@@ -57,7 +57,7 @@ fi
 # areas can be defined in .doyaken/rules/ after running dk init.
 # Uses origin/ prefix so the diff compares against the remote default branch,
 # not a potentially stale local copy (consistent with dk.sh __dk_show_header).
-DEFAULT_BRANCH=$(dk_default_branch)
+DEFAULT_BRANCH=$(dk_default_branch "$REPO_TOP")
 CHANGED_FILES=$(git diff "origin/${DEFAULT_BRANCH}...HEAD" --name-only 2>/dev/null || echo "")
 FOCUS_AREAS=""
 
