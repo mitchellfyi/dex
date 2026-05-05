@@ -65,6 +65,7 @@ doyaken() {
       echo "Worktree commands:"
       echo "  dk <number>            Run autonomous lifecycle (Plan → Complete) for a ticket"
       echo "  dk \"<description>\"     Same, for a task without a ticket"
+      echo "  dk --no-worktree <task> Run lifecycle in the current checkout instead"
       echo "  dk --resume            Resume the most recent session"
       echo "  dk --from-pr <N>      Resume session linked to a PR"
       echo "  dk revert <N> [phase] Revert worktree to a phase checkpoint"
@@ -194,8 +195,21 @@ __dk_provider_prompt() {
 unalias __dk_phase_message 2>/dev/null; unfunction __dk_phase_message 2>/dev/null
 __dk_phase_message() {
   local step="$1"
+  local raw_input="${2:-}"
+  local workspace_mode="${3:-worktree}"
+  local wt_dir="${4:-}"
   printf '%s\n' "${DK_PHASE_MESSAGES[$step]}"
   __dk_provider_prompt
+  if [[ -n "$raw_input" ]] || [[ "$workspace_mode" == "in-place" ]]; then
+    printf '%s\n' ""
+    printf '%s\n' "## Doyaken Request Context"
+    [[ -n "$raw_input" ]] && printf 'Original request: %s\n' "$raw_input"
+    if [[ "$workspace_mode" == "in-place" ]]; then
+      printf '%s\n' "Workspace mode: in-place. No Doyaken worktree was created."
+      [[ -n "$wt_dir" ]] && printf 'Current checkout: %s\n' "$wt_dir"
+      printf '%s\n' "Use the current checkout and Doyaken-managed branch; do not create or switch branches unless ticket setup instructions explicitly require a branch rename."
+    fi
+  fi
 }
 
 # Phase definitions (zsh arrays are 1-indexed, so index 1 = Phase 1)
@@ -358,14 +372,10 @@ __dk_is_ticket() {
   [[ "$1" =~ ^[[:space:]]*[a-zA-Z]*-?[0-9]+[[:space:]]*$ ]]
 }
 
-# __dk_setup_worktree <raw_input>
-# Sets: _dk_wt_name, _dk_wt_dir, _dk_is_task, _dk_repo_root, _dk_default_branch
-# Returns 0 if worktree exists or was created, 1 on error.
-# See: docs/autonomous-mode.md for the full lifecycle that follows worktree creation.
-__dk_setup_worktree() {
+# __dk_resolve_workspace_name <raw_input>
+# Sets: _dk_wt_name, _dk_is_task.
+__dk_resolve_workspace_name() {
   local raw_input="$1"
-
-  _dk_repo_root=$(dk_repo_root) || return 1
 
   _dk_is_task=0
   if __dk_is_ticket "$raw_input"; then
@@ -381,10 +391,75 @@ __dk_setup_worktree() {
     _dk_wt_name="task-${slug}"
     _dk_is_task=1
   fi
+}
+
+# __dk_session_id_for_workspace <workspace_mode> <workspace_name>
+# Worktree sessions keep the historic "worktree-*" ids. In-place sessions use
+# their own prefix so they do not collide with a same-ticket worktree session.
+__dk_session_id_for_workspace() {
+  local workspace_mode="$1" wt_name="$2"
+  if [[ "$workspace_mode" == "in-place" ]]; then
+    printf '%s\n' "inplace-${wt_name}"
+  else
+    dk_session_id "$wt_name"
+  fi
+}
+
+# __dk_claude_session_name <workspace_mode> <workspace_name>
+__dk_claude_session_name() {
+  local workspace_mode="$1" wt_name="$2"
+  if [[ "$workspace_mode" == "in-place" ]]; then
+    printf 'inplace-%s\n' "$wt_name"
+  else
+    printf '%s\n' "$wt_name"
+  fi
+}
+
+# __dk_write_last_session <workspace_name> <workspace_dir> <workspace_mode>
+__dk_write_last_session() {
+  __dk_write_state "$DK_STATE_DIR/last-session" "${1}:${2}:${3}"
+}
+
+# __dk_parse_last_session <raw_last_session>
+# Sets: _dk_wt_name, _dk_wt_dir, _dk_workspace_mode, _dk_session_id.
+__dk_parse_last_session() {
+  local last_info="$1"
+  _dk_wt_name="${last_info%%:*}"
+  local rest="${last_info#*:}"
+  _dk_workspace_mode="worktree"
+
+  case "$rest" in
+    *:in-place)
+      _dk_workspace_mode="in-place"
+      _dk_wt_dir="${rest%:in-place}"
+      ;;
+    *:worktree)
+      _dk_workspace_mode="worktree"
+      _dk_wt_dir="${rest%:worktree}"
+      ;;
+    *)
+      _dk_wt_dir="$rest"
+      ;;
+  esac
+
+  _dk_session_id=$(__dk_session_id_for_workspace "$_dk_workspace_mode" "$_dk_wt_name")
+}
+
+# __dk_setup_worktree <raw_input>
+# Sets: _dk_wt_name, _dk_wt_dir, _dk_is_task, _dk_repo_root, _dk_default_branch,
+# _dk_workspace_mode, _dk_session_id.
+# Returns 0 if worktree exists or was created, 1 on error.
+# See: docs/autonomous-mode.md for the full lifecycle that follows worktree creation.
+__dk_setup_worktree() {
+  local raw_input="$1"
+
+  _dk_repo_root=$(dk_repo_root) || return 1
+  __dk_resolve_workspace_name "$raw_input" || return 1
 
   _dk_wt_dir="${_dk_repo_root}/.doyaken/worktrees/${_dk_wt_name}"
-
   _dk_default_branch=$(dk_default_branch)
+  _dk_workspace_mode="worktree"
+  _dk_session_id=$(__dk_session_id_for_workspace "$_dk_workspace_mode" "$_dk_wt_name")
 
   # If worktree exists, ensure links are set up (retroactive fix) and return
   if [[ -d "$_dk_wt_dir" ]]; then
@@ -419,14 +494,91 @@ __dk_setup_worktree() {
   return 0
 }
 
+# __dk_setup_in_place <raw_input>
+# Sets the same workspace variables as __dk_setup_worktree, but points them at
+# the current checkout and creates/switches the normal Doyaken branch there.
+__dk_setup_in_place() {
+  local raw_input="$1"
+
+  _dk_repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [[ -z "$_dk_repo_root" ]]; then
+    dk_error "Not in a git repository."
+    return 1
+  fi
+  __dk_resolve_workspace_name "$raw_input" || return 1
+
+  _dk_wt_dir="$_dk_repo_root"
+  _dk_default_branch=$(dk_default_branch "$_dk_wt_dir")
+  _dk_workspace_mode="in-place"
+  _dk_session_id=$(__dk_session_id_for_workspace "$_dk_workspace_mode" "$_dk_wt_name")
+  local branch_name="worktree-${_dk_wt_name}"
+
+  dk_info "Running lifecycle in current checkout (no worktree): ${_dk_wt_dir}"
+
+  git -C "$_dk_wt_dir" fetch origin "$_dk_default_branch" --quiet 2>/dev/null || true
+
+  local current_branch has_changes
+  current_branch=$(git -C "$_dk_wt_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+  has_changes=0
+  git -C "$_dk_wt_dir" status --porcelain 2>/dev/null | head -1 | grep -q . && has_changes=1
+
+  if [[ -f "$(dk_state_file "$_dk_session_id")" ]]; then
+    dk_info "Using current checkout for existing in-place session ${_dk_wt_name}"
+    if [[ $has_changes -eq 1 ]]; then
+      dk_warn "Current checkout already has changes; in-place mode will include them in the lifecycle scope."
+    fi
+    return 0
+  fi
+
+  if [[ "$current_branch" == "$branch_name" ]]; then
+    dk_ok "Using existing Doyaken branch ${branch_name}"
+  elif git -C "$_dk_wt_dir" show-ref --verify --quiet "refs/heads/${branch_name}" 2>/dev/null; then
+    if [[ $has_changes -eq 1 ]]; then
+      dk_error "Cannot switch to existing branch ${branch_name} with uncommitted changes in the current checkout."
+      dk_info "Commit, stash, or discard those changes, then re-run: dk --no-worktree ${raw_input}"
+      return 1
+    fi
+    dk_info "Switching current checkout to existing Doyaken branch ${branch_name}"
+    if ! git -C "$_dk_wt_dir" switch "$branch_name"; then
+      dk_error "Failed to switch to ${branch_name}."
+      return 1
+    fi
+  else
+    if [[ $has_changes -eq 1 ]]; then
+      dk_error "Cannot create branch ${branch_name} from origin/${_dk_default_branch} with uncommitted changes in the current checkout."
+      dk_info "Commit, stash, or discard those changes, then re-run: dk --no-worktree ${raw_input}"
+      return 1
+    fi
+    dk_info "Creating branch ${branch_name} from origin/${_dk_default_branch}"
+    if ! git -C "$_dk_wt_dir" switch -c "$branch_name" "origin/${_dk_default_branch}"; then
+      dk_error "Failed to create branch ${branch_name}."
+      return 1
+    fi
+  fi
+
+  if [[ $has_changes -eq 1 ]]; then
+    dk_warn "Current checkout already has changes; in-place mode will include them in the lifecycle scope."
+  fi
+
+  # Auto-init after branch setup so a newly initialized repo records .doyaken/
+  # on the lifecycle branch instead of dirtying the starting checkout first.
+  if [[ ! -d "${_dk_repo_root}/.doyaken" ]]; then
+    echo "Auto-initialising Doyaken for this repo..."
+    bash "$DOYAKEN_DIR/bin/init.sh" --skip-analysis --skip-config
+  fi
+
+  return 0
+}
+
 # dk_session_id is provided by lib/session.sh (sourced via lib/common.sh)
 
-# __dk_build_system_context <wt_name> <step> <session_id> <wt_dir>
+# __dk_build_system_context <wt_name> <step> <session_id> <wt_dir> [workspace_mode] [raw_input]
 # Write a system prompt context file that persists across conversation compaction.
 # Returns the file path on stdout. The file is passed to --append-system-prompt-file
 # so Claude always knows which phase it is in, even after compaction.
 __dk_build_system_context() {
   local wt_name="$1" step="$2" session_id="$3" wt_dir="$4"
+  local workspace_mode="${5:-worktree}" raw_input="${6:-}"
   local ctx_file
   ctx_file=$(dk_context_file "$session_id")
   mkdir -p "$(dirname "$ctx_file")"
@@ -450,7 +602,26 @@ __dk_build_system_context() {
 
   cat > "$ctx_file" <<EOF
 You are Doyaken, running Phase ${step} (${DK_PHASE_NAMES[$step]}) for ${wt_name}.
-Worktree: ${wt_dir}
+Workspace: ${wt_dir}
+Workspace mode: ${workspace_mode}
+
+## Requested Work
+
+Original dk request: ${raw_input:-$wt_name}
+EOF
+
+  if [[ "$workspace_mode" == "in-place" ]]; then
+    cat >> "$ctx_file" <<EOF
+
+This lifecycle is running in-place in the current checkout. No Doyaken worktree
+was created. Doyaken still prepared the normal lifecycle branch in this checkout
+before launching Claude. Treat existing files, staged changes, unstaged changes,
+and the current branch as user-owned context. Do not switch branches or create a
+new branch unless ticket setup instructions explicitly require a branch rename.
+EOF
+  fi
+
+  cat >> "$ctx_file" <<EOF
 
 ## Audit Loop
 
@@ -497,7 +668,7 @@ DEOF
   echo "$ctx_file"
 }
 
-# __dk_run_review_loop <wt_name> <wt_dir> <session_id>
+# __dk_run_review_loop <wt_name> <wt_dir> <session_id> [workspace_mode] [raw_input]
 #
 # Phase 3 (Review): Shell-managed sub-loop with fresh Claude sessions per iteration.
 # Each iteration launches a new Claude session (--fork-session) with the Stop hook
@@ -514,7 +685,10 @@ DEOF
 # Returns 0 on success (enough clean passes or max iterations), non-zero on interrupt.
 __dk_run_review_loop() {
   local wt_name="$1" wt_dir="$2" session_id="$3"
+  local workspace_mode="${4:-worktree}" raw_input="${5:-}"
   local step=3
+  local claude_session_name
+  claude_session_name=$(__dk_claude_session_name "$workspace_mode" "$wt_name")
 
   local clean_passes=0
   local review_iteration=0
@@ -554,9 +728,9 @@ __dk_run_review_loop() {
 
     # Build system context for this iteration
     local ctx_file
-    ctx_file=$(__dk_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir")
+    ctx_file=$(__dk_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input")
 
-    local claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$wt_name")
+    local claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
     # --resume to reuse session name; --fork-session for fresh context window
     claude_args+=(--resume --fork-session)
     claude_args+=(--append-system-prompt-file "$ctx_file")
@@ -571,7 +745,7 @@ __dk_run_review_loop() {
       DOYAKEN_LOOP_PROMPT="$audit_prompt" \
       DOYAKEN_LOOP_PHASE="$step" \
       DOYAKEN_DIR="$DOYAKEN_DIR" \
-      __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step")"
+      __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
     )
     local exit_code=$?
 
@@ -613,7 +787,7 @@ __dk_run_review_loop() {
   return 0
 }
 
-# __dk_run_phases <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint>
+# __dk_run_phases <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
 #
 # Phase loop state machine: runs autonomous phases start_step through 6 sequentially.
 # Phase 6 (Complete) is autonomous: it marks the PR ready, requests configured
@@ -636,6 +810,10 @@ __dk_run_review_loop() {
 __dk_run_phases() {
   local wt_name="$1" wt_dir="$2" default_branch="$3" step="$4"
   local state_file="$5" times_file="$6" resume_hint="$7"
+  local workspace_mode="${8:-worktree}"
+  local session_id="${9:-}" raw_input="${10:-}"
+  local claude_session_name
+  claude_session_name=$(__dk_claude_session_name "$workspace_mode" "$wt_name")
 
   # Ensure Claude Code CLI is installed — all phases depend on it
   if ! command -v claude &>/dev/null; then
@@ -645,8 +823,7 @@ __dk_run_phases() {
   fi
 
   # Session ID — derived once, used for checkpoints, logging, and status classification.
-  local session_id
-  session_id=$(dk_session_id "$wt_name")
+  [[ -n "$session_id" ]] || session_id=$(__dk_session_id_for_workspace "$workspace_mode" "$wt_name")
 
   # Session-level timeout watchdog — single budget for the entire dk run.
   # Sends SIGTERM to this shell's process group when the budget expires.
@@ -662,13 +839,13 @@ __dk_run_phases() {
   fi
 
   while [[ $step -le 6 ]]; do
-    __dk_show_header "$wt_name" "$step" "$wt_dir" "$default_branch"
+    __dk_show_header "$wt_name" "$step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
 
     local claude_args=()
     if [[ $step -eq 1 ]]; then
       # Phase 1: bypassPermissions + EnterPlanMode — read-only without interactive prompts.
       # No stop hook: plan mode's built-in approval is the quality gate.
-      claude_args=("${DK_PLAN_FLAGS[@]}" -n "$wt_name")
+      claude_args=("${DK_PLAN_FLAGS[@]}" -n "$claude_session_name")
       claude_args+=(--append-system-prompt "You MUST be in plan mode — if not, call EnterPlanMode immediately.")
       # Resume only if re-entering Phase 1 (prior session exists)
       if [[ -f "$times_file" ]]; then
@@ -676,7 +853,7 @@ __dk_run_phases() {
       fi
     else
       # Phases 2, 4-6: autonomous with stop hook audit loop (Phase 3 has its own sub-loop)
-      claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$wt_name")
+      claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
       # Resume only if a prior phase actually ran (times_file has entries).
       # Handles edge case where state_file advanced but session was never created.
       if [[ -f "$times_file" ]]; then
@@ -686,7 +863,7 @@ __dk_run_phases() {
       # System prompt context file — survives conversation compaction so Claude
       # always knows which phase it is in and how to signal completion.
       local ctx_file
-      ctx_file=$(__dk_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir")
+      ctx_file=$(__dk_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input")
       claude_args+=(--append-system-prompt-file "$ctx_file")
 
       # Live status line — shows phase, audit iteration, and elapsed time in TUI
@@ -750,7 +927,7 @@ __dk_run_phases() {
         cd "$wt_dir" && \
         DOYAKEN_SESSION_ID="$session_id" \
         DOYAKEN_DIR="$DOYAKEN_DIR" \
-        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step")"
+        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
       )
     elif [[ $step -eq 3 ]]; then
       # Phase 3: Review — shell-managed sub-loop with fresh sessions per iteration.
@@ -760,7 +937,7 @@ __dk_run_phases() {
       # DK_REVIEW_CLEAN_PASSES before advancing. See: __dk_run_review_loop.
       (
         sh -c 'echo $PPID' > "$_dk_pidfile"
-        __dk_run_review_loop "$wt_name" "$wt_dir" "$session_id"
+        __dk_run_review_loop "$wt_name" "$wt_dir" "$session_id" "$workspace_mode" "$raw_input"
       )
     else
       # Phases 2, 4-6: audit loop active (single Claude session per phase).
@@ -805,7 +982,7 @@ __dk_run_phases() {
         DOYAKEN_COMPLETE_MAX_CYCLES="${DOYAKEN_COMPLETE_MAX_CYCLES:-$DK_COMPLETE_MAX_CYCLES}" \
         DOYAKEN_COMPLETE_WAIT_MINUTES="${DOYAKEN_COMPLETE_WAIT_MINUTES:-$DK_COMPLETE_WAIT_MINUTES}" \
         DOYAKEN_DIR="$DOYAKEN_DIR" \
-        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step")"
+        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
       )
     fi
 
@@ -876,7 +1053,11 @@ __dk_run_phases() {
       esac
       echo "Resume with: ${resume_hint}"
       if [[ $step -ge 2 ]] && git -C "$wt_dir" rev-parse --verify "dk-checkpoint/phase-${step}" &>/dev/null; then
-        echo "Revert to pre-phase state with: dk revert ${wt_name} ${step}"
+        if [[ "$workspace_mode" == "worktree" ]]; then
+          echo "Revert to pre-phase state with: dk revert ${wt_name} ${step}"
+        else
+          echo "Checkpoint tag available: dk-checkpoint/phase-${step}"
+        fi
       fi
       dk_provider_cleanup_session_state "$session_id"
       [[ -n "$_dk_session_watchdog_pid" ]] && kill "$_dk_session_watchdog_pid" 2>/dev/null
@@ -893,13 +1074,18 @@ __dk_run_phases() {
 
   # All autonomous phases complete — write step=7 so re-running `dk <ticket>` or
   # `dk --resume` detects "fully complete" instead of restarting from Phase 1.
-  # State files are cleaned up by dkrm / dkclean when the worktree is removed.
+  # Worktree state files are cleaned up by dkrm / dkclean. In-place state is
+  # retained so `dk --resume` can report completion for the last run.
   __dk_write_state "$state_file" "7"
   dk_provider_cleanup_session_state "$session_id"
-  __dk_show_header "$wt_name" 7 "$wt_dir" "$default_branch"
+  __dk_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
   echo ""
   echo "Ticket lifecycle complete — PR has been merged-eligible (CI green, reviews approved)."
-  echo "Run dkrm ${wt_name} to clean up the worktree when you're done."
+  if [[ "$workspace_mode" == "worktree" ]]; then
+    echo "Run dkrm ${wt_name} to clean up the worktree when you're done."
+  else
+    echo "No worktree cleanup is needed; this lifecycle ran in the current checkout."
+  fi
 }
 
 # __dk_format_elapsed <seconds>
@@ -913,12 +1099,13 @@ __dk_format_elapsed() {
   fi
 }
 
-# __dk_show_header <wt_name> <current_step> <wt_dir> [default_branch]
+# __dk_show_header <wt_name> <current_step> <wt_dir> [default_branch] [session_id] [workspace_mode]
 # Display lifecycle progress between phases
 __dk_show_header() {
   local wt_name="$1" step="$2" wt_dir="$3" default_branch="${4:-main}"
-  local session_id times_file
-  session_id=$(dk_session_id "$wt_name")
+  local session_id="${5:-}" workspace_mode="${6:-worktree}"
+  [[ -n "$session_id" ]] || session_id=$(__dk_session_id_for_workspace "$workspace_mode" "$wt_name")
+  local times_file
   times_file=$(dk_times_file "$session_id")
 
   echo ""
@@ -955,8 +1142,13 @@ __dk_show_header() {
     commits_count=$(git -C "$wt_dir" log --oneline "origin/${default_branch}..HEAD" 2>/dev/null | wc -l | tr -d ' ')
 
     local actual_branch
-    actual_branch=$(dk_wt_branch "$wt_dir" "worktree-${wt_name}")
+    if [[ "$workspace_mode" == "in-place" ]]; then
+      actual_branch=$(dk_wt_branch "$wt_dir" "current-checkout")
+    else
+      actual_branch=$(dk_wt_branch "$wt_dir" "worktree-${wt_name}")
+    fi
     local meta="  Branch: ${actual_branch}"
+    [[ "$workspace_mode" == "in-place" ]] && meta+=" | mode: in-place"
     [[ "$files_changed" != "0" ]] && meta+=" | ${files_changed} files changed"
     [[ "$commits_count" != "0" ]] && meta+=" | ${commits_count} commits"
     echo "$meta"
@@ -995,10 +1187,33 @@ dk() {
   if [[ $# -eq 0 ]]; then
     echo "Usage: dk <NUMBER>        (e.g. dk 999, dk ENG-999)"
     echo "       dk \"<description>\" (e.g. dk \"fix login bug\")"
+    echo "       dk --no-worktree <task>"
     echo "       dk --resume        Resume the most recent session"
     echo "       dk --from-pr <N>   Resume session linked to a PR"
     echo ""
     echo "       dk init|config|install|uninstall|uninit|status|reload|help"
+    return 1
+  fi
+
+  local use_worktree=1
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-worktree|--in-place|--here)
+        use_worktree=0
+        shift
+        ;;
+      --worktree)
+        use_worktree=1
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: dk --no-worktree <NUMBER|description>"
     return 1
   fi
 
@@ -1020,33 +1235,37 @@ dk() {
       dk_info "Start a new session with: dk <number>"
       return 1
     fi
-    # last-session file format: "wt_name:wt_dir" (e.g., "ticket-999:/path/to/worktree")
+    # last-session file format: "wt_name:wt_dir:mode". Older "wt_name:wt_dir"
+    # files are still treated as worktree sessions.
     local last_info
     last_info=$(cat "$last_session_file" 2>/dev/null)
-    local last_wt_name="${last_info%%:*}"  # everything before first colon
-    local last_wt_dir="${last_info#*:}"    # everything after first colon
-    if [[ ! -d "$last_wt_dir" ]]; then
-      dk_error "Worktree ${last_wt_name} no longer exists."
+    __dk_parse_last_session "$last_info"
+    if [[ ! -d "$_dk_wt_dir" ]]; then
+      if [[ "$_dk_workspace_mode" == "in-place" ]]; then
+        dk_error "Checkout for in-place session ${_dk_wt_name} no longer exists."
+      else
+        dk_error "Worktree ${_dk_wt_name} no longer exists."
+      fi
       rm -f "$last_session_file"
       return 1
     fi
 
-    # Validate worktree git state
-    if ! git -C "$last_wt_dir" rev-parse --git-dir &>/dev/null; then
-      dk_error "Worktree ${last_wt_name} has corrupted git state."
-      dk_info "Run dkrm ${last_wt_name} and start fresh."
+    # Validate workspace git state
+    if ! git -C "$_dk_wt_dir" rev-parse --git-dir &>/dev/null; then
+      dk_error "Workspace ${_dk_wt_name} has corrupted git state."
+      if [[ "$_dk_workspace_mode" == "worktree" ]]; then
+        dk_info "Run dkrm ${_dk_wt_name} and start fresh."
+      fi
       return 1
     fi
 
     # Reconstruct raw_input for resume message
-    local raw_input="$last_wt_name"
-    _dk_wt_name="$last_wt_name"
-    _dk_wt_dir="$last_wt_dir"
-    _dk_default_branch=$(dk_default_branch "$last_wt_dir")
+    local raw_input="$_dk_wt_name"
+    _dk_default_branch=$(dk_default_branch "$_dk_wt_dir")
 
     # Fall through to the phase loop below
     local session_id state_file times_file
-    session_id=$(dk_session_id "$_dk_wt_name")
+    session_id="$_dk_session_id"
     state_file=$(dk_state_file "$session_id")
     times_file=$(dk_times_file "$session_id")
     local step=1
@@ -1055,14 +1274,18 @@ dk() {
 
     if [[ $step -gt 6 ]]; then
       echo "Ticket lifecycle already complete for ${_dk_wt_name}."
-      echo "Run dkrm ${_dk_wt_name} to clean up after merging."
+      if [[ "$_dk_workspace_mode" == "worktree" ]]; then
+        echo "Run dkrm ${_dk_wt_name} to clean up after merging."
+      else
+        echo "No worktree cleanup is needed for this in-place session."
+      fi
       return 0
     fi
 
     echo "Resuming ${_dk_wt_name} from Phase ${step}: ${DK_PHASE_NAMES[$step]}..."
 
     cd "$_dk_wt_dir" 2>/dev/null || return 1
-    __dk_run_phases "$_dk_wt_name" "$_dk_wt_dir" "$_dk_default_branch" "$step" "$state_file" "$times_file" "dk --resume"
+    __dk_run_phases "$_dk_wt_name" "$_dk_wt_dir" "$_dk_default_branch" "$step" "$state_file" "$times_file" "dk --resume" "$_dk_workspace_mode" "$session_id" "$raw_input"
     return $?
   fi
 
@@ -1086,20 +1309,26 @@ dk() {
     return $exit_code
   fi
 
-  # Normal mode — setup worktree and run phased lifecycle
+  # Normal mode — setup workspace and run phased lifecycle
   local raw_input="${(j: :)@}"  # zsh: join all args with spaces
 
-  if ! __dk_setup_worktree "$raw_input"; then
-    return 1
+  if [[ $use_worktree -eq 1 ]]; then
+    if ! __dk_setup_worktree "$raw_input"; then
+      return 1
+    fi
+  else
+    if ! __dk_setup_in_place "$raw_input"; then
+      return 1
+    fi
   fi
 
   local session_id state_file times_file
-  session_id=$(dk_session_id "$_dk_wt_name")
+  session_id="$_dk_session_id"
   state_file=$(dk_state_file "$session_id")
   times_file=$(dk_times_file "$session_id")
 
   # Save as last session for --resume (atomic write to avoid corruption on interrupt)
-  __dk_write_state "$DK_STATE_DIR/last-session" "${_dk_wt_name}:${_dk_wt_dir}"
+  __dk_write_last_session "$_dk_wt_name" "$_dk_wt_dir" "$_dk_workspace_mode"
 
   # Read current phase (default: 1)
   local step=1
@@ -1110,7 +1339,11 @@ dk() {
 
   if [[ $step -gt 6 ]]; then
     echo "Ticket lifecycle already complete for ${_dk_wt_name}."
-    echo "Run dkrm ${raw_input} to clean up after merging."
+    if [[ "$_dk_workspace_mode" == "worktree" ]]; then
+      echo "Run dkrm ${raw_input} to clean up after merging."
+    else
+      echo "No worktree cleanup is needed for this in-place session."
+    fi
     return 0
   fi
 
@@ -1119,8 +1352,10 @@ dk() {
   fi
 
   # ── Phase loop ──
+  local resume_hint="dk ${raw_input}"
+  [[ "$_dk_workspace_mode" == "in-place" ]] && resume_hint="dk --no-worktree ${raw_input}"
   cd "$_dk_wt_dir" 2>/dev/null || return 1
-  __dk_run_phases "$_dk_wt_name" "$_dk_wt_dir" "$_dk_default_branch" "$step" "$state_file" "$times_file" "dk ${raw_input}"
+  __dk_run_phases "$_dk_wt_name" "$_dk_wt_dir" "$_dk_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dk_workspace_mode" "$session_id" "$raw_input"
   return $?
 }
 

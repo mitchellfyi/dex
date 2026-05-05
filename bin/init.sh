@@ -63,7 +63,7 @@ This project uses Doyaken for workflow automation.
 
 ## Autonomous workflow
 
-From the terminal, run `dk <ticket-number>` to start the full autonomous lifecycle (Plan → Implement → Verify → PR → Complete) in an isolated worktree. You can also run `dk "description"` for freeform tasks.
+From the terminal, run `dk <ticket-number>` to start the full autonomous lifecycle (Plan → Implement → Verify → PR → Complete) in an isolated worktree. You can also run `dk "description"` for freeform tasks, or `dk --no-worktree <ticket-or-description>` to set up the normal lifecycle branch in the current checkout without creating a worktree.
 
 ## One-off prompt (no ticket)
 
@@ -184,4 +184,4 @@ if [[ $SKIP_CONFIG -eq 0 ]]; then
   echo "  - Integrations configured (ticket tracker, optional MCPs)"
 fi
 echo ""
-echo "Next: run 'dk <ticket-number>' to start a worktree"
+echo "Next: run 'dk <ticket-number>' to start a worktree, or 'dk --no-worktree <task>' to branch in-place"

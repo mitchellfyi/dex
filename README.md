@@ -113,6 +113,8 @@ Gateway mode requires a real Anthropic-compatible gateway exposing `/v1/messages
 
 When you run `dk 999`, Doyaken creates an isolated git worktree and runs Claude through six autonomous phases. Each phase is a separate Claude Code session (`--fork-session`), so every phase starts with a fresh context window. The user is brought into the loop as a configured reviewer in Phase 6 — the autonomous loop waits for their review (and any other configured reviewers) and only closes the ticket once everyone has approved.
 
+If you want the same lifecycle without a separate checkout, run `dk --no-worktree <ticket-or-description>`. In-place mode still creates or switches to the normal Doyaken branch (`worktree-ticket-*` / `worktree-task-*`) in the current checkout; it just skips `git worktree add`. Phase 4 commits and pushes that branch. If the current checkout has uncommitted changes and Doyaken needs to switch/create the lifecycle branch, it stops so you can commit or stash first.
+
 ```
 dk 999
   │
@@ -239,6 +241,7 @@ dk uninit            # Remove Doyaken from current repo
 # Worktrees
 dk <number>          # Create worktree, run full autonomous lifecycle (Plan → Complete)
 dk "<description>"   # Same, for a task without a ticket number
+dk --no-worktree <task> # Run the full lifecycle in the current checkout
 dk --resume          # Resume a previous session
 dk revert <N> [phase] # Revert worktree to a phase checkpoint
 dk log [session_id]  # Show structured phase execution log

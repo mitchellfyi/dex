@@ -9,6 +9,7 @@ User runs: dk 999
   |
   v
 Wrapper creates worktree, starts Phase 1
+(`dk --no-worktree` skips worktree creation and uses the current checkout)
   |
   v
 Claude starts with DOYAKEN_LOOP_ACTIVE=1
@@ -82,6 +83,23 @@ To run without the audit loop:
 cd .doyaken/worktrees/ticket-999
 claude --model opus  # No DOYAKEN_LOOP_ACTIVE set, no .active file
 ```
+
+## In-Place Lifecycle (`dk --no-worktree`)
+
+For tickets or tasks where you do not want a separate checkout, use:
+
+```bash
+dk --no-worktree 999
+dk --no-worktree "fix login bug"
+```
+
+This runs the same six-phase lifecycle in the current git checkout. Doyaken does
+not create a worktree, but it still prepares the normal lifecycle branch
+(`worktree-ticket-*` or `worktree-task-*`) in the current checkout, using
+`origin/<default>` as the starting point just like worktree mode. Phase 4 commits
+and pushes that branch. If uncommitted changes are present and Doyaken would need
+to switch or create the lifecycle branch, it stops so you can commit or stash
+first. `dk --resume` resumes the most recent worktree or in-place lifecycle.
 
 ## Prompt Loop Mode (`dkloop`)
 
