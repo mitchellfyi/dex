@@ -1,3 +1,8 @@
+---
+name: "dkreviewloop"
+description: "Run dkreview repeatedly in fresh independent sessions until three clean reports in a row."
+---
+
 # Skill: dkreviewloop
 
 Run `/dkreview` repeatedly in fresh, independent sessions until **3 clean reports in a row** (max 10 iterations). Lighter-weight standalone alternative to the full dk Phase 3 review.

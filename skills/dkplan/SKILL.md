@@ -1,3 +1,8 @@
+---
+name: "dkplan"
+description: "Create an implementation plan from a ticket or user request after gathering project context."
+---
+
 # Skill: dkplan
 
 Create an implementation plan from a ticket or user request.

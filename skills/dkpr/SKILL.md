@@ -1,3 +1,8 @@
+---
+name: "dkpr"
+description: "Generate a PR description, create a draft pull request, and attach request-type reviewers."
+---
+
 # Skill: dkpr
 
 Generate a PR description, create a draft pull request, and attach `request`-type reviewers. Stays in draft — Phase 6 (`dkcomplete`) marks it ready and posts `@mention` comments.

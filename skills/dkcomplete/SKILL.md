@@ -1,3 +1,8 @@
+---
+name: "dkcomplete"
+description: "Run Phase 6 of the Doyaken lifecycle: ready the PR, request reviewers, monitor CI and reviews, address comments, and close the ticket."
+---
+
 # Skill: dkcomplete
 
 Phase 6 of the autonomous lifecycle. Marks the PR ready, requests configured reviewers, posts `@mention` comments, monitors CI and reviews, addresses comments via `/dkprreview`, and closes the ticket once everything is green and approved.

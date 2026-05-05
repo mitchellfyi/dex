@@ -1,3 +1,8 @@
+---
+name: "dkprreview"
+description: "Critically evaluate PR review comments, fix valid issues, push back when appropriate, and prepare reviewer replies."
+---
+
 # Skill: dkprreview
 
 Critically evaluate PR review comments — fix what should be fixed, push back on what should not, and escalate what needs human judgement. Always confirm with the user how they want replies delivered (inline on the PR per comment, or just summarised in the terminal).

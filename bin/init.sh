@@ -3,9 +3,17 @@
 # Creates .doyaken/ skeleton, then uses Claude Code CLI to analyze
 # the codebase and generate project-specific configuration.
 set -euo pipefail
-trap 'printf "\nInterrupted.\n"; exit 130' INT
 
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+
+INIT_PROVIDER_SESSION_ID=""
+__dk_init_cleanup() {
+  if [[ -n "${INIT_PROVIDER_SESSION_ID:-}" ]]; then
+    dk_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID" 2>/dev/null || true
+  fi
+}
+trap __dk_init_cleanup EXIT
+trap 'printf "\nInterrupted.\n"; exit 130' INT
 
 # Parse all flags upfront so they work independently of each other.
 # (Previously --skip-config was unreachable when --skip-analysis was set
@@ -92,18 +100,30 @@ fi
 echo ""
 echo "Skeleton created."
 
-# ── 2. Codebase analysis via Claude Code CLI ──────────────────────────
+# ── 2. Ensure Codex CLI can discover Doyaken skills ───────────────────
+
+CODEX_SKILL_COUNT=0
+if command -v codex &>/dev/null; then
+  if ! dk_install_codex_skills; then
+    dk_warn "Continuing init without complete Codex skill links"
+  fi
+  CODEX_SKILL_COUNT=$(dk_count_codex_doyaken_skills)
+else
+  dk_skip "Codex CLI not found; skipping Codex skills"
+fi
+
+# ── 3. Codebase analysis via Claude Code CLI ──────────────────────────
 
 if [[ $SKIP_ANALYSIS -eq 1 ]]; then
   echo ""
   echo "Skipped codebase analysis (--skip-analysis)."
   echo "To generate project-specific config later, run:"
-  echo "  claude -p \"\$(cat $DOYAKEN_DIR/prompts/init-analysis.md)\""
+  echo "  dk init --skip-config"
 elif ! command -v claude &>/dev/null; then
   echo ""
   echo "Claude Code CLI not found. Skipping codebase analysis."
   echo "Install Claude Code CLI, then run:"
-  echo "  claude -p \"\$(cat $DOYAKEN_DIR/prompts/init-analysis.md)\""
+  echo "  dk init --skip-config"
 else
   echo ""
   echo "Analyzing codebase with Claude Code CLI..."
@@ -113,23 +133,31 @@ else
 
   # -p runs a one-shot prompt; Claude writes files directly to .doyaken/
   # --verbose --output-format stream-json enables real-time progress.
+  dk_provider_apply
+  analysis_prompt=$(cat "$DOYAKEN_DIR/prompts/init-analysis.md")
+  provider_prompt=$(dk_provider_prompt)
+  INIT_PROVIDER_SESSION_ID="init-$(dk_unique_session_id)"
+  dk_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID"
   set +o pipefail
-  claude -p "$(cat "$DOYAKEN_DIR/prompts/init-analysis.md")" \
+  DOYAKEN_SESSION_ID="$INIT_PROVIDER_SESSION_ID" dk_provider_claude -p "${analysis_prompt}${provider_prompt}" \
+    --model "$DK_CLAUDE_MODEL" --effort "$DK_CLAUDE_EFFORT" \
     --dangerously-skip-permissions \
     --verbose --output-format stream-json --include-partial-messages \
     | dk_progress_filter
   CLAUDE_EXIT=${PIPESTATUS[0]}
   set -o pipefail
+  dk_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID"
+  INIT_PROVIDER_SESSION_ID=""
   if [[ $CLAUDE_EXIT -ne 0 ]]; then
     echo ""
     echo "WARNING: Codebase analysis exited with code $CLAUDE_EXIT."
     echo "The .doyaken/ skeleton was created but project-specific config may be incomplete."
     echo "You can re-run the analysis manually:"
-    echo "  claude -p \"\$(cat $DOYAKEN_DIR/prompts/init-analysis.md)\""
+    echo "  dk init --skip-config"
   fi
 fi
 
-# ── 3. Configure integrations ─────────────────────────────────────────
+# ── 4. Configure integrations ─────────────────────────────────────────
 
 if [[ $SKIP_CONFIG -eq 0 ]]; then
   echo ""
@@ -146,6 +174,9 @@ echo ""
 echo "What happened:"
 echo "  - .doyaken/ created (worktrees, config, gitignored artifacts)"
 echo "  - .doyaken/CLAUDE.md imports .doyaken/doyaken.md"
+if [[ "$CODEX_SKILL_COUNT" -gt 0 ]]; then
+  echo "  - ${CODEX_SKILL_COUNT} Doyaken skill link(s) available in $(dk_codex_skills_dir) for Codex CLI"
+fi
 if [[ $SKIP_ANALYSIS -eq 0 ]] && command -v claude &>/dev/null; then
   echo "  - Claude analyzed the codebase and generated project-specific config"
 fi

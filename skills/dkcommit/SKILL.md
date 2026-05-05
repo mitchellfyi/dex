@@ -1,3 +1,8 @@
+---
+name: "dkcommit"
+description: "Stage, commit, and push changes following the repo's commit discipline after verification passes."
+---
+
 # Skill: dkcommit
 
 Stage, commit, and push changes following the repo's commit discipline.

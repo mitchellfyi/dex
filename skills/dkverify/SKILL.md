@@ -1,3 +1,8 @@
+---
+name: "dkverify"
+description: "Discover and run the full quality verification pipeline for the current project."
+---
+
 # Skill: dkverify
 
 Run the full quality verification pipeline for the current project.

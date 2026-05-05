@@ -1,3 +1,8 @@
+---
+name: "dkloop"
+description: "Run a prompt in a loop until the requested work is fully implemented and verified."
+---
+
 # Skill: dkloop
 
 Run a prompt in a loop until fully implemented. In-session equivalent of the `dkloop` CLI command.

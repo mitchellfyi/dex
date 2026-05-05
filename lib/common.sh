@@ -5,7 +5,8 @@
 #   source "$DOYAKEN_DIR/lib/common.sh"
 #
 # Provides: DOYAKEN_DIR, DK_STATE_DIR, DK_LOOP_DIR, dk_repo_root()
-# Also sources: lib/git.sh, lib/session.sh, lib/output.sh, lib/worktree.sh
+# Also sources: lib/git.sh, lib/session.sh, lib/output.sh, lib/worktree.sh,
+# lib/provider.sh, lib/codex.sh
 
 if [[ -z "${DOYAKEN_DIR:-}" ]]; then
   # Auto-detect from this file's location (lib/common.sh → repo root).
@@ -15,7 +16,9 @@ if [[ -z "${DOYAKEN_DIR:-}" ]]; then
   export DOYAKEN_DIR
   unset _dk_self
 fi
+# shellcheck disable=SC2034  # exported by sourcing; used by dk.sh and sibling libs
 DK_STATE_DIR="$HOME/.claude/.doyaken-phases"
+# shellcheck disable=SC2034  # exported by sourcing; used by dk.sh and sibling libs
 DK_LOOP_DIR="$HOME/.claude/.doyaken-loops"
 
 # dk_repo_root — print the *main* repo toplevel or return 1
@@ -37,7 +40,15 @@ dk_repo_root() {
 }
 
 # Source sibling libraries
+# shellcheck disable=SC1091
 source "$DOYAKEN_DIR/lib/git.sh"
+# shellcheck disable=SC1091
 source "$DOYAKEN_DIR/lib/session.sh"
+# shellcheck disable=SC1091
 source "$DOYAKEN_DIR/lib/output.sh"
+# shellcheck disable=SC1091
 source "$DOYAKEN_DIR/lib/worktree.sh"
+# shellcheck disable=SC1091
+source "$DOYAKEN_DIR/lib/provider.sh"
+# shellcheck disable=SC1091
+source "$DOYAKEN_DIR/lib/codex.sh"

@@ -1,3 +1,8 @@
+---
+name: "dkwatchpr"
+description: "Monitor PR review comments and address feedback from automated and human reviewers."
+---
+
 # Skill: dkwatchpr
 
 Monitor PR review comments and address feedback from automated and human reviewers.

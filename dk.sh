@@ -42,6 +42,7 @@ doyaken() {
     uninstall) bash "$DOYAKEN_DIR/bin/uninstall.sh" "$@" ;;
     init)      bash "$DOYAKEN_DIR/bin/init.sh" "$@" ;;
     config)    bash "$DOYAKEN_DIR/bin/config.sh" "$@" ;;
+    provider)  dk_provider_command "$@" ;;
     uninit)    bash "$DOYAKEN_DIR/bin/uninit.sh" "$@" ;;
     reload)
       source "$DOYAKEN_DIR/dk.sh"
@@ -56,6 +57,7 @@ doyaken() {
       echo "  dk uninstall        Global uninstall"
       echo "  dk init             Bootstrap current repo for Doyaken"
       echo "  dk config           Configure integrations (ticket tracker, Figma, etc.)"
+      echo "  dk provider         Configure provider/model execution profiles"
       echo "  dk uninit           Remove Doyaken from current repo"
       echo "  dk reload           Reload shell functions after editing dk.sh"
       echo "  dk status           Show installation status"
@@ -136,17 +138,65 @@ doyaken() {
 
 # ─── Phase configuration ────────────────────────────────────────────────────
 
+# Capture explicit user overrides before provider profiles fill defaults.
+# shellcheck disable=SC2034
+DK_USER_CLAUDE_MODEL="${DK_CLAUDE_MODEL:-}"
+if [[ -n "${DK_PROVIDER_LAST_CLAUDE_MODEL:-}" && "$DK_USER_CLAUDE_MODEL" == "$DK_PROVIDER_LAST_CLAUDE_MODEL" ]] || [[ -n "${DK_PROVIDER_LAST_PROVIDER_MODEL:-}" && "$DK_USER_CLAUDE_MODEL" == "$DK_PROVIDER_LAST_PROVIDER_MODEL" ]]; then
+  DK_USER_CLAUDE_MODEL=""
+fi
+# shellcheck disable=SC2034
+DK_USER_PLAN_MODEL="${DK_PLAN_MODEL:-}"
+if [[ -n "${DK_PROVIDER_LAST_PLAN_MODEL:-}" && "$DK_USER_PLAN_MODEL" == "$DK_PROVIDER_LAST_PLAN_MODEL" ]] || [[ -n "${DK_PROVIDER_LAST_PROVIDER_PLAN_MODEL:-}" && "$DK_USER_PLAN_MODEL" == "$DK_PROVIDER_LAST_PROVIDER_PLAN_MODEL" ]]; then
+  DK_USER_PLAN_MODEL=""
+fi
+# shellcheck disable=SC2034
+DK_USER_CLAUDE_EFFORT="${DK_CLAUDE_EFFORT:-}"
+if [[ -n "${DK_PROVIDER_LAST_CLAUDE_EFFORT:-}" && "$DK_USER_CLAUDE_EFFORT" == "$DK_PROVIDER_LAST_CLAUDE_EFFORT" ]] || [[ -n "${DK_PROVIDER_LAST_PROVIDER_EFFORT:-}" && "$DK_USER_CLAUDE_EFFORT" == "$DK_PROVIDER_LAST_PROVIDER_EFFORT" ]]; then
+  DK_USER_CLAUDE_EFFORT=""
+fi
+# shellcheck disable=SC2034
+DK_USER_PLAN_EFFORT="${DK_PLAN_EFFORT:-}"
+if [[ -n "${DK_PROVIDER_LAST_PLAN_EFFORT:-}" && "$DK_USER_PLAN_EFFORT" == "$DK_PROVIDER_LAST_PLAN_EFFORT" ]] || [[ -n "${DK_PROVIDER_LAST_PROVIDER_PLAN_EFFORT:-}" && "$DK_USER_PLAN_EFFORT" == "$DK_PROVIDER_LAST_PROVIDER_PLAN_EFFORT" ]]; then
+  DK_USER_PLAN_EFFORT=""
+fi
+
 # Default Claude flags for all dk-launched sessions:
 #   --chrome           Enable browser automation tools (MCP)
-#   --model opus       Use Opus for autonomous multi-phase work
+#   --model            Use Opus for autonomous multi-phase work by default.
+#                      Override with DK_CLAUDE_MODEL for gateways/custom models.
 #   --permission-mode bypassPermissions  No interactive prompts (autonomous)
-#   --effort max       Maximum reasoning effort for complex tasks
-DK_CLAUDE_FLAGS=(--chrome --model opus --permission-mode bypassPermissions --effort max)
+#   --effort           Maximum reasoning effort for complex tasks by default.
+#                      Override with DK_CLAUDE_EFFORT if the provider differs.
+unalias __dk_refresh_provider 2>/dev/null; unfunction __dk_refresh_provider 2>/dev/null
+__dk_refresh_provider() {
+  dk_provider_apply || return 1
+  DK_CLAUDE_FLAGS=(--chrome --model "$DK_CLAUDE_MODEL" --permission-mode bypassPermissions --effort "$DK_CLAUDE_EFFORT")
+  DK_PLAN_FLAGS=(--chrome --model "$DK_PLAN_MODEL" --permission-mode bypassPermissions --effort "$DK_PLAN_EFFORT")
+}
+
+DK_CLAUDE_FLAGS=(--chrome --model "${DK_CLAUDE_MODEL:-opus}" --permission-mode bypassPermissions --effort "${DK_CLAUDE_EFFORT:-max}")
+DK_PLAN_FLAGS=(--chrome --model "${DK_PLAN_MODEL:-${DK_CLAUDE_MODEL:-opus}}" --permission-mode bypassPermissions --effort "${DK_PLAN_EFFORT:-${DK_CLAUDE_EFFORT:-max}}")
 
 # Phase 1 uses bypassPermissions to avoid interactive prompts. Claude calls
 # EnterPlanMode as its first action to enforce read-only until user approves
 # via ExitPlanMode.
-DK_PLAN_FLAGS=(--chrome --model opus --permission-mode bypassPermissions --effort max)
+
+unalias __dk_claude 2>/dev/null; unfunction __dk_claude 2>/dev/null
+__dk_claude() {
+  dk_provider_claude "$@"
+}
+
+unalias __dk_provider_prompt 2>/dev/null; unfunction __dk_provider_prompt 2>/dev/null
+__dk_provider_prompt() {
+  dk_provider_prompt
+}
+
+unalias __dk_phase_message 2>/dev/null; unfunction __dk_phase_message 2>/dev/null
+__dk_phase_message() {
+  local step="$1"
+  printf '%s\n' "${DK_PHASE_MESSAGES[$step]}"
+  __dk_provider_prompt
+}
 
 # Phase definitions (zsh arrays are 1-indexed, so index 1 = Phase 1)
 # Phases 1-6 all run autonomously via `dk`. Phase 6 marks the PR ready, requests
@@ -419,6 +469,8 @@ when enough quality passes have been achieved.
 CRITICAL: You MUST invoke skills using the Skill tool (e.g., Skill(skill="dkimplement")).
 Do NOT implement skill functionality ad-hoc — invoke the actual skill.
 
+$(__dk_provider_prompt)
+
 ## Scope Boundaries (Phase ${step} ONLY)
 
 ${scope_lines}
@@ -519,7 +571,7 @@ __dk_run_review_loop() {
       DOYAKEN_LOOP_PROMPT="$audit_prompt" \
       DOYAKEN_LOOP_PHASE="$step" \
       DOYAKEN_DIR="$DOYAKEN_DIR" \
-      claude "${claude_args[@]}" "${DK_PHASE_MESSAGES[$step]}"
+      __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step")"
     )
     local exit_code=$?
 
@@ -696,8 +748,9 @@ __dk_run_phases() {
       (
         sh -c 'echo $PPID' > "$_dk_pidfile"
         cd "$wt_dir" && \
+        DOYAKEN_SESSION_ID="$session_id" \
         DOYAKEN_DIR="$DOYAKEN_DIR" \
-        claude "${claude_args[@]}" "${DK_PHASE_MESSAGES[$step]}"
+        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step")"
       )
     elif [[ $step -eq 3 ]]; then
       # Phase 3: Review — shell-managed sub-loop with fresh sessions per iteration.
@@ -726,6 +779,7 @@ __dk_run_phases() {
 
       # Resolve minimum audit iterations for this phase.
       # Priority: DOYAKEN_PHASE_N_MIN_AUDITS env var > DK_PHASE_MIN_AUDITS[step]
+      # shellcheck disable=SC2034  # used via zsh ${(P)min_audits_env} indirect expansion below
       local min_audits_env="DOYAKEN_PHASE_${step}_MIN_AUDITS"
       local min_audits="${(P)min_audits_env:-${DK_PHASE_MIN_AUDITS[$step]:-1}}"
 
@@ -751,7 +805,7 @@ __dk_run_phases() {
         DOYAKEN_COMPLETE_MAX_CYCLES="${DOYAKEN_COMPLETE_MAX_CYCLES:-$DK_COMPLETE_MAX_CYCLES}" \
         DOYAKEN_COMPLETE_WAIT_MINUTES="${DOYAKEN_COMPLETE_WAIT_MINUTES:-$DK_COMPLETE_WAIT_MINUTES}" \
         DOYAKEN_DIR="$DOYAKEN_DIR" \
-        claude "${claude_args[@]}" "${DK_PHASE_MESSAGES[$step]}"
+        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step")"
       )
     fi
 
@@ -824,6 +878,7 @@ __dk_run_phases() {
       if [[ $step -ge 2 ]] && git -C "$wt_dir" rev-parse --verify "dk-checkpoint/phase-${step}" &>/dev/null; then
         echo "Revert to pre-phase state with: dk revert ${wt_name} ${step}"
       fi
+      dk_provider_cleanup_session_state "$session_id"
       [[ -n "$_dk_session_watchdog_pid" ]] && kill "$_dk_session_watchdog_pid" 2>/dev/null
       return $exit_code
     fi
@@ -840,6 +895,7 @@ __dk_run_phases() {
   # `dk --resume` detects "fully complete" instead of restarting from Phase 1.
   # State files are cleaned up by dkrm / dkclean when the worktree is removed.
   __dk_write_state "$state_file" "7"
+  dk_provider_cleanup_session_state "$session_id"
   __dk_show_header "$wt_name" 7 "$wt_dir" "$default_branch"
   echo ""
   echo "Ticket lifecycle complete — PR has been merged-eligible (CI green, reviews approved)."
@@ -948,11 +1004,13 @@ dk() {
 
   # Route management subcommands to doyaken
   case "$1" in
-    init|config|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|config|provider|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       doyaken "$@"
       return $?
       ;;
   esac
+
+  __dk_refresh_provider || return 1
 
   # Resume mode — find most recent session and continue from tracked phase
   if [[ "$1" == "--resume" ]]; then
@@ -1003,7 +1061,7 @@ dk() {
 
     echo "Resuming ${_dk_wt_name} from Phase ${step}: ${DK_PHASE_NAMES[$step]}..."
 
-    cd "$_dk_wt_dir" 2>/dev/null
+    cd "$_dk_wt_dir" 2>/dev/null || return 1
     __dk_run_phases "$_dk_wt_name" "$_dk_wt_dir" "$_dk_default_branch" "$step" "$state_file" "$times_file" "dk --resume"
     return $?
   fi
@@ -1014,8 +1072,18 @@ dk() {
       echo "Usage: dk --from-pr <PR_NUMBER|URL>"
       return 1
     fi
-    claude "${DK_CLAUDE_FLAGS[@]}" --from-pr "$2"
-    return $?
+    local provider_prompt
+    provider_prompt=$(__dk_provider_prompt)
+    local pr_args=("${DK_CLAUDE_FLAGS[@]}")
+    [[ -n "$provider_prompt" ]] && pr_args+=(--append-system-prompt "$provider_prompt")
+    pr_args+=(--from-pr "$2")
+    local session_id
+    session_id="from-pr-$(dk_unique_session_id)"
+    dk_provider_cleanup_session_state "$session_id"
+    DOYAKEN_SESSION_ID="$session_id" __dk_claude "${pr_args[@]}"
+    local exit_code=$?
+    dk_provider_cleanup_session_state "$session_id"
+    return $exit_code
   fi
 
   # Normal mode — setup worktree and run phased lifecycle
@@ -1051,7 +1119,7 @@ dk() {
   fi
 
   # ── Phase loop ──
-  cd "$_dk_wt_dir" 2>/dev/null
+  cd "$_dk_wt_dir" 2>/dev/null || return 1
   __dk_run_phases "$_dk_wt_name" "$_dk_wt_dir" "$_dk_default_branch" "$step" "$state_file" "$times_file" "dk ${raw_input}"
   return $?
 }
@@ -1060,6 +1128,8 @@ dk() {
 
 unalias dkloop 2>/dev/null; unfunction dkloop 2>/dev/null
 dkloop() {
+  __dk_refresh_provider || return 1
+
   local prompt=""
   if [[ $# -eq 0 ]]; then
     # No prompt given — load the default codebase improvement prompt
@@ -1090,6 +1160,7 @@ dkloop() {
 
   # Remove any loop files that happen to share this unique session ID (harmless
   # no-op in practice since each dkloop gets a fresh ID via dk_unique_session_id).
+  dk_provider_cleanup_session_state "$session_id"
   rm -f "$(dk_loop_file "$session_id")" "$(dk_complete_file "$session_id")" "$(dk_active_file "$session_id")"
 
   # Persist the original prompt so the Stop hook can re-inject it on each audit
@@ -1131,11 +1202,12 @@ dkloop() {
   dk_info "Phase: Plan (read-only until approved)"
   DOYAKEN_SESSION_ID="$session_id" \
   DOYAKEN_DIR="$DOYAKEN_DIR" \
-  claude "${plan_args[@]}" "Call EnterPlanMode now, then run /dkplan for the following task:
+  __dk_claude "${plan_args[@]}" "Call EnterPlanMode now, then run /dkplan for the following task:
 
 ${prompt}
 
-Gather context, explore the codebase, and create your implementation plan. When the plan is ready, use ExitPlanMode to present it for approval."
+Gather context, explore the codebase, and create your implementation plan. When the plan is ready, use ExitPlanMode to present it for approval.
+$(__dk_provider_prompt)"
 
   local plan_exit=$?
   if [[ $plan_exit -ne 0 ]]; then
@@ -1143,6 +1215,7 @@ Gather context, explore the codebase, and create your implementation plan. When 
           "$(dk_complete_file "$session_id")" \
           "$(dk_active_file "$session_id")" \
           "$(dk_prompt_file "$session_id")" 2>/dev/null
+    dk_provider_cleanup_session_state "$session_id"
     echo ""
     dk_info "dkloop interrupted during planning (exit code: $plan_exit)."
     return $plan_exit
@@ -1160,7 +1233,8 @@ Gather context, explore the codebase, and create your implementation plan. When 
   DOYAKEN_LOOP_PROMISE="PROMPT_COMPLETE" \
   DOYAKEN_LOOP_PHASE="prompt-loop" \
   DOYAKEN_DIR="$DOYAKEN_DIR" \
-  claude "${impl_args[@]}" "The plan is approved. Implement it now. Work through all tasks, following TDD where the project has tests. The stop hook audit will guide you through quality verification and final review when you are done."
+  __dk_claude "${impl_args[@]}" "The plan is approved. Implement it now. Work through all tasks, following TDD where the project has tests. The stop hook audit will guide you through quality verification and final review when you are done.
+$(__dk_provider_prompt)"
 
   local exit_code=$?
 
@@ -1169,6 +1243,7 @@ Gather context, explore the codebase, and create your implementation plan. When 
         "$(dk_complete_file "$session_id")" \
         "$(dk_active_file "$session_id")" \
         "$(dk_prompt_file "$session_id")" 2>/dev/null
+  dk_provider_cleanup_session_state "$session_id"
 
   if [[ $exit_code -eq 0 ]]; then
     echo ""
@@ -1185,6 +1260,8 @@ Gather context, explore the codebase, and create your implementation plan. When 
 
 unalias dkcomplete 2>/dev/null; unfunction dkcomplete 2>/dev/null
 dkcomplete() {
+  __dk_refresh_provider || return 1
+
   if ! command -v claude &>/dev/null; then
     dk_error "Claude Code CLI not found in PATH."
     dk_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
@@ -1237,13 +1314,15 @@ dkcomplete() {
   DOYAKEN_COMPLETE_MAX_CYCLES="${DOYAKEN_COMPLETE_MAX_CYCLES:-$DK_COMPLETE_MAX_CYCLES}" \
   DOYAKEN_COMPLETE_WAIT_MINUTES="${DOYAKEN_COMPLETE_WAIT_MINUTES:-$DK_COMPLETE_WAIT_MINUTES}" \
   DOYAKEN_DIR="$DOYAKEN_DIR" \
-  claude "${DK_CLAUDE_FLAGS[@]}" -n "dkcomplete-pr-${pr_num}" \
-    "Invoke the Skill tool with skill: \"dkcomplete\". Run the full completion workflow: verify the PR is ready for review, request configured reviewers, post @mention comments, monitor CI via /loop 2m /dkwatchci, monitor reviews via /loop 5m /dkwatchpr, address review comments, and close the ticket when all checks pass and reviewers have approved."
+  __dk_claude "${DK_CLAUDE_FLAGS[@]}" -n "dkcomplete-pr-${pr_num}" \
+    "Invoke the Skill tool with skill: \"dkcomplete\". Run the full completion workflow: verify the PR is ready for review, request configured reviewers, post @mention comments, monitor CI via /loop 2m /dkwatchci, monitor reviews via /loop 5m /dkwatchpr, address review comments, and close the ticket when all checks pass and reviewers have approved.
+$(__dk_provider_prompt)"
 
   local exit_code=$?
 
   # Clean up
   rm -f "$(dk_active_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_complete_file "$session_id")" 2>/dev/null
+  dk_provider_cleanup_session_state "$session_id"
 
   return $exit_code
 }
@@ -1266,6 +1345,8 @@ dkcomplete() {
 
 unalias dkreviewloop 2>/dev/null; unfunction dkreviewloop 2>/dev/null
 dkreviewloop() {
+  __dk_refresh_provider || return 1
+
   if ! command -v claude &>/dev/null; then
     dk_error "Claude Code CLI not found in PATH."
     dk_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
@@ -1346,7 +1427,8 @@ dkreviewloop() {
   local session_name
   session_name="dkreviewloop-$(dk_slugify "$branch")"
 
-  local message="Run an adversarial code review using /dkreview, scoped to **${scope_name}** on branch \`${branch}\`.
+  local message
+  message="Run an adversarial code review using /dkreview, scoped to **${scope_name}** on branch \`${branch}\`.
 
 IMPORTANT: When the audit prompt or /dkreview SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead:
 
@@ -1360,7 +1442,8 @@ If no approved plan / acceptance criteria are available for this scope, mark pla
 
 SCOPE BOUNDARIES: review and fix the diff above ONLY. Do NOT commit, push, or create PRs.
 
-When the review is clean, stop — the audit loop will verify."
+When the review is clean, stop — the audit loop will verify.
+$(__dk_provider_prompt)"
 
   while [[ $review_iteration -lt $max_iter ]] && [[ $clean_passes -lt $required_clean ]]; do
     review_iteration=$((review_iteration + 1))
@@ -1389,7 +1472,7 @@ When the review is clean, stop — the audit loop will verify."
     DOYAKEN_LOOP_PROMPT="$audit_prompt" \
     DOYAKEN_LOOP_PHASE="3" \
     DOYAKEN_DIR="$DOYAKEN_DIR" \
-    claude "${claude_args[@]}" "$message"
+    __dk_claude "${claude_args[@]}" "$message"
 
     local exit_code=$?
 
@@ -1398,6 +1481,7 @@ When the review is clean, stop — the audit loop will verify."
     if [[ $exit_code -ne 0 ]]; then
       echo ""
       dk_info "dkreviewloop interrupted (exit code: $exit_code)."
+      dk_provider_cleanup_session_state "$session_id"
       return $exit_code
     fi
 
@@ -1416,6 +1500,7 @@ When the review is clean, stop — the audit loop will verify."
   done
 
   rm -f "$(dk_review_result_file "$session_id")" 2>/dev/null
+  dk_provider_cleanup_session_state "$session_id"
 
   echo ""
   if [[ $clean_passes -ge $required_clean ]]; then
@@ -1670,7 +1755,7 @@ dkcd() {
 
   # No args → repo root
   if [[ $# -eq 0 ]]; then
-    cd "$repo_root"
+    cd "$repo_root" || return 1
     return 0
   fi
 
@@ -1684,7 +1769,7 @@ dkcd() {
 
   # Exact match first
   if [[ -d "$worktrees_dir/$target" ]]; then
-    cd "$worktrees_dir/$target"
+    cd "$worktrees_dir/$target" || return 1
     return 0
   fi
 
@@ -1703,7 +1788,7 @@ dkcd() {
     dk_error "No worktree matching '$target'. Run dkls to see active worktrees."
     return 1
   elif [[ ${#matches[@]} -eq 1 ]]; then
-    cd "${matches[0]}"
+    cd "${matches[1]}" || return 1
     return 0
   else
     dk_error "Multiple worktrees match '$target':"
@@ -1836,7 +1921,7 @@ dkclean() {
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
   local old_files
-  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt" 7)
+  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt provider" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))

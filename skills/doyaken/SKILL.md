@@ -1,3 +1,8 @@
+---
+name: "doyaken"
+description: "Orchestrate the full Doyaken ticket lifecycle from planning through PR completion."
+---
+
 # Skill: Doyaken
 
 Orchestrate the full ticket lifecycle from planning through completion.

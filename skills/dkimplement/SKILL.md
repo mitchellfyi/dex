@@ -1,3 +1,8 @@
+---
+name: "dkimplement"
+description: "Execute the approved implementation plan with TDD discipline and completeness verification."
+---
+
 # Skill: dkimplement
 
 Execute the approved plan, working through tasks with TDD discipline.

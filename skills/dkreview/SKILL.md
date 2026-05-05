@@ -1,3 +1,8 @@
+---
+name: "dkreview"
+description: "Run an adversarial implementation review using tooling, semantic analysis, dependency tracing, and acceptance criteria verification."
+---
+
 # Skill: dkreview
 
 Agentic implementation review that combines deterministic tooling with semantic analysis, dependency tracing, and acceptance criteria verification.

@@ -1,3 +1,8 @@
+---
+name: "dkwatchci"
+description: "Monitor CI checks for a ready PR, diagnose failures, and fix them when appropriate."
+---
+
 # Skill: dkwatchci
 
 Monitor CI checks after a PR is marked ready for review. Diagnose and fix failures.
