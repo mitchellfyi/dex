@@ -23,11 +23,11 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode)
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (common, git, session, output, worktree)
+lib/                 Shared shell libraries (common, codex, git, output, provider, session, worktree)
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
-skills/              Lifecycle skills (symlinked to ~/.claude/skills/)
-dk.sh                Main shell functions (zsh only, ~980 lines)
+skills/              Lifecycle skills (symlinked to ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
+dk.sh                Main shell functions (zsh only, ~1900 lines)
 settings.json        Hook definitions template
 install.sh           Quick-start installer (delegates to bin/install.sh)
 ```
@@ -64,7 +64,7 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
 ```
 
-Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, and `worktree.sh`.
+Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, and `codex.sh`.
 
 ### Output
 
@@ -84,12 +84,14 @@ All ephemeral state goes under `~/.claude/.doyaken-phases/` or `~/.claude/.doyak
 
 ## Skill Conventions
 
-Each skill lives in `skills/<name>/SKILL.md` with markdown content (the YAML frontmatter is in the agent file, not skills).
+Each skill lives in `skills/<name>/SKILL.md` with YAML frontmatter containing `name` and `description`, followed by markdown instructions. Codex uses this metadata for skill discovery; Claude Code tolerates the same format.
 
 - Directory naming: lowercase, `dk`-prefixed (`dkplan`, `dkimplement`, etc.)
 - Exception: the orchestrator is `doyaken` (no prefix)
 - Skills reference prompts via `@prompts/<file>.md` import syntax
 - Skills are codebase-agnostic — they discover toolchains at runtime
+- Claude gets skills via a single `~/.claude/skills -> $DOYAKEN_DIR/skills` symlink
+- Codex gets skills via individual symlinks in `$CODEX_HOME/skills/<name>` (`CODEX_HOME` defaults to `~/.codex`) so Doyaken does not replace Codex system/plugin skills
 
 ### Vendor skills are NOT bundled
 
@@ -134,15 +136,23 @@ name: unique-guard-name
 enabled: true
 event: bash|file|commit|all
 pattern: python-regex
+detector: optional-built-in-detector
 action: warn|block
 case_sensitive: false
+allow_pattern: optional-python-regex
+env_var: OPTIONAL_ENV_NAME
+env_value: optional-exact-value
 ---
 ```
 
 - Patterns are Python regexes evaluated by `guard-handler.py`
+- `detector` is optional; use only for built-in syntax-aware guard detectors
+- `allow_pattern` is optional; use it only for narrow safe exceptions to a broader `pattern`
+- `env_var`/`env_value` are optional; use them to scope a guard to a runtime mode
+- `env_var: DK_PROVIDER_ENGINE` has a session-state/config fallback so provider-scoped guards do not depend only on hook environment inheritance
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it).
 - Frontmatter parser is regex-based — flat `key: value` only, no nested objects or arrays
-- Built-in guards: `destructive-commands`, `sensitive-files`, `hardcoded-secrets` — don't duplicate these
+- Built-in guards: `destructive-commands`, `raw-codex-delegation`, `sensitive-files`, `hardcoded-secrets` — don't duplicate these
 
 ## Prompt Conventions
 
@@ -201,9 +211,10 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 ### Adding a new skill
 
 1. Create `skills/<dkname>/SKILL.md`
-2. Write the skill prompt as markdown
-3. Reference shared prompts via `@prompts/<file>.md`
-4. The symlink from `dk install` makes it available as `/<dkname>`
+2. Add YAML frontmatter with `name` and `description`
+3. Write the skill prompt as markdown
+4. Reference shared prompts via `@prompts/<file>.md`
+5. The symlink from `dk install` makes it available as `/<dkname>`
 
 ### Adding a new guard
 
@@ -233,7 +244,7 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 
 ### Modularizing large scripts
 
-`dk.sh` is the largest file (~980 lines). When it grows further, extract shared logic into `lib/` modules. The pattern:
+`dk.sh` is the largest file (~1900 lines). When adding shared or self-contained logic, prefer extracting it into `lib/` modules. The pattern:
 
 **When to extract:**
 - Same logic appears in 2+ functions → extract to `lib/`
@@ -252,27 +263,33 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | Module | Purpose | Key functions |
 |--------|---------|---------------|
 | `common.sh` | Bootstrap, constants, sources all others | `dk_repo_root()` |
+| `codex.sh` | Codex CLI skill installation helpers | `dk_install_codex_skills()`, `dk_count_doyaken_skills()`, `dk_codex_doyaken_skills_complete()`, `dk_uninstall_codex_skills()` |
 | `git.sh` | Git helpers | `dk_default_branch()`, `dk_slugify()` |
-| `session.sh` | Session ID derivation, state file paths | `dk_session_id()`, `dk_cleanup_session()` |
+| `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dk_provider_apply()`, `dk_provider_claude()`, `dk_provider_command()`, `dk_provider_doctor()` |
+| `session.sh` | Session ID derivation, state file paths | `dk_session_id()`, `dk_provider_state_file()`, `dk_cleanup_session()` |
 | `output.sh` | Formatted user-facing output | `dk_done()`, `dk_ok()`, `dk_warn()`, `dk_error()`, etc. |
 | `worktree.sh` | Worktree management utilities | `dk_wt_branch()`, `dk_wt_remove()`, `dk_cleanup_last_session()`, `dk_cleanup_stale_files()` |
 
-**dk.sh internal structure** (sections in order, ~980 lines total):
+**dk.sh internal structure** (sections in order, approximate):
 
 | Lines | Section | Functions |
 |-------|---------|-----------|
-| 25-82 | CLI dispatcher | `doyaken()` |
-| 84-118 | Phase config | Arrays: `DK_PHASE_NAMES`, `DK_PHASE_PROMISES`, `DK_PHASE_SKILLS` |
-| 119-300 | Internal helpers | `__dk_is_ticket()`, `__dk_setup_worktree()`, `__dk_run_phases()` |
-| 300-378 | Display helpers | `__dk_format_elapsed()`, `__dk_show_header()` |
-| 380-492 | Phased lifecycle | `dk()` |
-| 494-609 | Prompt loop | `dkloop()` |
-| 611-779 | Worktree removal | `dkrm()` |
-| 781-838 | Worktree listing | `dkls()` |
-| 840-975 | Stale cleanup | `dkclean()` |
+| 25-138 | CLI dispatcher | `doyaken()` |
+| 139-257 | Provider and phase config | `__dk_refresh_provider()`, `__dk_claude()`, phase arrays |
+| 258-509 | Internal helpers | `__dk_is_ticket()`, `__dk_setup_worktree()`, `__dk_build_system_context()` |
+| 510-897 | Phase execution | `__dk_run_review_loop()`, `__dk_run_phases()` |
+| 898-984 | Display helpers | `__dk_format_elapsed()`, `__dk_show_header()` |
+| 985-1109 | Phased lifecycle | `dk()` |
+| 1111-1238 | Prompt loop | `dkloop()` |
+| 1240-1490 | Completion and review loops | `dkcomplete()`, `dkreviewloop()` |
+| 1492-1665 | Worktree removal | `dkrm()` |
+| 1667-1724 | Worktree listing | `dkls()` |
+| 1726-1778 | Worktree navigation | `dkcd()` |
+| 1780-end | Stale cleanup | `dkclean()` |
 
-**Extraction candidates** if dk.sh grows past ~1000 lines:
-- `__dk_run_phases()` + phase config → `lib/phases.sh` (but uses zsh syntax — would need refactoring to bash-compat, or keep as zsh-only `lib/phases.zsh`)
+**Extraction candidates:**
+- Shared provider/model launch logic → `lib/provider.sh`
+- Codex skill-link logic → `lib/codex.sh`
 - `__dk_show_header()` + `__dk_format_elapsed()` → `lib/display.sh`
 
 **What stays in dk.sh:** Functions that use zsh-specific syntax (`${(j: :)@}`, zsh arrays) or need `unalias/unfunction` re-sourcing guards. The public commands (`dk`, `dkloop`, `dkrm`, `dkls`, `dkclean`, `dkcomplete`, `dkreviewloop`, `doyaken`) must stay because they are shell functions loaded into the user's zsh session.
@@ -289,6 +306,14 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `DOYAKEN_LOOP_PROMISE` | Completion signal string | unset |
 | `DOYAKEN_LOOP_MAX_ITERATIONS` | Max loop iterations | 30 |
 | `DOYAKEN_SESSION_ID` | Unique session ID (set by dkloop for stop hook) | unset |
+| `CODEX_HOME` | Codex config root used for Doyaken skill links | `~/.codex` |
+| `DK_PROVIDER_PROFILE` | Provider profile override (`claude-subscription`, `codex-subscription`, or custom) | config/default |
+| `DK_CLAUDE_MODEL` | Override Claude Code model passed to `--model` | profile model |
+| `DK_PLAN_MODEL` | Override Phase 1/plan model | `DK_CLAUDE_MODEL` or profile plan model |
+| `DK_CLAUDE_EFFORT` | Override Claude Code `--effort` | profile effort |
+| `DK_PLAN_EFFORT` | Override Phase 1/plan effort | `DK_CLAUDE_EFFORT` or profile plan effort |
+| `DK_ALLOW_API_BILLED_AUTH` | Allow `dk provider doctor` to tolerate API/gateway env vars | `0` |
+| `DK_ALLOW_REPO_GATEWAY_PROVIDER` | Explicitly allow a trusted repo-local gateway/API provider profile for the current invocation | `0` |
 
 ## Files to Never Commit
 

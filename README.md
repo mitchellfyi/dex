@@ -8,6 +8,7 @@ Standalone workflow automation for Claude Code. Autonomous ticket lifecycle, wor
 # One-time global install
 bash ~/work/doyaken/install.sh
 source ~/.zshrc
+dk status
 
 # Bootstrap a repo (analyzes codebase with Claude Code CLI)
 cd ~/work/myproject
@@ -28,6 +29,85 @@ Doyaken is built on Claude Code-specific primitives, not a portable agent abstra
 - **Skills, SessionStart hooks, status line, `--from-pr`** — all wired through Claude Code's harness
 
 Codex CLI doesn't currently expose equivalents, so swapping backends would mean re-implementing the audit loop, plan mode, and per-phase context handoff from scratch. Until that lands, `dk` requires the `claude` CLI on your `PATH`.
+
+### Provider profiles
+
+Claude Code cannot use the OpenAI API or Codex CLI as a backend through settings alone: it speaks Claude Code's Anthropic-compatible API shape and expects Claude Code features such as hooks, skills, sessions, and plan mode. Doyaken keeps Claude Code as the outer harness and lets you choose how substantive model work is routed.
+
+Built-in profiles:
+
+- `claude-subscription` — direct Claude Code using Claude subscription OAuth. This is the default.
+- `codex-subscription` — Claude Code remains the lifecycle harness, but phase prompts delegate substantive coding/review work to the local Codex CLI using ChatGPT subscription auth. The OpenAI Codex Claude Code plugin is optional for slash commands.
+
+`codex-subscription` reduces Claude Code usage; it is not a zero-Claude fallback. Claude Code still has to start, load hooks/skills, and orchestrate the lifecycle, so a fully exhausted Claude Code quota can still block `dk`.
+
+```bash
+dk provider list
+dk provider current
+dk provider doctor
+dk provider use codex-subscription
+dk provider use --repo codex-subscription
+```
+
+For subscription-safe modes, Doyaken strips Anthropic API, gateway, Bedrock, Vertex, Foundry, OpenAI API/base-url, and Claude model override variables from launched Claude Code and Codex CLI subprocesses. `dk provider doctor` warns when these variables would risk API billing or override profile routing.
+
+`codex-subscription` preflights the local Codex CLI before launching Claude. Delegated work goes through Doyaken's `bin/dkcodex.sh` wrapper, which enforces `--ignore-user-config` so `~/.codex/config.toml` cannot switch work to a custom/API provider. A built-in PreToolUse guard blocks raw Codex agent-work commands such as `codex`, `codex exec`, `codex e`, `codex review`, direct `dk_provider_codex` helper delegation, API-key login forms, shell-nested forms including literal variable-expanded and escape-decoded `bash -c`/`eval`/stdin payloads, generated heredoc scripts, direct executable script paths, readable executed or sourced script files, Python/Node/Ruby/Perl interpreter payloads that launch Codex, fail-closed unresolved/unreadable script paths, launch wrappers such as `nice`, `timeout`, `xargs`, and `find -exec`, package-runner forms such as `npx codex`, `npx -c "codex exec ..."`, `npm exec --call "codex exec ..."`, and `npx @openai/codex@latest`, and non-literal stdin/process-substitution generators piped into shells while this provider profile is active, so delegated work has to pass through the wrapper. The guard reads Doyaken's current session provider state first when a session id is present, with hook environment/config fallback, so it does not rely only on hook subprocess environment inheritance. Codex must be installed and signed in with ChatGPT, plus the OpenAI Codex Claude Code plugin if you want the plugin slash commands:
+
+```text
+/plugin marketplace add openai/codex-plugin-cc
+/plugin install codex@openai-codex
+/reload-plugins
+/codex:setup
+```
+
+Manual smoke tests for the Codex delegation path:
+
+```bash
+dk provider use codex-subscription
+dk provider doctor
+
+# In a Claude Code session launched by Doyaken, this should be blocked by the guard:
+codex exec "review this repository"
+
+# The wrapper should be allowed, including dash-leading prompt text:
+bash "$DOYAKEN_DIR/bin/dkcodex.sh" exec -- "- review the current diff"
+```
+
+For env sanitization, temporarily set `OPENAI_API_KEY` or `ANTHROPIC_BASE_URL`, then run `dk provider doctor`; subscription-safe profiles should report the variable as unsafe until it is unset.
+
+Manual evidence captured for this change used `codex-cli 0.125.0`, `Claude Code 2.1.123`, and `ShellCheck 0.11.0`. `dk provider doctor` passed the Claude/Codex CLI, `--ignore-user-config`, ChatGPT login, and plugin checks in `codex-subscription` mode. Guard smoke tests blocked raw Codex, helper, package-runner, shell/interpreter/heredoc/generated-script, escape-decoded, and launcher-wrapper delegation paths; allowed Codex help/status and safe print/echo cases; and confirmed the wrapper rejects caller-supplied Codex options. The post-commit guard detected and reported hidden `git commit` after Bash completion through shell, interpreter, generated-script, escape-decoded, and launcher-wrapper paths.
+
+Custom subscription profiles can be defined globally in `~/.doyaken/providers.json` or per repo in `.doyaken/providers.json`. Every custom profile must declare its `engine` and supported `auth` mode. Gateway profiles are custom because they need a real base URL, auth policy, and model id for your gateway; define them globally unless you explicitly opt into a trusted repo profile for one invocation with `DK_ALLOW_REPO_GATEWAY_PROVIDER=1`.
+
+```json
+{
+  "default": "codex-custom",
+  "profiles": {
+    "codex-custom": {
+      "engine": "codex-plugin",
+      "auth": "chatgpt-subscription",
+      "model": "opus",
+      "plan_model": "opus",
+      "effort": "max"
+    },
+    "gateway-local": {
+      "engine": "anthropic-gateway",
+      "auth": "api-token",
+      "base_url": "http://localhost:4000",
+      "auth_env": "LITELLM_MASTER_KEY",
+      "model": "your-gateway-model",
+      "plan_model": "your-gateway-model",
+      "effort": "xhigh"
+    }
+  }
+}
+```
+
+Built-in profile names are reserved; custom profiles should use their own names. Omit `codex_model` to let the Codex CLI use its configured default, or set it only to a model id you know your installed Codex CLI supports.
+
+`dk provider use --repo <profile>` can select built-in profiles or subscription-safe profiles defined in that repo's `.doyaken/providers.json`. Repo defaults are intentionally self-contained and do not depend on profiles that exist only in a user's global config. Repo gateway/API defaults are not auto-activated, and repo configs cannot use common ambient credential env vars such as `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` as gateway auth.
+
+Gateway mode requires a real Anthropic-compatible gateway exposing `/v1/messages`. Doyaken rejects `https://api.openai.com` as a gateway base URL because the request and streaming schemas are different.
 
 ## Lifecycle
 
@@ -128,6 +208,7 @@ Most Doyaken features work immediately after `dk install` — no per-project set
 | `dkcomplete` | No | Works in any git repo with a PR |
 | `dkreviewloop` | No | Works in any git repo with detectable changes |
 | `/dkloop`, `/dkplan`, `/dkimplement`, etc. | No | Skills work in any Claude Code session |
+| Codex skill discovery | No | `dk install` links Doyaken skills into `$CODEX_HOME/skills` (default `~/.codex/skills`) when Codex CLI is present |
 | Hooks (guards, commit validation, ticket context) | No | Installed globally by `dk install` |
 | Agents (self-reviewer) | No | Symlinked globally by `dk install` |
 | `dk <number>` / `dk "description"` | No | Worktrees work in any git repo |
@@ -138,6 +219,7 @@ Most Doyaken features work immediately after `dk install` — no per-project set
 - **Coding conventions** (`rules/`) — generates rule files from observed patterns (naming, file structure, error handling). Without init, Claude infers conventions from context each time.
 - **Project-specific guards** (`guards/`) — creates guards for files that should never be committed (environment files, generated configs). Without init, only the universal guards (destructive commands, secrets, sensitive files) are active.
 - **Integration config** — configures ticket tracker (Linear, GitHub Issues), Figma, Sentry, etc. Without init, skills skip tracker updates.
+- **Codex skill repair** — if Codex CLI is installed, refreshes Doyaken skill links in `$CODEX_HOME/skills` (default `~/.codex/skills`) without replacing Codex's own system skills.
 
 In short: everything works without init, but init makes it faster and more accurate by caching project knowledge.
 
@@ -145,8 +227,8 @@ In short: everything works without init, but init makes it faster and more accur
 
 ```bash
 # Global
-dk install           # Symlink skills + agents, add hooks, source shell functions
-dk uninstall         # Reverse everything install did
+dk install           # Symlink Claude skills/agents, Codex skills, hooks, shell functions
+dk uninstall         # Remove global symlinks, hooks, Codex skill links, and Doyaken settings
 dk status            # Show what's installed and where
 
 # Per-project
@@ -180,6 +262,8 @@ dkloop <prompt>     # Run a prompt until fully implemented (from terminal)
 
 # Maintenance
 dk reload            # Reload shell functions after editing dk.sh
+dk provider current  # Show active Claude/Codex/gateway execution profile
+dk provider doctor   # Check subscription-safe provider setup
 ```
 
 ## Structure
@@ -215,7 +299,9 @@ doyaken/
     dkreviewloop/            # In-session 3-clean-passes review via fresh Agent subagents
   lib/                       # Shared shell library (sourced by dk.sh and hook scripts)
     common.sh                # Constants, bootstrap (sources other lib files)
+    codex.sh                 # Codex CLI skill-link helpers
     git.sh                   # Git helpers (default branch detection, slugify)
+    provider.sh              # Provider/model profile resolution and diagnostics
     session.sh               # Session ID and state file path helpers
     output.sh                # Formatted output ([done], [ok], [warn], etc.)
   hooks/                     # Hook scripts (referenced from ~/.claude/settings.json)
@@ -225,6 +311,7 @@ doyaken/
     phase-loop.sh            # Stop — phase audit loop (quality-gated execution)
     guards/                  # Markdown guard rules (universal)
       destructive-commands.md
+      raw-codex-delegation.md
       sensitive-files.md
       hardcoded-secrets.md
   prompts/                   # Prompts referenced by skills and agents
@@ -279,7 +366,11 @@ To reconfigure integrations at any time: `dk config`
 
 ### Skills (immediate updates)
 
-Skills are symlinked: `~/.claude/skills/ -> ~/work/doyaken/skills/`. Claude Code auto-discovers them as slash commands (`/doyaken`, `/dkplan`, etc.). Edit a skill file — change takes effect in the next Claude invocation.
+Claude skills are symlinked as a directory: `~/.claude/skills/ -> ~/work/doyaken/skills/`. Claude Code auto-discovers them as slash commands (`/doyaken`, `/dkplan`, etc.).
+
+Codex skills are linked individually into `$CODEX_HOME/skills/<skill-name> -> ~/work/doyaken/skills/<skill-name>` (`CODEX_HOME` defaults to `~/.codex`). Doyaken does not replace the Codex skills directory, because Codex stores system and plugin skills there too. `dk install` creates these links globally, and `dk init` repairs them when Codex CLI is present.
+
+Edit a skill file — change takes effect in the next Claude or Codex invocation that loads that skill.
 
 All skills are **codebase-agnostic**. They discover the project's toolchain, conventions, and quality gates from the codebase itself rather than prescribing specific commands.
 
@@ -326,7 +417,7 @@ Self-review findings include a confidence score (0-100). Only findings scoring >
 
 To re-run codebase analysis after significant changes:
 ```bash
-claude -p "$(cat $DOYAKEN_DIR/prompts/init-analysis.md)"
+dk init --skip-config
 ```
 
 ## Configuration
@@ -334,6 +425,10 @@ claude -p "$(cat $DOYAKEN_DIR/prompts/init-analysis.md)"
 ### Environment
 
 `DOYAKEN_DIR` — Override the install location (default: `$HOME/work/doyaken`). Set before running install or sourcing dk.sh.
+
+`CODEX_HOME` — Override the Codex config root used for Doyaken skill links (default: `~/.codex`).
+
+`DK_ALLOW_REPO_GATEWAY_PROVIDER=1` — Explicitly allow a trusted repo-local gateway/API provider profile for the current invocation. Prefer global gateway profiles in `~/.doyaken/providers.json`.
 
 ### Guards
 

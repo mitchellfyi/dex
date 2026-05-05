@@ -7,10 +7,10 @@ These are Claude Code hooks — see [Claude Code hooks documentation](https://do
 ## How It Works
 
 1. Claude invokes a tool (Bash, Edit, Write)
-2. The hook passes the tool input to `guard-handler.py`
+2. Claude Code passes hook payload JSON to `guard-handler.py` on stdin
 3. The handler loads all enabled guard `.md` files
 4. Each guard's regex pattern is checked against the input
-5. Matching guards trigger a **warn** (message shown, tool proceeds) or **block** (tool prevented, exit code 2)
+5. Matching guards trigger a **warn** (message is returned as hook context, tool proceeds) or **block** (tool prevented, exit code 2)
 
 ## Guard File Format
 
@@ -24,6 +24,7 @@ name: guard-name
 enabled: true
 event: bash|file|commit|all
 pattern: regex-pattern
+detector: optional-built-in-detector
 action: warn|block
 ---
 
@@ -38,9 +39,17 @@ Supports **markdown** formatting.
 | `name` | yes | string | Unique identifier for the guard |
 | `enabled` | yes | true/false/yes/no | Toggle without deleting the file |
 | `event` | yes | bash, file, commit, all | When to evaluate this guard |
-| `pattern` | yes | Python regex | Pattern to match against tool input |
-| `action` | yes | warn, block | Warn shows a message; block prevents the action |
+| `pattern` | yes unless `detector` is set | Python regex | Pattern to match against tool input |
+| `detector` | no | built-in detector id | Use a built-in parser instead of a regex for syntax-sensitive checks |
+| `action` | yes | warn, block | Warn returns hook context; block prevents the action |
 | `case_sensitive` | no | true/false/yes/no | If true, pattern matching is case-sensitive (default: false) |
+| `allow_pattern` | no | Python regex | If this pattern matches, suppress this guard even when `pattern` matches |
+| `env_var` | no | string | Only evaluate this guard when the named environment variable is set |
+| `env_value` | no | string | With `env_var`, require this exact environment variable value |
+
+When using `env_value` values that look like booleans (`true`, `false`, `yes`, `no`), quote them so the simple frontmatter parser keeps them as strings.
+
+For `env_var: DK_PROVIDER_ENGINE`, `guard-handler.py` treats the current Doyaken session provider state as authoritative when `DOYAKEN_SESSION_ID` is present, then falls back to the hook environment and provider config defaults. Without an explicit session id, a hook-provided `DK_PROVIDER_ENGINE` value wins over any launch-scoped fallback state so stale state files cannot silently expand provider-scoped guards.
 
 ### Event Types
 
@@ -56,6 +65,7 @@ Supports **markdown** formatting.
 | Guard | Event | Action | What It Catches |
 |-------|-------|--------|----------------|
 | `block-destructive-commands` | bash | block | `rm -rf /`, `rm -rf ~`, `rm -rf .`, `rm -rf ./`, `rm -rf *` (but NOT `rm -rf /tmp` or `rm -rf ./build`), `dd if=`, `mkfs`, `format` |
+| `block-raw-codex-delegation` | bash | block | Raw Codex agent-work commands while the resolved provider engine is `codex-plugin`, including `codex`, `codex exec`, `codex e`, `codex review`, direct `dk_provider_codex` helper delegation, API-key login forms, shell-nested forms including literal variable-expanded and escape-decoded `bash -c`/`eval`/stdin payloads, generated heredoc scripts, direct executable script paths, readable executed or sourced script files, Python/Node/Ruby/Perl interpreter payloads that launch Codex, launch wrappers such as `nice`, `timeout`, `xargs`, and `find -exec`, and fail-closed shell execution from unresolved/unreadable script paths or unknown stdin/process-substitution producers; also blocks versioned/scoped package-runner forms such as `npx @openai/codex@latest` and runner shell payloads such as `npx -c "codex exec ..."` and `npm exec --call "codex exec ..."`; use `bin/dkcodex.sh` instead |
 | `warn-sensitive-files` | commit | warn | `.env`, credentials, keys, certs in commits |
 | `warn-hardcoded-secrets` | file | warn | `API_KEY = "..."`, `ACCESS_KEY`, `JWT_SECRET`, and other credential patterns in code |
 
@@ -100,7 +110,7 @@ enabled: false
 
 ## Pattern Syntax
 
-Guards use Python regex (`re.search` with `re.MULTILINE`). Matching is case-insensitive by default; add `case_sensitive: true` to the frontmatter for exact-case matching:
+Guards use Python regex (`re.MULTILINE`). Matching is case-insensitive by default; add `case_sensitive: true` to the frontmatter for exact-case matching:
 
 | Pattern | Matches |
 |---------|---------|
@@ -114,16 +124,20 @@ Guards use Python regex (`re.search` with `re.MULTILINE`). Matching is case-inse
 
 ```bash
 # Test a bash guard
-DOYAKEN_GUARD_EVENT=bash CLAUDE_TOOL_USE_INPUT="rm -rf /" python3 hooks/guard-handler.py
+printf '%s\n' '{"tool_input":{"command":"rm -rf /"}}' \
+  | DOYAKEN_GUARD_EVENT=bash python3 hooks/guard-handler.py
 echo "Exit: $?"
 
 # Test a file guard
-DOYAKEN_GUARD_EVENT=file CLAUDE_TOOL_USE_INPUT='API_KEY = "secret123"' python3 hooks/guard-handler.py
+printf '%s\n' '{"tool_input":{"file_path":"app.py","content":"API_KEY = \"secret123\""}}' \
+  | DOYAKEN_GUARD_EVENT=file python3 hooks/guard-handler.py
 echo "Exit: $?"
 
 # Test a commit guard
 DOYAKEN_GUARD_EVENT=commit CLAUDE_TOOL_USE_INPUT=$'config.toml\nfeat: add api' python3 hooks/guard-handler.py
 echo "Exit: $?"
 ```
+
+`CLAUDE_TOOL_USE_INPUT` is also supported as a plain-text fallback for manual tests and post-commit integration.
 
 Exit code 0 = no block, exit code 2 = blocked.
