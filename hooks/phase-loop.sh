@@ -3,15 +3,15 @@
 #
 # Flow:
 #   1. Claude tries to stop → this hook runs
-#   2. Check .complete file → if found, allow stop (exit 0)
-#   3. Check iteration count → if max reached, allow stop (exit 0)
+#   2. Check .complete file → if found, return continue=false so the CLI exits
+#   3. Check iteration count → if max reached, return continue=false so dk can pause
 #   4. Check min audit iterations:
 #      a. Below threshold → block stop, inject audit prompt WITHOUT completion instructions
 #      b. At/above threshold → block stop, inject audit prompt WITH completion instructions
 #   5. Claude reads the audit prompt, reviews its work, and either:
 #      a. Finds issues → fixes them → tries to stop → back to step 1
 #      b. Finds nothing, below min iterations → tries to stop → back to step 4a
-#      c. Finds nothing, at/above min iterations → writes .complete → step 2 allows stop
+#      c. Finds nothing, at/above min iterations → writes .complete → step 2 exits
 #
 # Completion detection:
 #   .complete signal file — written by Claude after the hook authorizes completion
@@ -39,7 +39,7 @@ if [[ "$LOOP_ACTIVE" != "1" ]] && [[ ! -f "$ACTIVE_FILE" ]]; then
 fi
 
 # Read phase configuration from .config file when env vars are not inherited.
-# dk.sh writes this file before launching Claude for phases 2-6. Format:
+# dk.sh writes this file before launching Claude for phases 1-6. Format:
 # "phase_number:promise_string:audit_file_path:min_audits"
 # Env vars take priority (belt-and-suspenders with file-based activation).
 # IMPORTANT: This block MUST run before the .active file defaults below,
@@ -88,8 +88,8 @@ COMPLETION_PROMISE="${DOYAKEN_LOOP_PROMISE:-DOYAKEN_TICKET_COMPLETE}"
 # See: docs/autonomous-mode.md § Completion Signals
 COMPLETE_FILE=$(dk_complete_file "$SESSION_ID")
 if [[ -f "$COMPLETE_FILE" ]]; then
-  echo "Completion signal file found. Phase complete."
   rm -f "$STATE_FILE" "$COMPLETE_FILE" "$ACTIVE_FILE" "$CONFIG_FILE"
+  printf '%s\n' '{"continue":false,"stopReason":"Doyaken phase complete. Returning control to the dk wrapper."}'
   exit 0
 fi
 
@@ -159,8 +159,8 @@ fi
 # state file removed by .complete cleanup). The wrapper is responsible for
 # cleaning up the state file after reading the iteration count.
 if [[ $ITERATION -gt $MAX_ITERATIONS ]]; then
-  echo "Phase audit loop reached max iterations ($MAX_ITERATIONS). Allowing stop."
   rm -f "$ACTIVE_FILE" "$CONFIG_FILE"
+  printf '{"continue":false,"stopReason":"Doyaken phase audit loop reached max iterations (%s). Returning control to the dk wrapper."}\n' "$MAX_ITERATIONS"
   exit 0
 fi
 

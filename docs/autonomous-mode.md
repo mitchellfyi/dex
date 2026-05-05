@@ -22,8 +22,8 @@ Claude tries to stop
   |
   v
 Stop hook (phase-loop.sh) intercepts:
-  - Checks for .complete signal file -> if found, cleans up state, allows stop
-  - Checks iteration count -> if max reached, allows stop
+  - Checks for .complete signal file -> if found, cleans up state and exits Claude Code
+  - Checks iteration count -> if max reached, exits Claude Code so dk can pause
   - Checks min audit iterations -> if below threshold, blocks WITHOUT completion instructions
   - If at/above threshold: blocks but INCLUDES completion instructions
   |
@@ -32,7 +32,7 @@ Claude reviews its own work critically (audit loop)
   - Finds issues -> fixes them -> tries to stop -> hook re-injects audit
   - Finds nothing, below min iterations -> tries to stop -> hook blocks, no completion yet
   - Finds nothing, at/above min iterations -> hook provides completion instructions
-  - Writes .complete file + outputs promise -> stop allowed
+  - Writes .complete file + outputs promise -> hook exits Claude Code
   |
   v
 Wrapper advances to next phase (new Claude Code session)
@@ -168,7 +168,7 @@ The status line is driven by `bin/status-line.sh` which reads state files from `
 
 ### Max Iterations
 
-Default: 30 iterations per phase. When the limit is reached, the Stop hook prints a message ("Phase audit loop reached max iterations (30). Allowing stop."), cleans up the iteration state file and `.active` file (if present), and exits 0 — allowing Claude to stop normally. The `.complete` file is NOT written, so the `dk` wrapper treats this as an interruption and saves state for resume.
+Default: 30 iterations per phase. When the limit is reached, the Stop hook returns `continue:false` to exit Claude Code and hand control back to `dk`. The `.complete` file is NOT written, so the wrapper treats this as an interruption and saves state for resume.
 
 Override with:
 

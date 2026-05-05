@@ -140,15 +140,15 @@ After Phase 1 approval, `dk` keeps advancing through Phases 2-5 without asking w
 
 ### Audit Loop
 
-Each phase (2-6) runs inside an audit loop. When Claude tries to stop, the Stop hook intercepts and injects a phase-specific quality audit. Claude must pass the audit before the hook authorizes completion.
+Each phase runs inside an audit loop. Phase 1 still uses Plan Mode for the user approval gate; after approval, the Stop hook handles the shell handoff. When Claude tries to stop, the Stop hook intercepts and injects a phase-specific quality audit. Claude must pass the audit before the hook authorizes completion.
 
 ```
 Claude does work → tries to stop
   │
   ▼
 Stop hook fires
-  ├─ .complete file exists?  → allow stop, advance to next phase
-  ├─ Max iterations reached? → allow stop (safety net)
+  ├─ .complete file exists?  → exit Claude Code, advance to next phase
+  ├─ Max iterations reached? → exit Claude Code, pause for intervention
   ├─ Below min audit passes? → BLOCK, inject audit prompt (no completion instructions)
   └─ At/above min passes?   → BLOCK, inject audit prompt WITH completion instructions
                                 │

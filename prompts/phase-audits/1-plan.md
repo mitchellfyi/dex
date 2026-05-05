@@ -1,8 +1,9 @@
 > **Note:** Phase 1 uses `--permission-mode bypassPermissions` with Claude calling
-> `EnterPlanMode` as its first action. This audit is not active during plan mode —
-> the quality checks are built into the /dkplan skill (Step 4: Plan Quality
-> Checklist) and enforced before ExitPlanMode is called. This file is retained as
-> reference documentation and as a fallback for manual stop-hook-based planning.
+> `EnterPlanMode` as its first action. Plan quality checks are built into the
+> /dkplan skill (Step 4: Plan Quality Checklist) and enforced before
+> ExitPlanMode is called. After the user approves the plan, this Stop hook audit
+> verifies the approved plan and provides the completion signal that returns
+> control to the shell wrapper.
 
 Before stopping, critically audit your plan:
 

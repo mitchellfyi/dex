@@ -316,18 +316,15 @@ __dk_phase_timeout() {
 __dk_classify_exit() {
   local exit_code="$1" step="$2" session_id="$3"
   if [[ $exit_code -eq 0 ]]; then
-    # Phase 1 has no audit loop — exit 0 always means advance.
-    # For phases 2-6, phase-loop.sh cleans up .complete on success but leaves
+    # phase-loop.sh cleans up .complete on success but leaves
     # no .complete on max-iterations (also exit 0). Check the loop state file:
     # if it still exists, phase-loop.sh didn't clean it up via the .complete
     # path, meaning max-iterations was hit.
-    if [[ $step -ge 2 ]]; then
-      local loop_file
-      loop_file=$(dk_loop_file "$session_id")
-      if [[ -f "$loop_file" ]]; then
-        echo "max-iter"
-        return
-      fi
+    local loop_file
+    loop_file=$(dk_loop_file "$session_id")
+    if [[ -f "$loop_file" ]]; then
+      echo "max-iter"
+      return
     fi
     echo "advance"
   elif [[ $exit_code -eq 88 ]]; then
@@ -774,9 +771,18 @@ __dk_run_review_loop() {
       __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
     )
     local exit_code=$?
+    local audit_max_iter=0
+    if [[ $exit_code -eq 0 ]] && [[ -f "$(dk_loop_file "$session_id")" ]]; then
+      audit_max_iter=1
+    fi
 
     # Clean up per-iteration loop state
     rm -f "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" "$(dk_loop_file "$session_id")" 2>/dev/null
+
+    if [[ $audit_max_iter -eq 1 ]]; then
+      __dk_write_state "$review_state_file" "${clean_passes}:${review_iteration}"
+      return 88
+    fi
 
     # Non-zero exit = user interrupt or error — save state for resume
     if [[ $exit_code -ne 0 ]]; then
@@ -872,7 +878,8 @@ __dk_run_phases() {
     local claude_args=()
     if [[ $step -eq 1 ]]; then
       # Phase 1: bypassPermissions + EnterPlanMode — read-only without interactive prompts.
-      # No stop hook: plan mode's built-in approval is the quality gate.
+      # Plan mode's built-in approval is the quality gate. The Stop hook owns
+      # the process handoff after approval so the wrapper can continue.
       claude_args=("${DK_PLAN_FLAGS[@]}" -n "$claude_session_name")
       claude_args+=(--append-system-prompt "You MUST be in plan mode — if not, call EnterPlanMode immediately. Phase 1 handoff is automatic: after ExitPlanMode is approved, stop this Claude Code session immediately so the dk shell wrapper regains control and starts Phase 2. Do NOT say 'run /dkimplement when ready', do NOT ask whether to continue, and do NOT wait for another user prompt.")
       # Resume only if re-entering Phase 1 (prior session exists)
@@ -949,11 +956,23 @@ __dk_run_phases() {
     fi
 
     if [[ $step -eq 1 ]]; then
-      # Phase 1: EnterPlanMode called by Claude — no audit loop. ExitPlanMode handles approval.
+      # Phase 1: EnterPlanMode called by Claude. ExitPlanMode handles approval.
+      # The Stop hook still owns the process handoff: once the approved plan is
+      # audited and the .complete file is written, it returns continue=false so
+      # Claude Code exits and the shell wrapper can launch Phase 2.
+      local audit_file="$DOYAKEN_DIR/prompts/phase-audits/${DK_PHASE_AUDIT_FILES[$step]}.md"
+      mkdir -p "$DK_LOOP_DIR"
+      touch "$(dk_active_file "$session_id")"
+      rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")"
+      __dk_write_state "$(dk_loop_config_file "$session_id")" "${step}:${DK_PHASE_PROMISES[$step]}:${audit_file}:1"
+
       (
         sh -c 'echo $PPID' > "$_dk_pidfile"
         cd "$wt_dir" && \
         DOYAKEN_SESSION_ID="$session_id" \
+        DOYAKEN_LOOP_ACTIVE=1 \
+        DOYAKEN_LOOP_PROMISE="${DK_PHASE_PROMISES[$step]}" \
+        DOYAKEN_LOOP_PHASE="$step" \
         DOYAKEN_DIR="$DOYAKEN_DIR" \
         __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
       )
@@ -994,7 +1013,7 @@ __dk_run_phases() {
       # The Stop hook (phase-loop.sh) reads activation from two sources:
       #   1. File-based: .active file + .config file (primary — always works)
       #   2. Env vars: DOYAKEN_LOOP_ACTIVE, etc. (belt-and-suspenders)
-      # Claude exits 0 when the .complete file is written (loop allows stop) or
+      # Claude exits 0 when the .complete file is written (hook returns continue=false) or
       # max iterations reached. Non-zero means user interrupt or error.
       # See: docs/autonomous-mode.md for the full architecture.
       # Runs in a subshell so `cd` doesn't affect the parent shell. Environment
@@ -1463,13 +1482,23 @@ dkloop() {
 
   # ── Session 1: Plan ──
   # bypassPermissions + EnterPlanMode — read-only without interactive prompts.
-  # No stop hook — plan mode's built-in approval is the quality gate.
+  # Plan mode's built-in approval is the quality gate. The Stop hook owns the
+  # process handoff after approval so dkloop can continue to implementation.
   local plan_args=("${DK_PLAN_FLAGS[@]}")
   [[ -n "$session_name" ]] && plan_args+=(-n "$session_name")
-  plan_args+=(--append-system-prompt "You are in a dkloop planning session. You MUST be in plan mode — if not, call EnterPlanMode immediately. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool if you lose track of the task. After ExitPlanMode is approved, stop this Claude Code session immediately so the dkloop wrapper can launch implementation. Do NOT ask whether to continue and do NOT wait for another user prompt.")
+  plan_args+=(--append-system-prompt "You are in a dkloop planning session. You MUST be in plan mode — if not, call EnterPlanMode immediately. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool if you lose track of the task. After ExitPlanMode is approved, stop this Claude Code session immediately so the dkloop wrapper can launch implementation. Do NOT ask whether to continue and do NOT wait for another user prompt. The Stop hook handles the process handoff back to dkloop.")
+
+  local plan_audit_file="$DOYAKEN_DIR/prompts/phase-audits/1-plan.md"
+  mkdir -p "$DK_LOOP_DIR"
+  touch "$(dk_active_file "$session_id")"
+  rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")"
+  __dk_write_state "$(dk_loop_config_file "$session_id")" "1:PHASE_1_COMPLETE:${plan_audit_file}:1"
 
   dk_info "Phase: Plan (read-only until approved)"
   DOYAKEN_SESSION_ID="$session_id" \
+  DOYAKEN_LOOP_ACTIVE=1 \
+  DOYAKEN_LOOP_PROMISE="PHASE_1_COMPLETE" \
+  DOYAKEN_LOOP_PHASE="1" \
   DOYAKEN_DIR="$DOYAKEN_DIR" \
   __dk_claude "${plan_args[@]}" "Call EnterPlanMode now, then run /dkplan for the following task:
 
@@ -1479,6 +1508,12 @@ Gather context, explore the codebase, and create your implementation plan. When 
 $(__dk_provider_prompt)"
 
   local plan_exit=$?
+  local plan_status="advance"
+  if [[ $plan_exit -eq 0 ]] && [[ -f "$(dk_loop_file "$session_id")" ]]; then
+    plan_status="max-iter"
+    plan_exit=1
+  fi
+  rm -f "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" "$(dk_loop_file "$session_id")" 2>/dev/null
   if [[ $plan_exit -ne 0 ]]; then
     rm -f "$(dk_loop_file "$session_id")" \
           "$(dk_complete_file "$session_id")" \
@@ -1486,7 +1521,11 @@ $(__dk_provider_prompt)"
           "$(dk_prompt_file "$session_id")" 2>/dev/null
     dk_provider_cleanup_session_state "$session_id"
     echo ""
-    dk_info "dkloop interrupted during planning (exit code: $plan_exit)."
+    if [[ "$plan_status" == "max-iter" ]]; then
+      dk_info "dkloop paused during planning: max audit iterations reached without completion."
+    else
+      dk_info "dkloop interrupted during planning (exit code: $plan_exit)."
+    fi
     return $plan_exit
   fi
 
@@ -1762,8 +1801,19 @@ $(__dk_provider_prompt)"
     __dk_claude "${claude_args[@]}" "$message"
 
     local exit_code=$?
+    local audit_max_iter=0
+    if [[ $exit_code -eq 0 ]] && [[ -f "$(dk_loop_file "$session_id")" ]]; then
+      audit_max_iter=1
+    fi
 
     rm -f "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" "$(dk_loop_file "$session_id")" 2>/dev/null
+
+    if [[ $audit_max_iter -eq 1 ]]; then
+      echo ""
+      dk_info "dkreviewloop paused: max audit iterations reached without completion."
+      dk_provider_cleanup_session_state "$session_id"
+      return 1
+    fi
 
     if [[ $exit_code -ne 0 ]]; then
       echo ""
