@@ -14,6 +14,19 @@ Create an implementation plan from a ticket or user request.
 
 ## Steps
 
+### 0. Mark Phase 1 Started
+
+When running under `dk` Phase 1, write the Phase 1 started marker before
+gathering context:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+touch "$(dk_phase_started_file "${DOYAKEN_SESSION_ID:-$(dk_session_id)}" 1)"
+```
+
+This marker tells the Stop hook that the actual `dkplan` workflow is running.
+Do not skip it when `DOYAKEN_SESSION_ID` is present.
+
 ### 1. Gather Context
 
 Use the integrations configured in doyaken.md § Integrations. Skip any that are "not configured".
@@ -167,7 +180,14 @@ When running in plan mode (e.g., via `dk` Phase 1 or `dkloop`), present the plan
 
 **Do not begin implementation until the user approves the plan.**
 
-When running under terminal `dk` Phase 1, approval is the handoff signal to the Stop hook. After `ExitPlanMode` is approved, print only a brief confirmation if needed, then stop once so the hook can audit the plan and inject Phase 2 in the same Claude session. Do **not** tell the user to run `/dkimplement`, do **not** ask whether to continue, and do **not** wait for another user prompt.
+When running under terminal `dk` Phase 1, approval is the handoff signal to the Stop hook. After `ExitPlanMode` is approved, write the Phase 1 approval marker:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+touch "$(dk_phase_ready_file "${DOYAKEN_SESSION_ID:-$(dk_session_id)}" 1)"
+```
+
+Then print only a brief confirmation if needed and stop once so the hook can audit the plan and inject Phase 2 in the same Claude session. Do **not** tell the user to run `/dkimplement`, do **not** ask whether to continue, and do **not** wait for another user prompt.
 
 ## Notes
 

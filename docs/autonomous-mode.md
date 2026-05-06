@@ -23,6 +23,7 @@ Claude tries to stop
   v
 Stop hook (phase-loop.sh) intercepts:
   - Checks for .complete signal file -> if found, advances inline or exits final session
+  - If Phase 1 plan approval marker is missing -> blocks without counting an audit iteration
   - Checks iteration count -> if max reached, pauses for intervention
   - Checks min audit iterations -> if below threshold, blocks WITHOUT completion instructions
   - If at/above threshold: blocks but INCLUDES completion instructions
@@ -209,6 +210,7 @@ Loop state is stored in `~/.claude/.doyaken-loops/`:
 - `.active` — activation signal for in-session `/dkloop` (alternative to `DOYAKEN_LOOP_ACTIVE` env var)
 - `.handoff-mode` — marker that this `dk` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
+- `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dkplan`; the Stop hook does not count plan audit iterations until the approval marker exists
 - The session ID is derived from the worktree directory name (stable across branch renames)
 - Loop files are cleaned up on completion, by `dkrm`, and by `dkclean`
 - Old files (7+ days) are pruned by `dkclean`

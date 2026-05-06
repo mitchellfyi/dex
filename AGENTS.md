@@ -181,7 +181,7 @@ Four hooks defined in `settings.json`, referenced by paths to Doyaken scripts:
 
 ### Phase audit loops
 
-When `DOYAKEN_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max iterations (default 30) are reached. For `dk` lifecycles, the hook advances phases inside the same Claude session by updating phase state/config and injecting the next phase instructions.
+When `DOYAKEN_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max iterations (default 30) are reached. For `dk` lifecycles, the hook advances phases inside the same Claude session by updating phase state/config and injecting the next phase instructions. Phase 1 is gated by `.phase-1.started` / `.phase-1.ready` markers from `dkplan`; the hook does not count plan audit iterations or reveal the completion signal until the approved-plan marker exists.
 
 ### Session IDs
 

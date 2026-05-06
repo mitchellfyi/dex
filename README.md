@@ -140,7 +140,7 @@ After Phase 1 approval, `dk` keeps advancing through Phases 2-5 without asking w
 
 ### Audit Loop
 
-Each phase runs inside an audit loop. Phase 1 still uses Plan Mode for the user approval gate; after approval, the Stop hook handles the phase handoff. When Claude tries to stop, the Stop hook intercepts and injects a phase-specific quality audit. Claude must pass the audit before the hook authorizes completion.
+Each phase runs inside an audit loop. Phase 1 still uses Plan Mode for the user approval gate; before the plan has been presented and approved, the Stop hook returns a short planning-gate prompt and does not count an audit iteration or reveal completion instructions. After approval, the Stop hook audits the approved plan and handles the phase handoff. When Claude tries to stop in later phases, the Stop hook injects a phase-specific quality audit. Claude must pass the audit before the hook exposes the completion signal.
 
 ```
 Claude does work → tries to stop
@@ -148,6 +148,7 @@ Claude does work → tries to stop
   ▼
 Stop hook fires
   ├─ .complete file exists?  → advance to next phase in the same session
+  ├─ Phase 1 plan not approved? → BLOCK, no audit count, no completion instructions
   ├─ Max iterations reached? → pause for intervention
   ├─ Below min audit passes? → BLOCK, inject audit prompt (no completion instructions)
   └─ At/above min passes?   → BLOCK, inject audit prompt WITH completion instructions
@@ -184,7 +185,7 @@ Each review iteration runs:
 
 Default: 3 consecutive clean passes required. Override: `DOYAKEN_REVIEW_CLEAN_PASSES=5`.
 
-Claude never learns how to signal completion on its own — the hook provides the `.complete` file path and promise string only after enough clean passes. This prevents premature completion.
+Claude never learns how to signal completion on its own — the hook provides the `.complete` file path and promise string only after Phase 1 approval and enough clean passes. This prevents premature completion.
 
 ### Session Timeout
 

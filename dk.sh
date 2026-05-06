@@ -198,7 +198,15 @@ __dk_phase_message() {
   local raw_input="${2:-}"
   local workspace_mode="${3:-worktree}"
   local wt_dir="${4:-}"
-  printf '%s\n' "${DK_PHASE_MESSAGES[$step]}"
+  if [[ "$step" -eq 1 ]]; then
+    cat <<'EOF'
+Call EnterPlanMode now. Then immediately invoke the dkplan skill using the Skill tool with skill: "dkplan" (or /dkplan if slash skills are the available interface). Do not fetch the ticket, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dkplan skill unless the skill explicitly instructs you to.
+
+The dkplan skill writes the required Phase 1 lifecycle markers. After the user approves the plan via ExitPlanMode, follow the dkplan completion instructions, then stop once so the Doyaken Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt.
+EOF
+  else
+    printf '%s\n' "${DK_PHASE_MESSAGES[$step]}"
+  fi
   __dk_provider_prompt
   if [[ -n "$raw_input" ]] || [[ "$workspace_mode" == "in-place" ]]; then
     printf '%s\n' ""
@@ -227,7 +235,7 @@ DK_PHASE_PROMISES=(\
 )
 
 DK_PHASE_MESSAGES=(\
-  "Call EnterPlanMode now, then run /dkplan — gather context, explore the codebase, and create your implementation plan. When the plan is ready, use ExitPlanMode to present it for approval. After the user approves the plan, immediately stop once so the Doyaken Stop hook can audit the plan and advance to Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt." \
+  "Call EnterPlanMode now, then immediately invoke the dkplan skill. Do not perform ticket setup, exploration, or planning by hand outside dkplan unless the skill explicitly instructs you to. After the user approves the plan via ExitPlanMode, write the Phase 1 approval marker and stop once so the Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dkimplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. SCOPE BOUNDARIES: implementation and testing ONLY. Do NOT commit, push, create branches, or create PRs during this phase — those are handled by later phases. When done, stop — the audit loop will verify your work." \
   "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dkreviewloop\" to run the 3-clean-pass review loop. Fix any findings it reports and rerun until it reports SUCCESS. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, create branches, or create PRs. When the review loop is successful, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dkcommit\" to commit and push. SCOPE BOUNDARIES: verify and commit ONLY. Do NOT create PRs or modify implementation beyond fixing verify failures. When pushed, stop — the audit loop will verify." \
@@ -529,6 +537,9 @@ __dk_build_system_context() {
   # Build phase-specific scope boundaries
   local scope_lines=""
   case $step in
+    1) scope_lines="- DO invoke the dkplan skill immediately after entering Plan Mode
+- Do NOT fetch tickets, rename branches, update tracker status, explore code, or draft a plan by hand outside dkplan unless the skill explicitly instructs you to
+- DO wait for explicit user approval via ExitPlanMode before marking Phase 1 ready" ;;
     2) scope_lines="- Do NOT commit, push, create PRs, or modify git history
 - DO implement, test, and verify completeness via the Skill tool" ;;
     3) scope_lines="- Do NOT commit, push, create PRs, or modify git history
@@ -729,7 +740,7 @@ __dk_run_phases_inline() {
   _dk_pidfile=$(mktemp "${TMPDIR:-/tmp}/dk-inline.XXXXXX")
 
   if [[ "$session_timeout" -gt 0 ]]; then
-    (
+    eval '(
       local tgt=""
       while [[ -z "$tgt" ]]; do
         [[ -s "$_dk_pidfile" ]] && tgt=$(<"$_dk_pidfile")
@@ -737,9 +748,8 @@ __dk_run_phases_inline() {
       done
       sleep "$session_timeout" 2>/dev/null
       kill -TERM -"$tgt" 2>/dev/null
-    ) &
-    _dk_watchdog_pid=$!
-    disown "$_dk_watchdog_pid" 2>/dev/null
+    ) &!
+    _dk_watchdog_pid=$!'
   fi
 
   (
@@ -1941,7 +1951,7 @@ dkclean() {
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
   local old_files
-  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt provider" 7)
+  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt provider phase-1.started phase-1.ready" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))

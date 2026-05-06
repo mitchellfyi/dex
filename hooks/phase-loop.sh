@@ -215,6 +215,35 @@ STATE_FILE=$(dk_loop_file "$SESSION_ID")
 MAX_ITERATIONS="${DOYAKEN_LOOP_MAX_ITERATIONS:-30}"
 COMPLETION_PROMISE="${DOYAKEN_LOOP_PROMISE:-DOYAKEN_TICKET_COMPLETE}"
 
+# Phase 1 has an external approval gate: the plan must be presented through
+# ExitPlanMode and explicitly approved by the user before the audit loop should
+# count iterations or reveal the completion signal. This keeps ordinary
+# planning waits/background-agent pauses from burning the max-iteration budget.
+if [[ "$HANDOFF_MODE" == "inline" && "${DOYAKEN_LOOP_PHASE:-}" == "1" ]]; then
+  PHASE_STARTED_FILE=$(dk_phase_started_file "$SESSION_ID" 1)
+  PHASE_READY_FILE=$(dk_phase_ready_file "$SESSION_ID" 1)
+  if [[ ! -f "$PHASE_READY_FILE" ]]; then
+    rm -f "$COMPLETE_FILE" "$STATE_FILE"
+    printf '\n%s\n\n' "--- Doyaken Phase 1 Gate: plan approval required ---" >&2
+    printf '%s\n' "No audit iteration was counted and no completion signal is available yet." >&2
+    printf '%s\n' "" >&2
+    if [[ ! -f "$PHASE_STARTED_FILE" ]]; then
+      printf '%s\n' "Mandatory next step: invoke the dkplan skill now (Skill tool with skill: \"dkplan\", or /dkplan if slash skills are the available interface)." >&2
+      printf '%s\n' "Do not manually fetch the ticket, rename branches, update tracker status, explore code, or draft the plan outside that skill unless the skill explicitly instructs you to." >&2
+    else
+      printf '%s\n' "Continue the dkplan workflow. Do not stop until the plan has been presented through ExitPlanMode and the user has approved it." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "If the user has already approved the plan, write the Phase 1 approval marker, then stop again:" >&2
+      printf '%s\n' '```bash' >&2
+      printf '%s\n' "source \"\${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh\"" >&2
+      printf '%s\n' "touch \"\$(dk_phase_ready_file \"\${DOYAKEN_SESSION_ID:-\$(dk_session_id)}\" 1)\"" >&2
+      printf '%s\n' '```' >&2
+    fi
+    printf '%s\n' "" >&2
+    exit 2
+  fi
+fi
+
 # Completion detection: The .complete file is the sole mechanism.
 # This hook provides the .complete file path and promise string to Claude
 # ONLY after MIN_AUDIT_ITERATIONS passes — audit prompts do NOT contain
@@ -226,7 +255,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" =~ ^[0-9]+$ && "$CURRENT_PHASE" -lt 6 ]]; then
     NEXT_PHASE=$((CURRENT_PHASE + 1))
     dk_record_phase_result "$CURRENT_PHASE" "advance" "0"
-    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE"
+    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")"
 
     PHASE_STATE_FILE=$(dk_state_file "$SESSION_ID")
     printf '%s\n' "$NEXT_PHASE" > "$PHASE_STATE_FILE"
@@ -255,7 +284,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
 
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "6" ]]; then
     dk_record_phase_result "$CURRENT_PHASE" "advance" "0"
-    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE"
+    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")"
     printf '%s\n' "7" > "$(dk_state_file "$SESSION_ID")"
     rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
     {
@@ -265,7 +294,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     exit 2
   fi
 
-  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE"
+  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")"
   rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
   printf '%s\n' '{"continue":false,"stopReason":"Doyaken loop complete."}'
   exit 0
@@ -453,7 +482,7 @@ echo "" >&2
 # COMPLETE_FILE was already set above (line 87) for the early-exit check.
 if [[ $ITERATION -ge $MIN_AUDIT_ITERATIONS ]]; then
   printf '%s\n' "---" >&2
-  printf '%s\n' "## Completion Authorized ($ITERATION/$MIN_AUDIT_ITERATIONS audit iterations reached)" >&2
+  printf '%s\n' "## Completion Signal Available ($ITERATION/$MIN_AUDIT_ITERATIONS audit iterations reached)" >&2
   printf '%s\n' "" >&2
   printf '%s\n' "If ALL completion criteria above are met, you may now signal completion:" >&2
   printf '%s\n' "" >&2
