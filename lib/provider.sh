@@ -440,11 +440,11 @@ __dk_provider_write_state_file() {
     printf 'engine=%s\n' "$DK_PROVIDER_ENGINE"
     printf 'session=%s\n' "$session_id"
   } > "$tmp_file"; then
-    rm -f "$tmp_file" 2>/dev/null
+    command rm -f "$tmp_file" 2>/dev/null
     return 1
   fi
-  if ! mv "$tmp_file" "$state_file"; then
-    rm -f "$tmp_file" 2>/dev/null
+  if ! command mv -f "$tmp_file" "$state_file"; then
+    command rm -f "$tmp_file" 2>/dev/null
     return 1
   fi
 }

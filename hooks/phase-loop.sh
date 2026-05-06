@@ -384,9 +384,9 @@ fi
 # corrupt the state file (we'd lose at most the temp file, and default to 0 on
 # next read).
 TEMP_FILE="${STATE_FILE}.tmp.$$"
-if ! echo "${ITERATION}:${NOW_EPOCH}:${STALL_COUNT}" > "$TEMP_FILE" || ! mv "$TEMP_FILE" "$STATE_FILE"; then
+if ! printf '%s\n' "${ITERATION}:${NOW_EPOCH}:${STALL_COUNT}" > "$TEMP_FILE" || ! command mv -f "$TEMP_FILE" "$STATE_FILE"; then
   echo "WARNING: Failed to save loop state. Allowing stop."
-  rm -f "$TEMP_FILE"
+  command rm -f "$TEMP_FILE" 2>/dev/null
   exit 0
 fi
 

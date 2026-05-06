@@ -291,8 +291,8 @@ __dk_write_state() {
   local file="$1" content="$2"
   mkdir -p "$(dirname "$file")"
   local tmp="${file}.tmp.$$"
-  if ! echo "$content" > "$tmp" || ! mv "$tmp" "$file"; then
-    rm -f "$tmp"
+  if ! printf '%s\n' "$content" >| "$tmp" || ! command mv -f "$tmp" "$file"; then
+    command rm -f "$tmp" 2>/dev/null
     return 1
   fi
 }
