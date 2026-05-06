@@ -22,8 +22,8 @@ Claude tries to stop
   |
   v
 Stop hook (phase-loop.sh) intercepts:
-  - Checks for .complete signal file -> if found, cleans up state and exits Claude Code
-  - Checks iteration count -> if max reached, exits Claude Code so dk can pause
+  - Checks for .complete signal file -> if found, advances inline or exits final session
+  - Checks iteration count -> if max reached, pauses for intervention
   - Checks min audit iterations -> if below threshold, blocks WITHOUT completion instructions
   - If at/above threshold: blocks but INCLUDES completion instructions
   |
@@ -32,10 +32,10 @@ Claude reviews its own work critically (audit loop)
   - Finds issues -> fixes them -> tries to stop -> hook re-injects audit
   - Finds nothing, below min iterations -> tries to stop -> hook blocks, no completion yet
   - Finds nothing, at/above min iterations -> hook provides completion instructions
-  - Writes .complete file + outputs promise -> hook exits Claude Code
+  - Writes .complete file + outputs promise -> hook hands off to next phase
   |
   v
-Wrapper advances to next phase (new Claude Code session)
+Claude continues with the next phase in the same session
 ```
 
 ## Phase Audit Prompts
@@ -46,17 +46,17 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 |-------|-----------|-----------------|
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
 | 2. Implement | `2-implement.md` | Task completion, TDD verification, evidence table |
-| 3. Review | `3-review.md` | Adversarial code review: `/dkreview --single-pass`, 4-pass manual, self-reviewer agent |
+| 3. Review | `3-review-loop.md` in same-session mode, `3-review.md` in fresh mode | `/dkreviewloop` or shell-managed adversarial review requiring 3 clean passes |
 | 4. Verify & Commit | `4-verify.md` | All checks passing, commit quality, pushed to origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
 | 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor, address comments, re-request after each push, close ticket |
 
-The review audit (Phase 3) is the most rigorous — it runs as a shell-managed sub-loop with fresh Claude sessions per iteration. Each iteration runs `/dkreview --single-pass`, a 4-pass manual review, and the self-reviewer agent. The shell requires 3 consecutive CLEAN iterations before advancing.
+The review audit (Phase 3) is the most rigorous. In default same-session mode, Phase 3 runs `/dkreviewloop`, which spawns fresh review subagents and requires 3 consecutive clean reports. In `DOYAKEN_FRESH_PHASES=1` mode, the shell runs the older fresh Claude-session review sub-loop.
 
 Phase 6 (Complete) is autonomous: it reads `## Reviewers` from `.doyaken/doyaken.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer — the autonomous loop waits at least `DOYAKEN_COMPLETE_WAIT_MINUTES` (default 30) per cycle for reviews to come in, addresses any comments via `/dkprreview`, re-requests reviewers after each push, and closes the ticket once everything is approved and CI is green. After `DOYAKEN_COMPLETE_MAX_CYCLES` (default 3) idle cycles with no progress, it escalates to the user.
 
-After Phase 1 approval, the wrapper advances through normal Phase 2-5
-handoffs without asking whether to continue. A phase pauses only when it hits an
+After Phase 1 approval, the Stop hook advances through normal Phase 2-5
+handoffs in the same Claude session without asking whether to continue. A phase pauses only when it hits an
 explicit escalation condition such as missing credentials/tooling, a destructive
 git decision, repeated failed fix attempts, max audit/review iterations, or
 feedback that needs human judgement.
@@ -145,15 +145,17 @@ Claude should only output the promise after the audit criteria are fully met.
 
 Long-running sessions (especially Phase 2) can trigger conversation compaction when the context window fills. Two mechanisms ensure Claude retains phase awareness after compaction:
 
-**System prompt context file** (`--append-system-prompt-file`): For phases 2-6, `dk.sh` generates a context file at `~/.claude/.doyaken-phases/<session_id>.system-context` containing the current phase, completion protocol, and worktree path. This is passed via `--append-system-prompt-file` and persists through compaction as part of the system prompt.
+**System prompt context file** (`--append-system-prompt-file`): `dk.sh` generates a context file at `~/.claude/.doyaken-phases/<session_id>.system-context` containing lifecycle context, completion protocol, and worktree path. This is passed via `--append-system-prompt-file` and persists through compaction as part of the system prompt. In same-session mode, the Stop hook's latest phase handoff instruction supersedes the initial phase label in this file.
 
 **PreCompact hook**: The `PreCompact` hook fires before compaction begins and reminds Claude to re-orient using its system context. This is a supplementary safety net alongside the system prompt file.
 
-## Session Forking
+## Phase Handoff
 
-At every phase boundary (Phase 2-6), sessions are forked with `--fork-session`. This creates a new session while preserving a summary of the previous conversation, giving each phase a fresh context budget. The system prompt context file ensures essential state (phase number, scope boundaries) survives the fork.
+By default, phases hand off inside the same Claude session. The Stop hook updates the phase state/config files, injects the next phase instructions, and exits with the hook-blocking status so Claude keeps working without requiring `/exit` or a manual resume.
 
-Phase 3 (Review) additionally forks within its own sub-loop — each review iteration is a fresh Claude session, ensuring each adversarial review starts with a clean context.
+Set `DOYAKEN_FRESH_PHASES=1` to use the legacy wrapper-managed handoff. In that mode, each phase boundary forks with `--fork-session`, and the user may need to exit a completed Claude screen if the TUI does not close automatically.
+
+Phase 3 still gets independent review coverage in same-session mode because `/dkreviewloop` spawns fresh review subagents. In legacy fresh mode, Phase 3 uses the shell-managed fresh Claude-session review loop.
 
 ## Status Line
 
@@ -168,7 +170,7 @@ The status line is driven by `bin/status-line.sh` which reads state files from `
 
 ### Max Iterations
 
-Default: 30 iterations per phase. When the limit is reached, the Stop hook returns `continue:false` to exit Claude Code and hand control back to `dk`. The `.complete` file is NOT written, so the wrapper treats this as an interruption and saves state for resume.
+Default: 30 iterations per phase. When the limit is reached, the Stop hook pauses the current phase and asks Claude to summarize the blocker. The `.complete` file is NOT written, so `dk --resume` continues from the same phase after intervention.
 
 Override with:
 
@@ -207,8 +209,10 @@ Loop state is stored in `~/.claude/.doyaken-loops/`:
 - `.state` — iteration count (e.g., `worktree-ticket-999.state`)
 - `.complete` — completion signal, written by phase audit prompts or `/dkcomplete`
 - `.active` — activation signal for in-session `/dkloop` (alternative to `DOYAKEN_LOOP_ACTIVE` env var)
+- `.handoff-mode` — phase handoff mode for `dk` (`inline` by default, `fresh` for `DOYAKEN_FRESH_PHASES=1`)
+- `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
 - The session ID is derived from the worktree directory name (stable across branch renames)
-- All three file types are cleaned up on completion, by `dkrm`, and by `dkclean`
+- Loop files are cleaned up on completion, by `dkrm`, and by `dkclean`
 - Old files (7+ days) are pruned by `dkclean`
 
 Phase state is stored in `~/.claude/.doyaken-phases/`:
@@ -227,6 +231,7 @@ Phase state is stored in `~/.claude/.doyaken-phases/`:
 | `DOYAKEN_LOOP_PROMPT` | (from file) | Audit prompt injected on each loop iteration |
 | `DOYAKEN_LOOP_PHASE` | (set by wrapper) | Current phase number (1-6) or `prompt-loop`, used to find audit file |
 | `DOYAKEN_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
+| `DOYAKEN_FRESH_PHASES` | `0` | Set to `1` to use legacy fresh Claude sessions between phases |
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
 | `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive clean review iterations required to advance Phase 3 |
 | `DOYAKEN_REVIEW_MAX_ITERATIONS` | `10` | Max review iterations before Phase 3 pauses for intervention |
@@ -239,11 +244,11 @@ Phase state is stored in `~/.claude/.doyaken-phases/`:
 
 The max iterations safety net (default 30) will always allow Claude to stop eventually. If you need to force-stop immediately, press Ctrl+C.
 
-### Phase completes but the Claude screen stays open
+### Phase handoff does not continue
 
-Type `/exit` or press Ctrl-D. The original `dk` wrapper should then regain
-control and launch the next phase. If you return to a shell prompt and nothing
-starts, run:
+Default same-session mode should inject the next phase directly into the Claude
+screen. If you used `DOYAKEN_FRESH_PHASES=1` or return to a shell prompt and
+nothing starts, run:
 
 ```bash
 dk --resume

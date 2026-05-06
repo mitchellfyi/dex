@@ -23,7 +23,7 @@ dk 999
 Doyaken is built on Claude Code-specific primitives, not a portable agent abstraction. The lifecycle relies on:
 
 - **Stop hook** — phase audit loops re-inject quality checks until Claude passes them
-- **`--fork-session`** — fresh context window per phase while keeping the named session for `--resume`
+- **same-session phase handoff** — the Stop hook advances phases inside the current Claude session
 - **Plan mode** — `EnterPlanMode` / `ExitPlanMode` give Phase 1 a read-only quality gate
 - **`--append-system-prompt-file`** — phase scope and completion protocol survive context compaction
 - **Skills, SessionStart hooks, status line, `--from-pr`** — all wired through Claude Code's harness
@@ -111,7 +111,7 @@ Gateway mode requires a real Anthropic-compatible gateway exposing `/v1/messages
 
 ## Lifecycle
 
-When you run `dk 999`, Doyaken creates an isolated git worktree and runs Claude through six autonomous phases. Each phase is a separate Claude Code session (`--fork-session`), so every phase starts with a fresh context window. The user is brought into the loop as a configured reviewer in Phase 6 — the autonomous loop waits for their review (and any other configured reviewers) and only closes the ticket once everyone has approved.
+When you run `dk 999`, Doyaken creates an isolated git worktree and runs Claude through six autonomous phases. By default, those phases advance inside the same Claude session: the Stop hook audits each phase, injects the next phase instructions, and keeps going without requiring `/exit` + `dk --resume`. The user is brought into the loop as a configured reviewer in Phase 6 — the autonomous loop waits for their review (and any other configured reviewers) and only closes the ticket once everyone has approved.
 
 If you want the same lifecycle without a separate checkout, run `dk --no-worktree <ticket-or-description>`. In-place mode still creates or switches to the normal Doyaken branch (`worktree-ticket-*` / `worktree-task-*`) in the current checkout; it just skips `git worktree add`. Phase 4 commits and pushes that branch. If the current checkout has uncommitted changes and Doyaken needs to switch/create the lifecycle branch, it stops so you can commit or stash first.
 
@@ -131,7 +131,7 @@ dk 999
 |-------|--------|-------------|-------------|
 | 1. Plan | `/dkplan` | Reads ticket, explores code, presents 2-3 approaches, drafts plan | Approve plan |
 | 2. Implement | `/dkimplement` | TDD per task, evidence table, completeness check | Only for scope/requirement changes |
-| 3. Review | `/dkreview --single-pass` + self-reviewer | Adversarial 4-pass review, 3 consecutive clean passes required | — |
+| 3. Review | `/dkreviewloop` | Fresh review subagents, 3 consecutive clean passes required | — |
 | 4. Verify & Commit | `/dkverify` + `/dkcommit` | Quality gates, atomic conventional commits, push | — |
 | 5. PR | `/dkpr` | PR description, create draft PR, attach `request`-type reviewers | — |
 | 6. Complete | `/dkcomplete` + `/dkwatchci` + `/dkwatchpr` | Mark ready, request reviews, post `@mention` comments, monitor, address comments, close ticket | Review/approve when configured; respond only to escalations |
@@ -140,15 +140,15 @@ After Phase 1 approval, `dk` keeps advancing through Phases 2-5 without asking w
 
 ### Audit Loop
 
-Each phase runs inside an audit loop. Phase 1 still uses Plan Mode for the user approval gate; after approval, the Stop hook handles the shell handoff. When Claude tries to stop, the Stop hook intercepts and injects a phase-specific quality audit. Claude must pass the audit before the hook authorizes completion.
+Each phase runs inside an audit loop. Phase 1 still uses Plan Mode for the user approval gate; after approval, the Stop hook handles the phase handoff. When Claude tries to stop, the Stop hook intercepts and injects a phase-specific quality audit. Claude must pass the audit before the hook authorizes completion.
 
 ```
 Claude does work → tries to stop
   │
   ▼
 Stop hook fires
-  ├─ .complete file exists?  → exit Claude Code, advance to next phase
-  ├─ Max iterations reached? → exit Claude Code, pause for intervention
+  ├─ .complete file exists?  → advance to next phase in the same session
+  ├─ Max iterations reached? → pause for intervention
   ├─ Below min audit passes? → BLOCK, inject audit prompt (no completion instructions)
   └─ At/above min passes?   → BLOCK, inject audit prompt WITH completion instructions
                                 │
@@ -158,20 +158,20 @@ Stop hook fires
 
 ### Review Sub-Loop (Phase 3)
 
-Phase 3 uses a **shell-managed sub-loop** on top of the standard audit loop. Each review iteration is a fresh Claude session (`--fork-session`), ensuring each adversarial review starts with a clean context. The shell tracks consecutive CLEAN results:
+Phase 3 uses `/dkreviewloop` on top of the standard audit loop. Each review iteration is a fresh subagent context, ensuring each adversarial review starts clean while the main Claude session keeps orchestrating fixes. The loop tracks consecutive CLEAN results:
 
 ```
-Shell starts review sub-loop (clean_passes=0)
+Claude starts /dkreviewloop (clean_passes=0)
   │
   ▼
-Launch fresh Claude session with Stop hook (MIN_AUDITS=1)
+Launch fresh review subagent
   ├─ Claude runs /dkreview --single-pass + 4-pass manual review + self-reviewer agent
   ├─ Builds merged findings inventory, fixes issues
   ├─ Writes review result signal: "CLEAN" or "FINDINGS:N"
   └─ Stop hook verifies, allows completion
   │
   ▼
-Shell reads review result
+Loop reads review result
   ├─ CLEAN → clean_passes++ → if ≥3: advance to Phase 4
   └─ FINDINGS → clean_passes=0 → fresh session → loop repeats
 ```
@@ -183,6 +183,8 @@ Each review iteration runs:
 4. Merged findings inventory → batch fix → re-verify
 
 Default: 3 consecutive clean passes required. Override: `DOYAKEN_REVIEW_CLEAN_PASSES=5`.
+
+For the older shell-managed fresh Claude session handoff, run with `DOYAKEN_FRESH_PHASES=1`. That mode still uses `--fork-session` between phases and requires exiting completed Claude screens so the wrapper can launch the next phase.
 
 Claude never learns how to signal completion on its own — the hook provides the `.complete` file path and promise string only after enough clean passes. This prevents premature completion.
 
@@ -200,11 +202,7 @@ Even in autonomous mode, Claude stops and escalates to the user for:
 - Missing credentials/tooling or destructive git operations that require explicit approval
 - Max audit/review iterations without a completion signal
 
-The user can always interrupt with Ctrl+C. Between phases, state is saved so `dk 999` or `dk --resume` picks up where it left off.
-
-If a completed phase leaves the Claude Code screen open, type `/exit` or press
-Ctrl-D. The original `dk` command should then continue to the next phase. If you
-return to a shell prompt and nothing starts, run `dk --resume`.
+The user can always interrupt with Ctrl+C. Phase state is saved so `dk 999` or `dk --resume` picks up where it left off.
 
 See [docs/autonomous-mode.md](docs/autonomous-mode.md) for full architecture.
 
@@ -456,6 +454,7 @@ Control via environment variables:
 | `DOYAKEN_LOOP_MAX_ITERATIONS` | `30` | Max iterations before forced stop |
 | `DOYAKEN_LOOP_MIN_AUDITS` | Per-phase | Min audit iterations before completion authorized |
 | `DOYAKEN_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
+| `DOYAKEN_FRESH_PHASES` | `0` | Set to `1` to use the legacy fresh Claude session per phase handoff |
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | — | Per-phase override (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
 | `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive clean review iterations required (Phase 3) |
 | `DOYAKEN_REVIEW_MAX_ITERATIONS` | `10` | Max review iterations before Phase 3 pauses for intervention |
