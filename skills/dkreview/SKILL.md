@@ -23,8 +23,7 @@ Run the single-pass review instructions below only when one of these is true:
 
 - The invocation includes `--single-pass` or `--no-loop`
 - The caller explicitly says this review is being run from `/dkreviewloop`
-- The caller explicitly says this review is being run by Doyaken Phase 3's
-  shell-managed review loop
+- The caller explicitly says this review is being run by `/dkreviewloop`
 
 If you are unsure whether this is a direct user invocation or an internal loop
 iteration, prefer the loop and invoke `dkreviewloop`.

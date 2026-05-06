@@ -1,8 +1,7 @@
 Before stopping, verify the same-session Review phase completed the full review
 loop. Do NOT stop until every step below passes.
 
-This lifecycle is using same-session phase handoff. The shell wrapper is not
-restarting Claude between phases, so Phase 3 gets independent review coverage by
+This lifecycle advances phases in the same Claude session. Phase 3 gets independent review coverage by
 running `/dkreviewloop`, which spawns fresh review subagents and requires three
 clean reports in a row.
 

@@ -46,12 +46,12 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 |-------|-----------|-----------------|
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
 | 2. Implement | `2-implement.md` | Task completion, TDD verification, evidence table |
-| 3. Review | `3-review-loop.md` in same-session mode, `3-review.md` in fresh mode | `/dkreviewloop` or shell-managed adversarial review requiring 3 clean passes |
+| 3. Review | `3-review-loop.md` | `/dkreviewloop` requiring 3 clean review passes |
 | 4. Verify & Commit | `4-verify.md` | All checks passing, commit quality, pushed to origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
 | 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor, address comments, re-request after each push, close ticket |
 
-The review audit (Phase 3) is the most rigorous. In default same-session mode, Phase 3 runs `/dkreviewloop`, which spawns fresh review subagents and requires 3 consecutive clean reports. In `DOYAKEN_FRESH_PHASES=1` mode, the shell runs the older fresh Claude-session review sub-loop.
+The review audit (Phase 3) is the most rigorous. Phase 3 runs `/dkreviewloop`, which spawns fresh review subagents and requires 3 consecutive clean reports.
 
 Phase 6 (Complete) is autonomous: it reads `## Reviewers` from `.doyaken/doyaken.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer — the autonomous loop waits at least `DOYAKEN_COMPLETE_WAIT_MINUTES` (default 30) per cycle for reviews to come in, addresses any comments via `/dkprreview`, re-requests reviewers after each push, and closes the ticket once everything is approved and CI is green. After `DOYAKEN_COMPLETE_MAX_CYCLES` (default 3) idle cycles with no progress, it escalates to the user.
 
@@ -151,11 +151,9 @@ Long-running sessions (especially Phase 2) can trigger conversation compaction w
 
 ## Phase Handoff
 
-By default, phases hand off inside the same Claude session. The Stop hook updates the phase state/config files, injects the next phase instructions, and exits with the hook-blocking status so Claude keeps working without requiring `/exit` or a manual resume.
+Phases hand off inside the same Claude session. The Stop hook updates the phase state/config files, injects the next phase instructions, and exits with the hook-blocking status so Claude keeps working without requiring `/exit` or a manual resume.
 
-Set `DOYAKEN_FRESH_PHASES=1` to use the legacy wrapper-managed handoff. In that mode, each phase boundary forks with `--fork-session`, and the user may need to exit a completed Claude screen if the TUI does not close automatically.
-
-Phase 3 still gets independent review coverage in same-session mode because `/dkreviewloop` spawns fresh review subagents. In legacy fresh mode, Phase 3 uses the shell-managed fresh Claude-session review loop.
+Phase 3 still gets independent review coverage because `/dkreviewloop` spawns fresh review subagents.
 
 ## Status Line
 
@@ -190,7 +188,7 @@ Even in autonomous mode, Claude stops and escalates to the user for:
 
 ### Manual Override
 
-The user can always interrupt by providing input or pressing Ctrl+C. Between phases, the wrapper saves state so `dk 999` or `dk --resume` picks up where it left off.
+The user can always interrupt by providing input or pressing Ctrl+C. Phase state is saved so `dk 999` or `dk --resume` picks up where it left off.
 
 ### PR-Linked Resumption
 
@@ -209,7 +207,7 @@ Loop state is stored in `~/.claude/.doyaken-loops/`:
 - `.state` — iteration count (e.g., `worktree-ticket-999.state`)
 - `.complete` — completion signal, written by phase audit prompts or `/dkcomplete`
 - `.active` — activation signal for in-session `/dkloop` (alternative to `DOYAKEN_LOOP_ACTIVE` env var)
-- `.handoff-mode` — phase handoff mode for `dk` (`inline` by default, `fresh` for `DOYAKEN_FRESH_PHASES=1`)
+- `.handoff-mode` — marker that this `dk` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
 - The session ID is derived from the worktree directory name (stable across branch renames)
 - Loop files are cleaned up on completion, by `dkrm`, and by `dkclean`
@@ -231,7 +229,6 @@ Phase state is stored in `~/.claude/.doyaken-phases/`:
 | `DOYAKEN_LOOP_PROMPT` | (from file) | Audit prompt injected on each loop iteration |
 | `DOYAKEN_LOOP_PHASE` | (set by wrapper) | Current phase number (1-6) or `prompt-loop`, used to find audit file |
 | `DOYAKEN_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
-| `DOYAKEN_FRESH_PHASES` | `0` | Set to `1` to use legacy fresh Claude sessions between phases |
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
 | `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive clean review iterations required to advance Phase 3 |
 | `DOYAKEN_REVIEW_MAX_ITERATIONS` | `10` | Max review iterations before Phase 3 pauses for intervention |
@@ -246,9 +243,8 @@ The max iterations safety net (default 30) will always allow Claude to stop even
 
 ### Phase handoff does not continue
 
-Default same-session mode should inject the next phase directly into the Claude
-screen. If you used `DOYAKEN_FRESH_PHASES=1` or return to a shell prompt and
-nothing starts, run:
+The Stop hook should inject the next phase directly into the Claude screen. If
+you return to a shell prompt and nothing starts, run:
 
 ```bash
 dk --resume

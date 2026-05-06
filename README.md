@@ -111,7 +111,7 @@ Gateway mode requires a real Anthropic-compatible gateway exposing `/v1/messages
 
 ## Lifecycle
 
-When you run `dk 999`, Doyaken creates an isolated git worktree and runs Claude through six autonomous phases. By default, those phases advance inside the same Claude session: the Stop hook audits each phase, injects the next phase instructions, and keeps going without requiring `/exit` + `dk --resume`. The user is brought into the loop as a configured reviewer in Phase 6 — the autonomous loop waits for their review (and any other configured reviewers) and only closes the ticket once everyone has approved.
+When you run `dk 999`, Doyaken creates an isolated git worktree and runs Claude through six autonomous phases. Those phases advance inside the same Claude session: the Stop hook audits each phase, injects the next phase instructions, and keeps going without requiring `/exit` + `dk --resume`. The user is brought into the loop as a configured reviewer in Phase 6 — the autonomous loop waits for their review (and any other configured reviewers) and only closes the ticket once everyone has approved.
 
 If you want the same lifecycle without a separate checkout, run `dk --no-worktree <ticket-or-description>`. In-place mode still creates or switches to the normal Doyaken branch (`worktree-ticket-*` / `worktree-task-*`) in the current checkout; it just skips `git worktree add`. Phase 4 commits and pushes that branch. If the current checkout has uncommitted changes and Doyaken needs to switch/create the lifecycle branch, it stops so you can commit or stash first.
 
@@ -120,7 +120,7 @@ dk 999
   │
   ├─ Phase 1: Plan          Claude explores codebase, presents approaches, user approves
   ├─ Phase 2: Implement     TDD implementation, completeness verification
-  ├─ Phase 3: Review        Adversarial code review (3 clean passes, fresh sessions)
+  ├─ Phase 3: Review        Adversarial code review (3 clean passes, fresh subagents)
   ├─ Phase 4: Verify        Format, lint, typecheck, test → commit + push
   ├─ Phase 5: PR            Generate description, create draft PR + attach reviewers
   └─ Phase 6: Complete      Mark ready, request reviews, monitor CI, address comments,
@@ -173,7 +173,7 @@ Launch fresh review subagent
   ▼
 Loop reads review result
   ├─ CLEAN → clean_passes++ → if ≥3: advance to Phase 4
-  └─ FINDINGS → clean_passes=0 → fresh session → loop repeats
+  └─ FINDINGS → clean_passes=0 → fresh subagent → loop repeats
 ```
 
 Each review iteration runs:
@@ -183,8 +183,6 @@ Each review iteration runs:
 4. Merged findings inventory → batch fix → re-verify
 
 Default: 3 consecutive clean passes required. Override: `DOYAKEN_REVIEW_CLEAN_PASSES=5`.
-
-For the older shell-managed fresh Claude session handoff, run with `DOYAKEN_FRESH_PHASES=1`. That mode still uses `--fork-session` between phases and requires exiting completed Claude screens so the wrapper can launch the next phase.
 
 Claude never learns how to signal completion on its own — the hook provides the `.complete` file path and promise string only after enough clean passes. This prevents premature completion.
 
@@ -334,7 +332,8 @@ doyaken/
     phase-audits/            # Phase-specific audit prompts (injected by Stop hook)
       1-plan.md              # Plan quality audit
       2-implement.md         # Implementation completeness audit
-      3-review.md            # Adversarial code review audit (shell sub-loop)
+      3-review-loop.md       # Lifecycle review-loop audit
+      3-review.md            # Single-pass adversarial review audit
       4-verify.md            # Verification + commit audit
       5-pr.md                # PR quality audit
       6-complete.md          # Phase 6 cycle-loop audit (mark ready, monitor, close)
@@ -454,7 +453,6 @@ Control via environment variables:
 | `DOYAKEN_LOOP_MAX_ITERATIONS` | `30` | Max iterations before forced stop |
 | `DOYAKEN_LOOP_MIN_AUDITS` | Per-phase | Min audit iterations before completion authorized |
 | `DOYAKEN_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
-| `DOYAKEN_FRESH_PHASES` | `0` | Set to `1` to use the legacy fresh Claude session per phase handoff |
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | — | Per-phase override (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
 | `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive clean review iterations required (Phase 3) |
 | `DOYAKEN_REVIEW_MAX_ITERATIONS` | `10` | Max review iterations before Phase 3 pauses for intervention |

@@ -167,7 +167,7 @@ When running in plan mode (e.g., via `dk` Phase 1 or `dkloop`), present the plan
 
 **Do not begin implementation until the user approves the plan.**
 
-When running under terminal `dk` Phase 1, approval is the handoff signal to the shell wrapper. After `ExitPlanMode` is approved, print only a brief confirmation if needed, then stop the current Claude Code session immediately. Do **not** tell the user to run `/dkimplement`, do **not** ask whether to continue, and do **not** wait for another user prompt. The `dk` wrapper launches Phase 2 automatically.
+When running under terminal `dk` Phase 1, approval is the handoff signal to the Stop hook. After `ExitPlanMode` is approved, print only a brief confirmation if needed, then stop once so the hook can audit the plan and inject Phase 2 in the same Claude session. Do **not** tell the user to run `/dkimplement`, do **not** ask whether to continue, and do **not** wait for another user prompt.
 
 ## Notes
 

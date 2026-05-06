@@ -181,7 +181,7 @@ Four hooks defined in `settings.json`, referenced by paths to Doyaken scripts:
 
 ### Phase audit loops
 
-When `DOYAKEN_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max iterations (default 30) are reached.
+When `DOYAKEN_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max iterations (default 30) are reached. For `dk` lifecycles, the hook advances phases inside the same Claude session by updating phase state/config and injecting the next phase instructions.
 
 ### Session IDs
 
@@ -279,7 +279,7 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | 25-138 | CLI dispatcher | `doyaken()` |
 | 139-257 | Provider and phase config | `__dk_refresh_provider()`, `__dk_claude()`, phase arrays |
 | 258-509 | Internal helpers | `__dk_is_ticket()`, `__dk_setup_worktree()`, `__dk_build_system_context()` |
-| 510-897 | Phase execution | `__dk_run_review_loop()`, `__dk_run_phases()` |
+| 510-897 | Phase execution | `__dk_run_phases_inline()`, `__dk_run_phases()` |
 | 898-984 | Display helpers | `__dk_format_elapsed()`, `__dk_show_header()` |
 | 985-1109 | Phased lifecycle | `dk()` |
 | 1111-1238 | Prompt loop | `dkloop()` |
@@ -304,7 +304,8 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `DK_STATE_DIR` | Phase state directory | `~/.claude/.doyaken-phases` |
 | `DK_LOOP_DIR` | Loop state directory | `~/.claude/.doyaken-loops` |
 | `DOYAKEN_LOOP_ACTIVE` | Enable phase audit loop | unset |
-| `DOYAKEN_LOOP_PHASE` | Current phase (1-5 or "prompt-loop") | unset |
+| `DOYAKEN_LOOP_PHASE` | Current phase (1-6 or "prompt-loop") | unset |
+| `DOYAKEN_PHASE_HANDOFF` | Same-session phase handoff marker (`inline` for `dk`) | unset |
 | `DOYAKEN_LOOP_PROMISE` | Completion signal string | unset |
 | `DOYAKEN_LOOP_MAX_ITERATIONS` | Max loop iterations | 30 |
 | `DOYAKEN_SESSION_ID` | Unique session ID (set by dkloop for stop hook) | unset |

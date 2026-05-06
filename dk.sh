@@ -229,15 +229,14 @@ DK_PHASE_PROMISES=(\
 DK_PHASE_MESSAGES=(\
   "Call EnterPlanMode now, then run /dkplan — gather context, explore the codebase, and create your implementation plan. When the plan is ready, use ExitPlanMode to present it for approval. After the user approves the plan, immediately stop once so the Doyaken Stop hook can audit the plan and advance to Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dkimplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. SCOPE BOUNDARIES: implementation and testing ONLY. Do NOT commit, push, create branches, or create PRs during this phase — those are handled by later phases. When done, stop — the audit loop will verify your work." \
-  "Run an adversarial code review of the implementation. Follow the review audit prompt exactly: run /dkreview --single-pass, perform the 4-pass manual review (Logic, Structure, Security, Holistic), spawn the self-reviewer agent, build the merged findings inventory, and fix all issues. Write the review result signal file after building the inventory. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, or create PRs. When review is clean, stop — the audit loop will verify." \
+  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dkreviewloop\" to run the 3-clean-pass review loop. Fix any findings it reports and rerun until it reports SUCCESS. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, create branches, or create PRs. When the review loop is successful, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dkcommit\" to commit and push. SCOPE BOUNDARIES: verify and commit ONLY. Do NOT create PRs or modify implementation beyond fixing verify failures. When pushed, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkpr\" to generate the PR description, create the draft PR, and attach the configured 'request' reviewers from doyaken.md § Reviewers. SCOPE BOUNDARIES: PR creation and description ONLY. Do NOT mark the PR ready for review (Phase 6 owns that), do NOT post @mention comments, do NOT modify implementation code. When done, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from doyaken.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 2m /dkwatchci and /loop 5m /dkwatchpr, wait DOYAKEN_COMPLETE_WAIT_MINUTES per cycle, address comments via /dkprreview, re-request reviewers after each push, and close the ticket when CI is green and all reviewers have approved. Stop — the audit loop will verify." \
 )
 
 # Audit prompt file basenames (must match prompts/phase-audits/ filenames)
-DK_PHASE_AUDIT_FILES=("1-plan" "2-implement" "3-review" "4-verify" "5-pr" "6-complete")
-DK_INLINE_PHASE_AUDIT_FILES=("1-plan" "2-implement" "3-review-loop" "4-verify" "5-pr" "6-complete")
+DK_PHASE_AUDIT_FILES=("1-plan" "2-implement" "3-review-loop" "4-verify" "5-pr" "6-complete")
 
 # Session timeout in seconds — single budget for the entire dk run (all phases).
 # Default: 86400 (24 hours). Set to 0 to disable.
@@ -246,16 +245,16 @@ DK_SESSION_TIMEOUT=86400
 
 # Minimum audit iterations per phase before the Stop hook authorizes completion.
 # Phase 2 (Implement) requires 1 pass (completeness check; deep review is Phase 3).
-# Phase 3 (Review) uses a shell-managed sub-loop with DK_REVIEW_CLEAN_PASSES instead.
+# Phase 3 (Review) uses /dkreviewloop; the audit verifies that loop's SUCCESS report.
 # Phase 6 (Complete) wait windows are enforced inside the audit prompt; min 1 here.
 # Other phases require 1 pass (the audit prompt must be followed at least once).
 # Override: DOYAKEN_PHASE_2_MIN_AUDITS=5
 # zsh 1-indexed: [1]=Plan, [2]=Implement, [3]=Review, [4]=Verify, [5]=PR, [6]=Complete
 DK_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 
-# Review sub-loop configuration (Phase 3 only).
-# The shell manages the outer loop — each iteration is a fresh Claude session.
-# The Stop hook enforces one audit pass per iteration (MIN_AUDITS=1).
+# Review sub-loop configuration.
+# Lifecycle Phase 3 uses the /dkreviewloop skill in the same Claude session.
+# The standalone dkreviewloop shell command also uses these defaults.
 # DK_REVIEW_CLEAN_PASSES: consecutive clean iterations required to advance.
 # DK_REVIEW_MAX_ITERATIONS: safety net — stop after this many iterations regardless.
 # Override: DOYAKEN_REVIEW_CLEAN_PASSES=5, DOYAKEN_REVIEW_MAX_ITERATIONS=15
@@ -304,62 +303,6 @@ __dk_phase_timeout() {
   else
     echo "${DK_PHASE_TIMEOUTS[$step]:-0}"
   fi
-}
-
-# __dk_classify_exit <exit_code> <step> <session_id>
-# Classify a phase's exit into a status marker (inspired by autoresearch's
-# keep/discard/crash statuses). Returns one of:
-#   advance  — phase completed successfully (.complete file was written)
-#   timeout  — killed by wall-clock watchdog
-#   interrupt — user sent Ctrl+C (SIGINT)
-#   max-iter — audit/review loop exhausted without completion
-#   crash    — unexpected non-zero exit
-__dk_classify_exit() {
-  local exit_code="$1" step="$2" session_id="$3"
-  if [[ $exit_code -eq 0 ]]; then
-    # phase-loop.sh cleans up .complete on success but leaves
-    # no .complete on max-iterations (also exit 0). Check the loop state file:
-    # if it still exists, phase-loop.sh didn't clean it up via the .complete
-    # path, meaning max-iterations was hit.
-    local loop_file
-    loop_file=$(dk_loop_file "$session_id")
-    if [[ -f "$loop_file" ]]; then
-      echo "max-iter"
-      return
-    fi
-    echo "advance"
-  elif [[ $exit_code -eq 88 ]]; then
-    echo "max-iter"
-  elif [[ $exit_code -eq 143 ]] || [[ $exit_code -eq 137 ]]; then
-    echo "timeout"
-  elif [[ $exit_code -eq 130 ]]; then
-    echo "interrupt"
-  else
-    echo "crash"
-  fi
-}
-
-# __dk_log_phase <session_id> <step> <phase_name> <start_epoch> <end_epoch> <duration_s> <iterations> <status> <exit_code>
-# Append a TSV row to the structured phase log. Creates the header on first write.
-# Inspired by autoresearch's TSV experiment results logging.
-__dk_log_phase() {
-  local session_id="$1" step="$2" phase_name="$3"
-  local start_epoch="$4" end_epoch="$5" duration_s="$6"
-  local iterations="$7" phase_status="$8" exit_code="$9"
-  local log_file
-  log_file=$(dk_log_file "$session_id")
-
-  # Write header if this is a new log file
-  mkdir -p "$(dirname "$log_file")"
-  if [[ ! -f "$log_file" ]]; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "session_id" "phase" "phase_name" "start_epoch" "end_epoch" \
-      "duration_s" "iterations" "status" "exit_code" > "$log_file"
-  fi
-
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$session_id" "$step" "$phase_name" "$start_epoch" "$end_epoch" \
-    "$duration_s" "$iterations" "$phase_status" "$exit_code" >> "$log_file"
 }
 
 # dk_default_branch is provided by lib/git.sh (sourced via lib/common.sh)
@@ -589,7 +532,7 @@ __dk_build_system_context() {
     2) scope_lines="- Do NOT commit, push, create PRs, or modify git history
 - DO implement, test, and verify completeness via the Skill tool" ;;
     3) scope_lines="- Do NOT commit, push, create PRs, or modify git history
-- DO run adversarial code review, fix all findings, write review result signal" ;;
+- DO run /dkreviewloop, fix all findings, and reach a SUCCESS result" ;;
     4) scope_lines="- Do NOT create PRs or modify implementation beyond fixing verify failures
 - DO run format/lint/typecheck/test, fix failures, commit, push" ;;
     5) scope_lines="- Do NOT mark the PR ready for review (that is Phase 6)
@@ -652,7 +595,7 @@ complete or a real human decision is required.
 Do NOT ask the user whether to continue, do NOT ask for permission to start the
 next phase, and do NOT tell the user to run the next skill manually. At normal
 phase completion, stop once so the Stop hook can audit the phase and either
-advance you to the next phase in this session or return control to the wrapper.
+advance you to the next phase in this session or pause for a real escalation.
 If the Stop hook hands you a new phase in this same session, that latest
 handoff instruction supersedes the initial phase label and scope section below.
 
@@ -700,142 +643,11 @@ DEOF
   echo "$ctx_file"
 }
 
-# __dk_run_review_loop <wt_name> <wt_dir> <session_id> [workspace_mode] [raw_input]
-#
-# Phase 3 (Review): Shell-managed sub-loop with fresh Claude sessions per iteration.
-# Each iteration launches a new Claude session (--fork-session) with the Stop hook
-# active (MIN_AUDITS=1). After each session exits, the shell reads the review result
-# file to determine if the iteration was CLEAN.
-#
-# Tracks consecutive clean passes — requires DK_REVIEW_CLEAN_PASSES (default 3)
-# consecutive CLEAN iterations to advance. DK_REVIEW_MAX_ITERATIONS (default 10)
-# is a safety net.
-#
-# State is persisted to dk_review_state_file so `dk --resume` can continue where
-# it left off mid-review.
-#
-# Returns 0 on success (enough clean passes), non-zero on interrupt or max iterations.
-__dk_run_review_loop() {
-  local wt_name="$1" wt_dir="$2" session_id="$3"
-  local workspace_mode="${4:-worktree}" raw_input="${5:-}"
-  local step=3
-  local claude_session_name
-  claude_session_name=$(__dk_claude_session_name "$workspace_mode" "$wt_name")
-
-  local clean_passes=0
-  local review_iteration=0
-  local max_review_iterations="${DOYAKEN_REVIEW_MAX_ITERATIONS:-$DK_REVIEW_MAX_ITERATIONS}"
-  local required_clean="${DOYAKEN_REVIEW_CLEAN_PASSES:-$DK_REVIEW_CLEAN_PASSES}"
-
-  # Resume: read persisted clean_passes and iteration count
-  local review_state_file
-  review_state_file=$(dk_review_state_file "$session_id")
-  if [[ -f "$review_state_file" ]]; then
-    local raw
-    raw=$(cat "$review_state_file" 2>/dev/null || echo "")
-    if [[ "$raw" =~ ^([0-9]+):([0-9]+)$ ]]; then
-      clean_passes="${match[1]}"
-      review_iteration="${match[2]}"
-    fi
-  fi
-
-  while [[ $review_iteration -lt $max_review_iterations ]] && [[ $clean_passes -lt $required_clean ]]; do
-    review_iteration=$((review_iteration + 1))
-
-    echo ""
-    echo "  Review iteration ${review_iteration}/${max_review_iterations} (${clean_passes}/${required_clean} clean passes)"
-    echo ""
-
-    # Clean stale loop and result state for this iteration
-    rm -f "$(dk_review_result_file "$session_id")"
-    mkdir -p "$DK_LOOP_DIR"
-    touch "$(dk_active_file "$session_id")"
-    rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")"
-
-    # Configure Stop hook: MIN_AUDITS=1 (one audit pass per review iteration)
-    local audit_file="$DOYAKEN_DIR/prompts/phase-audits/${DK_PHASE_AUDIT_FILES[$step]}.md"
-    local audit_prompt=""
-    [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")
-    __dk_write_state "$(dk_loop_config_file "$session_id")" "${step}:${DK_PHASE_PROMISES[$step]}:${audit_file}:1"
-
-    # Build system context for this iteration
-    local ctx_file
-    ctx_file=$(__dk_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input")
-
-    local claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
-    # --resume to reuse session name; --fork-session for fresh context window
-    claude_args+=(--resume --fork-session)
-    claude_args+=(--append-system-prompt-file "$ctx_file")
-    claude_args+=(--settings "{\"statusLine\":{\"type\":\"command\",\"command\":\"bash '${DOYAKEN_DIR}/bin/status-line.sh'\"}}")
-
-    # Launch Claude in foreground subshell (TUI needs terminal access)
-    (
-      cd "$wt_dir" && \
-      DOYAKEN_SESSION_ID="$session_id" \
-      DOYAKEN_LOOP_ACTIVE=1 \
-      DOYAKEN_LOOP_PROMISE="${DK_PHASE_PROMISES[$step]}" \
-      DOYAKEN_LOOP_PROMPT="$audit_prompt" \
-      DOYAKEN_LOOP_PHASE="$step" \
-      DOYAKEN_DIR="$DOYAKEN_DIR" \
-      __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
-    )
-    local exit_code=$?
-    local audit_max_iter=0
-    if [[ $exit_code -eq 0 ]] && [[ -f "$(dk_loop_file "$session_id")" ]]; then
-      audit_max_iter=1
-    fi
-
-    # Clean up per-iteration loop state
-    rm -f "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" "$(dk_loop_file "$session_id")" 2>/dev/null
-
-    if [[ $audit_max_iter -eq 1 ]]; then
-      __dk_write_state "$review_state_file" "${clean_passes}:${review_iteration}"
-      return 88
-    fi
-
-    # Non-zero exit = user interrupt or error — save state for resume
-    if [[ $exit_code -ne 0 ]]; then
-      __dk_write_state "$review_state_file" "${clean_passes}:${review_iteration}"
-      return $exit_code
-    fi
-
-    # Read review result signal file (written by Claude in the audit prompt)
-    local result_file
-    result_file=$(dk_review_result_file "$session_id")
-    local result="UNKNOWN"
-    [[ -f "$result_file" ]] && result=$(cat "$result_file" 2>/dev/null || echo "UNKNOWN")
-
-    if [[ "$result" == "CLEAN" ]]; then
-      clean_passes=$((clean_passes + 1))
-      echo "  Review iteration ${review_iteration}: CLEAN (${clean_passes}/${required_clean})"
-    else
-      clean_passes=0
-      echo "  Review iteration ${review_iteration}: ${result} — resetting clean pass counter"
-    fi
-
-    # Persist state for resume
-    __dk_write_state "$review_state_file" "${clean_passes}:${review_iteration}"
-  done
-
-  if [[ $clean_passes -ge $required_clean ]]; then
-    rm -f "$review_state_file" "$(dk_review_result_file "$session_id")" 2>/dev/null
-    echo "  Review complete: ${clean_passes} consecutive clean passes achieved."
-    return 0
-  else
-    __dk_write_state "$review_state_file" "${clean_passes}:${review_iteration}"
-    rm -f "$(dk_review_result_file "$session_id")" 2>/dev/null
-    echo "  Review reached max iterations (${max_review_iterations}) with ${clean_passes}/${required_clean} clean passes."
-    echo "  Pausing before advancing so the review result can be inspected."
-    return 88
-  fi
-}
-
 # __dk_inline_audit_file <step>
-# Audit prompt for same-session phase handoff. Phase 3 uses the in-session
-# dkreviewloop audit; fresh-session mode keeps the shell-managed review loop.
+# Audit prompt for same-session phase handoff.
 __dk_inline_audit_file() {
   local step="$1"
-  echo "$DOYAKEN_DIR/prompts/phase-audits/${DK_INLINE_PHASE_AUDIT_FILES[$step]}.md"
+  echo "$DOYAKEN_DIR/prompts/phase-audits/${DK_PHASE_AUDIT_FILES[$step]}.md"
 }
 
 # __dk_configure_inline_phase <step> <session_id>
@@ -907,7 +719,26 @@ __dk_run_phases_inline() {
     message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dkreviewloop\" to run the 3-clean-pass review loop. Fix any findings it reports and rerun until it reports SUCCESS. Scope boundaries: review and fix only; do not commit, push, create branches, or create PRs. When the review loop is successful, stop so the Stop hook can audit and advance."
   fi
 
+  local session_timeout="${DOYAKEN_SESSION_TIMEOUT:-$DK_SESSION_TIMEOUT}"
+  local _dk_watchdog_pid="" _dk_pidfile=""
+  _dk_pidfile=$(mktemp "${TMPDIR:-/tmp}/dk-inline.XXXXXX")
+
+  if [[ "$session_timeout" -gt 0 ]]; then
+    (
+      local tgt=""
+      while [[ -z "$tgt" ]]; do
+        [[ -s "$_dk_pidfile" ]] && tgt=$(<"$_dk_pidfile")
+        [[ -z "$tgt" ]] && sleep 0.2
+      done
+      sleep "$session_timeout" 2>/dev/null
+      kill -TERM -"$tgt" 2>/dev/null
+    ) &
+    _dk_watchdog_pid=$!
+    disown "$_dk_watchdog_pid" 2>/dev/null
+  fi
+
   (
+    sh -c 'echo $PPID' > "$_dk_pidfile"
     cd "$wt_dir" && \
     DOYAKEN_SESSION_ID="$session_id" \
     DOYAKEN_LOOP_ACTIVE=1 \
@@ -920,10 +751,34 @@ __dk_run_phases_inline() {
     __dk_claude "${claude_args[@]}" "$message"
   )
   local exit_code=$?
+  rm -f "$_dk_pidfile"
+  [[ -n "$_dk_watchdog_pid" ]] && kill "$_dk_watchdog_pid" 2>/dev/null
 
   local final_step="$step"
   [[ -f "$state_file" ]] && final_step=$(cat "$state_file" 2>/dev/null || echo "$step")
   [[ "$final_step" =~ ^[1-7]$ ]] || final_step="$step"
+
+  local loop_file
+  loop_file=$(dk_loop_file "$session_id")
+  if [[ "$final_step" -lt 7 && -f "$loop_file" ]]; then
+    local raw_iter iterations max_iterations pause_reason
+    raw_iter=$(cat "$loop_file" 2>/dev/null || echo "0")
+    iterations="${raw_iter%%:*}"
+    [[ "$iterations" =~ ^[0-9]+$ ]] || iterations=0
+    max_iterations="${DOYAKEN_LOOP_MAX_ITERATIONS:-30}"
+    pause_reason="phase did not complete"
+    if [[ "$iterations" -ge "$max_iterations" ]]; then
+      pause_reason="max audit iterations reached (${iterations}/${max_iterations})"
+    fi
+
+    rm -f "$loop_file" "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" "$(dk_handoff_mode_file "$session_id")" "$(dk_paused_file "$session_id")" 2>/dev/null
+    dk_provider_cleanup_session_state "$session_id"
+
+    echo ""
+    echo "Paused at Phase ${final_step}: ${DK_PHASE_NAMES[$final_step]} (${pause_reason})"
+    echo "Resume with: ${resume_hint}"
+    return 1
+  fi
 
   if [[ "$final_step" -ge 7 ]]; then
     dk_provider_cleanup_session_state "$session_id"
@@ -954,329 +809,14 @@ __dk_run_phases_inline() {
 
 # __dk_run_phases <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
 #
-# Phase lifecycle entrypoint. Default mode launches one Claude session and lets
-# the Stop hook advance phases inline. Set DOYAKEN_FRESH_PHASES=1 to use the
-# legacy wrapper-managed fresh-session state machine below.
+# Phase lifecycle entrypoint. Launches one Claude session and lets the Stop hook
+# advance phases inline.
 # Phase 6 (Complete) is autonomous: it marks the PR ready, requests configured
 # reviewers (see doyaken.md § Reviewers), monitors CI/reviews, addresses comments,
 # and closes the ticket. The user is in the loop only as a configured reviewer.
-# Fresh-session mode launches each phase with:
-#   - A phase-specific message (DK_PHASE_MESSAGES) that tells Claude which skills to run
-#   - An audit loop (DOYAKEN_LOOP_* env vars) that prevents premature exit
-#   - Session naming (-n) so --resume can reconnect across phase boundaries
-#
-# Fresh-session phase transitions:
-#   Phase N completes (exit 0) → state_file written with N+1 → loop continues
-#   Phase N interrupted (exit != 0) → state_file written with N → function returns
-#   Phase 6 completes → state_file written with 7 (ticket complete)
-#
-# The .complete signal file (managed by phase-loop.sh) is the bridge between
-# Claude's intent to stop and the wrapper's phase advancement. See docs/autonomous-mode.md.
-#
 # Returns non-zero if user interrupts or an error occurs.
 __dk_run_phases() {
-  if [[ "${DOYAKEN_FRESH_PHASES:-0}" != "1" ]]; then
-    __dk_run_phases_inline "$@"
-    return $?
-  fi
-
-  local wt_name="$1" wt_dir="$2" default_branch="$3" step="$4"
-  local state_file="$5" times_file="$6" resume_hint="$7"
-  local workspace_mode="${8:-worktree}"
-  local session_id="${9:-}" raw_input="${10:-}"
-  local claude_session_name
-  claude_session_name=$(__dk_claude_session_name "$workspace_mode" "$wt_name")
-
-  # Ensure Claude Code CLI is installed — all phases depend on it
-  if ! command -v claude &>/dev/null; then
-    dk_error "Claude Code CLI not found in PATH."
-    dk_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
-    return 1
-  fi
-
-  # Session ID — derived once, used for checkpoints, logging, and status classification.
-  [[ -n "$session_id" ]] || session_id=$(__dk_session_id_for_workspace "$workspace_mode" "$wt_name")
-
-  # Session-level timeout watchdog — single budget for the entire dk run.
-  # Sends SIGTERM to this shell's process group when the budget expires.
-  local session_timeout="${DOYAKEN_SESSION_TIMEOUT:-$DK_SESSION_TIMEOUT}"
-  local _dk_session_watchdog_pid=""
-  if [[ "$session_timeout" -gt 0 ]]; then
-    (
-      sleep "$session_timeout" 2>/dev/null
-      kill -TERM -$$ 2>/dev/null
-    ) &
-    _dk_session_watchdog_pid=$!
-    disown "$_dk_session_watchdog_pid" 2>/dev/null
-  fi
-
-  while [[ $step -le 6 ]]; do
-    __dk_show_header "$wt_name" "$step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
-
-    local claude_args=()
-    if [[ $step -eq 1 ]]; then
-      # Phase 1: bypassPermissions + EnterPlanMode — read-only without interactive prompts.
-      # Plan mode's built-in approval is the quality gate. The Stop hook owns
-      # the process handoff after approval so the wrapper can continue.
-      claude_args=("${DK_PLAN_FLAGS[@]}" -n "$claude_session_name")
-      claude_args+=(--append-system-prompt "You MUST be in plan mode — if not, call EnterPlanMode immediately. Phase 1 handoff is automatic: after ExitPlanMode is approved, stop once so the Doyaken Stop hook can audit the plan and advance to Phase 2. Do NOT say 'run /dkimplement when ready', do NOT ask whether to continue, and do NOT wait for another user prompt.")
-      # Resume only if re-entering Phase 1 (prior session exists)
-      if [[ -f "$times_file" ]]; then
-        claude_args+=(--resume)
-      fi
-    else
-      # Phases 2, 4-6: autonomous with stop hook audit loop (Phase 3 has its own sub-loop)
-      claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
-      # Resume only if a prior phase actually ran (times_file has entries).
-      # Handles edge case where state_file advanced but session was never created.
-      if [[ -f "$times_file" ]]; then
-        claude_args+=(--resume)
-      fi
-
-      # System prompt context file — survives conversation compaction so Claude
-      # always knows which phase it is in and how to signal completion.
-      local ctx_file
-      ctx_file=$(__dk_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input")
-      claude_args+=(--append-system-prompt-file "$ctx_file")
-
-      # Live status line — shows phase, audit iteration, and elapsed time in TUI
-      claude_args+=(--settings "{\"statusLine\":{\"type\":\"command\",\"command\":\"bash '${DOYAKEN_DIR}/bin/status-line.sh'\"}}")
-
-      # Fork session at every phase boundary so Claude exits and restarts with
-      # a fresh context window. The system prompt file carries essential context
-      # (phase number, scope boundaries, completion protocol) across the fork.
-      claude_args+=(--fork-session)
-    fi
-
-    # Git checkpoint — snapshot HEAD before the phase runs so we can revert
-    # on failure (inspired by autoresearch's commit-before-experiment pattern).
-    # Phase 1 is read-only (plan mode) so no checkpoint needed.
-    if [[ $step -ge 2 ]]; then
-      dk_checkpoint_tag "$step" "$wt_dir"
-    fi
-
-    # Record phase start time (written to times_file AFTER claude exits so
-    # the file serves as a reliable "session exists" marker for --resume)
-    local phase_start_epoch
-    phase_start_epoch=$(date +%s)
-
-    # Resolve phase timeout (0 = disabled). Watchdog runs in the background
-    # and sends SIGTERM if the phase exceeds its wall-clock budget.
-    local phase_timeout
-    phase_timeout=$(__dk_phase_timeout "$step")
-    local _dk_watchdog_pid=""
-
-    # PID file lets the watchdog discover the foreground subshell's PID.
-    # Claude is a TUI — it MUST run in the foreground (not &) or the kernel
-    # suspends it with SIGTTOU. The old pattern backgrounded the subshell to
-    # capture $!, but that broke terminal access.
-    local _dk_pidfile=""
-    _dk_pidfile=$(mktemp "${TMPDIR:-/tmp}/dk-phase.XXXXXX")
-
-    # Start timeout watchdog BEFORE the foreground process (which blocks).
-    # It polls the PID file until the subshell writes its PID, then sleeps
-    # for the budget duration before sending SIGTERM to the process group.
-    if [[ "$phase_timeout" -gt 0 ]]; then
-      (
-        local tgt=""
-        while [[ -z "$tgt" ]]; do
-          [[ -s "$_dk_pidfile" ]] && tgt=$(<"$_dk_pidfile")
-          [[ -z "$tgt" ]] && sleep 0.2
-        done
-        sleep "$phase_timeout" 2>/dev/null
-        kill -TERM -"$tgt" 2>/dev/null
-      ) &
-      _dk_watchdog_pid=$!
-      # Disown so zsh doesn't print "[N] + done ..." when the watchdog exits.
-      # We still have the PID to kill/wait on — disown only suppresses the
-      # job table notification, not the ability to signal the process.
-      disown "$_dk_watchdog_pid" 2>/dev/null
-    fi
-
-    if [[ $step -eq 1 ]]; then
-      # Phase 1: EnterPlanMode called by Claude. ExitPlanMode handles approval.
-      # The Stop hook still owns the process handoff: once the approved plan is
-      # audited and the .complete file is written, it returns continue=false so
-      # Claude Code exits and the shell wrapper can launch Phase 2.
-      local audit_file="$DOYAKEN_DIR/prompts/phase-audits/${DK_PHASE_AUDIT_FILES[$step]}.md"
-      mkdir -p "$DK_LOOP_DIR"
-      touch "$(dk_active_file "$session_id")"
-      rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")"
-      __dk_write_state "$(dk_loop_config_file "$session_id")" "${step}:${DK_PHASE_PROMISES[$step]}:${audit_file}:1"
-
-      (
-        sh -c 'echo $PPID' > "$_dk_pidfile"
-        cd "$wt_dir" && \
-        DOYAKEN_SESSION_ID="$session_id" \
-        DOYAKEN_LOOP_ACTIVE=1 \
-        DOYAKEN_LOOP_PROMISE="${DK_PHASE_PROMISES[$step]}" \
-        DOYAKEN_LOOP_PHASE="$step" \
-        DOYAKEN_DIR="$DOYAKEN_DIR" \
-        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
-      )
-    elif [[ $step -eq 3 ]]; then
-      # Phase 3: Review — shell-managed sub-loop with fresh sessions per iteration.
-      # The review loop runs multiple Claude sessions internally (each with
-      # --fork-session). The Stop hook (MIN_AUDITS=1) enforces one audit pass per
-      # iteration. The shell tracks consecutive CLEAN results and requires
-      # DK_REVIEW_CLEAN_PASSES before advancing. See: __dk_run_review_loop.
-      (
-        sh -c 'echo $PPID' > "$_dk_pidfile"
-        __dk_run_review_loop "$wt_name" "$wt_dir" "$session_id" "$workspace_mode" "$raw_input"
-      )
-    else
-      # Phases 2, 4-6: audit loop active (single Claude session per phase).
-      # Load phase-specific audit prompt from file
-      local audit_prompt=""
-      local audit_file="$DOYAKEN_DIR/prompts/phase-audits/${DK_PHASE_AUDIT_FILES[$step]}.md"
-      [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")
-
-      # Write file-based activation signals — belt-and-suspenders alongside env vars.
-      # Claude Code runs hooks as separate subprocesses that may not inherit inline
-      # env vars from the parent process. These files ensure the hook activates
-      # even when DOYAKEN_LOOP_ACTIVE is not visible to the hook subprocess.
-      mkdir -p "$DK_LOOP_DIR"
-      touch "$(dk_active_file "$session_id")"
-      rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")"
-
-      # Resolve minimum audit iterations for this phase.
-      # Priority: DOYAKEN_PHASE_N_MIN_AUDITS env var > DK_PHASE_MIN_AUDITS[step]
-      # shellcheck disable=SC2034  # used via zsh ${(P)min_audits_env} indirect expansion below
-      local min_audits_env="DOYAKEN_PHASE_${step}_MIN_AUDITS"
-      local min_audits="${(P)min_audits_env:-${DK_PHASE_MIN_AUDITS[$step]:-1}}"
-
-      # Config file format: "phase:promise:audit_file:min_audits"
-      __dk_write_state "$(dk_loop_config_file "$session_id")" "${step}:${DK_PHASE_PROMISES[$step]}:${audit_file}:${min_audits}"
-
-      # The Stop hook (phase-loop.sh) reads activation from two sources:
-      #   1. File-based: .active file + .config file (primary — always works)
-      #   2. Env vars: DOYAKEN_LOOP_ACTIVE, etc. (belt-and-suspenders)
-      # Claude exits 0 when the .complete file is written (hook returns continue=false) or
-      # max iterations reached. Non-zero means user interrupt or error.
-      # See: docs/autonomous-mode.md for the full architecture.
-      # Runs in a subshell so `cd` doesn't affect the parent shell. Environment
-      # variables are set inline (not exported) to scope them to this invocation.
-      (
-        sh -c 'echo $PPID' > "$_dk_pidfile"
-        cd "$wt_dir" && \
-        DOYAKEN_SESSION_ID="$session_id" \
-        DOYAKEN_LOOP_ACTIVE=1 \
-        DOYAKEN_LOOP_PROMISE="${DK_PHASE_PROMISES[$step]}" \
-        DOYAKEN_LOOP_PROMPT="$audit_prompt" \
-        DOYAKEN_LOOP_PHASE="$step" \
-        DOYAKEN_COMPLETE_MAX_CYCLES="${DOYAKEN_COMPLETE_MAX_CYCLES:-$DK_COMPLETE_MAX_CYCLES}" \
-        DOYAKEN_COMPLETE_WAIT_MINUTES="${DOYAKEN_COMPLETE_WAIT_MINUTES:-$DK_COMPLETE_WAIT_MINUTES}" \
-        DOYAKEN_DIR="$DOYAKEN_DIR" \
-        __dk_claude "${claude_args[@]}" "$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")"
-      )
-    fi
-
-    local exit_code=$?
-    rm -f "$_dk_pidfile"
-
-    # Write phase timing now that claude actually ran. This must happen AFTER
-    # claude exits so times_file only exists when a real session was created —
-    # the --resume guard on phase 1 (and phases 2-6) checks this file.
-    # Skip writing on non-zero exit when no prior entry exists — this means
-    # Claude was interrupted before it could create a persistent session, so
-    # --resume would fail with a session picker instead of resuming.
-    if [[ $exit_code -eq 0 ]] || [[ -f "$times_file" ]]; then
-      mkdir -p "$(dirname "$times_file")"
-      echo "${step}:${phase_start_epoch}" >> "$times_file"
-    fi
-
-    local phase_end_epoch
-    phase_end_epoch=$(date +%s)
-
-    # Kill the timeout watchdog if it's still running.
-    # No wait needed — disown (above) removed it from the job table.
-    if [[ -n "$_dk_watchdog_pid" ]]; then
-      kill "$_dk_watchdog_pid" 2>/dev/null
-    fi
-
-    # Classify the phase outcome (autoresearch-inspired status markers)
-    local phase_status
-    phase_status=$(__dk_classify_exit "$exit_code" "$step" "$session_id")
-
-    # Read iteration count from loop state file before cleaning up.
-    # On max-iter, phase-loop.sh leaves this file intact for classification;
-    # on .complete, it's already removed. Clean up after reading.
-    local iterations=0
-    local loop_file
-    loop_file=$(dk_loop_file "$session_id")
-    if [[ -f "$loop_file" ]]; then
-      local raw_iter
-      raw_iter=$(cat "$loop_file" 2>/dev/null || echo "0")
-      # Handle both old format (bare number) and new format (number:epoch:stall)
-      iterations="${raw_iter%%:*}"
-      [[ "$iterations" =~ ^[0-9]+$ ]] || iterations=0
-      rm -f "$loop_file"
-    fi
-    # Clean up file-based activation signals (idempotent — hook may have already removed some)
-    rm -f "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" 2>/dev/null
-
-    # Log phase result (TSV)
-    local duration_s=$((phase_end_epoch - phase_start_epoch))
-    __dk_log_phase "$session_id" "$step" "${DK_PHASE_NAMES[$step]}" \
-      "$phase_start_epoch" "$phase_end_epoch" "$duration_s" \
-      "$iterations" "$phase_status" "$exit_code"
-
-    # Anything other than an explicit advance means user input or intervention
-    # is required before the lifecycle can safely continue.
-    if [[ "$phase_status" != "advance" ]]; then
-      __dk_write_state "$state_file" "$step"
-      echo ""
-      case "$phase_status" in
-        max-iter)
-          echo "Paused at Phase ${step}: ${DK_PHASE_NAMES[$step]} (max audit iterations reached)"
-          ;;
-        timeout)
-          echo "Phase ${step} (${DK_PHASE_NAMES[$step]}) timed out after ${phase_timeout}s."
-          ;;
-        interrupt)
-          echo "Paused at Phase ${step}: ${DK_PHASE_NAMES[$step]} (interrupted)"
-          ;;
-        *)
-          echo "Paused at Phase ${step}: ${DK_PHASE_NAMES[$step]} (${phase_status}, exit ${exit_code})"
-          ;;
-      esac
-      echo "Resume with: ${resume_hint}"
-      if [[ $step -ge 2 ]] && git -C "$wt_dir" rev-parse --verify "dk-checkpoint/phase-${step}" &>/dev/null; then
-        if [[ "$workspace_mode" == "worktree" ]]; then
-          echo "Revert to pre-phase state with: dk revert ${wt_name} ${step}"
-        else
-          echo "Checkpoint tag available: dk-checkpoint/phase-${step}"
-        fi
-      fi
-      dk_provider_cleanup_session_state "$session_id"
-      [[ -n "$_dk_session_watchdog_pid" ]] && kill "$_dk_session_watchdog_pid" 2>/dev/null
-      local return_code="$exit_code"
-      [[ "$return_code" -eq 0 ]] && return_code=1
-      return "$return_code"
-    fi
-
-    # Advance to next phase
-    step=$((step + 1))
-    __dk_write_state "$state_file" "$step"
-  done
-
-  # Kill session watchdog — all phases done
-  [[ -n "$_dk_session_watchdog_pid" ]] && kill "$_dk_session_watchdog_pid" 2>/dev/null
-
-  # All autonomous phases complete — write step=7 so re-running `dk <ticket>` or
-  # `dk --resume` detects "fully complete" instead of restarting from Phase 1.
-  # Worktree state files are cleaned up by dkrm / dkclean. In-place state is
-  # retained so `dk --resume` can report completion for the last run.
-  __dk_write_state "$state_file" "7"
-  dk_provider_cleanup_session_state "$session_id"
-  __dk_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
-  echo ""
-  echo "Ticket lifecycle complete — PR has been merged-eligible (CI green, reviews approved)."
-  if [[ "$workspace_mode" == "worktree" ]]; then
-    echo "Run dkrm ${wt_name} to clean up the worktree when you're done."
-  else
-    echo "No worktree cleanup is needed; this lifecycle ran in the current checkout."
-  fi
+  __dk_run_phases_inline "$@"
 }
 
 # __dk_format_elapsed <seconds>
@@ -1883,7 +1423,7 @@ dkreviewloop() {
   local max_iter="${DOYAKEN_REVIEW_MAX_ITERATIONS:-$DK_REVIEW_MAX_ITERATIONS}"
   local required_clean="${DOYAKEN_REVIEW_CLEAN_PASSES:-$DK_REVIEW_CLEAN_PASSES}"
 
-  # Reuse the Phase 3 audit prompt — same one dk wrapper Phase 3 uses.
+  # Standalone review uses the detailed single-pass adversarial audit.
   local audit_file="$DOYAKEN_DIR/prompts/phase-audits/3-review.md"
   local audit_prompt=""
   [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")

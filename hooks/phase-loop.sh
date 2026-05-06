@@ -3,7 +3,7 @@
 #
 # Flow:
 #   1. Claude tries to stop → this hook runs
-#   2. Check .complete file → advance inline or exit for fresh handoff/final done
+#   2. Check .complete file → advance inline or finish the lifecycle
 #   3. Check iteration count → pause/escalate
 #   4. Check min audit iterations:
 #      a. Below threshold → block stop, inject audit prompt WITHOUT completion instructions
@@ -56,17 +56,11 @@ dk_phase_promise() {
 }
 
 dk_phase_audit_file() {
-  local phase="$1" handoff_mode="${2:-fresh}" name
+  local phase="$1" name
   case "$phase" in
     1) name="1-plan" ;;
     2) name="2-implement" ;;
-    3)
-      if [[ "$handoff_mode" == "inline" ]]; then
-        name="3-review-loop"
-      else
-        name="3-review"
-      fi
-      ;;
+    3) name="3-review-loop" ;;
     4) name="4-verify" ;;
     5) name="5-pr" ;;
     6) name="6-complete" ;;
@@ -84,6 +78,43 @@ dk_phase_min_audits() {
   else
     printf '%s\n' "1"
   fi
+}
+
+dk_phase_iteration_count() {
+  local state_file="$1" raw iterations
+  raw=$(cat "$state_file" 2>/dev/null || echo "0")
+  iterations="${raw%%:*}"
+  if [[ "$iterations" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$iterations"
+  else
+    printf '%s\n' "0"
+  fi
+}
+
+dk_phase_start_epoch() {
+  local phase="$1" times_file
+  times_file=$(dk_times_file "$SESSION_ID")
+  if [[ -f "$times_file" ]]; then
+    awk -F: -v phase="$phase" '$1 == phase { start=$2 } END { if (start != "") print start }' "$times_file"
+  fi
+}
+
+dk_record_phase_result() {
+  local phase="$1" status="$2" exit_code="$3" start_epoch end_epoch duration iterations
+  [[ "$phase" =~ ^[1-6]$ ]] || return 0
+  end_epoch=$(date +%s)
+  start_epoch=$(dk_phase_start_epoch "$phase")
+  [[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch="$end_epoch"
+  duration=$((end_epoch - start_epoch))
+  iterations=$(dk_phase_iteration_count "$STATE_FILE")
+  dk_log_phase "$SESSION_ID" "$phase" "$(dk_phase_name "$phase")" "$start_epoch" "$end_epoch" "$duration" "$iterations" "$status" "$exit_code"
+}
+
+dk_start_phase_timer() {
+  local phase="$1" times_file
+  times_file=$(dk_times_file "$SESSION_ID")
+  mkdir -p "$(dirname "$times_file")"
+  printf '%s:%s\n' "$phase" "$(date +%s)" >> "$times_file"
 }
 
 dk_inline_phase_message() {
@@ -128,12 +159,11 @@ HANDOFF_MODE_FILE=$(dk_handoff_mode_file "$SESSION_ID")
 if [[ -z "$HANDOFF_MODE" && -f "$HANDOFF_MODE_FILE" ]]; then
   HANDOFF_MODE=$(cat "$HANDOFF_MODE_FILE" 2>/dev/null || echo "")
 fi
-HANDOFF_MODE="${HANDOFF_MODE:-fresh}"
 PAUSED_FILE=$(dk_paused_file "$SESSION_ID")
 COMPLETE_FILE=$(dk_complete_file "$SESSION_ID")
 
 if [[ -f "$PAUSED_FILE" && ! -f "$COMPLETE_FILE" ]]; then
-  rm -f "$PAUSED_FILE"
+  rm -f "$PAUSED_FILE" "$HANDOFF_MODE_FILE"
   exit 0
 fi
 
@@ -192,20 +222,23 @@ COMPLETION_PROMISE="${DOYAKEN_LOOP_PROMISE:-DOYAKEN_TICKET_COMPLETE}"
 # See: docs/autonomous-mode.md § Completion Signals
 if [[ -f "$COMPLETE_FILE" ]]; then
   CURRENT_PHASE="${DOYAKEN_LOOP_PHASE:-0}"
-  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE"
 
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" =~ ^[0-9]+$ && "$CURRENT_PHASE" -lt 6 ]]; then
     NEXT_PHASE=$((CURRENT_PHASE + 1))
+    dk_record_phase_result "$CURRENT_PHASE" "advance" "0"
+    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE"
+
     PHASE_STATE_FILE=$(dk_state_file "$SESSION_ID")
     printf '%s\n' "$NEXT_PHASE" > "$PHASE_STATE_FILE"
 
-    # Preserve phase checkpoints even though the shell wrapper no longer
-    # regains control between phases in inline mode.
+    # Preserve phase checkpoints at same-session phase boundaries.
     if [[ "$NEXT_PHASE" -ge 2 ]] && git rev-parse --git-dir >/dev/null 2>&1; then
       dk_checkpoint_tag "$NEXT_PHASE" "$(pwd)"
     fi
 
-    NEXT_AUDIT_FILE=$(dk_phase_audit_file "$NEXT_PHASE" "$HANDOFF_MODE")
+    dk_start_phase_timer "$NEXT_PHASE"
+
+    NEXT_AUDIT_FILE=$(dk_phase_audit_file "$NEXT_PHASE")
     NEXT_PROMISE=$(dk_phase_promise "$NEXT_PHASE")
     NEXT_MIN_AUDITS=$(dk_phase_min_audits "$NEXT_PHASE")
     printf '%s:%s:%s:%s\n' "$NEXT_PHASE" "$NEXT_PROMISE" "$NEXT_AUDIT_FILE" "$NEXT_MIN_AUDITS" > "$CONFIG_FILE"
@@ -221,6 +254,8 @@ if [[ -f "$COMPLETE_FILE" ]]; then
   fi
 
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "6" ]]; then
+    dk_record_phase_result "$CURRENT_PHASE" "advance" "0"
+    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE"
     printf '%s\n' "7" > "$(dk_state_file "$SESSION_ID")"
     rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
     {
@@ -230,8 +265,9 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     exit 2
   fi
 
+  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE"
   rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
-  printf '%s\n' '{"continue":false,"stopReason":"Doyaken phase complete. If this Claude screen stays open, type /exit or press Ctrl-D; the original dk command should then launch the next phase. If you return to the shell and nothing starts, run: dk --resume"}'
+  printf '%s\n' '{"continue":false,"stopReason":"Doyaken loop complete."}'
   exit 0
 fi
 
@@ -303,12 +339,14 @@ fi
 if [[ $ITERATION -gt $MAX_ITERATIONS ]]; then
   rm -f "$ACTIVE_FILE" "$CONFIG_FILE"
   if [[ "$HANDOFF_MODE" == "inline" ]]; then
+    CURRENT_PHASE="${DOYAKEN_LOOP_PHASE:-0}"
+    dk_record_phase_result "$CURRENT_PHASE" "max-iter" "88"
     touch "$PAUSED_FILE"
     printf '\n%s\n\n' "--- Doyaken phase paused: max audit iterations reached (${MAX_ITERATIONS}) ---" >&2
     printf '%s\n' "Do not advance to the next phase. Summarize the blocker, current phase, and the exact user decision or intervention needed." >&2
     exit 2
   fi
-  printf '{"continue":false,"stopReason":"Doyaken phase audit loop reached max iterations (%s). If this Claude screen stays open, type /exit or press Ctrl-D. Then inspect the pause and resume with: dk --resume"}\n' "$MAX_ITERATIONS"
+  printf '{"continue":false,"stopReason":"Doyaken audit loop reached max iterations (%s). Inspect the pause and resume when ready."}\n' "$MAX_ITERATIONS"
   exit 0
 fi
 
@@ -338,13 +376,7 @@ if [[ -z "$AUDIT_PROMPT" ]]; then
   case "$LOOP_PHASE" in
     1) AUDIT_FILENAME="1-plan" ;;
     2) AUDIT_FILENAME="2-implement" ;;
-    3)
-      if [[ "$HANDOFF_MODE" == "inline" ]]; then
-        AUDIT_FILENAME="3-review-loop"
-      else
-        AUDIT_FILENAME="3-review"
-      fi
-      ;;
+    3) AUDIT_FILENAME="3-review-loop" ;;
     4) AUDIT_FILENAME="4-verify" ;;
     5) AUDIT_FILENAME="5-pr" ;;
     6) AUDIT_FILENAME="6-complete" ;;

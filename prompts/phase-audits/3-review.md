@@ -177,7 +177,7 @@ Replace `<sorted list of INV-N descriptions>` with the actual finding descriptio
 
 ### Review Result Signal
 
-After building the inventory, write the review result so the shell wrapper can track clean passes:
+After building the inventory, write the review result so the review loop can track clean passes:
 
 ```bash
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"

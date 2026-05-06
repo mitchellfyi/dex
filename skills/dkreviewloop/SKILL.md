@@ -1,11 +1,11 @@
 ---
 name: "dkreviewloop"
-description: "Run dkreview repeatedly in fresh independent sessions until three clean reports in a row."
+description: "Run dkreview repeatedly in fresh independent subagents until three clean reports in a row."
 ---
 
 # Skill: dkreviewloop
 
-Run `/dkreview --single-pass` repeatedly in fresh, independent sessions until **3 clean reports in a row** (max 10 iterations). This is the default in-session review loop used by same-session `dk` Phase 3.
+Run `/dkreview --single-pass` repeatedly in fresh, independent subagents until **3 clean reports in a row** (max 10 iterations). This is the default review loop used by `dk` Phase 3.
 
 ## When to Use
 
@@ -81,5 +81,5 @@ If SAFETY-NET-EXIT, list the residual findings the subagents kept reporting so t
 
 - **Fresh sessions matter.** Do not "carry state" across iterations beyond `clean_count` and the diff scope. The orchestrator persists; each review pass must not.
 - **Fixes belong to the orchestrator, reviews belong to subagents.** Subagents that fix things they review make the independence claim weaker. Keep the split clean.
-- Same-session `dk <ticket>` Phase 3 uses this skill, with the Stop hook auditing the final `SUCCESS` report. For the legacy shell-managed fresh Claude-session loop, use the `dkreviewloop` shell function or run `DOYAKEN_FRESH_PHASES=1 dk <ticket>`.
+- Same-session `dk <ticket>` Phase 3 uses this skill, with the Stop hook auditing the final `SUCCESS` report.
 - Do NOT commit, push, or create PRs from this skill. Review and fix only.

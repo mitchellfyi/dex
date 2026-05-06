@@ -40,4 +40,8 @@ if [[ -f "$TIMES_FILE" ]]; then
   fi
 fi
 
-echo "Phase ${PHASE}/6${ITER}${ELAPSED}"
+if [[ "$PHASE" =~ ^[0-9]+$ ]] && [[ "$PHASE" -gt 6 ]]; then
+  echo "Lifecycle complete${ELAPSED}"
+else
+  echo "Phase ${PHASE}/6${ITER}${ELAPSED}"
+fi

@@ -14,14 +14,14 @@ Orchestrate the full ticket lifecycle from planning through completion.
 
 ## Lifecycle
 
-The `dk` wrapper runs each phase as a separate Claude Code session, auto-advancing between them. Each phase has an audit loop that critically reviews the work before allowing completion.
+The terminal `dk` lifecycle runs phases in the same Claude Code session. Each phase has an audit loop that critically reviews the work before allowing completion; when the phase passes, the Stop hook injects the next phase instructions directly into the current session.
 
 ### Phase 1: Plan
 
 1. Run `/dkplan` — gather context from the configured tracker (see doyaken.md § Integrations), draft implementation plan, create tasks.
 2. **[STOP]** Present the plan to the user. Wait for approval.
 3. If the user requests changes, revise and re-present.
-4. When running under the terminal `dk` wrapper, stop the current session immediately after approval so the wrapper can launch Phase 2 automatically. Do not tell the user to run `/dkimplement`.
+4. When running under the terminal `dk` lifecycle, stop once immediately after approval so the Stop hook can audit the plan and inject Phase 2 in the same session. Do not tell the user to run `/dkimplement`.
 5. When running `/doyaken` interactively without the wrapper, output `PHASE_1_COMPLETE` when the user approves.
 
 ### Phase 2: Implement
@@ -35,10 +35,10 @@ The `dk` wrapper runs each phase as a separate Claude Code session, auto-advanci
 
 ### Phase 3: Review
 
-1. The shell wrapper runs an adversarial review sub-loop — each iteration is a fresh Claude session.
-2. Run `/dkreview --single-pass`, perform 4-pass manual review (Logic, Structure, Security, Holistic), spawn the self-reviewer agent.
-3. Build merged findings inventory, fix all issues, write review result signal.
-4. The shell tracks consecutive CLEAN results — requires 3 clean passes to advance.
+1. Invoke `/dkreviewloop` to run the adversarial 3-clean-pass review loop.
+2. Each `/dkreviewloop` iteration runs `/dkreview --single-pass` in a fresh review subagent.
+3. Fix all findings, then rerun the loop until it reports `SUCCESS`.
+4. The loop requires 3 consecutive clean reports to advance.
 5. **SCOPE**: review and fix ONLY. Do NOT commit, push, or create PRs.
 6. Output `PHASE_3_COMPLETE` when review is clean.
 
@@ -68,7 +68,7 @@ The `dk` wrapper runs each phase as a separate Claude Code session, auto-advanci
 
 ## Resuming
 
-If the session is interrupted, `dk 999` or `dk --resume` picks up from the saved phase. Phase tracking is handled by the `dk` shell wrapper (see `dk.sh` `__dk_run_phases`), which persists the current phase number in `~/.claude/.doyaken-phases/<session_id>.phase`. The wrapper is responsible for advancing phases and re-launching Claude with the correct phase message and audit prompt.
+If the session is interrupted, `dk 999` or `dk --resume` picks up from the saved phase. Phase tracking is handled by the `dk` shell lifecycle (see `dk.sh` `__dk_run_phases`), which persists the current phase number in `~/.claude/.doyaken-phases/<session_id>.phase`. The Stop hook is responsible for advancing phases in-session by updating phase state and injecting the next phase message and audit prompt.
 
 As a fallback (e.g., when running `/doyaken` interactively without the wrapper), the agent can infer the correct phase by checking current state:
 
@@ -94,7 +94,7 @@ As a fallback (e.g., when running `/doyaken` interactively without the wrapper),
 | 1 | Plan ready | Present plan, wait for approval |
 | 2 | Ambiguous requirement | Present options, ask user to choose |
 | 2 | Scope change needed | Explain impact, ask approval |
-| 2-5 | Normal phase completion | Stop the session; the wrapper launches the next phase automatically |
+| 2-5 | Normal phase completion | Stop once; the Stop hook injects the next phase automatically |
 | 5 | Draft PR created | Stop; Phase 6 takes over automatically |
 | 6 | CI secrets scan failure | Cancel all loops, alert immediately |
 | 6 | 3 failed CI fix attempts | Cancel loops, escalate with details |
@@ -106,7 +106,7 @@ As a fallback (e.g., when running `/doyaken` interactively without the wrapper),
 When the session is started by `dk`, a Stop hook prevents premature exit and injects a phase-specific audit prompt. Activation is signaled via an `.active` file in `~/.claude/.doyaken-loops/` (and optionally the `DOYAKEN_LOOP_ACTIVE=1` env var as a belt-and-suspenders mechanism). Each phase has its own quality criteria — the loop continues until the audit is satisfied. This enables quality-gated autonomous execution:
 
 - If `/dkverify` fails → fix and retry automatically
-- If `/dkreview --single-pass` finds issues → fix and re-review automatically
+- If `/dkreviewloop` finds issues → fix and re-review automatically
 - If CI fails → fix and re-push automatically
 - If reviews have comments → address and re-push automatically
 

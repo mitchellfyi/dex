@@ -2,8 +2,7 @@
 > `EnterPlanMode` as its first action. Plan quality checks are built into the
 > /dkplan skill (Step 4: Plan Quality Checklist) and enforced before
 > ExitPlanMode is called. After the user approves the plan, this Stop hook audit
-> verifies the approved plan and provides the completion signal that returns
-> control to the shell wrapper.
+> verifies the approved plan and authorizes the same-session handoff to Phase 2.
 
 Before stopping, critically audit your plan:
 

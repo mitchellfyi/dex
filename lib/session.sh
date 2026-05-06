@@ -85,7 +85,7 @@ dk_debt_file() { echo "${DK_LOOP_DIR}/${1}.debt"; }
 # dk_loop_config_file <session_id> — loop configuration (phase:promise:audit_file_path)
 dk_loop_config_file() { echo "${DK_LOOP_DIR}/${1}.config"; }
 
-# dk_handoff_mode_file <session_id> — phase handoff mode ("inline" or "fresh")
+# dk_handoff_mode_file <session_id> — marker for same-session phase handoff
 dk_handoff_mode_file() { echo "${DK_LOOP_DIR}/${1}.handoff-mode"; }
 
 # dk_paused_file <session_id> — one-shot marker allowing an inline paused session to exit
@@ -103,6 +103,27 @@ dk_complete_state_file() { echo "${DK_LOOP_DIR}/${1}.complete-state"; }
 
 # dk_provider_state_file <session_id> — resolved provider engine for hook fallback
 dk_provider_state_file() { echo "${DK_LOOP_DIR}/${1}.provider"; }
+
+# dk_log_phase <session_id> <step> <phase_name> <start_epoch> <end_epoch> <duration_s> <iterations> <status> <exit_code>
+# Append a TSV row to the structured phase log. Creates the header on first write.
+dk_log_phase() {
+  local session_id="$1" step="$2" phase_name="$3"
+  local start_epoch="$4" end_epoch="$5" duration_s="$6"
+  local iterations="$7" phase_status="$8" exit_code="$9"
+  local log_file
+  log_file=$(dk_log_file "$session_id")
+
+  mkdir -p "$(dirname "$log_file")"
+  if [[ ! -f "$log_file" ]]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "session_id" "phase" "phase_name" "start_epoch" "end_epoch" \
+      "duration_s" "iterations" "status" "exit_code" > "$log_file"
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$session_id" "$step" "$phase_name" "$start_epoch" "$end_epoch" \
+    "$duration_s" "$iterations" "$phase_status" "$exit_code" >> "$log_file"
+}
 
 # dk_cleanup_session <session_id>
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
