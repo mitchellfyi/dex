@@ -229,7 +229,7 @@ DK_PHASE_PROMISES=(\
 DK_PHASE_MESSAGES=(\
   "Call EnterPlanMode now, then run /dkplan — gather context, explore the codebase, and create your implementation plan. When the plan is ready, use ExitPlanMode to present it for approval. After the user approves the plan, immediately stop this Phase 1 session so the dk wrapper can launch Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dkimplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. SCOPE BOUNDARIES: implementation and testing ONLY. Do NOT commit, push, create branches, or create PRs during this phase — those are handled by later phases. When done, stop — the audit loop will verify your work." \
-  "Run an adversarial code review of the implementation. Follow the review audit prompt exactly: run /dkreview, perform the 4-pass manual review (Logic, Structure, Security, Holistic), spawn the self-reviewer agent, build the merged findings inventory, and fix all issues. Write the review result signal file after building the inventory. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, or create PRs. When review is clean, stop — the audit loop will verify." \
+  "Run an adversarial code review of the implementation. Follow the review audit prompt exactly: run /dkreview --single-pass, perform the 4-pass manual review (Logic, Structure, Security, Holistic), spawn the self-reviewer agent, build the merged findings inventory, and fix all issues. Write the review result signal file after building the inventory. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, or create PRs. When review is clean, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dkcommit\" to commit and push. SCOPE BOUNDARIES: verify and commit ONLY. Do NOT create PRs or modify implementation beyond fixing verify failures. When pushed, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkpr\" to generate the PR description, create the draft PR, and attach the configured 'request' reviewers from doyaken.md § Reviewers. SCOPE BOUNDARIES: PR creation and description ONLY. Do NOT mark the PR ready for review (Phase 6 owns that), do NOT post @mention comments, do NOT modify implementation code. When done, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from doyaken.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 2m /dkwatchci and /loop 5m /dkwatchpr, wait DOYAKEN_COMPLETE_WAIT_MINUTES per cycle, address comments via /dkprreview, re-request reviewers after each push, and close the ticket when CI is green and all reviewers have approved. Stop — the audit loop will verify." \
@@ -1662,7 +1662,7 @@ $(__dk_provider_prompt)"
 #   3. Unpushed commits    → git diff @{u}...HEAD
 #   4. PR diff vs default  → git diff origin/<default>...HEAD
 #
-# Each iteration is a fresh Claude session that runs /dkreview, performs
+# Each iteration is a fresh Claude session that runs /dkreview --single-pass, performs
 # the manual review passes, spawns the self-reviewer agent, builds a
 # merged findings inventory, fixes everything, and writes a CLEAN /
 # FINDINGS:N review-result signal. The shell tracks consecutive CLEAN
@@ -1754,7 +1754,7 @@ dkreviewloop() {
   session_name="dkreviewloop-$(dk_slugify "$branch")"
 
   local message
-  message="Run an adversarial code review using /dkreview, scoped to **${scope_name}** on branch \`${branch}\`.
+  message="Run an adversarial code review using /dkreview --single-pass, scoped to **${scope_name}** on branch \`${branch}\`.
 
 IMPORTANT: When the audit prompt or /dkreview SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead:
 
@@ -1762,7 +1762,7 @@ IMPORTANT: When the audit prompt or /dkreview SKILL.md tells you to scope with \
 - Stat:        \`${stat_cmd}\`
 - File names:  \`${name_cmd}\`
 
-Follow the audit prompt: run /dkreview, perform the manual passes, spawn the self-reviewer agent, build the merged findings inventory, fix all issues, and write the review result signal file.
+Follow the audit prompt: run /dkreview --single-pass, perform the manual passes, spawn the self-reviewer agent, build the merged findings inventory, fix all issues, and write the review result signal file.
 
 If no approved plan / acceptance criteria are available for this scope, mark plan-dependent sections (acceptance criteria verification, evidence table) as N/A and proceed without them.
 

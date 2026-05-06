@@ -36,7 +36,7 @@ The `dk` wrapper runs each phase as a separate Claude Code session, auto-advanci
 ### Phase 3: Review
 
 1. The shell wrapper runs an adversarial review sub-loop — each iteration is a fresh Claude session.
-2. Run `/dkreview`, perform 4-pass manual review (Logic, Structure, Security, Holistic), spawn the self-reviewer agent.
+2. Run `/dkreview --single-pass`, perform 4-pass manual review (Logic, Structure, Security, Holistic), spawn the self-reviewer agent.
 3. Build merged findings inventory, fix all issues, write review result signal.
 4. The shell tracks consecutive CLEAN results — requires 3 clean passes to advance.
 5. **SCOPE**: review and fix ONLY. Do NOT commit, push, or create PRs.
@@ -106,7 +106,7 @@ As a fallback (e.g., when running `/doyaken` interactively without the wrapper),
 When the session is started by `dk`, a Stop hook prevents premature exit and injects a phase-specific audit prompt. Activation is signaled via an `.active` file in `~/.claude/.doyaken-loops/` (and optionally the `DOYAKEN_LOOP_ACTIVE=1` env var as a belt-and-suspenders mechanism). Each phase has its own quality criteria — the loop continues until the audit is satisfied. This enables quality-gated autonomous execution:
 
 - If `/dkverify` fails → fix and retry automatically
-- If `/dkreview` finds issues → fix and re-review automatically
+- If `/dkreview --single-pass` finds issues → fix and re-review automatically
 - If CI fails → fix and re-push automatically
 - If reviews have comments → address and re-push automatically
 

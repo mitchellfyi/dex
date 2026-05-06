@@ -45,10 +45,10 @@ Work on the user's prompt. Follow the same approach as any implementation task:
 Before signaling completion, critically review your work against the original prompt. The stop hook will guide you through a comprehensive audit when you try to stop, including:
 
 1. **Acceptance criteria extraction** — list all requirements from the prompt (explicit and implied)
-2. **/dkreview** — run /dkreview on your changes (code-change sessions only)
+2. **/dkreview --single-pass** — run /dkreview --single-pass on your changes (code-change sessions only)
 3. **Multi-perspective inventory** — 4-pass manual review (Logic & Correctness, Structure/Design/Documentation, Security, Holistic Consistency & Dependencies)
 4. **Self-reviewer agent** — spawn the `self-reviewer` agent for an independent adversarial review (code-change sessions only)
-5. **Merged inventory and batch fix** — combine all findings from /dkreview, manual passes, and the agent; fix in severity order
+5. **Merged inventory and batch fix** — combine all findings from /dkreview --single-pass, manual passes, and the agent; fix in severity order
 6. **/dkverify quality pipeline** — format, lint, typecheck, test (code-change sessions only)
 7. **Evidence table** — trace each requirement to specific `file:line` evidence in code and tests
 

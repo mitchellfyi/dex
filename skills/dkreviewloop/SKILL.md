@@ -5,7 +5,7 @@ description: "Run dkreview repeatedly in fresh independent sessions until three 
 
 # Skill: dkreviewloop
 
-Run `/dkreview` repeatedly in fresh, independent sessions until **3 clean reports in a row** (max 10 iterations). Lighter-weight standalone alternative to the full dk Phase 3 review.
+Run `/dkreview --single-pass` repeatedly in fresh, independent sessions until **3 clean reports in a row** (max 10 iterations). Lighter-weight standalone alternative to the full dk Phase 3 review.
 
 ## When to Use
 
@@ -39,7 +39,7 @@ For each iteration (up to **10**), spawn a fresh subagent via the **Agent tool**
 The subagent's prompt must include:
 
 - The diff command from Step 1 (so the subagent reviews the right scope, not the default `origin/<default>...HEAD`)
-- An instruction to invoke `/dkreview` via the Skill tool
+- An instruction to invoke `/dkreview --single-pass` via the Skill tool
 - A request to report back with: (a) the final result line — `CLEAN`, `PASS WITH WARNINGS`, or `NEEDS ATTENTION` — and (b) any remaining findings that the subagent did not auto-fix
 - A reminder that the subagent should NOT commit, push, or create PRs
 

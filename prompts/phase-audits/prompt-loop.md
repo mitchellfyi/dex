@@ -20,13 +20,13 @@ Verify your understanding against the guardrails:
 - Can you answer the five understanding-check questions from `prompts/guardrails.md`?
 - Have you identified the failure modes and resource cleanup needs?
 
-**Session classification:** Run `git diff --name-only` and `git status --porcelain`. If any production code files were created or modified (not just docs/config), this is a **code-change session**. Otherwise it is a **non-code session**. This classification determines whether /dkreview and the self-reviewer agent run in subsequent steps.
+**Session classification:** Run `git diff --name-only` and `git status --porcelain`. If any production code files were created or modified (not just docs/config), this is a **code-change session**. Otherwise it is a **non-code session**. This classification determines whether `/dkreview --single-pass` and the self-reviewer agent run in subsequent steps.
 
-## Step 2: Self-Review via /dkreview (code-change sessions only)
+## Step 2: Self-Review via /dkreview --single-pass (code-change sessions only)
 
 **Skip this step if this is a non-code session.**
 
-Run /dkreview on your changes (if you haven't already since your last code change).
+Run `/dkreview --single-pass` on your changes (if you haven't already since your last code change). This audit loop already owns repetition, so do not invoke `/dkreview` in its default looping mode here.
 
 Read the report carefully. Do NOT fix anything yet — record all findings for the inventory in Step 5.
 
@@ -34,7 +34,7 @@ Read the report carefully. Do NOT fix anything yet — record all findings for t
 
 **CRITICAL: Do NOT fix anything during this step. Only find and record.**
 
-Perform four manual review passes over ALL your changes, in addition to any /dkreview findings from Step 2. For each issue, record: `[INV-N] file:line | Pass | Severity | Description`
+Perform four manual review passes over ALL your changes, in addition to any `/dkreview --single-pass` findings from Step 2. For each issue, record: `[INV-N] file:line | Pass | Severity | Description`
 
 Reference `prompts/review.md` for the full criteria behind each pass.
 
@@ -103,7 +103,7 @@ Total: N findings (X high, Y medium, Z low)
 ```
 
 Source values: `dkreview`, `manual`, `agent`.
-If /dkreview did not run (non-code session), omit that source.
+If `/dkreview --single-pass` did not run (non-code session), omit that source.
 If the self-reviewer agent was not spawned (non-code session), omit that source.
 
 - If the inventory is **empty** → skip to Step 7.
@@ -125,7 +125,7 @@ Replace `<sorted list of INV-N descriptions>` with the actual finding descriptio
 
 1. Fix all inventory items in severity order (high → medium → low).
 2. After ALL fixes are applied:
-   - **Code-change sessions:** re-run /dkreview on the **full scope** (not just modified files).
+   - **Code-change sessions:** re-run `/dkreview --single-pass` on the **full scope** (not just modified files).
    - Re-run your manual passes (Step 3) on the **entire change set** — fixes can regress untouched files.
    - Re-spawn the self-reviewer agent to verify fixes against the FULL change set. **Maximum 3 total agent spawns** (including the initial spawn in Step 4).
 3. If new findings → add to inventory, fix, and re-verify. **Maximum 3 cycles.**
@@ -179,11 +179,11 @@ If updates are needed but missing, make them now.
 ALL of these must be true before you stop:
 - Every acceptance criterion from Step 1 has status MET in the evidence table (Step 8)
 - The findings inventory from your last re-verification (Step 6) is empty
-- **Code-change sessions:** /dkreview result is PASS (not PASS WITH WARNINGS or NEEDS ATTENTION), AND you have run /dkreview AFTER your most recent code change
+- **Code-change sessions:** `/dkreview --single-pass` result is PASS (not PASS WITH WARNINGS or NEEDS ATTENTION), AND you have run `/dkreview --single-pass` AFTER your most recent code change
 - **Code-change sessions:** /dkverify passes — format, lint, typecheck, tests all green (Step 7)
 - Any needed `.doyaken/` updates are applied (Step 9)
 - You have re-verified AFTER your most recent change of any kind
 
-Do NOT stop if any acceptance criterion is NOT MET, any findings remain, /dkreview is not PASS (for code changes), or /dkverify has failures (for code changes). Fix first, then re-audit from Step 3.
+Do NOT stop if any acceptance criterion is NOT MET, any findings remain, `/dkreview --single-pass` is not PASS (for code changes), or /dkverify has failures (for code changes). Fix first, then re-audit from Step 3.
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions after sufficient consecutive clean audit passes.

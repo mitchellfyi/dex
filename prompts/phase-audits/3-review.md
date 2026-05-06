@@ -19,9 +19,9 @@ Read in this order — stop when you have enough:
 
 Every finding the review produces MUST cite which Phase 0 artefact backs it (e.g., "AGENTS.md:47 says hooks must use `set -euo pipefail`; this hook does not"). Findings without a Phase 0 anchor are filtered.
 
-## Step 1: Self-Review via /dkreview (find only — no fixes yet)
+## Step 1: Self-Review via /dkreview --single-pass (find only — no fixes yet)
 
-Run /dkreview on the changes since the base branch (use `git diff --name-only` to scope).
+Run `/dkreview --single-pass` on the changes since the base branch (use `git diff --name-only` to scope). This phase is already managed by the shell review loop, so do not invoke `/dkreview` in its default looping mode.
 
 Read the report carefully. Do NOT fix anything yet — record all findings for the inventory in Step 4.
 
@@ -29,7 +29,7 @@ Read the report carefully. Do NOT fix anything yet — record all findings for t
 
 **CRITICAL: Do NOT fix anything during this step. Only find and record.**
 
-Perform six manual review passes in addition to the /dkreview findings. For each issue, record: `[INV-N] file:line | Pass | Severity | Description`
+Perform six manual review passes in addition to the `/dkreview --single-pass` findings. For each issue, record: `[INV-N] file:line | Pass | Severity | Description`
 
 Reference `prompts/review.md` for the full criteria behind each pass.
 
@@ -195,7 +195,7 @@ Replace `<total findings>` with the actual count from your inventory.
 
 1. Fix all inventory items in severity order (high → medium → low).
 2. After ALL fixes are applied:
-   - Re-run /dkreview on the **full scope** (not just modified files).
+   - Re-run `/dkreview --single-pass` on the **full scope** (not just modified files).
    - Re-run your manual passes (Step 2) on the **entire change set** — fixes can regress untouched files.
    - Re-spawn the self-reviewer agent to verify fixes against the FULL change set. **Maximum 3 total agent spawns** (including the initial spawn in Step 3).
 3. If new findings → add to inventory, fix, and re-verify. Maximum 3 cycles.
@@ -234,11 +234,11 @@ For each acceptance criterion, fill in the evidence table:
 ## Completion Criteria
 
 ALL of these must be true before you stop:
-- /dkreview result is PASS — OR result is PASS WITH WARNINGS and all remaining warnings are tracked as DEBT in the debt ledger
+- `/dkreview --single-pass` result is PASS — OR result is PASS WITH WARNINGS and all remaining warnings are tracked as DEBT in the debt ledger
 - The findings inventory from your last re-verification (Step 5) is empty — OR all remaining findings are LOW/MEDIUM severity and tracked as DEBT
 - Every acceptance criterion has status MET in the evidence table (Step 6) — OR criteria with status RELAXED have a corresponding DEBT entry
 - The review result signal file contains "CLEAN" (written in Step 4)
-- You have run /dkreview AFTER your most recent code change
+- You have run `/dkreview --single-pass` AFTER your most recent code change
 
 If any findings are tracked as debt, output a debt summary:
 

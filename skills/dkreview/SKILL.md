@@ -12,6 +12,23 @@ Agentic implementation review that combines deterministic tooling with semantic 
 - After completing implementation, before running `/dkverify`
 - When you want to catch issues in your own code before pushing
 
+## Dispatch Mode
+
+`/dkreview` is the user-facing review command. When invoked directly by a user
+without `--single-pass` or `--no-loop`, immediately invoke the Skill tool with
+skill: `dkreviewloop`, then stop. This gives users the 3-clean-pass review loop
+without requiring them to remember a separate command.
+
+Run the single-pass review instructions below only when one of these is true:
+
+- The invocation includes `--single-pass` or `--no-loop`
+- The caller explicitly says this review is being run from `/dkreviewloop`
+- The caller explicitly says this review is being run by Doyaken Phase 3's
+  shell-managed review loop
+
+If you are unsure whether this is a direct user invocation or an internal loop
+iteration, prefer the loop and invoke `dkreviewloop`.
+
 ## Overview
 
 Four phases, executed sequentially. Phase 0 (Codebase Context) is a sub-step of Phase 0 — it runs FIRST so all subsequent passes have the context they need.

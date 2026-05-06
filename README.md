@@ -131,7 +131,7 @@ dk 999
 |-------|--------|-------------|-------------|
 | 1. Plan | `/dkplan` | Reads ticket, explores code, presents 2-3 approaches, drafts plan | Approve plan |
 | 2. Implement | `/dkimplement` | TDD per task, evidence table, completeness check | Only for scope/requirement changes |
-| 3. Review | `/dkreview` + self-reviewer | Adversarial 4-pass review, 3 consecutive clean passes required | — |
+| 3. Review | `/dkreview --single-pass` + self-reviewer | Adversarial 4-pass review, 3 consecutive clean passes required | — |
 | 4. Verify & Commit | `/dkverify` + `/dkcommit` | Quality gates, atomic conventional commits, push | — |
 | 5. PR | `/dkpr` | PR description, create draft PR, attach `request`-type reviewers | — |
 | 6. Complete | `/dkcomplete` + `/dkwatchci` + `/dkwatchpr` | Mark ready, request reviews, post `@mention` comments, monitor, address comments, close ticket | Review/approve when configured; respond only to escalations |
@@ -165,7 +165,7 @@ Shell starts review sub-loop (clean_passes=0)
   │
   ▼
 Launch fresh Claude session with Stop hook (MIN_AUDITS=1)
-  ├─ Claude runs /dkreview + 4-pass manual review + self-reviewer agent
+  ├─ Claude runs /dkreview --single-pass + 4-pass manual review + self-reviewer agent
   ├─ Builds merged findings inventory, fixes issues
   ├─ Writes review result signal: "CLEAN" or "FINDINGS:N"
   └─ Stop hook verifies, allows completion
@@ -177,7 +177,7 @@ Shell reads review result
 ```
 
 Each review iteration runs:
-1. `/dkreview` — deterministic + 10-pass semantic review
+1. `/dkreview --single-pass` — deterministic + 10-pass semantic review
 2. Manual 4-pass review (Logic, Structure, Security, Holistic)
 3. `self-reviewer` agent — independent adversarial review
 4. Merged findings inventory → batch fix → re-verify
@@ -266,6 +266,7 @@ dkcomplete           # Run Phase 6 manually on the current branch's PR
 # Standalone review (3-clean-passes loop, no full lifecycle)
 dkreviewloop         # Shell function — spawns full Claude CLI sessions per pass (terminal)
 /dkreviewloop        # Skill — orchestrates fresh Agent-tool subagents per pass (in-session)
+/dkreview            # User-facing alias that dispatches to /dkreviewloop by default
 
 # Prompt loop (no worktree or ticket needed)
 dkloop <prompt>     # Run a prompt until fully implemented (from terminal)

@@ -107,11 +107,11 @@ Every criterion must have status MET with specific file:line evidence. Any NOT F
 
 If the final agent result is PASS and the evidence table has zero NOT FOUND entries: implementation is complete. When run via the `dk` wrapper, the next phase (Verify & Commit) follows automatically after you signal completion.
 
-### 5. Chain to /dkreview
+### 5. Chain to /dkreview --single-pass
 
-After the self-review loop passes (Step 4 produces PASS with zero NOT FOUND entries), invoke `/dkreview` using the Skill tool as a final independent gate. The phase audit loop checks that `/dkreview` was run after the last code change.
+After the self-review loop passes (Step 4 produces PASS with zero NOT FOUND entries), invoke `/dkreview --single-pass` using the Skill tool as a final independent gate. Phase 2 is followed by the dedicated Phase 3 review loop, so do not invoke `/dkreview` in its default looping mode here. The phase audit loop checks that `/dkreview --single-pass` was run after the last code change.
 
-If `/dkreview` returns NEEDS ATTENTION, fix the findings and re-invoke `/dkreview`. Maximum 3 review cycles.
+If `/dkreview --single-pass` returns NEEDS ATTENTION, fix the findings and re-invoke `/dkreview --single-pass`. Maximum 3 review cycles.
 
 ## Scope Boundaries
 
@@ -124,7 +124,7 @@ During implementation (Phase 2), you MUST NOT:
 You SHOULD:
 - Implement all planned tasks with TDD
 - Run quality checks on changed files after each task (format, lint, typecheck)
-- Run the self-review loop (Step 4) and chain to `/dkreview` (Step 5)
+- Run the self-review loop (Step 4) and chain to `/dkreview --single-pass` (Step 5)
 - Update `.doyaken/` project docs if your changes require it
 
 ## Notes
