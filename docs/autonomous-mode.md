@@ -214,7 +214,9 @@ Loop state is stored in `~/.claude/.doyaken-loops/`:
 - `.handoff-mode` — marker that this `dk` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dkplan`; the Stop hook does not count plan audit iterations until the approval marker exists
+- `.phase-2.ready` — Phase 2 marker written by `dkimplement` only after every acceptance criterion and verification gate is complete; the Stop hook ignores `PHASE_2_COMPLETE` without it
 - `.phase-3.busy` — Phase 3 marker written by `dkreviewloop` while a review subagent is running; the Stop hook does not count audit iterations while waiting
+- `.phase-3.busy-notice` — timestamp used to throttle repeated Phase 3 busy-gate notices while the same review pass is still running
 - The session ID is derived from the worktree directory name (stable across branch renames)
 - Loop files are cleaned up on completion, by `dkrm`, and by `dkclean`
 - Old files (7+ days) are pruned by `dkclean`
@@ -241,7 +243,9 @@ UI artifacts are stored separately in `~/.claude/.doyaken-artifacts/` so screens
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
 | `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive clean review iterations required to advance Phase 3 |
 | `DOYAKEN_REVIEW_MAX_ITERATIONS` | `10` | Max review iterations before Phase 3 pauses for intervention |
-| `DOYAKEN_REVIEW_PASS_TIMEOUT` | `2700` | Seconds a Phase 3 review subagent may stay in progress before the lifecycle pauses |
+| `DOYAKEN_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a Phase 3 review subagent may stay in progress before the lifecycle pauses |
+| `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
+| `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | `45` (0m 45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
 | `DOYAKEN_COMPLETE_MAX_CYCLES` | `3` | Max idle cycles before Phase 6 escalates |
 | `DOYAKEN_COMPLETE_WAIT_MINUTES` | `30` | Minimum wait window per Phase 6 cycle (minutes) |
 | `DK_ARTIFACT_DIR` | `~/.claude/.doyaken-artifacts` | Screenshots, videos, traces, and logs produced by Doyaken |

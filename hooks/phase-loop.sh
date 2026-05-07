@@ -91,6 +91,18 @@ dk_phase_iteration_count() {
   fi
 }
 
+dk_format_duration() {
+  local seconds="$1" minutes remainder
+  if [[ ! "$seconds" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$seconds"
+    return 0
+  fi
+
+  minutes=$((seconds / 60))
+  remainder=$((seconds % 60))
+  printf '%dm %ds\n' "$minutes" "$remainder"
+}
+
 dk_phase_start_epoch() {
   local phase="$1" times_file
   times_file=$(dk_times_file "$SESSION_ID")
@@ -172,6 +184,36 @@ EOF
   esac
 }
 
+dk_compact_repeat_audit_prompt() {
+  local phase="$1" audit_file="${2:-}"
+
+  case "$phase" in
+    2)
+      printf '%s\n' "The full Phase 2 implementation audit was already shown for this phase."
+      if [[ -n "$audit_file" ]]; then
+        printf 'Full audit prompt: %s\n' "$audit_file"
+      fi
+      printf '%s\n' ""
+      printf '%s\n' "Before completing Phase 2, all of these must be true:"
+      printf '%s\n' "- Every task from the approved plan is implemented."
+      printf '%s\n' "- Every acceptance criterion and verification gate has status MET with specific implementation and test locations."
+      printf '%s\n' "- No evidence-table status is DEFERRED, SKIPPED, NOT MET, NOT FOUND, BLOCKED, N/A, or equivalent unless the user explicitly approved a plan change."
+      printf '%s\n' "- The final verification commands have passed."
+      printf '%s\n' "- Port conflicts or unavailable local services have been resolved or worked around locally; future CI is not a substitute for required Phase 2 verification."
+      printf '%s\n' "- No TODO/FIXME/HACK, debug output, commented-out code blocks, missing imports, or obvious runtime errors remain."
+      printf '%s\n' "- No Phase 2 background agents or long-running verification commands are still in flight."
+      printf '%s\n' "- Any needed .doyaken/ updates are made."
+      printf '%s\n' "- UI capture evidence is linked for UI-affecting changes, or UI capture is explicitly marked N/A."
+      printf '%s\n' "- The Phase 2 ready marker has been written."
+      printf '%s\n' ""
+      printf '%s\n' "If any item is not true, continue implementing or verifying instead of signalling completion."
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # Check activation: env var OR .active file (for in-session /dkloop skill)
 ACTIVE_FILE=$(dk_active_file "$SESSION_ID")
 LOOP_ACTIVE="${DOYAKEN_LOOP_ACTIVE:-0}"
@@ -201,6 +243,7 @@ fi
 # correct phase values from .config.
 MIN_AUDIT_ITERATIONS="${DOYAKEN_LOOP_MIN_AUDITS:-1}"
 CONFIG_FILE=$(dk_loop_config_file "$SESSION_ID")
+CONFIG_AUDIT_FILE=""
 if [[ -f "$CONFIG_FILE" ]]; then
   CONFIG_RAW=$(cat "$CONFIG_FILE" 2>/dev/null || echo "")
   if [[ -n "$CONFIG_RAW" ]]; then
@@ -271,6 +314,7 @@ fi
 if [[ "$HANDOFF_MODE" == "inline" && "${DOYAKEN_LOOP_PHASE:-}" == "3" ]]; then
   PHASE_BUSY_FILE=$(dk_phase_busy_file "$SESSION_ID" 3)
   if [[ -f "$PHASE_BUSY_FILE" && ! -f "$COMPLETE_FILE" ]]; then
+    PHASE_BUSY_NOTICE_FILE=$(dk_phase_busy_notice_file "$SESSION_ID" 3)
     BUSY_RAW=$(cat "$PHASE_BUSY_FILE" 2>/dev/null || echo "")
     BUSY_EPOCH="$BUSY_RAW"
     BUSY_LABEL=""
@@ -280,26 +324,85 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DOYAKEN_LOOP_PHASE:-}" == "3" ]]; then
     fi
     [[ "$BUSY_EPOCH" =~ ^[0-9]+$ ]] || BUSY_EPOCH=$(date +%s)
     BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))
-    BUSY_TIMEOUT="${DOYAKEN_REVIEW_PASS_TIMEOUT:-2700}"
+    BUSY_TIMEOUT="${DOYAKEN_REVIEW_PASS_TIMEOUT:-900}"
 
     if [[ "$BUSY_TIMEOUT" =~ ^[0-9]+$ && "$BUSY_TIMEOUT" -gt 0 && "$BUSY_AGE" -gt "$BUSY_TIMEOUT" ]]; then
-      rm -f "$ACTIVE_FILE" "$CONFIG_FILE" "$PHASE_BUSY_FILE"
+      rm -f "$ACTIVE_FILE" "$CONFIG_FILE" "$PHASE_BUSY_FILE" "$PHASE_BUSY_NOTICE_FILE"
       dk_record_phase_result "3" "review-pass-timeout" "89"
       touch "$PAUSED_FILE"
-      printf '\n%s\n\n' "--- Doyaken phase paused: review pass timeout reached (${BUSY_AGE}s/${BUSY_TIMEOUT}s) ---" >&2
+      printf '\n%s\n\n' "--- Doyaken phase paused: review pass timeout reached ($(dk_format_duration "$BUSY_AGE")/$(dk_format_duration "$BUSY_TIMEOUT")) ---" >&2
       printf '%s\n' "Do not advance to the next phase. Summarize the in-flight review pass, current clean-pass count, and whether the user wants to retry, reduce review depth, or continue with documented risk." >&2
       exit 2
     fi
 
     rm -f "$STATE_FILE"
-    printf '\n%s\n\n' "--- Doyaken Phase 3 Gate: review pass in progress ---" >&2
-    printf '%s\n' "No audit iteration was counted and no completion signal is available while dkreviewloop is waiting on a review pass." >&2
-    if [[ -n "$BUSY_LABEL" && "$BUSY_LABEL" != "$BUSY_RAW" ]]; then
-      printf '%s\n' "" >&2
-      printf 'Current review work: %s\n' "$BUSY_LABEL" >&2
+
+    BUSY_NOTICE_INTERVAL="${DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL:-120}"
+    [[ "$BUSY_NOTICE_INTERVAL" =~ ^[0-9]+$ ]] || BUSY_NOTICE_INTERVAL=120
+    SHOULD_PRINT_BUSY_NOTICE=1
+
+    if [[ "$BUSY_NOTICE_INTERVAL" -gt 0 && -f "$PHASE_BUSY_NOTICE_FILE" ]]; then
+      BUSY_NOTICE_RAW=$(cat "$PHASE_BUSY_NOTICE_FILE" 2>/dev/null || echo "")
+      BUSY_NOTICE_EPOCH="$BUSY_NOTICE_RAW"
+      BUSY_NOTICE_LABEL=""
+      if [[ "$BUSY_NOTICE_RAW" == *$'\t'* ]]; then
+        BUSY_NOTICE_EPOCH="${BUSY_NOTICE_RAW%%$'\t'*}"
+        BUSY_NOTICE_LABEL="${BUSY_NOTICE_RAW#*$'\t'}"
+      fi
+      if [[ "$BUSY_NOTICE_EPOCH" =~ ^[0-9]+$ && "$BUSY_NOTICE_LABEL" == "$BUSY_LABEL" ]]; then
+        BUSY_NOTICE_AGE=$(( $(date +%s) - BUSY_NOTICE_EPOCH ))
+        if [[ "$BUSY_NOTICE_AGE" -lt "$BUSY_NOTICE_INTERVAL" ]]; then
+          SHOULD_PRINT_BUSY_NOTICE=0
+        fi
+      fi
     fi
-    printf '%s\n' "" >&2
-    printf '%s\n' "Continue waiting for the current review pass. Do not commit, push, create a PR, or start later lifecycle phases from Phase 3." >&2
+
+    if [[ $SHOULD_PRINT_BUSY_NOTICE -eq 0 ]]; then
+      BUSY_RECHECK_SECONDS="${DOYAKEN_REVIEW_PASS_RECHECK_SECONDS:-45}"
+      [[ "$BUSY_RECHECK_SECONDS" =~ ^[0-9]+$ ]] || BUSY_RECHECK_SECONDS=45
+      if [[ "$BUSY_RECHECK_SECONDS" -gt 0 ]]; then
+        BUSY_POLL_DEADLINE=$(( $(date +%s) + BUSY_RECHECK_SECONDS ))
+        while [[ -f "$PHASE_BUSY_FILE" ]]; do
+          BUSY_POLL_NOW=$(date +%s)
+          [[ "$BUSY_POLL_NOW" -lt "$BUSY_POLL_DEADLINE" ]] || break
+          BUSY_SLEEP_SECONDS=$((BUSY_POLL_DEADLINE - BUSY_POLL_NOW))
+          [[ "$BUSY_SLEEP_SECONDS" -le 2 ]] || BUSY_SLEEP_SECONDS=2
+          [[ "$BUSY_SLEEP_SECONDS" -gt 0 ]] || break
+          sleep "$BUSY_SLEEP_SECONDS"
+        done
+      fi
+
+      if [[ ! -f "$PHASE_BUSY_FILE" ]]; then
+        rm -f "$PHASE_BUSY_NOTICE_FILE"
+        printf '\n%s\n\n' "--- Doyaken Phase 3 Gate: review pass finished ---" >&2
+        printf '%s\n' "The busy marker cleared while the Stop hook was waiting. Continue dkreviewloop with the returned review result before stopping again." >&2
+        exit 2
+      fi
+
+      BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))
+      if [[ -n "$BUSY_LABEL" && "$BUSY_LABEL" != "$BUSY_RAW" ]]; then
+        printf '\n--- Doyaken Phase 3 Gate: still waiting on %s (%s/%s timeout) ---\n\n' "$BUSY_LABEL" "$(dk_format_duration "$BUSY_AGE")" "$(dk_format_duration "$BUSY_TIMEOUT")" >&2
+      else
+        printf '\n--- Doyaken Phase 3 Gate: review pass still running (%s/%s timeout) ---\n\n' "$(dk_format_duration "$BUSY_AGE")" "$(dk_format_duration "$BUSY_TIMEOUT")" >&2
+      fi
+    fi
+
+    if [[ $SHOULD_PRINT_BUSY_NOTICE -eq 1 ]]; then
+      BUSY_NOTICE_TMP="${PHASE_BUSY_NOTICE_FILE}.tmp.$$"
+      if ! printf '%s\t%s\n' "$(date +%s)" "$BUSY_LABEL" > "$BUSY_NOTICE_TMP" || ! command mv -f "$BUSY_NOTICE_TMP" "$PHASE_BUSY_NOTICE_FILE"; then
+        command rm -f "$BUSY_NOTICE_TMP" 2>/dev/null
+      fi
+
+      printf '\n%s\n\n' "--- Doyaken Phase 3 Gate: review pass in progress ---" >&2
+      printf '%s\n' "No audit iteration was counted and no completion signal is available while dkreviewloop is waiting on a review pass." >&2
+      if [[ -n "$BUSY_LABEL" && "$BUSY_LABEL" != "$BUSY_RAW" ]]; then
+        printf '%s\n' "" >&2
+        printf 'Current review work: %s\n' "$BUSY_LABEL" >&2
+      fi
+      printf '%s\n' "" >&2
+      printf 'This wait-state notice is throttled to once every %s unless the review pass changes or times out.\n' "$(dk_format_duration "$BUSY_NOTICE_INTERVAL")" >&2
+      printf 'Continue waiting for the current review pass. If this exceeds %s, Doyaken will pause Phase 3 for intervention. Do not commit, push, create a PR, or start later lifecycle phases from Phase 3.\n' "$(dk_format_duration "$BUSY_TIMEOUT")" >&2
+    fi
     exit 2
   fi
 fi
@@ -312,10 +415,31 @@ fi
 if [[ -f "$COMPLETE_FILE" ]]; then
   CURRENT_PHASE="${DOYAKEN_LOOP_PHASE:-0}"
 
+  if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "2" ]]; then
+    PHASE_READY_FILE=$(dk_phase_ready_file "$SESSION_ID" 2)
+    if [[ ! -f "$PHASE_READY_FILE" ]]; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Doyaken Phase 2 Gate: implementation readiness marker missing ---" >&2
+      printf '%s\n' "Completion signal ignored; Phase 2 did not advance." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Before writing the Phase 2 ready marker, confirm every approved task and acceptance criterion is exactly MET, with no DEFERRED/SKIPPED/N/A entries unless the user explicitly approved a plan change." >&2
+      printf '%s\n' "All required verification, flake gates, and UI capture evidence must be complete locally. Do not rely on future CI as a substitute for a required Phase 2 check." >&2
+      printf '%s\n' "No Phase 2 background agents or long-running verification commands may still be in flight." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "If all of that is true, write the ready marker, then stop again for the completion signal:" >&2
+      printf '%s\n' '```bash' >&2
+      printf '%s\n' "source \"\${DOYAKEN_DIR:-\$HOME/work/doyaken}/lib/common.sh\"" >&2
+      printf '%s\n' "touch \"\$(dk_phase_ready_file \"\${DOYAKEN_SESSION_ID:-\$(dk_session_id)}\" 2)\"" >&2
+      printf '%s\n' '```' >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
+  fi
+
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" =~ ^[0-9]+$ && "$CURRENT_PHASE" -lt 6 ]]; then
     NEXT_PHASE=$((CURRENT_PHASE + 1))
     dk_record_phase_result "$CURRENT_PHASE" "advance" "0"
-    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")"
+    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
 
     PHASE_STATE_FILE=$(dk_state_file "$SESSION_ID")
     printf '%s\n' "$NEXT_PHASE" > "$PHASE_STATE_FILE"
@@ -344,7 +468,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
 
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "6" ]]; then
     dk_record_phase_result "$CURRENT_PHASE" "advance" "0"
-    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_prompt_file "$SESSION_ID")" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")"
+    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_prompt_file "$SESSION_ID")" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
     printf '%s\n' "7" > "$(dk_state_file "$SESSION_ID")"
     rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
     {
@@ -354,7 +478,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     exit 2
   fi
 
-  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")"
+  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
   rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
   printf '%s\n' '{"continue":false,"stopReason":"Doyaken loop complete."}'
   exit 0
@@ -457,6 +581,7 @@ fi
 #      (used by in-session activations like /dkloop where the env var isn't set)
 #   3. Generic fallback — hardcoded prompt below, used when neither source is available
 AUDIT_PROMPT="${DOYAKEN_LOOP_PROMPT:-}"
+AUDIT_SOURCE_FILE="${CONFIG_AUDIT_FILE:-}"
 
 if [[ -z "$AUDIT_PROMPT" ]]; then
   LOOP_PHASE="${DOYAKEN_LOOP_PHASE:-}"
@@ -473,8 +598,13 @@ if [[ -z "$AUDIT_PROMPT" ]]; then
   esac
   AUDIT_FILE="$DOYAKEN_DIR/prompts/phase-audits/${AUDIT_FILENAME}.md"
   if [[ -n "$AUDIT_FILENAME" ]] && [[ -f "$AUDIT_FILE" ]]; then
+    AUDIT_SOURCE_FILE="$AUDIT_FILE"
     AUDIT_PROMPT=$(cat "$AUDIT_FILE")
   fi
+fi
+
+if [[ -z "$AUDIT_SOURCE_FILE" ]]; then
+  AUDIT_SOURCE_FILE=$(dk_phase_audit_file "${DOYAKEN_LOOP_PHASE:-}" 2>/dev/null || true)
 fi
 
 if [[ -z "$AUDIT_PROMPT" ]]; then
@@ -512,7 +642,7 @@ fi
 if [[ $IS_STALLED -eq 1 ]] && [[ $STALL_COUNT -ge $STALL_ESCALATE_AFTER ]]; then
   printf '%s\n' "## STUCK LOOP DETECTED (stalled $STALL_COUNT times)" >&2
   printf '%s\n' "" >&2
-  printf '%s\n' "You appear to be stuck in a loop. The last $STALL_COUNT iterations each took longer than ${STALL_TIMEOUT}s without making progress." >&2
+  printf '%s\n' "You appear to be stuck in a loop. The last $STALL_COUNT iterations each took longer than $(dk_format_duration "$STALL_TIMEOUT") without making progress." >&2
   printf '%s\n' "" >&2
   printf '%s\n' "MANDATORY: Read prompts/failure-recovery.md and run the failure analysis." >&2
   printf '%s\n' "You MUST choose a different recovery strategy. Do NOT retry the same approach." >&2
@@ -533,7 +663,11 @@ if [[ $SEMANTIC_STUCK -eq 1 ]]; then
   printf '%s\n' "" >&2
 fi
 
-printf '%s\n' "$AUDIT_PROMPT" >&2
+if [[ $ITERATION -gt 1 ]] && dk_compact_repeat_audit_prompt "${DOYAKEN_LOOP_PHASE:-}" "$AUDIT_SOURCE_FILE" >&2; then
+  :
+else
+  printf '%s\n' "$AUDIT_PROMPT" >&2
+fi
 echo "" >&2
 
 # Completion gate — only provide completion instructions after enough audit iterations.

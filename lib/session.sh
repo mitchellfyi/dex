@@ -116,6 +116,9 @@ dk_phase_ready_file() { echo "${DK_LOOP_DIR}/${1}.phase-${2}.ready"; }
 # dk_phase_busy_file <session_id> <phase> — marker that async phase work is still running
 dk_phase_busy_file() { echo "${DK_LOOP_DIR}/${1}.phase-${2}.busy"; }
 
+# dk_phase_busy_notice_file <session_id> <phase> — last busy-gate notice timestamp
+dk_phase_busy_notice_file() { echo "${DK_LOOP_DIR}/${1}.phase-${2}.busy-notice"; }
+
 # dk_log_phase <session_id> <step> <phase_name> <start_epoch> <end_epoch> <duration_s> <iterations> <status> <exit_code>
 # Append a TSV row to the structured phase log. Creates the header on first write.
 dk_log_phase() {
@@ -160,6 +163,6 @@ dk_record_session_branch() {
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
 dk_cleanup_session() {
   local sid="$1"
-  [[ -d "$DK_LOOP_DIR" ]]  && rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" "${DK_LOOP_DIR}/${sid}".phase-*.started "${DK_LOOP_DIR}/${sid}".phase-*.ready "${DK_LOOP_DIR}/${sid}".phase-*.busy 2>/dev/null
+  [[ -d "$DK_LOOP_DIR" ]]  && rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" "${DK_LOOP_DIR}/${sid}".phase-*.started "${DK_LOOP_DIR}/${sid}".phase-*.ready "${DK_LOOP_DIR}/${sid}".phase-*.busy "${DK_LOOP_DIR}/${sid}".phase-*.busy-notice 2>/dev/null
   [[ -d "$DK_STATE_DIR" ]] && rm -f "$(dk_state_file "$sid")" "$(dk_times_file "$sid")" "$(dk_context_file "$sid")" "$(dk_log_file "$sid")" "$(dk_branch_file "$sid")" 2>/dev/null
 }

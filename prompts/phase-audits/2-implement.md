@@ -41,7 +41,10 @@ For each acceptance criterion from the plan, fill in the evidence table:
 - Implementation evidence must be a specific `file:line` in production code.
 - Test evidence must be a specific test name or `test-file:line`.
 - Prose claims ("I verified this") are NOT evidence. Cite specific locations.
-- Any NOT MET entry blocks completion — go back and implement/test it.
+- Every acceptance criterion and verification gate must be exactly `MET`.
+- Any `NOT MET`, `NOT FOUND`, `DEFERRED`, `SKIPPED`, `BLOCKED`, `N/A`, "CI will cover it", "port busy", "tool unavailable", or equivalent entry blocks completion unless the user explicitly approved a plan change.
+- If a local port is busy or a service is unavailable, resolve it locally (for example, use another port or start the missing service) and rerun the required verification. Do not substitute future CI for a required Phase 2 check.
+- Use a plain GitHub Markdown table or short bullets. Do not use Unicode box-drawing tables; they wrap poorly in Claude Code transcripts.
 
 ## Step 4: `.doyaken/` Freshness
 
@@ -96,8 +99,17 @@ ALL of these must be true before you stop:
 - Every task from the approved plan is implemented
 - Every acceptance criterion has status MET in the evidence table (Step 3)
 - All tests pass (run the test suite one final time to confirm)
+- No acceptance criterion or verification gate is deferred, skipped, blocked, or delegated to future CI
 - No TODO/FIXME/debugging artifacts remain
+- No background agents or long-running verification commands started during Phase 2 are still in flight
 - Any needed `.doyaken/` updates are staged
 - UI capture evidence is linked for UI-affecting changes, or UI capture is explicitly N/A
+
+Before writing the completion signal in a terminal `dk` lifecycle, write the Phase 2 ready marker. Do this only after every completion criterion above is true:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+touch "$(dk_phase_ready_file "${DOYAKEN_SESSION_ID:-$(dk_session_id)}" 2)"
+```
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions. The next phase (Review) will perform deep adversarial code review.

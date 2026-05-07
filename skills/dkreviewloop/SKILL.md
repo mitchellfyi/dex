@@ -36,6 +36,8 @@ Print the chosen scope (name + diff command + file count) before spawning the fi
 
 For each iteration (up to **10**), spawn a fresh subagent via the **Agent tool** with `subagent_type: "general-purpose"`. Each Agent invocation is a fresh context window — that is the independence the user wants.
 
+Run one review pass at a time and wait for its result before attempting to stop. Do not use the Stop hook as a polling loop for backgrounded review agents. If the interface backgrounds the Agent invocation, use the available agent-management UI/tooling to wait for that specific agent result; do not repeatedly output "waiting" and stop. The Phase 3 busy marker below is only a safety gate to prevent accidental phase advancement while a pass is still running.
+
 When running inside a `dk` lifecycle (`DOYAKEN_SESSION_ID` is present), mark the
 review pass as in progress before spawning/waiting on each subagent, then remove
 the marker immediately after that subagent returns:
@@ -46,7 +48,7 @@ SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
 BUSY_FILE="$(dk_phase_busy_file "$SESSION_ID" 3)"
 printf '%s\t%s\n' "$(date +%s)" "dkreviewloop pass ${ITERATION}/${MAX_ITERATIONS}; clean ${CLEAN_COUNT}/${REQUIRED_CLEAN}" > "$BUSY_FILE"
 # spawn and wait for exactly one fresh review subagent
-rm -f "$BUSY_FILE"
+rm -f "$BUSY_FILE" "$(dk_phase_busy_notice_file "$SESSION_ID" 3)"
 ```
 
 The Stop hook uses this marker to avoid counting audit iterations while a review

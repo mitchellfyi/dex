@@ -105,6 +105,12 @@ Before declaring PASS, produce an acceptance criteria evidence table:
 
 Every criterion must have status MET with specific file:line evidence. Any NOT FOUND blocks completion.
 
+Use a plain GitHub Markdown table or short bullets. Do not use Unicode box-drawing tables; they wrap poorly in Claude Code transcripts.
+
+Completion is blocked unless every acceptance criterion and verification gate is exactly `MET`. Treat `NOT MET`, `NOT FOUND`, `DEFERRED`, `SKIPPED`, `BLOCKED`, `N/A`, "CI will cover it", "port busy", "tool unavailable", or equivalent as a blocker unless the user explicitly approved a plan change. If a local port is busy, use another port or stop the conflicting process and rerun the required check; do not defer required Phase 2 verification to future CI.
+
+Before declaring PASS, confirm that no self-reviewer, implementation helper, UI capture, test runner, dev server, or other Phase 2 background process/agent is still in flight.
+
 If the final agent result is PASS and the evidence table has zero NOT FOUND entries: implementation is complete. When run via `dk`, the next phase (Review) follows automatically after the Stop hook audits this phase.
 
 ### 5. Final Implementation Checks
@@ -116,6 +122,24 @@ After the self-review loop passes (Step 4 produces PASS with zero NOT FOUND entr
 If the change affects browser UI, invoke the `dkuicapture` skill before Phase 2 completes. Capture desktop/mobile screenshots, Playwright traces, and video for interactive flows. Artifacts must stay in Doyaken's artifact directory and must not be committed. Add absolute links to screenshots, videos, traces, and logs to the implementation evidence.
 
 If no browser UI changed, add `UI capture: N/A — no UI-affecting files changed` to the evidence.
+
+### 7. Mark Phase 2 Ready
+
+When running inside a terminal `dk` lifecycle (`DOYAKEN_SESSION_ID` is present), write the Phase 2 ready marker only after all of these are true:
+
+- Every planned task is complete.
+- Every acceptance criterion and verification gate is exactly `MET`.
+- No evidence entry is deferred, skipped, blocked, missing, or delegated to future CI unless the user approved a plan change.
+- Final deterministic checks passed locally.
+- Required UI capture evidence is linked, or UI capture is explicitly N/A.
+- No Phase 2 background agents or long-running commands are still in flight.
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+touch "$(dk_phase_ready_file "${DOYAKEN_SESSION_ID:-$(dk_session_id)}" 2)"
+```
+
+Do not write this marker early. The Stop hook ignores `PHASE_2_COMPLETE` without it.
 
 ## Scope Boundaries
 
