@@ -117,6 +117,31 @@ dk_start_phase_timer() {
   printf '%s:%s\n' "$phase" "$(date +%s)" >> "$times_file"
 }
 
+# Claude hook subprocesses can inherit stale DOYAKEN_LOOP_PHASE values from the
+# original launch. In inline mode, the phase file is the lifecycle source of
+# truth after handoffs, so use it to recover before applying phase-specific gates.
+dk_sync_inline_phase_from_state() {
+  [[ "$HANDOFF_MODE" == "inline" ]] || return 0
+
+  local phase_file phase phase_min audit_file
+  phase_file=$(dk_state_file "$SESSION_ID")
+  [[ -f "$phase_file" ]] || return 0
+
+  phase=$(cat "$phase_file" 2>/dev/null || echo "")
+  [[ "$phase" =~ ^[1-6]$ ]] || return 0
+  [[ "${DOYAKEN_LOOP_PHASE:-}" == "$phase" ]] && return 0
+
+  DOYAKEN_LOOP_PHASE="$phase"
+  DOYAKEN_LOOP_PROMISE=$(dk_phase_promise "$phase")
+  phase_min=$(dk_phase_min_audits "$phase")
+  MIN_AUDIT_ITERATIONS="${DOYAKEN_LOOP_MIN_AUDITS:-$phase_min}"
+
+  audit_file=$(dk_phase_audit_file "$phase")
+  if [[ -n "$audit_file" && -f "$audit_file" ]]; then
+    DOYAKEN_LOOP_PROMPT=$(cat "$audit_file")
+  fi
+}
+
 dk_inline_phase_message() {
   case "$1" in
     2)
@@ -208,6 +233,8 @@ if [[ -f "$ACTIVE_FILE" ]]; then
   DOYAKEN_LOOP_PHASE="${DOYAKEN_LOOP_PHASE:-prompt-loop}"
   DOYAKEN_LOOP_PROMISE="${DOYAKEN_LOOP_PROMISE:-PROMPT_COMPLETE}"
 fi
+
+dk_sync_inline_phase_from_state
 
 STATE_FILE=$(dk_loop_file "$SESSION_ID")
 # 30 iterations is tuned for medium-sized features; reduce for simple bugs (10-15).
