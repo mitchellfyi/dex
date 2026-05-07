@@ -429,14 +429,9 @@ __dk_setup_worktree() {
   git fetch origin "$_dk_default_branch" --quiet 2>/dev/null || true
   mkdir -p "${_dk_repo_root}/.doyaken/worktrees"
 
-  if ! git worktree add "$_dk_wt_dir" -b "worktree-${_dk_wt_name}" "origin/${_dk_default_branch}" 2>&1; then
+  if ! git worktree add --no-track "$_dk_wt_dir" -b "worktree-${_dk_wt_name}" "origin/${_dk_default_branch}" 2>&1; then
     dk_error "Failed to create worktree."
     return 1
-  fi
-
-  # Save raw prompt for task worktrees (picked up by SessionStart hook)
-  if [[ $_dk_is_task -eq 1 ]]; then
-    printf '%s\n' "$raw_input" > "$_dk_wt_dir/.doyaken-prompt"
   fi
 
   # Share .claude/ config and MCP auth with main repo
@@ -501,7 +496,7 @@ __dk_setup_in_place() {
       return 1
     fi
     dk_info "Creating branch ${branch_name} from origin/${_dk_default_branch}"
-    if ! git -C "$_dk_wt_dir" switch -c "$branch_name" "origin/${_dk_default_branch}"; then
+    if ! git -C "$_dk_wt_dir" switch --no-track -c "$branch_name" "origin/${_dk_default_branch}"; then
       dk_error "Failed to create branch ${branch_name}."
       return 1
     fi
@@ -1072,6 +1067,11 @@ dk() {
   session_id="$_dk_session_id"
   state_file=$(dk_state_file "$session_id")
   times_file=$(dk_times_file "$session_id")
+
+  if [[ $_dk_is_task -eq 1 ]]; then
+    mkdir -p "$DK_LOOP_DIR"
+    __dk_write_state "$(dk_prompt_file "$session_id")" "$raw_input"
+  fi
 
   # Save as last session for --resume (atomic write to avoid corruption on interrupt)
   __dk_write_last_session "$_dk_wt_name" "$_dk_wt_dir" "$_dk_workspace_mode"

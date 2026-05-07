@@ -284,7 +284,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
 
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "6" ]]; then
     dk_record_phase_result "$CURRENT_PHASE" "advance" "0"
-    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")"
+    rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dk_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dk_prompt_file "$SESSION_ID")" "$(dk_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dk_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")"
     printf '%s\n' "7" > "$(dk_state_file "$SESSION_ID")"
     rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
     {

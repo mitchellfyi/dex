@@ -208,6 +208,7 @@ Loop state is stored in `~/.claude/.doyaken-loops/`:
 - `.state` — iteration count (e.g., `worktree-ticket-999.state`)
 - `.complete` — completion signal, written by phase audit prompts or `/dkcomplete`
 - `.active` — activation signal for in-session `/dkloop` (alternative to `DOYAKEN_LOOP_ACTIVE` env var)
+- `.prompt` — original freeform task or `dkloop` prompt, re-injected during audits and kept outside the git checkout
 - `.handoff-mode` — marker that this `dk` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dkplan`; the Stop hook does not count plan audit iterations until the approval marker exists

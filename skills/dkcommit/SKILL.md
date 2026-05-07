@@ -47,7 +47,13 @@ For each logical group:
 ### 3. Push
 
 ```bash
-git push
+current_branch=$(git branch --show-current)
+upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+if [[ -z "$upstream" || "$upstream" != "origin/${current_branch}" ]]; then
+  git push -u origin HEAD
+else
+  git push
+fi
 ```
 
-Verify the push succeeded. If it fails due to diverged history, investigate — do not force push without user approval.
+Verify the push succeeded. This handles newly created Doyaken lifecycle branches whose first checkout was based on `origin/main` or `origin/master`, but whose push target must be their own branch. If push fails due to diverged history, investigate — do not force push without user approval.

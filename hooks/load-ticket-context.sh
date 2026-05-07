@@ -22,6 +22,8 @@ if [[ "$BRANCH" != worktree-task-* ]]; then
 fi
 
 REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+TASK_PROMPT_FILE=$(dk_prompt_file "$SESSION_ID")
 
 if [[ -n "$TICKET_NUM" ]]; then
   echo "Ticket number: ${TICKET_NUM}"
@@ -38,6 +40,12 @@ if [[ -n "$TICKET_NUM" ]]; then
     TEMPLATE="${TEMPLATE//\{\{BRANCH\}\}/$BRANCH}"
     printf '%s\n' "$TEMPLATE"
   fi
+elif [[ -f "$TASK_PROMPT_FILE" ]]; then
+  echo "Branch: ${BRANCH}"
+  echo ""
+  echo "Task: $(cat "$TASK_PROMPT_FILE")"
+  echo ""
+  echo "Use /doyaken to begin work on this task, or work on it directly."
 elif [[ -f "$REPO_TOP/.doyaken-prompt" ]]; then
   echo "Branch: ${BRANCH}"
   echo ""
