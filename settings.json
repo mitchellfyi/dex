@@ -62,6 +62,15 @@
             "command": "export DOYAKEN_DIR=\"${DOYAKEN_DIR:-$HOME/work/doyaken}\"; bash \"$DOYAKEN_DIR/hooks/phase-loop.sh\""
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "export DOYAKEN_DIR=\"${DOYAKEN_DIR:-$HOME/work/doyaken}\"; bash \"$DOYAKEN_DIR/hooks/stop-sound.sh\""
+          }
+        ]
       }
     ],
     "PreCompact": [

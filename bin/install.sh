@@ -11,7 +11,6 @@ if [[ -z "${DOYAKEN_DIR:-}" ]]; then
 fi
 source "$DOYAKEN_DIR/lib/common.sh"
 CLAUDE_DIR="$HOME/.claude"
-SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 ZSHRC="$HOME/.zshrc"
 
 echo "Doyaken — Global Install"
@@ -84,67 +83,8 @@ if ! dk_install_ui_capture_tooling; then
 fi
 
 # 5. Merge hooks and settings into ~/.claude/settings.json
-if [[ -f "$SETTINGS_FILE" ]]; then
-  # Use jq if available, otherwise manual merge. Existing settings are always
-  # merged through jq so stale/missing Doyaken hook entries are repaired.
-  if command -v jq &>/dev/null; then
-    local_settings=$(sed "s|\\\$HOME/work/doyaken|${DOYAKEN_DIR}|g" "$DOYAKEN_DIR/settings.json")
-    # Merge Doyaken settings into existing settings.json.
-    #
-    # The jq expression processes two inputs: .[0] = existing settings, .[1] = Doyaken settings.
-    # Hooks: For each hook category (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact, SessionEnd) from .[1]:
-    #   1. Take the existing entries for that category (.[0].hooks[category] // [])
-    #   2. Filter OUT stale Doyaken hook commands by resolved path, $DOYAKEN_DIR path, or hook script name
-    #   3. Append the fresh Doyaken entries from .[1]
-    # Worktree: Deep-merge .[1].worktree into .[0].worktree (Doyaken values win).
-    # This preserves non-Doyaken hooks and settings while replacing stale Doyaken entries.
-    #
-    # Claude Code settings.json hook structure:
-    #   { "hooks": { "EventName": [ { "matcher": "...", "hooks": [ { "command": "..." } ] } ] } }
-    # See: https://docs.anthropic.com/en/docs/claude-code/hooks
-    if merged=$(jq -s --arg dir "$DOYAKEN_DIR" --arg home "$HOME" '
-      def is_doyaken_cmd:
-        type == "string" and (
-          contains($dir + "/hooks/")
-          or contains($home + "/work/doyaken/hooks/")
-          or contains("$HOME/work/doyaken/hooks/")
-          or contains("$DOYAKEN_DIR/hooks/")
-          or (contains("export DOYAKEN_DIR=") and contains("/hooks/"))
-          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/doyaken(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
-        );
-      .[0] + {hooks: (reduce (.[1].hooks | to_entries[]) as $e (
-        (.[0].hooks // {});
-        .[$e.key] = (
-          [
-            (.[$e.key] // [])[]
-            | .hooks = ([.hooks[]? | select((.command | is_doyaken_cmd) | not)])
-            | select((.hooks // []) | length > 0)
-          ]
-          + $e.value
-        )
-      ))} + {worktree: ((.[0].worktree // {}) * (.[1].worktree // {}))}
-    ' "$SETTINGS_FILE" <(echo "$local_settings")) && [[ -n "$merged" ]]; then
-      # Atomic write: write to temp file then mv to avoid corrupting
-      # settings.json if the process is interrupted mid-write.
-      TMPFILE="${SETTINGS_FILE}.tmp.$$"
-      echo "$merged" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS_FILE"
-      dk_done "Merged hooks and worktree settings into ~/.claude/settings.json"
-    else
-      dk_error "Failed to merge settings — settings.json left unchanged"
-      echo "        Add settings manually from $DOYAKEN_DIR/settings.json"
-    fi
-  else
-    dk_info "Add these settings to ~/.claude/settings.json manually:"
-    echo ""
-    sed "s|\\\$HOME/work/doyaken|${DOYAKEN_DIR}|g" "$DOYAKEN_DIR/settings.json"
-    echo ""
-  fi
-else
-  if sed "s|\\\$HOME/work/doyaken|${DOYAKEN_DIR}|g" "$DOYAKEN_DIR/settings.json" > "$SETTINGS_FILE"; then
-    dk_done "Created ~/.claude/settings.json with hooks and worktree settings"
-  else
-    dk_error "Failed to copy settings.json"
-  fi
+if ! bash "$DOYAKEN_DIR/bin/install-settings.sh"; then
+  dk_warn "Continuing install without refreshed Claude settings"
 fi
 
 # 6. Source dk.sh in ~/.zshrc

@@ -13,7 +13,7 @@ __dk_status_has_doyaken_hooks() {
   grep -Fq "$HOME/work/doyaken/hooks/" "$settings_file" 2>/dev/null && return 0
   grep -Fq "\$HOME/work/doyaken/hooks/" "$settings_file" 2>/dev/null && return 0
   grep -Fq "\$DOYAKEN_DIR/hooks/" "$settings_file" 2>/dev/null && return 0
-  grep -Eq 'export DOYAKEN_DIR=.*hooks/|/doyaken(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|post-commit-guard\.sh|phase-loop\.sh|pre-compact\.sh|session-end\.sh)' "$settings_file" 2>/dev/null
+  grep -Eq 'export DOYAKEN_DIR=.*hooks/|/doyaken(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|post-commit-guard\.sh|phase-loop\.sh|stop-sound\.sh|pre-compact\.sh|session-end\.sh)' "$settings_file" 2>/dev/null
 }
 
 echo "Doyaken — Status"

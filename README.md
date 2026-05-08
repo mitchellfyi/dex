@@ -367,6 +367,7 @@ doyaken/
     post-commit-guard.sh     # PostToolUse — commit validation via guards
     guard-handler.py         # PreToolUse — markdown-based guard evaluation
     phase-loop.sh            # Stop — phase audit loop (quality-gated execution)
+    stop-sound.sh            # Stop — best-effort macOS sound notification
     pre-compact.sh           # PreCompact — compaction context reminder
     session-end.sh           # SessionEnd — session cleanup bookkeeping
     guards/                  # Markdown guard rules (universal)
@@ -453,7 +454,7 @@ Hooks are defined in `~/.claude/settings.json` with paths to Doyaken scripts (se
 | UserPromptSubmit | User submits a prompt | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
 | PreToolUse | Before Bash/Edit/Write | `guard-handler.py` | Block/warn on dangerous patterns |
 | PostToolUse | After Bash (git commit) | `post-commit-guard.sh` | Validate commits via guards |
-| Stop | Claude tries to stop | `phase-loop.sh` | Phase audit loop (when active) |
+| Stop | Claude tries to stop | `phase-loop.sh`, `stop-sound.sh` | Phase audit loop (when active) plus best-effort macOS sound notification |
 | PreCompact | Before compaction | `pre-compact.sh` | Preserve Doyaken context across compaction |
 | SessionEnd | Session ends | `session-end.sh` | Record session end metadata |
 

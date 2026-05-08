@@ -184,7 +184,7 @@ Seven hooks defined in `settings.json`, referenced by paths to Doyaken scripts:
 | UserPromptSubmit | User prompt | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
 | PreToolUse | Before Bash/Edit/Write | `guard-handler.py` | Block/warn on dangerous patterns |
 | PostToolUse | After `git commit` | `post-commit-guard.sh` | Validate commit format via guards |
-| Stop | Claude tries to stop | `phase-loop.sh` | Phase audit loop (when active) |
+| Stop | Claude tries to stop | `phase-loop.sh`, `stop-sound.sh` | Phase audit loop (when active) plus best-effort macOS sound notification |
 | PreCompact | Before compaction | `pre-compact.sh` | Preserve Doyaken context across compaction |
 | SessionEnd | Session ends | `session-end.sh` | Record session end metadata |
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # doyaken init — bootstrap current repo for Doyaken
 # Creates .doyaken/ skeleton, then uses Claude Code CLI to analyze
 # the codebase and generate project-specific configuration.
@@ -128,6 +129,12 @@ fi
 
 if ! dk_install_ui_capture_tooling; then
   dk_warn "Continuing init without complete UI capture tooling"
+fi
+
+if bash "$DOYAKEN_DIR/bin/install-settings.sh" --quiet; then
+  dk_done "Refreshed global Claude settings"
+else
+  dk_warn "Continuing init without refreshed Claude settings"
 fi
 
 # ── 3. Codebase analysis via Claude Code CLI ──────────────────────────
