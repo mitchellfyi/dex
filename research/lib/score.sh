@@ -297,6 +297,7 @@ $content
   local judge_result
   judge_result=$(claude -p \
     --model "$LLM_JUDGE_MODEL" \
+    "$CLAUDE_BYPASS_FLAG" \
     --permission-mode "$CLAUDE_PERMISSION_MODE" \
     --output-format text \
     "$judge_prompt" 2>/dev/null || echo '{"score": 50, "reasoning": "LLM judge failed"}')

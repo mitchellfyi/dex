@@ -795,22 +795,22 @@ dk_provider_codex_wrapper_args() {
   }
 
   local saw_ignore_user_config=0
-  local saw_full_auto=0
+  local saw_dangerous_bypass=0
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ignore-user-config)
         saw_ignore_user_config=1
         ;;
-      --full-auto)
-        saw_full_auto=1
+      --dangerously-bypass-approvals-and-sandbox|--yolo)
+        saw_dangerous_bypass=1
         ;;
     esac
     shift
   done
 
-  if [[ $saw_ignore_user_config -ne 1 || $saw_full_auto -ne 1 ]]; then
-    dk_error "Doyaken Codex delegation requires --ignore-user-config and --full-auto."
+  if [[ $saw_ignore_user_config -ne 1 || $saw_dangerous_bypass -ne 1 ]]; then
+    dk_error "Doyaken Codex delegation requires --ignore-user-config and --dangerously-bypass-approvals-and-sandbox."
     return 1
   fi
 }
@@ -837,15 +837,39 @@ dk_provider_claude_diagnostic() {
   env "${env_args[@]}" claude "$@"
 }
 
-dk_provider_codex_ignore_user_config_check() {
+dk_provider_claude_required_flags_check() {
+  local claude_help
+  claude_help=$(claude --help 2>&1 || true)
+  local failed=0
+  if ! printf '%s\n' "$claude_help" | grep -q -- "--dangerously-skip-permissions"; then
+    dk_error "Claude Code CLI does not support --dangerously-skip-permissions; upgrade Claude before using Doyaken."
+    failed=1
+  fi
+  if ! printf '%s\n' "$claude_help" | grep -q -- "--permission-mode"; then
+    dk_error "Claude Code CLI does not support --permission-mode; upgrade Claude before using Doyaken."
+    failed=1
+  fi
+  return $failed
+}
+
+dk_provider_codex_required_flags_check() {
   local codex_exec_help codex_review_help
   codex_exec_help=$(dk_provider_codex exec --help 2>&1 || true)
   codex_review_help=$(dk_provider_codex exec review --help 2>&1 || true)
-  if printf '%s\n' "$codex_exec_help" | grep -q -- "--ignore-user-config" && printf '%s\n' "$codex_review_help" | grep -q -- "--ignore-user-config"; then
-    return 0
+  local failed=0
+  if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--ignore-user-config" || ! printf '%s\n' "$codex_review_help" | grep -q -- "--ignore-user-config"; then
+    dk_error "Codex CLI does not support --ignore-user-config; upgrade Codex before using codex-subscription."
+    failed=1
   fi
-  dk_error "Codex CLI does not support --ignore-user-config; upgrade Codex before using codex-subscription."
-  return 1
+  if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--dangerously-bypass-approvals-and-sandbox" || ! printf '%s\n' "$codex_review_help" | grep -q -- "--dangerously-bypass-approvals-and-sandbox"; then
+    dk_error "Codex CLI does not support --dangerously-bypass-approvals-and-sandbox; upgrade Codex before using codex-subscription."
+    failed=1
+  fi
+  return $failed
+}
+
+dk_provider_codex_ignore_user_config_check() {
+  dk_provider_codex_required_flags_check
 }
 
 dk_provider_codex_ready_check() {
@@ -854,7 +878,7 @@ dk_provider_codex_ready_check() {
     dk_info "Install Codex, sign in with ChatGPT, then run 'dk provider doctor'."
     return 1
   fi
-  dk_provider_codex_ignore_user_config_check || return 1
+  dk_provider_codex_required_flags_check || return 1
 
   local login_status
   login_status=$(dk_provider_codex login status 2>&1 || true)
@@ -892,8 +916,8 @@ Subscription-safety rules:
   "codex exec review"; also do NOT run raw aliases/forms like "codex e",
   "codex review", bare "codex <prompt>", direct "dk_provider_codex"
   delegation, or package-runner forms like "npx codex". The wrapper enforces
-  "--ignore-user-config", sanitized environment variables, and the configured
-  Codex model.
+  "--ignore-user-config", "--dangerously-bypass-approvals-and-sandbox",
+  sanitized environment variables, and the configured Codex model.
 - If Codex is missing or not logged in, stop and report that "dk provider doctor"
   or "/codex:setup" must be run.
 
@@ -1074,6 +1098,11 @@ dk_provider_doctor() {
   local failed=0
   if command -v claude >/dev/null 2>&1; then
     dk_ok "Claude Code CLI found"
+    if dk_provider_claude_required_flags_check; then
+      dk_ok "Claude Code CLI supports required Doyaken permission flags"
+    else
+      failed=1
+    fi
   else
     dk_error "Claude Code CLI not found"
     failed=1
@@ -1126,8 +1155,8 @@ dk_provider_doctor() {
     if command -v codex >/dev/null 2>&1; then
       codex_cli_found=1
       dk_ok "Codex CLI found"
-      if dk_provider_codex_ignore_user_config_check; then
-        dk_ok "Codex CLI supports --ignore-user-config"
+      if dk_provider_codex_required_flags_check; then
+        dk_ok "Codex CLI supports required Doyaken exec flags"
       else
         failed=1
       fi

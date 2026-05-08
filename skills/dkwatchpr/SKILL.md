@@ -16,6 +16,8 @@ Monitor PR review comments and address feedback from automated and human reviewe
 
 Each invocation is a **single check cycle** — `/loop` handles the scheduling. The session context carries state between invocations naturally.
 
+Each cycle has a hard runtime budget from `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). Do not allow a watcher cycle to run longer than that budget or overlap with a later `/loop` tick.
+
 ## Arguments
 
 Optional: a PR number (e.g., `/dkwatchpr 456`). If omitted, operates on the current branch's open PR.
@@ -29,6 +31,7 @@ Before running any PR, GitHub, or repository commands, check whether a direct us
 ```bash
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
 SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+WATCH_NAME="pr"
 if dk_watch_pause_active "$SESSION_ID"; then
   pause_ttl=$(dk_watch_pause_ttl_seconds)
   if [[ "$pause_ttl" -eq 0 ]]; then
@@ -39,26 +42,40 @@ if dk_watch_pause_active "$SESSION_ID"; then
   echo "Doyaken watcher paused by a recent user prompt. Skipping this scheduled /dkwatchpr cycle without running PR commands. ${pause_detail} Run /dkcomplete or ask to resume watchers to clear it."
   exit 0
 fi
+if ! dk_watch_lock_acquire "$SESSION_ID" "$WATCH_NAME"; then
+  cycle_timeout=$(dk_watch_cycle_timeout_seconds)
+  echo "Previous /dkwatchpr cycle is still within its $(dk_format_duration "$cycle_timeout") runtime budget. Skipping this scheduled tick without running PR commands."
+  exit 0
+fi
+trap 'dk_watch_lock_release "$SESSION_ID" "$WATCH_NAME"' EXIT
 ```
+
+Every GitHub or local shell command in this watcher must be bounded. Use either the Bash tool timeout with a value no greater than `$(dk_format_duration "$(dk_watch_command_timeout_seconds)")`, or wrap direct commands with:
+
+```bash
+dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" <command> [args...]
+```
+
+If a command returns `124`, it timed out. Report the timeout using `dk_format_duration`, release the lock via the trap, and exit this cycle.
 
 ### 1. Get PR Info
 
 ```bash
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+REPO=$(dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh repo view --json nameWithOwner -q .nameWithOwner)
 
 # Use provided PR number, or detect from current branch
 if [[ -n "$1" ]]; then
   PR_NUM="$1"
 else
-  PR_NUM=$(gh pr view --json number -q .number)
+  PR_NUM=$(dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh pr view --json number -q .number)
 fi
 ```
 
 ### 2. Check for Reviews and Comments
 
 ```bash
-gh api repos/$REPO/pulls/$PR_NUM/reviews
-gh api repos/$REPO/pulls/$PR_NUM/comments
+dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/reviews"
+dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/comments"
 ```
 
 ### 3. Address Comments

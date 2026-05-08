@@ -156,6 +156,7 @@ PATCH_FILE="$PROPOSAL_DIR/patch-${TIMESTAMP}.diff"
 # Run Claude for analysis
 claude_response=$(claude -p \
   --model "$CLAUDE_MODEL" \
+  "$CLAUDE_BYPASS_FLAG" \
   --permission-mode "$CLAUDE_PERMISSION_MODE" \
   --effort "$CLAUDE_EFFORT" \
   --output-format text \

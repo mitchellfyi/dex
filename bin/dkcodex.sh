@@ -45,7 +45,7 @@ dk_provider_codex_ready_check
 
 case "$subcmd" in
   exec)
-    codex_args=(exec --ignore-user-config --full-auto)
+    codex_args=(exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
     if [[ -n "${DK_CODEX_MODEL:-}" ]]; then
       codex_args+=(-m "$DK_CODEX_MODEL")
     fi
@@ -69,7 +69,7 @@ case "$subcmd" in
     DK_PROVIDER_CODEX_WRAPPER=1 dk_provider_codex "${codex_args[@]}"
     ;;
   review)
-    codex_args=(exec review --ignore-user-config --full-auto)
+    codex_args=(exec review --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
     if [[ -n "${DK_CODEX_MODEL:-}" ]]; then
       codex_args+=(-m "$DK_CODEX_MODEL")
     fi

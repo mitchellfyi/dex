@@ -39,10 +39,11 @@ For each logical group:
    git diff --cached --name-only
    ```
 
-3. **Write a conventional commit message** following the format in `prompts/commit-format.md`. Include a `Co-Authored-By` trailer:
+3. **Write a conventional commit message** following the format in `prompts/commit-format.md`. Include the Doyaken `Co-Authored-By` trailer and no Claude attribution:
    ```
    Co-Authored-By: Doyaken <noreply@doyaken.ai>
    ```
+   Do not include `Generated with Claude Code`, `Co-Authored-By: Claude ...`, or any similar Claude Code footer.
 
 ### 3. Push
 

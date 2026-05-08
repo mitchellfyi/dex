@@ -154,7 +154,7 @@ env_value: optional-exact-value
 - `env_var: DK_PROVIDER_ENGINE` has a session-state/config fallback so provider-scoped guards do not depend only on hook environment inheritance
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it).
 - Frontmatter parser is regex-based — flat `key: value` only, no nested objects or arrays
-- Built-in guards: `destructive-commands`, `raw-codex-delegation`, `sensitive-files`, `hardcoded-secrets` — don't duplicate these
+- Built-in guards: `claude-attribution`, `destructive-commands`, `raw-codex-delegation`, `sensitive-files`, `hardcoded-secrets` — don't duplicate these
 
 ## Prompt Conventions
 
@@ -169,6 +169,10 @@ Stored in `prompts/`. Referenced by skills/agents via `@prompts/<file>.md`.
 - `phase-audits/*.md` — Numbered 1-6 matching lifecycle phases, plus `prompt-loop.md`
 
 ## Key Architecture Concepts
+
+### Provider launch policy
+
+Doyaken-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Codex delegation must go through `bin/dkcodex.sh`, which owns `--ignore-user-config` and `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto` for Doyaken-managed Codex work.
 
 ### Hook integration
 
@@ -319,6 +323,8 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `DOYAKEN_REVIEW_PASS_TIMEOUT` | Seconds a Phase 3 review subagent may stay in progress before lifecycle pause | 900 (15m 0s) |
 | `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | Minimum seconds between repeated Phase 3 busy-gate notices | 120 (2m 0s) |
 | `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (0m 45s) |
+| `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation | 120 (2m 0s) |
+| `DOYAKEN_WATCH_COMMAND_TIMEOUT_SECONDS` | Maximum runtime for one GitHub/local shell command inside a watcher cycle | 30 (0m 30s) |
 | `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt | 3600 (60m 0s) |
 | `DOYAKEN_SESSION_ID` | Unique session ID (set by dkloop for stop hook) | unset |
 | `CODEX_HOME` | Codex config root used for Doyaken skill links | `~/.codex` |

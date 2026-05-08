@@ -155,6 +155,104 @@ dk_clear_watch_pause() {
   rm -f "$(dk_watch_pause_file "$session_id")" 2>/dev/null || true
 }
 
+# dk_watch_cycle_timeout_seconds — max runtime for one scheduled watcher cycle
+dk_watch_cycle_timeout_seconds() {
+  local timeout="${DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS:-120}"
+  if [[ "$timeout" =~ ^[0-9]+$ ]]; then
+    echo "$timeout"
+  else
+    echo "120"
+  fi
+}
+
+# dk_watch_command_timeout_seconds — max runtime for a single watcher shell command
+dk_watch_command_timeout_seconds() {
+  local timeout="${DOYAKEN_WATCH_COMMAND_TIMEOUT_SECONDS:-30}"
+  if [[ "$timeout" =~ ^[0-9]+$ ]]; then
+    echo "$timeout"
+  else
+    echo "30"
+  fi
+}
+
+# dk_watch_lock_file <session_id> <watch_name> — per-watcher overlap guard
+dk_watch_lock_file() { echo "${DK_LOOP_DIR}/${1}.${2}.watch-lock"; }
+
+# dk_watch_lock_acquire <session_id> <watch_name> — acquire or reject active watcher lock
+dk_watch_lock_acquire() {
+  local session_id="$1" watch_name="$2" lock_file raw epoch now age timeout
+  [[ -n "$session_id" && -n "$watch_name" ]] || return 1
+
+  lock_file=$(dk_watch_lock_file "$session_id" "$watch_name")
+  mkdir -p "$(dirname "$lock_file")"
+
+  if ( set -C; printf '%s\t%s\n' "$(date +%s)" "$$" > "$lock_file" ) 2>/dev/null; then
+    return 0
+  fi
+
+  raw=$(cat "$lock_file" 2>/dev/null || echo "")
+  epoch="${raw%%$'\t'*}"
+  timeout=$(dk_watch_cycle_timeout_seconds)
+  now=$(date +%s)
+
+  if [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
+    rm -f "$lock_file" 2>/dev/null || true
+  else
+    age=$((now - epoch))
+    [[ "$timeout" -gt 0 && "$age" -lt "$timeout" ]] && return 1
+    rm -f "$lock_file" 2>/dev/null || true
+  fi
+
+  ( set -C; printf '%s\t%s\n' "$(date +%s)" "$$" > "$lock_file" ) 2>/dev/null
+}
+
+# dk_watch_lock_release <session_id> <watch_name> — release a watcher overlap lock
+dk_watch_lock_release() {
+  local session_id="$1" watch_name="$2"
+  [[ -n "$session_id" && -n "$watch_name" ]] || return 0
+  rm -f "$(dk_watch_lock_file "$session_id" "$watch_name")" 2>/dev/null || true
+}
+
+# dk_run_with_timeout <seconds> <command> [args...] — portable timeout wrapper
+dk_run_with_timeout() {
+  local timeout="$1" marker cmd_pid watchdog_pid cmd_status
+  shift
+  [[ $# -gt 0 ]] || return 2
+
+  if [[ ! "$timeout" =~ ^[0-9]+$ || "$timeout" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  marker="${TMPDIR:-/tmp}/doyaken-timeout-${$}-${RANDOM}"
+  "$@" &
+  cmd_pid=$!
+
+  (
+    sleep "$timeout" 2>/dev/null
+    if kill -0 "$cmd_pid" 2>/dev/null; then
+      : > "$marker"
+      kill "$cmd_pid" 2>/dev/null || true
+      sleep 2 2>/dev/null
+      kill -KILL "$cmd_pid" 2>/dev/null || true
+    fi
+  ) &
+  watchdog_pid=$!
+
+  cmd_status=0
+  wait "$cmd_pid" || cmd_status=$?
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+
+  if [[ -f "$marker" ]]; then
+    rm -f "$marker" 2>/dev/null || true
+    return 124
+  fi
+
+  rm -f "$marker" 2>/dev/null || true
+  return "$cmd_status"
+}
+
 # dk_review_state_file <session_id> — review sub-loop clean pass counter (survives interrupts)
 dk_review_state_file() { echo "${DK_LOOP_DIR}/${1}.review-state"; }
 
@@ -224,6 +322,6 @@ dk_record_session_branch() {
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
 dk_cleanup_session() {
   local sid="$1"
-  [[ -d "$DK_LOOP_DIR" ]]  && rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_watch_pause_file "$sid")" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" "${DK_LOOP_DIR}/${sid}".phase-*.started "${DK_LOOP_DIR}/${sid}".phase-*.ready "${DK_LOOP_DIR}/${sid}".phase-*.busy "${DK_LOOP_DIR}/${sid}".phase-*.busy-notice 2>/dev/null
+  [[ -d "$DK_LOOP_DIR" ]]  && rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_watch_pause_file "$sid")" "$(dk_watch_lock_file "$sid" ci)" "$(dk_watch_lock_file "$sid" pr)" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" "${DK_LOOP_DIR}/${sid}".phase-*.started "${DK_LOOP_DIR}/${sid}".phase-*.ready "${DK_LOOP_DIR}/${sid}".phase-*.busy "${DK_LOOP_DIR}/${sid}".phase-*.busy-notice 2>/dev/null
   [[ -d "$DK_STATE_DIR" ]] && rm -f "$(dk_state_file "$sid")" "$(dk_times_file "$sid")" "$(dk_context_file "$sid")" "$(dk_log_file "$sid")" "$(dk_branch_file "$sid")" 2>/dev/null
 }

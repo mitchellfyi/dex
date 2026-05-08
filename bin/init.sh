@@ -159,7 +159,7 @@ else
   set +o pipefail
   DOYAKEN_SESSION_ID="$INIT_PROVIDER_SESSION_ID" dk_provider_claude -p "${analysis_prompt}${provider_prompt}" \
     --model "$DK_CLAUDE_MODEL" --effort "$DK_CLAUDE_EFFORT" \
-    --dangerously-skip-permissions \
+    --dangerously-skip-permissions --permission-mode bypassPermissions \
     --verbose --output-format stream-json --include-partial-messages \
     | dk_progress_filter
   CLAUDE_EXIT=${PIPESTATUS[0]}

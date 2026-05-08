@@ -166,6 +166,7 @@ After all fixes are implemented and verified:
 2. **Commit format:** `fix(review): <description>`
    - Single fix: `fix(review): handle nil check in user lookup`
    - Multiple related fixes: `fix(review): address review feedback — nil check, error message, naming`
+   - Include `Co-Authored-By: Doyaken <noreply@doyaken.ai>` and do not include Claude attribution.
 3. **Push once:**
    ```bash
    git push

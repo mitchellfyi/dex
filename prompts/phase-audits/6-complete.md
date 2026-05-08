@@ -72,6 +72,8 @@ These run between turns and won't consume context. `/dkwatchci` will fix CI fail
 
 If the user sends a direct prompt while Phase 6 is active, the `UserPromptSubmit` hook writes a watcher-pause marker. Scheduled `/dkwatchci` and `/dkwatchpr` invocations must no-op while that marker is active and must not run GitHub/CI commands. Running `/dkcomplete` or explicitly asking to resume watchers clears the marker. The default pause TTL is `60m 0s`.
 
+Each watcher invocation must also stay within `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). If the previous watcher cycle is still locked within that runtime budget, the next `/loop` tick must no-op instead of overlapping.
+
 ---
 
 ## Wait window

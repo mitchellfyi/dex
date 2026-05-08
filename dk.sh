@@ -165,22 +165,23 @@ fi
 #   --chrome           Enable browser automation tools (MCP)
 #   --model            Use Opus for autonomous multi-phase work by default.
 #                      Override with DK_CLAUDE_MODEL for gateways/custom models.
-#   --permission-mode bypassPermissions  No interactive prompts (autonomous)
+#   --dangerously-skip-permissions       No interactive permission prompts.
+#   --permission-mode bypassPermissions  Keep Claude's permission mode explicit.
 #   --effort           Maximum reasoning effort for complex tasks by default.
 #                      Override with DK_CLAUDE_EFFORT if the provider differs.
 unalias __dk_refresh_provider 2>/dev/null; unfunction __dk_refresh_provider 2>/dev/null
 __dk_refresh_provider() {
   dk_provider_apply || return 1
-  DK_CLAUDE_FLAGS=(--chrome --model "$DK_CLAUDE_MODEL" --permission-mode bypassPermissions --effort "$DK_CLAUDE_EFFORT")
-  DK_PLAN_FLAGS=(--chrome --model "$DK_PLAN_MODEL" --permission-mode bypassPermissions --effort "$DK_PLAN_EFFORT")
+  DK_CLAUDE_FLAGS=(--chrome --model "$DK_CLAUDE_MODEL" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "$DK_CLAUDE_EFFORT")
+  DK_PLAN_FLAGS=(--chrome --model "$DK_PLAN_MODEL" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "$DK_PLAN_EFFORT")
 }
 
-DK_CLAUDE_FLAGS=(--chrome --model "${DK_CLAUDE_MODEL:-opus}" --permission-mode bypassPermissions --effort "${DK_CLAUDE_EFFORT:-max}")
-DK_PLAN_FLAGS=(--chrome --model "${DK_PLAN_MODEL:-${DK_CLAUDE_MODEL:-opus}}" --permission-mode bypassPermissions --effort "${DK_PLAN_EFFORT:-${DK_CLAUDE_EFFORT:-max}}")
+DK_CLAUDE_FLAGS=(--chrome --model "${DK_CLAUDE_MODEL:-opus}" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "${DK_CLAUDE_EFFORT:-max}")
+DK_PLAN_FLAGS=(--chrome --model "${DK_PLAN_MODEL:-${DK_CLAUDE_MODEL:-opus}}" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "${DK_PLAN_EFFORT:-${DK_CLAUDE_EFFORT:-max}}")
 
-# Phase 1 uses bypassPermissions to avoid interactive prompts. Claude calls
-# EnterPlanMode as its first action to enforce read-only until user approves
-# via ExitPlanMode.
+# Phase 1 uses dangerous skip permissions plus bypassPermissions to avoid
+# interactive prompts. Claude calls EnterPlanMode as its first action to
+# enforce read-only until user approves via ExitPlanMode.
 
 unalias __dk_claude 2>/dev/null; unfunction __dk_claude 2>/dev/null
 __dk_claude() {
@@ -1231,7 +1232,7 @@ dkloop() {
   echo ""
 
   # ── Session 1: Plan ──
-  # bypassPermissions + EnterPlanMode — read-only without interactive prompts.
+  # Dangerous skip permissions + EnterPlanMode — read-only without interactive prompts.
   # Plan mode's built-in approval is the quality gate. The Stop hook owns the
   # process handoff after approval so dkloop can continue to implementation.
   local plan_args=("${DK_PLAN_FLAGS[@]}")
@@ -2008,7 +2009,7 @@ dkclean() {
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
   local old_files
-  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt provider busy busy-notice started ready watch-pause" 7)
+  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt provider busy busy-notice started ready watch-pause watch-lock" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))

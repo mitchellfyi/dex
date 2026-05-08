@@ -60,6 +60,8 @@ Phase 6 (Complete) is autonomous: it reads `## Reviewers` from `.doyaken/doyaken
 
 When the user submits a direct prompt during Phase 6, the `UserPromptSubmit` hook writes a `.watch-pause` marker. Scheduled `/dkwatchci` and `/dkwatchpr` cycles must no-op while the marker is active, so manual work is not interrupted by CI/review polling commands. The pause expires after `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`) unless the user runs `/dkcomplete` or asks to resume watchers.
 
+Each watcher cycle also has a runtime lock with a default budget of `2m 0s`. If a later `/loop` tick fires while the previous `/dkwatchci` or `/dkwatchpr` cycle is still within that budget, the later tick skips instead of starting overlapping GitHub or CI work. Individual watcher shell commands default to `0m 30s`.
+
 After Phase 1 approval, the Stop hook advances through normal Phase 2-5
 handoffs in the same Claude session without asking whether to continue. A phase pauses only when it hits an
 explicit escalation condition such as missing credentials/tooling, a destructive
@@ -92,7 +94,7 @@ To run without the audit loop:
 
 ```bash
 cd .doyaken/worktrees/ticket-999
-claude --model opus  # No DOYAKEN_LOOP_ACTIVE set, no .active file
+claude --model opus --dangerously-skip-permissions --permission-mode bypassPermissions  # No DOYAKEN_LOOP_ACTIVE set, no .active file
 ```
 
 ## In-Place Lifecycle (`dk --no-worktree`)
@@ -216,6 +218,7 @@ Loop state is stored in `~/.claude/.doyaken-loops/`:
 - `.handoff-mode` — marker that this `dk` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
 - `.watch-pause` — marker that scheduled Phase 6 CI/PR watchers should no-op after a direct user prompt
+- `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dkwatchci` or `/dkwatchpr` cycle
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dkplan`; the Stop hook does not count plan audit iterations until the approval marker exists
 - `.phase-2.ready` — Phase 2 marker written by `dkimplement` only after every acceptance criterion and verification gate is complete; the Stop hook ignores `PHASE_2_COMPLETE` without it
 - `.phase-3.busy` — Phase 3 marker written by `dkreviewloop` while a review subagent is running; the Stop hook does not count audit iterations while waiting
@@ -249,6 +252,8 @@ UI artifacts are stored separately in `~/.claude/.doyaken-artifacts/` so screens
 | `DOYAKEN_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a Phase 3 review subagent may stay in progress before the lifecycle pauses |
 | `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | `45` (0m 45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
+| `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation |
+| `DOYAKEN_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (0m 30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |
 | `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` | `3600` (60m 0s) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |
 | `DOYAKEN_COMPLETE_MAX_CYCLES` | `3` | Max idle cycles before Phase 6 escalates |
 | `DOYAKEN_COMPLETE_WAIT_MINUTES` | `30` | Minimum wait window per Phase 6 cycle (minutes) |

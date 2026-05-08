@@ -228,6 +228,19 @@ if [[ -z "$HANDOFF_MODE" && -f "$HANDOFF_MODE_FILE" ]]; then
 fi
 PAUSED_FILE=$(dk_paused_file "$SESSION_ID")
 COMPLETE_FILE=$(dk_complete_file "$SESSION_ID")
+PHASE_STATE_FILE=$(dk_state_file "$SESSION_ID")
+
+# After inline Phase 6 completes, the Claude process can still carry stale
+# DOYAKEN_LOOP_ACTIVE/DOYAKEN_LOOP_PHASE env vars until the user closes the
+# session. The phase state file is authoritative; phase 7 means the lifecycle is
+# done and the Stop hook must not re-enter an earlier gate.
+if [[ "$HANDOFF_MODE" == "inline" && -f "$PHASE_STATE_FILE" ]]; then
+  PHASE_STATE=$(cat "$PHASE_STATE_FILE" 2>/dev/null || echo "")
+  if [[ "$PHASE_STATE" == "7" ]]; then
+    rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE" "$COMPLETE_FILE" "$(dk_loop_file "$SESSION_ID")" "$(dk_loop_config_file "$SESSION_ID")" "$(dk_findings_file "$SESSION_ID")" "$(dk_prompt_file "$SESSION_ID")" "${DK_LOOP_DIR}/${SESSION_ID}".phase-*.started "${DK_LOOP_DIR}/${SESSION_ID}".phase-*.ready "${DK_LOOP_DIR}/${SESSION_ID}".phase-*.busy "${DK_LOOP_DIR}/${SESSION_ID}".phase-*.busy-notice 2>/dev/null
+    exit 0
+  fi
+fi
 
 if [[ -f "$PAUSED_FILE" && ! -f "$COMPLETE_FILE" ]]; then
   rm -f "$PAUSED_FILE" "$HANDOFF_MODE_FILE"

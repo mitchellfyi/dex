@@ -86,6 +86,8 @@ These check status, fix CI failures, address review comments via `/dkprreview`, 
 
 If the user sends a direct prompt during Phase 6, the `UserPromptSubmit` hook pauses these scheduled watcher cycles for `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`). During that pause the watcher skills must skip GitHub/CI commands until the user runs `/dkcomplete` or asks to resume watchers.
 
+Each scheduled watcher invocation is also bounded by `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). If a prior `/dkwatchci` or `/dkwatchpr` cycle is still within that budget, the next scheduled tick must skip without running GitHub/CI commands.
+
 ### 4. Wait Window
 
 Each cycle waits at least `DOYAKEN_COMPLETE_WAIT_MINUTES` minutes (default 30) between outcome checks. You don't sleep — you just stop, and the Stop hook re-injects the audit on the next iteration. The audit checks elapsed time and only authorizes outcome evaluation once the window has elapsed.

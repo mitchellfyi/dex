@@ -19,6 +19,7 @@ SCORES_TSV="$RESULTS_DIR/scores.tsv"
 # ── Claude CLI ─────────────────────────────────────────────────────────────
 CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 CLAUDE_EFFORT="${CLAUDE_EFFORT:-max}"
+CLAUDE_BYPASS_FLAG="--dangerously-skip-permissions"
 CLAUDE_PERMISSION_MODE="bypassPermissions"
 
 # LLM judge model (opus for quality, matches production)

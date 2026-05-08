@@ -16,6 +16,8 @@ Monitor CI checks after a PR is marked ready for review. Diagnose and fix failur
 
 Each invocation is a **single check cycle** — `/loop` handles the scheduling. The session context carries state between invocations naturally.
 
+Each cycle has a hard runtime budget from `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). Do not allow a watcher cycle to run longer than that budget or overlap with a later `/loop` tick.
+
 ## Arguments
 
 Optional: a PR number (e.g., `/dkwatchci 456`). If omitted, operates on the current branch's open PR.
@@ -29,6 +31,7 @@ Before running any CI, GitHub, or repository commands, check whether a direct us
 ```bash
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
 SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+WATCH_NAME="ci"
 if dk_watch_pause_active "$SESSION_ID"; then
   pause_ttl=$(dk_watch_pause_ttl_seconds)
   if [[ "$pause_ttl" -eq 0 ]]; then
@@ -39,7 +42,21 @@ if dk_watch_pause_active "$SESSION_ID"; then
   echo "Doyaken watcher paused by a recent user prompt. Skipping this scheduled /dkwatchci cycle without running CI commands. ${pause_detail} Run /dkcomplete or ask to resume watchers to clear it."
   exit 0
 fi
+if ! dk_watch_lock_acquire "$SESSION_ID" "$WATCH_NAME"; then
+  cycle_timeout=$(dk_watch_cycle_timeout_seconds)
+  echo "Previous /dkwatchci cycle is still within its $(dk_format_duration "$cycle_timeout") runtime budget. Skipping this scheduled tick without running CI commands."
+  exit 0
+fi
+trap 'dk_watch_lock_release "$SESSION_ID" "$WATCH_NAME"' EXIT
 ```
+
+Every GitHub or local shell command in this watcher must be bounded. Use either the Bash tool timeout with a value no greater than `$(dk_format_duration "$(dk_watch_command_timeout_seconds)")`, or wrap direct commands with:
+
+```bash
+dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" <command> [args...]
+```
+
+If a command returns `124`, it timed out. Report the timeout using `dk_format_duration`, release the lock via the trap, and exit this cycle.
 
 ### 1. Get PR Info
 
@@ -48,14 +65,14 @@ fi
 if [[ -n "$1" ]]; then
   PR_NUM="$1"
 else
-  PR_NUM=$(gh pr view --json number -q .number)
+  PR_NUM=$(dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh pr view --json number -q .number)
 fi
 ```
 
 ### 2. Check CI Status
 
 ```bash
-gh pr checks $PR_NUM
+dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh pr checks "$PR_NUM"
 ```
 
 Parse each check: name, status (pending/pass/fail), URL.
@@ -76,7 +93,7 @@ Parse each check: name, status (pending/pass/fail), URL.
 **Any checks failed:**
 - Fetch logs and diagnose:
   ```bash
-  gh run view <run-id> --log-failed
+  dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh run view <run-id> --log-failed
   ```
 - Diagnose the failure from the logs. Common categories:
   - **Formatting/linting** — run the project's formatter/linter locally, commit, push
@@ -89,7 +106,7 @@ Parse each check: name, status (pending/pass/fail), URL.
   - **Flaky tests** — if the same test fails intermittently with different error messages or passes on local rerun, treat it as a flaky test. On the first occurrence, retry once via `gh run rerun <id> --failed`. If it fails again on the same test, escalate to the user with the test name and both failure outputs rather than attempting code fixes.
 - After fixing:
   1. Verify the fix locally (run the specific check).
-  2. Commit with `fix(ci): <description>`.
+  2. Commit with `fix(ci): <description>` and the Doyaken co-author trailer from `prompts/commit-format.md`. Do not add Claude attribution.
   3. Push — triggers a new CI run.
   4. Wait for the next loop invocation to check the new run.
 

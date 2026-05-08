@@ -156,6 +156,7 @@ Work autonomously. Create all files from scratch. Do not ask questions — make 
     timeout "${timeout}s" \
     claude -p \
       --model "$CLAUDE_MODEL" \
+      "$CLAUDE_BYPASS_FLAG" \
       --permission-mode "$CLAUDE_PERMISSION_MODE" \
       --effort "$CLAUDE_EFFORT" \
       --output-format stream-json \
@@ -194,6 +195,7 @@ _capture_lifecycle() {
     timeout "${half_timeout}s" \
     claude -p \
       --model "$CLAUDE_MODEL" \
+      "$CLAUDE_BYPASS_FLAG" \
       --permission-mode "$CLAUDE_PERMISSION_MODE" \
       --effort "$CLAUDE_EFFORT" \
       --output-format stream-json \
@@ -227,6 +229,7 @@ ${prompt}" \
     timeout "${half_timeout}s" \
     claude -p \
       --model "$CLAUDE_MODEL" \
+      "$CLAUDE_BYPASS_FLAG" \
       --permission-mode "$CLAUDE_PERMISSION_MODE" \
       --effort "$CLAUDE_EFFORT" \
       --output-format stream-json \
