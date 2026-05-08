@@ -8,6 +8,19 @@ dk_skip()  { printf '[skip]  %s\n' "$*"; }
 dk_info()  { printf '[info]  %s\n' "$*"; }
 dk_error() { printf '[error] %s\n' "$*" >&2; }
 
+# dk_format_duration <seconds> — format a numeric duration as "Xm Ys".
+dk_format_duration() {
+  local seconds="$1" minutes remainder
+  if [[ ! "$seconds" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$seconds"
+    return 0
+  fi
+
+  minutes=$((seconds / 60))
+  remainder=$((seconds % 60))
+  printf '%dm %ds\n' "$minutes" "$remainder"
+}
+
 # dk_progress_filter — parse Claude Code CLI stream-json output and display
 # human-readable progress lines showing which tools are being invoked.
 #

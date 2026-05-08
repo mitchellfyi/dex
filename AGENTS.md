@@ -172,14 +172,17 @@ Stored in `prompts/`. Referenced by skills/agents via `@prompts/<file>.md`.
 
 ### Hook integration
 
-Four hooks defined in `settings.json`, referenced by paths to Doyaken scripts:
+Seven hooks defined in `settings.json`, referenced by paths to Doyaken scripts:
 
 | Hook | Event | Script | Purpose |
 |------|-------|--------|---------|
 | SessionStart | Startup | `load-ticket-context.sh` | Load ticket context, detect focus areas |
+| UserPromptSubmit | User prompt | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
 | PreToolUse | Before Bash/Edit/Write | `guard-handler.py` | Block/warn on dangerous patterns |
 | PostToolUse | After `git commit` | `post-commit-guard.sh` | Validate commit format via guards |
 | Stop | Claude tries to stop | `phase-loop.sh` | Phase audit loop (when active) |
+| PreCompact | Before compaction | `pre-compact.sh` | Preserve Doyaken context across compaction |
+| SessionEnd | Session ends | `session-end.sh` | Record session end metadata |
 
 ### Phase audit loops
 
@@ -316,6 +319,7 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `DOYAKEN_REVIEW_PASS_TIMEOUT` | Seconds a Phase 3 review subagent may stay in progress before lifecycle pause | 900 (15m 0s) |
 | `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | Minimum seconds between repeated Phase 3 busy-gate notices | 120 (2m 0s) |
 | `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (0m 45s) |
+| `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt | 3600 (60m 0s) |
 | `DOYAKEN_SESSION_ID` | Unique session ID (set by dkloop for stop hook) | unset |
 | `CODEX_HOME` | Codex config root used for Doyaken skill links | `~/.codex` |
 | `DK_PROVIDER_PROFILE` | Provider profile override (`claude-subscription`, `codex-subscription`, or custom) | config/default |

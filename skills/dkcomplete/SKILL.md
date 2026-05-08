@@ -23,6 +23,16 @@ hook cycle loop and configured `DOYAKEN_COMPLETE_WAIT_MINUTES`.
 
 ## Steps
 
+### 0. Resume Phase 6 Watchers
+
+`/dkcomplete` is the explicit signal to resume autonomous Phase 6 monitoring. Clear any pause left by a direct user prompt before launching `/dkwatchci` or `/dkwatchpr`:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+dk_clear_watch_pause "$SESSION_ID"
+```
+
 ### 1. Read Reviewer Config
 
 Read the `## Reviewers` section of `.doyaken/doyaken.md`. Parse rows into two lists:
@@ -73,6 +83,8 @@ When setup runs:
 ```
 
 These check status, fix CI failures, address review comments via `/dkprreview`, and cancel themselves when their respective conditions are met (CI green / all reviews approved).
+
+If the user sends a direct prompt during Phase 6, the `UserPromptSubmit` hook pauses these scheduled watcher cycles for `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`). During that pause the watcher skills must skip GitHub/CI commands until the user runs `/dkcomplete` or asks to resume watchers.
 
 ### 4. Wait Window
 

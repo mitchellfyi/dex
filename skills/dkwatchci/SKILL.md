@@ -22,6 +22,25 @@ Optional: a PR number (e.g., `/dkwatchci 456`). If omitted, operates on the curr
 
 ## Steps
 
+### 0. Respect Manual User Interruptions
+
+Before running any CI, GitHub, or repository commands, check whether a direct user prompt has paused scheduled Phase 6 watchers:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+if dk_watch_pause_active "$SESSION_ID"; then
+  pause_ttl=$(dk_watch_pause_ttl_seconds)
+  if [[ "$pause_ttl" -eq 0 ]]; then
+    pause_detail="Pause does not expire automatically."
+  else
+    pause_detail="Pause expires after $(dk_format_duration "$pause_ttl")."
+  fi
+  echo "Doyaken watcher paused by a recent user prompt. Skipping this scheduled /dkwatchci cycle without running CI commands. ${pause_detail} Run /dkcomplete or ask to resume watchers to clear it."
+  exit 0
+fi
+```
+
 ### 1. Get PR Info
 
 ```bash

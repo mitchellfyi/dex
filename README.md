@@ -363,9 +363,12 @@ doyaken/
     ui-capture.sh            # Playwright/UI capture tooling and artifact helpers
   hooks/                     # Hook scripts (referenced from ~/.claude/settings.json)
     load-ticket-context.sh   # SessionStart — ticket context + focus area detection
+    user-prompt-submit.sh    # UserPromptSubmit — pause scheduled watchers during manual prompts
     post-commit-guard.sh     # PostToolUse — commit validation via guards
     guard-handler.py         # PreToolUse — markdown-based guard evaluation
     phase-loop.sh            # Stop — phase audit loop (quality-gated execution)
+    pre-compact.sh           # PreCompact — compaction context reminder
+    session-end.sh           # SessionEnd — session cleanup bookkeeping
     guards/                  # Markdown guard rules (universal)
       destructive-commands.md
       raw-codex-delegation.md
@@ -441,14 +444,17 @@ Agents are symlinked: `~/.claude/agents/ -> ~/work/doyaken/agents/`. Claude Code
 
 ### Hooks (immediate updates)
 
-Hooks are defined in `~/.claude/settings.json` with paths to Doyaken scripts (see [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks)). Four hook types:
+Hooks are defined in `~/.claude/settings.json` with paths to Doyaken scripts (see [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks)). Seven hook types:
 
 | Hook | Event | Script | Purpose |
 |------|-------|--------|---------|
 | SessionStart | Session begins | `load-ticket-context.sh` | Load ticket context, detect focus areas |
+| UserPromptSubmit | User submits a prompt | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
 | PreToolUse | Before Bash/Edit/Write | `guard-handler.py` | Block/warn on dangerous patterns |
 | PostToolUse | After Bash (git commit) | `post-commit-guard.sh` | Validate commits via guards |
 | Stop | Claude tries to stop | `phase-loop.sh` | Phase audit loop (when active) |
+| PreCompact | Before compaction | `pre-compact.sh` | Preserve Doyaken context across compaction |
+| SessionEnd | Session ends | `session-end.sh` | Record session end metadata |
 
 ### Guards (immediate updates)
 
@@ -511,6 +517,7 @@ Control via environment variables:
 | `DOYAKEN_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a Phase 3 review subagent may stay in progress before the lifecycle pauses |
 | `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | `45` (0m 45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
+| `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` | `3600` (60m 0s) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |
 | `DOYAKEN_COMPLETE_MAX_CYCLES` | `3` | Max idle review cycles before Phase 6 escalates |
 | `DOYAKEN_COMPLETE_WAIT_MINUTES` | `30` | Minimum wait window per Phase 6 cycle (minutes) |
 | `DK_ARTIFACT_DIR` | `~/.claude/.doyaken-artifacts` | Doyaken-generated screenshots, videos, traces, and logs |

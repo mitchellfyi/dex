@@ -20,7 +20,7 @@ __dk_settings_have_doyaken_hooks() {
           or contains("$HOME/work/doyaken/hooks/")
           or contains("$DOYAKEN_DIR/hooks/")
           or (contains("export DOYAKEN_DIR=") and contains("/hooks/"))
-          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/doyaken(-cli)?/hooks/(load-ticket-context\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
+          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/doyaken(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
         );
       [(.hooks // {}) | to_entries[] | .value[]? | .hooks[]? | .command | select(is_doyaken_cmd)] | length > 0
     ' "$SETTINGS_FILE" >/dev/null 2>&1
@@ -30,7 +30,7 @@ __dk_settings_have_doyaken_hooks() {
   grep -Fq "$HOME/work/doyaken/hooks/" "$SETTINGS_FILE" 2>/dev/null && return 0
   grep -Fq "\$HOME/work/doyaken/hooks/" "$SETTINGS_FILE" 2>/dev/null && return 0
   grep -Fq "\$DOYAKEN_DIR/hooks/" "$SETTINGS_FILE" 2>/dev/null && return 0
-  grep -Eq 'export DOYAKEN_DIR=.*hooks/|/doyaken(-cli)?/hooks/(load-ticket-context\.sh|guard-handler\.py|post-commit-guard\.sh|phase-loop\.sh|pre-compact\.sh|session-end\.sh)' "$SETTINGS_FILE" 2>/dev/null
+  grep -Eq 'export DOYAKEN_DIR=.*hooks/|/doyaken(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|post-commit-guard\.sh|phase-loop\.sh|pre-compact\.sh|session-end\.sh)' "$SETTINGS_FILE" 2>/dev/null
 }
 
 __dk_settings_have_doyaken_worktree_settings() {
@@ -87,7 +87,7 @@ if __dk_settings_have_doyaken_hooks; then
           or contains("$HOME/work/doyaken/hooks/")
           or contains("$DOYAKEN_DIR/hooks/")
           or (contains("export DOYAKEN_DIR=") and contains("/hooks/"))
-          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/doyaken(-cli)?/hooks/(load-ticket-context\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
+          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/doyaken(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
         );
       .hooks |= (
         (. // {})

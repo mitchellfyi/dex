@@ -70,6 +70,8 @@ Launch the watcher loops if they aren't already running. `/loop` is a built-in C
 
 These run between turns and won't consume context. `/dkwatchci` will fix CI failures and re-push. `/dkwatchpr` will read review comments, hand them to `/dkprreview`, push fixes, and reply.
 
+If the user sends a direct prompt while Phase 6 is active, the `UserPromptSubmit` hook writes a watcher-pause marker. Scheduled `/dkwatchci` and `/dkwatchpr` invocations must no-op while that marker is active and must not run GitHub/CI commands. Running `/dkcomplete` or explicitly asking to resume watchers clears the marker. The default pause TTL is `60m 0s`.
+
 ---
 
 ## Wait window

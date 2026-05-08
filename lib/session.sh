@@ -94,6 +94,67 @@ dk_handoff_mode_file() { echo "${DK_LOOP_DIR}/${1}.handoff-mode"; }
 # dk_paused_file <session_id> — one-shot marker allowing an inline paused session to exit
 dk_paused_file() { echo "${DK_LOOP_DIR}/${1}.paused"; }
 
+# dk_watch_pause_file <session_id> — marker that scheduled CI/PR watchers should no-op
+dk_watch_pause_file() { echo "${DK_LOOP_DIR}/${1}.watch-pause"; }
+
+# dk_watch_pause_ttl_seconds — watch-pause lifetime; 0 means no automatic expiry
+dk_watch_pause_ttl_seconds() {
+  local ttl="${DOYAKEN_WATCH_PAUSE_TTL_SECONDS:-3600}"
+  if [[ "$ttl" =~ ^[0-9]+$ ]]; then
+    echo "$ttl"
+  else
+    echo "3600"
+  fi
+}
+
+# dk_watch_pause_active <session_id> — true when scheduled watchers should skip work
+dk_watch_pause_active() {
+  local session_id="$1" pause_file raw epoch now ttl age
+  [[ "${DOYAKEN_WATCH_IGNORE_PAUSE:-0}" == "1" ]] && return 1
+
+  pause_file=$(dk_watch_pause_file "$session_id")
+  [[ -f "$pause_file" ]] || return 1
+
+  raw=$(cat "$pause_file" 2>/dev/null || echo "")
+  epoch="${raw%%$'\t'*}"
+  if [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
+    rm -f "$pause_file" 2>/dev/null || true
+    return 1
+  fi
+
+  ttl=$(dk_watch_pause_ttl_seconds)
+  [[ "$ttl" -gt 0 ]] || return 0
+
+  now=$(date +%s)
+  age=$((now - epoch))
+  if [[ "$age" -lt "$ttl" ]]; then
+    return 0
+  fi
+
+  rm -f "$pause_file" 2>/dev/null || true
+  return 1
+}
+
+# dk_write_watch_pause <session_id> [reason] — atomically write a watcher pause marker
+dk_write_watch_pause() {
+  local session_id="$1" reason="${2:-user-prompt}" pause_file tmp_file
+  [[ -n "$session_id" ]] || return 0
+  pause_file=$(dk_watch_pause_file "$session_id")
+  mkdir -p "$(dirname "$pause_file")"
+  tmp_file="${pause_file}.tmp.$$"
+  if ! printf '%s\t%s\n' "$(date +%s)" "$reason" > "$tmp_file" || ! command mv -f "$tmp_file" "$pause_file"; then
+    command rm -f "$tmp_file" 2>/dev/null
+    return 1
+  fi
+}
+
+# dk_clear_watch_pause <session_id> — remove any watcher pause marker for the session
+dk_clear_watch_pause() {
+  local session_id="$1"
+  [[ -n "$session_id" ]] || return 0
+  rm -f "$(dk_watch_pause_file "$session_id")" 2>/dev/null || true
+}
+
 # dk_review_state_file <session_id> — review sub-loop clean pass counter (survives interrupts)
 dk_review_state_file() { echo "${DK_LOOP_DIR}/${1}.review-state"; }
 
@@ -163,6 +224,6 @@ dk_record_session_branch() {
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
 dk_cleanup_session() {
   local sid="$1"
-  [[ -d "$DK_LOOP_DIR" ]]  && rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" "${DK_LOOP_DIR}/${sid}".phase-*.started "${DK_LOOP_DIR}/${sid}".phase-*.ready "${DK_LOOP_DIR}/${sid}".phase-*.busy "${DK_LOOP_DIR}/${sid}".phase-*.busy-notice 2>/dev/null
+  [[ -d "$DK_LOOP_DIR" ]]  && rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_watch_pause_file "$sid")" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" "${DK_LOOP_DIR}/${sid}".phase-*.started "${DK_LOOP_DIR}/${sid}".phase-*.ready "${DK_LOOP_DIR}/${sid}".phase-*.busy "${DK_LOOP_DIR}/${sid}".phase-*.busy-notice 2>/dev/null
   [[ -d "$DK_STATE_DIR" ]] && rm -f "$(dk_state_file "$sid")" "$(dk_times_file "$sid")" "$(dk_context_file "$sid")" "$(dk_log_file "$sid")" "$(dk_branch_file "$sid")" 2>/dev/null
 }

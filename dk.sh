@@ -713,7 +713,7 @@ __dk_configure_inline_phase() {
   mkdir -p "$DK_LOOP_DIR"
   touch "$(dk_active_file "$session_id")"
   printf '%s\n' "inline" > "$(dk_handoff_mode_file "$session_id")"
-  rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")" "$(dk_paused_file "$session_id")"
+  rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")" "$(dk_paused_file "$session_id")" "$(dk_watch_pause_file "$session_id")"
 
   # shellcheck disable=SC2034  # used via zsh ${(P)min_audits_env} indirect expansion below
   min_audits_env="DOYAKEN_PHASE_${step}_MIN_AUDITS"
@@ -1372,7 +1372,7 @@ dkcomplete() {
   # enforces completion criteria. See: hooks/phase-loop.sh prompt-loop branch.
   mkdir -p "$DK_LOOP_DIR"
   touch "$(dk_active_file "$session_id")"
-  rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")"
+  rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_watch_pause_file "$session_id")"
 
   DOYAKEN_SESSION_ID="$session_id" \
   DOYAKEN_LOOP_ACTIVE=1 \
@@ -2008,7 +2008,7 @@ dkclean() {
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
   local old_files
-  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt provider busy busy-notice started ready" 7)
+  old_files=$(dk_cleanup_stale_files "$DK_LOOP_DIR" "state complete active prompt config findings debt provider busy busy-notice started ready watch-pause" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))

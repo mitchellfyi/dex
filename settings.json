@@ -11,6 +11,17 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "export DOYAKEN_DIR=\"${DOYAKEN_DIR:-$HOME/work/doyaken}\"; bash \"$DOYAKEN_DIR/hooks/user-prompt-submit.sh\""
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",

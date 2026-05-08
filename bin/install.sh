@@ -92,7 +92,7 @@ if [[ -f "$SETTINGS_FILE" ]]; then
     # Merge Doyaken settings into existing settings.json.
     #
     # The jq expression processes two inputs: .[0] = existing settings, .[1] = Doyaken settings.
-    # Hooks: For each hook category (SessionStart, PreToolUse, PostToolUse, Stop, PreCompact, SessionEnd) from .[1]:
+    # Hooks: For each hook category (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact, SessionEnd) from .[1]:
     #   1. Take the existing entries for that category (.[0].hooks[category] // [])
     #   2. Filter OUT stale Doyaken hook commands by resolved path, $DOYAKEN_DIR path, or hook script name
     #   3. Append the fresh Doyaken entries from .[1]
@@ -110,7 +110,7 @@ if [[ -f "$SETTINGS_FILE" ]]; then
           or contains("$HOME/work/doyaken/hooks/")
           or contains("$DOYAKEN_DIR/hooks/")
           or (contains("export DOYAKEN_DIR=") and contains("/hooks/"))
-          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/doyaken(-cli)?/hooks/(load-ticket-context\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
+          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/doyaken(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
         );
       .[0] + {hooks: (reduce (.[1].hooks | to_entries[]) as $e (
         (.[0].hooks // {});
