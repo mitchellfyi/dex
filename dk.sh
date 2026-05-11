@@ -75,6 +75,9 @@ doyaken() {
       echo "  dkls                  List worktrees"
       echo "  dkclean               Clean stale worktrees + gone branches"
       echo ""
+      echo "Refinement (pre-implementation):"
+      echo "  dk refine <N|description>  Refine a ticket — clarify with the user, raise risks, propose sub-tickets"
+      echo ""
       echo "Standalone completion (recovery / non-dk PRs):"
       echo "  dkcomplete             Monitor CI/reviews, address comments, close ticket"
       echo ""
@@ -976,6 +979,7 @@ dk() {
     echo "       dk --no-worktree <task>"
     echo "       dk --resume        Resume the most recent session"
     echo "       dk --from-pr <N>   Resume session linked to a PR"
+    echo "       dk refine <N|description>  Refine a ticket before implementation"
     echo ""
     echo "       dk init|config|install|uninstall|uninit|status|reload|help"
     return 1
@@ -1001,6 +1005,13 @@ dk() {
   if [[ $# -eq 0 ]]; then
     echo "Usage: dk --no-worktree <NUMBER|description>"
     return 1
+  fi
+
+  # Refine subcommand — intercept before worktree setup (read-only flow)
+  if [[ "$1" == "refine" ]]; then
+    shift
+    dkrefine "$@"
+    return $?
   fi
 
   # Route management subcommands to doyaken
@@ -1321,6 +1332,104 @@ $(__dk_provider_prompt)"
     fi
   fi
 
+  return $exit_code
+}
+
+# ─── dkrefine — standalone ticket refinement (pre-implementation) ─────────
+#
+# Single Claude session in plan mode. Drives the user through 3+ batches of
+# clarifying questions focused on high-level architecture and risks, then
+# presents a PO-grade refined ticket via ExitPlanMode. On approval, the
+# dkrefine skill posts architecture/risk comments and creates sub-tickets on
+# the configured tracker; the parent ticket's description is left untouched.
+#
+# No worktree, no commits, no branch rename. No phase-loop participation.
+
+unalias dkrefine 2>/dev/null; unfunction dkrefine 2>/dev/null
+dkrefine() {
+  __dk_refresh_provider || return 1
+
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: dkrefine <NUMBER>           (e.g. dkrefine 123, dkrefine ENG-123)"
+    echo "       dkrefine \"<description>\"    (e.g. dkrefine \"streaming export pipeline\")"
+    return 1
+  fi
+
+  if ! command -v claude &>/dev/null; then
+    dk_error "Claude Code CLI not found in PATH."
+    dk_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
+    return 1
+  fi
+
+  # Must be in a git repo so the skill can read AGENTS.md and codebase context.
+  local repo_root
+  repo_root=$(dk_repo_root) || return 1
+
+  local raw_input="${(j: :)@}"
+
+  # Session label for the Claude session name — stable across invocations on
+  # the same input so the user can recognize it.
+  local session_label
+  if __dk_is_ticket "$raw_input"; then
+    session_label="ticket-${raw_input//[^0-9]/}"
+  else
+    local slug
+    slug=$(dk_slugify "${raw_input:0:40}")
+    session_label="${slug:-$(date +%s)}"
+  fi
+  local session_name="dkrefine-${session_label}"
+
+  # Unique state id so concurrent dkrefines don't collide on provider state.
+  local session_id
+  session_id="refine-$(dk_unique_session_id)"
+  dk_provider_cleanup_session_state "$session_id"
+
+  local branch
+  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  DOYAKEN — dkrefine (ticket refinement)"
+  echo ""
+  echo "  Branch: ${branch}"
+  echo "  Input:  ${raw_input:0:72}$([ ${#raw_input} -gt 72 ] && echo '...')"
+  echo "  Phase:  Refine (read-only until ExitPlanMode is approved)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  local plan_args=("${DK_PLAN_FLAGS[@]}" -n "$session_name")
+  plan_args+=(--append-system-prompt "You are in a dkrefine session — refinement only. Do NOT implement, do NOT commit, do NOT rename branches, do NOT set ticket status to In Progress. Stay in plan mode until you call ExitPlanMode. After approval, follow the dkrefine skill's write-back steps and stop.
+
+Standing platform constraints (apply to every refinement):
+- The system is multi-tenant. All new configuration, data, and computation must be tenant-scoped; cross-tenant isolation must be preserved.
+- The system is compute-heavy with a low user count (not high-traffic). Performance targets are about latency of a single computation and the scope of cascade recomputes, not requests-per-second. Naive whole-plan recomputes on every edit are a red flag — call out cascade scope, memoization, and incremental recomputation in the NFRs.
+
+Anchor every claim about where something lives to a real path in this repo. Reuse beats invent — justify every 'new X' against the existing X you found.")
+
+  DOYAKEN_SESSION_ID="$session_id" \
+  DOYAKEN_DIR="$DOYAKEN_DIR" \
+  __dk_claude "${plan_args[@]}" \
+    "This is a TECHNICAL refinement, not product discovery.
+
+Input: ${raw_input}
+
+Pre-flight (BEFORE EnterPlanMode — plan mode is read-only, so the architecture-map file write must happen first):
+ 0. Run: bash -lc 'test -f \"\$(git rev-parse --show-toplevel)/.doyaken/architecture.md\" && echo MAP_PRESENT || echo MAP_MISSING'
+    - If MAP_MISSING: invoke the Skill tool with skill: \"dkarchitect\" to bootstrap .doyaken/architecture.md (it writes the file directly; the user reviews and commits it themselves — the skill does NOT commit). Remember in working memory that the map was freshly built so you can flag it in the final summary.
+    - If MAP_PRESENT: continue.
+
+Now call EnterPlanMode, then invoke the Skill tool with skill: \"dkrefine\". Skill flow:
+ 1. Gather ticket context (if a ticket id).
+ 2. Read .doyaken/architecture.md (C4 levels 1-3) — this is the canonical current-state map and the source of valid Domain values for sub-tickets.
+ 3. Ask the user at least four batches of clarifying questions covering scope, architecture & integration, scale & multi-tenancy, and operational risk. Skip PO-flavor probes (value hypothesis, user stories).
+ 4. Identify the design patterns that fit, with each tied to a sub-ticket (or record '— none, all sub-tickets are mechanical' if genuinely mechanical).
+ 5. Decompose into AT LEAST TWO sub-tickets, each tagged with a Domain (a C4 container or component name from the architecture map verbatim), a t-shirt size (XS/S/M/L/XL), and a dominant design pattern. Decomposition is the defining output of dkrefine — if the work cannot be split, bail out and tell the user to run dk <ticket> directly.
+ 6. Present a /dkplan-style summary via ExitPlanMode, including a per-Domain rollup so the user can dispatch sub-tickets to owners.
+ 7. After approval, create the sub-tickets (with Domain in body and as a label if the tracker supports it) and post five comments on the parent (architecture+component map, design patterns, risks, NFRs, open questions+decision log). Do NOT modify the parent ticket's description. If the architecture map was bootstrapped in step 0, remind the user to commit .doyaken/architecture.md themselves.
+$(__dk_provider_prompt)"
+
+  local exit_code=$?
+  dk_provider_cleanup_session_state "$session_id"
   return $exit_code
 }
 
