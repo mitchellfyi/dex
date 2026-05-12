@@ -63,7 +63,7 @@ except:
   local port=0
   port=$(_find_free_port)
 
-  (cd "$ws" && exec env PORT=$port node "$entry") &>/dev/null &
+  (cd "$ws" && exec env PORT="$port" node "$entry") &>/dev/null &
   local server_pid=$!
   sleep 3
 
@@ -186,10 +186,9 @@ except:
     -d "{\"title\":\"Draft Post\",\"content\":\"Draft content\",\"author_id\":\"$user_id\",\"published\":false}" 2>/dev/null >/dev/null || true
 
   # Create a post by user2 (for author filter testing)
-  local user2_post_resp
-  user2_post_resp=$(curl -s -X POST "$base/posts" \
+  curl -s -X POST "$base/posts" \
     -H "Content-Type: application/json" \
-    -d "{\"title\":\"Other User Post\",\"content\":\"Other content\",\"author_id\":\"$user2_id\",\"published\":true}" 2>/dev/null) || true
+    -d "{\"title\":\"Other User Post\",\"content\":\"Other content\",\"author_id\":\"$user2_id\",\"published\":true}" 2>/dev/null >/dev/null || true
 
   # --- GET /posts returns published posts only (8 pts) ---
   local list_resp

@@ -16,12 +16,11 @@ This skill is **not** part of the autonomous `dk` lifecycle. Do **not** write Ph
 
 The defining output of `dkrefine` is a **decomposition into multiple estimated sub-tickets**, plus architecture, pattern, and risk comments on the parent. If the work cannot decompose into at least two independently shippable sub-tickets, `dkrefine` is the wrong tool — bail out (per §12 in Step 6) and tell the user to run `dk <ticket>` directly.
 
-## Standing Platform Constraints
+## Project Constraint Discovery
 
-Two constraints apply to **every** refinement, regardless of ticket. The agent must address both during the question loop and re-check them in the quality gate before presenting the draft:
+Do not assume standing platform constraints. Doyaken is codebase-agnostic, so refinement must derive constraints from `.doyaken/architecture.md`, `.doyaken/rules/`, project docs, and code paths read during context gathering.
 
-- **Multi-tenancy.** All configuration, data, and computation are tenant-scoped. Cross-tenant isolation must be preserved by every proposed change. Configuration surfaces are per-tenant by default; any setting that is _not_ per-tenant must be flagged explicitly with a justification.
-- **Compute-heavy, low-user-count profile.** The platform is not high-traffic; it is heavy per-request computation (solvers, allocations, projections, cascades). Performance NFRs target the latency of a single computation and the scope of cascade recomputes — not requests-per-second. Caching, memoization, incremental recomputation, and cascade-scope minimization are first-class design tools. A proposal that triggers a naive O(N²) recompute over the whole plan on every edit is a red flag and must be challenged.
+Examples of project-derived constraints include tenant isolation, rate limits, data residency, background-job ordering, cascade recomputation, plugin/strategy boundaries, high-throughput API latency, offline processing windows, public API compatibility, or operational approval gates. Apply only the constraints that are evidenced in the repo or confirmed by the user, and mark unknowns as open questions.
 
 ## Steps
 
@@ -51,7 +50,7 @@ Foundational. Every later decision — design patterns, sub-tickets, risks, esti
 
 #### 2a. Read `.doyaken/architecture.md`
 
-- **Present** → read it. It is a C4 model (System Context, Container, Component) plus multi-tenancy boundary and plug-point catalogue. Treat as the canonical current-state view. Skim the codebase to spot obvious drift against the map; note any drift in the Decision Log (§15) but do **not** rewrite the file silently.
+- **Present** → read it. It is a C4 model (System Context, Container, Component) plus cross-cutting constraints and plug-point catalogue. Treat as the canonical current-state view. Skim the codebase to spot obvious drift against the map; note any drift in the Decision Log (§15) but do **not** rewrite the file silently.
 - **Present but `last-refreshed` is older than 90 days** → use it, but flag staleness in the Decision Log and suggest the user run `/dkarchitect` to refresh.
 - **Absent** → **stop and tell the user to run `/dkarchitect` first**, then re-invoke `/dkrefine`. The shell wrapper (`dk refine`) handles this bootstrap automatically outside plan mode; direct `/dkrefine` invocations need to run `/dkarchitect` themselves first because plan mode is read-only.
 
@@ -73,8 +72,8 @@ Before asking the user anything, answer these five questions to yourself. If you
 1. What system boundaries does this cross? (services, pillars, ownership)
 2. Which existing components participate, and which need to change? _(cite paths)_
 3. What is the data/control flow before vs. after?
-4. What invariants or contracts could break? (schema, API, tenant isolation, idempotency, cascade ordering)
-5. What does a senior architect challenge about this direction? Especially: scale within a single tenant's plan, cascade explosion, solver/engine interaction, plug-point design.
+4. What invariants or contracts could break? (schema, API, authorization boundaries, idempotency, ordering, compatibility)
+5. What would a senior architect challenge about this direction? Especially: scale profile, failure modes, concurrency, data consistency, integration boundaries, plug-point design.
 
 ### 4. Mandatory Question Loop
 
@@ -86,12 +85,12 @@ This is a **technical** refinement — engineering decomposition, not product di
 
 - **Goals & scope.** What does done look like _technically_? What is explicitly out of scope (and which OoS items are roadmap candidates vs. permanent)? Cross-project / cross-service interfaces.
 - **Architecture & integration.** Chosen approach vs. alternatives; new components vs. extensions of existing ones (cite the existing ones by path); data model impact (new entities, new attributes, identity-vs-attribute split); sync/async; API/contract changes; backward compatibility; **interface pluggability** — what should be a strategy/plug-point so v2 does not need a schema migration.
-- **Scale & multi-tenancy (mandatory, every ticket).**
-  - Tenant-scoping: which new config/data is tenant-scoped? How is isolation preserved?
-  - Compute profile: cost shape of the operation (per plan? per batch? per movement? O(N) in what)? Realistic upper bound for N in a single tenant's plan?
-  - Cascade scope: when a single edit fires, what is the minimum recompute set vs. the worst-case recompute set? Is there a guarded "manual full re-run" vs. "incremental cascade" distinction?
-  - Caching/memoization: which intermediate results are reusable across edits?
-  - Tenant-config surface: what does the admin configure per tenant? Defaults? Per-product overrides?
+- **Scale & project constraints.**
+  - Scale profile: request throughput, batch size, data volume, fan-out, latency budgets, or other cost drivers evidenced by the repo.
+  - Security and isolation: authz, tenancy, ownership, privacy, or data-boundary rules that apply to this project.
+  - Recompute/side-effect scope: if the project has cascades, queues, jobs, caches, or generated artifacts, what is the minimum update set vs. worst case?
+  - Configuration surface: who configures this behavior, where defaults live, and whether settings are global, scoped, or environment-specific.
+  - Compatibility constraints: CLI/API/config/data format contracts that existing users or integrations depend on.
 - **Operational & risk.** Blast radius; rollback story; observability (per-failure reasoning logs, latency P50/P99 instrumentation, KPI value logging); security/permissions; rollout (flag, gradual, big-bang); dependencies on other teams/tickets; edge cases the implementer will hit first.
 
 If the user defers a dimension, that dimension must appear verbatim under **Open Questions** in the draft. Do **not** silently make decisions on the user's behalf — even decisions that seem obvious — because the user's domain context, deadlines, downstream coordination, and prior decisions are invisible from inside the codebase.
@@ -125,11 +124,11 @@ This is your **working memory**, not the user-facing output. Build all fifteen s
 7. **Out of Scope.** Bulleted list. Each item: one-line reason and a marker — _roadmap candidate_ vs. _permanent OoS_. Out of Scope being empty is itself a smell — refinement that excludes nothing has not yet drawn its boundaries.
 8. **Verification Criteria.** Numbered, **each a testable assertion with a concrete observable outcome** — a test name, a query, an HTTP probe, a log assertion, a metric threshold. Prose-only criteria ("works correctly", "is performant") must be rewritten as mechanically checkable assertions. Group by the engineering sub-domains from §1.
 9. **Non-Functional Requirements.** Broken into sub-sections:
-   - **Performance.** Latency targets for the dominant operations (single computation, cascade trigger latency, KPI calc time, etc.). If the user has not given a number, use a placeholder and flag it as `TBD-during-refinement`.
+   - **Performance.** Latency, throughput, batch-size, or resource targets for the dominant operations. If the user has not given a number, use a placeholder and flag it as `TBD-during-refinement`.
    - **Observability.** What to log on success vs. failure; aggregate metrics; per-failure reasoning logs where the operation is debug-heavy.
-   - **Configurability (per-tenant).** Every configuration surface introduced or changed. Tenant-scoping is implicit; explicitly note any setting that is _not_ per-tenant and why.
+   - **Configurability.** Every configuration surface introduced or changed, including where defaults live and whether settings are global, scoped, or environment-specific.
    - **Pluggability (architectural).** For each plug-point identified in §10, state the interface name, what v1 ships as the only registered implementation, and what v2/v3 candidates exist.
-   - **Multi-tenancy.** Explicit section confirming tenant-scoping of new data/config, isolation guarantees, and any deviation from the platform's standing isolation stance.
+   - **Project constraints.** Explicit section for any repo-evidenced constraints such as tenancy, authz, public API compatibility, data retention, background-job ordering, or deployment limits. Mark `— none found` only after checking the architecture map/rules.
 10. **Design Patterns.** The full output of Step 5. Table format preferred: `Pattern | Why it fits | Location | Sub-ticket(s) | Alternative considered`.
 11. **Risk Register.** Table `Risk | Likelihood (L/M/H) | Impact (L/M/H) | Mitigation | Owner`. At least one risk per Heavy-impact pillar.
 12. **Proposed Sub-tickets.** Numbered list. Each carries:
@@ -166,9 +165,9 @@ Before presenting via `ExitPlanMode`, walk this checklist against the material i
 
 1. Every Verification Criterion is a testable assertion with an observable outcome.
 2. Every Heavy-impact pillar has at least one entry in Risk Register, Sub-tickets, and (if applicable) NFRs.
-3. Every new entity / configuration explicitly states its multi-tenancy stance.
+3. Every new entity / configuration explicitly states its scope and isolation stance if the project has scoped data, tenancy, authz, or ownership boundaries.
 4. Every "we will add new X" line has been justified against existing X in the codebase, citing the existing X's path.
-5. The Performance NFR names the dominant cost shape (per plan / per batch / per movement) and an upper-bound expectation for N.
+5. The Performance NFR names the dominant cost shape for this project and an upper-bound expectation where applicable.
 6. Out of Scope is non-empty.
 7. Every dimension from Step 4 is either answered in the material or explicitly listed under Open Questions.
 8. **§12 contains at least two sub-tickets, each tagged with a Domain, t-shirt size, and design pattern (`— none` allowed for pattern, never for size or domain).** If decomposition is not possible, bail out per the §12 instruction.
@@ -221,6 +220,6 @@ Only if a ticket tracker is configured **and** the input was a ticket id. For fr
 ## Notes
 
 - `dkrefine` does **not** call `TaskCreate` — task creation is `/dkplan`'s job during implementation.
-- `dkrefine` does **not** branch, commit, push, or modify code. The one exception is writing `.doyaken/architecture.md` in §2b — that is a workspace file, not a code edit, and is **never** committed by the skill.
+- `dkrefine` does **not** branch, commit, push, or modify code. It only reads `.doyaken/architecture.md`; when the map is missing or stale, `dkarchitect` owns writing or refreshing it.
 - `dkrefine` does **not** chain to implementation automatically. After approval and write-back, suggest the user run `dk <subticket>` on any created child ticket to begin implementation.
 - If the user invokes `/dkrefine` from inside an autonomous `dk` lifecycle session by mistake, decline and tell them to start a separate `dk refine` session — mixing refinement into the lifecycle would skip the Stop-hook expectations of the active phase.

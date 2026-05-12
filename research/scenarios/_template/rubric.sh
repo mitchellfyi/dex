@@ -18,6 +18,7 @@ rubric_test_quality() {
 
 rubric_robustness() {
   local ws="$1"
+  : "$ws"
   local score=0
   # TODO: Add robustness checks
   echo "$score"

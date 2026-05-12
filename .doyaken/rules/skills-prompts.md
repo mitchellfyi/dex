@@ -43,14 +43,14 @@ case_sensitive: false
 - Patterns are Python regexes evaluated by `guard-handler.py`
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it)
 - Frontmatter parser is regex-based — flat `key: value` only, no nested objects or arrays
-- Built-in guards: `destructive-commands`, `sensitive-files`, `hardcoded-secrets` — don't duplicate these
+- Built-in guards: `claude-attribution`, `destructive-commands`, `hardcoded-secrets`, `raw-codex-delegation`, `sensitive-files` — don't duplicate these
 
 ## Prompts
 
 Stored in `prompts/`. Referenced by skills/agents via `@prompts/<file>.md`.
 
 - `guardrails.md` — Implementation discipline
-- `review.md` — 10-pass review criteria (A-J) with confidence scoring
+- `review.md` — 12-pass review criteria (A-L) with confidence scoring
 - `commit-format.md` — Conventional Commits specification
 - `pr-description.md` — PR description template
 - `ticket-instructions.md` — Ticket intake workflow (injected by SessionStart hook)

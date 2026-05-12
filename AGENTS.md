@@ -161,7 +161,7 @@ env_value: optional-exact-value
 Stored in `prompts/`. Referenced by skills/agents via `@prompts/<file>.md`.
 
 - `guardrails.md` — Implementation discipline (shared across implement/review skills)
-- `review.md` — 10-pass review criteria (A-J) with confidence scoring
+- `review.md` — 12-pass review criteria (A-L) with confidence scoring
 - `commit-format.md` — Conventional Commits specification
 - `pr-description.md` — PR description template
 - `ticket-instructions.md` — Ticket intake workflow (injected by SessionStart hook)
@@ -194,7 +194,7 @@ When `DOYAKEN_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a 
 
 ### Session IDs
 
-Derived from worktree names (`worktree-<name>`) or branch names (fallback). Used to key all state files. Path-based derivation makes them stable across branch renames.
+Derived from a stable repo key plus worktree names (`worktree-<name>`) or branch names (fallback). Used to key all state files. Path-based derivation makes worktree sessions stable across branch renames while the repo key prevents cross-repo collisions in the global state directories.
 
 ### Worktree isolation
 

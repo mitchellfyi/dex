@@ -217,7 +217,7 @@ except:
   port=$(_find_free_port)
   local server_pid=""
 
-  (cd "$ws" && exec env PORT=$port node "$entry") &>/dev/null &
+  (cd "$ws" && exec env PORT="$port" node "$entry") &>/dev/null &
   server_pid=$!
   sleep 2
 
@@ -835,7 +835,7 @@ rubric_robustness() {
   if [[ -n "$entry" ]]; then
     local port
     port=$(_find_free_port)
-    (cd "$ws" && exec env PORT=$port node "$entry") &>/dev/null &
+    (cd "$ws" && exec env PORT="$port" node "$entry") &>/dev/null &
     local server_pid=$!
     sleep 2
 

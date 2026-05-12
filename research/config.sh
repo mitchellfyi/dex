@@ -30,7 +30,7 @@ LLM_JUDGE_MODEL="${LLM_JUDGE_MODEL:-opus}"
 SCENARIO_TIMEOUT="${SCENARIO_TIMEOUT:-900}"
 
 # Max audit loop iterations (keeps scenarios bounded)
-MAX_LOOP_ITERATIONS="${MAX_LOOP_ITERATIONS:-10}"
+MAX_LOOP_ITERATIONS="${MAX_LOOP_ITERATIONS:-20}"
 
 # ── Scoring weights (must sum to 100) ─────────────────────────────────────
 W_CORRECTNESS=30
@@ -42,7 +42,7 @@ W_CODE_QUALITY=10
 
 # ── Improvement loop ──────────────────────────────────────────────────────
 # Max improvement iterations per loop.sh invocation
-MAX_IMPROVE_ITERATIONS="${MAX_IMPROVE_ITERATIONS:-10}"
+MAX_IMPROVE_ITERATIONS="${MAX_IMPROVE_ITERATIONS:-20}"
 
 # Cumulative cost limit in USD (abort loop if exceeded)
 COST_LIMIT_USD="${COST_LIMIT_USD:-200}"
@@ -63,4 +63,12 @@ ALLOWED_MODIFY_PATTERNS=(
   "prompts/phase-audits/*.md"
   "agents/*.md"
   "hooks/guards/*.md"
+  "research/config.sh"
+  "research/run.sh"
+  "research/loop.sh"
+  "research/improve.sh"
+  "research/lib/*.sh"
+  "research/scenarios/*/prompt.md"
+  "research/scenarios/*/rubric.sh"
+  "research/scenarios/*/scenario.json"
 )

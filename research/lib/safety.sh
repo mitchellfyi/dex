@@ -2,6 +2,7 @@
 # Research harness — safety layer
 # Regression gating, auto-revert, cost tracking, branch protection.
 
+# shellcheck source=research/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 # safety_check_branch
@@ -96,23 +97,53 @@ PYEOF
 # Check that a git diff only touches allowed files.
 # Reads diff from stdin.
 safety_validate_diff() {
-  python3 - "${ALLOWED_MODIFY_PATTERNS[@]}" <<'PYEOF'
+  python3 -c '
 import sys, fnmatch
 
 patterns = sys.argv[1:]
 violations = []
 
+def clean_path(path):
+    path = path.strip()
+    if path in {"", "/dev/null"}:
+        return ""
+    if path[:1] == chr(34) and path[-1:] == chr(34):
+        path = path[1:-1]
+    if path.startswith("a/") or path.startswith("b/"):
+        path = path[2:]
+    return path
+
+def check_path(path):
+    path = clean_path(path)
+    if not path:
+        return
+    if not any(fnmatch.fnmatch(path, p) for p in patterns):
+        violations.append(path)
+
 for line in sys.stdin:
     line = line.strip()
-    if not line.startswith("diff --git") and not line.startswith("--- a/") and not line.startswith("+++ b/"):
-        continue
-    if line.startswith("+++ b/") or line.startswith("--- a/"):
-        path = line.split("/", 1)[-1] if "/" in line else ""
-        if path == "/dev/null" or not path:
+    if line.startswith("diff --git "):
+        parts = line.split()
+        if len(parts) < 4:
+            violations.append(f"unparseable diff header: {line}")
             continue
-        allowed = any(fnmatch.fnmatch(path, p) for p in patterns)
-        if not allowed:
-            violations.append(path)
+        check_path(parts[2])
+        check_path(parts[3])
+        continue
+    if line.startswith("--- ") or line.startswith("+++ "):
+        parts = line.split(maxsplit=1)
+        if len(parts) < 2:
+            violations.append(f"unparseable file header: {line}")
+            continue
+        check_path(parts[1])
+        continue
+    if line.startswith("rename from ") or line.startswith("rename to "):
+        check_path(line.split(" ", 2)[2] if len(line.split(" ", 2)) == 3 else "")
+        continue
+    if line.startswith(("old mode ", "new mode ", "deleted file mode ", "new file mode ")):
+        continue
+    if line.startswith(("index ", "similarity index ", "dissimilarity index ")):
+        continue
 
 if violations:
     print("SCOPE VIOLATION: Changes touch files outside allowed patterns:")
@@ -122,18 +153,19 @@ if violations:
 
 print("OK: All changes within allowed scope")
 sys.exit(0)
-PYEOF
+' "${ALLOWED_MODIFY_PATTERNS[@]}"
 }
 
 # safety_cost_check <cumulative_usd>
 # Returns 1 if cost limit exceeded.
 safety_cost_check() {
   local cumulative="$1"
+  local limit="${COST_LIMIT:-$COST_LIMIT_USD}"
 
-  python3 -c "
-import sys
-cumulative = float('$cumulative')
-limit = float('$COST_LIMIT_USD')
+  CUMULATIVE_COST="$cumulative" COST_LIMIT_EFFECTIVE="$limit" python3 -c "
+import os, sys
+cumulative = float(os.environ['CUMULATIVE_COST'])
+limit = float(os.environ['COST_LIMIT_EFFECTIVE'])
 if cumulative > limit:
     print(f'COST LIMIT: \${cumulative:.2f} exceeds limit of \${limit:.2f}')
     sys.exit(1)

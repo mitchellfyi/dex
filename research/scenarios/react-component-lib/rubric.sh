@@ -329,7 +329,7 @@ rubric_robustness() {
   # Also accept ts-jest or @swc/jest as alternatives to Babel
   if [[ "$has_babel" -eq 0 ]]; then
     grep -q "ts-jest\|@swc/jest" <<< "$src_content" 2>/dev/null && has_babel=1
-    [[ -f "$ws/tsconfig.json" ]] && echo "$(cat "$ws/tsconfig.json" 2>/dev/null)" | grep -q '"jsx"' 2>/dev/null && has_babel=1
+    [[ -f "$ws/tsconfig.json" ]] && grep -q '"jsx"' "$ws/tsconfig.json" 2>/dev/null && has_babel=1
   fi
   [[ "$has_babel" -eq 1 ]] && score=$((score + 5))
 

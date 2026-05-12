@@ -2,6 +2,7 @@
 # Research harness — Claude execution capture
 # Wraps claude -p invocations with output routing, timeout, and exit code capture.
 
+# shellcheck source=research/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 # _inject_workspace_context <workspace_dir>

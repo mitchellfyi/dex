@@ -80,6 +80,11 @@ dk_phase_min_audits() {
   fi
 }
 
+dk_reverse_file_lines() {
+  local file="$1"
+  awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$file"
+}
+
 dk_phase_iteration_count() {
   local state_file="$1" raw iterations
   raw=$(cat "$state_file" 2>/dev/null || echo "0")
@@ -550,7 +555,7 @@ if [[ -f "$FINDINGS_FILE" ]]; then
       else
         break
       fi
-    done < <(tac "$FINDINGS_FILE" 2>/dev/null)
+    done < <(dk_reverse_file_lines "$FINDINGS_FILE" 2>/dev/null)
     if [[ $REPEAT_COUNT -ge 3 ]]; then
       SEMANTIC_STUCK=1
     fi

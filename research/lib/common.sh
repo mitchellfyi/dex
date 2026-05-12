@@ -6,6 +6,7 @@ set -euo pipefail
 
 # Source config if not already loaded
 if [[ -z "${RESEARCH_DIR:-}" ]]; then
+  # shellcheck source=research/config.sh
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config.sh"
 fi
 
@@ -32,6 +33,22 @@ run_id() {
 # Path to a scenario directory
 scenario_dir() {
   echo "$SCENARIOS_DIR/$1"
+}
+
+# Scenario names are path components used under scenarios/, workspaces/, and
+# results/. Keep them as basenames so user input cannot escape those roots.
+scenario_name_valid() {
+  local name="${1:-}"
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
+}
+
+scenario_name_require_valid() {
+  local name="${1:-}"
+  if scenario_name_valid "$name"; then
+    return 0
+  fi
+  log_error "Invalid scenario name: $name"
+  return 1
 }
 
 # Path to a workspace for a given scenario

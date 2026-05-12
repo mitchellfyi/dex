@@ -196,6 +196,33 @@ def provider_global_config_path():
     return os.path.expanduser('~/.doyaken/providers.json')
 
 
+def provider_repo_session_key():
+    root = provider_repo_root() or os.getcwd()
+    name = os.path.basename(root.rstrip(os.sep)) or 'repo'
+    slug = re.sub(r'[^a-z0-9._-]+', '-', name.lower()).strip('-') or 'repo'
+    session_hash = 'nohash'
+    try:
+        completed = subprocess.run(
+            ['cksum'],
+            input=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if completed.returncode == 0:
+            parts = completed.stdout.split()
+            if parts:
+                session_hash = parts[0]
+    except Exception:
+        pass
+    return f'repo-{slug}-{session_hash}'
+
+
+def provider_scoped_session_id(raw_id):
+    return f'{provider_repo_session_key()}-{raw_id}'
+
+
 def provider_profile_engine(path, profile, repo_scoped=False):
     if profile in PROVIDER_BUILTIN_ENGINES:
         return PROVIDER_BUILTIN_ENGINES[profile]
@@ -230,7 +257,7 @@ def provider_session_id():
     if root:
         marker = os.sep + '.doyaken' + os.sep + 'worktrees' + os.sep
         if marker in root:
-            return f"worktree-{os.path.basename(root)}"
+            return provider_scoped_session_id(f"worktree-{os.path.basename(root)}")
     try:
         branch = subprocess.check_output(
             ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
@@ -238,7 +265,7 @@ def provider_session_id():
         ).strip()
     except Exception:
         branch = ''
-    return branch.replace('/', '-') if branch else ''
+    return provider_scoped_session_id(branch.replace('/', '-')) if branch else ''
 
 
 def provider_session_engine():

@@ -239,8 +239,7 @@ rubric_test_quality() {
 
     # Mutation 1: Remove negative price/quantity validation
     # Re-introduce bug: make addItem accept negative price without throwing
-    local mutant1
-    mutant1=$(cd "$ws" && node -e "
+    (cd "$ws" && node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$cart_file', 'utf8');
 // Remove validation: replace throw statements related to price/quantity with nothing
@@ -269,7 +268,7 @@ if (mutated === src) {
 } else {
   fs.writeFileSync('$cart_file', mutated);
 }
-" 2>&1) || true
+" >/dev/null 2>&1) || true
     local mut1_result
     mut1_result=$(cd "$ws" && npm test 2>&1 | tail -20) || true
     if echo "$mut1_result" | grep -qiE "fail|FAIL|error|Error|✕|✗"; then

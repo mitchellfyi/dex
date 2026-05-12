@@ -4,7 +4,9 @@ set -euo pipefail
 
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
 
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  repo_root=""
+fi
 if [[ -z "$repo_root" ]]; then
   echo "ERROR: Not in a git repository."
   exit 1

@@ -12,10 +12,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=research/lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=research/lib/workspace.sh
 source "$SCRIPT_DIR/lib/workspace.sh"
+# shellcheck source=research/lib/capture.sh
 source "$SCRIPT_DIR/lib/capture.sh"
+# shellcheck source=research/lib/score.sh
 source "$SCRIPT_DIR/lib/score.sh"
+# shellcheck source=research/lib/report.sh
 source "$SCRIPT_DIR/lib/report.sh"
 
 # ── Parse arguments ────────────────────────────────────────────────────────
@@ -79,6 +84,7 @@ echo ""
 # ── Discover scenarios ─────────────────────────────────────────────────────
 SCENARIOS=()
 if [[ -n "$SCENARIO_FILTER" ]]; then
+  scenario_name_require_valid "$SCENARIO_FILTER" || exit 1
   if [[ ! -d "$SCENARIOS_DIR/$SCENARIO_FILTER" ]]; then
     log_error "Scenario not found: $SCENARIO_FILTER"
     exit 1
@@ -86,6 +92,7 @@ if [[ -n "$SCENARIO_FILTER" ]]; then
   SCENARIOS=("$SCENARIO_FILTER")
 else
   while IFS= read -r s; do
+    scenario_name_require_valid "$s" || exit 1
     SCENARIOS+=("$s")
   done < <(list_scenarios)
 fi

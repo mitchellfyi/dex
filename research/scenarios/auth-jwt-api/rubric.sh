@@ -13,6 +13,16 @@ s.close()
 "
 }
 
+_kill_auth_server() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] || return 0
+  kill -- -"$pid" 2>/dev/null || true
+  kill "$pid" 2>/dev/null || true
+  sleep 0.5
+  kill -9 -- -"$pid" 2>/dev/null || true
+  kill -9 "$pid" 2>/dev/null || true
+}
+
 rubric_correctness() {
   local ws="$1"
   local score=0
@@ -43,10 +53,9 @@ rubric_correctness() {
   local port=0
   port=$(_find_free_port)
 
-  (cd "$ws" && exec env PORT=$port JWT_SECRET="test-rubric-secret-key-12345" node "$entry") &>/dev/null &
+  (cd "$ws" && exec env PORT="$port" JWT_SECRET="test-rubric-secret-key-12345" node "$entry") &>/dev/null &
   local server_pid=$!
-  # shellcheck disable=SC2064  # Intentional: expand $server_pid now, not at trap time
-  trap "kill -- -$server_pid 2>/dev/null; kill -9 -- -$server_pid 2>/dev/null || true" RETURN
+  trap '_kill_auth_server "$server_pid"; trap - RETURN' RETURN
   sleep 2
 
   if ! kill -0 "$server_pid" 2>/dev/null; then
@@ -450,8 +459,9 @@ except:
     [[ "$update_code" == "200" ]] && score=$((score + 5))
   fi
 
-  # Cleanup — kill process group to include child processes
-  kill -- -$server_pid 2>/dev/null; sleep 0.5; kill -9 -- -$server_pid 2>/dev/null || true
+  # Cleanup — try process group first, then the direct server PID.
+  _kill_auth_server "$server_pid"
+  trap - RETURN
 
   echo "$score"
 }
@@ -707,7 +717,7 @@ except:
     done
   fi
   if [[ -n "$tp_entry" ]]; then
-    (cd "$ws" && exec env PORT=$tp_port JWT_SECRET="test-rubric-secret-key-12345" node "$tp_entry") &>/dev/null &
+    (cd "$ws" && exec env PORT="$tp_port" JWT_SECRET="test-rubric-secret-key-12345" node "$tp_entry") &>/dev/null &
     local tp_pid=$!
     sleep 2
     if kill -0 "$tp_pid" 2>/dev/null; then

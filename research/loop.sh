@@ -3,7 +3,7 @@
 # Runs suite → analyzes failures → improves DK → validates → repeats.
 #
 # Usage:
-#   ./research/loop.sh                          # Default: 10 iterations
+#   ./research/loop.sh                          # Default: 20 iterations
 #   ./research/loop.sh --max-iterations 5       # Custom iteration limit
 #   ./research/loop.sh --cost-limit 100         # Custom cost limit (USD)
 #   ./research/loop.sh --scenario cli-todo-app  # Focus on one scenario
@@ -12,8 +12,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=research/lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=research/lib/safety.sh
 source "$SCRIPT_DIR/lib/safety.sh"
+# shellcheck source=research/lib/report.sh
 source "$SCRIPT_DIR/lib/report.sh"
 
 # ── Parse arguments ────────────────────────────────────────────────────────

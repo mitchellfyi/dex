@@ -114,12 +114,10 @@ rubric_correctness() {
   # Adding todo with empty string should be rejected (5 pts)
   local empty_add_output empty_add_exit
   empty_add_output=$(cd "$ws" && node "$entry" add "" 2>&1); empty_add_exit=$?
-  local empty_rejected=0
   # Should either show error message or exit non-zero
   local empty_err_match
   empty_err_match=$(echo "$empty_add_output" | grep -ciE 'error|invalid|empty|required|provide|cannot|must' 2>/dev/null) || true
   if [[ "$empty_err_match" -gt 0 ]] || [[ "$empty_add_exit" -ne 0 ]]; then
-    empty_rejected=1
     score=$((score + 5))
   fi
 
@@ -427,8 +425,8 @@ rubric_robustness() {
   fi
   # Should still be able to add after corruption (5 pts)
   echo "GARBAGE" > "$ws/todos.json"
-  local post_corrupt_add
-  post_corrupt_add=$(cd "$ws" && node "$entry" add "Recovery test" 2>&1); local post_corrupt_exit=$?
+  local post_corrupt_exit
+  (cd "$ws" && node "$entry" add "Recovery test" >/dev/null 2>&1); post_corrupt_exit=$?
   if [[ $post_corrupt_exit -ne 139 && $post_corrupt_exit -ne 134 ]]; then
     local recovery_list
     recovery_list=$(cd "$ws" && node "$entry" list 2>&1) || true
@@ -470,8 +468,8 @@ rubric_robustness() {
   rm -f "$ws/todos.json" 2>/dev/null
 
   # With no todos.json, list should work without error (5 pts)
-  local fresh_output fresh_exit
-  fresh_output=$(cd "$ws" && node "$entry" list 2>&1); fresh_exit=$?
+  local fresh_exit
+  (cd "$ws" && node "$entry" list >/dev/null 2>&1); fresh_exit=$?
   if [[ $fresh_exit -eq 0 ]] || [[ $fresh_exit -ne 139 && $fresh_exit -ne 134 ]]; then
     score=$((score + 5))
   fi

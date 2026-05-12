@@ -55,8 +55,13 @@ if [[ -f "$SETTINGS_FILE" ]]; then
       ))} + {worktree: ((.[0].worktree // {}) * (.[1].worktree // {}))}
     ' "$SETTINGS_FILE" <(printf '%s\n' "$local_settings")) && [[ -n "$merged" ]]; then
       tmpfile="${SETTINGS_FILE}.tmp.$$"
-      printf '%s\n' "$merged" > "$tmpfile" && mv "$tmpfile" "$SETTINGS_FILE"
-      say_done "Merged hooks and worktree settings into ~/.claude/settings.json"
+      if printf '%s\n' "$merged" > "$tmpfile" && mv "$tmpfile" "$SETTINGS_FILE"; then
+        say_done "Merged hooks and worktree settings into ~/.claude/settings.json"
+      else
+        rm -f "$tmpfile" 2>/dev/null || true
+        say_error "Failed to merge settings — settings.json left unchanged"
+        exit 1
+      fi
     else
       say_error "Failed to merge settings — settings.json left unchanged"
       [[ $QUIET -eq 1 ]] || printf '        Add settings manually from %s/settings.json\n' "$DOYAKEN_DIR"
@@ -69,9 +74,11 @@ if [[ -f "$SETTINGS_FILE" ]]; then
     fi
   fi
 else
-  if printf '%s\n' "$local_settings" > "$SETTINGS_FILE"; then
+  tmpfile="${SETTINGS_FILE}.tmp.$$"
+  if printf '%s\n' "$local_settings" > "$tmpfile" && mv "$tmpfile" "$SETTINGS_FILE"; then
     say_done "Created ~/.claude/settings.json with hooks and worktree settings"
   else
+    rm -f "$tmpfile" 2>/dev/null || true
     say_error "Failed to copy settings.json"
     exit 1
   fi

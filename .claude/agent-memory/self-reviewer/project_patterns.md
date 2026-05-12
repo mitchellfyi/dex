@@ -6,17 +6,17 @@ type: project
 
 ## State File Cleanup Patterns
 
-dk_cleanup_session() in lib/session.sh is the canonical way to remove all loop+phase state files for a session. It covers: .state, .complete, .active, .prompt, .findings, .debt, .config (loop files) + .phase, .times, .system-context, .log (phase files).
+dk_cleanup_session() in lib/session.sh is the canonical way to remove all loop+phase state files for a session. It covers loop files including .state, .complete, .active, .prompt, .findings, .debt, .config, handoff/paused/watch/provider/review/complete state, and phase marker files, plus phase files including .phase, .times, .system-context, .log, and .branch.
 
 dkloop (shell function) intentionally does a SUBSET cleanup (only loop files, no .active or phase files) because it never creates .config or phase state. This is not an inconsistency.
 
-dkclean stale file cleanup (dk_cleanup_stale_files) covers extensions: state, complete, active, prompt (loop dir) + phase, times, system-context, log (state dir). It does NOT clean: findings, debt, config. These will accumulate indefinitely if dk_cleanup_session is never called for a given session ID. This is a known gap.
+dkclean stale file cleanup (dk_cleanup_stale_files) now covers the loop/session extensions that can otherwise accumulate, including prompt, config, findings, debt, provider, phase markers, watch pause/lock files, plus phase/timing/context/log/branch files. Do not report missing findings/debt/config stale cleanup as a current gap without re-checking dk.sh.
 
 ## Install/Uninstall Symmetry
 
 install.sh checks for existing install with: `grep -q 'doyaken/dk.sh' "$ZSHRC"` — this assumes DOYAKEN_DIR path contains 'doyaken'. This is a pre-existing assumption.
 
-**Known regression (as of 2026-03-21):** install.sh now writes `export DOYAKEN_DIR="..."` in addition to the source line, but the idempotency check (line 112) only looks for the source line. Users with a pre-existing install who re-run `dk install` will not get the new DOYAKEN_DIR export line added. They need to manually add it or fully reinstall.
+install.sh has an upgrade path for existing source lines that lack `export DOYAKEN_DIR=...`: it inserts the export before the source line. The old regression where re-running install skipped the export is fixed.
 
 uninstall.sh uses `grep -v 'DOYAKEN_DIR'` to remove the export line — this is intentionally broad and will also remove any user-written DOYAKEN_DIR references in .zshrc.
 
@@ -26,11 +26,11 @@ config.sh uses `_DKTMP="$path" awk '... ENVIRON["_DKTMP"] ...'` to pass file pat
 
 ## Session ID Derivation
 
-dk_session_id() without args: reads from worktree path or current branch name. With arg: returns "worktree-{name}". IDs are NOT cryptographically random — documented in session.sh.
+dk_session_id() without args reads from the Doyaken worktree path or current branch name. With an arg it derives a worktree session. All normal session IDs are prefixed with a stable repo key such as `repo-doyaken-cli-3495066660-...` to prevent cross-repo collisions. IDs are NOT cryptographically random — documented in session.sh.
 
 dk_unique_session_id() (added 2026-03-21): appends PID + epoch to branch-based ID. Used by dkloop to prevent collisions across concurrent invocations. The unique ID is passed via DOYAKEN_SESSION_ID env var so phase-loop.sh and skills (dkloop, dkcomplete) use the correct ID.
 
-Implication: dkloop now generates a NEW session ID every run. Stale .prompt, .state, .active, .complete files from prior interrupted runs are NOT cleaned by the next run (unique ID means the next run can't find the old files by name). dkclean handles .state/.complete/.active after 7 days but does NOT clean .prompt files.
+Implication: dkloop generates a new session ID every run. Stale files from interrupted unique-ID runs are not found by the next run by name, but dkclean prunes old loop/session files after 7 days, including prompts and review/debt/config/provider markers.
 
 ## dkloop Two-Phase Architecture (as of 2026-03-21)
 
@@ -40,9 +40,9 @@ dkloop now runs two sequential Claude sessions: (1) Plan session in --permission
 
 New library providing: dk_wt_branch, dk_wt_remove, dk_cleanup_last_session, dk_cleanup_stale_files. Sourced via common.sh. The header claims "Used by bin scripts (uninit.sh)" but uninit.sh does not call any functions from worktree.sh directly — it uses session.sh functions only. The header is inaccurate for uninit.sh.
 
-## phase-loop.sh: .active File Defaults Override .config File (found 2026-04-07)
+## phase-loop.sh: .config Ordering (fixed)
 
-When env vars are NOT inherited by the Stop hook (the scenario the file-based config was added to fix), the `.active` file block (lines 41-44) sets `DOYAKEN_LOOP_PHASE=prompt-loop` and `DOYAKEN_LOOP_PROMISE=PROMPT_COMPLETE` BEFORE the `.config` file block (lines 50-64) reads the correct values. Since both use `${VAR:-default}`, the first-set wins and the `.config` values are silently ignored. The audit prompt content (DOYAKEN_LOOP_PROMPT) IS correctly set because lines 42-43 don't set it. Fix: swap the block order (read .config before setting .active defaults) or make .config values unconditional when .config exists.
+phase-loop.sh reads the per-session `.config` before applying `.active` prompt-loop defaults, so file-backed phase/promise/audit values are no longer overridden when hook env vars are missing. Do not report the old `.active` default-ordering bug without re-checking phase-loop.sh.
 
 ## Atomic Write Consistency
 
@@ -68,9 +68,9 @@ All `echo "ERROR: ..."` calls in dk.sh (except line 24, which runs before lib/ou
 
 `__dk_classify_exit` documents and the `format_status` in log.sh handles a "max-iter" status, but this status is never produced. `phase-loop.sh` exits 0 (not a distinct code) when max iterations are reached, so `__dk_classify_exit` always returns "advance" for exit 0. The log.sh `max-iter` case is dead code.
 
-## Watchdog Process Group Pattern
+## Watchdog Process Tree Pattern
 
-The phase timeout watchdog (`kill -TERM "$claude_pid"`) targets the background subshell PID. The `claude` CLI runs as a CHILD of that subshell. Killing the subshell does not guarantee SIGTERM propagates to `claude` — claude may become an orphan if it doesn't handle SIGHUP on parent exit. The intended fix is to kill the process group (`kill -TERM -"$claude_pid"`) rather than just the parent subshell.
+The phase timeout watchdog must not assume the launched subshell owns a process group. The current pattern uses `__dk_kill_process_tree` to terminate the wrapper and descendants. If changing timeout code, preserve child-process cleanup rather than reverting to negative-PID process-group kills.
 
 ## Commit Message Pattern
 
@@ -82,7 +82,7 @@ In rubric.sh files, the pattern `require('./src/cart.js') || require('./cart.js'
 
 ## Research Harness: Subshell Process Kill Pattern
 
-`(cd "$ws" && cmd) &` followed by `server_pid=$!` and `kill "$server_pid"` kills the bash subshell wrapper, NOT the inner `cmd` process. The inner process becomes an orphan. Test confirmed on macOS. Same pattern as the existing Watchdog Process Group Pattern in the main codebase. Fix: use `kill -- -$server_pid` to kill the process group, or start with `node ... &` directly.
+`(cd "$ws" && cmd) &` followed by `server_pid=$!` and `kill "$server_pid"` kills the bash subshell wrapper, NOT necessarily the inner `cmd` process. Rubrics that start servers this way should use a cleanup helper that tries process-group cleanup and direct-PID fallback. The auth-jwt-api rubric uses `_kill_auth_server` for this.
 
 ## Research Harness: RUN_ID Capture via tail -1
 
@@ -98,7 +98,7 @@ Fixed by adding `unset -f` loop for all `rubric_*` functions before sourcing eac
 
 ## Research Harness: access_token Injection Into node -e (fixed 2026-03-27)
 
-Fixed in auth-jwt-api/rubric.sh by passing the JWT token via `ACCESS_TOKEN` env var and reading with `process.env.ACCESS_TOKEN` instead of string interpolation. Also fixed server process leak by killing the process group (`kill -- -$server_pid`) and adding a RETURN trap.
+Fixed in auth-jwt-api/rubric.sh by passing the JWT token via `ACCESS_TOKEN` env var and reading with `process.env.ACCESS_TOKEN` instead of string interpolation. Server cleanup uses `_kill_auth_server`, which tries process-group cleanup and direct-PID fallback from a RETURN trap.
 
 ## Research Harness: LLM Judge Response Triple-Quote Corruption (fixed 2026-03-27)
 

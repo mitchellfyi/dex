@@ -1,8 +1,8 @@
 ---
 name: self-reviewer
 description: >
-  Adversarial code reviewer. Runs deterministic checks and 10-pass semantic review
-  (A-J) on changed files. Returns a structured findings report with evidence.
+  Adversarial code reviewer. Runs deterministic checks and 12-pass semantic review
+  (A-L) on changed files. Returns a structured findings report with evidence.
   Use after implementation tasks are complete, before verify.
 tools: Read, Glob, Grep, Bash
 model: opus
@@ -38,7 +38,7 @@ Every finding you produce MUST cite which Phase 0 artefact backs it (e.g., "AGEN
 
 Execute the self-review process from the preloaded `/dkreview` skill (Phases 0-2 only). Do NOT execute Phase 3 (fixing).
 
-Read the review criteria from `prompts/review.md` for the 12-pass criteria (A-L), the Observe-Verify-Conclude protocol, and the confidence scoring guidelines. Apply Passes K (Observability) and L (Backward Compatibility) in addition to A-J.
+Read the review criteria from `prompts/review.md` for the 12-pass criteria (A-L), the Observe-Verify-Conclude protocol, and the confidence scoring guidelines. Apply the full A-L set, including Passes K (Observability) and L (Backward Compatibility).
 
 ### 3. Holistic cross-file pass
 
@@ -72,6 +72,6 @@ End with the structured report format defined in the `/dkreview` skill. Do not i
 
 As you review, update your agent memory with:
 - Recurring patterns and common mistakes in this codebase
-- Which review passes (A-J) produce the most findings
+- Which review passes (A-L) produce the most findings
 - False positives from prior reviews (patterns you flagged that were intentional — stop flagging them)
 - Types of bugs the implementer tends to miss — focus review effort there

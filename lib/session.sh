@@ -5,22 +5,108 @@
 # stable across branch renames (the SessionStart hook may rename branches to
 # follow project conventions). See: docs/autonomous-mode.md § State Management
 #
-# Scope: state/loop dirs are global (~/.claude/.doyaken-{phases,loops}/) so
-# session IDs must be unique across repos. Worktree-based IDs include the
-# worktree name (e.g., "worktree-ticket-999") which is unique per-repo.
-# Branch-based IDs (fallback for non-worktree use) could collide if two repos
-# share the same branch name — this is acceptable since dkloop cleans state
-# after each run, so stale collisions are unlikely.
+# Scope: state/loop dirs are global (~/.claude/.doyaken-{phases,loops}/), so
+# session IDs include a repo-stable key plus the worktree/branch identifier.
+# This prevents two repos using the same ticket, task, or branch name from
+# sharing phase, provider, watcher, or loop state.
 #
 # Concurrency: dk_unique_session_id() appends PID+epoch to avoid collisions
 # when multiple dkloop invocations run on the same branch. The unique ID is
 # passed to Claude via DOYAKEN_SESSION_ID env var so the stop hook resolves
 # to the same unique ID. See: hooks/phase-loop.sh line 29.
 
+# dk_session_repo_key
+# Derive a filesystem-safe repo key from the main repo root. The basename keeps
+# state files readable; the cksum component makes same-named repos distinct.
+dk_session_repo_key() {
+  local root name slug hash
+  root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [[ "$root" == *"/.doyaken/worktrees/"* ]]; then
+    root="${root%%/.doyaken/worktrees/*}"
+  fi
+  [[ -n "$root" ]] || root="${PWD:-unknown}"
+
+  name=$(basename "$root")
+  slug=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')
+  [[ -n "$slug" ]] || slug="repo"
+
+  hash=""
+  if command -v cksum >/dev/null 2>&1; then
+    hash=$(printf '%s' "$root" | cksum 2>/dev/null | awk '{print $1}') || hash=""
+  fi
+  [[ -n "$hash" ]] || hash="nohash"
+
+  printf 'repo-%s-%s\n' "$slug" "$hash"
+}
+
+# dk_scoped_session_id <raw_id>
+# Add the current repo namespace to a raw worktree/branch/session identifier.
+dk_scoped_session_id() {
+  local raw_id="$1"
+  printf '%s-%s\n' "$(dk_session_repo_key)" "$raw_id"
+}
+
+# __dk_migrate_legacy_session_file <old_path> <new_path> <new_session_id>
+# Move one pre-scoped session file into the current repo scope without
+# overwriting newer scoped state.
+__dk_migrate_legacy_session_file() {
+  local old_path="$1" new_path="$2" new_session_id="$3" tmp_file
+  [[ -f "$old_path" && ! -e "$new_path" ]] || return 0
+
+  if [[ "$old_path" == *.provider ]]; then
+    tmp_file="${new_path}.tmp.$$"
+    if awk -v sid="$new_session_id" '
+      BEGIN { saw_session = 0 }
+      /^session=/ { print "session=" sid; saw_session = 1; next }
+      { print }
+      END { if (!saw_session) print "session=" sid }
+    ' "$old_path" > "$tmp_file" && command mv -f "$tmp_file" "$new_path"; then
+      command rm -f "$old_path" 2>/dev/null || true
+      return 0
+    fi
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 0
+  fi
+
+  command mv "$old_path" "$new_path" 2>/dev/null || true
+}
+
+# dk_migrate_legacy_session_state <legacy_id> <scoped_id>
+# Upgrade state created before repo-scoped session IDs existed. The legacy files
+# were global, so migrate only when the scoped target does not already exist.
+dk_migrate_legacy_session_state() {
+  local legacy_id="$1" scoped_id="$2" suffix old_file new_file base
+  [[ -n "$legacy_id" && -n "$scoped_id" && "$legacy_id" != "$scoped_id" ]] || return 0
+
+  if [[ -d "$DK_STATE_DIR" ]]; then
+    for suffix in phase times system-context log branch; do
+      old_file="${DK_STATE_DIR}/${legacy_id}.${suffix}"
+      new_file="${DK_STATE_DIR}/${scoped_id}.${suffix}"
+      __dk_migrate_legacy_session_file "$old_file" "$new_file" "$scoped_id"
+    done
+  fi
+
+  if [[ -d "$DK_LOOP_DIR" ]]; then
+    for suffix in state complete active prompt findings debt config handoff-mode paused watch-pause ci.watch-lock pr.watch-lock review-state review-result complete-state provider; do
+      old_file="${DK_LOOP_DIR}/${legacy_id}.${suffix}"
+      new_file="${DK_LOOP_DIR}/${scoped_id}.${suffix}"
+      __dk_migrate_legacy_session_file "$old_file" "$new_file" "$scoped_id"
+    done
+
+    while IFS= read -r old_file; do
+      [[ -n "$old_file" && -f "$old_file" ]] || continue
+      base=$(basename "$old_file")
+      new_file="${DK_LOOP_DIR}/${scoped_id}${base#"$legacy_id"}"
+      __dk_migrate_legacy_session_file "$old_file" "$new_file" "$scoped_id"
+    done < <(find "$DK_LOOP_DIR" -maxdepth 1 -type f \( -name "${legacy_id}.phase-*.started" -o -name "${legacy_id}.phase-*.ready" -o -name "${legacy_id}.phase-*.busy" -o -name "${legacy_id}.phase-*.busy-notice" \) -print 2>/dev/null)
+  fi
+}
+
 # dk_session_id [wt_name]
 # Derive a stable session identifier used to key state and loop files.
 #
-# With argument:  "worktree-<wt_name>" — used by dk.sh which knows the name.
+# With argument:  "repo-<name>-<hash>-worktree-<wt_name>" — used by dk.sh
+# which knows the name.
 # Without argument: auto-detect from the current git directory:
 #   - If inside a doyaken worktree (path contains /.doyaken/worktrees/),
 #     derive from the directory name. This is stable even if the branch
@@ -28,19 +114,26 @@
 #   - Otherwise, fall back to the current branch name (slashes → dashes).
 # shellcheck disable=SC2120  # Intentionally dual-mode: called with args from dk.sh, without from hooks
 dk_session_id() {
+  local raw_id scoped_id
   if [[ $# -ge 1 ]]; then
-    echo "worktree-${1}"
+    raw_id="worktree-${1}"
+    scoped_id=$(dk_scoped_session_id "$raw_id")
+    dk_migrate_legacy_session_state "$raw_id" "$scoped_id" 2>/dev/null || true
+    printf '%s\n' "$scoped_id"
     return
   fi
   local toplevel
   toplevel=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
   if [[ "$toplevel" == *"/.doyaken/worktrees/"* ]]; then
-    echo "worktree-$(basename "$toplevel")"
+    raw_id="worktree-$(basename "$toplevel")"
   else
     local branch
     branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "default")
-    echo "${branch//\//-}"
+    raw_id="${branch//\//-}"
   fi
+  scoped_id=$(dk_scoped_session_id "$raw_id")
+  dk_migrate_legacy_session_state "$raw_id" "$scoped_id" 2>/dev/null || true
+  printf '%s\n' "$scoped_id"
 }
 
 # dk_unique_session_id
@@ -322,6 +415,9 @@ dk_record_session_branch() {
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
 dk_cleanup_session() {
   local sid="$1"
-  [[ -d "$DK_LOOP_DIR" ]]  && rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_watch_pause_file "$sid")" "$(dk_watch_lock_file "$sid" ci)" "$(dk_watch_lock_file "$sid" pr)" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" "${DK_LOOP_DIR}/${sid}".phase-*.started "${DK_LOOP_DIR}/${sid}".phase-*.ready "${DK_LOOP_DIR}/${sid}".phase-*.busy "${DK_LOOP_DIR}/${sid}".phase-*.busy-notice 2>/dev/null
+  if [[ -d "$DK_LOOP_DIR" ]]; then
+    rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_watch_pause_file "$sid")" "$(dk_watch_lock_file "$sid" ci)" "$(dk_watch_lock_file "$sid" pr)" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" 2>/dev/null
+    find "$DK_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" \) -exec rm -f {} + 2>/dev/null || true
+  fi
   [[ -d "$DK_STATE_DIR" ]] && rm -f "$(dk_state_file "$sid")" "$(dk_times_file "$sid")" "$(dk_context_file "$sid")" "$(dk_log_file "$sid")" "$(dk_branch_file "$sid")" 2>/dev/null
 }

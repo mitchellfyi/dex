@@ -5,7 +5,7 @@ description: "Run dkreview repeatedly in fresh independent subagents until three
 
 # Skill: dkreviewloop
 
-Run `/dkreview --single-pass` repeatedly in fresh, independent subagents until **3 clean reports in a row** (max 10 iterations). This is the default review loop used by `dk` Phase 3.
+Run `/dkreview --single-pass` repeatedly in fresh, independent subagents until **3 clean reports in a row** (max 20 iterations). This is the default review loop used by `dk` Phase 3.
 
 ## When to Use
 
@@ -34,7 +34,7 @@ Print the chosen scope (name + diff command + file count) before spawning the fi
 
 ### 2. Spawn Fresh Review Sessions
 
-For each iteration (up to **10**), spawn a fresh subagent via the **Agent tool** with `subagent_type: "general-purpose"`. Each Agent invocation is a fresh context window — that is the independence the user wants.
+For each iteration (up to **20**), spawn a fresh subagent via the **Agent tool** with `subagent_type: "general-purpose"`. Each Agent invocation is a fresh context window — that is the independence the user wants.
 
 Run one review pass at a time and wait for its result before attempting to stop. Do not use the Stop hook as a polling loop for backgrounded review agents. If the interface backgrounds the Agent invocation, use the available agent-management UI/tooling to wait for that specific agent result; do not repeatedly output "waiting" and stop. The Phase 3 busy marker below is only a safety gate to prevent accidental phase advancement while a pass is still running.
 
@@ -77,7 +77,7 @@ If the result is non-CLEAN: **fix the findings yourself in this orchestrator ses
 ### 4. Exit Conditions
 
 - **Success** — `clean_count >= 3` consecutive clean passes → done.
-- **Safety net** — 10 iterations reached without 3 clean in a row → stop and report partial result. Do not loop forever.
+- **Safety net** — 20 iterations reached without 3 clean in a row → stop and report partial result. Do not loop forever.
 - **User interrupt** — if the user redirects, halt and surface the current count.
 
 ### 5. Report
@@ -88,7 +88,7 @@ Print a final summary:
 ## dkreviewloop Result
 
 - Scope:                 {staged | unstaged | unpushed | PR diff}
-- Iterations:            N / 10
+- Iterations:            N / 20
 - Consecutive clean:     M / 3
 - Result:                {SUCCESS | SAFETY-NET-EXIT}
 - Findings fixed this run: K

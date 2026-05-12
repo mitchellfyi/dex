@@ -4,12 +4,14 @@
 #
 # Usage:
 #   ./research/improve.sh <run-dir>
-#   ./research/improve.sh results/run-20260321-120000
+#   ./research/improve.sh run-20260321-120000
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=research/lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=research/lib/safety.sh
 source "$SCRIPT_DIR/lib/safety.sh"
 
 # ── Parse arguments ────────────────────────────────────────────────────────

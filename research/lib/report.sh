@@ -2,6 +2,7 @@
 # Research harness — reporting
 # TSV append, summary.json generation, and terminal output.
 
+# shellcheck source=research/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 # report_init_tsv

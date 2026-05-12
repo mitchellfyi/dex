@@ -29,7 +29,9 @@ for arg in "$@"; do
 done
 
 # Must be in a git repo
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  repo_root=""
+fi
 if [[ -z "$repo_root" ]]; then
   echo "ERROR: Not in a git repository."
   exit 1
@@ -64,7 +66,7 @@ This project uses Doyaken for workflow automation.
 
 ## Autonomous workflow
 
-From the terminal, run `dk <ticket-number>` to start the full autonomous lifecycle (Plan → Implement → Verify → PR → Complete) in an isolated worktree. You can also run `dk "description"` for freeform tasks, or `dk --no-worktree <ticket-or-description>` to set up the normal lifecycle branch in the current checkout without creating a worktree.
+From the terminal, run `dk <ticket-number>` to start the full autonomous lifecycle (Plan → Implement → Review → Verify & Commit → PR → Complete) in an isolated worktree. You can also run `dk "description"` for freeform tasks, or `dk --no-worktree <ticket-or-description>` to set up the normal lifecycle branch in the current checkout without creating a worktree.
 
 ## One-off prompt (no ticket)
 

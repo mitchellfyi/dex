@@ -6,7 +6,9 @@ set -euo pipefail
 
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
 
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  repo_root=""
+fi
 if [[ -z "$repo_root" ]]; then
   echo "ERROR: Not in a git repository."
   exit 1
@@ -335,15 +337,27 @@ if [[ -f "$MCP_FILE" ]] && command -v jq &>/dev/null; then
     echo ""
     if ask_yn "Promote to ~/.claude/settings.json for worktree compatibility?" "y"; then
       if [[ ! -f "$SETTINGS_FILE" ]]; then
-        echo '{}' > "$SETTINGS_FILE"
+        mkdir -p "$(dirname "$SETTINGS_FILE")"
+        TMPFILE="${SETTINGS_FILE}.tmp.$$"
+        if ! printf '%s\n' '{}' > "$TMPFILE" || ! mv "$TMPFILE" "$SETTINGS_FILE"; then
+          rm -f "$TMPFILE" 2>/dev/null || true
+          dk_warn "Failed to create settings.json — MCP promotion skipped"
+          echo ""
+          echo "To reconfigure later, run: dk config"
+          exit 0
+        fi
       fi
       # Merge .mcp.json servers into global settings.json mcpServers
       if merged=$(jq -s '
         .[0] + {mcpServers: ((.[0].mcpServers // {}) + (.[1].mcpServers // {}))}
       ' "$SETTINGS_FILE" "$MCP_FILE" 2>/dev/null) && [[ -n "$merged" ]]; then
         TMPFILE="${SETTINGS_FILE}.tmp.$$"
-        echo "$merged" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS_FILE"
-        dk_done "Promoted MCP servers to global settings"
+        if printf '%s\n' "$merged" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS_FILE"; then
+          dk_done "Promoted MCP servers to global settings"
+        else
+          rm -f "$TMPFILE" 2>/dev/null || true
+          dk_warn "Failed to merge MCP servers — settings.json left unchanged"
+        fi
       else
         dk_warn "Failed to merge MCP servers — settings.json left unchanged"
       fi

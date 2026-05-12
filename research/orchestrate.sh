@@ -11,8 +11,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=research/lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=research/lib/report.sh
 source "$SCRIPT_DIR/lib/report.sh"
+# shellcheck source=research/lib/safety.sh
 source "$SCRIPT_DIR/lib/safety.sh"
 
 # ── Parse arguments ────────────────────────────────────────────────────────

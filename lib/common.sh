@@ -29,7 +29,9 @@ DK_ARTIFACT_DIR="${DK_ARTIFACT_DIR:-$HOME/.claude/.doyaken-artifacts}"
 # from creating nested worktrees when the user's shell is cd'd into one.
 dk_repo_root() {
   local root
-  root=$(git rev-parse --show-toplevel 2>/dev/null)
+  if ! root=$(git rev-parse --show-toplevel 2>/dev/null); then
+    root=""
+  fi
   if [[ -z "$root" ]]; then
     echo "ERROR: Not in a git repository." >&2
     return 1

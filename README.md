@@ -198,7 +198,7 @@ Loop reads review result
 ```
 
 Each review iteration runs:
-1. `/dkreview --single-pass` — deterministic + 10-pass semantic review
+1. `/dkreview --single-pass` — deterministic + 12-pass semantic review
 2. Manual 4-pass review (Logic, Structure, Security, Holistic)
 3. `self-reviewer` agent — independent adversarial review
 4. Merged findings inventory → batch fix → re-verify
@@ -301,6 +301,11 @@ dkcd                # cd to repo root
 dkcd <number|slug>  # cd to a worktree (fuzzy match)
 dkclean             # Prune stale worktrees, gone branches, orphan branches
 
+# Refinement / architecture mapping
+dk refine <N|description> # Refine a ticket before implementation
+/dkrefine <input>         # In-session refinement workflow
+/dkarchitect [focus]      # Build or refresh .doyaken/architecture.md
+
 # Standalone completion (recovery / non-dk PRs)
 dkcomplete           # Run Phase 6 manually on the current branch's PR
 
@@ -340,6 +345,8 @@ doyaken/
   skills/                    # Lifecycle skills -> symlinked to ~/.claude/skills/
                              # Each skill is a directory containing SKILL.md
     doyaken/                 # Orchestrate full ticket lifecycle
+    dkarchitect/             # Build or refresh the C4 architecture map
+    dkrefine/                # Refine tickets into estimated sub-tickets
     dkplan/                  # Implementation planning (multi-approach)
     dkimplement/             # TDD implementation with completeness verification
     dkuicapture/             # UI screenshots, traces, videos, and browser error logs
@@ -377,7 +384,7 @@ doyaken/
       sensitive-files.md
       hardcoded-secrets.md
   prompts/                   # Prompts referenced by skills and agents
-    review.md                # 10-pass review criteria + confidence scoring
+    review.md                # 12-pass review criteria + confidence scoring
     guardrails.md            # AI discipline + implementation principles (referenced by skills)
     pr-description.md        # PR description template
     commit-format.md         # Conventional commit format + grouping rules
@@ -515,7 +522,7 @@ Control via environment variables:
 | `DOYAKEN_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | — | Per-phase override (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
 | `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive clean review iterations required (Phase 3) |
-| `DOYAKEN_REVIEW_MAX_ITERATIONS` | `10` | Max review iterations before Phase 3 pauses for intervention |
+| `DOYAKEN_REVIEW_MAX_ITERATIONS` | `20` | Max review iterations before Phase 3 pauses for intervention |
 | `DOYAKEN_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a Phase 3 review subagent may stay in progress before the lifecycle pauses |
 | `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | `45` (0m 45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |

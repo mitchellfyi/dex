@@ -11,7 +11,8 @@ dk_default_branch() {
   local branch
   # ${arr[@]+...} idiom: expands to nothing when the array is empty. Required because
   # bash 3.2 (macOS default) treats "${arr[@]}" as "unbound variable" under set -u.
-  branch=$(git ${git_args[@]+"${git_args[@]}"} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
+  branch=$(git ${git_args[@]+"${git_args[@]}"} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)
+  branch="${branch#refs/remotes/origin/}"
   if [[ -z "$branch" ]]; then
     if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet refs/remotes/origin/main 2>/dev/null; then
       branch="main"

@@ -2,6 +2,7 @@
 # Research harness — workspace management
 # Creates and resets isolated workspace directories for each scenario.
 
+# shellcheck source=research/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 # workspace_create <scenario_name>
@@ -10,6 +11,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 workspace_create() {
   local name="$1"
   local ws
+  scenario_name_require_valid "$name" || return 1
   ws=$(workspace_dir "$name")
 
   if [[ -d "$ws" ]]; then
@@ -48,6 +50,7 @@ workspace_reset() {
 # Returns 0 if workspace exists, 1 otherwise.
 workspace_exists() {
   local ws
+  scenario_name_require_valid "$1" || return 1
   ws=$(workspace_dir "$1")
   [[ -d "$ws/.git" ]]
 }
@@ -56,6 +59,7 @@ workspace_exists() {
 # Remove a workspace entirely.
 workspace_destroy() {
   local ws
+  scenario_name_require_valid "$1" || return 1
   ws=$(workspace_dir "$1")
   if [[ -d "$ws" ]]; then
     rm -rf "$ws"

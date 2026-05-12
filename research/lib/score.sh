@@ -2,6 +2,7 @@
 # Research harness — scoring engine
 # Loads per-scenario rubrics, runs deterministic checks, computes weighted totals.
 
+# shellcheck source=research/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 # score_scenario <scenario_name> <result_dir> [--skip-llm-judge]
@@ -31,6 +32,7 @@ score_scenario() {
   done
 
   # Source the scenario's rubric (defines rubric_* functions)
+  # shellcheck source=/dev/null
   source "$rubric_file"
 
   log_step "Scoring scenario: $scenario"

@@ -27,7 +27,7 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "$DOYAKEN_DIR/lib/common.sh"
 ```
 
-Sourcing `common.sh` automatically sources `git.sh`, `session.sh`, `output.sh`, and `worktree.sh`.
+Sourcing `common.sh` automatically sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, and `ui-capture.sh`.
 
 ## Output
 

@@ -34,7 +34,7 @@ rubric_correctness() {
 
   # Try to start the server
   # Use exec so kill targets the node process directly (not a bash subshell)
-  (cd "$ws" && exec env PORT=$port node "$entry") &>/dev/null &
+  (cd "$ws" && exec env PORT="$port" node "$entry") &>/dev/null &
   server_pid=$!
   sleep 2
 
@@ -223,8 +223,7 @@ except:
   dup1_resp=$(curl -s -w "\n%{http_code}" -X POST "$base/books" \
     -H "Content-Type: application/json" \
     -d '{"title":"First Book","author":"Author One","isbn":"9781234567897"}' 2>/dev/null) || true
-  local dup1_code
-  dup1_code=$(echo "$dup1_resp" | tail -1)
+  : "$dup1_resp"
   # Now try creating another book with the same ISBN
   local dup2_resp
   dup2_resp=$(curl -s -w "\n%{http_code}" -X POST "$base/books" \
@@ -279,8 +278,6 @@ except:
   patch_create=$(curl -s -w "\n%{http_code}" -X POST "$base/books" \
     -H "Content-Type: application/json" \
     -d '{"title":"Patch Target","author":"Original Author"}' 2>/dev/null) || true
-  local patch_create_code
-  patch_create_code=$(echo "$patch_create" | tail -1)
   local patch_body
   patch_body=$(echo "$patch_create" | sed '$d')
   local patch_id
@@ -835,7 +832,7 @@ except:
   fi
   if [[ -n "$hc_entry" ]]; then
     local hc_pid=""
-    (cd "$ws" && exec env PORT=$hc_port node "$hc_entry") &>/dev/null &
+    (cd "$ws" && exec env PORT="$hc_port" node "$hc_entry") &>/dev/null &
     hc_pid=$!
     sleep 2
     if kill -0 "$hc_pid" 2>/dev/null; then

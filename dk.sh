@@ -269,9 +269,9 @@ DK_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 # The standalone dkreviewloop shell command also uses these defaults.
 # DK_REVIEW_CLEAN_PASSES: consecutive clean iterations required to advance.
 # DK_REVIEW_MAX_ITERATIONS: safety net — stop after this many iterations regardless.
-# Override: DOYAKEN_REVIEW_CLEAN_PASSES=5, DOYAKEN_REVIEW_MAX_ITERATIONS=15
+# Override: DOYAKEN_REVIEW_CLEAN_PASSES=5, DOYAKEN_REVIEW_MAX_ITERATIONS=25
 DK_REVIEW_CLEAN_PASSES=3
-DK_REVIEW_MAX_ITERATIONS=10
+DK_REVIEW_MAX_ITERATIONS=20
 
 # Phase 6 (Complete) cycle configuration.
 # DK_COMPLETE_MAX_CYCLES: max review cycles before escalating to user (default 3).
@@ -319,6 +319,34 @@ __dk_phase_timeout() {
 
 # dk_default_branch is provided by lib/git.sh (sourced via lib/common.sh)
 
+# __dk_child_pids <pid>
+# Print child PIDs for a process using pgrep when available, with a ps fallback.
+unalias __dk_child_pids 2>/dev/null; unfunction __dk_child_pids 2>/dev/null
+__dk_child_pids() {
+  local pid="$1"
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -P "$pid" 2>/dev/null || true
+  else
+    ps -axo pid=,ppid= 2>/dev/null | awk -v parent="$pid" '$2 == parent { print $1 }'
+  fi
+}
+
+# __dk_kill_process_tree <pid> [signal]
+# Kill a process and its descendants without assuming the process owns a pgroup.
+unalias __dk_kill_process_tree 2>/dev/null; unfunction __dk_kill_process_tree 2>/dev/null
+__dk_kill_process_tree() {
+  local pid="$1" signal="${2:-TERM}" child
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+
+  while IFS= read -r child; do
+    [[ "$child" =~ ^[0-9]+$ ]] || continue
+    [[ "$child" == "$$" ]] && continue
+    __dk_kill_process_tree "$child" "$signal"
+  done < <(__dk_child_pids "$pid")
+
+  kill "-${signal}" "$pid" 2>/dev/null || true
+}
+
 # __dk_is_ticket <string>
 # Returns 0 if the string looks like a ticket reference (bare number, prefixed
 # like ENG-999, ticket-999). Returns 1 otherwise (freeform task description).
@@ -354,7 +382,10 @@ __dk_resolve_workspace_name() {
 __dk_session_id_for_workspace() {
   local workspace_mode="$1" wt_name="$2"
   if [[ "$workspace_mode" == "in-place" ]]; then
-    printf '%s\n' "inplace-${wt_name}"
+    local raw_id="inplace-${wt_name}" scoped_id
+    scoped_id=$(dk_scoped_session_id "$raw_id")
+    dk_migrate_legacy_session_state "$raw_id" "$scoped_id" 2>/dev/null || true
+    printf '%s\n' "$scoped_id"
   else
     dk_session_id "$wt_name"
   fi
@@ -783,16 +814,18 @@ __dk_run_phases_inline() {
   _dk_pidfile=$(mktemp "${TMPDIR:-/tmp}/dk-inline.XXXXXX")
 
   if [[ "$session_timeout" -gt 0 ]]; then
-    eval '(
+    (
       local tgt=""
       while [[ -z "$tgt" ]]; do
         [[ -s "$_dk_pidfile" ]] && tgt=$(<"$_dk_pidfile")
         [[ -z "$tgt" ]] && sleep 0.2
       done
       sleep "$session_timeout" 2>/dev/null
-      kill -TERM -"$tgt" 2>/dev/null
-    ) &!
-    _dk_watchdog_pid=$!'
+      __dk_kill_process_tree "$tgt" TERM
+      sleep 2
+      __dk_kill_process_tree "$tgt" KILL
+    ) &
+    _dk_watchdog_pid=$!
   fi
 
   (
@@ -1400,9 +1433,10 @@ dkrefine() {
   local plan_args=("${DK_PLAN_FLAGS[@]}" -n "$session_name")
   plan_args+=(--append-system-prompt "You are in a dkrefine session — refinement only. Do NOT implement, do NOT commit, do NOT rename branches, do NOT set ticket status to In Progress. Stay in plan mode until you call ExitPlanMode. After approval, follow the dkrefine skill's write-back steps and stop.
 
-Standing platform constraints (apply to every refinement):
-- The system is multi-tenant. All new configuration, data, and computation must be tenant-scoped; cross-tenant isolation must be preserved.
-- The system is compute-heavy with a low user count (not high-traffic). Performance targets are about latency of a single computation and the scope of cascade recomputes, not requests-per-second. Naive whole-plan recomputes on every edit are a red flag — call out cascade scope, memoization, and incremental recomputation in the NFRs.
+Project constraints:
+- Derive security, tenancy, scale, performance, and operational constraints from .doyaken/architecture.md, .doyaken/rules/, and code paths you read.
+- Do not assume the target repo is multi-tenant, compute-heavy, high-traffic, or CRUD-oriented unless the project context proves it.
+- If the project has tenant isolation, cascade recomputation, plugin boundaries, or other standing constraints, call them out with path-backed evidence.
 
 Anchor every claim about where something lives to a real path in this repo. Reuse beats invent — justify every 'new X' against the existing X you found.")
 
@@ -1527,7 +1561,7 @@ $(__dk_provider_prompt)"
 # merged findings inventory, fixes everything, and writes a CLEAN /
 # FINDINGS:N review-result signal. The shell tracks consecutive CLEAN
 # results — DK_REVIEW_CLEAN_PASSES (default 3) in a row to advance,
-# DK_REVIEW_MAX_ITERATIONS (default 10) safety net before pausing.
+# DK_REVIEW_MAX_ITERATIONS (default 20) safety net before pausing.
 
 unalias dkreviewloop 2>/dev/null; unfunction dkreviewloop 2>/dev/null
 dkreviewloop() {
@@ -1583,9 +1617,26 @@ dkreviewloop() {
   local branch
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 
-  # File count preview (parsed from --stat tail line)
+  # File count preview without eval; branch/ref names are passed as argv.
   local files_changed
-  files_changed=$(eval "$stat_cmd" 2>/dev/null | tail -1 | grep -oE '[0-9]+ files? changed' | grep -oE '[0-9]+' || echo "?")
+  case "$scope_name" in
+    "staged changes")
+      files_changed=$(git diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ') || files_changed="?"
+      ;;
+    "unstaged changes")
+      files_changed=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ') || files_changed="?"
+      ;;
+    "unpushed commits (vs upstream)")
+      files_changed=$(git diff '@{u}...HEAD' --name-only 2>/dev/null | wc -l | tr -d ' ') || files_changed="?"
+      ;;
+    "PR diff"*)
+      files_changed=$(git diff "origin/${default_branch}...HEAD" --name-only 2>/dev/null | wc -l | tr -d ' ') || files_changed="?"
+      ;;
+    *)
+      files_changed="?"
+      ;;
+  esac
+  [[ -n "$files_changed" ]] || files_changed="?"
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1646,11 +1697,8 @@ $(__dk_provider_prompt)"
     # Stop hook config: phase 3, MIN_AUDITS=1
     __dk_write_state "$(dk_loop_config_file "$session_id")" "3:${DK_PHASE_PROMISES[3]}:${audit_file}:1"
 
-    local claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$session_name")
-    if [[ $review_iteration -gt 1 ]]; then
-      # Reuse session name across iterations, fresh context window each time
-      claude_args+=(--resume --fork-session)
-    fi
+    local pass_session_name="${session_name}-pass-${review_iteration}"
+    local claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$pass_session_name")
 
     DOYAKEN_SESSION_ID="$session_id" \
     DOYAKEN_LOOP_ACTIVE=1 \
@@ -1750,12 +1798,12 @@ dkrm() {
     local session_ids=()
 
     if [[ -d "$worktrees_dir" ]]; then
-      for wt_dir in "$worktrees_dir"/*/; do
+      for wt_dir in "$worktrees_dir"/*(/N); do
         [[ -d "$wt_dir" ]] || continue
         found=1
         local wt_name
         wt_name="$(basename "$wt_dir")"
-        session_ids+=("worktree-${wt_name}")
+        session_ids+=("$(dk_session_id "$wt_name")")
 
         # The SessionStart hook may rename the worktree branch (e.g. from
         # worktree-ticket-999 to feat/ENG-999-description) to follow project
@@ -1898,7 +1946,7 @@ dkls() {
   fi
 
   local count=0
-  for wt_dir in "$worktrees_dir"/*/; do
+  for wt_dir in "$worktrees_dir"/*(/N); do
     [[ -d "$wt_dir" ]] || continue
     count=$((count + 1))
     local wt_name
@@ -1972,7 +2020,7 @@ dkcd() {
 
   # Prefix match: "ticket-123" or just "123" matches worktree names containing that string
   local matches=()
-  for wt_dir in "$worktrees_dir"/*/; do
+  for wt_dir in "$worktrees_dir"/*(/N); do
     [[ -d "$wt_dir" ]] || continue
     local name
     name="$(basename "$wt_dir")"
@@ -2013,7 +2061,7 @@ dkclean() {
   # 1. Prune stale worktrees (no uncommitted changes)
   local worktrees_dir="${repo_root}/.doyaken/worktrees"
   if [[ -d "$worktrees_dir" ]]; then
-    for wt_dir in "$worktrees_dir"/*/; do
+    for wt_dir in "$worktrees_dir"/*(/N); do
       [[ -d "$wt_dir" ]] || continue
       local wt_name
       wt_name="$(basename "$wt_dir")"
@@ -2080,7 +2128,7 @@ dkclean() {
     # Don't delete branches with active worktrees
     local has_worktree=0
     if [[ -d "$worktrees_dir" ]]; then
-      for wt_dir in "$worktrees_dir"/*/; do
+      for wt_dir in "$worktrees_dir"/*(/N); do
         [[ -d "$wt_dir" ]] || continue
         local wt_branch
         wt_branch=$(dk_wt_branch "$wt_dir")

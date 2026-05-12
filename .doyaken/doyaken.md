@@ -10,7 +10,7 @@
 ## Quality Gates
 | Check | Command | Scope |
 |-------|---------|-------|
-| Lint | `shellcheck dk.sh bin/*.sh hooks/*.sh lib/*.sh` | All shell scripts |
+| Lint | `shellcheck dk.sh bin/*.sh hooks/*.sh lib/*.sh` | Core runtime shell scripts |
 | Syntax (bash) | `bash -n lib/<file>.sh` | Library modules, hooks, bin scripts |
 | Syntax (zsh) | `zsh -n dk.sh` | dk.sh only |
 | Test | N/A | No test suite |
@@ -21,18 +21,18 @@
 
 ## Project Structure
 ```
-dk.sh                Main shell functions (zsh only, ~1037 lines)
+dk.sh                Main shell functions (zsh only, ~2140 lines)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
 agents/              Sub-agents (symlinked to ~/.claude/agents/)
 bin/                 CLI scripts: install, uninstall, init, uninit, config, status
 docs/                Extended docs: guards, autonomous mode
 hooks/               Claude Code hooks + guard handler
-  guards/            Built-in guard rules (3 rules)
-lib/                 Shared shell libraries (5 modules)
+  guards/            Built-in guard rules (5 rules)
+lib/                 Shared shell libraries (8 modules)
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
-skills/              Lifecycle skills (11 total, symlinked to ~/.claude/skills/)
+skills/              Lifecycle skills (16 total, symlinked to ~/.claude/skills/)
 .doyaken/            Per-project config (this directory)
 ```
 

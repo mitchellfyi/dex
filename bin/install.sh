@@ -105,7 +105,10 @@ else
   # Check for old Doyaken source lines (different path)
   if grep -qE 'doyaken.*dk\.sh|DOYAKEN_DIR.*/dk\.sh' "$ZSHRC" 2>/dev/null; then
     dk_info "Found old Doyaken dk.sh source line — replacing..."
-    grep -vE 'doyaken.*dk\.sh|DOYAKEN_DIR.*/dk\.sh|export DOYAKEN_DIR=' "$ZSHRC" > "${ZSHRC}.tmp" && mv "${ZSHRC}.tmp" "$ZSHRC"
+    # grep -v exits 1 when no lines survive filtering, which is valid when
+    # .zshrc only contained old Doyaken lines.
+    grep -vE 'doyaken.*dk\.sh|DOYAKEN_DIR.*/dk\.sh|export DOYAKEN_DIR=' "$ZSHRC" > "${ZSHRC}.tmp" || true
+    mv "${ZSHRC}.tmp" "$ZSHRC"
   fi
   {
     echo ""

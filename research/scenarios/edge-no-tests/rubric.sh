@@ -34,6 +34,7 @@ rubric_correctness() {
 
   # Detect the actual package name from Go source files (DK may use strutil, stringutil, main, etc.)
   local pkg_name
+  # shellcheck disable=SC2086  # go_files is a find-produced file list for grep.
   pkg_name=$(grep -m1 '^package ' $go_files 2>/dev/null | awk '{print $2}') || true
   [[ -z "$pkg_name" ]] && pkg_name="strutil"
 
@@ -470,11 +471,13 @@ rubric_robustness() {
 
   # Detect the actual package name (needed for injected test file)
   local pkg_name
+  # shellcheck disable=SC2086  # src_files is a find-produced file list for grep.
   pkg_name=$(grep -m1 '^package ' $src_files 2>/dev/null | awk '{print $2}') || true
   [[ -z "$pkg_name" ]] && pkg_name="strutil"
 
   # Concatenate all source content for pattern matching
   local src_content
+  # shellcheck disable=SC2086  # src_files is a find-produced file list for cat.
   src_content=$(cat $src_files 2>/dev/null)
 
   # --- Empty string handling (explicit checks in source) --- (10pts)
@@ -499,9 +502,11 @@ rubric_robustness() {
 
   # --- Go doc comments on all exported functions --- (10pts)
   local exported_funcs
+  # shellcheck disable=SC2086  # src_files is a find-produced file list for grep.
   exported_funcs=$(grep -cE '^func [A-Z]' $src_files 2>/dev/null | awk -F: '{s+=$NF}END{print s+0}') || true
   local documented_funcs
   # A doc comment is a // comment on the line immediately before func
+  # shellcheck disable=SC2086  # src_files is a find-produced file list for grep.
   documented_funcs=$(grep -cB1 '^func [A-Z]' $src_files 2>/dev/null | grep -c '//' 2>/dev/null) || true
   if [[ $exported_funcs -gt 0 && $documented_funcs -ge $exported_funcs ]]; then
     score=$((score + 10))
