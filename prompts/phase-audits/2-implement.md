@@ -64,7 +64,7 @@ If you discovered conventions, failure patterns, or interface details during thi
 - [pattern found, e.g., "this project uses barrel exports in src/index.ts"]
 
 ## Failure Patterns
-- [what went wrong and how it was fixed, e.g., "Jest needs setupFilesAfterEnv for custom matchers"]
+- [what went wrong and how it was fixed, e.g., "test matcher extensions must be loaded before assertions run"]
 
 ## Interface Notes
 - [API contracts discovered, e.g., "error responses use {error: string, code: number} shape"]

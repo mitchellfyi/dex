@@ -21,6 +21,8 @@ workspace_create() {
 
   mkdir -p "$ws"
   git -C "$ws" init --quiet
+  git -C "$ws" config user.name "Doyaken Research"
+  git -C "$ws" config user.email "research@doyaken.local"
 
   # Minimal gitignore so DK's output is clean
   cat > "$ws/.gitignore" <<'GITIGNORE'
