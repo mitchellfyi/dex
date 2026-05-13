@@ -391,6 +391,102 @@ __dk_session_id_for_workspace() {
   fi
 }
 
+# __dk_active_in_place_phase_for_branch <branch>
+# Prints the active phase number when a worktree-* branch belongs to an
+# in-place lifecycle that is still resumable. Returns non-zero otherwise.
+__dk_active_in_place_phase_for_branch() {
+  local branch="$1" wt_name phase_val
+
+  if [[ "$branch" == worktree-ticket-* ]] || [[ "$branch" == worktree-task-* ]]; then
+    wt_name="${branch#worktree-}"
+    if phase_val=$(__dk_active_in_place_phase_for_workspace "$wt_name" "$branch"); then
+      printf '%s\n' "$phase_val"
+      return 0
+    fi
+  fi
+
+  local repo_key phase_path candidate_session candidate_branch_file candidate_branch
+  repo_key=$(dk_session_repo_key)
+  [[ -d "$DK_STATE_DIR" ]] || return 1
+
+  while IFS= read -r phase_path; do
+    [[ -n "$phase_path" && -f "$phase_path" ]] || continue
+    candidate_session="$(basename "$phase_path" .phase)"
+    candidate_branch_file=$(dk_branch_file "$candidate_session")
+    [[ -f "$candidate_branch_file" ]] || continue
+    candidate_branch=$(cat "$candidate_branch_file" 2>/dev/null || echo "")
+    [[ "$candidate_branch" == "$branch" ]] || continue
+
+    phase_val=$(cat "$phase_path" 2>/dev/null || echo "")
+    [[ "$phase_val" =~ ^[1-6]$ ]] || continue
+    printf '%s\n' "$phase_val"
+    return 0
+  done < <(find "$DK_STATE_DIR" -maxdepth 1 -type f -name "${repo_key}-inplace-*.phase" -print 2>/dev/null)
+
+  return 1
+}
+
+# __dk_active_in_place_phase_for_workspace <workspace_name> [expected_branch]
+# Prints the active phase number for an in-place lifecycle workspace when its
+# saved branch still exists. If expected_branch is provided, it must match.
+__dk_active_in_place_phase_for_workspace() {
+  local wt_name="$1" expected_branch="${2:-}" session_id phase_file phase_val branch_file session_branch=""
+
+  session_id=$(__dk_session_id_for_workspace "in-place" "$wt_name")
+  phase_file=$(dk_state_file "$session_id")
+  [[ -f "$phase_file" ]] || return 1
+
+  phase_val=$(cat "$phase_file" 2>/dev/null || echo "")
+  [[ "$phase_val" =~ ^[1-6]$ ]] || return 1
+
+  branch_file=$(dk_branch_file "$session_id")
+  if [[ -f "$branch_file" ]]; then
+    session_branch=$(cat "$branch_file" 2>/dev/null || echo "")
+    [[ -z "$expected_branch" || -z "$session_branch" || "$session_branch" == "$expected_branch" ]] || return 1
+    [[ -z "$session_branch" ]] || git show-ref --verify --quiet "refs/heads/${session_branch}" 2>/dev/null || return 1
+  else
+    local canonical_branch="worktree-${wt_name}"
+    git show-ref --verify --quiet "refs/heads/${canonical_branch}" 2>/dev/null || return 1
+  fi
+
+  printf '%s\n' "$phase_val"
+}
+
+# __dk_last_session_active_in_place
+# Returns 0 when last-session still points at a resumable in-place lifecycle.
+__dk_last_session_active_in_place() {
+  local last_session_file="$DK_STATE_DIR/last-session" last_info wt_name rest workspace_mode
+  [[ -f "$last_session_file" ]] || return 1
+
+  last_info=$(cat "$last_session_file" 2>/dev/null || echo "")
+  [[ -n "$last_info" ]] || return 1
+  wt_name="${last_info%%:*}"
+  rest="${last_info#*:}"
+  workspace_mode="worktree"
+  [[ "$rest" == *:in-place ]] && workspace_mode="in-place"
+  [[ "$workspace_mode" == "in-place" ]] || return 1
+
+  __dk_active_in_place_phase_for_workspace "$wt_name" >/dev/null
+}
+
+# __dk_cleanup_lifecycle_state_for_branch <branch>
+# Remove state tied to a deleted canonical Doyaken lifecycle branch.
+__dk_cleanup_lifecycle_state_for_branch() {
+  local branch="$1" wt_name worktree_session_id in_place_session_id
+
+  if [[ "$branch" != worktree-ticket-* ]] && [[ "$branch" != worktree-task-* ]]; then
+    return 0
+  fi
+
+  wt_name="${branch#worktree-}"
+  worktree_session_id=$(dk_session_id "$wt_name")
+  in_place_session_id=$(__dk_session_id_for_workspace "in-place" "$wt_name")
+
+  dk_cleanup_session "$worktree_session_id"
+  dk_cleanup_session "$in_place_session_id"
+  dk_cleanup_last_session "$wt_name"
+}
+
 # __dk_claude_session_name <workspace_mode> <workspace_name>
 __dk_claude_session_name() {
   local workspace_mode="$1" wt_name="$2"
@@ -1791,6 +1887,7 @@ dkrm() {
 
   if [[ "$1" == "--all" ]]; then
     local found=0
+    local skipped_active_in_place=0
     local renamed_branches=()
     local session_ids=()
 
@@ -1823,8 +1920,16 @@ dkrm() {
     while IFS= read -r branch; do
       [[ -z "$branch" ]] && continue
       found=1
+      local active_in_place_phase
+      if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch"); then
+        echo "Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})"
+        skipped_active_in_place=1
+        continue
+      fi
       echo "Deleting branch ${branch}..."
-      git branch -D "$branch" 2>/dev/null || true
+      if git branch -D "$branch" 2>/dev/null; then
+        __dk_cleanup_lifecycle_state_for_branch "$branch"
+      fi
     done < <(git branch --list 'worktree-ticket-*' 'worktree-task-*' 2>/dev/null | sed 's/^[* ]*//')
 
     # Delete renamed branches that wouldn't match the worktree-* pattern
@@ -1836,8 +1941,13 @@ dkrm() {
 
     git worktree prune 2>/dev/null
 
-    # Clean up last-session pointer (all worktrees gone, nothing to resume)
-    rm -f "$DK_STATE_DIR/last-session" 2>/dev/null
+    local last_session_active_in_place=0
+    __dk_last_session_active_in_place && last_session_active_in_place=1
+
+    # Clean up last-session pointer unless it still points at a resumable in-place session.
+    if [[ $last_session_active_in_place -eq 0 ]]; then
+      rm -f "$DK_STATE_DIR/last-session" 2>/dev/null
+    fi
 
     # Clean up state files for THIS repo's worktrees only (not cross-repo globs)
     local sid
@@ -1847,6 +1957,8 @@ dkrm() {
 
     if [[ $found -eq 0 ]]; then
       dk_info "No worktrees or branches found."
+    elif [[ $skipped_active_in_place -eq 1 || $last_session_active_in_place -eq 1 ]]; then
+      echo "Finished. Active in-place lifecycle branch(es) were left intact."
     else
       echo "All worktrees removed."
     fi
@@ -1873,6 +1985,10 @@ dkrm() {
     if [[ -d "${worktrees_dir}/${slug}" ]]; then
       wt_name="$slug"
     elif [[ -d "${worktrees_dir}/task-${slug}" ]]; then
+      wt_name="task-${slug}"
+    elif [[ "$slug" == task-* ]] && git show-ref --verify --quiet "refs/heads/worktree-${slug}" 2>/dev/null; then
+      wt_name="$slug"
+    elif git show-ref --verify --quiet "refs/heads/worktree-task-${slug}" 2>/dev/null; then
       wt_name="task-${slug}"
     else
       dk_error "No worktree found matching '${raw_input}'."
@@ -1903,6 +2019,15 @@ dkrm() {
     return 1
   fi
 
+  if [[ $has_dir -eq 0 ]] && [[ $has_branch -eq 1 ]]; then
+    local active_in_place_phase
+    if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch_name"); then
+      dk_error "Refusing to remove active in-place lifecycle branch ${branch_name} (phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})."
+      dk_info "Resume it with dk --resume, or finish the lifecycle before cleaning it up."
+      return 1
+    fi
+  fi
+
   echo "Removing ${wt_name}..."
 
   [[ $has_dir -eq 1 ]] && dk_cleanup_checkpoints "$wt_dir"
@@ -1911,7 +2036,9 @@ dkrm() {
 
   if [[ $has_branch -eq 1 ]]; then
     echo "  Deleting branch ${branch_name}..."
-    git branch -D "$branch_name" 2>/dev/null || true
+    if git branch -D "$branch_name" 2>/dev/null && [[ $has_dir -eq 0 ]]; then
+      __dk_cleanup_lifecycle_state_for_branch "$branch_name"
+    fi
   fi
 
   if [[ $has_actual_branch -eq 1 ]]; then
@@ -2122,6 +2249,11 @@ dkclean() {
     if [[ "$branch" != worktree-ticket-* ]] && [[ "$branch" != worktree-task-* ]]; then
       continue
     fi
+    local active_in_place_phase
+    if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch"); then
+      echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})"
+      continue
+    fi
     # Don't delete branches with active worktrees
     local has_worktree=0
     if [[ -d "$worktrees_dir" ]]; then
@@ -2142,18 +2274,27 @@ dkclean() {
     fi
 
     echo "  Deleting gone branch: ${branch}"
-    git branch -D "$branch" 2>/dev/null || true
-    cleaned=$((cleaned + 1))
+    if git branch -D "$branch" 2>/dev/null; then
+      __dk_cleanup_lifecycle_state_for_branch "$branch"
+      cleaned=$((cleaned + 1))
+    fi
   done < <(git branch -vv 2>/dev/null | grep ': gone]' | sed 's/^[* ]*//' | awk '{print $1}')
 
   # 3. Prune worktree branches that have no worktree directory
   while IFS= read -r branch; do
     [[ -z "$branch" ]] && continue
+    local active_in_place_phase
+    if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch"); then
+      echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})"
+      continue
+    fi
     local ticket_name="${branch#worktree-}"
     if [[ ! -d "$worktrees_dir/$ticket_name" ]]; then
       echo "  Deleting orphan branch: ${branch}"
-      git branch -D "$branch" 2>/dev/null || true
-      cleaned=$((cleaned + 1))
+      if git branch -D "$branch" 2>/dev/null; then
+        __dk_cleanup_lifecycle_state_for_branch "$branch"
+        cleaned=$((cleaned + 1))
+      fi
     fi
   done < <(git branch --list 'worktree-ticket-*' 'worktree-task-*' 2>/dev/null | sed 's/^[* ]*//')
 
