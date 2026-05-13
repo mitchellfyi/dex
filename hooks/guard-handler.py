@@ -571,15 +571,37 @@ def apply_literal_variables(value, variables=None):
         return value
     for name, replacement in variables.items():
         escaped = re.escape(name)
-        value = re.sub(r'\$\{' + escaped + r'\}', lambda _match: replacement, value)
-        value = re.sub(r'\$\{' + escaped + r':-[^}]*\}', lambda _match: replacement, value)
+        pattern = re.compile(r'\$\{' + escaped + r'((?::?[-=?+])([^}]*))?\}')
+
+        def replace_parameter(match):
+            expansion = match.group(1) or ''
+            word = match.group(2) or ''
+            if expansion.startswith(':+') or expansion.startswith('+'):
+                return word
+            return replacement
+
+        value = pattern.sub(replace_parameter, value)
         value = re.sub(r'\$' + escaped + r'(?=\W|$)', lambda _match: replacement, value)
     return value
+
+
+def apply_parameter_expansion_defaults(value):
+    pattern = re.compile(r'\$\{[A-Za-z_][A-Za-z0-9_]*((?::?[-=+]))([^}]*)\}')
+
+    def replace_parameter(match):
+        operator = match.group(1) or ''
+        word = match.group(2) or ''
+        if operator in {'-', ':-', '=', ':=', '+', ':+'}:
+            return word
+        return match.group(0)
+
+    return pattern.sub(replace_parameter, value)
 
 
 def resolve_shell_path(path, variables=None, cwd=None):
     root = doyaken_root()
     path = apply_literal_variables(path, variables)
+    path = apply_parameter_expansion_defaults(path)
     path = re.sub(r'\$\{DOYAKEN_DIR:-[^}]*\}', root, path)
     path = path.replace('${DOYAKEN_DIR}', root).replace('$DOYAKEN_DIR', root)
     path = os.path.expanduser(os.path.expandvars(path))
@@ -745,9 +767,72 @@ def collect_literal_variables(tokens):
                 variables[name] = value
             index += 1
             continue
+        if command_position and base in ASSIGNMENT_BUILTINS:
+            index += 1
+            while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+                token = tokens[index]
+                if token == '--':
+                    index += 1
+                    continue
+                if token.startswith('-') and not is_shell_assignment(token):
+                    index += 1
+                    continue
+                if is_shell_assignment(token):
+                    name, value = assignment_parts(token)
+                    if name and value and value != '$' and '$(' not in value and '`' not in value:
+                        variables[name] = apply_literal_variables(value, variables)
+                    index += 1
+                    continue
+                break
+            command_position = False
+            continue
         command_position = False
         index += 1
     return variables
+
+
+def shell_assignment_literal_pair(token):
+    name, value = assignment_parts(token)
+    if name and value and value != '$' and '$(' not in value and '`' not in value:
+        return name, value
+    return None, None
+
+
+def shell_wrapper_variables(tokens, start_index, command_index, variables=None):
+    merged = dict(variables or {})
+    index = start_index
+    while index < command_index:
+        token = tokens[index]
+        if is_shell_assignment(token):
+            name, value = shell_assignment_literal_pair(token)
+            if name:
+                merged[name] = apply_literal_variables(value, merged)
+            index += 1
+            continue
+        base = token_basename(token)
+        if base == 'env':
+            index += 1
+            while index < command_index and tokens[index] not in SHELL_SEPARATORS:
+                token = tokens[index]
+                if token == '--':
+                    index += 1
+                    break
+                if is_shell_assignment(token):
+                    name, value = shell_assignment_literal_pair(token)
+                    if name:
+                        merged[name] = apply_literal_variables(value, merged)
+                    index += 1
+                    continue
+                if token.startswith('-'):
+                    needs_value = token in ENV_OPTION_ARGS or token_takes_value(token, ENV_OPTION_ARGS)
+                    index += 1
+                    if needs_value and index < command_index:
+                        index += 1
+                    continue
+                break
+            continue
+        index += 1
+    return merged
 
 
 def variable_name_at(tokens, index):
@@ -786,6 +871,7 @@ SHELLS = {'bash', 'sh', 'zsh', 'dash', 'ksh'}
 WRAPPER_COMMANDS = {'command', 'builtin'}
 EVAL_COMMANDS = {'eval'}
 SOURCE_COMMANDS = {'source', '.'}
+ASSIGNMENT_BUILTINS = {'export', 'readonly', 'declare', 'typeset', 'local'}
 CODEX_HELPER_COMMANDS = {'dk_provider_codex', '__dk_provider_codex_raw'}
 DIRECT_CODEX_RUNNERS = {'npx', 'bunx', 'uvx'}
 PACKAGE_MANAGER_RUNNERS = {
@@ -906,6 +992,7 @@ def decode_ansi_c_token(value):
 
 def expand_executable_script(script, variables=None):
     expanded = apply_literal_variables(script, variables)
+    expanded = apply_parameter_expansion_defaults(expanded)
     expanded = decode_ansi_c_token(expanded)
     if SHELL_LEADING_VARIABLE_RE.match(expanded):
         return UNKNOWN_SHELL_STDIN
@@ -914,6 +1001,7 @@ def expand_executable_script(script, variables=None):
 
 def expand_literal_output_token(token, variables=None):
     expanded = apply_literal_variables(token, variables)
+    expanded = apply_parameter_expansion_defaults(expanded)
     expanded = decode_ansi_c_token(expanded)
     if SHELL_VARIABLE_WORD_RE.match(expanded):
         return UNKNOWN_SHELL_STDIN
@@ -924,6 +1012,7 @@ def expand_shell_command_token(token, variables=None):
     if '$(' in token or '`' in token:
         return UNKNOWN_SHELL_STDIN
     expanded = apply_literal_variables(token, variables)
+    expanded = apply_parameter_expansion_defaults(expanded)
     if SHELL_VARIABLE_REF_RE.search(expanded):
         return UNKNOWN_SHELL_STDIN
     expanded = decode_ansi_c_token(expanded)
@@ -1244,6 +1333,10 @@ def shell_word_tokens(text):
             index += 1
             continue
         if char == '\\' and not in_single:
+            if in_double and index + 1 < len(text) and text[index + 1] not in '$`"\\\n':
+                word.append(char)
+                index += 1
+                continue
             escaped = True
             index += 1
             continue
@@ -1564,12 +1657,11 @@ def xargs_command_start(tokens, command_index):
     return index, replacement
 
 
-def replace_xargs_placeholders(command_tokens, replacement, stdin_text):
+def replace_xargs_placeholders(command_tokens, replacement, value):
     if not replacement:
         return command_tokens
-    if stdin_text is UNKNOWN_SHELL_STDIN:
+    if value is UNKNOWN_SHELL_STDIN:
         return UNKNOWN_SHELL_STDIN
-    value = stdin_text.strip().splitlines()[0] if stdin_text.strip() else ''
     if not value:
         return command_tokens
     replaced = []
@@ -1590,6 +1682,47 @@ def replace_xargs_placeholders(command_tokens, replacement, stdin_text):
     return replaced
 
 
+def xargs_uses_null_delimiter(tokens, command_index):
+    index = command_index + 1
+    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+        token = tokens[index]
+        if token == '--':
+            index += 1
+            break
+        if token in {'-0', '--null'}:
+            return True
+        if short_option_has_attached_value(token, {'-a', '-d', '-E', '-I', '-L', '-n', '-P', '-s'}):
+            index += 1
+            continue
+        if token.startswith('--delimiter=') and token.split('=', 1)[1] in {'\\0', '0'}:
+            return True
+        if token == '-d' or token == '--delimiter':
+            if index + 1 < len(tokens) and tokens[index + 1] in {'\\0', '0'}:
+                return True
+            index += 2 if index + 1 < len(tokens) else 1
+            continue
+        if token.startswith('-'):
+            needs_value = token in XARGS_VALUE_OPTIONS or token_takes_value(token, XARGS_VALUE_OPTIONS)
+            index += 1
+            if needs_value and index < len(tokens):
+                index += 1
+            continue
+        break
+    return False
+
+
+def xargs_stdin_tokens(stdin_text, null_delimited=False):
+    if not stdin_text:
+        return []
+    if null_delimited:
+        values = [value for value in stdin_text.split('\0') if value]
+        return values
+    try:
+        return shlex.split(stdin_text)
+    except ValueError:
+        return stdin_text.split()
+
+
 def xargs_command_is_blocked(tokens, command_index, command_start, variables=None, cwd=None, depth=0):
     if token_basename(tokens[command_index]) != 'xargs':
         return False
@@ -1604,9 +1737,15 @@ def xargs_command_is_blocked(tokens, command_index, command_start, variables=Non
     stdin_text = None
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
-        command_tokens = replace_xargs_placeholders(command_tokens, replacement, stdin_text)
-        if command_tokens is UNKNOWN_SHELL_STDIN:
+        if stdin_text is UNKNOWN_SHELL_STDIN:
             return True
+        for value in xargs_stdin_tokens(stdin_text, xargs_uses_null_delimiter(tokens, command_index)):
+            replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
+            if replaced_tokens is UNKNOWN_SHELL_STDIN:
+                return True
+            if has_raw_codex_delegation(shell_quote_tokens(replaced_tokens), depth + 1, cwd):
+                return True
+        return False
     else:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
         if stdin_text is UNKNOWN_SHELL_STDIN:
@@ -1622,6 +1761,11 @@ def find_exec_commands(tokens, command_index):
     index = command_index + 1
     while index < len(tokens):
         token = tokens[index]
+        if token == '$' and index + 1 < len(tokens) and tokens[index + 1] == '(':
+            end_index = command_substitution_end(tokens, index)
+            if end_index is not None:
+                index = end_index + 1
+                continue
         if token in SHELL_SEPARATORS and token != ';':
             break
         if token in {'-exec', '-execdir', '-ok', '-okdir'}:
@@ -1911,7 +2055,8 @@ def shell_c_scripts(text, variables=None):
             if command_index < len(tokens) and token_basename(tokens[command_index]) in SHELLS:
                 script = shell_script_arg(tokens, command_index)
                 if script:
-                    scripts.append(expand_executable_script(script, variables))
+                    script_vars = shell_wrapper_variables(tokens, index, command_index, variables)
+                    scripts.append(expand_executable_script(script, script_vars))
             while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
                 index += 1
             command_position = False
@@ -2099,6 +2244,15 @@ def literal_command_substitution_body_output(body_tokens, variables=None, cwd=No
 
 
 def command_substitution_body_tokens(tokens, index):
+    if index < len(tokens):
+        token = tokens[index]
+        match = INLINE_DOLLAR_SUB_RE.match(token)
+        if match:
+            return shell_tokens(match.group(1)), index
+        match = INLINE_BACKTICK_SUB_RE.match(token)
+        if match:
+            return shell_tokens(match.group(1)), index
+
     dollar_end = command_substitution_end(tokens, index)
     if dollar_end is not None:
         return tokens[index + 2:dollar_end], dollar_end
@@ -2158,6 +2312,38 @@ def literal_command_substitution_output(script, variables=None, cwd=None):
         return ''
     body_tokens = shell_tokens(body)
     return literal_command_substitution_body_output(body_tokens, variables, cwd)
+
+
+def expand_literal_shell_word(value, variables=None, cwd=None):
+    expanded = apply_literal_variables(value, variables)
+    expanded = apply_parameter_expansion_defaults(expanded)
+    expanded = decode_ansi_c_token(expanded)
+    output = []
+    index = 0
+    while index < len(expanded):
+        if expanded.startswith('$(', index):
+            substitution, next_index = scan_dollar_substitution_word(expanded, index)
+            if not substitution.endswith(')'):
+                return UNKNOWN_SHELL_STDIN
+            substitution_output = literal_command_substitution_output(substitution, variables, cwd)
+            if substitution_output is UNKNOWN_SHELL_STDIN:
+                return UNKNOWN_SHELL_STDIN
+            output.append(substitution_output)
+            index = next_index
+            continue
+        if expanded[index] == '`':
+            substitution, next_index = scan_backtick_word(expanded, index)
+            if not substitution.endswith('`'):
+                return UNKNOWN_SHELL_STDIN
+            substitution_output = literal_command_substitution_output(substitution, variables, cwd)
+            if substitution_output is UNKNOWN_SHELL_STDIN:
+                return UNKNOWN_SHELL_STDIN
+            output.append(substitution_output)
+            index = next_index
+            continue
+        output.append(expanded[index])
+        index += 1
+    return ''.join(output)
 
 
 def render_printf_once(fmt, values, arg_index):
@@ -2832,6 +3018,446 @@ def skip_wrapper_prefix(tokens, index):
     return index
 
 
+def rm_option_is_recursive(token):
+    if token in {'-r', '-R', '--recursive'}:
+        return True
+    return token.startswith('-') and not token.startswith('--') and any(ch in token[1:] for ch in 'rR')
+
+
+def rm_option_is_force(token):
+    if token in {'-f', '--force'}:
+        return True
+    return token.startswith('-') and not token.startswith('--') and 'f' in token[1:]
+
+
+def normalize_rm_target_alias(target):
+    wildcard = False
+    if target.endswith('/*'):
+        wildcard = True
+        target = target[:-2]
+    if target.startswith('//'):
+        target = '/' + target.lstrip('/')
+    while len(target) > 1 and target.endswith('/'):
+        target = target[:-1]
+    while target.endswith('/.'):
+        target = target[:-2] or '/'
+        if target.startswith('//'):
+            target = '/' + target.lstrip('/')
+        while len(target) > 1 and target.endswith('/'):
+            target = target[:-1]
+    if wildcard:
+        return '/*' if target == '/' else f"{target}/*"
+    return target
+
+
+def parameter_expansion_destructive_target(target, depth=0):
+    if depth > 2:
+        return False
+    match = re.match(r'^\$\{[A-Za-z_][A-Za-z0-9_]*((?::?[-=+]))([^}]*)\}(.*)$', target)
+    if not match:
+        return False
+    operator = match.group(1) or ''
+    word = match.group(2) or ''
+    suffix = match.group(3) or ''
+    if operator not in {'-', ':-', '=', ':=', '+', ':+'} or not word:
+        return False
+    candidate = word
+    if suffix:
+        candidate = f"{word.rstrip('/') or '/'}{suffix}"
+    return destructive_rm_target(candidate, depth + 1)
+
+
+def destructive_rm_target(token, depth=0):
+    target = normalize_rm_target_alias(token.strip('`"\''))
+    if target in {'/*', '~/*', '~+/*', '$HOME/*', '${HOME}/*', '$PWD/*', '${PWD}/*', './*', '{}'}:
+        return True
+    if re.match(r'^\$\{(?:HOME|PWD)(?:(?::?[-=?+])[^}]*)?\}(?:/\*)?$', target):
+        return True
+    if parameter_expansion_destructive_target(target, depth):
+        return True
+    if target != '/':
+        target = target.rstrip('/')
+    return target in {'/', '~', '~+', '$HOME', '${HOME}', '$PWD', '${PWD}', '.', '*'}
+
+
+def literal_rm_target(token, variables=None, cwd=None):
+    expanded = expand_literal_shell_word(token, variables, cwd)
+    if expanded is UNKNOWN_SHELL_STDIN:
+        return UNKNOWN_SHELL_STDIN
+    return expanded
+
+
+def rm_target_is_destructive(token, variables=None, cwd=None):
+    if token is UNKNOWN_SHELL_STDIN:
+        return True
+    if destructive_rm_target(token):
+        return True
+    target = literal_rm_target(token, variables, cwd)
+    if target is UNKNOWN_SHELL_STDIN:
+        return True
+    return destructive_rm_target(target)
+
+
+def rm_invocation_parts(tokens, command_index, variables=None, cwd=None):
+    recursive = False
+    force = False
+    targets = []
+    unknown_option = False
+    index = command_index + 1
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == '$' and index + 1 < len(tokens) and tokens[index + 1] == '(':
+            end_index = command_substitution_end(tokens, index)
+            if end_index is None:
+                targets.append(token)
+                index += 1
+                continue
+            targets.append(f"$({shell_quote_tokens(tokens[index + 2:end_index])})")
+            index = end_index + 1
+            continue
+        if tokens[index:index + 2] == ['{', '}']:
+            targets.append('{}')
+            index += 2
+            continue
+        if token in SHELL_SEPARATORS:
+            break
+        if token == '--':
+            cursor = index + 1
+            while cursor < len(tokens):
+                if tokens[cursor] == '$' and cursor + 1 < len(tokens) and tokens[cursor + 1] == '(':
+                    end_index = command_substitution_end(tokens, cursor)
+                    if end_index is None:
+                        targets.append(tokens[cursor])
+                        cursor += 1
+                        continue
+                    targets.append(f"$({shell_quote_tokens(tokens[cursor + 2:end_index])})")
+                    cursor = end_index + 1
+                    continue
+                if tokens[cursor:cursor + 2] == ['{', '}']:
+                    targets.append('{}')
+                    cursor += 2
+                    continue
+                if tokens[cursor] in SHELL_SEPARATORS:
+                    break
+                targets.append(tokens[cursor])
+                cursor += 1
+            break
+        if token.startswith('-') and token != '-':
+            option = expand_literal_shell_word(token, variables, cwd)
+            if option is UNKNOWN_SHELL_STDIN:
+                unknown_option = True
+            else:
+                recursive = recursive or rm_option_is_recursive(option)
+                force = force or rm_option_is_force(option)
+            index += 1
+            continue
+        expanded = expand_literal_shell_word(token, variables, cwd)
+        if expanded is UNKNOWN_SHELL_STDIN:
+            unknown_option = True
+            targets.append(UNKNOWN_SHELL_STDIN)
+        elif expanded.startswith('-') and expanded != '-':
+            recursive = recursive or rm_option_is_recursive(expanded)
+            force = force or rm_option_is_force(expanded)
+        else:
+            targets.append(expanded)
+        index += 1
+
+    return recursive, force, targets, unknown_option
+
+
+def rm_invocation_is_destructive(tokens, command_index, variables=None, cwd=None):
+    recursive, force, targets, unknown_option = rm_invocation_parts(tokens, command_index, variables, cwd)
+    if unknown_option and any(
+        target is not UNKNOWN_SHELL_STDIN and rm_target_is_destructive(target, variables, cwd)
+        for target in targets
+    ):
+        return True
+    if not recursive or not force:
+        return False
+
+    index = 0
+    while index < len(targets):
+        token = targets[index]
+        if token is UNKNOWN_SHELL_STDIN:
+            return True
+        if token == '$' and index + 1 < len(targets) and targets[index + 1] == '(':
+            end_index = command_substitution_end(targets, index)
+            if end_index is None:
+                return True
+            body_tokens = targets[index + 2:end_index]
+            target = literal_command_substitution_body_output(body_tokens, variables, cwd)
+            if target is UNKNOWN_SHELL_STDIN or destructive_rm_target(target):
+                return True
+            index = end_index + 1
+            continue
+        if token.startswith('`'):
+            end_index = backtick_substitution_end(targets, index)
+            if end_index is None:
+                return True
+            body_tokens = targets[index:end_index + 1]
+            body_tokens[0] = body_tokens[0][1:]
+            body_tokens[-1] = body_tokens[-1][:-1]
+            target = literal_command_substitution_body_output(body_tokens, variables, cwd)
+            if target is UNKNOWN_SHELL_STDIN or destructive_rm_target(target):
+                return True
+            index = end_index + 1
+            continue
+        if rm_target_is_destructive(token, variables, cwd):
+            return True
+        index += 1
+
+    return False
+
+
+def rm_targets_have_destructive_placeholder(targets, roots, variables=None, cwd=None):
+    for target in targets:
+        if target == '{}':
+            return any(rm_target_is_destructive(root, variables, cwd) for root in roots)
+        if rm_target_is_destructive(target, variables, cwd):
+            return True
+    return False
+
+
+def destructive_command_segment_is_blocked(tokens, command_index, variables=None, cwd=None):
+    command_base = token_basename(tokens[command_index])
+    segment_tokens = []
+    index = command_index + 1
+    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+        segment_tokens.append(tokens[index])
+        index += 1
+
+    if command_base == 'rm':
+        return rm_invocation_is_destructive(tokens, command_index, variables, cwd)
+    if command_base == 'dd':
+        return any(token.startswith('if=') for token in segment_tokens)
+    if command_base == 'mkfs' or command_base.startswith('mkfs.'):
+        return True
+    if command_base == 'format':
+        return any(re.match(r'^[a-z]:$', token, re.IGNORECASE) for token in segment_tokens)
+    return False
+
+
+def xargs_destructive_command_is_blocked(tokens, command_index, command_start, variables=None, cwd=None, depth=0):
+    if token_basename(tokens[command_index]) != 'xargs':
+        return False
+    command_arg_start, replacement = xargs_command_start(tokens, command_index)
+    xargs_separators = SHELL_SEPARATORS - {'{', '}'}
+    if command_arg_start >= len(tokens) or tokens[command_arg_start] in xargs_separators:
+        return False
+    command_end = command_arg_start
+    while command_end < len(tokens) and tokens[command_end] not in xargs_separators:
+        command_end += 1
+    command_tokens = tokens[command_arg_start:command_end]
+    null_delimited = xargs_uses_null_delimiter(tokens, command_index)
+    if replacement:
+        stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
+        if stdin_text is UNKNOWN_SHELL_STDIN:
+            return True
+        for value in xargs_stdin_tokens(stdin_text, null_delimited):
+            replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
+            if replaced_tokens is UNKNOWN_SHELL_STDIN:
+                return True
+            if has_destructive_command(shell_quote_tokens(replaced_tokens), depth + 1):
+                return True
+        return False
+    else:
+        stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
+        if stdin_text is UNKNOWN_SHELL_STDIN:
+            command_base = token_basename(command_tokens[0]) if command_tokens else ''
+            if command_base == 'rm':
+                return any(rm_option_is_recursive(token) for token in command_tokens[1:]) and any(rm_option_is_force(token) for token in command_tokens[1:])
+            return False
+        if stdin_text:
+            command_tokens.extend(xargs_stdin_tokens(stdin_text, null_delimited))
+    return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
+
+
+def find_search_roots(tokens, command_index):
+    roots = []
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token in SHELL_SEPARATORS:
+            break
+        if token == '$' and index + 1 < len(tokens) and tokens[index + 1] == '(':
+            end_index = command_substitution_end(tokens, index)
+            if end_index is None:
+                roots.append(token)
+                index += 1
+                continue
+            roots.append(f"$({shell_quote_tokens(tokens[index + 2:end_index])})")
+            index = end_index + 1
+            continue
+        if token in {'-H', '-L', '-P'}:
+            index += 1
+            continue
+        if token == '--':
+            index += 1
+            continue
+        if token.startswith('-') or token in {'!', ','}:
+            break
+        roots.append(token)
+        index += 1
+    return roots or ['.']
+
+
+def find_exec_destructive_command_is_blocked(tokens, command_index, variables=None, cwd=None, depth=0):
+    if token_basename(tokens[command_index]) != 'find':
+        return False
+    roots = find_search_roots(tokens, command_index)
+    for command_tokens in find_exec_commands(tokens, command_index):
+        nested_command_index = skip_wrapper_prefix(command_tokens, 0) if command_tokens else 0
+        if nested_command_index < len(command_tokens) and token_basename(command_tokens[nested_command_index]) == 'rm':
+            recursive, force, targets, unknown_option = rm_invocation_parts(command_tokens, nested_command_index, variables, cwd)
+            if unknown_option and any(rm_target_is_destructive(target, variables, cwd) for target in targets):
+                return True
+            if recursive and force:
+                non_placeholder_targets = [target for target in targets if target != '{}']
+                if any(rm_target_is_destructive(target, variables, cwd) for target in non_placeholder_targets):
+                    return True
+                if any(target == '{}' for target in targets):
+                    return any(rm_target_is_destructive(root, variables, cwd) for root in roots)
+                continue
+        if has_destructive_command(shell_quote_tokens(command_tokens), depth + 1):
+            return True
+    return False
+
+
+def eval_destructive_command_is_blocked(tokens, command_index, variables=None, depth=0):
+    if token_basename(tokens[command_index]) not in EVAL_COMMANDS:
+        return False
+    index = command_index + 1
+    script_tokens = []
+    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+        script_tokens.append(tokens[index])
+        index += 1
+    if not script_tokens:
+        return False
+    script = expand_executable_script(' '.join(script_tokens), variables)
+    if script is UNKNOWN_SHELL_STDIN:
+        return True
+    return bool(script and has_destructive_command(script, depth + 1))
+
+
+def substitution_invocation_is_destructive(tokens, index, shell_vars=None, cwd=None, depth=0):
+    resolved_invocation = command_substitution_resolved_invocation(tokens, index, shell_vars, cwd)
+    if resolved_invocation is None:
+        return False, None
+
+    resolved_command, resolved_args, _ = resolved_invocation
+    body_tokens, substitution_end_index = command_substitution_body_tokens(tokens, index)
+    if resolved_command is UNKNOWN_SHELL_STDIN:
+        return True, substitution_end_index
+    if not resolved_command:
+        return False, substitution_end_index
+
+    resolved_text = shell_quote_tokens([resolved_command] + resolved_args)
+    return has_destructive_command(resolved_text, depth + 1), substitution_end_index
+
+
+def has_destructive_command(text, depth=0):
+    if depth > 8:
+        return True
+    if not text.strip():
+        return False
+
+    shell_text, heredoc_substitutions, heredoc_bodies = strip_heredoc_bodies(text)
+    for fragment in heredoc_substitutions:
+        if has_destructive_command(fragment, depth + 1):
+            return True
+    for body in heredoc_bodies:
+        if has_destructive_command(body, depth + 1):
+            return True
+    for fragment in extract_executable_backticks(shell_text):
+        if has_destructive_command(fragment, depth + 1):
+            return True
+    for fragment in extract_dollar_substitutions(shell_text):
+        if has_destructive_command(fragment, depth + 1):
+            return True
+
+    tokens = shell_word_tokens(shell_text)
+    shell_vars = collect_literal_variables(tokens)
+    aliases = collect_aliases(tokens, shell_vars)
+    for script in shell_c_scripts(shell_text, shell_vars):
+        if script is UNKNOWN_SHELL_STDIN:
+            return True
+        if has_destructive_command(script, depth + 1):
+            return True
+
+    command_position = True
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        base = token_basename(token)
+
+        if token in SHELL_SEPARATORS:
+            command_position = True
+            index += 1
+            continue
+        if base in SHELL_COMMAND_KEYWORDS:
+            command_position = True
+            index += 1
+            continue
+        if base in SHELL_END_KEYWORDS or base in {'for', 'select', 'case', 'in'}:
+            command_position = False
+            index += 1
+            continue
+
+        if command_position:
+            if is_shell_assignment(token):
+                index = assignment_end(tokens, index)
+                continue
+            blocked, direct_substitution_end = substitution_invocation_is_destructive(tokens, index, shell_vars, None, depth)
+            if blocked:
+                return True
+            if direct_substitution_end is not None:
+                command_position = False
+                index = direct_substitution_end + 1
+                continue
+            command_index = skip_wrapper_prefix(tokens, index)
+            if command_index >= len(tokens):
+                return False
+            command_base = token_basename(tokens[command_index])
+            if command_base in aliases:
+                alias_body = aliases[command_base]
+                if alias_body is UNKNOWN_SHELL_STDIN:
+                    return True
+                segment_end = command_segment_end(tokens, command_index + 1)
+                alias_command = f"{alias_body} {shell_quote_tokens(tokens[command_index + 1:segment_end])}"
+                if has_destructive_command(alias_command, depth + 1):
+                    return True
+            blocked, wrapped_substitution_end = substitution_invocation_is_destructive(tokens, command_index, shell_vars, None, depth)
+            if blocked:
+                return True
+            if wrapped_substitution_end is not None:
+                command_position = False
+                index = wrapped_substitution_end + 1
+                continue
+            if eval_destructive_command_is_blocked(tokens, command_index, shell_vars, depth):
+                return True
+            if destructive_command_segment_is_blocked(tokens, command_index, shell_vars, None):
+                return True
+            env_payload = env_split_payload(tokens, command_index, shell_vars)
+            if env_payload is UNKNOWN_SHELL_STDIN:
+                return True
+            if env_payload and has_destructive_command(env_payload, depth + 1):
+                return True
+            if xargs_destructive_command_is_blocked(tokens, command_index, index, shell_vars, None, depth):
+                return True
+            if find_exec_destructive_command_is_blocked(tokens, command_index, shell_vars, None, depth):
+                return True
+            while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+                index += 1
+            command_position = False
+            continue
+
+        command_position = False
+        index += 1
+
+    return False
+
+
 def has_raw_codex_delegation(text, depth=0, cwd=None):
     if depth > 24:
         return True
@@ -3121,6 +3747,8 @@ def guard_detector_matches(guard, text):
     detector = guard.get('detector', '')
     if not detector:
         return None
+    if detector == 'destructive-commands':
+        return has_destructive_command(text)
     if detector == 'raw-codex-delegation':
         return has_raw_codex_delegation(text)
     print(f"[guard:{guard.get('name', 'unnamed')}] skipped — unknown detector: {detector}", file=sys.stderr)

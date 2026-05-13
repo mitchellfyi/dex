@@ -2,7 +2,7 @@
 name: warn-sensitive-files
 enabled: true
 event: commit
-pattern: (^|/)\.env($|[.-])|credentials\.(json|yml|yaml|xml)$|\.secret$|\.(key|pem|p12|pfx)$|(^|/)id_rsa($|\s)
+pattern: (^|/)\.env($|[.-])|credentials\.(json|yml|yaml|xml)$|\.secret$|\.(key|pem|p12|pfx)$|(^|/)id_(rsa|dsa|ecdsa|ed25519)($|\s)
 action: warn
 ---
 
