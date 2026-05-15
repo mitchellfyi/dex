@@ -97,9 +97,17 @@ If the table is empty or only contains `_none_` rows, Phase 6 skips review-reque
 ## Rules
 [Reference any rule files generated in .doyaken/rules/]
 [Reference `.doyaken/review-rules.md` if generated]
+[Reference `.doyaken/memory/index.md` if generated]
+
+## Memory
+`.doyaken/memory/index.md` maps durable repo memory to paths, phases, and
+workflows. Agents should load only scoped active entries and verify them against
+current code before relying on them.
 
 ## Workflow
 Run `/doyaken` to begin the autonomous ticket lifecycle.
+Run `/dksync` or `dk sync` to refresh repo memory after significant repo,
+workflow, review, or CI changes.
 ```
 
 ### `.doyaken/rules/*.md` (one per major area of the codebase)
@@ -133,6 +141,59 @@ attention. Include concise sections for applicable areas such as:
 
 Do not duplicate generic review criteria from `prompts/review.md`; capture only
 project-specific focus by path or subsystem.
+
+### `.doyaken/memory/index.md`
+
+Create `.doyaken/memory/index.md` as the retrieval map for durable repo memory.
+This file should be compact. It tells future agents which memory domain files to
+load for specific paths, phases, commands, or workflows.
+
+Initial repos often do not have enough evidence for durable memory. In that
+case, create the index with an explicit empty state:
+
+```markdown
+# Doyaken Memory Index
+
+No durable repo memory has been promoted yet.
+
+Run `/dksync` or `dk sync` after repeated review comments, CI failures,
+maintenance runs, or durable workflow lessons create evidence worth preserving.
+
+## Domains
+
+| Domain | File | Loads For | Status |
+|--------|------|-----------|--------|
+```
+
+If the repo already contains strong, current, evidenced conventions, create
+focused memory files under `.doyaken/memory/domains/` and reference them from the
+index. Let the repo shape the domains: choose names based on how future agents
+need context, such as `review-quality`, `verification-ci`,
+`architecture-decisions`, `security-guards`, `workflow-operations`, or a
+repo-specific subsystem such as `auth`, `migrations`, or `frontend-ui`.
+
+Avoid catch-all domains such as `misc`, `general`, or `learnings`. If a lesson
+does not fit a clear domain, leave it out until `/dksync` has enough evidence to
+organize it.
+
+Only promote durable lessons that have evidence in current files, docs, tests,
+CI, or git history. Do not create speculative memory.
+
+Memory entries must include:
+
+- `Domain`
+- `Status`
+- `Scope`
+- `Applies to phases`
+- `Applies to paths`
+- `Last verified`
+- `Recheck when`
+- `Lesson`
+- `Evidence`
+- `Future agent behavior`
+
+Do not create `.doyaken/learnings.md`. Session observations belong in external
+Doyaken run state until `/dksync` promotes them through a reviewable diff.
 
 ### `.doyaken/guards/*.md` (project-specific guards)
 
@@ -174,5 +235,7 @@ Ensure `.doyaken/CLAUDE.md` remains a compatibility pointer to `.doyaken/AGENTS.
 - Be specific and accurate. Use exact commands and paths from the actual codebase.
 - Don't generate speculative content. If you're unsure about a convention, skip it.
 - Keep rules concise. Developers will read these alongside their work.
+- Keep memory durable and evidenced. If a lesson is not current, scoped, and
+  useful to future agents, leave it out.
 - Test any commands you reference by checking they exist (in Makefile, package.json, etc.).
 - For monorepos, document per-package quality gates, not just top-level ones.

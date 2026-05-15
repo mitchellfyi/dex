@@ -86,6 +86,11 @@ file names, and `Acceptance Criteria: N/A` unless criteria were explicitly
 provided by the current caller; then run `test -s "$REVIEW_CONTEXT_FILE"` and
 read back the first 80 lines before marking the context-pack step complete.
 
+If `.doyaken/memory/index.md` exists, load only active memory entries whose scope
+matches the changed files or review phase. Record loaded, skipped, and rejected
+memory entries in the context pack. Treat memory as context to verify, not proof
+of a finding.
+
 Do not infer acceptance criteria from stale session prompt files, previous
 conversation turns, session titles, AGENTS instructions, or unrelated ticket
 context.

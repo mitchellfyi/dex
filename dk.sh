@@ -21,6 +21,7 @@
 #   dkls                   List worktrees
 #   dkclean                Clean stale worktrees + gone branches
 #   dkloop <prompt>         Run a prompt until fully implemented
+#   dk sync                 Refresh repo memory/rules from verified observations
 
 if [[ -z "${DOYAKEN_DIR:-}" ]]; then
   echo "ERROR: DOYAKEN_DIR not set. Run 'dk install' first." >&2
@@ -41,6 +42,7 @@ doyaken() {
     install)   bash "$DOYAKEN_DIR/bin/install.sh" "$@" ;;
     uninstall) bash "$DOYAKEN_DIR/bin/uninstall.sh" "$@" ;;
     init)      bash "$DOYAKEN_DIR/bin/init.sh" "$@" ;;
+    sync)      bash "$DOYAKEN_DIR/bin/sync.sh" "$@" ;;
     config)    bash "$DOYAKEN_DIR/bin/config.sh" "$@" ;;
     provider)  dk_provider_command "$@" ;;
     uninit)    bash "$DOYAKEN_DIR/bin/uninit.sh" "$@" ;;
@@ -56,6 +58,7 @@ doyaken() {
       echo "  dk install          Global install (skills, agents, hooks, zshrc)"
       echo "  dk uninstall        Global uninstall"
       echo "  dk init             Bootstrap current repo for Doyaken"
+      echo "  dk sync             Refresh repo memory/rules from verified observations"
       echo "  dk config           Configure integrations (ticket tracker, Figma, etc.)"
       echo "  dk provider         Configure provider/model execution profiles"
       echo "  dk uninit           Remove Doyaken from current repo"
@@ -1110,7 +1113,7 @@ dk() {
     echo "       dk --from-pr <N>   Resume session linked to a PR"
     echo "       dk refine <N|description>  Refine a ticket before implementation"
     echo ""
-    echo "       dk init|config|install|uninstall|uninit|status|reload|help"
+    echo "       dk init|sync|config|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -1145,7 +1148,7 @@ dk() {
 
   # Route management subcommands to doyaken
   case "$1" in
-    init|config|provider|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|config|provider|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       doyaken "$@"
       return $?
       ;;
@@ -1530,7 +1533,7 @@ dkrefine() {
   plan_args+=(--append-system-prompt "You are in a dkrefine session — refinement only. Do NOT implement, do NOT commit, do NOT rename branches, do NOT set ticket status to In Progress. Stay in plan mode until you call ExitPlanMode. After approval, follow the dkrefine skill's write-back steps and stop.
 
 Project constraints:
-- Derive security, tenancy, scale, performance, and operational constraints from .doyaken/architecture.md, .doyaken/rules/, and code paths you read.
+- Derive security, tenancy, scale, performance, and operational constraints from .doyaken/architecture.md, scoped .doyaken/memory/ entries, .doyaken/rules/, and code paths you read.
 - Do not assume the target repo is multi-tenant, compute-heavy, high-traffic, or CRUD-oriented unless the project context proves it.
 - If the project has tenant isolation, cascade recomputation, plugin boundaries, or other standing constraints, call them out with path-backed evidence.
 

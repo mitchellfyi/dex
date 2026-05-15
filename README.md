@@ -14,6 +14,9 @@ dk status
 cd ~/work/myproject
 dk init
 
+# Refresh Doyaken's repo memory after durable review/CI/workflow lessons emerge
+dk sync
+
 # Start work on a ticket
 dk 999
 ```
@@ -23,6 +26,7 @@ dk 999
 ## At a Glance
 
 - `dk 999` creates an isolated worktree and runs six phases: Plan → Implement → Review → Verify & Commit → PR → Complete.
+- `dk sync` refreshes durable repo memory and rules so future agents load the right context without trusting raw observations.
 - Phase 1 asks for plan approval. Later phases continue automatically unless requirements change, tooling is missing, or a review/CI problem needs human judgement.
 - UI changes get visual evidence in Phase 2: desktop/mobile screenshots, Playwright traces, and videos for interactive flows.
 - Phase 3 runs fresh adversarial review waves until the change is clean.
@@ -267,6 +271,7 @@ Most Doyaken features work immediately after `dk install` — no per-project set
 | `dkloop <prompt>` | No | Works in any git repo |
 | `dkcomplete` | No | Works in any git repo with a PR |
 | `dkreviewloop` | No | Works in any git repo with detectable changes |
+| `dk sync` / `/dksync` | No | Creates missing memory scaffold and refreshes durable repo context |
 | `/dkloop`, `/dkplan`, `/dkimplement`, etc. | No | Skills work in any Claude Code session |
 | Codex skill discovery | No | `dk install` links Doyaken skills into `$CODEX_HOME/skills` (default `~/.codex/skills`) when Codex CLI is present |
 | UI capture tooling | No | `dk install` installs Playwright into `~/.claude/.doyaken-tools/` and configures Playwright MCP + Chrome DevTools MCP when CLIs are present |
@@ -277,7 +282,7 @@ Most Doyaken features work immediately after `dk install` — no per-project set
 **What `dk init` adds:** It runs Claude Code CLI to analyze your specific codebase and generates project-tailored configuration in `.doyaken/`:
 
 - **Quality gates** (`doyaken.md`) — discovers your format, lint, typecheck, and test commands from package.json, Makefile, CI config, etc. Without init, skills discover these at runtime (slower, may miss non-obvious commands).
-- **Coding conventions** (`rules/`) — generates rule files from observed patterns (naming, file structure, error handling). Without init, Claude infers conventions from context each time.
+- **Coding conventions and memory** (`rules/`, `memory/`) — generates rule files from observed patterns and a memory index for durable lessons. Without init/sync, Claude infers conventions from context each time.
 - **Project-specific guards** (`guards/`) — creates guards for files that should never be committed (environment files, generated configs). Without init, only the universal guards (destructive commands, secrets, sensitive files) are active.
 - **Integration config** — configures ticket tracker (Linear, GitHub Issues), Figma, Sentry, etc. Without init, skills skip tracker updates.
 - **Codex skill repair** — if Codex CLI is installed, refreshes Doyaken skill links in `$CODEX_HOME/skills` (default `~/.codex/skills`) without replacing Codex's own system skills.
@@ -295,6 +300,7 @@ dk status            # Show what's installed and where
 
 # Per-project
 dk init              # Bootstrap current repo — analyzes codebase, generates config
+dk sync              # Refresh repo memory/rules from verified observations
 dk config            # Configure integrations (ticket tracker, Figma, Sentry, etc.)
 dk uninit            # Remove Doyaken from current repo
 
@@ -347,6 +353,7 @@ doyaken/
     install.sh               # Global install
     uninstall.sh             # Global uninstall
     init.sh                  # Per-project bootstrap (uses Claude Code CLI)
+    sync.sh                  # Repo memory/rule refresh
     uninit.sh                # Per-project removal
     config.sh                # Integration configuration (ticket tracker, Figma, etc.)
     status.sh                # Show installation status
@@ -358,6 +365,7 @@ doyaken/
                              # Each skill is a directory containing SKILL.md
     doyaken/                 # Orchestrate full ticket lifecycle
     dkarchitect/             # Build or refresh the C4 architecture map
+    dksync/                  # Refresh durable repo memory and rules
     dkrefine/                # Refine tickets into estimated sub-tickets
     dkplan/                  # Implementation planning (multi-approach)
     dkimplement/             # TDD implementation with completeness verification
@@ -429,6 +437,7 @@ doyaken/
   review-rules.md            # Optional path-specific focus for review waves
   rules/                     # Coding conventions (generated from codebase analysis)
   guards/                    # Project-specific guard rules (generated)
+  memory/                    # Durable repo memory index + promoted lessons
   worktrees/                 # Worktree directories (created by dk)
 ```
 
@@ -442,6 +451,7 @@ doyaken/
 
 - **Quality gates** — discovers format, lint, typecheck, test commands from package.json, Makefile, CI config
 - **Coding conventions** — generates rule files from observed patterns in the codebase
+- **Memory index** — creates `.doyaken/memory/index.md` for durable repo lessons promoted by `dk sync`
 - **Guards** — creates guards for files that should never be committed (environment files, generated configs)
 - **Integrations** — asks which integrations to use (ticket tracker, Figma, Sentry, Vercel, Grafana)
 

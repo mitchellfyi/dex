@@ -60,8 +60,9 @@ Before reporting results, verify `.doyaken/` is in sync with the changes:
    - Package manifests (package.json, Cargo.toml, pyproject.toml, go.mod)
    - New frameworks, tools, or conventions introduced
    - Security-sensitive file paths or patterns
-2. If so, confirm the corresponding `.doyaken/` files were updated (doyaken.md, rules/, guards/).
-3. If `.doyaken/` updates are pending, make them now and stage them for commit.
+2. If so, confirm the corresponding `.doyaken/` files were updated (doyaken.md, rules/, guards/, memory/).
+3. If durable lessons were discovered but not yet promoted, run `/dksync --dry-run` or call them out as candidate observations for `dk sync`.
+4. If `.doyaken/` updates are pending, make them now and stage them for commit.
 
 ### 5. Report
 

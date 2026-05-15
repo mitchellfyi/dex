@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # doyaken uninit — remove Doyaken from current repo
 set -euo pipefail
 
@@ -50,9 +51,9 @@ if [[ -d "$worktrees_dir" ]] && ls "$worktrees_dir"/*/ &>/dev/null; then
   dk_warn "Active worktrees exist. Clean them up with: dkrm --all"
 fi
 
-# 5. Remove generated config directories (rules/ and guards/ are created by dk init;
+# 5. Remove generated config directories (rules/, guards/, and memory/ are created by dk init;
 # hooks/ is NOT part of the per-project structure — it lives in $DOYAKEN_DIR/hooks/)
-for dir in rules guards; do
+for dir in rules guards memory; do
   if [[ -d "$repo_root/.doyaken/$dir" ]]; then
     rm -rf "$repo_root/.doyaken/$dir"
     dk_done "Removed .doyaken/$dir/"

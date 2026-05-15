@@ -18,11 +18,12 @@ Before evaluating findings, gather the context needed to judge them. **Skipping 
 Read in this order — stop early when you have enough to judge the change:
 
 1. **Project conventions** — `AGENTS.md`, `CLAUDE.md` compatibility pointers, and any `.doyaken/rules/*.md` referenced from them. These document language boundaries, naming, error-handling, and architecture rules specific to the repo. A finding that violates one of these has higher confidence; a finding that contradicts one is likely a false positive.
-2. **Project-specific review criteria** — `.doyaken/doyaken.md` § Reviewers (or other review-criteria sections). Some projects extend or override the defaults below.
-3. **The plan or ticket** — if a plan file or ticket context exists, read the acceptance criteria and the chosen approach. A "missing case" finding is invalid if the case was explicitly out of scope per the plan.
-4. **Similar code in the repo** — for any pattern the change introduces (a new auth check, a new query, a new error type), `Grep` for existing instances. If the codebase already uses pattern X for this scenario in 3+ places, the change should follow X. If X is established and the change introduces Y → finding. If you flag the change as "doesn't match best practice Z" without confirming Z is the project's pattern, that's a false positive.
-5. **Recent fix history of touched files** — `git log --oneline --since=3.months -- <file>` for each deep-review file. Recent `fix:` commits → fragile area; apply extra scrutiny.
-6. **Failure-recovery and debt records** — `prompts/failure-recovery.md` (recovery strategies for stuck-loop scenarios) and any `.debt` ledger files in the loop dir. A finding that someone has already accepted as debt should not be re-raised.
+2. **Scoped repo memory** — if `.doyaken/memory/index.md` exists, read it and load only active memory entries whose scope matches the changed files or review phase. Memory is context, not proof; re-check current code before relying on it.
+3. **Project-specific review criteria** — `.doyaken/doyaken.md` § Reviewers (or other review-criteria sections). Some projects extend or override the defaults below.
+4. **The plan or ticket** — if a plan file or ticket context exists, read the acceptance criteria and the chosen approach. A "missing case" finding is invalid if the case was explicitly out of scope per the plan.
+5. **Similar code in the repo** — for any pattern the change introduces (a new auth check, a new query, a new error type), `Grep` for existing instances. If the codebase already uses pattern X for this scenario in 3+ places, the change should follow X. If X is established and the change introduces Y → finding. If you flag the change as "doesn't match best practice Z" without confirming Z is the project's pattern, that's a false positive.
+6. **Recent fix history of touched files** — `git log --oneline --since=3.months -- <file>` for each deep-review file. Recent `fix:` commits → fragile area; apply extra scrutiny.
+7. **Failure-recovery and debt records** — `prompts/failure-recovery.md` (recovery strategies for stuck-loop scenarios) and any `.debt` ledger files in the loop dir. A finding that someone has already accepted as debt should not be re-raised.
 
 For each pass below, an explicit "context check" step references back to the artefacts gathered here. Findings that don't pass the context check are downgraded or filtered.
 

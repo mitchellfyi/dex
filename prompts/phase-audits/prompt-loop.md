@@ -172,8 +172,12 @@ If the project has a `.doyaken/` directory, check whether your changes introduce
 - New dependencies or tooling changes → `.doyaken/doyaken.md` updated?
 - New code patterns or conventions → relevant `.doyaken/rules/*.md` updated?
 - New security boundaries or sensitive paths → `.doyaken/guards/` updated?
+- Durable repo lessons that should help future agents → `/dksync --dry-run`
+  run, or candidate observations recorded in the final summary for `dk sync`
 
 If updates are needed but missing, make them now.
+Do not create `.doyaken/learnings.md`; raw observations must be promoted through
+`/dksync` or `dk sync` before they become trusted memory.
 
 ## Completion Gate
 

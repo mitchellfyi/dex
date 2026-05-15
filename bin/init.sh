@@ -114,6 +114,31 @@ else
   dk_done "Created .doyaken/CLAUDE.md pointing to AGENTS.md"
 fi
 
+# Memory index scaffold. Durable entries are added by codebase analysis or dk sync;
+# raw observations live outside the repo.
+memory_dir="$repo_root/.doyaken/memory"
+mkdir -p "$memory_dir/domains"
+memory_index="$memory_dir/index.md"
+if [[ ! -f "$memory_index" ]]; then
+  cat > "${memory_index}.tmp" << 'MEMORYINDEX'
+# Doyaken Memory Index
+
+No durable repo memory has been promoted yet.
+
+Run `/dksync` or `dk sync` after repeated review comments, CI failures,
+maintenance runs, or durable workflow lessons create evidence worth preserving.
+
+## Domains
+
+| Domain | File | Loads For | Status |
+|--------|------|-----------|--------|
+MEMORYINDEX
+  mv "${memory_index}.tmp" "$memory_index"
+  dk_done "Created .doyaken/memory/index.md"
+else
+  dk_ok ".doyaken/memory/index.md already exists"
+fi
+
 echo ""
 echo "Skeleton created."
 
@@ -202,6 +227,7 @@ echo "What happened:"
 echo "  - .doyaken/ created (worktrees, config, gitignored artifacts)"
 echo "  - .doyaken/AGENTS.md imports .doyaken/doyaken.md"
 echo "  - .doyaken/CLAUDE.md points to .doyaken/AGENTS.md"
+echo "  - .doyaken/memory/index.md is ready for durable repo memory"
 if [[ "$CODEX_SKILL_COUNT" -gt 0 ]]; then
   echo "  - ${CODEX_SKILL_COUNT} Doyaken skill link(s) available in $(dk_codex_skills_dir) for Codex CLI"
 fi

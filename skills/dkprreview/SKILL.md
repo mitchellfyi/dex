@@ -33,10 +33,11 @@ Read in this order — stop when you have enough:
 
 1. `AGENTS.md` and `CLAUDE.md` compatibility pointers (root and any nested) — language boundaries, naming, error-handling, architecture rules
 2. `.doyaken/rules/*.md` referenced from those files
-3. `.doyaken/doyaken.md § Reviewers` — the configured reviewers; mention-type bots' substantive feedback IS actionable (we deliberately invited them)
-4. `prompts/review.md` — the 12-pass criteria; use it to classify the comment's underlying concern (Pass A correctness, Pass C security, etc.)
-5. The plan file or ticket — establishes scope and out-of-scope. Comments asking for out-of-scope changes are Tier 3 (escalate).
-6. Similar code in the repo: when a comment says "do X instead", `Grep` for whether the codebase already does X or Y. If Y is the established pattern in 3+ places, "do X" is likely a personal preference and goes to Tier 2 evaluation, not Tier 1.
+3. `.doyaken/memory/index.md` and only active scoped memory entries relevant to the PR files or review phase; treat memory as context to verify, not proof
+4. `.doyaken/doyaken.md § Reviewers` — the configured reviewers; mention-type bots' substantive feedback IS actionable (we deliberately invited them)
+5. `prompts/review.md` — the 12-pass criteria; use it to classify the comment's underlying concern (Pass A correctness, Pass C security, etc.)
+6. The plan file or ticket — establishes scope and out-of-scope. Comments asking for out-of-scope changes are Tier 3 (escalate).
+7. Similar code in the repo: when a comment says "do X instead", `Grep` for whether the codebase already does X or Y. If Y is the established pattern in 3+ places, "do X" is likely a personal preference and goes to Tier 2 evaluation, not Tier 1.
 
 Every "fix" or "do not fix" decision in Step 3 must reference one of these artefacts in the reply (e.g., "Keeping current approach: matches the pattern in `auth/middleware.ts:42` and `auth/session.ts:91`").
 
@@ -133,7 +134,7 @@ For each unaddressed comment, classify it and decide on the action.
 For each Tier 2 comment, assess four criteria:
 
 1. **Correctness impact** — Does this fix an actual bug or prevent a real failure? If yes, lean toward fixing.
-2. **Codebase consistency** — Does the suggestion align with existing patterns in this repo? Read nearby files and the project's conventions (AGENTS.md, `.doyaken/rules/`). If the suggestion contradicts established patterns, lean toward not fixing.
+2. **Codebase consistency** — Does the suggestion align with existing patterns in this repo? Read nearby files, scoped memory, and the project's conventions (AGENTS.md, `.doyaken/rules/`). If the suggestion contradicts established patterns, lean toward not fixing.
 3. **Scope alignment** — Is the change within this PR's scope? If it requires touching files outside the PR or changing the architectural approach, lean toward not fixing (or escalating).
 4. **Effort-to-value ratio** — Trivial fix (< 5 min) with clear value: fix. Significant refactor with debatable benefit: do not fix.
 

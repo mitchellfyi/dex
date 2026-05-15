@@ -18,7 +18,10 @@ Execute the approved plan, working through tasks with TDD discipline.
 
 Before starting, read the implementation guardrails from `prompts/guardrails.md`. Apply them throughout.
 
-If `.doyaken/learnings.md` exists, read it — it contains conventions, failure patterns, and interface details discovered during earlier tasks in this session that may save you time.
+If `.doyaken/memory/index.md` exists, read it and load only the memory entries
+whose scope matches the approved plan, changed files, or current phase. Treat
+memory as useful context, not proof: re-check current code before relying on an
+old lesson.
 
 For each task in the approved plan:
 
@@ -42,8 +45,10 @@ After completing each task, check if your changes require updating project docum
 - **New code patterns established** (new conventions, architectural patterns) → add or update the relevant `.doyaken/rules/*.md` file
 - **Security boundaries changed** (new auth, sensitive file paths, restricted APIs) → add a guard in `.doyaken/guards/`
 - **Integration added/changed** (new MCP, new CI step) → update `.doyaken/doyaken.md` § Integrations
+- **Durable repo lesson discovered** (repeated failure, review pattern, or workflow rule) → run `/dksync --dry-run` or record the candidate in the implementation summary so `dk sync` can promote it through a reviewable `.doyaken/memory/domains/` diff
 
 Only update when the change is meaningful and lasting — don't document one-off implementation details.
+Do not create `.doyaken/learnings.md`; raw observations are not trusted memory.
 
 ### 3. Handle Scope Changes
 

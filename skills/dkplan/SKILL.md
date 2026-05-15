@@ -49,8 +49,11 @@ Use the integrations configured in doyaken.md § Integrations. Skip any that are
 
 1. Read the relevant `AGENTS.md`, `CLAUDE.md`, or `README.md` for each area affected.
 2. Read any project-specific conventions or rules referenced in those files.
-3. Explore affected code paths — identify files to modify, patterns to follow, similar features to reference.
-4. Search for existing utilities, components, and helpers that can be reused.
+3. If `.doyaken/memory/index.md` exists, read it and load only memory entries
+   whose scope matches the ticket, affected paths, or planning phase. Treat
+   memory as context to verify, not proof.
+4. Explore affected code paths — identify files to modify, patterns to follow, similar features to reference.
+5. Search for existing utilities, components, and helpers that can be reused.
 
 **Understanding check** — before drafting the plan, answer these five questions (to yourself):
 
@@ -140,6 +143,8 @@ Present the approaches briefly (2-3 sentences each), then recommend one with rea
 7. For MEDIUM and HIGH risk tasks, include:
    - **review_focus** — what the reviewer should look for (e.g., "verify auth check on all new endpoints")
    - **testing_guidance** — what to test (e.g., "test both valid and expired tokens")
+8. If scoped memory affected the plan, cite the memory ID or file in the task's
+   rationale so implementation and review can re-check it.
 
 ### 4. Plan Quality Checklist
 

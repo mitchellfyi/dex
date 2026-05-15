@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # SessionStart hook — detects ticket context from branch name and prints instructions.
 # Works with or without ticket trackers (Linear, GitHub Issues).
 # Feeds context into the phase system — see docs/autonomous-mode.md for lifecycle flow.
@@ -86,4 +87,10 @@ if [[ -n "$FOCUS_AREAS" ]]; then
   echo ""
   echo "Focus areas detected:${FOCUS_AREAS}"
   echo "Prioritise reading the relevant rules from .doyaken/rules/ for these areas."
+fi
+
+if [[ -f "$REPO_TOP/.doyaken/memory/index.md" ]]; then
+  echo ""
+  echo "Repo memory index detected: .doyaken/memory/index.md"
+  echo "Load only active memory entries whose scope matches the task, changed files, or current phase."
 fi

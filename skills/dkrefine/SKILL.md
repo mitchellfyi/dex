@@ -18,7 +18,7 @@ The defining output of `dkrefine` is a **decomposition into multiple estimated s
 
 ## Project Constraint Discovery
 
-Do not assume standing platform constraints. Doyaken is codebase-agnostic, so refinement must derive constraints from `.doyaken/architecture.md`, `.doyaken/rules/`, project docs, and code paths read during context gathering.
+Do not assume standing platform constraints. Doyaken is codebase-agnostic, so refinement must derive constraints from `.doyaken/architecture.md`, scoped `.doyaken/memory/` entries, `.doyaken/rules/`, project docs, and code paths read during context gathering.
 
 Examples of project-derived constraints include tenant isolation, rate limits, data residency, background-job ordering, cascade recomputation, plugin/strategy boundaries, high-throughput API latency, offline processing windows, public API compatibility, or operational approval gates. Apply only the constraints that are evidenced in the repo or confirmed by the user, and mark unknowns as open questions.
 
@@ -43,6 +43,12 @@ Use the integrations configured in `doyaken.md § Integrations`. Skip any that a
 
 - If the ticket has related or blocking issues, read those too.
 - `git log --oneline -20` for recent local context.
+
+**Scoped repo memory:**
+
+- If `.doyaken/memory/index.md` exists, read it and load only active entries
+  relevant to the ticket, affected paths, or refinement phase.
+- Treat memory as context to verify against current code, not proof.
 
 ### 2. Architecture Map (Read-only)
 

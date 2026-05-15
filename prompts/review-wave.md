@@ -62,12 +62,16 @@ After the skeleton exists, enrich it with concise sections:
   frontend/UI, backend/API, data/schema, shell/hook, and other.
 - Risk classification per file: high, medium, or low.
 - Relevant project context: `AGENTS.md`, `CLAUDE.md`, `.doyaken/doyaken.md`,
-  `.doyaken/rules/*.md`, and `.doyaken/review-rules.md` if present.
+  `.doyaken/rules/*.md`, `.doyaken/review-rules.md`, and scoped active
+  `.doyaken/memory/domains/*.md` entries referenced by
+  `.doyaken/memory/index.md` if present.
 - Plan or ticket acceptance criteria, or `N/A` if none are available.
 - Deterministic checks discovered for affected packages.
 - Dependency impact notes: touched exports, changed schemas/contracts, direct
   consumers found by grep, and recent fix history for deep-review files.
 - Debt or accepted-risk entries that should not be re-raised.
+- Memory load notes: which memory entries were loaded, skipped, or rejected for
+  this review scope, with a one-line reason for each.
 
 Keep the pack short. Prefer bullet summaries and command outputs over pasted
 full files. If the pack already exists, refresh any sections invalidated by new

@@ -55,22 +55,22 @@ Check if your implementation introduced any of these:
 
 If updates are needed but missing, make them now.
 
-## Step 5: Knowledge Propagation
+## Step 5: Memory Candidate Check
 
-If you discovered conventions, failure patterns, or interface details during this task that would help subsequent tasks, append them to `.doyaken/learnings.md`:
+If you discovered conventions, repeated failure patterns, review expectations,
+or interface details that would help future tasks, decide where they belong:
 
-```markdown
-## Conventions Discovered
-- [pattern found, e.g., "this project uses barrel exports in src/index.ts"]
+- Clear, current project rule that future agents should follow now -> update the
+  relevant `.doyaken/rules/*.md` file.
+- Enforceable safety pattern with a narrow detector -> add or update a
+  `.doyaken/guards/*.md` rule.
+- Durable lesson that needs evidence, recurrence, or review before becoming
+  trusted -> run `/dksync --dry-run` or include it in the Phase 2 summary as a
+  candidate observation for `dk sync`.
 
-## Failure Patterns
-- [what went wrong and how it was fixed, e.g., "test matcher extensions must be loaded before assertions run"]
-
-## Interface Notes
-- [API contracts discovered, e.g., "error responses use {error: string, code: number} shape"]
-```
-
-Only add entries that are non-obvious and would save time in future tasks. Skip if nothing noteworthy was discovered.
+Do not create `.doyaken/learnings.md`. Raw observations are not trusted memory.
+Durable memory belongs in `.doyaken/memory/domains/` only after `/dksync` or
+`dk sync` promotes it through a reviewable diff.
 
 ## Step 6: UI Capture Evidence
 
