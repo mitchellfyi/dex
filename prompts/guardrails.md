@@ -29,6 +29,12 @@ These rules exist because they compete with the momentum of code completion. If 
 - Summarize passing logs; keep exact failing lines, file:line evidence, and commands needed to verify the claim.
 - Do not paste full files, full diffs, or full logs when a short summary plus path is enough.
 
+### Humanized Writing
+
+- Before writing or publishing user-facing prose, markdown copy, docs, release notes, PR descriptions, issue/ticket bodies, review replies, or tracker/GitHub comments, invoke the `humanizer` skill and apply its final-pass checklist.
+- Before adding or editing code comments or doc comments, apply `humanizer` in code-comment mode: plain, technical, short, and focused on why, invariants, edge cases, or public API contracts.
+- Preserve required templates, exact commands, paths, identifiers, checkboxes, code blocks, and attribution footers while humanizing surrounding prose.
+
 ### Research Before Implementing
 
 - Before writing code that uses an unfamiliar API or library: read the official docs or source.

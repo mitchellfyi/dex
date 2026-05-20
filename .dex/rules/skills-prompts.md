@@ -5,10 +5,16 @@
 Each skill lives in `skills/<name>/SKILL.md` with markdown content.
 
 - Directory naming: lowercase, `dx`-prefixed (`dxplan`, `dximplement`, etc.)
-- Exception: the orchestrator is `dex` (no prefix)
+- Exceptions: the orchestrator is `dex`; the writing pass is `humanizer`
 - Reference shared prompts via `@prompts/<file>.md` import syntax
 - Skills are codebase-agnostic — they discover toolchains at runtime
 - Skills auto-discovered after symlink via `dx install`
+
+Use the `humanizer` skill whenever writing or editing copy, documentation,
+ticket bodies, PR descriptions, GitHub/tracker comments, review replies,
+user-facing messages, code comments, or doc comments. Preserve technical
+identifiers, commands, paths, markdown structure, and required attribution while
+removing AI-sounding filler.
 
 ## Agents
 

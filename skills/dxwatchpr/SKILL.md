@@ -149,7 +149,9 @@ if [[ "$PRE_HEAD" != "$POST_HEAD" ]]; then
   # For each mention-type reviewer, post a fresh comment:
   if [[ ${#MENTION_REVIEWERS[@]} -gt 0 ]]; then
     handles=$(printf '%s ' "${MENTION_REVIEWERS[@]}")
-    gh pr comment "$PR_NUM" --body "Updated - ${handles}please re-review."
+    handles="${handles% }"
+    # Run this comment body through the `humanizer` skill before posting.
+    gh pr comment "$PR_NUM" --body "Updated: ${handles}, please re-review."
   fi
 fi
 ```
@@ -166,6 +168,8 @@ fi
    - Comments addressed: N
    - Source breakdown: automated vs human
 3. Proceed to `/dxcomplete` so Phase 6 can run final verification, close the ticket, and end the session.
+
+Invoke the `humanizer` skill on any free-form PR comments or status prose before publishing or printing them. Preserve reviewer handles, check names, counts, SHAs, and commands exactly.
 
 **Checks pending, reviews pending, or comments unresolved:**
 - Do nothing further. Wait for the next loop invocation.

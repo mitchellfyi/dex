@@ -37,8 +37,9 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
    - If the description is empty, unclear, or missing acceptance criteria:
      a. Read related issues, comments, and explore the relevant code.
      b. Draft a short description (2-3 sentences) and acceptance criteria checklist.
-     c. Present to the user for review.
-     d. Once confirmed, update the ticket via the configured tracker.
+     c. Invoke the `humanizer` skill on the draft. Preserve factual requirements, ticket IDs, checkboxes, commands, and acceptance criteria exactly.
+     d. Present to the user for review.
+     e. Once confirmed, update the ticket via the configured tracker.
    - If clear, skip to step 5.
 
 5. Read the relevant AGENTS.md or README.md for the areas of code involved. Explore the codebase only enough to validate the bootstrap (e.g., confirm the branch name format matches existing conventions). Deep exploration is Phase 1's job.

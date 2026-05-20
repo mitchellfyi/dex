@@ -22,6 +22,10 @@ not ask the user whether to continue between wait cycles. Waiting for
 CI/reviewers is handled by the Stop hook cycle loop and configured
 `DEX_COMPLETE_WAIT_MINUTES`.
 
+Before posting PR comments, ticket updates, or final prose summaries, invoke the
+`humanizer` skill. Preserve reviewer handles, PR numbers, ticket IDs, commands,
+tables, counts, and status labels exactly.
+
 ## Steps
 
 ### 0. Resume Phase 6 Watcher
@@ -75,7 +79,8 @@ When setup runs:
    ```bash
    if [[ ${#MENTION_REVIEWERS[@]} -gt 0 ]]; then
      handles=$(printf '%s ' "${MENTION_REVIEWERS[@]}")
-     gh pr comment "$PR_NUM" --body "Requesting review from ${handles}— please take a look."
+     handles="${handles% }"
+     gh pr comment "$PR_NUM" --body "Requesting review from ${handles}."
    fi
    ```
 
@@ -125,6 +130,8 @@ If any condition is not met, return to Step 5 (do not advance to closure).
 ### 7. Update Ticket
 
 Mark the ticket as Done via the configured tracker (see `dex.md § Integrations`). Add a final summary — what was implemented, key decisions, follow-up work. Skip if no tracker configured — the PR is the record.
+
+Invoke the `humanizer` skill on the final ticket summary before posting it. Keep commit SHAs, PR links, ticket IDs, reviewer handles, and verification details exact.
 
 ### 8. Print Summary
 

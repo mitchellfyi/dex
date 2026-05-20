@@ -68,6 +68,9 @@ path, and write inline review-comment outcomes to `inline-replies.jsonl` as JSON
 lines with `comment_id` and optional artifact-only context. Do not post GitHub
 comments directly from the provider session. The wrapper publishes deterministic
 public summary/reply text rather than copying provider-authored free text.
+Invoke the `humanizer` skill before finalizing maintenance reports, response
+notes, or optional inline reply text. Preserve JSON shape, comment IDs, paths,
+SHAs, reviewer handles, commands, and status labels exactly.
 
 ## Output
 

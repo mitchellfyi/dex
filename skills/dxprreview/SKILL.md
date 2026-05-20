@@ -268,6 +268,7 @@ gh api repos/$REPO/issues/$PR_NUM/comments \
 - Keep replies factual and concise. No filler ("Great catch!", "Thanks for the review!").
 - Always reference specific code, files, or patterns when explaining a decision not to fix.
 - Never dismiss a comment without reasoning. Even nitpicks get a reply.
+- Before posting or printing reply text, invoke the `humanizer` skill. Preserve short SHAs, file paths, API names, and the required reply format while removing filler and servile tone.
 
 ### 7. Handle Escalations
 
@@ -287,6 +288,8 @@ If any comments were classified as Tier 3 (escalate):
 ### 8. Report
 
 Print a summary. The summary table is the same regardless of reply mode; in `terminal` mode, append a "Proposed replies" section with the full reply text per comment so the user can post them manually.
+
+Invoke the `humanizer` skill on any prose in the terminal report. Preserve tables, counts, comment numbers, reviewer handles, paths, and reply blocks exactly.
 
 ```
 ## PR Review Comments Addressed

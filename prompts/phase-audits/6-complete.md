@@ -2,6 +2,10 @@ Phase 6 (Complete) is the bounded autonomous PR monitoring loop. The PR was crea
 
 This phase runs as a **cycle loop**. Each cycle is one Stop hook iteration. Between cycles you wait — the loop infrastructure handles wall-clock time, not you.
 
+Before posting PR comments, ticket updates, or free-form status summaries, invoke
+the `humanizer` skill. Preserve reviewer handles, PR numbers, ticket IDs,
+commands, counts, status labels, and required audit wording exactly.
+
 ---
 
 ## Setup (only on the very first invocation)
@@ -57,10 +61,10 @@ already requested.
 If there are any `mention`-type reviewers, post a single comment on the PR mentioning all of them:
 
 ```bash
-gh pr comment "$PR_NUM" --body "Requesting review from @bot1 @bot2 — please take a look."
+gh pr comment "$PR_NUM" --body "Requesting review from @bot1 @bot2."
 ```
 
-Customize the body to whatever fits. The point is the `@mention` so the bots see it.
+Run the body through `humanizer` before posting if you customize it. The point is the `@mention` so the bots see it.
 
 ---
 
@@ -126,7 +130,7 @@ Update the ticket (if a tracker is configured — see `dex.md § Integrations`).
 If new commits were pushed during the cycle (`/dxwatchpr` fixed CI or `/dxprreview` addressed comments), re-trigger reviewers:
 
 - For each `request` reviewer: normalize the handle and run `gh pr edit "$PR_NUM" --add-reviewer "<normalized-handle>"` again — they get a fresh notification that there's something new.
-- For each `mention` reviewer: post a new comment `@<handle> updated — please re-review.`
+- For each `mention` reviewer: post a new comment such as `Updated: @<handle>, please re-review.` after applying `humanizer`.
 
 Increment the cycle counter (use arithmetic, not parameter expansion — `NEW_CYCLE=$((CYCLE + 1))`), reset `LAST_EPOCH` to now, write `"${NEW_CYCLE}:${NOW}"` to the state file. Stop. Next iteration starts a new wait window.
 

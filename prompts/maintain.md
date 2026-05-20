@@ -99,6 +99,9 @@ If the mode is missing or unrecognized, default to `report`.
 8. **Report**
    - Always write the compact maintenance report to the invocation `Report file`.
    - Also print a short completion summary when running interactively.
+   - Invoke the `humanizer` skill on free-form report prose before finalizing it.
+     Preserve tables, commands, paths, SHAs, run IDs, labels, and status values
+     exactly.
    - Include run id, repo, base ref, mode, sync result, selected surfaces,
      commands run, findings, rejected observations, unavailable signals, PRs
      opened, and next suggested run.
@@ -125,6 +128,9 @@ Use this flow when the invocation command is `respond`.
      `inline-replies.jsonl` path named in the invocation. Each line must be an
      object with `comment_id`; optional body text is retained as artifact context
      only and is not copied into the public inline reply.
+   - Invoke the `humanizer` skill on response notes and optional inline reply
+     body text before writing the artifacts. Preserve comment IDs, paths, SHAs,
+     reviewer handles, and section headings exactly.
 5. Treat each unaddressed comment as one of:
    - fix with a minimal commit and reply;
    - answer inline with cited repo context;

@@ -208,6 +208,10 @@ Do **not** write any phase markers — this command does not participate in the 
 
 Only if a ticket tracker is configured **and** the input was a ticket id. For freeform input or no-tracker setups, skip this step and print a brief summary instead.
 
+Before creating sub-tickets or posting parent comments, invoke the `humanizer`
+skill on the drafted ticket/comment prose. Preserve tables, headings, C4 names,
+Domain labels, estimates, paths, ticket IDs, links, and checklist syntax exactly.
+
 1. **Create sub-tickets.** For each item in §12:
    - Linear: `save_issue` with `parent` relation to the original ticket. If the tracker supports labels, set a label matching the **Domain** (e.g. `domain:api-service`).
    - GitHub Issues: `gh issue create` with the parent referenced in the body (e.g. "Parent: #123") and a `--label "domain:<name>"` flag if the label exists in the repo (skip the flag silently if it doesn't — do not auto-create labels).

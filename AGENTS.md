@@ -89,11 +89,19 @@ All ephemeral state goes under `~/.claude/.dex-phases/` or `~/.claude/.dex-loops
 Each skill lives in `skills/<name>/SKILL.md` with YAML frontmatter containing `name` and `description`, followed by markdown instructions. Codex uses this metadata for skill discovery; Claude Code tolerates the same format.
 
 - Directory naming: lowercase, `dx`-prefixed (`dxplan`, `dximplement`, etc.)
-- Exception: the orchestrator is `dex` (no prefix)
+- Exceptions: the orchestrator is `dex`; the writing pass is `humanizer`
 - Skills reference prompts via `@prompts/<file>.md` import syntax
 - Skills are codebase-agnostic — they discover toolchains at runtime
 - Claude gets skills via a single `~/.claude/skills -> $DEX_DIR/skills` symlink when possible; if `~/.claude/skills` is already a directory, `dx install` preserves unrelated skills and installs Dex skill symlinks inside it
 - Codex gets skills via individual symlinks in `$CODEX_HOME/skills/<name>` (`CODEX_HOME` defaults to `~/.codex`) so Dex does not replace Codex system/plugin skills
+
+### Writing copy and comments
+
+Use the `humanizer` skill whenever writing or editing copy, documentation,
+ticket bodies, PR descriptions, GitHub/tracker comments, review replies,
+user-facing messages, code comments, or doc comments. Preserve technical
+identifiers, commands, paths, markdown structure, and required attribution while
+removing AI-sounding filler.
 
 ### Vendor skills are NOT bundled
 
@@ -215,7 +223,7 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 
 ### Adding a new skill
 
-1. Create `skills/<dxname>/SKILL.md`
+1. Create `skills/<dxname>/SKILL.md` (`skills/<name>/SKILL.md` only for approved non-`dx` exceptions such as `humanizer`)
 2. Add YAML frontmatter with `name` and `description`
 3. Write the skill prompt as markdown
 4. Reference shared prompts via `@prompts/<file>.md`

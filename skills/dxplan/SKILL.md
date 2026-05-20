@@ -171,11 +171,15 @@ If any gate fails, fix the plan before proceeding.
 
 ### 6. Update Ticket (if tracker configured)
 
+Before writing the plan summary, invoke the `humanizer` skill on the draft copy. Preserve task numbering, file paths, commands, ticket IDs, and acceptance criteria exactly.
+
 Add the plan summary to the ticket via the configured tracker. If no tracker is configured, skip — the plan exists in the conversation and task list.
 
 ### 7. Present to User
 
 **STOP and present the plan to the user.**
+
+Before presenting, invoke the `humanizer` skill on the user-facing plan text. Preserve all technical identifiers, commands, paths, and task structure exactly.
 
 Include:
 - The numbered plan with task descriptions
