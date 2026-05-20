@@ -23,6 +23,12 @@ These rules exist because they compete with the momentum of code completion. If 
 - Before using a function or API: read the source or official docs to confirm the signature and behavior.
 - If you are uncertain about behavior, a schema, or a business rule: write a small test or read the code. Do not fill gaps with plausible guesses.
 
+### Tool Output Hygiene
+
+- Prefer scoped `rg`, `git diff --name-only`, `git diff --stat`, and targeted file reads before broad output.
+- Summarize passing logs; keep exact failing lines, file:line evidence, and commands needed to verify the claim.
+- Do not paste full files, full diffs, or full logs when a short summary plus path is enough.
+
 ### Research Before Implementing
 
 - Before writing code that uses an unfamiliar API or library: read the official docs or source.

@@ -128,13 +128,23 @@ repo_name=$(basename "$repo_root")
 echo "Doyaken - Sync: $repo_name"
 echo ""
 
+if [[ "$READ_ONLY" -eq 1 ]]; then
+  if ! dk_bootstrap_agent_tooling "$repo_root" "check"; then
+    dk_warn "Read-only sync found Claude/Codex tooling drift; run 'dk sync' or 'dk tools bootstrap' to repair it."
+  fi
+else
+  if ! dk_bootstrap_agent_tooling "$repo_root" "repair"; then
+    dk_warn "Continuing sync without complete Claude/Codex tooling bootstrap"
+  fi
+fi
+
 BASELINE_ANALYSIS_RAN=0
 if [[ ! -d "$repo_root/.doyaken" ]]; then
   if [[ "$READ_ONLY" -eq 1 ]]; then
     dk_info "No .doyaken/ directory found; read-only sync will report the missing scaffold"
   else
     dk_info "No .doyaken/ directory found; running baseline project analysis first"
-    bash "$DOYAKEN_DIR/bin/init.sh" --skip-config
+    DOYAKEN_SKIP_TOOL_BOOTSTRAP=1 bash "$DOYAKEN_DIR/bin/init.sh" --skip-config
     BASELINE_ANALYSIS_RAN=1
   fi
 fi
@@ -142,7 +152,7 @@ fi
 if [[ "$READ_ONLY" -eq 0 && "$BASELINE_ANALYSIS_RAN" -eq 0 ]]; then
   if ! __dk_sync_project_context_complete "$repo_root"; then
     dk_info "Doyaken project context is incomplete; running baseline project analysis first"
-    bash "$DOYAKEN_DIR/bin/init.sh" --skip-config
+    DOYAKEN_SKIP_TOOL_BOOTSTRAP=1 bash "$DOYAKEN_DIR/bin/init.sh" --skip-config
     BASELINE_ANALYSIS_RAN=1
   fi
 fi

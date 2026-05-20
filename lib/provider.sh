@@ -1196,10 +1196,10 @@ dk_provider_doctor() {
     else
       if [[ $codex_cli_found -eq 1 ]]; then
         dk_warn "OpenAI Codex Claude Code plugin not installed; Codex CLI delegation is still available"
-        dk_info "Install plugin slash commands with: claude plugin marketplace add openai/codex-plugin-cc && claude plugin install codex@openai-codex"
+        dk_info "Repair plugin slash commands with: dk tools bootstrap"
       else
         dk_error "OpenAI Codex Claude Code plugin not installed"
-        dk_info "Install it with: claude plugin marketplace add openai/codex-plugin-cc && claude plugin install codex@openai-codex"
+        dk_info "Install Codex CLI, then run: dk tools bootstrap"
         failed=1
       fi
     fi

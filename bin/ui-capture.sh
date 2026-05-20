@@ -126,8 +126,52 @@ if [[ -z "$out_dir" ]]; then
   runner_args+=("--out" "$out_dir")
 fi
 
+abs_out_dir="$out_dir"
+case "$abs_out_dir" in
+  /*) ;;
+  *) abs_out_dir="$(pwd)/$abs_out_dir" ;;
+esac
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$repo_root" ]]; then
+  case "$abs_out_dir" in
+    "$repo_root"/*)
+      if ! git check-ignore -q "$abs_out_dir"; then
+        dk_error "UI artifact directory is inside the repo and is not ignored: $abs_out_dir"
+        exit 1
+      fi
+      ;;
+  esac
+fi
+
 mkdir -p "$out_dir"
 
 dk_info "Capturing UI artifacts for ${url}"
-DK_UI_CAPTURE_TOOLS_DIR="$(dk_ui_capture_tools_dir)" \
-  node "$DOYAKEN_DIR/scripts/ui-capture.cjs" "${runner_args[@]}"
+capture_output=$(
+  DK_UI_CAPTURE_TOOLS_DIR="$(dk_ui_capture_tools_dir)" \
+    node "$DOYAKEN_DIR/scripts/ui-capture.cjs" "${runner_args[@]}"
+)
+printf '%s\n' "$capture_output"
+
+manifest="$(dk_ui_capture_manifest_file "$session_id")"
+mkdir -p "$(dirname "$manifest")"
+if [[ ! -f "$manifest" ]]; then
+  {
+    printf '# Visual Evidence\n\n'
+    printf 'Session: %s\n' "$session_id"
+    printf 'PR: pending\n'
+    printf 'Upload note: local files do not render in GitHub; upload before/after screenshots manually to the PR body or a PR comment.\n'
+  } > "$manifest"
+fi
+
+{
+  printf '\n## Capture: %s\n\n' "$run_name"
+  printf -- "- URL: \`%s\`\n" "$url"
+  printf -- '- Directory: [%s](%s)\n' "$abs_out_dir" "$abs_out_dir"
+  printf '\n'
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    printf -- '- %s\n' "$line"
+  done <<< "$capture_output"
+} >> "$manifest"
+printf 'manifest: %s\n' "$manifest"

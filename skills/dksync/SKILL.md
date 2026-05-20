@@ -20,6 +20,18 @@ workflow context.
 
 ## Contract
 
+Before starting the memory refresh, run the same conservative tooling bootstrap
+as `dk sync` unless the user requested `--dry-run` or `--trace-retrieval`:
+
+```bash
+repo_root=$(git rev-parse --show-toplevel)
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+dk_bootstrap_agent_tooling "$repo_root" "repair"
+```
+
+For `--dry-run` or `--trace-retrieval`, use mode `"check"` instead and report
+any drift without repairing it.
+
 Read and follow `prompts/sync-memory.md`. That prompt is the source of truth for:
 
 - raw observations vs trusted memory

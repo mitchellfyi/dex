@@ -33,6 +33,7 @@ SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
 
 dk_phase_name() {
   case "$1" in
+    0) printf '%s\n' "Setup" ;;
     1) printf '%s\n' "Plan" ;;
     2) printf '%s\n' "Implement" ;;
     3) printf '%s\n' "Review" ;;
@@ -45,6 +46,7 @@ dk_phase_name() {
 
 dk_phase_promise() {
   case "$1" in
+    0) printf '%s\n' "PHASE_0_COMPLETE" ;;
     1) printf '%s\n' "PHASE_1_COMPLETE" ;;
     2) printf '%s\n' "PHASE_2_COMPLETE" ;;
     3) printf '%s\n' "PHASE_3_COMPLETE" ;;
@@ -58,6 +60,7 @@ dk_phase_promise() {
 dk_phase_audit_file() {
   local phase="$1" name
   case "$phase" in
+    0) name="0-setup" ;;
     1) name="1-plan" ;;
     2) name="2-implement" ;;
     3) name="3-review-loop" ;;
@@ -118,7 +121,7 @@ dk_phase_start_epoch() {
 
 dk_record_phase_result() {
   local phase="$1" status="$2" exit_code="$3" start_epoch end_epoch duration iterations
-  [[ "$phase" =~ ^[1-6]$ ]] || return 0
+  [[ "$phase" =~ ^[0-6]$ ]] || return 0
   end_epoch=$(date +%s)
   start_epoch=$(dk_phase_start_epoch "$phase")
   [[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch="$end_epoch"
@@ -145,7 +148,7 @@ dk_sync_inline_phase_from_state() {
   [[ -f "$phase_file" ]] || return 0
 
   phase=$(cat "$phase_file" 2>/dev/null || echo "")
-  [[ "$phase" =~ ^[1-6]$ ]] || return 0
+  [[ "$phase" =~ ^[0-6]$ ]] || return 0
   [[ "${DOYAKEN_LOOP_PHASE:-}" == "$phase" ]] && return 0
 
   DOYAKEN_LOOP_PHASE="$phase"
@@ -161,9 +164,14 @@ dk_sync_inline_phase_from_state() {
 
 dk_inline_phase_message() {
   case "$1" in
+    1)
+      cat <<'EOF'
+Phase 0 setup is complete (branch renamed and pushed, ticket assigned, status set to In Progress). Begin Phase 1: Plan. Call EnterPlanMode now, then immediately invoke the Skill tool with skill: "dkplan". Do not redo ticket setup unless something is clearly missing. After the user approves the plan via ExitPlanMode, write the Phase 1 approval marker and stop so the Stop hook can audit and advance.
+EOF
+      ;;
     2)
       cat <<'EOF'
-The plan is approved. Invoke the Skill tool with skill: "dkimplement" to begin implementation. Scope: implementation, testing, and UI capture evidence only. For UI-affecting changes, invoke dkuicapture and link screenshots/videos/traces before stopping. Do not commit, push, create branches, or create PRs. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance the lifecycle.
+The plan is approved. Invoke the Skill tool with skill: "dkimplement" to begin implementation. Scope: implementation, testing, and UI capture evidence only. For UI-affecting changes, invoke dkuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. Do not commit, push, create branches, or create PRs. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance the lifecycle.
 EOF
       ;;
     3)
@@ -178,12 +186,12 @@ EOF
       ;;
     5)
       cat <<'EOF'
-Begin Phase 5: PR. Invoke the Skill tool with skill: "dkpr" to generate the PR description, create the draft PR, and attach configured request reviewers. Do not mark the PR ready, post @mention comments, or modify implementation code. When done, stop so the Stop hook can audit and advance.
+Begin Phase 5: PR. Invoke the Skill tool with skill: "dkpr" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach configured request reviewers. Do not mark the PR ready, post @mention comments, or modify implementation code. When done, stop so the Stop hook can audit and advance.
 EOF
       ;;
     6)
       cat <<'EOF'
-Begin Phase 6: Complete. Invoke the Skill tool with skill: "dkcomplete". Mark the PR ready, request reviewers, post configured @mention comments, monitor CI/reviews, address comments, and close the ticket when CI is green and configured reviewers approve. Continue unattended until completion or a real escalation condition is hit.
+Begin Phase 6: Complete. Invoke the Skill tool with skill: "dkcomplete". Mark the PR ready, request reviewers, post configured @mention comments, monitor CI/reviews through /dkwatchpr, address failures, and close the ticket when CI is green and configured reviewers approve. Do not merge the PR. Continue unattended until completion, the bounded watch window expires, or a real escalation condition is hit.
 EOF
       ;;
   esac
@@ -208,7 +216,7 @@ dk_compact_repeat_audit_prompt() {
       printf '%s\n' "- No TODO/FIXME/HACK, debug output, commented-out code blocks, missing imports, or obvious runtime errors remain."
       printf '%s\n' "- No Phase 2 background agents or long-running verification commands are still in flight."
       printf '%s\n' "- Any needed .doyaken/ updates are made."
-      printf '%s\n' "- UI capture evidence is linked for UI-affecting changes, or UI capture is explicitly marked N/A."
+      printf '%s\n' "- UI capture evidence is linked for UI-affecting changes, including before/after evidence or a before-unavailable reason, or UI capture is explicitly marked N/A."
       printf '%s\n' "- The Phase 2 ready marker has been written."
       printf '%s\n' ""
       printf '%s\n' "If any item is not true, continue implementing or verifying instead of signalling completion."
@@ -303,6 +311,34 @@ dk_record_session_branch "$SESSION_ID" "$(pwd)" 2>/dev/null || true
 # Each iteration = one audit cycle, so 30 is a safety net, not an expected count.
 MAX_ITERATIONS="${DOYAKEN_LOOP_MAX_ITERATIONS:-30}"
 COMPLETION_PROMISE="${DOYAKEN_LOOP_PROMISE:-DOYAKEN_TICKET_COMPLETE}"
+
+# Phase 0 has an external readiness gate: the agent must explicitly mark setup
+# done (after renaming the branch, pushing, and updating tracker status). Block
+# the stop until the ready marker exists so an early "I'm done" cannot skip
+# bootstrap. Mirrors Phase 1/Phase 2 gates below.
+if [[ "$HANDOFF_MODE" == "inline" && "${DOYAKEN_LOOP_PHASE:-}" == "0" ]]; then
+  PHASE_READY_FILE=$(dk_phase_ready_file "$SESSION_ID" 0)
+  if [[ ! -f "$PHASE_READY_FILE" ]]; then
+    rm -f "$COMPLETE_FILE" "$STATE_FILE"
+    printf '\n%s\n\n' "--- Doyaken Phase 0 Gate: ticket setup required ---" >&2
+    printf '%s\n' "No audit iteration was counted and no completion signal is available yet." >&2
+    printf '%s\n' "" >&2
+    printf '%s\n' "Phase 0 owns ticket bootstrap. Before you can advance to planning, all of these must be true:" >&2
+    printf '%s\n' "- Ticket fetched from the configured tracker (skip if none is configured)." >&2
+    printf '%s\n' "- Assignee set to the authenticated user (skip if already assigned to you; STOP and warn if assigned to someone else)." >&2
+    printf '%s\n' "- Lifecycle branch renamed to the tracker's git branch name and pushed (no draft PR yet — Phase 5 owns that)." >&2
+    printf '%s\n' "- Ticket status moved to In Progress." >&2
+    printf '%s\n' "- Description / acceptance criteria drafted (only if the ticket was empty or unclear)." >&2
+    printf '%s\n' "" >&2
+    printf '%s\n' "When all of the above is done, write the Phase 0 ready marker and stop once:" >&2
+    printf '%s\n' '```bash' >&2
+    printf '%s\n' "source \"\${DOYAKEN_DIR:-\$HOME/work/doyaken}/lib/common.sh\"" >&2
+    printf '%s\n' "touch \"\$(dk_phase_ready_file \"\${DOYAKEN_SESSION_ID:-\$(dk_session_id)}\" 0)\"" >&2
+    printf '%s\n' '```' >&2
+    printf '%s\n' "" >&2
+    exit 2
+  fi
+fi
 
 # Phase 1 has an external approval gate: the plan must be presented through
 # ExitPlanMode and explicitly approved by the user before the audit loop should
@@ -627,6 +663,7 @@ if [[ -z "$AUDIT_PROMPT" ]]; then
   # Map phase number to audit file basename (must match actual filenames)
   AUDIT_FILENAME=""
   case "$LOOP_PHASE" in
+    0) AUDIT_FILENAME="0-setup" ;;
     1) AUDIT_FILENAME="1-plan" ;;
     2) AUDIT_FILENAME="2-implement" ;;
     3) AUDIT_FILENAME="3-review-loop" ;;

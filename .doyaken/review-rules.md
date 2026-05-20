@@ -43,14 +43,14 @@ Path-specific review focus for Doyaken review waves.
 - Phase audits should verify the phase-specific completion gate and avoid
   duplicating work owned by the invoked skill.
 - Phase 3 single-wave audits may complete with `FINDINGS_FIXED:N`; the outer
-  `/dkreviewloop` owns the three consecutive `CLEAN` gate.
+  `/dkreviewloop` owns the adaptive consecutive `CLEAN` gate.
 - Completion criteria must match the state/result files read by `dk.sh` and
   `hooks/phase-loop.sh`.
 
 ## `agents/*.md`
 
-- Review specialist agents are read-only and must not edit files.
-- Review specialist agents should not enable project memory; review waves must
+- Review agents are read-only and must not edit files.
+- Review agents should not enable project memory; review waves must
   not create `.claude/agent-memory/` artifacts as a side effect.
 - Findings require exact evidence, a concrete trigger, and confidence >= 50.
 - Domain-specific agents should return `N/A` quickly when their domain is not

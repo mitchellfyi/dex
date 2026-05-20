@@ -1,4 +1,4 @@
-IMPORTANT: Follow these steps in order. Use the ticket tracker configured in doyaken.md § Integrations. If no tracker is configured, skip tracker steps.
+IMPORTANT: These steps run in Phase 0 (Setup) of the `dk` lifecycle. Phase 0 runs in NORMAL mode (no plan mode), so you can write to git and the tracker before Phase 1 begins. Use the ticket tracker configured in doyaken.md § Integrations. If no tracker is configured, skip tracker steps. Do NOT call `EnterPlanMode` during this phase.
 
 1. Gather ticket context from the configured ticket tracker:
 
@@ -23,6 +23,14 @@ IMPORTANT: Follow these steps in order. Use the ticket tracker configured in doy
      git push -u origin {{BRANCH}}
      ```
 
+   - After renaming, update the per-session meta sidecar so `dk <N>` can find this worktree later even though the branch no longer matches `worktree-ticket-*`:
+     ```bash
+     source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+     SID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+     dk_meta_write "$SID" "tracker_key=<KEY-N>" "current_branch=$(git rev-parse --abbrev-ref HEAD)"
+     ```
+     Use the tracker's key (e.g. `ENG-999`). If no tracker is configured, only the `current_branch` field is required.
+
 3. Set the ticket status to "In Progress" via the configured tracker. If no tracker, skip.
 
 4. Check the ticket description (if a ticket was found):
@@ -33,6 +41,13 @@ IMPORTANT: Follow these steps in order. Use the ticket tracker configured in doy
      d. Once confirmed, update the ticket via the configured tracker.
    - If clear, skip to step 5.
 
-5. Read the relevant AGENTS.md or README.md for the areas of code involved. Explore the codebase to understand scope and context.
+5. Read the relevant AGENTS.md or README.md for the areas of code involved. Explore the codebase only enough to validate the bootstrap (e.g., confirm the branch name format matches existing conventions). Deep exploration is Phase 1's job.
 
-6. Once setup steps 1–5 are complete, continue directly with the active workflow (e.g., `/doyaken`, `/dkplan`, `/dkimplement`, or whatever the user invoked). Do NOT pause to ask for go-ahead — running setup is part of carrying out the user's already-authorised request, and a separate "ready to start?" prompt is unnecessary friction. Print a brief one-line summary of what was set up (branch, ticket status) and then proceed. If the active workflow is `dk` Phase 1 planning, then after the user approves `ExitPlanMode`, stop once so the Stop hook can audit the plan and inject Phase 2 in the same session; do not tell the user to run `/dkimplement`. The user can interrupt at any time if they want to redirect.
+6. Once setup steps 1–5 are complete, write the Phase 0 ready marker so the Stop hook can audit and advance:
+
+   ```bash
+   source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+   touch "$(dk_phase_ready_file "${DOYAKEN_SESSION_ID:-$(dk_session_id)}" 0)"
+   ```
+
+   Then print a brief one-line summary of what was set up (branch, ticket status, assignee) and stop once. Do NOT call `EnterPlanMode`, do NOT invoke `/dkplan`, and do NOT wait for a "ready to start?" prompt — the Stop hook will inject Phase 1 instructions automatically. The user can interrupt at any time if they want to redirect.

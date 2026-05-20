@@ -48,7 +48,28 @@ Check if the project has a PR description template or prompt (referenced in AGEN
 
 Otherwise, read the PR description template from the Doyaken prompts directory (`prompts/pr-description.md`) and follow its structure. Fill in every section with specifics from the implementation.
 
-### 3. Create or Update the PR (always as draft)
+### 3. Prepare Visual Evidence for PR Handoff
+
+If the PR includes browser UI, visual layout, style, route, or user-flow changes, prepare a user-facing visual evidence bundle before creating or updating the PR body:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+session_id="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+manifest="$(dk_ui_capture_manifest_file "$session_id")"
+printf '%s\n' "$manifest"
+```
+
+Rules:
+- Use the existing `visual-evidence.md` from Phase 2 when it exists.
+- If UI files changed after the last after-capture, or the manifest is missing after evidence, invoke `dkuicapture` now to refresh after screenshots/traces/logs. Do not modify implementation code while doing this.
+- Keep screenshots, videos, traces, logs, generated flow scripts, and the manifest under Doyaken's artifact directory. Never commit or stage them.
+- Do not embed local file paths as GitHub images; they will not render for reviewers.
+- In the PR body, either include an uploaded before/after image section if the user has already uploaded images, or state that visual evidence has been prepared for manual upload.
+- In the Phase 5 handoff summary, give the user the manifest path and the before/after screenshot paths so they can upload them to the PR body or a PR comment.
+
+If the PR has no browser UI impact, write `Visual evidence: N/A — no browser UI changes` in your Phase 5 notes.
+
+### 4. Create or Update the PR (always as draft)
 
 Read the commit format prompt (`prompts/commit-format.md`) for title format guidance.
 
@@ -76,7 +97,7 @@ EOF
 
 Before either command, inspect the exact body text. If it contains Claude attribution, remove it. The built-in `block-claude-attribution` guard will block PR create/edit/comment commands that still contain Claude generated-by or co-author text.
 
-### 4. Attach Request-Type Reviewers
+### 5. Attach Request-Type Reviewers
 
 Read the `## Reviewers` section of `.doyaken/doyaken.md`. For every row whose Type column is `request`, attach the reviewer to the draft PR:
 
@@ -96,17 +117,18 @@ Notes:
 
 If the `## Reviewers` section is missing or empty, skip this step entirely.
 
-### 5. Update Ticket (if tracker configured)
+### 6. Update Ticket (if tracker configured)
 
 Add an implementation summary to the ticket via the configured tracker (see doyaken.md § Integrations) — what was implemented, key decisions, deviations from plan. If no tracker is configured, skip — the PR description covers this.
 
-### 6. Hand Off to Phase 6
+### 7. Hand Off to Phase 6
 
 Print a summary of the draft PR for the user:
 - PR link
 - PR description preview (title + summary section)
 - List of `request` reviewers attached
 - Implementation summary
+- Visual evidence manifest and before/after screenshot paths, or N/A
 
 Then output:
 

@@ -68,26 +68,12 @@ else
   fi
 fi
 
-# 3. Install Codex skills without replacing Codex's skills directory.
-if command -v codex &>/dev/null; then
-  if ! dk_install_codex_skills; then
-    dk_warn "Continuing install without complete Codex skill links"
-  fi
-else
-  dk_skip "Codex CLI not found; skipping Codex skills"
+# 3. Install or repair conservative Claude/Codex tooling.
+if ! dk_bootstrap_agent_tooling "" "repair"; then
+  dk_warn "Continuing install without complete Claude/Codex tooling bootstrap"
 fi
 
-# 4. Install Doyaken-managed browser automation tooling.
-if ! dk_install_ui_capture_tooling; then
-  dk_warn "Continuing install without complete UI capture tooling"
-fi
-
-# 5. Merge hooks and settings into ~/.claude/settings.json
-if ! bash "$DOYAKEN_DIR/bin/install-settings.sh"; then
-  dk_warn "Continuing install without refreshed Claude settings"
-fi
-
-# 6. Source dk.sh in ~/.zshrc
+# 4. Source dk.sh in ~/.zshrc
 if grep -qE 'doyaken/dk\.sh|DOYAKEN_DIR.*/dk\.sh' "$ZSHRC" 2>/dev/null; then
   # Ensure DOYAKEN_DIR export exists (upgrade path: older installs lack it)
   if ! grep -qE '^export DOYAKEN_DIR=' "$ZSHRC" 2>/dev/null; then
@@ -119,7 +105,7 @@ else
   dk_done "Added DOYAKEN_DIR export and source to ~/.zshrc"
 fi
 
-# 7. Make scripts executable
+# 5. Make scripts executable
 chmod +x "$DOYAKEN_DIR/hooks/"*.sh "$DOYAKEN_DIR/hooks/"*.py "$DOYAKEN_DIR/bin/"*.sh 2>/dev/null
 dk_done "Made scripts executable"
 

@@ -10,7 +10,7 @@ Status: active
 Scope: agents/review-*.md, agents/self-reviewer.md, agents/review-verifier.md, prompts/review-wave.md, prompts/review.md, skills/dkreview*/SKILL.md
 Applies to phases: review (Phase 3), prompt-loop
 Applies to paths: agents/review-*.md, agents/self-reviewer.md, agents/review-verifier.md, prompts/review-wave.md, prompts/review.md
-Last verified: 2026-05-15
+Last verified: 2026-05-20
 Recheck when: a new specialist reviewer is added, agent frontmatter schema changes, or `.claude/agent-memory/` semantics change
 
 Lesson:
@@ -20,11 +20,11 @@ NotebookEdit. They must not enable project memory; review waves must not leave
 `.claude/agent-memory/` artifacts as a side effect of running.
 
 Evidence:
-- All ten specialist agent files (`agents/review-architecture.md`,
+- All specialist agent files (`agents/review-architecture.md`,
   `review-contracts.md`, `review-correctness.md`, `review-devops.md`,
   `review-frontend.md`, `review-observability.md`, `review-performance.md`,
   `review-security.md`, `review-tests.md`, `review-verifier.md`) declare
-  `tools: Read, Glob, Grep, Bash` and explicitly state "You are read-only".
+  `tools: Read, Glob, Grep, Bash` and explicitly state they are read-only.
 - `.doyaken/review-rules.md` codifies the rule for both `agents/*.md` and
   review-wave skill files.
 - Commit `4742c3f feat(review): add specialist review wave loop` body lists a
@@ -47,8 +47,8 @@ Status: active
 Scope: prompts/review-wave.md, prompts/phase-audits/3-review-loop.md, prompts/phase-audits/3-review.md, skills/dkreviewloop/SKILL.md, skills/dkreview/SKILL.md, agents/review-*.md, agents/review-verifier.md
 Applies to phases: review (Phase 3), prompt-loop
 Applies to paths: prompts/review-wave.md, prompts/phase-audits/3-review*.md, skills/dkreview*/SKILL.md, agents/review-*.md, agents/review-verifier.md
-Last verified: 2026-05-15
-Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the outer dkreviewloop three-consecutive-clean gate changes
+Last verified: 2026-05-20
+Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the adaptive dkreviewloop gate/profile logic changes
 
 Lesson:
 Doyaken review waves preserve four interlocking rules. First, the wave's first
@@ -68,11 +68,12 @@ Evidence:
 - `prompts/review-wave.md` Step 1 requires context pack first; Step 2 requires
   deterministic checks before semantic review; Step 7 defines `CLEAN` result
   semantics.
-- `prompts/phase-audits/3-review-loop.md` requires three consecutive `CLEAN`
-  reports and excludes `FINDINGS_FIXED:N`, `FINDINGS:N`, and `BLOCKED:reason`
-  from incrementing the counter.
+- `prompts/phase-audits/3-review-loop.md` requires the resolved profile's
+  consecutive `CLEAN` reports and excludes `FINDINGS_FIXED:N`, `FINDINGS:N`,
+  `BLOCKED:reason`, and `ESCALATE_THOROUGH:reason` from incrementing the
+  counter.
 - `.doyaken/review-rules.md` § `prompts/phase-audits/` records that the outer
-  review loop owns the gate.
+  review loop owns the adaptive clean-pass gate.
 - Commit `b577f92 fix(dkreviewloop): review full current change set` confirms
   the review wave must cover the full diff, not a subset.
 - Commit `d868c38 fix: pause phase three while reviews run` confirms review
@@ -90,4 +91,4 @@ Future agent behavior:
 - When invoking review outside the lifecycle, still build the context pack
   before broad semantic exploration.
 - Treat `FINDINGS_FIXED:N` as a valid single-wave completion result; the outer
-  `/dkreviewloop` owns the three-clean-pass gate.
+  `/dkreviewloop` owns the adaptive clean-pass gate.

@@ -1,186 +1,49 @@
 ---
 name: "dkreview"
-description: "Run one full-scope Doyaken review wave with deterministic checks, specialist reviewers, verifier triage, and batch fixes."
+description: "Run one full-scope Doyaken review wave with adaptive depth, verifier triage, and batch fixes."
 ---
 
 # Skill: dkreview
 
-Run a single full-scope review wave. Direct user invocations still dispatch to
-`/dkreviewloop`; the single-pass mode is for `/dkreviewloop` and Phase 3.
+Run one full-scope review wave. Direct `/dkreview` invocations still dispatch to
+`/dkreviewloop`; single-pass mode is for `/dkreviewloop` and Phase 3.
 
-## Dispatch Mode
+## Dispatch
 
-`/dkreview` without `--single-pass` or `--no-loop` must invoke the Skill tool
-with skill: `dkreviewloop`, then stop.
+If invoked without `--single-pass` or `--no-loop`, invoke skill `dkreviewloop`
+and stop.
 
-Run the single-pass review-wave instructions only when one of these is true:
+Run the single-pass workflow only when the invocation includes `--single-pass`,
+`--no-loop`, or explicitly says it is running from `/dkreviewloop`. If unsure,
+prefer the loop.
 
-- the invocation includes `--single-pass` or `--no-loop`
-- the caller explicitly says this is running from `/dkreviewloop`
-- the caller explicitly says this is running by `/dkreviewloop`
+## Single-Pass Workflow
 
-If unsure, prefer the loop.
+Follow `prompts/review-wave.md` as the source of truth. In one wave:
 
-## Single-Pass Goal
+1. Review the full current change set from caller-supplied diff/stat/name
+   commands, or discover committed, staged, unstaged, and untracked changes.
+2. Build the compact context pack first in `dk_review_context_file`.
+3. Run deterministic checks before semantic review.
+4. Harvest candidate issues according to the supplied profile:
+   - `light`: orchestrator harvest; run `review-verifier` only if candidates or
+     escalation risk exist
+   - `standard`: orchestrator harvest, targeted specialists for concrete changed
+     domains, plus `review-verifier`
+   - `thorough`: full specialist roster plus `review-verifier`
+5. Verify, deduplicate, and rank candidate findings before fixing.
+6. Batch-fix all verified findings, then re-run affected checks and targeted
+   review once.
+7. Write the review result signal and findings hash.
 
-One single-pass run performs **one full review wave** over the full current
-change set:
+Collect all candidate issues before fixing anything. Do not add a separate
+general reviewer just to harvest issues; the fresh review-wave loop already owns
+that pass. The point is one aggressive inventory followed by one batch fix.
 
-1. Build or refresh the compact review context pack.
-2. Run deterministic checks.
-3. Spawn read-only specialist reviewers.
-4. Verify, deduplicate, and rank findings.
-5. Batch-fix verified findings.
-6. Re-check affected surfaces.
-7. Write the review result signal.
-
-The outer loop still owns the guarantee of three consecutive full `CLEAN`
-passes. A single pass that found and fixed anything is successful engineering
-work, but it is **not** a clean pass.
-
-## Review-Wave Contract
-
-Read and follow `prompts/review-wave.md`. It is the source of truth for:
-
-- context-pack contents and path handling
-- specialist reviewer roster
-- structured JSON-line finding schema
-- verifier responsibilities
-- result semantics
-- stuck-loop findings hash
-
-Use `prompts/review.md` as the criteria library behind each specialist review.
-Do not paste the full criteria into every reviewer prompt; point reviewers at the
-context pack and the relevant domain.
-
-## Scope Detection
-
-Review the full current change set, not just one category of changes:
-
-- committed branch changes against `origin/<default>...HEAD` when available
-- staged changes
-- unstaged changes
-- untracked files, represented with `git diff --no-index -- /dev/null <file>`
-
-If the caller supplied explicit diff/stat/file-name commands, use those commands
-instead of rediscovering scope. They are the authoritative full-scope commands
-for the current loop iteration.
-
-If no changes exist, stop with a clear message and do not write `CLEAN`.
-
-## Context Pack
-
-Create or refresh the context pack in global Doyaken loop state:
-
-```bash
-source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
-SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
-REVIEW_CONTEXT_FILE="$(dk_review_context_file "$SESSION_ID")"
-mkdir -p "$(dirname "$REVIEW_CONTEXT_FILE")"
-```
-
-The pack is shared with specialist reviewers. It must be compact and current,
-especially after the orchestrator applies fixes. Materialize it before broad
-semantic exploration: write a non-empty skeleton with scope commands, changed
-file names, and `Acceptance Criteria: N/A` unless criteria were explicitly
-provided by the current caller; then run `test -s "$REVIEW_CONTEXT_FILE"` and
-read back the first 80 lines before marking the context-pack step complete.
-
-If `.doyaken/memory/index.md` exists, load only active memory entries whose scope
-matches the changed files or review phase. Record loaded, skipped, and rejected
-memory entries in the context pack. Treat memory as context to verify, not proof
-of a finding.
-
-Do not infer acceptance criteria from stale session prompt files, previous
-conversation turns, session titles, AGENTS instructions, or unrelated ticket
-context.
-
-## Deterministic Checks
-
-Run deterministic checks before semantic review whenever available and scoped:
-
-- formatter/check mode
-- linter/check mode
-- typecheck
-- targeted tests
-- generated-code freshness
-- `bash -n`, `zsh -n`, and `shellcheck` for shell changes when available
-- CI/workflow/config validation when relevant and available
-
-Fix mechanical failures before semantic review. If any fix is applied, the wave
-cannot be `CLEAN`; final result should be `FINDINGS_FIXED:N` or another
-non-CLEAN status.
-
-## Specialist Review Wave
-
-Spawn read-only specialist reviewers with the Agent tool. Run them in parallel
-when the host supports parallel Agent calls.
-
-If the Agent tool is unavailable, write `BLOCKED:agent-tool-unavailable`. Do not
-simulate specialist review by reading all specialist prompts in the orchestrator
-context.
-
-Always run:
-
-- `review-correctness`
-- `review-security`
-- `review-contracts`
-- `review-tests`
-- `review-architecture`
-
-Run when relevant, allowing quick `N/A` responses:
-
-- `review-frontend`
-- `review-devops`
-- `review-performance`
-- `review-observability`
-
-All specialist reviewers must return `NO_FINDINGS`, `N/A`, or JSON lines in the
-schema from `prompts/review-wave.md`.
-
-## Verification
-
-Use `review-verifier` with the Agent tool. If the Agent tool is unavailable,
-write `BLOCKED:agent-tool-unavailable`. Verification is mandatory before fixing.
-
-The verifier must:
-
-- deduplicate by root cause
-- re-read cited code and context
-- reject speculative or stale findings
-- reject findings below confidence 50
-- confirm the issue is introduced or made relevant by this change
-- normalize severity
-
-Only verified findings may drive fixes or reset the clean counter.
-
-## Batch Fix And Recheck
-
-If verified findings exist:
-
-1. Fix them in severity order.
-2. Re-run relevant deterministic checks.
-3. Re-run targeted review on changed surfaces and impacted callers.
-4. If new verified findings appear, fix once more.
-5. After two unsuccessful fix cycles, read `prompts/failure-recovery.md`.
-
-Do not mark the wave `CLEAN` after applying fixes. Write `FINDINGS_FIXED:N` when
-all verified findings were fixed and rechecked, where N is the number of
-verified findings found in the wave.
-
-## Acceptance Criteria
-
-If plan or ticket criteria are available, produce an evidence table:
-
-```markdown
-| # | Criterion | Implementation (`file:line`) | Test (`test:line`) | Status |
-|---|-----------|------------------------------|--------------------|--------|
-```
-
-Any `NOT FOUND`, `NOT MET`, or unverified criterion is a verified finding unless
-the criterion is explicitly out of scope or accepted as debt.
-
-If no criteria are available, mark the section `N/A` and continue.
+If no plan or ticket criteria are supplied by the current caller, mark
+criteria-dependent evidence as `N/A`. Do not infer acceptance criteria from stale
+session prompt files, previous turns, session titles, AGENTS instructions, or
+unrelated tickets.
 
 ## Result Signal
 
@@ -198,29 +61,15 @@ Allowed results:
 - `FINDINGS_FIXED:N`
 - `FINDINGS:N`
 - `BLOCKED:reason`
+- `ESCALATE_THOROUGH:reason`
 
 Only `CLEAN` means the wave found zero verified findings and applied zero fixes.
+Any fix writes `FINDINGS_FIXED:N`. If the current profile is too shallow for the
+observed risk, write `ESCALATE_THOROUGH:reason`.
 
 Also append the findings hash described in `prompts/review-wave.md`.
 
 ## Final Report
 
-End with:
-
-```markdown
-## Review Wave Result
-
-- Scope: full current change set
-- Context pack: <path>
-- Specialist reviewers: <domains run>
-- Deterministic checks: PASS | FAIL | PARTIAL
-- Verified findings: N
-- Fixes applied this wave: N
-- Result signal: CLEAN | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason
-```
-
-## Notes
-
-- This skill is for work-in-progress review before verify and PR creation.
-- Do not commit, push, create PRs, update PRs, or request external reviewers.
-- External PR feedback remains Phase 5/6 and `/dkprreview` work.
+End with the `Review Wave Result` block from `prompts/review-wave.md`. Do not
+commit, push, create PRs, update PRs, or request external reviewers.

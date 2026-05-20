@@ -1,20 +1,20 @@
 ---
 name: "dkwatchpr"
-description: "Monitor PR review comments and address feedback from automated and human reviewers."
+description: "Monitor a ready PR for CI failures and review feedback, fix issues when appropriate, and hand completion back to dkcomplete."
 ---
 
 # Skill: dkwatchpr
 
-Monitor PR review comments and address feedback from automated and human reviewers.
+Monitor a ready PR for both CI status and review feedback. This is the only scheduled Phase 6 watcher.
 
 ## When to Use
 
-- Scheduled via `/loop 5m /dkwatchpr` from `/dkcomplete` (Phase 6) after `gh pr ready`
-- Can also be invoked manually for a one-off review check
+- Scheduled via `/loop 5m /dkwatchpr` from `/dkcomplete` after `gh pr ready`
+- Can also be invoked manually for a one-off CI/review check
 
 ## How It Works
 
-Each invocation is a **single check cycle** — `/loop` handles the scheduling. The session context carries state between invocations naturally.
+Each invocation is a **single check cycle**. `/loop` handles scheduling. The session context carries state between invocations naturally.
 
 Each cycle has a hard runtime budget from `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). Do not allow a watcher cycle to run longer than that budget or overlap with a later `/loop` tick.
 
@@ -26,7 +26,7 @@ Optional: a PR number (e.g., `/dkwatchpr 456`). If omitted, operates on the curr
 
 ### 0. Respect Manual User Interruptions
 
-Before running any PR, GitHub, or repository commands, check whether a direct user prompt has paused scheduled Phase 6 watchers:
+Before running any PR, CI, GitHub, or repository commands, check whether a direct user prompt has paused scheduled Phase 6 watchers:
 
 ```bash
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
@@ -39,12 +39,12 @@ if dk_watch_pause_active "$SESSION_ID"; then
   else
     pause_detail="Pause expires after $(dk_format_duration "$pause_ttl")."
   fi
-  echo "Doyaken watcher paused by a recent user prompt. Skipping this scheduled /dkwatchpr cycle without running PR commands. ${pause_detail} Run /dkcomplete or ask to resume watchers to clear it."
+  echo "Doyaken watcher paused by a recent user prompt. Skipping this scheduled /dkwatchpr cycle without running PR or CI commands. ${pause_detail} Run /dkcomplete or ask to resume watching to clear it."
   exit 0
 fi
 if ! dk_watch_lock_acquire "$SESSION_ID" "$WATCH_NAME"; then
   cycle_timeout=$(dk_watch_cycle_timeout_seconds)
-  echo "Previous /dkwatchpr cycle is still within its $(dk_format_duration "$cycle_timeout") runtime budget. Skipping this scheduled tick without running PR commands."
+  echo "Previous /dkwatchpr cycle is still within its $(dk_format_duration "$cycle_timeout") runtime budget. Skipping this scheduled tick without running PR or CI commands."
   exit 0
 fi
 trap 'dk_watch_lock_release "$SESSION_ID" "$WATCH_NAME"' EXIT
@@ -71,18 +71,58 @@ else
 fi
 ```
 
-### 2. Check for Reviews and Comments
+Capture the local head SHA before making changes:
+
+```bash
+PRE_HEAD=$(git rev-parse HEAD)
+```
+
+### 2. Check and Fix CI
+
+```bash
+dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh pr checks "$PR_NUM"
+```
+
+Parse each check: name, status (pending/pass/fail), URL.
+
+**All checks pass:**
+- Record that CI is green for this cycle.
+
+**Any checks still pending:**
+- Do not diagnose yet. Continue to review/comment checks, then wait for the next loop invocation.
+
+**Any checks failed:**
+- Fetch logs and diagnose:
+  ```bash
+  dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh run view <run-id> --log-failed
+  ```
+- Diagnose the failure from the logs. Common categories:
+  - **Formatting/linting**: run the project's formatter/linter locally, commit, push
+  - **Type errors**: run the type checker locally, fix errors, commit, push
+  - **Test failures**: run the specific failing test locally, diagnose, fix, commit, push
+  - **Code generation drift**: run the project's code generator, commit if changes, push
+  - **Dependency issues**: check lockfile freshness, install, commit if changes, push
+  - **Secrets scan**: STOP IMMEDIATELY. Cancel the watcher. Alert the user. Do not auto-fix.
+  - **Infrastructure failure** (Docker pull timeout, OOM in CI): suggest `gh run rerun <id> --failed` or escalate
+  - **Flaky tests**: if the same test fails intermittently with different error messages or passes on local rerun, retry once via `gh run rerun <id> --failed`. If it fails again on the same test, escalate with the test name and both failure outputs rather than attempting code fixes.
+- After fixing:
+  1. Verify the fix locally with the specific failed check.
+  2. Commit with `fix(ci): <description>` and the Doyaken co-author trailer from `prompts/commit-format.md`. Do not add Claude attribution.
+  3. Push. This triggers a new CI run.
+  4. Continue to review/comment checks in this cycle if there is enough budget; otherwise exit and let the next loop invocation pick up the new run.
+
+### 3. Check Reviews and Comments
 
 ```bash
 dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/reviews"
 dk_run_with_timeout "$(dk_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/comments"
 ```
 
-### 3. Address Comments
+### 4. Address Comments
 
 If there are unaddressed comments (comments not yet replied to or resolved):
 
-Run `/dkprreview --reply=inline` to critically evaluate and respond to each comment. Pass `--reply=inline` so the autonomous loop doesn't pause asking the user — `dkwatchpr` is running unattended and inline replies are the right default.
+Run `/dkprreview --reply=inline` to critically evaluate and respond to each comment. Pass `--reply=inline` so the autonomous loop doesn't pause asking the user. `dkwatchpr` is running unattended and inline replies are the right default.
 
 `/dkprreview` will:
 - Classify each comment (bug, security, request-change, question, suggestion, nitpick, approval)
@@ -91,16 +131,13 @@ Run `/dkprreview --reply=inline` to critically evaluate and respond to each comm
 - Reply to every comment inline with reasoning
 - Return a list of escalations (if any)
 
-If `/dkprreview` reports escalations, proceed to Step 5 (Escalation).
+If `/dkprreview` reports escalations, proceed to Step 7 (Escalation).
 
-### 3b. Re-Request Reviewers (after a push)
+### 5. Re-Request Reviewers After a Push
 
-If `/dkprreview` pushed any new commits in this cycle (i.e., the PR head SHA advanced), re-trigger reviewers so they get a fresh notification that there's something new to look at. Read the `## Reviewers` section of `.doyaken/doyaken.md`:
+If this cycle pushed any new commits (from a CI fix or `/dkprreview`), re-trigger reviewers so they get a fresh notification that there's something new to look at. Read the `## Reviewers` section of `.doyaken/doyaken.md`:
 
 ```bash
-# Capture HEAD before /dkprreview ran. Compare after.
-PRE_HEAD=$(git rev-parse HEAD)
-# ... /dkprreview runs ...
 POST_HEAD=$(git rev-parse HEAD)
 if [[ "$PRE_HEAD" != "$POST_HEAD" ]]; then
   source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
@@ -112,49 +149,48 @@ if [[ "$PRE_HEAD" != "$POST_HEAD" ]]; then
   # For each mention-type reviewer, post a fresh comment:
   if [[ ${#MENTION_REVIEWERS[@]} -gt 0 ]]; then
     handles=$(printf '%s ' "${MENTION_REVIEWERS[@]}")
-    gh pr comment "$PR_NUM" --body "Updated — ${handles}please re-review."
+    gh pr comment "$PR_NUM" --body "Updated - ${handles}please re-review."
   fi
 fi
 ```
 
-`gh pr edit --add-reviewer` is idempotent — re-running on a reviewer that's already requested triggers a fresh notification on supported clients without duplicating the request.
+`gh pr edit --add-reviewer` is idempotent. Re-running on a reviewer that's already requested triggers a fresh notification on supported clients without duplicating the request.
 
-### 4. Evaluate Completion
+### 6. Evaluate Completion
 
-**All reviews approved, no unresolved comments:**
-1. Cancel the review monitoring loop: use `CronDelete` with the job ID.
+**All checks pass, all reviews approved, no unresolved comments:**
+1. Cancel the PR monitoring loop: use `CronDelete` with the job ID.
 2. Report:
+   - Total checks: X (all passed)
    - Total reviews: X (Y approved, Z with comments)
    - Comments addressed: N
    - Source breakdown: automated vs human
-3. If `/dkwatchci` loop is also done (all checks green), proceed to `/dkcomplete`.
+3. Proceed to `/dkcomplete` so Phase 6 can run final verification, close the ticket, and end the session.
 
-**Reviews still pending or comments unresolved:**
+**Checks pending, reviews pending, or comments unresolved:**
 - Do nothing further. Wait for the next loop invocation.
 
-### 5. Escalation
+### 7. Escalation
 
-**STOP, cancel all loops, and escalate to the user when:**
-- A reviewer requests a significant **architectural change** (affects multiple files, changes the approach).
-- There's a **disagreement** with a reviewer on the correct approach.
-- A reviewer's comment is **unclear** and you can't determine the right fix.
-- A **human reviewer** explicitly requests changes that conflict with the approved plan, require scope/architecture judgement, or remain unclear after reading the surrounding code.
+STOP, cancel the watcher, and escalate to the user when:
+- The same CI check fails 3 times after attempted fixes.
+- A secrets scan fails. Credential rotation may be needed.
+- A reviewer requests a significant architectural change (affects multiple files, changes the approach).
+- There is a disagreement with a reviewer on the correct approach.
+- A reviewer's comment is unclear and you can't determine the right fix.
+- A human reviewer explicitly requests changes that conflict with the approved plan, require scope/architecture judgement, or remain unclear after reading the surrounding code.
 
 Clear, in-scope human feedback should be handled autonomously through `/dkprreview --reply=inline`; do not pause only because the commenter is human.
 
 ## Timeout
 
-The monitoring loop should be set up alongside a **one-shot 30-minute timeout** via `/dkpr` Step 7 (shared with `/dkwatchci`). The timeout uses `CronCreate` to schedule a one-shot job. When it fires, it cancels both monitoring loops (using `CronDelete` with their job IDs) and outputs a status report:
-- Which reviewers have responded and their verdict (approved/changes requested/commented)
-- Which reviewers haven't responded yet
-- Outstanding unresolved comments with links
-- Whether CI is still pending
-
-The 30-minute window is tuned for automated reviewers (typically respond in 5-10 minutes). Human reviewers may take longer — see Notes below.
+The scheduled watcher is bounded by Phase 6: `/dkcomplete` defaults to 3 idle cycles of 5 minutes each. When that window expires, Doyaken pauses with a notice telling the user to run `/dkwatchpr` manually for a one-off CI/review check, `/loop 5m /dkwatchpr` to resume watching, or `/dkcomplete` when the PR is ready to complete the ticket.
 
 ## Notes
 
+- CI only runs after `gh pr ready`; draft PRs do not trigger CI.
+- A push during CI triggers a new run; the old run is cancelled automatically.
+- Some checks only run when specific paths change (check the project's CI configuration).
 - Automated reviewers typically respond within 5-10 minutes.
-- Human reviewers may take hours — the 30m timeout is designed for automated reviews.
-- If a human review comes in later, the user can re-run `/loop 5m /dkwatchpr` or address it manually.
-- Do not dismiss review comments — always reply, even if the fix is trivial.
+- Human reviewers may take hours; the bounded watch window is intentionally short.
+- Do not dismiss review comments. Always reply, even if the fix is trivial.

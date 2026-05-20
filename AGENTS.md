@@ -4,7 +4,7 @@ Instructions for AI coding agents working on the Doyaken codebase.
 
 ## What Is Doyaken
 
-Doyaken is a standalone workflow automation framework for Claude Code. It provides autonomous ticket lifecycle management — from planning through PR merge — using worktree isolation, quality-gated phase execution, and codebase-agnostic skill discovery. It works with any repo after a one-time global install.
+Doyaken is a standalone workflow automation framework for Claude Code. It provides autonomous ticket lifecycle management — from planning through ready-for-merge PR completion — using worktree isolation, quality-gated phase execution, and codebase-agnostic skill discovery. It works with any repo after a one-time global install.
 
 ## Tech Stack
 
@@ -112,6 +112,14 @@ When users need a vendor skill:
 | Other  | Browse the Claude plugin marketplace via `/plugin` inside Claude Code, or check the vendor's docs for their official MCP/skill integration |
 
 The corresponding MCP servers are listed and authenticated through claude.ai or `claude mcp` — they show up as `mcp__claude_ai_<Vendor>__*` tools and are available to Doyaken's skills automatically when enabled.
+
+Doyaken may auto-repair a narrow official tooling allowlist during `dk install`,
+`dk init`, and `dk sync`: Doyaken Claude/Codex skill links, browser MCPs,
+OpenAI docs MCP, the OpenAI Codex Claude plugin when Codex is installed,
+`frontend-design` for detected frontend repos, and official language LSP
+plugins for detected TypeScript/JavaScript, Python, Rust, or Go repos. Do not
+add broad behavior-changing plugins, community marketplaces, or vendor
+integration plugins to the default bootstrap path.
 
 ## Agent Conventions
 
@@ -280,6 +288,7 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | Module | Purpose | Key functions |
 |--------|---------|---------------|
 | `common.sh` | Bootstrap, constants, sources all others | `dk_repo_root()` |
+| `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap | `dk_bootstrap_agent_tooling()`, `dk_install_safe_official_claude_plugins()`, `dk_install_openai_docs_mcp_servers()` |
 | `codex.sh` | Codex CLI skill installation helpers | `dk_install_codex_skills()`, `dk_count_doyaken_skills()`, `dk_codex_doyaken_skills_complete()`, `dk_uninstall_codex_skills()` |
 | `git.sh` | Git helpers | `dk_default_branch()`, `dk_slugify()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dk_provider_apply()`, `dk_provider_claude()`, `dk_provider_command()`, `dk_provider_doctor()` |
@@ -332,6 +341,8 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation | 120 (2m 0s) |
 | `DOYAKEN_WATCH_COMMAND_TIMEOUT_SECONDS` | Maximum runtime for one GitHub/local shell command inside a watcher cycle | 30 (0m 30s) |
 | `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt | 3600 (60m 0s) |
+| `DOYAKEN_COMPLETE_MAX_CYCLES` | Max idle PR watch cycles before Phase 6 pauses for manual follow-up | 3 |
+| `DOYAKEN_COMPLETE_WAIT_MINUTES` | Minimum wait window per Phase 6 cycle (minutes) | 5 |
 | `DOYAKEN_SESSION_ID` | Unique session ID (set by dkloop for stop hook) | unset |
 | `CODEX_HOME` | Codex config root used for Doyaken skill links | `~/.codex` |
 | `DK_PROVIDER_PROFILE` | Provider profile override (`claude-subscription`, `codex-subscription`, or custom) | config/default |

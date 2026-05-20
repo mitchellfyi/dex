@@ -78,14 +78,17 @@ If the implementation affects browser UI, run `/dkuicapture` before stopping.
 
 Required evidence for UI-affecting changes:
 
+- Before screenshot/trace for each changed representative route/view captured before UI edits, or an explicit reason the baseline is unavailable
 - Desktop screenshot for each changed representative route/view
 - Mobile screenshot when layout, responsive behavior, shared components, or CSS changed
 - Playwright trace for captured routes/views
 - Video for interactive flows (clicks, forms, navigation, modals, menus, drag/drop, auth, checkout, onboarding, uploads)
 - Console, page, network, and HTTP error logs checked
+- `visual-evidence.md` manifest under Doyaken's artifact directory, with before and after links grouped for PR upload
 - Absolute links to all screenshots/videos/traces/logs included in the evidence table or final Phase 2 summary
 
 Artifacts must live under Doyaken's artifact directory (`${DK_ARTIFACT_DIR:-~/.claude/.doyaken-artifacts}`) and must not be committed or staged.
+If `DK_ARTIFACT_DIR` points inside the repo, verify the artifact path is gitignored before writing captures.
 
 If the implementation does not affect browser UI, include:
 
@@ -103,7 +106,7 @@ ALL of these must be true before you stop:
 - No TODO/FIXME/debugging artifacts remain
 - No background agents or long-running verification commands started during Phase 2 are still in flight
 - Any needed `.doyaken/` updates are staged
-- UI capture evidence is linked for UI-affecting changes, or UI capture is explicitly N/A
+- UI capture evidence is linked for UI-affecting changes, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A
 
 Before writing the completion signal in a terminal `dk` lifecycle, write the Phase 2 ready marker. Do this only after every completion criterion above is true:
 

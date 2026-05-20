@@ -1,38 +1,43 @@
 # Review Wave
 
-A review wave is one full-scope pass inside `/dkreviewloop`. The outer loop still
-requires the configured number of consecutive full clean passes, normally three.
-This prompt defines how one pass should spend its time efficiently.
+One `/dkreviewloop` iteration reviews the full current change set. The outer loop
+sets the required consecutive `CLEAN` waves from the resolved profile: `light`,
+`standard`, or `thorough`.
 
-## Non-Negotiables
+## Rules
 
-- Review the full current change set for every wave.
-- Specialist reviewers are read-only.
-- Only the wave orchestrator may edit files.
-- A wave that finds and fixes any verified issue is not clean. It must write a
-  non-CLEAN result so the outer clean counter resets.
-- Do not commit, push, create branches, create PRs, or update PRs.
-- Do not treat draft PR review or external reviewer polling as part of Phase 3.
+- Review the full current change set every wave.
+- Build the context pack before broad exploration or specialist/verifier calls.
+- Run deterministic checks before semantic review.
+- Specialist/verifier agents are read-only; only the wave orchestrator may edit.
+- Do not commit, push, create branches, create or update PRs, or poll reviewers.
+- Acceptance criteria come only from the current caller; otherwise use `N/A`.
+- `CLEAN` means zero verified findings and zero fixes in this wave.
 
-## Result Semantics
+## Concise Style
 
-- `CLEAN` - no verified findings were found and no fixes were applied during this
-  wave.
-- `FINDINGS_FIXED:N` - N verified findings were found and all were fixed, with
-  deterministic checks and targeted re-review passing afterward.
-- `FINDINGS:N` - N verified findings remain unresolved.
-- `BLOCKED:reason` - the wave could not complete because required context,
-  tooling, or user judgment is missing.
+Write for transfer, not narration. Prefer paths, symbols, command summaries,
+file:line evidence, and JSON lines. Omit greetings, status prose, repeated rules,
+passing logs, unchanged code, and duplicate findings. Keep command output in the
+context pack summarized unless the exact text is evidence.
 
-Only `CLEAN` increments the outer clean-pass counter. Every other result resets
-the counter.
+Tool output: prefer `rg`, `git diff --name-only`, `git diff --stat`, and
+`git diff --numstat` for orientation. Use full file reads only when needed to
+verify behavior; quote only the evidence lines in reports.
 
-## Step 1: Build Or Refresh The Context Pack
+## Results
 
-Create or refresh a compact context pack in Doyaken's global loop state, never in
-the repository. This must be the first substantive action in the wave: do not do
-broad `Read`, `Glob`, `Grep`, or specialist-agent prompt loading before a
-non-empty context pack exists.
+- `CLEAN` - no verified findings and no fixes.
+- `FINDINGS_FIXED:N` - N verified findings fixed and rechecked.
+- `FINDINGS:N` - N verified findings remain.
+- `BLOCKED:reason` - required tooling, context, or user judgment is missing.
+- `ESCALATE_THOROUGH:reason` - the current profile is too shallow.
+
+Only `CLEAN` increments the outer clean counter. Every other result resets it.
+
+## 1. Context Pack
+
+Create or refresh the context pack in global Doyaken state:
 
 ```bash
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
@@ -41,179 +46,119 @@ REVIEW_CONTEXT_FILE="$(dk_review_context_file "$SESSION_ID")"
 mkdir -p "$(dirname "$REVIEW_CONTEXT_FILE")"
 ```
 
-First write a small skeleton with the caller-supplied scope commands, changed
-file names, and `Acceptance Criteria: N/A` unless explicit criteria were supplied
-by the current caller. Then prove it exists:
+First write a non-empty skeleton with supplied diff/stat/name commands, changed
+files, profile, and acceptance criteria or `N/A`; then verify it:
 
 ```bash
 test -s "$REVIEW_CONTEXT_FILE"
 sed -n '1,80p' "$REVIEW_CONTEXT_FILE"
 ```
 
-Do not infer acceptance criteria from stale session prompt files, previous
-conversation turns, session titles, AGENTS instructions, or unrelated ticket
-context. If this review invocation did not explicitly provide a plan, ticket, or
-criteria, the acceptance section is `N/A`.
+Add concise sections:
 
-After the skeleton exists, enrich it with concise sections:
+- file groups: production, tests, docs, generated, config, CI/devops, UI, API,
+  data/schema, shell/hook, other
+- per-file risk: high, medium, low
+- relevant project context and scoped active memory entries
+- discovered deterministic checks
+- dependency impact: exports, schemas/contracts, direct consumers, recent fixes
+- accepted debt/risk not to re-raise
 
-- Scope commands supplied by the caller: diff, stat, and file names.
-- Changed files grouped as production, test, docs, generated, config, CI/devops,
-  frontend/UI, backend/API, data/schema, shell/hook, and other.
-- Risk classification per file: high, medium, or low.
-- Relevant project context: `AGENTS.md`, `CLAUDE.md`, `.doyaken/doyaken.md`,
-  `.doyaken/rules/*.md`, `.doyaken/review-rules.md`, and scoped active
-  `.doyaken/memory/domains/*.md` entries referenced by
-  `.doyaken/memory/index.md` if present.
-- Plan or ticket acceptance criteria, or `N/A` if none are available.
-- Deterministic checks discovered for affected packages.
-- Dependency impact notes: touched exports, changed schemas/contracts, direct
-  consumers found by grep, and recent fix history for deep-review files.
-- Debt or accepted-risk entries that should not be re-raised.
-- Memory load notes: which memory entries were loaded, skipped, or rejected for
-  this review scope, with a one-line reason for each.
+## 2. Deterministic Checks
 
-Keep the pack short. Prefer bullet summaries and command outputs over pasted
-full files. If the pack already exists, refresh any sections invalidated by new
-edits.
+Run available scoped checks first: format/check, lint, typecheck, targeted tests,
+generated-code freshness, shell syntax/`shellcheck`, and CI/config validation
+when relevant. Mechanical fixes make the wave non-`CLEAN`.
 
-## Step 2: Deterministic Foundation
+## 3. Issue Harvest
 
-Run deterministic checks before semantic review, scoped to affected packages or
-changed files when possible:
+Collect all candidate issues before fixing anything.
 
-- format/check mode
-- lint/check mode
-- typecheck
-- targeted tests
-- generated-code freshness when relevant
-- shell syntax and `shellcheck` for shell changes when available
-- workflow/config validation for CI or infrastructure changes when available
+- `light`: orchestrator harvest; call `review-verifier` only for candidates or
+  escalation risk.
+- `standard`: orchestrator harvest; targeted specialists for concrete changed
+  domains; then `review-verifier`.
+- `thorough`: full specialist roster; then `review-verifier`.
 
-Record deterministic failures as findings. Fix mechanical failures before
-spending model time on semantic findings, then continue the wave. A deterministic
-failure fixed during the wave still makes the wave non-CLEAN.
+The orchestrator harvest covers correctness, security, contracts, tests,
+architecture, performance, and operations. Construct breaking inputs, trace
+direct callers, and filter speculation.
 
-## Step 3: Specialist Reviewers
+Full roster in `thorough`: `review-correctness`, `review-security`,
+`review-contracts`, `review-tests`, `review-architecture`, plus relevant
+`review-frontend`, `review-devops`, `review-performance`, and
+`review-observability`.
 
-Spawn the applicable read-only specialist reviewers with the Agent tool. Use
-parallel Agent calls when the host environment supports them. If the Agent tool is
-unavailable, write `BLOCKED:agent-tool-unavailable`; do not simulate specialist
-review by reading every specialist prompt in the orchestrator context.
+Targeted specialists in `standard`:
 
-Always include:
+- trust boundary/secrets/auth -> `review-security`
+- public API/schema/config/CLI contract -> `review-contracts`
+- acceptance/regression coverage -> `review-tests`
+- abstraction/module boundary -> `review-architecture`
+- UI/browser/client state/routing/accessibility -> `review-frontend`
+- CI/deploy/shell/hooks/package scripts/infra -> `review-devops`
+- hot path/query/cache/large data/rendering -> `review-performance`
+- logs/metrics/traces/health/audit trails -> `review-observability`
 
-- `review-correctness`
-- `review-security`
-- `review-contracts`
-- `review-tests`
-- `review-architecture`
+If a required specialist or verifier is unavailable, write
+`BLOCKED:agent-tool-unavailable`.
 
-Include these when relevant, and let them return `N/A` quickly when not relevant:
-
-- `review-frontend` for browser UI, client state, routing, accessibility,
-  responsive layout, or design-system changes.
-- `review-devops` for CI, deployment, shell hooks, package scripts, infrastructure
-  config, secrets handling, generated artifacts, or release process changes.
-- `review-performance` for hot paths, database queries, large data processing,
-  caching, concurrency, or expensive frontend rendering.
-- `review-observability` for logging, metrics, traces, health checks, alerting,
-  audit trails, or operational diagnostics.
-
-Give every reviewer:
-
-- the review context pack path
-- the full-scope diff/stat/file-name commands
-- the current branch and base branch
-- acceptance criteria or `N/A`
-- the instruction to be read-only
-- the structured finding schema below
-
-Do not mark this step complete until every applicable Agent report has returned
-and every non-applicable domain is explicitly recorded as `N/A`.
-
-## Step 4: Structured Findings
-
-Every reviewer must end with either `NO_FINDINGS`, `N/A`, or JSON lines using
-this schema:
+Candidate output must be `NO_FINDINGS`, `N/A`, `ESCALATE_THOROUGH:reason`, or
+JSON lines:
 
 ```json
-{"id":"domain-1","domain":"correctness","severity":"high|medium|low","confidence":95,"file":"path/to/file","line":123,"introduced_by_change":true,"evidence":"exact code behavior and context checked","trigger":"specific input, state, request, or command that exposes the issue","suggested_fix":"concrete fix","verification":"command or check that would prove the fix"}
+{"id":"domain-1","domain":"correctness","severity":"high|medium|low","confidence":95,"file":"path","line":123,"introduced_by_change":true,"evidence":"exact behavior checked","trigger":"specific input/state/request/command","suggested_fix":"concrete fix","verification":"command/check"}
 ```
 
-Rules:
+Report only confidence >= 50, cite exact file/line unless cross-file evidence
+requires multiple paths, and filter style-only nits unless project rules require
+them.
 
-- Confidence must be 50 or higher.
-- Findings below 50 confidence are filtered by the reviewer.
-- Findings must cite an exact file and line unless the issue is cross-file or
-  missing-file evidence, in which case the reviewer must cite all relevant paths.
-- Findings must explain why the issue is introduced or made relevant by this
-  change. Pre-existing unrelated debt is filtered.
-- Style-only nits are filtered unless the project has an explicit rule.
+## 4. Verification
 
-## Step 5: Verification And Triage
+Run `review-verifier` after specialist reports, and in light mode only for
+candidate findings or escalation risk. It dedupes by root cause, re-reads cited
+code, checks project context and accepted debt, rejects weak/stale evidence,
+confirms change relevance, and normalizes severity.
 
-Run `review-verifier` with the Agent tool after all specialist reports return. If
-the Agent tool is unavailable, write `BLOCKED:agent-tool-unavailable`; do not
-replace verifier triage with unlabelled orchestrator reasoning. The verifier:
+Only verified findings may drive fixes. If `ESCALATE_THOROUGH` survives
+verification, write it instead of fixing.
 
-1. Deduplicates by root cause, not just by file line.
-2. Re-reads the cited code before accepting a finding.
-3. Checks project rules and nearby precedent.
-4. Rejects findings with missing evidence, missing trigger, stale context, or
-   confidence below 50.
-5. Promotes severity only for mechanically verifiable correctness, security,
-   data loss, contract breakage, or release-blocking CI/devops issues.
-6. Produces the final verified inventory.
+## 5. Batch Fix
 
-Only verified findings may drive fixes or reset the clean counter.
-
-## Step 6: Batch Fix
-
-If the verified inventory is non-empty:
+If verified findings exist:
 
 1. Fix all verified findings in severity order.
-2. Keep fixes scoped to the current change set and directly impacted callers.
-3. Re-run deterministic checks affected by the fixes.
-4. Re-run targeted specialist review only for changed surfaces and impacted
-   callers to confirm the fixes.
-5. If new verified findings appear, repeat once more. After two unsuccessful fix
-   cycles, read `prompts/failure-recovery.md` and choose a recovery strategy.
+2. Keep fixes scoped to this change set and directly impacted callers.
+3. Re-run affected deterministic checks.
+4. Re-run targeted review for changed surfaces and impacted callers.
+5. Repeat once if new verified findings appear; then use
+   `prompts/failure-recovery.md`.
 
-If all verified findings are fixed, write `FINDINGS_FIXED:N`, not `CLEAN`.
+Write `FINDINGS_FIXED:N` when all verified findings were fixed and rechecked.
+Never write `CLEAN` after applying a fix in the same wave.
 
-## Step 7: Clean Wave
-
-If the wave reaches zero verified findings without applying any fix during this
-wave, write `CLEAN`.
-
-Write the result signal when `DOYAKEN_SESSION_ID` is available:
+## 6. Result Signal
 
 ```bash
 source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
 SESSION_ID="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
-echo "<CLEAN|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason>" > "$(dk_review_result_file "$SESSION_ID")"
-```
-
-Also append a findings hash for stuck-loop detection:
-
-```bash
+echo "<result>" > "$(dk_review_result_file "$SESSION_ID")"
 FINDINGS_HASH=$(printf '%s\n' "<sorted verified finding descriptions or EMPTY>" | shasum -a 256 | cut -c1-16)
 echo "$FINDINGS_HASH" >> "$(dk_findings_file "$SESSION_ID")"
 ```
 
-## Final Report
-
-End each wave with:
+Final output:
 
 ```markdown
 ## Review Wave Result
 
 - Scope: full current change set
+- Profile: light | standard | thorough
 - Context pack: <path>
-- Specialist reviewers: correctness, security, contracts, tests, architecture, ...
+- Review coverage: <orchestrator/specialists/verifier run>
 - Deterministic checks: PASS | FAIL | PARTIAL
 - Verified findings: N
 - Fixes applied this wave: N
-- Result signal: CLEAN | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason
+- Result signal: CLEAN | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason | ESCALATE_THOROUGH:reason
 ```

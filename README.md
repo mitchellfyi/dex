@@ -21,14 +21,14 @@ dk sync
 dk 999
 ```
 
-`dk install` sets up shell functions, Claude hooks, Doyaken skills, Codex skill links when Codex is installed, and browser capture tooling. UI capture uses Playwright in `~/.claude/.doyaken-tools/` and writes screenshots/videos/traces to `~/.claude/.doyaken-artifacts/`, not your repo.
+`dk install` sets up shell functions, Claude hooks, Doyaken skills/agents, Codex skill links when Codex is installed, browser capture tooling, official OpenAI docs MCP, and a conservative official-plugin bootstrap. UI capture uses Playwright in `~/.claude/.doyaken-tools/` and writes screenshots/videos/traces to `~/.claude/.doyaken-artifacts/`, not your repo.
 
 ## At a Glance
 
 - `dk 999` creates an isolated worktree and runs six phases: Plan → Implement → Review → Verify & Commit → PR → Complete.
 - `dk sync` refreshes durable repo memory and rules so future agents load the right context without trusting raw observations.
 - Phase 1 asks for plan approval. Later phases continue automatically unless requirements change, tooling is missing, or a review/CI problem needs human judgement.
-- UI changes get visual evidence in Phase 2: desktop/mobile screenshots, Playwright traces, and videos for interactive flows.
+- UI changes get before/after visual evidence: desktop/mobile screenshots, Playwright traces, videos for interactive flows, and a local upload manifest for the PR.
 - Phase 3 runs fresh adversarial review waves until the change is clean.
 - Phase 6 marks the PR ready, monitors CI/reviews, addresses feedback, and closes the ticket when approvals and checks are complete.
 
@@ -75,14 +75,7 @@ dk provider use --repo codex-subscription
 
 For subscription-safe modes, Doyaken strips Anthropic API, gateway, Bedrock, Vertex, Foundry, OpenAI API/base-url, and Claude model override variables from launched Claude Code and Codex CLI subprocesses. Doyaken-launched Claude Code sessions use `--dangerously-skip-permissions` with `--permission-mode bypassPermissions`; Codex delegation uses `--dangerously-bypass-approvals-and-sandbox` through the Doyaken wrapper. `dk provider doctor` warns when environment variables would risk API billing or override profile routing.
 
-`codex-subscription` preflights the local Codex CLI before launching Claude. Delegated work goes through Doyaken's `bin/dkcodex.sh` wrapper, which enforces `--ignore-user-config` so `~/.codex/config.toml` cannot switch work to a custom/API provider and `--dangerously-bypass-approvals-and-sandbox` so unattended runs do not block on Codex approvals or sandbox prompts. A built-in PreToolUse guard blocks raw Codex agent-work commands such as `codex`, `codex exec`, `codex e`, `codex review`, direct `dk_provider_codex` helper delegation, API-key login forms, shell-nested forms including literal variable-expanded and escape-decoded `bash -c`/`eval`/stdin payloads, generated heredoc scripts, direct executable script paths, readable executed or sourced script files, Python/Node/Ruby/Perl interpreter payloads that launch Codex, fail-closed unresolved/unreadable script paths, launch wrappers such as `nice`, `timeout`, `xargs`, and `find -exec`, package-runner forms such as `npx codex`, `npx -c "codex exec ..."`, `npm exec --call "codex exec ..."`, and `npx @openai/codex@latest`, and non-literal stdin/process-substitution generators piped into shells while this provider profile is active, so delegated work has to pass through the wrapper. The guard reads Doyaken's current session provider state first when a session id is present, with hook environment/config fallback, so it does not rely only on hook subprocess environment inheritance. Codex must be installed and signed in with ChatGPT, plus the OpenAI Codex Claude Code plugin if you want the plugin slash commands:
-
-```text
-/plugin marketplace add openai/codex-plugin-cc
-/plugin install codex@openai-codex
-/reload-plugins
-/codex:setup
-```
+`codex-subscription` preflights the local Codex CLI before launching Claude. Delegated work goes through Doyaken's `bin/dkcodex.sh` wrapper, which enforces `--ignore-user-config` so `~/.codex/config.toml` cannot switch work to a custom/API provider and `--dangerously-bypass-approvals-and-sandbox` so unattended runs do not block on Codex approvals or sandbox prompts. A built-in PreToolUse guard blocks raw Codex agent-work commands such as `codex`, `codex exec`, `codex e`, `codex review`, direct `dk_provider_codex` helper delegation, API-key login forms, shell-nested forms including literal variable-expanded and escape-decoded `bash -c`/`eval`/stdin payloads, generated heredoc scripts, direct executable script paths, readable executed or sourced script files, Python/Node/Ruby/Perl interpreter payloads that launch Codex, fail-closed unresolved/unreadable script paths, launch wrappers such as `nice`, `timeout`, `xargs`, and `find -exec`, package-runner forms such as `npx codex`, `npx -c "codex exec ..."`, `npm exec --call "codex exec ..."`, and `npx @openai/codex@latest`, and non-literal stdin/process-substitution generators piped into shells while this provider profile is active, so delegated work has to pass through the wrapper. The guard reads Doyaken's current session provider state first when a session id is present, with hook environment/config fallback, so it does not rely only on hook subprocess environment inheritance. Codex must be installed and signed in with ChatGPT. `dk install`, `dk init`, and `dk sync` repair the official OpenAI Codex Claude Code plugin automatically when both Claude Code and Codex are present; run `dk tools bootstrap` to repair it directly.
 
 Manual smoke tests for the Codex delegation path:
 
@@ -143,22 +136,22 @@ If you want the same lifecycle without a separate checkout, run `dk --no-worktre
 dk 999
   │
   ├─ Phase 1: Plan          Claude explores codebase, presents approaches, user approves
-  ├─ Phase 2: Implement     TDD implementation, UI capture when relevant, completeness verification
-  ├─ Phase 3: Review        Adversarial review waves (3 clean passes, fresh subagents)
+  ├─ Phase 2: Implement     TDD implementation, before/after UI capture when relevant, completeness verification
+  ├─ Phase 3: Review        Adaptive adversarial review waves
   ├─ Phase 4: Verify        Format, lint, typecheck, test → commit + push
-  ├─ Phase 5: PR            Generate description, create draft PR + attach reviewers
-  └─ Phase 6: Complete      Mark ready, request reviews, monitor CI, address comments,
-                            re-request reviewers each push, close ticket
+  ├─ Phase 5: PR            Generate description, prepare visual handoff, create draft PR + attach reviewers
+  └─ Phase 6: Complete      Mark ready, request reviews, watch CI/reviews,
+                            re-request reviewers each push, close ticket, clean up locally
 ```
 
 | Phase | Skills | What Happens | User Action |
 |-------|--------|-------------|-------------|
 | 1. Plan | `/dkplan` | Reads ticket, explores code, presents 2-3 approaches, drafts plan | Approve plan |
-| 2. Implement | `/dkimplement` + `/dkuicapture` when UI changed | TDD per task, screenshots/traces/videos for UI work, evidence table, completeness check | Only for scope/requirement changes |
-| 3. Review | `/dkreviewloop` | Fresh full-scope review waves, specialist reviewers, verifier triage, 3 consecutive clean passes required | — |
+| 2. Implement | `/dkimplement` + `/dkuicapture` when UI changed | TDD per task, before/after screenshots/traces/videos for UI work, evidence table, completeness check | Only for scope/requirement changes |
+| 3. Review | `/dkreviewloop` | Fresh full-scope review waves, compact context, verifier triage, profile-based clean gate | — |
 | 4. Verify & Commit | `/dkverify` + `/dkcommit` | Quality gates, atomic conventional commits, push | — |
-| 5. PR | `/dkpr` | PR description, create draft PR, attach `request`-type reviewers | — |
-| 6. Complete | `/dkcomplete` + `/dkwatchci` + `/dkwatchpr` | Mark ready, request reviews, post `@mention` comments, monitor, address comments, close ticket | Review/approve when configured; respond only to escalations |
+| 5. PR | `/dkpr` | PR description, visual evidence handoff for UI work, create draft PR, attach `request`-type reviewers | — |
+| 6. Complete | `/dkcomplete` + `/dkwatchpr` | Mark ready, request reviews, post `@mention` comments, monitor CI/reviews, address failures, close ticket, remove local worktree/branch | Review/approve when configured; respond only to escalations |
 
 After Phase 1 approval, `dk` keeps advancing through Phases 2-5 without asking whether to continue. It stops for human input only when requirements change, credentials/tooling are missing, a destructive git decision is needed, repeated CI failures occur, max audit/review iterations are reached, reviewer feedback needs human judgement, or Phase 6 is waiting for CI/reviewer approval.
 
@@ -183,10 +176,12 @@ Stop hook fires
 
 ### Review Sub-Loop (Phase 3)
 
-Phase 3 uses `/dkreviewloop` on top of the standard audit loop. Each review
+Phase 3 uses `/dkreviewloop` on top of the standard audit loop. It starts with an
+auto depth profile from the diff: `light` for tiny/docs-only changes, `standard`
+for normal changes, and `thorough` for high-risk or broad changes. Each review
 iteration is a fresh full-scope review wave, ensuring each adversarial review
-starts clean while still spending time efficiently. The loop tracks consecutive
-`CLEAN` results:
+starts clean while still spending time efficiently. A wave can write
+`ESCALATE_THOROUGH:reason` if the starting profile is too shallow.
 
 ```
 Claude starts /dkreviewloop (clean_passes=0)
@@ -195,30 +190,33 @@ Claude starts /dkreviewloop (clean_passes=0)
 Launch fresh review-wave subagent
   ├─ Builds/refreshes a compact review context pack
   ├─ Runs deterministic checks
-  ├─ Spawns read-only specialist reviewers (correctness, security, contracts,
-  │  tests, architecture, frontend, devops, performance, observability)
+  ├─ Harvests issues in the wave orchestrator
+  │  (plus targeted specialists or full specialist fan-out when needed)
   ├─ Verifies and deduplicates findings, then batch-fixes verified issues
   ├─ Rechecks affected surfaces
   ├─ Writes review result signal: "CLEAN", "FINDINGS_FIXED:N", "FINDINGS:N",
-  │  or "BLOCKED:reason"
+  │  "BLOCKED:reason", or "ESCALATE_THOROUGH:reason"
   └─ Stop hook verifies, allows completion
   │
   ▼
 Loop reads review result
-  ├─ CLEAN → clean_passes++ → if ≥3: advance to Phase 4
+  ├─ CLEAN → clean_passes++ → if profile gate met: advance to Phase 4
+  ├─ ESCALATE_THOROUGH → clean_passes=0 → switch to thorough
   └─ anything else → clean_passes=0 → fresh full-scope wave → loop repeats
 ```
 
 Each review iteration runs:
 1. `/dkreview --single-pass` - one review wave following `prompts/review-wave.md`
 2. Deterministic checks before semantic review
-3. Read-only specialist reviewers plus `review-verifier`
+3. Orchestrator issue harvest plus targeted read-only specialists when needed
 4. Verified findings inventory -> batch fix -> targeted recheck
 
-Default: 3 consecutive clean passes required. Override:
-`DOYAKEN_REVIEW_CLEAN_PASSES=5`. A wave that finds and fixes issues writes
-`FINDINGS_FIXED:N`, not `CLEAN`, so the next fresh wave must re-review the full
-change set before the counter can advance.
+Default: adaptive profile gates (`light`: 1 clean/4 max, `standard`: 2 clean/6
+max, `thorough`: 3 clean/10 max). Override depth with
+`DOYAKEN_REVIEW_PROFILE=thorough`, or exact gates with
+`DOYAKEN_REVIEW_CLEAN_PASSES=5 DOYAKEN_REVIEW_MAX_ITERATIONS=20`. A wave that
+finds and fixes issues writes `FINDINGS_FIXED:N`, not `CLEAN`, so the next fresh
+wave must re-review the full change set before the counter can advance.
 
 Claude never learns how to signal completion on its own — the hook provides the `.complete` file path and promise string only after Phase 1 approval and enough clean passes. This prevents premature completion.
 
@@ -242,14 +240,15 @@ See [docs/autonomous-mode.md](docs/autonomous-mode.md) for full architecture.
 
 ## UI Capture
 
-For browser UI changes, Phase 2 runs `/dkuicapture` before review. It captures:
+For browser UI changes, Phase 2 runs `/dkuicapture` before UI edits and again before review. Phase 5 refreshes after evidence when needed and gives the user local files to upload to the PR. It captures:
 
-- desktop and mobile screenshots
+- before/after desktop and mobile screenshots
 - Playwright traces for debugging
 - WebM video for interactive flows
 - console, page, network, and HTTP error logs
+- a `visual-evidence.md` manifest with upload-ready local paths
 
-Artifacts are stored under `~/.claude/.doyaken-artifacts/ui/<session>/` by default and are linked in the implementation evidence. They are not committed.
+Artifacts are stored under `~/.claude/.doyaken-artifacts/ui/<session>/` by default and are linked in the implementation evidence. They are not committed. Local paths do not render in GitHub, so users upload before/after screenshots from the manifest to the PR body or a PR comment.
 
 Run capture manually when needed:
 
@@ -274,8 +273,9 @@ Most Doyaken features work immediately after `dk install` — no per-project set
 | `dk sync` / `/dksync` | No | Creates missing memory scaffold and refreshes durable repo context |
 | `dk maintain` / `/dkmaintain` | Yes | Requires `.doyaken/` repo context; `dk init --install-maintenance-workflow` can also install the scheduled GitHub workflow |
 | `/dkloop`, `/dkplan`, `/dkimplement`, etc. | No | Skills work in any Claude Code session |
-| Codex skill discovery | No | `dk install` links Doyaken skills into `$CODEX_HOME/skills` (default `~/.codex/skills`) when Codex CLI is present |
-| UI capture tooling | No | `dk install` installs Playwright into `~/.claude/.doyaken-tools/` and configures Playwright MCP + Chrome DevTools MCP when CLIs are present |
+| Claude/Codex tooling bootstrap | No | `dk install`, `dk init`, and `dk sync` repair Doyaken links, browser MCPs, official OpenAI docs MCP, and safe official plugins |
+| Codex skill discovery | No | Doyaken links skills into `$CODEX_HOME/skills` (default `~/.codex/skills`) when Codex CLI is present |
+| UI capture tooling | No | Doyaken installs Playwright into `~/.claude/.doyaken-tools/` and configures Playwright MCP + Chrome DevTools MCP when CLIs are present |
 | Hooks (guards, commit validation, ticket context) | No | Installed globally by `dk install` |
 | Agents (self-reviewer, review specialists) | No | Symlinked globally by `dk install` |
 | `dk <number>` / `dk "description"` | No | Worktrees work in any git repo |
@@ -286,8 +286,7 @@ Most Doyaken features work immediately after `dk install` — no per-project set
 - **Coding conventions and memory** (`rules/`, `memory/`) — generates rule files from observed patterns and a memory index for durable lessons. Without init/sync, Claude infers conventions from context each time.
 - **Project-specific guards** (`guards/`) — creates guards for files that should never be committed (environment files, generated configs). Without init, only the universal guards (destructive commands, secrets, sensitive files) are active.
 - **Integration config** — configures ticket tracker (Linear, GitHub Issues), Figma, Sentry, etc. Without init, skills skip tracker updates.
-- **Codex skill repair** — if Codex CLI is installed, refreshes Doyaken skill links in `$CODEX_HOME/skills` (default `~/.codex/skills`) without replacing Codex's own system skills.
-- **UI capture repair** — installs/repairs Doyaken-managed Playwright tooling and browser MCP servers without adding dependencies to the project.
+- **Claude/Codex tooling repair** — refreshes Doyaken Claude skill/agent links, Codex skill links, Doyaken-managed browser MCPs, official OpenAI docs MCP, and a narrow allowlist of official Claude plugins. Doyaken auto-installs only the OpenAI Codex plugin when Codex is present, `frontend-design` for detected frontend repos, and language LSP plugins for detected TypeScript/JavaScript, Python, Rust, or Go repos.
 - **Optional maintenance workflow** — with `--install-maintenance-workflow`, installs `.github/workflows/dk-maintain.yml` for scheduled report runs plus manually dispatched propose/fix-scoped runs. GitHub-hosted runners also need `DK_MAINTAIN_PROVIDER_SETUP` to install/authenticate the agent provider; write modes need a `DK_MAINTAIN_TOKEN` secret for the separate publish step.
 
 In short: everything works without init, but init makes it faster and more accurate by caching project knowledge.
@@ -299,6 +298,8 @@ In short: everything works without init, but init makes it faster and more accur
 dk install           # Symlink Claude skills/agents, Codex skills, hooks, shell functions
 dk uninstall         # Remove global symlinks, hooks, Codex skill links, and Doyaken settings
 dk status            # Show what's installed and where
+dk tools             # Check Claude/Codex tooling without changing configuration
+dk tools bootstrap   # Repair Doyaken links, official MCPs, and safe official plugins
 
 # Per-project
 dk init              # Bootstrap current repo — analyzes codebase, generates config
@@ -332,7 +333,7 @@ dk refine <N|description> # Refine a ticket before implementation
 # Standalone completion (recovery / non-dk PRs)
 dkcomplete           # Run Phase 6 manually on the current branch's PR
 
-# Standalone review (3-clean-passes loop, no full lifecycle)
+# Standalone review (adaptive clean-pass loop, no full lifecycle)
 dkreviewloop         # Shell function — spawns full Claude CLI sessions per pass (terminal)
 /dkreviewloop        # Skill — orchestrates fresh Agent-tool subagents per pass (in-session)
 /dkreview            # User-facing alias that dispatches to /dkreviewloop by default
@@ -376,16 +377,15 @@ doyaken/
     dkplan/                  # Implementation planning (multi-approach)
     dkimplement/             # TDD implementation with completeness verification
     dkuicapture/             # UI screenshots, traces, videos, and browser error logs
-    dkreview/                # Single review wave: context, specialists, verifier, batch fixes
+    dkreview/                # Single review wave: context, harvest, verifier, batch fixes
     dkverify/                # Discover and run project quality gates
     dkcommit/                # Atomic conventional commits
     dkpr/                    # PR description, reviews, monitoring
-    dkwatchci/              # CI monitoring via /loop
-    dkwatchpr/              # PR review monitoring via /loop
+    dkwatchpr/              # PR review and CI monitoring via /loop
     dkprreview/              # Critically evaluate and address PR review comments
     dkcomplete/              # Final verification, ticket closure
     dkloop/                  # In-session prompt loop (run until done)
-    dkreviewloop/            # In-session 3-clean-passes review via fresh Agent subagents
+    dkreviewloop/            # In-session adaptive review via fresh Agent subagents
   lib/                       # Shared shell library (sourced by dk.sh and hook scripts)
     common.sh                # Constants, bootstrap (sources other lib files)
     codex.sh                 # Codex CLI skill-link helpers
@@ -460,6 +460,7 @@ doyaken/
 - **Memory index** — creates `.doyaken/memory/index.md` for durable repo lessons promoted by `dk sync`
 - **Guards** — creates guards for files that should never be committed (environment files, generated configs)
 - **Integrations** — asks which integrations to use (ticket tracker, Figma, Sentry, Vercel, Grafana)
+- **Tooling repair** — checks and repairs Claude/Codex Doyaken links, official MCPs, and the safe official plugin allowlist
 - **Optional maintenance workflow** — installs `.github/workflows/dk-maintain.yml` when `--install-maintenance-workflow` is passed
 
 Flags:
@@ -473,7 +474,7 @@ To reconfigure integrations at any time: `dk config`
 
 Claude skills are symlinked as a directory: `~/.claude/skills/ -> ~/work/doyaken/skills/`. Claude Code auto-discovers them as slash commands (`/doyaken`, `/dkplan`, etc.).
 
-Codex skills are linked individually into `$CODEX_HOME/skills/<skill-name> -> ~/work/doyaken/skills/<skill-name>` (`CODEX_HOME` defaults to `~/.codex`). Doyaken does not replace the Codex skills directory, because Codex stores system and plugin skills there too. `dk install` creates these links globally, and `dk init` repairs them when Codex CLI is present.
+Codex skills are linked individually into `$CODEX_HOME/skills/<skill-name> -> ~/work/doyaken/skills/<skill-name>` (`CODEX_HOME` defaults to `~/.codex`). Doyaken does not replace the Codex skills directory, because Codex stores system and plugin skills there too. `dk install`, `dk init`, and `dk sync` repair these links when Codex CLI is present.
 
 Edit a skill file — change takes effect in the next Claude or Codex invocation that loads that skill.
 
@@ -553,16 +554,17 @@ Control via environment variables:
 | `DOYAKEN_LOOP_MIN_AUDITS` | Per-phase | Min audit iterations before completion authorized |
 | `DOYAKEN_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | — | Per-phase override (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
-| `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive `CLEAN` review waves required (Phase 3) |
-| `DOYAKEN_REVIEW_MAX_ITERATIONS` | `20` | Max review iterations before Phase 3 pauses for intervention |
+| `DOYAKEN_REVIEW_PROFILE` | `auto` | Starting Phase 3 review depth: `auto`, `light`, `standard`, or `thorough` |
+| `DOYAKEN_REVIEW_CLEAN_PASSES` | profile-based | Exact consecutive `CLEAN` review waves required (overrides profile) |
+| `DOYAKEN_REVIEW_MAX_ITERATIONS` | profile-based | Exact max review iterations before Phase 3 pauses (overrides profile) |
 | `DOYAKEN_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a Phase 3 review wave may stay in progress before the lifecycle pauses |
 | `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | `45` (0m 45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
 | `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation |
 | `DOYAKEN_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (0m 30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |
 | `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` | `3600` (60m 0s) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |
-| `DOYAKEN_COMPLETE_MAX_CYCLES` | `3` | Max idle review cycles before Phase 6 escalates |
-| `DOYAKEN_COMPLETE_WAIT_MINUTES` | `30` | Minimum wait window per Phase 6 cycle (minutes) |
+| `DOYAKEN_COMPLETE_MAX_CYCLES` | `3` | Max idle PR watch cycles before Phase 6 pauses for manual follow-up |
+| `DOYAKEN_COMPLETE_WAIT_MINUTES` | `5` | Minimum wait window per Phase 6 cycle (minutes) |
 | `DK_ARTIFACT_DIR` | `~/.claude/.doyaken-artifacts` | Doyaken-generated screenshots, videos, traces, and logs |
 | `DK_TOOL_DIR` | `~/.claude/.doyaken-tools` | Doyaken-managed external tooling cache, including Playwright |
 

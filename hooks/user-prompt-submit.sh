@@ -73,5 +73,5 @@ fi
 
 dk_write_watch_pause "$SESSION_ID" "user-prompt"
 cat <<'JSON'
-{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Doyaken detected a direct user prompt during Phase 6 and paused scheduled CI/PR watcher loops for this session. Prioritize the user's latest request. Do not run /dkwatchci or /dkwatchpr unless the user asks to resume autonomous monitoring."}}
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Doyaken detected a direct user prompt during Phase 6 and paused the scheduled PR watcher loop for this session. Prioritize the user's latest request. Do not run /dkwatchpr unless the user asks to resume autonomous monitoring."}}
 JSON

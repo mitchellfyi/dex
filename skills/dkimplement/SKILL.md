@@ -23,6 +23,8 @@ whose scope matches the approved plan, changed files, or current phase. Treat
 memory as useful context, not proof: re-check current code before relying on an
 old lesson.
 
+Before editing UI-affecting files, decide whether the approved plan changes browser UI, visual layout, styles, routes, or user flows. If it does, invoke `dkuicapture` immediately for before evidence and add the generated `visual-evidence.md` manifest path to your working notes. Capture the representative routes/flows you expect to change. If UI files have already been modified before the baseline can be captured, do not synthesize a before state; record `Before capture: unavailable — UI was already modified before capture` in the manifest and final evidence.
+
 For each task in the approved plan:
 
 1. `TaskUpdate(task_id, "in_progress")`
@@ -124,7 +126,15 @@ After the self-review loop passes (Step 4 produces PASS with zero NOT FOUND entr
 
 ### 6. UI Capture Evidence
 
-If the change affects browser UI, invoke the `dkuicapture` skill before Phase 2 completes. Capture desktop/mobile screenshots, Playwright traces, and video for interactive flows. Artifacts must stay in Doyaken's artifact directory and must not be committed. Add absolute links to screenshots, videos, traces, and logs to the implementation evidence.
+If the change affects browser UI, invoke the `dkuicapture` skill before Phase 2 completes. Ensure the evidence includes:
+
+- before screenshots/traces captured before UI edits, or an explicit before-unavailable reason
+- after desktop/mobile screenshots for the same representative routes/views
+- Playwright traces and browser logs for captured routes/views
+- video for interactive flows
+- the `visual-evidence.md` manifest path under Doyaken's artifact directory
+
+Artifacts must stay in Doyaken's artifact directory and must not be committed. Add absolute links to the manifest, screenshots, videos, traces, and logs to the implementation evidence.
 
 If no browser UI changed, add `UI capture: N/A — no UI-affecting files changed` to the evidence.
 
@@ -136,7 +146,7 @@ When running inside a terminal `dk` lifecycle (`DOYAKEN_SESSION_ID` is present),
 - Every acceptance criterion and verification gate is exactly `MET`.
 - No evidence entry is deferred, skipped, blocked, missing, or delegated to future CI unless the user approved a plan change.
 - Final deterministic checks passed locally.
-- Required UI capture evidence is linked, or UI capture is explicitly N/A.
+- Required UI capture evidence is linked, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A.
 - No Phase 2 background agents or long-running commands are still in flight.
 
 ```bash
@@ -152,13 +162,14 @@ During implementation (Phase 2), you MUST NOT:
 - Run `git commit` or `git push` (that is Phase 4: Verify & Commit)
 - Create or modify pull requests via `gh pr` (that is Phase 5: PR)
 - Mark tickets as done or in-review (that is Phase 6: Complete)
+- Rename the lifecycle branch or move ticket status — Phase 0 (Setup) already handled that. If you notice it wasn't done, surface that to the user rather than fixing it ad-hoc.
 - Create new branches (the worktree branch was created by `dk`)
 
 You SHOULD:
 - Implement all planned tasks with TDD
 - Run quality checks on changed files after each task (format, lint, typecheck)
 - Run the self-review loop (Step 4) and final implementation checks (Step 5)
-- Run `/dkuicapture` for UI-affecting changes and link the artifacts
+- Run `/dkuicapture` for UI-affecting changes before UI edits and after implementation, then link the artifacts
 - Update `.doyaken/` project docs if your changes require it
 
 ## Notes

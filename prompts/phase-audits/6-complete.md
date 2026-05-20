@@ -1,4 +1,4 @@
-Phase 6 (Complete) is the autonomous CI/review monitoring loop. The PR was created in Phase 5; your job is to mark it ready, request reviews, monitor for comments, address them, and close the ticket once everyone has approved and CI is green.
+Phase 6 (Complete) is the bounded autonomous PR monitoring loop. The PR was created in Phase 5; your job is to mark it ready, request reviews, monitor CI and review comments through the PR watcher, address failures, and close the ticket once everyone has approved and CI is green. Do not merge the PR.
 
 This phase runs as a **cycle loop**. Each cycle is one Stop hook iteration. Between cycles you wait — the loop infrastructure handles wall-clock time, not you.
 
@@ -66,16 +66,15 @@ Customize the body to whatever fits. The point is the `@mention` so the bots see
 
 ## Monitoring (every cycle)
 
-Launch the watcher loops if they aren't already running. `/loop` is a built-in Claude Code skill — `/loop <interval> <slash-command>` runs the command on a recurring interval in the background.
+Launch the PR watcher loop if it isn't already running. `/loop` is a built-in Claude Code skill — `/loop <interval> <slash-command>` runs the command on a recurring interval in the background.
 
 ```
-/loop 2m /dkwatchci
 /loop 5m /dkwatchpr
 ```
 
-These run between turns and won't consume context. `/dkwatchci` will fix CI failures and re-push. `/dkwatchpr` will read review comments, hand them to `/dkprreview`, push fixes, and reply.
+This runs between turns and won't consume context. `/dkwatchpr` checks CI status, fixes CI failures when appropriate, reads review comments, hands them to `/dkprreview`, pushes fixes, and replies.
 
-If the user sends a direct prompt while Phase 6 is active, the `UserPromptSubmit` hook writes a watcher-pause marker. Scheduled `/dkwatchci` and `/dkwatchpr` invocations must no-op while that marker is active and must not run GitHub/CI commands. Running `/dkcomplete` or explicitly asking to resume watchers clears the marker. The default pause TTL is `60m 0s`.
+If the user sends a direct prompt while Phase 6 is active, the `UserPromptSubmit` hook writes a watcher-pause marker. Scheduled `/dkwatchpr` invocations must no-op while that marker is active and must not run GitHub/CI commands. Running `/dkcomplete` or explicitly asking to resume watchers clears the marker. The default pause TTL is `60m 0s`.
 
 Each watcher invocation must also stay within `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). If the previous watcher cycle is still locked within that runtime budget, the next `/loop` tick must no-op instead of overlapping.
 
@@ -83,12 +82,12 @@ Each watcher invocation must also stay within `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECON
 
 ## Wait window
 
-Each cycle must wait at least `DOYAKEN_COMPLETE_WAIT_MINUTES` minutes (default 30) before declaring the cycle "stuck" and moving on. You don't sleep — you simply stop and let the Stop hook's audit loop re-engage you on the next iteration. Compute elapsed time:
+Each cycle must wait at least `DOYAKEN_COMPLETE_WAIT_MINUTES` minutes (default 5) before declaring the cycle idle and moving on. You don't sleep — you simply stop and let the Stop hook's audit loop re-engage you on the next iteration. Compute elapsed time:
 
 ```bash
 NOW=$(date +%s)
 ELAPSED=$((NOW - LAST_EPOCH))
-WAIT_MINUTES="${DOYAKEN_COMPLETE_WAIT_MINUTES:-30}"
+WAIT_MINUTES="${DOYAKEN_COMPLETE_WAIT_MINUTES:-5}"
 WAIT_SECONDS=$((WAIT_MINUTES * 60))
 ```
 
@@ -99,7 +98,7 @@ If `LAST_EPOCH -eq 0` (very first cycle — setup just ran):
 - Do NOT proceed to Outcome — there's nothing to evaluate yet.
 
 If `ELAPSED -lt WAIT_SECONDS`, the wait window hasn't elapsed:
-- Confirm the watcher loops are still running (one `gh pr view --json` is fine; do NOT run `/dkprreview` directly here — that's the watcher's job).
+- Confirm the watcher loop is still running (one `gh pr view --json` is fine; do NOT run `/dkprreview` directly here — that's the watcher's job).
 - Update the state file: `echo "${CYCLE}:${LAST_EPOCH}" > "$COMPLETE_STATE_FILE"`
 - Stop. The Stop hook will re-inject this audit on the next iteration; that iteration also will not be authorized to complete until the window has elapsed.
 
@@ -122,40 +121,56 @@ Note: `mention`-type reviewers (AI bots) do not issue native GitHub reviews and 
 
 Update the ticket (if a tracker is configured — see `doyaken.md § Integrations`). Print the completion summary (per `skills/dkcomplete/SKILL.md` Step 5). Cycle is done — proceed to Termination.
 
-### Case B — Pending reviews or unresolved comments, but progress was made
+### Case B — Pending checks/reviews or unresolved comments, but progress was made
 
-If new commits were pushed during the cycle (`/dkprreview` addressed comments), re-trigger reviewers:
+If new commits were pushed during the cycle (`/dkwatchpr` fixed CI or `/dkprreview` addressed comments), re-trigger reviewers:
 
 - For each `request` reviewer: normalize the handle and run `gh pr edit "$PR_NUM" --add-reviewer "<normalized-handle>"` again — they get a fresh notification that there's something new.
 - For each `mention` reviewer: post a new comment `@<handle> updated — please re-review.`
 
 Increment the cycle counter (use arithmetic, not parameter expansion — `NEW_CYCLE=$((CYCLE + 1))`), reset `LAST_EPOCH` to now, write `"${NEW_CYCLE}:${NOW}"` to the state file. Stop. Next iteration starts a new wait window.
 
-### Case C — No comments, no new commits, no approvals
+### Case C — No CI/review progress
 
-The cycle was idle. Increment the cycle counter (`NEW_CYCLE=$((CYCLE + 1))`). If `NEW_CYCLE >= DOYAKEN_COMPLETE_MAX_CYCLES` → proceed to Case D escalation. Otherwise, write `"${NEW_CYCLE}:${NOW}"` to the state file and stop. Next iteration starts a new wait window.
+The cycle was idle. Increment the cycle counter (`NEW_CYCLE=$((CYCLE + 1))`). If `NEW_CYCLE >= DOYAKEN_COMPLETE_MAX_CYCLES` → proceed to Case D bounded-timeout pause. Otherwise, write `"${NEW_CYCLE}:${NOW}"` to the state file and stop. Next iteration starts a new wait window.
 
-### Case D — Hard escalation
+### Case D — Bounded-timeout pause or hard escalation
 
 Stop and escalate to the user immediately if:
-- CI has failed the same check 3 times in a row (`/dkwatchci` should already escalate)
+- The watcher has completed `DOYAKEN_COMPLETE_MAX_CYCLES` idle cycles (default 3) without checks and approvals going green
+- CI has failed the same check 3 times in a row (`/dkwatchpr` should already escalate)
 - A reviewer requested a scope change that affects other tickets
 - A secrets scan failed
 - Architectural disagreement that needs human judgement
 
-Print the escalation reason with cited file:line evidence and stop without writing the completion signal.
+For the bounded-timeout pause, print this notice and stop without writing the completion signal:
+
+```
+Autonomous PR monitoring paused after 3 idle 5-minute cycles.
+Run /dkwatchpr manually for a one-off CI/review check, or /loop 5m /dkwatchpr to resume watching.
+Run /dkcomplete manually when the PR is ready and you want Doyaken to complete the ticket.
+The PR was not merged.
+```
+
+Then touch the pause marker so the wrapper can end the session cleanly:
+
+```bash
+touch "$(dk_paused_file "$SESSION_ID")"
+```
+
+For hard escalations, print the escalation reason with cited file:line evidence, touch the same pause marker, and stop without writing the completion signal.
 
 ---
 
 ## Termination
 
-Cycle ends successfully when **Case A** is reached: CI green and all configured reviewers approved.
+Cycle ends successfully only when **Case A** is reached: CI green and all configured reviewers approved. Completion means the ticket is closed and the local Doyaken worktree/branch can be removed; it never means merging the PR.
 
-Cycle ends with escalation when:
-- `CYCLE >= DOYAKEN_COMPLETE_MAX_CYCLES` (default 3) and no approvals yet
+Cycle pauses with escalation when:
+- `CYCLE >= DOYAKEN_COMPLETE_MAX_CYCLES` (default 3) and checks/approvals are not green
 - Hard escalation (see Case D)
 
-In either ending, stop. The Stop hook authorizes completion through the standard `.complete` mechanism after the audit pass — only emit the completion promise when Case A is met OR escalation conditions render the autonomous loop unable to make further progress.
+Only Case A may write `.complete`. Timeout and hard escalation paths must stop without writing `.complete`; the user can run `/dkwatchpr` manually for another one-off pass or `/dkcomplete` to resume completion.
 
 ---
 
@@ -164,6 +179,6 @@ In either ending, stop. The Stop hook authorizes completion through the standard
 - The PR is no longer a draft (`gh pr view --json isDraft -q .isDraft` returns `false`)
 - All `request` reviewers have been requested at least once
 - One mention comment has been posted for `mention` reviewers (if any)
-- Either: all CI checks green AND all `request`-type reviewers approved AND ticket marked Done (if tracker configured) — OR: a documented escalation has been printed and acknowledged. `mention`-type reviewers do NOT gate completion.
+- All CI checks green AND all `request`-type reviewers approved AND ticket marked Done (if tracker configured). `mention`-type reviewers do NOT gate completion.
 
 Do NOT emit `DOYAKEN_TICKET_COMPLETE` until the Stop hook authorizes completion via the audit-iteration threshold. Follow the standard pattern.

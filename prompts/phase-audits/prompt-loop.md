@@ -26,7 +26,7 @@ Verify your understanding against the guardrails:
 
 **Skip this step if this is a non-code session.**
 
-Run `/dkreview --single-pass` on your changes (if you haven't already since your last code change). This audit loop already owns repetition, so do not invoke `/dkreview` in its default looping mode here. The single-pass review wave handles deterministic checks, specialist reviewers, verifier triage, batch fixes, and targeted recheck.
+Run `/dkreview --single-pass` on your changes (if you haven't already since your last code change). This audit loop already owns repetition, so do not invoke `/dkreview` in its default looping mode here. The single-pass review wave handles deterministic checks, issue harvest, verifier triage, batch fixes, and targeted recheck.
 
 Read the report carefully. If the review wave applied fixes, restart this audit from Step 1 so the acceptance criteria and current diff are fresh. If findings remain, record them for the inventory in Step 5.
 
@@ -80,7 +80,7 @@ Run `git diff` against the base branch and review ALL changes together:
 **Skip this step if this is a non-code session.**
 **Skip this step if `/dkreview --single-pass` completed a review wave successfully.**
 
-If `/dkreview --single-pass` could not run because the Skill tool or specialist reviewers were unavailable, spawn the `self-reviewer` agent to get an independent review perspective. Provide:
+If `/dkreview --single-pass` could not run because the Skill tool or required specialist/verifier agents were unavailable, spawn the `self-reviewer` agent to get an independent review perspective. Provide:
 - The acceptance criteria list from Step 1 (copy verbatim)
 - The current branch name and base branch (from `git rev-parse --abbrev-ref HEAD` and the default branch)
 - Which areas of the codebase have changed files (from `git diff --name-only`)

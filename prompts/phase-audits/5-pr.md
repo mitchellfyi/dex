@@ -31,7 +31,21 @@ Check:
 - Is the ticket linked (if tracker configured)?
 - The PR is still in **draft** state (Phase 6 marks it ready, not Phase 5).
 
-## Step 4: Reviewer attachment
+## Step 4: Visual evidence handoff
+
+If the PR includes browser UI changes:
+
+- Confirm the `visual-evidence.md` manifest exists under Doyaken's artifact directory.
+- Confirm before and after screenshots are listed, or that the manifest records why before evidence is unavailable.
+- If implementation changed after the last after-capture, refresh after screenshots/traces/logs with `/dkuicapture` without modifying implementation code.
+- Confirm no screenshots, videos, traces, logs, flow scripts, or manifests are staged or committed.
+- Confirm the Phase 5 summary gives the user the manifest path and upload-ready before/after screenshot paths.
+
+Do not embed local artifact paths as GitHub images; they will not render for reviewers. The user uploads the local images manually to the PR body or a PR comment.
+
+If the PR has no browser UI changes, record `Visual evidence: N/A — no browser UI changes`.
+
+## Step 5: Reviewer attachment
 
 Read the `## Reviewers` section of `.doyaken/doyaken.md`. For every row whose Type is `request`, confirm the reviewer is attached to the PR:
 
@@ -62,6 +76,7 @@ ALL of these must be true before you stop:
 - PR description attributes generation to Doyaken only, with no Claude Code generated-by footer
 - PR scope matches the plan — no unrelated changes, nothing missing
 - The PR is still in draft state
+- Visual evidence is prepared for manual upload when browser UI changed, or explicitly N/A
 - All `request`-type reviewers from `doyaken.md § Reviewers` are attached to the PR (or the section is empty/`_none_`)
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

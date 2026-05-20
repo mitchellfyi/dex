@@ -185,23 +185,18 @@ echo "Skeleton created."
 # ── 2. Ensure global Doyaken tooling is available ─────────────────────
 
 CODEX_SKILL_COUNT=0
-if command -v codex &>/dev/null; then
-  if ! dk_install_codex_skills; then
-    dk_warn "Continuing init without complete Codex skill links"
+TOOL_BOOTSTRAP_RAN=0
+if [[ "${DOYAKEN_SKIP_TOOL_BOOTSTRAP:-0}" == "1" ]]; then
+  dk_skip "Skipping Claude/Codex tooling bootstrap (already handled by caller)"
+else
+  TOOL_BOOTSTRAP_RAN=1
+  if ! dk_bootstrap_agent_tooling "$repo_root" "repair"; then
+    dk_warn "Continuing init without complete Claude/Codex tooling bootstrap"
   fi
+fi
+
+if command -v codex &>/dev/null; then
   CODEX_SKILL_COUNT=$(dk_count_codex_doyaken_skills)
-else
-  dk_skip "Codex CLI not found; skipping Codex skills"
-fi
-
-if ! dk_install_ui_capture_tooling; then
-  dk_warn "Continuing init without complete UI capture tooling"
-fi
-
-if bash "$DOYAKEN_DIR/bin/install-settings.sh" --quiet; then
-  dk_done "Refreshed global Claude settings"
-else
-  dk_warn "Continuing init without refreshed Claude settings"
 fi
 
 # ── 3. Codebase analysis via Claude Code CLI ──────────────────────────
@@ -275,6 +270,9 @@ echo "  - .doyaken/CLAUDE.md points to .doyaken/AGENTS.md"
 echo "  - .doyaken/memory/index.md is ready for durable repo memory"
 if [[ "$CODEX_SKILL_COUNT" -gt 0 ]]; then
   echo "  - ${CODEX_SKILL_COUNT} Doyaken skill link(s) available in $(dk_codex_skills_dir) for Codex CLI"
+fi
+if [[ "$TOOL_BOOTSTRAP_RAN" -eq 1 ]]; then
+  echo "  - Claude/Codex tooling checked and repaired with Doyaken links, official MCPs, and safe official plugins"
 fi
 if [[ $SKIP_ANALYSIS -eq 0 ]] && command -v claude &>/dev/null; then
   echo "  - Claude analyzed the codebase and generated project-specific config"

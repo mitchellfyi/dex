@@ -22,6 +22,11 @@ dk_ui_capture_session_dir() {
   printf '%s\n' "$(dk_artifacts_dir)/ui/${session_id}"
 }
 
+dk_ui_capture_manifest_file() {
+  local session_id="$1"
+  printf '%s\n' "$(dk_ui_capture_session_dir "$session_id")/visual-evidence.md"
+}
+
 dk_ui_capture_run_dir() {
   local session_id="$1" run_name="${2:-capture}"
   local timestamp

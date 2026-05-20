@@ -199,7 +199,7 @@ component boundaries instead of canonical C4 names.
 | Provider and state libraries | `lib/provider.sh`, `lib/session.sh`, `lib/output.sh`, `lib/worktree.sh` | Launch providers and keep state outside the repo | Medium |
 | Review system | `skills/dkreview/`, `skills/dkreviewloop/`, `prompts/review-wave.md`, `prompts/review.md` | Run deterministic-plus-semantic review waves | Medium |
 | Verification system | `skills/dkverify/`, `prompts/failure-recovery.md` | Discover and run project quality gates | Medium |
-| PR and watcher system | `skills/dkpr/`, `skills/dkcomplete/`, `skills/dkwatchci/`, `skills/dkwatchpr/` | Create PRs, monitor CI, and respond to review feedback | Light in V1, Medium later |
+| PR and watcher system | `skills/dkpr/`, `skills/dkcomplete/`, `skills/dkwatchpr/` | Create PRs, monitor CI, and respond to review feedback | Light in V1, Medium later |
 | GitHub workflow integration | `templates/github/workflows/`, `.github/workflows/dk-maintain.yml`, future workflow installer | Schedule maintenance and trigger one-shot PR feedback responses | Heavy |
 | Hook system | `settings.json`, `hooks/*.sh`, `hooks/guard-handler.py` | Guard commands, preserve context, pause watcher overlap | Light in V1 |
 | Documentation | `docs/*.md`, `README.md` | Explain behavior, rollout, and manual operation | Medium |

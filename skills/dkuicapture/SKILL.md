@@ -5,11 +5,13 @@ description: "Capture UI screenshots, Playwright traces, videos, and browser err
 
 # Skill: dkuicapture
 
-Capture visual evidence for UI work after implementation and before review.
+Capture before/after visual evidence for browser-facing work.
 
 ## When to Use
 
-- After `/dkimplement` finishes tasks that affect web UI, routes, components, styles, browser behavior, or user flows
+- At the start of `/dkimplement`, before editing UI files, when the approved plan affects web UI, routes, components, styles, browser behavior, or user flows
+- After `/dkimplement` finishes UI-affecting changes, before Phase 2 hands off to review
+- During `/dkpr` when a UI change needs final after-capture evidence for PR handoff
 - When a ticket asks for visual verification, screenshots, or video
 - When debugging UI regressions with Playwright MCP or Chrome DevTools MCP
 
@@ -17,11 +19,30 @@ If the change does not affect UI, record `UI capture: N/A — no UI-affecting fi
 
 ## Artifact Rules
 
-- Do **not** commit screenshots, videos, traces, generated flow scripts, or logs.
+- Do **not** commit screenshots, videos, traces, generated flow scripts, logs, or visual evidence manifests.
 - Store artifacts only under Doyaken's artifact directory:
   - default: `~/.claude/.doyaken-artifacts/ui/<session>/`
   - override: `DK_ARTIFACT_DIR`
-- Include absolute markdown links to the artifacts in the Phase 2 evidence table or final status.
+- Keep a concise manifest at `$(dk_ui_capture_manifest_file "$session_id")`, usually `~/.claude/.doyaken-artifacts/ui/<session>/visual-evidence.md`.
+- If `DK_ARTIFACT_DIR` is overridden to a path inside the repo, verify it is ignored before writing artifacts:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+artifact_root="$(dk_artifacts_dir)"
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$repo_root" ]]; then
+  case "$artifact_root" in
+    "$repo_root"/*)
+      git check-ignore -q "$artifact_root" || {
+        printf 'UI artifact directory is inside the repo and is not ignored: %s\n' "$artifact_root" >&2
+        exit 1
+      }
+      ;;
+  esac
+fi
+```
+
+- Local artifact links do not render for GitHub reviewers. Use them to hand the user upload-ready files; the user must upload the screenshots manually to the PR body or a PR comment.
 
 ## Steps
 
@@ -37,7 +58,7 @@ If this fails because Node.js/npm/npx are missing or network install is blocked,
 
 ### 2. Decide Whether UI Capture Is Required
 
-Check changed files and the approved plan:
+Check the approved plan and changed files:
 
 ```bash
 git diff --name-only
@@ -53,7 +74,48 @@ Treat these as UI-affecting by default:
 
 If only backend/CLI/docs/test-only files changed and no visible browser behavior is affected, record N/A.
 
-### 3. Start the App
+### 3. Prepare Artifact Tracking
+
+Create the session artifact directory outside the repo. `bin/ui-capture.sh` creates and appends to the manifest automatically on each capture run:
+
+```bash
+source "${DOYAKEN_DIR:-$HOME/work/doyaken}/lib/common.sh"
+session_id="${DOYAKEN_SESSION_ID:-$(dk_session_id)}"
+capture_dir="$(dk_ui_capture_session_dir "$session_id")"
+manifest="$(dk_ui_capture_manifest_file "$session_id")"
+mkdir -p "$capture_dir"
+printf '%s\n' "$manifest"
+```
+
+Manifest template:
+
+```markdown
+# Visual Evidence
+
+Session: <session_id>
+PR: <pending or PR URL>
+Upload note: local files do not render in GitHub; upload before/after screenshots manually to the PR body or a PR comment.
+
+## Before
+
+- <label> desktop: [desktop.png](/absolute/path/to/desktop.png)
+- <label> mobile: [mobile.png](/absolute/path/to/mobile.png)
+
+## After
+
+- <label> desktop: [desktop.png](/absolute/path/to/desktop.png)
+- <label> mobile: [mobile.png](/absolute/path/to/mobile.png)
+
+## Verification
+
+- URL/flow parity: yes/no
+- Console/page/network/http logs checked: yes/no
+- Notes: <expected or unrelated log entries, unavailable captures, reviewer upload instructions>
+```
+
+Keep manual notes in the manifest short. It is a user handoff file, not a full implementation report.
+
+### 4. Start the App
 
 Use the project's existing commands. Prefer the package manager and scripts already in the repo:
 
@@ -64,20 +126,39 @@ Use the project's existing commands. Prefer the package manager and scripts alre
 
 Run the server in the background, wait for the local URL to return a response, and stop the server after capture. Use a different port if the default is occupied.
 
-### 4. Capture Screenshots and Traces
+### 5. Capture Before Evidence
 
-For each changed route or representative page, capture desktop, mobile, and a trace:
+When called at the start of Phase 2 for a UI-affecting plan, capture before editing UI surfaces. Use stable names so the later after capture can match them:
 
 ```bash
 bash "${DOYAKEN_DIR:-$HOME/work/doyaken}/bin/ui-capture.sh" \
   --url "http://127.0.0.1:3000/path" \
-  --name "ticket-route-name" \
+  --name "before-route-name" \
   --desktop \
   --mobile \
   --trace
 ```
 
-Inspect the generated logs:
+If UI files were already modified before the baseline could be captured, do not fake a before screenshot. Record this in the manifest and Phase 2 evidence:
+
+```text
+Before capture: unavailable — UI was already modified before capture.
+```
+
+### 6. Capture After Evidence
+
+After implementation, capture the same representative routes, viewports, and flows as the before pass wherever possible. Use matching names:
+
+```bash
+bash "${DOYAKEN_DIR:-$HOME/work/doyaken}/bin/ui-capture.sh" \
+  --url "http://127.0.0.1:3000/path" \
+  --name "after-route-name" \
+  --desktop \
+  --mobile \
+  --trace
+```
+
+Inspect the generated logs for every run:
 
 - `console-errors.log`
 - `page-errors.log`
@@ -85,9 +166,9 @@ Inspect the generated logs:
 - `http-errors.log`
 - `metadata.json`
 
-Fix real UI/runtime issues before Phase 2 completion. If a log entry is expected or unrelated, document why.
+Fix real UI/runtime issues before Phase 2 completion. If a log entry is expected or unrelated, document why in the manifest and evidence.
 
-### 5. Capture Video for Interactive Flows
+### 7. Capture Video for Interactive Flows
 
 For changed flows involving clicks, forms, navigation, drag/drop, modals, menus, uploads, checkout, auth, onboarding, or other interactions, record video and trace.
 
@@ -116,7 +197,7 @@ Then capture with video:
 ```bash
 bash "${DOYAKEN_DIR:-$HOME/work/doyaken}/bin/ui-capture.sh" \
   --url "http://127.0.0.1:3000/path" \
-  --name "flow-name" \
+  --name "after-flow-name" \
   --desktop \
   --mobile \
   --video \
@@ -126,7 +207,7 @@ bash "${DOYAKEN_DIR:-$HOME/work/doyaken}/bin/ui-capture.sh" \
 
 The generated `.webm` files are the video evidence. The `.zip` traces can be opened with Playwright Trace Viewer.
 
-### 6. Use MCP When Helpful
+### 8. Use MCP When Helpful
 
 The bootstrap configures:
 
@@ -135,17 +216,29 @@ The bootstrap configures:
 
 Use MCP tools when they are available in the session and they make debugging faster. The deterministic artifact command above remains the canonical evidence because it stores files in Doyaken's artifact directory.
 
-### 7. Report Evidence
+### 9. Verify Evidence
+
+Do not mark UI capture complete until:
+
+- each referenced screenshot/video/trace exists and is non-empty
+- before and after captures use the same URL, route, viewport, and flow where possible
+- logs have been checked and real runtime issues are fixed
+- the manifest lists before evidence, after evidence, or an explicit before-unavailable reason
+- artifacts are outside the repo or the artifact directory is ignored
+
+### 10. Report Evidence
 
 Report artifacts as absolute markdown links:
 
 ```markdown
 UI capture:
-- Desktop screenshot: [desktop.png](/absolute/path/to/desktop.png)
-- Mobile screenshot: [mobile.png](/absolute/path/to/mobile.png)
+- Manifest: [visual-evidence.md](/absolute/path/to/visual-evidence.md)
+- Before desktop: [desktop.png](/absolute/path/to/before/desktop.png)
+- After desktop: [desktop.png](/absolute/path/to/after/desktop.png)
+- Mobile screenshot: [mobile.png](/absolute/path/to/after/mobile.png)
 - Video: [desktop video](/absolute/path/to/video.webm)
 - Trace: [desktop trace](/absolute/path/to/desktop-trace.zip)
 - Logs: [metadata.json](/absolute/path/to/metadata.json)
 ```
 
-Do not mark UI capture complete unless screenshots exist and any required interactive-flow video exists.
+For PR handoff, tell the user that the manifest contains local upload-ready files and that GitHub requires manual upload for images to render to reviewers.

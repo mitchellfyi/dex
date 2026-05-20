@@ -27,6 +27,10 @@ touch "$(dk_phase_started_file "${DOYAKEN_SESSION_ID:-$(dk_session_id)}" 1)"
 This marker tells the Stop hook that the actual `dkplan` workflow is running.
 Do not skip it when `DOYAKEN_SESSION_ID` is present.
 
+Phase 0 (Setup) already renamed the branch, assigned the ticket, pushed the
+branch, and moved status to In Progress before Phase 1 began. Do not redo
+those steps here; only flag missing setup back to the user if you notice it.
+
 ### 1. Gather Context
 
 Use the integrations configured in doyaken.md § Integrations. Skip any that are "not configured".

@@ -8,7 +8,7 @@ Doyaken runs the ticket lifecycle as a series of phases, each with its own quali
 User runs: dk 999
   |
   v
-Wrapper creates worktree, starts Phase 1
+Wrapper creates worktree, starts Phase 0 (Setup)
 (`dk --no-worktree` skips worktree creation and uses the current checkout)
   |
   v
@@ -45,28 +45,31 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 
 | Phase | Audit File | What It Reviews |
 |-------|-----------|-----------------|
+| 0. Setup | `0-setup.md` | Ticket read + assigned, branch renamed + pushed, ticket status In Progress, meta sidecar updated |
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
 | 2. Implement | `2-implement.md` | Task completion, TDD verification, UI capture evidence, evidence table |
-| 3. Review | `3-review-loop.md` | `/dkreviewloop` requiring 3 clean full-scope review waves |
+| 3. Review | `3-review-loop.md` | `/dkreviewloop` requiring the resolved profile's clean full-scope review waves |
 | 4. Verify & Commit | `4-verify.md` | All checks passing, commit quality, pushed to origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
-| 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor, address comments, re-request after each push, close ticket |
+| 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor CI/reviews through `/dkwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
 
-The review audit (Phase 3) is the most rigorous. Phase 3 runs
-`/dkreviewloop`, which spawns fresh full-scope review waves and requires 3
-consecutive `CLEAN` reports. Each wave builds a compact context pack, runs
-deterministic checks, fans out to read-only specialist reviewers (including
-frontend and devops/CI when relevant), verifies findings, batch-fixes verified
-issues, and rechecks affected surfaces. A wave that fixes anything writes
-`FINDINGS_FIXED:N`, which resets the outer clean counter.
+The review audit (Phase 3) is adaptive. Phase 3 runs `/dkreviewloop`, which
+starts from `DOYAKEN_REVIEW_PROFILE=auto`: light for tiny/docs-only changes,
+standard for normal changes, and thorough for high-risk or broad changes. Each
+wave builds a compact context pack, runs deterministic checks, harvests issues in
+the fresh wave orchestrator, uses targeted read-only specialists only when the
+profile requires them, verifies findings, batch-fixes verified issues, and
+rechecks affected surfaces. A wave that fixes anything writes `FINDINGS_FIXED:N`,
+which resets the outer clean counter. A wave can write `ESCALATE_THOROUGH:reason`
+when the profile is too shallow.
 
-For browser UI changes, Phase 2 also requires UI capture evidence before handoff to review. `/dkuicapture` stores screenshots, videos, traces, and browser logs under `~/.claude/.doyaken-artifacts/` and links them in the implementation evidence. See [ui-capture.md](ui-capture.md).
+For browser UI changes, Phase 2 also requires before/after UI capture evidence before handoff to review. `/dkuicapture` stores screenshots, videos, traces, browser logs, and a `visual-evidence.md` upload manifest under `~/.claude/.doyaken-artifacts/` and links them in the implementation evidence. See [ui-capture.md](ui-capture.md).
 
-Phase 6 (Complete) is autonomous: it reads `## Reviewers` from `.doyaken/doyaken.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer — the autonomous loop waits at least `DOYAKEN_COMPLETE_WAIT_MINUTES` (default 30) per cycle for reviews to come in, addresses any comments via `/dkprreview`, re-requests reviewers after each push, and closes the ticket once everything is approved and CI is green. After `DOYAKEN_COMPLETE_MAX_CYCLES` (default 3) idle cycles with no progress, it escalates to the user.
+Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from `.doyaken/doyaken.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer. The autonomous loop waits at least `DOYAKEN_COMPLETE_WAIT_MINUTES` (default 5) per cycle for CI and reviews, addresses failures through `/dkwatchpr` and `/dkprreview`, re-requests reviewers after each push, and closes the ticket once everything is approved and CI is green. After `DOYAKEN_COMPLETE_MAX_CYCLES` (default 3) idle cycles with no progress, it pauses with manual follow-up instructions. It never merges the PR.
 
-When the user submits a direct prompt during Phase 6, the `UserPromptSubmit` hook writes a `.watch-pause` marker. Scheduled `/dkwatchci` and `/dkwatchpr` cycles must no-op while the marker is active, so manual work is not interrupted by CI/review polling commands. The pause expires after `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`) unless the user runs `/dkcomplete` or asks to resume watchers.
+When the user submits a direct prompt during Phase 6, the `UserPromptSubmit` hook writes a `.watch-pause` marker. Scheduled `/dkwatchpr` cycles must no-op while the marker is active, so manual work is not interrupted by CI/review polling commands. The pause expires after `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`) unless the user runs `/dkcomplete` or asks to resume watching.
 
-Each watcher cycle also has a runtime lock with a default budget of `2m 0s`. If a later `/loop` tick fires while the previous `/dkwatchci` or `/dkwatchpr` cycle is still within that budget, the later tick skips instead of starting overlapping GitHub or CI work. Individual watcher shell commands default to `0m 30s`.
+Each watcher cycle also has a runtime lock with a default budget of `2m 0s`. If a later `/loop` tick fires while the previous `/dkwatchpr` cycle is still within that budget, the later tick skips instead of starting overlapping GitHub or CI work. Individual watcher shell commands default to `0m 30s`.
 
 After Phase 1 approval, the Stop hook advances through normal Phase 2-5
 handoffs in the same Claude session without asking whether to continue. A phase pauses only when it hits an
@@ -224,8 +227,8 @@ Loop state is stored in `~/.claude/.doyaken-loops/`:
 - `.prompt` — original freeform task or `dkloop` prompt, re-injected during audits and kept outside the git checkout
 - `.handoff-mode` — marker that this `dk` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
-- `.watch-pause` — marker that scheduled Phase 6 CI/PR watchers should no-op after a direct user prompt
-- `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dkwatchci` or `/dkwatchpr` cycle
+- `.watch-pause` — marker that scheduled Phase 6 PR watcher should no-op after a direct user prompt
+- `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dkwatchpr` cycle
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dkplan`; the Stop hook does not count plan audit iterations until the approval marker exists
 - `.phase-2.ready` — Phase 2 marker written by `dkimplement` only after every acceptance criterion and verification gate is complete; the Stop hook ignores `PHASE_2_COMPLETE` without it
 - `.phase-3.busy` — Phase 3 marker written by `dkreviewloop` while a review wave is running; the Stop hook does not count audit iterations while waiting
@@ -241,7 +244,7 @@ Phase state is stored in `~/.claude/.doyaken-phases/`:
 - One `.system-context` file per worktree, used by `--append-system-prompt-file` for compaction resilience (regenerated each phase, cleaned up by `SessionEnd` hook)
 - One `.branch` file per lifecycle session, used by in-place mode to resume on the correct branch after branch renames or shell navigation
 
-UI artifacts are stored separately in `~/.claude/.doyaken-artifacts/` so screenshots, videos, traces, flow scripts, and logs stay out of git.
+UI artifacts are stored separately in `~/.claude/.doyaken-artifacts/` so screenshots, videos, traces, flow scripts, logs, and PR upload manifests stay out of git.
 
 ## Environment Variables
 
@@ -255,16 +258,17 @@ UI artifacts are stored separately in `~/.claude/.doyaken-artifacts/` so screens
 | `DOYAKEN_LOOP_PHASE` | (set by wrapper) | Current phase number (1-6) or `prompt-loop`, used to find audit file |
 | `DOYAKEN_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
 | `DOYAKEN_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DOYAKEN_PHASE_2_MIN_AUDITS=5`) |
-| `DOYAKEN_REVIEW_CLEAN_PASSES` | `3` | Consecutive `CLEAN` review waves required to advance Phase 3 |
-| `DOYAKEN_REVIEW_MAX_ITERATIONS` | `20` | Max review iterations before Phase 3 pauses for intervention |
+| `DOYAKEN_REVIEW_PROFILE` | `auto` | Starting Phase 3 review depth: `auto`, `light`, `standard`, or `thorough` |
+| `DOYAKEN_REVIEW_CLEAN_PASSES` | profile-based | Exact consecutive `CLEAN` review waves required to advance Phase 3 |
+| `DOYAKEN_REVIEW_MAX_ITERATIONS` | profile-based | Exact max review iterations before Phase 3 pauses |
 | `DOYAKEN_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a Phase 3 review wave may stay in progress before the lifecycle pauses |
 | `DOYAKEN_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DOYAKEN_REVIEW_PASS_RECHECK_SECONDS` | `45` (0m 45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
 | `DOYAKEN_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation |
 | `DOYAKEN_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (0m 30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |
 | `DOYAKEN_WATCH_PAUSE_TTL_SECONDS` | `3600` (60m 0s) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |
-| `DOYAKEN_COMPLETE_MAX_CYCLES` | `3` | Max idle cycles before Phase 6 escalates |
-| `DOYAKEN_COMPLETE_WAIT_MINUTES` | `30` | Minimum wait window per Phase 6 cycle (minutes) |
+| `DOYAKEN_COMPLETE_MAX_CYCLES` | `3` | Max idle cycles before Phase 6 pauses for manual follow-up |
+| `DOYAKEN_COMPLETE_WAIT_MINUTES` | `5` | Minimum wait window per Phase 6 cycle (minutes) |
 | `DK_ARTIFACT_DIR` | `~/.claude/.doyaken-artifacts` | Screenshots, videos, traces, and logs produced by Doyaken |
 | `DK_TOOL_DIR` | `~/.claude/.doyaken-tools` | Doyaken-managed external tooling cache |
 

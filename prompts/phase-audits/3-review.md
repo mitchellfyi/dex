@@ -18,19 +18,11 @@ counter advances or resets.
    non-empty skeleton pack, `test -s` it, and read back the first 80 lines before
    broad semantic exploration or specialist spawning.
 5. Run deterministic checks first.
-6. Spawn the applicable read-only specialist reviewers:
-   - `review-correctness`
-   - `review-security`
-   - `review-contracts`
-   - `review-tests`
-   - `review-architecture`
-   - `review-frontend` when UI/browser/client changes are relevant
-   - `review-devops` when CI, deployment, shell, hooks, package scripts, or
-     infrastructure are relevant
-   - `review-performance` when hot paths, query behavior, caching, large data, or
-     expensive rendering are relevant
-   - `review-observability` when runtime diagnostics, logs, metrics, traces,
-     health checks, or operational workflows are relevant
+6. Harvest candidate issues according to the current review profile:
+   - `light`: orchestrator harvest; verifier only if candidates/escalation risk
+   - `standard`: orchestrator harvest plus targeted specialists for concrete
+     changed domains
+   - `thorough`: full specialist roster
 7. Run `review-verifier` with the Agent tool.
 8. Batch-fix verified findings in severity order.
 9. Re-run deterministic checks and targeted review for changed surfaces.
@@ -44,6 +36,7 @@ Write exactly one of these values to `$(dk_review_result_file "$SESSION_ID")`:
 - `FINDINGS_FIXED:N`
 - `FINDINGS:N`
 - `BLOCKED:reason`
+- `ESCALATE_THOROUGH:reason`
 
 `CLEAN` is allowed only when this wave found zero verified findings and applied
 zero fixes.
@@ -55,6 +48,9 @@ counter. Do not keep reviewing inside the same iteration just to turn it into
 
 If verified findings remain, write `FINDINGS:N`. If required tooling/context is
 missing and cannot be resolved locally, write `BLOCKED:reason`.
+
+If the current review profile is too shallow for the observed risk, write
+`ESCALATE_THOROUGH:reason` so the outer loop restarts with thorough review.
 
 If the Agent tool is unavailable for specialist review or verifier triage, write
 `BLOCKED:agent-tool-unavailable`; do not simulate the specialist wave inside the
@@ -75,8 +71,8 @@ All of these must be true before you stop:
 - The full current change set was reviewed.
 - The context pack was created or refreshed.
 - Deterministic checks were run or explicitly marked unavailable.
-- Specialist reviewer reports were gathered, with non-applicable domains marked
-  `N/A`.
+- Candidate issues were harvested for the current profile, with non-applicable
+  specialist domains marked `N/A`.
 - Findings were verified before any fix was applied.
 - Verified findings were batch-fixed when safe, then rechecked.
 - The review result signal file contains one allowed result value.

@@ -79,7 +79,7 @@ dk_migrate_legacy_session_state() {
   [[ -n "$legacy_id" && -n "$scoped_id" && "$legacy_id" != "$scoped_id" ]] || return 0
 
   if [[ -d "$DK_STATE_DIR" ]]; then
-    for suffix in phase times system-context log branch; do
+    for suffix in phase times system-context log branch meta; do
       old_file="${DK_STATE_DIR}/${legacy_id}.${suffix}"
       new_file="${DK_STATE_DIR}/${scoped_id}.${suffix}"
       __dk_migrate_legacy_session_file "$old_file" "$new_file" "$scoped_id"
@@ -172,6 +172,135 @@ dk_log_file() { echo "${DK_STATE_DIR}/${1}.log"; }
 
 # dk_branch_file <session_id> — branch last used by this lifecycle session
 dk_branch_file() { echo "${DK_STATE_DIR}/${1}.branch"; }
+
+# dk_meta_file <session_id> — per-session metadata sidecar (ticket id, tracker key,
+# workspace dir/mode, original input). Used to resume a lifecycle by ticket
+# number even when the worktree dir or branch has been renamed.
+dk_meta_file() { echo "${DK_STATE_DIR}/${1}.meta"; }
+
+# dk_meta_read <session_id> <key>
+# Print the value for <key> from the session meta sidecar, or empty if missing.
+dk_meta_read() {
+  local session_id="$1" key="$2" meta_file
+  [[ -n "$session_id" && -n "$key" ]] || return 0
+  meta_file=$(dk_meta_file "$session_id")
+  [[ -f "$meta_file" ]] || return 0
+  awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$meta_file" 2>/dev/null
+}
+
+# dk_meta_write <session_id> [key=value ...]
+# Merge key/value pairs into the session meta sidecar. Existing keys are
+# overwritten; unspecified keys are preserved. Creation time is only set the
+# first time the file is written. Safe to call repeatedly. Bash/zsh compatible:
+# uses awk to merge so we avoid associative arrays.
+dk_meta_write() {
+  local session_id="$1"; shift
+  local meta_file tmp_file overrides_input now_epoch pair
+  [[ -n "$session_id" ]] || return 0
+  [[ $# -gt 0 ]] || return 0
+
+  meta_file=$(dk_meta_file "$session_id")
+  mkdir -p "$(dirname "$meta_file")"
+  now_epoch=$(date +%s)
+
+  # Build a TAB-separated key<TAB>value stream of overrides, including
+  # updated_at. created_at is added only when the file is new.
+  overrides_input=""
+  for pair in "$@"; do
+    [[ "$pair" == *=* ]] || continue
+    local k="${pair%%=*}" v="${pair#*=}"
+    [[ -n "$k" ]] || continue
+    [[ "$k" == "created_at" || "$k" == "updated_at" ]] && continue
+    overrides_input+=$(printf '%s\t%s\n' "$k" "$v")
+    overrides_input+=$'\n'
+  done
+  overrides_input+=$(printf '%s\t%s\n' "updated_at" "$now_epoch")
+  overrides_input+=$'\n'
+  if [[ ! -f "$meta_file" ]]; then
+    overrides_input+=$(printf '%s\t%s\n' "created_at" "$now_epoch")
+    overrides_input+=$'\n'
+  fi
+
+  tmp_file="${meta_file}.tmp.$$"
+  if ! printf '%s' "$overrides_input" | awk -F'\t' -v meta="$meta_file" '
+    BEGIN {
+      ok = 1
+    }
+    NF >= 2 {
+      key = $1
+      val = $0
+      sub(/^[^\t]*\t/, "", val)
+      overrides[key] = val
+      order[++n] = key
+    }
+    END {
+      # First, emit existing lines (preserve order), substituting overridden values
+      # and recording which keys we have already written.
+      if ((getline _ < meta) >= 0) {
+        close(meta)
+        while ((getline line < meta) > 0) {
+          if (line == "") continue
+          eq = index(line, "=")
+          if (eq == 0) {
+            print line
+            continue
+          }
+          k = substr(line, 1, eq - 1)
+          if (k in overrides) {
+            print k "=" overrides[k]
+            seen[k] = 1
+          } else {
+            print line
+          }
+        }
+        close(meta)
+      }
+      for (i = 1; i <= n; i++) {
+        k = order[i]
+        if (!(k in seen)) {
+          print k "=" overrides[k]
+          seen[k] = 1
+        }
+      }
+    }
+  ' > "$tmp_file"; then
+    command rm -f "$tmp_file" 2>/dev/null
+    return 1
+  fi
+
+  if ! command mv -f "$tmp_file" "$meta_file"; then
+    command rm -f "$tmp_file" 2>/dev/null
+    return 1
+  fi
+}
+
+# dk_meta_find_workspace_by_ticket <ticket_number>
+# Scan meta sidecars in the current repo's session scope and print the first
+# match as a TAB-separated record: session_id<TAB>wt_name<TAB>wt_dir<TAB>workspace_mode.
+# Used to resume by ticket number when the conventional ticket-N directory
+# does not exist (e.g. the worktree was originally named task-*).
+dk_meta_find_workspace_by_ticket() {
+  local ticket="$1" repo_key
+  [[ -n "$ticket" ]] || return 1
+  [[ -d "$DK_STATE_DIR" ]] || return 1
+  repo_key=$(dk_session_repo_key)
+
+  local meta_file session_id ticket_in_file wt_name wt_dir workspace_mode
+  while IFS= read -r meta_file; do
+    [[ -n "$meta_file" && -f "$meta_file" ]] || continue
+    session_id="$(basename "$meta_file" .meta)"
+    ticket_in_file=$(awk -F= '$1 == "ticket_number" { sub(/^[^=]*=/, ""); print; exit }' "$meta_file" 2>/dev/null)
+    [[ "$ticket_in_file" == "$ticket" ]] || continue
+    wt_name=$(awk -F= '$1 == "wt_name" { sub(/^[^=]*=/, ""); print; exit }' "$meta_file" 2>/dev/null)
+    wt_dir=$(awk -F= '$1 == "wt_dir" { sub(/^[^=]*=/, ""); print; exit }' "$meta_file" 2>/dev/null)
+    workspace_mode=$(awk -F= '$1 == "workspace_mode" { sub(/^[^=]*=/, ""); print; exit }' "$meta_file" 2>/dev/null)
+    [[ -n "$wt_name" && -n "$wt_dir" ]] || continue
+    [[ -d "$wt_dir" ]] || continue
+    printf '%s\t%s\t%s\t%s\n' "$session_id" "$wt_name" "$wt_dir" "${workspace_mode:-worktree}"
+    return 0
+  done < <(find "$DK_STATE_DIR" -maxdepth 1 -type f -name "${repo_key}-*.meta" -print 2>/dev/null)
+  return 1
+}
 
 # dk_findings_file <session_id> — findings hash history for stuck loop detection
 dk_findings_file() { echo "${DK_LOOP_DIR}/${1}.findings"; }
@@ -439,5 +568,5 @@ dk_cleanup_session() {
     rm -f "$(dk_loop_file "$sid")" "$(dk_complete_file "$sid")" "$(dk_active_file "$sid")" "$(dk_prompt_file "$sid")" "$(dk_findings_file "$sid")" "$(dk_debt_file "$sid")" "$(dk_loop_config_file "$sid")" "$(dk_handoff_mode_file "$sid")" "$(dk_paused_file "$sid")" "$(dk_watch_pause_file "$sid")" "$(dk_watch_lock_file "$sid" ci)" "$(dk_watch_lock_file "$sid" pr)" "$(dk_review_state_file "$sid")" "$(dk_review_result_file "$sid")" "$(dk_review_context_file "$sid")" "$(dk_complete_state_file "$sid")" "$(dk_provider_state_file "$sid")" 2>/dev/null
     find "$DK_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" \) -exec rm -f {} + 2>/dev/null || true
   fi
-  [[ -d "$DK_STATE_DIR" ]] && rm -f "$(dk_state_file "$sid")" "$(dk_times_file "$sid")" "$(dk_context_file "$sid")" "$(dk_log_file "$sid")" "$(dk_branch_file "$sid")" 2>/dev/null
+  [[ -d "$DK_STATE_DIR" ]] && rm -f "$(dk_state_file "$sid")" "$(dk_times_file "$sid")" "$(dk_context_file "$sid")" "$(dk_log_file "$sid")" "$(dk_branch_file "$sid")" "$(dk_meta_file "$sid")" 2>/dev/null
 }

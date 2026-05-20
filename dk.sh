@@ -16,13 +16,14 @@
 #   dk --resume             Resume the most recent session
 #   dk --from-pr <N>        Resume session linked to a PR
 #   dkcomplete              Standalone completion workflow (recovery / non-dk PRs)
-#   dkreviewloop            Standalone 3-clean-passes review of the full current change set
+#   dkreviewloop            Standalone adaptive review of the full current change set
 #   dkrm <number|name|--all>  Remove a worktree
 #   dkls                   List worktrees
 #   dkclean                Clean stale worktrees + gone branches
 #   dkloop <prompt>         Run a prompt until fully implemented
 #   dk sync                 Refresh repo memory/rules from verified observations
 #   dk maintain             Run background maintenance or install workflow
+#   dk tools                Check or repair Claude/Codex tooling bootstrap
 
 if [[ -z "${DOYAKEN_DIR:-}" ]]; then
   echo "ERROR: DOYAKEN_DIR not set. Run 'dk install' first." >&2
@@ -45,6 +46,7 @@ doyaken() {
     init)      bash "$DOYAKEN_DIR/bin/init.sh" "$@" ;;
     sync)      bash "$DOYAKEN_DIR/bin/sync.sh" "$@" ;;
     maintain)  bash "$DOYAKEN_DIR/bin/maintain.sh" "$@" ;;
+    tools)     bash "$DOYAKEN_DIR/bin/tools.sh" "$@" ;;
     config)    bash "$DOYAKEN_DIR/bin/config.sh" "$@" ;;
     provider)  dk_provider_command "$@" ;;
     uninit)    bash "$DOYAKEN_DIR/bin/uninit.sh" "$@" ;;
@@ -62,6 +64,7 @@ doyaken() {
       echo "  dk init             Bootstrap current repo for Doyaken"
       echo "  dk sync             Refresh repo memory/rules from verified observations"
       echo "  dk maintain         Run background maintenance or install the GitHub workflow"
+      echo "  dk tools            Check or repair Claude/Codex tooling bootstrap"
       echo "  dk config           Configure integrations (ticket tracker, Figma, etc.)"
       echo "  dk provider         Configure provider/model execution profiles"
       echo "  dk uninit           Remove Doyaken from current repo"
@@ -87,7 +90,7 @@ doyaken() {
       echo "Standalone completion (recovery / non-dk PRs):"
       echo "  dkcomplete             Monitor CI/reviews, address comments, close ticket"
       echo ""
-      echo "Standalone review (3-clean-passes loop, no full lifecycle needed):"
+      echo "Standalone review (adaptive clean-pass loop, no full lifecycle needed):"
       echo "  dkreviewloop           Review the full current change set"
       echo ""
       echo "Prompt loop:"
@@ -95,10 +98,10 @@ doyaken() {
       echo ""
       echo "Autonomous lifecycle phases (run automatically by dk):"
       echo "  1. Plan            Gather context, draft plan, get approval"
-      echo "  2. Implement       Work through tasks with TDD"
-      echo "  3. Review          Adversarial code review (3 clean passes required)"
+      echo "  2. Implement       Work through tasks with TDD; capture UI before/after evidence"
+      echo "  3. Review          Adaptive adversarial code review"
       echo "  4. Verify & Commit Format, lint, typecheck, test, then commit + push"
-      echo "  5. PR              Generate PR description, create draft PR + attach reviewers"
+      echo "  5. PR              Generate PR description, prepare visual handoff, create draft PR + attach reviewers"
       echo "  6. Complete        Mark ready, request reviewers, monitor CI/reviews, close ticket"
       ;;
     revert)
@@ -208,9 +211,13 @@ __dk_phase_message() {
   local raw_input="${2:-}"
   local workspace_mode="${3:-worktree}"
   local wt_dir="${4:-}"
-  if [[ "$step" -eq 1 ]]; then
+  if [[ "$step" -eq 0 ]]; then
+    printf '%s\n' "$DK_PHASE_0_MESSAGE"
+  elif [[ "$step" -eq 1 ]]; then
     cat <<'EOF'
-Call EnterPlanMode now. Then immediately invoke the dkplan skill using the Skill tool with skill: "dkplan" (or /dkplan if slash skills are the available interface). Do not fetch the ticket, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dkplan skill unless the skill explicitly instructs you to.
+Phase 0 setup (branch rename, push, ticket status → In Progress, assignment) is already complete. Do NOT redo it unless you find it missing.
+
+Call EnterPlanMode now. Then immediately invoke the dkplan skill using the Skill tool with skill: "dkplan" (or /dkplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dkplan skill unless the skill explicitly instructs you to.
 
 The dkplan skill writes the required Phase 1 lifecycle markers. After the user approves the plan via ExitPlanMode, follow the dkplan completion instructions, then stop once so the Doyaken Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt.
 EOF
@@ -230,9 +237,12 @@ EOF
   fi
 }
 
-# Phase definitions (zsh arrays are 1-indexed, so index 1 = Phase 1)
-# Phases 1-6 all run autonomously via `dk`. Phase 6 marks the PR ready, requests
-# the configured reviewers, monitors CI/reviews, and closes the ticket.
+# Phase definitions (zsh arrays are 1-indexed, so index 1 = Phase 1).
+# Phase 0 (Setup) bootstraps ticket state before planning begins; its constants
+# live in the DK_PHASE_0_* variables and the __dk_phase_* helpers below, kept
+# out of the 1-indexed arrays because zsh aliases arr[0] to arr[1]. Phases 1-6
+# then run autonomously via `dk`. Phase 6 marks the PR ready, requests the
+# configured reviewers, monitors CI/reviews, and closes the ticket.
 DK_PHASE_NAMES=("Plan" "Implement" "Review" "Verify & Commit" "PR" "Complete")
 
 DK_PHASE_PROMISES=(\
@@ -245,16 +255,69 @@ DK_PHASE_PROMISES=(\
 )
 
 DK_PHASE_MESSAGES=(\
-  "Call EnterPlanMode now, then immediately invoke the dkplan skill. Do not perform ticket setup, exploration, or planning by hand outside dkplan unless the skill explicitly instructs you to. After the user approves the plan via ExitPlanMode, write the Phase 1 approval marker and stop once so the Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt." \
-  "The plan is approved. You MUST invoke the Skill tool with skill: \"dkimplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. For UI-affecting changes, Phase 2 must invoke dkuicapture and link screenshots/videos/traces before stopping. SCOPE BOUNDARIES: implementation, testing, and UI capture evidence ONLY. Do NOT commit, push, create branches, or create PRs during this phase — those are handled by later phases. When done, stop — the audit loop will verify your work." \
-  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dkreviewloop\" to run the 3-clean-pass review loop. Each pass is a full review wave: context pack, deterministic checks, read-only specialist reviewers, verifier triage, batch fixes, and targeted recheck. Only waves that find zero verified findings and apply zero fixes count as CLEAN. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, create branches, or create PRs. When the review loop is successful, stop — the audit loop will verify." \
+  "Call EnterPlanMode now, then immediately invoke the dkplan skill. Do not perform exploration or planning by hand outside dkplan unless the skill explicitly instructs you to. Ticket setup (branch rename, status update, assignment, push) was already done in Phase 0; if anything looks incomplete (status still Backlog/Todo, no assignee, branch not renamed/pushed), finish it before calling EnterPlanMode. After the user approves the plan via ExitPlanMode, write the Phase 1 approval marker and stop once so the Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dkimplement and do NOT wait for another prompt." \
+  "The plan is approved. You MUST invoke the Skill tool with skill: \"dkimplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. For UI-affecting changes, Phase 2 must invoke dkuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. SCOPE BOUNDARIES: implementation, testing, and UI capture evidence ONLY. Do NOT commit, push, create branches, or create PRs during this phase — those are handled by later phases. When done, stop — the audit loop will verify your work." \
+  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dkreviewloop\" to run the adaptive clean-pass review loop. Each pass is a full review wave: compact context pack, deterministic checks, orchestrator issue harvest, verifier triage when needed, batch fixes, and targeted recheck. Small low-risk changes may use fewer clean passes; high-risk changes must escalate to thorough review. Only waves that find zero verified findings and apply zero fixes count as CLEAN. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, create branches, or create PRs. When the review loop is successful, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dkverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dkcommit\" to commit and push. SCOPE BOUNDARIES: verify and commit ONLY. Do NOT create PRs or modify implementation beyond fixing verify failures. When pushed, stop — the audit loop will verify." \
-  "Invoke the Skill tool with skill: \"dkpr\" to generate the PR description, create the draft PR, and attach the configured 'request' reviewers from doyaken.md § Reviewers. SCOPE BOUNDARIES: PR creation and description ONLY. Do NOT mark the PR ready for review (Phase 6 owns that), do NOT post @mention comments, do NOT modify implementation code. When done, stop — the audit loop will verify." \
-  "Invoke the Skill tool with skill: \"dkcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from doyaken.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 2m /dkwatchci and /loop 5m /dkwatchpr, wait DOYAKEN_COMPLETE_WAIT_MINUTES per cycle, address comments via /dkprreview, re-request reviewers after each push, and close the ticket when CI is green and all reviewers have approved. Stop — the audit loop will verify." \
+  "Invoke the Skill tool with skill: \"dkpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from doyaken.md § Reviewers. SCOPE BOUNDARIES: PR creation, description, and artifact handoff ONLY. Do NOT mark the PR ready for review (Phase 6 owns that), do NOT post @mention comments, do NOT modify implementation code. When done, stop — the audit loop will verify." \
+  "Invoke the Skill tool with skill: \"dkcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from doyaken.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dkwatchpr, wait DOYAKEN_COMPLETE_WAIT_MINUTES per cycle, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all reviewers have approved. If the bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
 )
 
 # Audit prompt file basenames (must match prompts/phase-audits/ filenames)
 DK_PHASE_AUDIT_FILES=("1-plan" "2-implement" "3-review-loop" "4-verify" "5-pr" "6-complete")
+
+# Phase 0 (Setup) constants — kept out of the 1-indexed arrays to avoid zsh's
+# arr[0]==arr[1] aliasing. Surfaced through the __dk_phase_* helpers below.
+DK_PHASE_0_NAME="Setup"
+DK_PHASE_0_PROMISE="PHASE_0_COMPLETE"
+DK_PHASE_0_AUDIT_FILE="0-setup"
+DK_PHASE_0_MIN_AUDITS="1"
+DK_PHASE_0_TIMEOUT="0"
+DK_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (c) rename the lifecycle branch to the tracker's git branch name and push it (do NOT create a draft PR — Phase 5 owns that); (d) set ticket status to In Progress; (e) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, push the current lifecycle branch and proceed. SCOPE BOUNDARIES: ticket setup only — do NOT call EnterPlanMode, do NOT draft a plan, do NOT implement, do NOT commit source code, do NOT create a draft PR. When setup is complete, write the Phase 0 ready marker (\`dk_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dkplan and do NOT wait for another prompt."
+
+# __dk_phase_name <step>
+# Display name for the given phase number. Centralises Phase 0 (kept out of
+# DK_PHASE_NAMES) without forcing callers to special-case the array lookup.
+__dk_phase_name() {
+  case "$1" in
+    0) printf '%s' "$DK_PHASE_0_NAME" ;;
+    *) printf '%s' "${DK_PHASE_NAMES[$1]:-Unknown}" ;;
+  esac
+}
+
+# __dk_phase_promise <step>
+__dk_phase_promise() {
+  case "$1" in
+    0) printf '%s' "$DK_PHASE_0_PROMISE" ;;
+    *) printf '%s' "${DK_PHASE_PROMISES[$1]:-DOYAKEN_TICKET_COMPLETE}" ;;
+  esac
+}
+
+# __dk_phase_audit_basename <step>
+__dk_phase_audit_basename() {
+  case "$1" in
+    0) printf '%s' "$DK_PHASE_0_AUDIT_FILE" ;;
+    *) printf '%s' "${DK_PHASE_AUDIT_FILES[$1]:-}" ;;
+  esac
+}
+
+# __dk_phase_min_audits <step>
+# Respects DOYAKEN_PHASE_<step>_MIN_AUDITS env override; falls back to defaults.
+__dk_phase_min_audits() {
+  # shellcheck disable=SC2034  # used via zsh ${(P)env_name} indirect expansion below
+  local step="$1" env_name value
+  # shellcheck disable=SC2034
+  env_name="DOYAKEN_PHASE_${step}_MIN_AUDITS"
+  value="${(P)env_name:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return
+  fi
+  case "$step" in
+    0) printf '%s' "$DK_PHASE_0_MIN_AUDITS" ;;
+    *) printf '%s' "${DK_PHASE_MIN_AUDITS[$step]:-1}" ;;
+  esac
+}
 
 # Session timeout in seconds — single budget for the entire dk run (all phases).
 # Default: 86400 (24 hours). Set to 0 to disable.
@@ -273,18 +336,29 @@ DK_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 # Review sub-loop configuration.
 # Lifecycle Phase 3 uses the /dkreviewloop skill in the same Claude session.
 # The standalone dkreviewloop shell command also uses these defaults.
-# DK_REVIEW_CLEAN_PASSES: consecutive CLEAN review waves required to advance.
-# DK_REVIEW_MAX_ITERATIONS: safety net — stop after this many iterations regardless.
-# Override: DOYAKEN_REVIEW_CLEAN_PASSES=5, DOYAKEN_REVIEW_MAX_ITERATIONS=25
-DK_REVIEW_CLEAN_PASSES=3
-DK_REVIEW_MAX_ITERATIONS=20
+# DK_REVIEW_PROFILE: auto|light|standard|thorough.
+# Auto chooses a starting depth from diff size/risk; review waves may escalate.
+# Override depth: DOYAKEN_REVIEW_PROFILE=thorough
+# Override exact loop gates: DOYAKEN_REVIEW_CLEAN_PASSES=5 DOYAKEN_REVIEW_MAX_ITERATIONS=25
+DK_REVIEW_PROFILE=auto
+DK_REVIEW_LIGHT_CLEAN_PASSES=1
+DK_REVIEW_STANDARD_CLEAN_PASSES=2
+DK_REVIEW_THOROUGH_CLEAN_PASSES=3
+DK_REVIEW_LIGHT_MAX_ITERATIONS=4
+DK_REVIEW_STANDARD_MAX_ITERATIONS=6
+DK_REVIEW_THOROUGH_MAX_ITERATIONS=10
+# Backward-compatible fallback for callers that source these constants directly.
+# shellcheck disable=SC2034
+DK_REVIEW_CLEAN_PASSES=$DK_REVIEW_THOROUGH_CLEAN_PASSES
+# shellcheck disable=SC2034
+DK_REVIEW_MAX_ITERATIONS=$DK_REVIEW_THOROUGH_MAX_ITERATIONS
 
 # Phase 6 (Complete) cycle configuration.
 # DK_COMPLETE_MAX_CYCLES: max review cycles before escalating to user (default 3).
-# DK_COMPLETE_WAIT_MINUTES: minimum wait window per cycle in minutes (default 30).
-# Override: DOYAKEN_COMPLETE_MAX_CYCLES=5, DOYAKEN_COMPLETE_WAIT_MINUTES=15
+# DK_COMPLETE_WAIT_MINUTES: minimum wait window per cycle in minutes (default 5).
+# Override: DOYAKEN_COMPLETE_MAX_CYCLES=5, DOYAKEN_COMPLETE_WAIT_MINUTES=10
 DK_COMPLETE_MAX_CYCLES=3
-DK_COMPLETE_WAIT_MINUTES=30
+DK_COMPLETE_WAIT_MINUTES=5
 
 # Per-phase timeouts are disabled by default (session timeout covers them).
 # Set per-phase: DOYAKEN_PHASE_2_TIMEOUT=3600
@@ -319,7 +393,117 @@ __dk_phase_timeout() {
   elif [[ -n "${DOYAKEN_PHASE_TIMEOUT:-}" ]]; then
     echo "$DOYAKEN_PHASE_TIMEOUT"
   else
-    echo "${DK_PHASE_TIMEOUTS[$step]:-0}"
+    case "$step" in
+      0) echo "$DK_PHASE_0_TIMEOUT" ;;
+      *) echo "${DK_PHASE_TIMEOUTS[$step]:-0}" ;;
+    esac
+  fi
+}
+
+# __dk_review_profile_clean_passes <profile>
+# Print the default consecutive CLEAN waves required for a review profile.
+unalias __dk_review_profile_clean_passes 2>/dev/null; unfunction __dk_review_profile_clean_passes 2>/dev/null
+__dk_review_profile_clean_passes() {
+  case "$1" in
+    light) echo "$DK_REVIEW_LIGHT_CLEAN_PASSES" ;;
+    standard) echo "$DK_REVIEW_STANDARD_CLEAN_PASSES" ;;
+    thorough) echo "$DK_REVIEW_THOROUGH_CLEAN_PASSES" ;;
+    *) echo "$DK_REVIEW_THOROUGH_CLEAN_PASSES" ;;
+  esac
+}
+
+# __dk_review_profile_max_iterations <profile>
+# Print the default safety-net iteration count for a review profile.
+unalias __dk_review_profile_max_iterations 2>/dev/null; unfunction __dk_review_profile_max_iterations 2>/dev/null
+__dk_review_profile_max_iterations() {
+  case "$1" in
+    light) echo "$DK_REVIEW_LIGHT_MAX_ITERATIONS" ;;
+    standard) echo "$DK_REVIEW_STANDARD_MAX_ITERATIONS" ;;
+    thorough) echo "$DK_REVIEW_THOROUGH_MAX_ITERATIONS" ;;
+    *) echo "$DK_REVIEW_THOROUGH_MAX_ITERATIONS" ;;
+  esac
+}
+
+# __dk_review_is_doc_path <path>
+# Return 0 when a changed path is documentation-only for review-depth purposes.
+unalias __dk_review_is_doc_path 2>/dev/null; unfunction __dk_review_is_doc_path 2>/dev/null
+__dk_review_is_doc_path() {
+  case "$1" in
+    README|README.*|CHANGELOG|CHANGELOG.*|LICENSE|LICENSE.*|docs/*|*.md|*.mdx|*.rst|*.txt)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
+# __dk_review_is_high_risk_path <path>
+# Return 0 when a changed path should start at thorough review.
+unalias __dk_review_is_high_risk_path 2>/dev/null; unfunction __dk_review_is_high_risk_path 2>/dev/null
+__dk_review_is_high_risk_path() {
+  case "$1" in
+    dk.sh|install.sh|bin/*|hooks/*|lib/*|settings.json|.github/workflows/*|Dockerfile|Dockerfile.*|docker-compose.*|compose.*|package-lock.json|pnpm-lock.yaml|yarn.lock|Cargo.lock|go.sum|*.lock)
+      return 0 ;;
+  esac
+
+  case "$1" in
+    *auth*|*Auth*|*security*|*Security*|*permission*|*Permission*|*guard*|*Guard*|*secret*|*Secret*|*payment*|*Payment*|*billing*|*Billing*|*migration*|*Migration*|*schema*|*Schema*)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
+# __dk_review_auto_profile <committed_ref>
+# Choose a conservative starting review profile from the current diff.
+unalias __dk_review_auto_profile 2>/dev/null; unfunction __dk_review_auto_profile 2>/dev/null
+__dk_review_auto_profile() {
+  local committed_ref="$1"
+  local file_count=0 total_lines=0 docs_only=1 high_risk=0
+  local file add del changed_path line_count
+
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    file_count=$((file_count + 1))
+    __dk_review_is_doc_path "$file" || docs_only=0
+    __dk_review_is_high_risk_path "$file" && high_risk=1
+  done < <(
+    {
+      [[ -n "$committed_ref" ]] && git diff "$committed_ref" --name-only 2>/dev/null
+      git diff --cached --name-only 2>/dev/null
+      git diff --name-only 2>/dev/null
+      git ls-files --others --exclude-standard 2>/dev/null
+    } | sort -u
+  )
+
+  while IFS=$'\t' read -r add del changed_path; do
+    [[ -n "$changed_path" ]] || continue
+    [[ "$add" =~ ^[0-9]+$ ]] || add=0
+    [[ "$del" =~ ^[0-9]+$ ]] || del=0
+    total_lines=$((total_lines + add + del))
+  done < <(
+    {
+      [[ -n "$committed_ref" ]] && git diff "$committed_ref" --numstat 2>/dev/null
+      git diff --cached --numstat 2>/dev/null
+      git diff --numstat 2>/dev/null
+      while IFS= read -r file; do
+        [[ -f "$file" ]] || continue
+        line_count=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+        [[ "$line_count" =~ ^[0-9]+$ ]] || line_count=0
+        printf '%s\t0\t%s\n' "$line_count" "$file"
+      done < <(git ls-files --others --exclude-standard 2>/dev/null)
+    }
+  )
+
+  if [[ "$file_count" -eq 0 ]]; then
+    echo "standard"
+  elif [[ "$docs_only" -eq 1 ]]; then
+    echo "light"
+  elif [[ "$high_risk" -eq 1 || "$file_count" -gt 8 || "$total_lines" -gt 400 ]]; then
+    echo "thorough"
+  elif [[ "$file_count" -le 2 && "$total_lines" -le 80 ]]; then
+    echo "light"
+  else
+    echo "standard"
   fi
 }
 
@@ -424,7 +608,7 @@ __dk_active_in_place_phase_for_branch() {
     [[ "$candidate_branch" == "$branch" ]] || continue
 
     phase_val=$(cat "$phase_path" 2>/dev/null || echo "")
-    [[ "$phase_val" =~ ^[1-6]$ ]] || continue
+    [[ "$phase_val" =~ ^[0-6]$ ]] || continue
     printf '%s\n' "$phase_val"
     return 0
   done < <(find "$DK_STATE_DIR" -maxdepth 1 -type f -name "${repo_key}-inplace-*.phase" -print 2>/dev/null)
@@ -443,7 +627,7 @@ __dk_active_in_place_phase_for_workspace() {
   [[ -f "$phase_file" ]] || return 1
 
   phase_val=$(cat "$phase_file" 2>/dev/null || echo "")
-  [[ "$phase_val" =~ ^[1-6]$ ]] || return 1
+  [[ "$phase_val" =~ ^[0-6]$ ]] || return 1
 
   branch_file=$(dk_branch_file "$session_id")
   if [[ -f "$branch_file" ]]; then
@@ -533,6 +717,36 @@ __dk_parse_last_session() {
   _dk_session_id=$(__dk_session_id_for_workspace "$_dk_workspace_mode" "$_dk_wt_name")
 }
 
+# __dk_resolve_existing_workspace_by_ticket <ticket_number>
+# Look up an already-created worktree/in-place workspace for a given ticket
+# number using the meta sidecars written at creation time. Sets the same
+# globals __dk_setup_worktree would set when a matching workspace is found.
+# Returns 0 on match, 1 otherwise. Used as a fallback when the conventional
+# ticket-N directory does not exist (e.g. the worktree was originally created
+# with a freeform description and the agent later linked it to a ticket).
+__dk_resolve_existing_workspace_by_ticket() {
+  local ticket="$1" record session_id wt_name wt_dir workspace_mode
+  [[ -n "$ticket" ]] || return 1
+
+  record=$(dk_meta_find_workspace_by_ticket "$ticket") || return 1
+  [[ -n "$record" ]] || return 1
+
+  session_id="${record%%$'\t'*}"
+  record="${record#*$'\t'}"
+  wt_name="${record%%$'\t'*}"
+  record="${record#*$'\t'}"
+  wt_dir="${record%%$'\t'*}"
+  workspace_mode="${record#*$'\t'}"
+
+  _dk_wt_name="$wt_name"
+  _dk_wt_dir="$wt_dir"
+  _dk_workspace_mode="${workspace_mode:-worktree}"
+  _dk_session_id="$session_id"
+  _dk_is_task=0
+  [[ "$wt_name" == task-* ]] && _dk_is_task=1
+  return 0
+}
+
 # __dk_setup_worktree <raw_input>
 # Sets: _dk_wt_name, _dk_wt_dir, _dk_is_task, _dk_repo_root, _dk_default_branch,
 # _dk_workspace_mode, _dk_session_id.
@@ -553,7 +767,28 @@ __dk_setup_worktree() {
   if [[ -d "$_dk_wt_dir" ]]; then
     dk_link_claude_to_worktree "$_dk_repo_root" "$_dk_wt_dir"
     dk_record_session_branch "$_dk_session_id" "$_dk_wt_dir"
+    dk_meta_write "$_dk_session_id" "wt_name=${_dk_wt_name}" "wt_dir=${_dk_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}"
+    [[ $_dk_is_task -eq 0 ]] && dk_meta_write "$_dk_session_id" "ticket_number=${_dk_wt_name#ticket-}"
     return 0
+  fi
+
+  # Ticket-aware fallback: when the caller passed a numeric/ticket-like ID but
+  # the conventional ticket-N directory is missing, scan meta sidecars to see
+  # if another worktree (e.g. a task-* dir created before the ticket existed)
+  # already represents this ticket. Resume that one instead of creating a new
+  # worktree.
+  if [[ $_dk_is_task -eq 0 ]]; then
+    local ticket_number="${_dk_wt_name#ticket-}"
+    if [[ -n "$ticket_number" ]] && __dk_resolve_existing_workspace_by_ticket "$ticket_number"; then
+      if [[ "$_dk_workspace_mode" == "worktree" ]]; then
+        dk_link_claude_to_worktree "$_dk_repo_root" "$_dk_wt_dir"
+      fi
+      _dk_default_branch=$(dk_default_branch "$_dk_wt_dir")
+      dk_record_session_branch "$_dk_session_id" "$_dk_wt_dir"
+      dk_meta_write "$_dk_session_id" "ticket_number=${ticket_number}"
+      dk_info "Resuming existing workspace ${_dk_wt_name} for ticket ${ticket_number}"
+      return 0
+    fi
   fi
 
   # Auto-init if .doyaken doesn't exist yet
@@ -575,6 +810,8 @@ __dk_setup_worktree() {
   # Share .claude/ config and MCP auth with main repo
   dk_link_claude_to_worktree "$_dk_repo_root" "$_dk_wt_dir"
   dk_record_session_branch "$_dk_session_id" "$_dk_wt_dir"
+  dk_meta_write "$_dk_session_id" "wt_name=${_dk_wt_name}" "wt_dir=${_dk_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}" "original_branch=worktree-${_dk_wt_name}"
+  [[ $_dk_is_task -eq 0 ]] && dk_meta_write "$_dk_session_id" "ticket_number=${_dk_wt_name#ticket-}"
 
   return 0
 }
@@ -652,7 +889,29 @@ __dk_setup_in_place() {
   if [[ -f "$(dk_state_file "$_dk_session_id")" ]]; then
     dk_info "Using current checkout for existing in-place session ${_dk_wt_name}"
     __dk_restore_in_place_session_branch "$_dk_session_id" "$_dk_wt_name" "$_dk_wt_dir" "dk --no-worktree ${raw_input}"
-    return $?
+    local _rc=$?
+    if [[ $_rc -eq 0 ]]; then
+      dk_meta_write "$_dk_session_id" "wt_name=${_dk_wt_name}" "wt_dir=${_dk_wt_dir}" "workspace_mode=in-place" "raw_input=${raw_input}"
+      [[ $_dk_is_task -eq 0 ]] && dk_meta_write "$_dk_session_id" "ticket_number=${_dk_wt_name#ticket-}"
+    fi
+    return $_rc
+  fi
+
+  # Ticket-aware fallback: if the user passed a numeric ticket but no in-place
+  # session exists yet for ticket-N, see if another workspace already represents
+  # this ticket (created earlier with a freeform description) and resume that.
+  if [[ $_dk_is_task -eq 0 ]]; then
+    local _ticket_number="${_dk_wt_name#ticket-}"
+    if [[ -n "$_ticket_number" ]] && __dk_resolve_existing_workspace_by_ticket "$_ticket_number"; then
+      if [[ "$_dk_workspace_mode" == "worktree" ]]; then
+        dk_link_claude_to_worktree "$_dk_repo_root" "$_dk_wt_dir"
+      fi
+      _dk_default_branch=$(dk_default_branch "$_dk_wt_dir")
+      dk_record_session_branch "$_dk_session_id" "$_dk_wt_dir"
+      dk_meta_write "$_dk_session_id" "ticket_number=${_ticket_number}"
+      dk_info "Resuming existing workspace ${_dk_wt_name} for ticket ${_ticket_number}"
+      return 0
+    fi
   fi
 
   if [[ "$current_branch" == "$branch_name" ]]; then
@@ -693,6 +952,8 @@ __dk_setup_in_place() {
   fi
 
   dk_record_session_branch "$_dk_session_id" "$_dk_wt_dir"
+  dk_meta_write "$_dk_session_id" "wt_name=${_dk_wt_name}" "wt_dir=${_dk_wt_dir}" "workspace_mode=in-place" "raw_input=${raw_input}" "original_branch=${branch_name}"
+  [[ $_dk_is_task -eq 0 ]] && dk_meta_write "$_dk_session_id" "ticket_number=${_dk_wt_name#ticket-}"
   return 0
 }
 
@@ -712,8 +973,13 @@ __dk_build_system_context() {
   # Build phase-specific scope boundaries
   local scope_lines=""
   case $step in
+    0) scope_lines="- DO read the ticket, assign it to the authenticated user (if unassigned), rename the lifecycle branch to the tracker's git branch name, push the renamed branch, and set ticket status to In Progress
+- DO operate in NORMAL mode — do NOT call EnterPlanMode in this phase
+- Do NOT draft a plan, implement code, commit source changes, or create a draft PR
+- DO write the Phase 0 ready marker (dk_phase_ready_file step 0) when setup is complete, then stop" ;;
     1) scope_lines="- DO invoke the dkplan skill immediately after entering Plan Mode
-- Do NOT fetch tickets, rename branches, update tracker status, explore code, or draft a plan by hand outside dkplan unless the skill explicitly instructs you to
+- Phase 0 already handled branch rename and ticket setup; do not redo them unless the markers are missing
+- Do NOT explore code or draft a plan by hand outside dkplan unless the skill explicitly instructs you to
 - DO wait for explicit user approval via ExitPlanMode before marking Phase 1 ready" ;;
     2) scope_lines="- Do NOT commit, push, create PRs, or modify git history
 - DO implement, test, and verify completeness via the Skill tool" ;;
@@ -726,12 +992,14 @@ __dk_build_system_context() {
 - DO create the draft PR, write the description, attach 'request' reviewers from doyaken.md § Reviewers" ;;
     6) scope_lines="- Do NOT modify implementation code unless fixing CI/review failures
 - DO mark the PR ready, request reviewers (request type), post @mention comment (mention type),
-- DO launch /loop 2m /dkwatchci and /loop 5m /dkwatchpr, address comments, close ticket" ;;
+- DO launch /loop 5m /dkwatchpr, address CI/review failures, close ticket only when checks and approvals are green" ;;
   esac
 
+  local phase_label
+  phase_label=$(__dk_phase_name "$step")
   cat > "$ctx_file" <<EOF
 You are Doyaken, running the Doyaken lifecycle for ${wt_name}.
-Initial phase: Phase ${step} (${DK_PHASE_NAMES[$step]}).
+Initial phase: Phase ${step} (${phase_label}).
 Workspace: ${wt_dir}
 Workspace mode: ${workspace_mode}
 
@@ -789,7 +1057,7 @@ Same-session handoff rules:
 - When a phase is complete, stop once for the Stop hook audit.
 - If the Stop hook gives you the next phase, continue immediately without asking
   the user.
-- Phase 3 must use /dkreviewloop for the 3-clean-pass review loop.
+- Phase 3 must use /dkreviewloop for the adaptive clean-pass review loop.
 
 Human input is required only for:
 - Phase 1 plan approval or plan rejection
@@ -814,7 +1082,7 @@ status line for the current phase.
 
 If you lose context after compaction, re-read the current phase audit prompt.
 The initial phase audit prompt was:
-  ${DOYAKEN_DIR}/prompts/phase-audits/${DK_PHASE_AUDIT_FILES[$step]}.md
+  ${DOYAKEN_DIR}/prompts/phase-audits/$(__dk_phase_audit_basename "$step").md
 EOF
 
   # Append debt warnings from prior phases so downstream work is aware of accepted gaps
@@ -838,24 +1106,25 @@ DEOF
 # __dk_inline_audit_file <step>
 # Audit prompt for same-session phase handoff.
 __dk_inline_audit_file() {
-  local step="$1"
-  echo "$DOYAKEN_DIR/prompts/phase-audits/${DK_PHASE_AUDIT_FILES[$step]}.md"
+  local step="$1" basename
+  basename=$(__dk_phase_audit_basename "$step")
+  [[ -n "$basename" ]] || return 0
+  echo "$DOYAKEN_DIR/prompts/phase-audits/${basename}.md"
 }
 
 # __dk_configure_inline_phase <step> <session_id>
 # Prepare the Stop hook to audit the current phase and advance inline.
 __dk_configure_inline_phase() {
-  local step="$1" session_id="$2" audit_file min_audits_env min_audits
+  local step="$1" session_id="$2" audit_file min_audits promise
   audit_file=$(__dk_inline_audit_file "$step")
   mkdir -p "$DK_LOOP_DIR"
   touch "$(dk_active_file "$session_id")"
   printf '%s\n' "inline" > "$(dk_handoff_mode_file "$session_id")"
   rm -f "$(dk_complete_file "$session_id")" "$(dk_loop_file "$session_id")" "$(dk_findings_file "$session_id")" "$(dk_paused_file "$session_id")" "$(dk_watch_pause_file "$session_id")"
 
-  # shellcheck disable=SC2034  # used via zsh ${(P)min_audits_env} indirect expansion below
-  min_audits_env="DOYAKEN_PHASE_${step}_MIN_AUDITS"
-  min_audits="${(P)min_audits_env:-${DK_PHASE_MIN_AUDITS[$step]:-1}}"
-  __dk_write_state "$(dk_loop_config_file "$session_id")" "${step}:${DK_PHASE_PROMISES[$step]}:${audit_file}:${min_audits}"
+  min_audits=$(__dk_phase_min_audits "$step")
+  promise=$(__dk_phase_promise "$step")
+  __dk_write_state "$(dk_loop_config_file "$session_id")" "${step}:${promise}:${audit_file}:${min_audits}"
 }
 
 # __dk_run_phases_inline <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
@@ -864,6 +1133,61 @@ __dk_configure_inline_phase() {
 # advances phases by updating state/config files and injecting the next phase's
 # instructions back into the existing session. This avoids the Claude TUI
 # handoff problem where a completed phase leaves the user needing /exit + resume.
+unalias __dk_cleanup_completed_workspace 2>/dev/null; unfunction __dk_cleanup_completed_workspace 2>/dev/null
+__dk_cleanup_completed_workspace() {
+  local wt_name="$1" wt_dir="$2" default_branch="$3" workspace_mode="${4:-worktree}" session_id="${5:-}"
+
+  if [[ "$workspace_mode" == "worktree" ]]; then
+    dk_info "Cleaning up local Doyaken worktree and branch..."
+    if dkrm "$wt_name"; then
+      dk_done "Local worktree and branch removed."
+      return 0
+    fi
+    dk_warn "Ticket lifecycle completed, but local worktree cleanup failed."
+    dk_info "Run dkrm ${wt_name} after resolving the cleanup issue."
+    return 1
+  fi
+
+  local current_branch
+  current_branch=$(git -C "$wt_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [[ -z "$current_branch" || "$current_branch" == "HEAD" ]]; then
+    dk_warn "Ticket lifecycle completed, but local branch cleanup was skipped because the checkout is detached."
+    return 1
+  fi
+
+  if [[ "$current_branch" == "$default_branch" ]]; then
+    dk_info "No local branch cleanup needed; current checkout is already on ${default_branch}."
+    return 0
+  fi
+
+  if git -C "$wt_dir" status --porcelain 2>/dev/null | head -1 | grep -q .; then
+    dk_warn "Ticket lifecycle completed, but local branch cleanup was skipped because the current checkout has uncommitted changes."
+    dk_info "Commit, stash, or discard those changes, then delete branch ${current_branch} manually."
+    return 1
+  fi
+
+  if ! git -C "$wt_dir" show-ref --verify --quiet "refs/heads/${default_branch}" 2>/dev/null; then
+    dk_warn "Ticket lifecycle completed, but local branch cleanup was skipped because local branch ${default_branch} does not exist."
+    dk_info "Create or switch to a safe branch, then delete branch ${current_branch} manually."
+    return 1
+  fi
+
+  dk_info "Switching current checkout to ${default_branch} before deleting local lifecycle branch ${current_branch}..."
+  if ! git -C "$wt_dir" switch "$default_branch"; then
+    dk_warn "Ticket lifecycle completed, but failed to switch to ${default_branch}; branch ${current_branch} was left intact."
+    return 1
+  fi
+
+  if ! git -C "$wt_dir" branch -D "$current_branch"; then
+    dk_warn "Ticket lifecycle completed, but failed to delete local branch ${current_branch}."
+    return 1
+  fi
+
+  [[ -n "$session_id" ]] && dk_cleanup_session "$session_id"
+  dk_cleanup_last_session "$wt_name"
+  dk_done "Local branch ${current_branch} removed."
+}
+
 __dk_run_phases_inline() {
   local wt_name="$1" wt_dir="$2" default_branch="$3" step="$4"
   local state_file="$5" times_file="$6" resume_hint="$7"
@@ -908,7 +1232,7 @@ __dk_run_phases_inline() {
   local message
   message=$(__dk_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")
   if [[ $step -eq 3 ]]; then
-    message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dkreviewloop\" to run the 3-clean-pass review loop. Each pass is a full review wave: context pack, deterministic checks, read-only specialist reviewers, verifier triage, batch fixes, and targeted recheck. Only waves that find zero verified findings and apply zero fixes count as CLEAN. Scope boundaries: review and fix only; do not commit, push, create branches, or create PRs. When the review loop is successful, stop so the Stop hook can audit and advance."
+    message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dkreviewloop\" to run the adaptive clean-pass review loop. Each pass is a full review wave: compact context pack, deterministic checks, orchestrator issue harvest, verifier triage when needed, batch fixes, and targeted recheck. Small low-risk changes may use fewer clean passes; high-risk changes must escalate to thorough review. Only waves that find zero verified findings and apply zero fixes count as CLEAN. Scope boundaries: review and fix only; do not commit, push, create branches, or create PRs. When the review loop is successful, stop so the Stop hook can audit and advance."
   fi
 
   local session_timeout="${DOYAKEN_SESSION_TIMEOUT:-$DK_SESSION_TIMEOUT}"
@@ -949,7 +1273,7 @@ __dk_run_phases_inline() {
 
   local final_step="$step"
   [[ -f "$state_file" ]] && final_step=$(cat "$state_file" 2>/dev/null || echo "$step")
-  [[ "$final_step" =~ ^[1-7]$ ]] || final_step="$step"
+  [[ "$final_step" =~ ^[0-7]$ ]] || final_step="$step"
 
   local loop_file
   loop_file=$(dk_loop_file "$session_id")
@@ -968,34 +1292,30 @@ __dk_run_phases_inline() {
     dk_provider_cleanup_session_state "$session_id"
 
     echo ""
-    echo "Paused at Phase ${final_step}: ${DK_PHASE_NAMES[$final_step]} (${pause_reason})"
+    echo "Paused at Phase ${final_step}: $(__dk_phase_name "$final_step") (${pause_reason})"
     echo "Resume with: ${resume_hint}"
     return 1
   fi
 
-  if [[ "$final_step" -ge 7 ]]; then
-    dk_provider_cleanup_session_state "$session_id"
-    rm -f "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" "$(dk_handoff_mode_file "$session_id")" 2>/dev/null
-    __dk_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
-    echo ""
-    echo "Ticket lifecycle complete."
-    if [[ "$workspace_mode" == "worktree" ]]; then
-      echo "Run dkrm ${wt_name} to clean up the worktree when you're done."
-    else
-      echo "No worktree cleanup is needed; this lifecycle ran in the current checkout."
-    fi
-    return 0
-  fi
+	  if [[ "$final_step" -ge 7 ]]; then
+	    dk_provider_cleanup_session_state "$session_id"
+	    rm -f "$(dk_active_file "$session_id")" "$(dk_loop_config_file "$session_id")" "$(dk_handoff_mode_file "$session_id")" 2>/dev/null
+	    __dk_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
+	    echo ""
+	    echo "Ticket lifecycle complete."
+	    __dk_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
+	    return $?
+	  fi
 
   if [[ $exit_code -ne 0 ]]; then
     echo ""
-    echo "Paused at Phase ${final_step}: ${DK_PHASE_NAMES[$final_step]} (exit ${exit_code})"
+    echo "Paused at Phase ${final_step}: $(__dk_phase_name "$final_step") (exit ${exit_code})"
     echo "Resume with: ${resume_hint}"
     return "$exit_code"
   fi
 
   echo ""
-  echo "Claude session exited at Phase ${final_step}: ${DK_PHASE_NAMES[$final_step]}."
+  echo "Claude session exited at Phase ${final_step}: $(__dk_phase_name "$final_step")."
   echo "Resume with: ${resume_hint}"
   return 0
 }
@@ -1037,16 +1357,17 @@ __dk_show_header() {
   echo "  DOYAKEN — ${wt_name}"
   echo ""
 
-  # Phase progress line (6 autonomous phases)
+  # Phase progress line (Phase 0 setup + 6 autonomous phases)
   local progress="  "
-  local i
-  for i in 1 2 3 4 5 6; do
+  local i label
+  for i in 0 1 2 3 4 5 6; do
+    label=$(__dk_phase_name "$i")
     if [[ $i -lt $step ]]; then
-      progress+="✓ ${DK_PHASE_NAMES[$i]}"
+      progress+="✓ ${label}"
     elif [[ $i -eq $step ]]; then
-      progress+="→ ${DK_PHASE_NAMES[$i]}"
+      progress+="→ ${label}"
     else
-      progress+="○ ${DK_PHASE_NAMES[$i]}"
+      progress+="○ ${label}"
     fi
     [[ $i -lt 6 ]] && progress+="  "
   done
@@ -1116,7 +1437,7 @@ dk() {
     echo "       dk --from-pr <N>   Resume session linked to a PR"
     echo "       dk refine <N|description>  Refine a ticket before implementation"
     echo ""
-    echo "       dk init|sync|maintain|config|install|uninstall|uninit|status|reload|help"
+    echo "       dk init|sync|maintain|tools|config|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -1151,7 +1472,7 @@ dk() {
 
   # Route management subcommands to doyaken
   case "$1" in
-    init|sync|maintain|config|provider|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|maintain|tools|config|provider|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       doyaken "$@"
       return $?
       ;;
@@ -1212,22 +1533,23 @@ dk() {
     fi
     _dk_default_branch=$(dk_default_branch "$_dk_wt_dir")
 
-    # Fall through to the phase loop below
-    local step=1
+    # Fall through to the phase loop below. Default to Phase 0 (Setup) for a
+    # brand-new session; existing sessions keep whatever phase state recorded.
+    local step=0
     [[ -f "$state_file" ]] && step=$(cat "$state_file" 2>/dev/null)
-    [[ "$step" =~ ^[1-7]$ ]] || step=1
+    [[ "$step" =~ ^[0-7]$ ]] || step=0
 
     if [[ $step -gt 6 ]]; then
       echo "Ticket lifecycle already complete for ${_dk_wt_name}."
-      if [[ "$_dk_workspace_mode" == "worktree" ]]; then
-        echo "Run dkrm ${_dk_wt_name} to clean up after merging."
-      else
-        echo "No worktree cleanup is needed for this in-place session."
+	    if [[ "$_dk_workspace_mode" == "worktree" ]]; then
+	      echo "Local cleanup should already be complete. If files remain, run dkrm ${_dk_wt_name}."
+	    else
+	      echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
       fi
       return 0
     fi
 
-    echo "Resuming ${_dk_wt_name} from Phase ${step}: ${DK_PHASE_NAMES[$step]}..."
+    echo "Resuming ${_dk_wt_name} from Phase ${step}: $(__dk_phase_name "$step")..."
 
     cd "$_dk_wt_dir" 2>/dev/null || return 1
     __dk_run_phases "$_dk_wt_name" "$_dk_wt_dir" "$_dk_default_branch" "$step" "$state_file" "$times_file" "dk --resume" "$_dk_workspace_mode" "$session_id" "$raw_input"
@@ -1275,20 +1597,20 @@ dk() {
   # Save as last session for --resume (atomic write to avoid corruption on interrupt)
   __dk_write_last_session "$_dk_wt_name" "$_dk_wt_dir" "$_dk_workspace_mode"
 
-  # Read current phase (default: 1)
-  local step=1
+  # Read current phase (default: 0 — Setup runs before Plan on fresh tickets).
+  local step=0
   if [[ -f "$state_file" ]]; then
     step=$(cat "$state_file" 2>/dev/null)
-    [[ "$step" =~ ^[1-7]$ ]] || step=1
+    [[ "$step" =~ ^[0-7]$ ]] || step=0
   fi
 
-  if [[ $step -gt 6 ]]; then
-    echo "Ticket lifecycle already complete for ${_dk_wt_name}."
-    if [[ "$_dk_workspace_mode" == "worktree" ]]; then
-      echo "Run dkrm ${raw_input} to clean up after merging."
-    else
-      echo "No worktree cleanup is needed for this in-place session."
-    fi
+	  if [[ $step -gt 6 ]]; then
+	    echo "Ticket lifecycle already complete for ${_dk_wt_name}."
+	    if [[ "$_dk_workspace_mode" == "worktree" ]]; then
+	      echo "Local cleanup should already be complete. If files remain, run dkrm ${raw_input}."
+	    else
+	      echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
+	    fi
     return 0
   fi
 
@@ -1297,8 +1619,8 @@ dk() {
     __dk_write_state "$(dk_prompt_file "$session_id")" "$raw_input"
   fi
 
-  if [[ $step -gt 1 ]]; then
-    echo "Resuming ${_dk_wt_name} from Phase ${step}: ${DK_PHASE_NAMES[$step]}..."
+  if [[ $step -gt 0 ]]; then
+    echo "Resuming ${_dk_wt_name} from Phase ${step}: $(__dk_phase_name "$step")..."
   fi
 
   # ── Phase loop ──
@@ -1608,11 +1930,20 @@ dkcomplete() {
   echo "  PR:    #${pr_num}"
   echo "  Phase: Monitor CI → Address reviews → Close ticket"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
+	  echo ""
 
   # Use a session ID derived from the current location (worktree-aware via dk_session_id)
-  local session_id
+  local session_id start_dir cleanup_repo_root cleanup_default_branch cleanup_mode="" cleanup_wt_name="" cleanup_wt_dir=""
   session_id=$(dk_session_id)
+  start_dir=$(pwd)
+  cleanup_repo_root=$(dk_repo_root 2>/dev/null || echo "")
+  cleanup_default_branch=$(dk_default_branch "$start_dir")
+  if [[ -n "$cleanup_repo_root" && "$start_dir" == "${cleanup_repo_root}/.doyaken/worktrees/"* ]]; then
+    cleanup_mode="worktree"
+    cleanup_wt_name="${start_dir#"${cleanup_repo_root}/.doyaken/worktrees/"}"
+    cleanup_wt_name="${cleanup_wt_name%%/*}"
+    cleanup_wt_dir="${cleanup_repo_root}/.doyaken/worktrees/${cleanup_wt_name}"
+  fi
 
   # Activate the prompt-loop variant of the audit loop so the Stop hook
   # enforces completion criteria. See: hooks/phase-loop.sh prompt-loop branch.
@@ -1628,7 +1959,7 @@ dkcomplete() {
   DOYAKEN_COMPLETE_WAIT_MINUTES="${DOYAKEN_COMPLETE_WAIT_MINUTES:-$DK_COMPLETE_WAIT_MINUTES}" \
   DOYAKEN_DIR="$DOYAKEN_DIR" \
   __dk_claude "${DK_CLAUDE_FLAGS[@]}" -n "dkcomplete-pr-${pr_num}" \
-    "Invoke the Skill tool with skill: \"dkcomplete\". Run the full completion workflow: verify the PR is ready for review, request configured reviewers, post @mention comments, monitor CI via /loop 2m /dkwatchci, monitor reviews via /loop 5m /dkwatchpr, address review comments, and close the ticket when all checks pass and reviewers have approved.
+    "Invoke the Skill tool with skill: \"dkcomplete\". Run the full completion workflow: verify the PR is ready for review, request configured reviewers, post @mention comments, monitor CI and reviews via /loop 5m /dkwatchpr, address CI failures and review comments, and close the ticket when all checks pass and reviewers have approved.
 $(__dk_provider_prompt)"
 
   local exit_code=$?
@@ -1644,24 +1975,28 @@ $(__dk_provider_prompt)"
 
   if [[ "$loop_status" == "max-iter" ]]; then
     dk_info "dkcomplete paused: max audit iterations reached without completion."
+  elif [[ $exit_code -eq 0 && "$cleanup_mode" == "worktree" ]]; then
+    __dk_cleanup_completed_workspace "$cleanup_wt_name" "$cleanup_wt_dir" "$cleanup_default_branch" "$cleanup_mode" "$session_id"
+    exit_code=$?
+  elif [[ $exit_code -eq 0 ]]; then
+    dk_info "dkcomplete finished; no Doyaken worktree was detected, so the current checkout and branch were left intact."
   fi
 
   return $exit_code
 }
 
-# ─── dkreviewloop — standalone 3-clean-passes review ─────────────────────
+# ─── dkreviewloop — standalone adaptive clean-pass review ─────────────────
 #
 # Runs the same adversarial review loop dk Phase 3 uses, without requiring
 # the full lifecycle. Scope is the full current change set: committed branch
 # changes, staged changes, unstaged changes, and untracked files together.
 #
 # Each iteration is a fresh Claude session that runs one full review wave:
-# build/refresh a compact context pack, fan out to read-only specialist reviewers,
-# verify and deduplicate findings, batch-fix verified issues, re-check, then write
-# a review-result signal. Only a wave with zero verified findings and zero fixes
-# writes CLEAN; waves that fixed issues reset the clean-pass counter.
-# DK_REVIEW_CLEAN_PASSES (default 3) consecutive CLEAN results advance,
-# DK_REVIEW_MAX_ITERATIONS (default 20) is the safety net before pausing.
+# build/refresh a compact context pack, run deterministic checks, collect
+# read-only review findings, verify/dedupe, batch-fix, re-check, then write a
+# review-result signal. Only a wave with zero verified findings and zero fixes
+# writes CLEAN. Auto depth starts light/standard/thorough based on diff risk;
+# a wave may escalate itself to thorough if the starting depth is unsafe.
 
 unalias dkreviewloop 2>/dev/null; unfunction dkreviewloop 2>/dev/null
 dkreviewloop() {
@@ -1726,8 +2061,18 @@ dkreviewloop() {
   local branch
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 
-  local max_iter="${DOYAKEN_REVIEW_MAX_ITERATIONS:-$DK_REVIEW_MAX_ITERATIONS}"
-  local required_clean="${DOYAKEN_REVIEW_CLEAN_PASSES:-$DK_REVIEW_CLEAN_PASSES}"
+  local requested_profile="${DOYAKEN_REVIEW_PROFILE:-$DK_REVIEW_PROFILE}"
+  local review_profile="$requested_profile"
+  case "$review_profile" in
+    auto|"") review_profile="$(__dk_review_auto_profile "$committed_ref")" ;;
+    light|standard|thorough) ;;
+    *)
+      dk_warn "Unknown DOYAKEN_REVIEW_PROFILE '${review_profile}'; using auto."
+      review_profile="$(__dk_review_auto_profile "$committed_ref")" ;;
+  esac
+
+  local max_iter="${DOYAKEN_REVIEW_MAX_ITERATIONS:-$(__dk_review_profile_max_iterations "$review_profile")}"
+  local required_clean="${DOYAKEN_REVIEW_CLEAN_PASSES:-$(__dk_review_profile_clean_passes "$review_profile")}"
 
   # File count preview for the full current change set without eval.
   local files_changed
@@ -1743,10 +2088,11 @@ dkreviewloop() {
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  DOYAKEN — dkreviewloop (${required_clean}-clean-pass review)"
+  echo "  DOYAKEN — dkreviewloop (${review_profile}, ${required_clean} clean pass(es))"
   echo ""
   echo "  Branch: ${branch}"
   echo "  Scope:  ${scope_name} (${files_changed} files)"
+  echo "  Depth:  ${review_profile} (${required_clean} clean, max ${max_iter} iterations)"
   echo "  Diff:   ${diff_cmd}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
@@ -1781,8 +2127,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
   local session_name
   session_name="dkreviewloop-$(dk_slugify "$branch")"
 
-  local message
-  message="Run one full Doyaken review wave using /dkreview --single-pass, scoped to **${scope_name}** on branch \`${branch}\`.
+  local message_template
+  message_template="Run one full Doyaken review wave using /dkreview --single-pass, scoped to **${scope_name}** on branch \`${branch}\`.
 
 IMPORTANT: When the audit prompt or /dkreview SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead. This is the full current change set, including committed branch changes, staged changes, unstaged changes, and untracked files:
 
@@ -1793,12 +2139,18 @@ IMPORTANT: When the audit prompt or /dkreview SKILL.md tells you to scope with \
 Use this review context pack path: \`${review_context_file}\`
 Use this per-pass completion path only after the review result signal and findings hash are written: \`${pass_complete_file}\`
 
-Follow the audit prompt and \`prompts/review-wave.md\`: first materialize a non-empty context pack, then run deterministic checks, spawn the applicable read-only specialist reviewers with the Agent tool (including frontend and devops/CI when relevant), verify and deduplicate findings, batch-fix verified issues, re-check, and write the review result signal file.
+Review depth profile for this pass: \`__REVIEW_PROFILE__\`.
+- \`light\`: deterministic checks, orchestrator issue harvest, verifier only for candidates/escalation risk, batch fix, targeted recheck.
+- \`standard\`: orchestrator issue harvest, targeted specialist reviewers for concrete changed domains, verifier triage.
+- \`thorough\`: full specialist fan-out, verifier triage, batch fix, targeted recheck.
+
+Follow the audit prompt and \`prompts/review-wave.md\`: first materialize a non-empty compact context pack, run deterministic checks, harvest candidate issues according to the depth profile, verify and deduplicate findings, batch-fix verified issues, re-check, and write the review result signal file.
 
 Result semantics:
 - Write \`CLEAN\` only if this wave found zero verified findings and applied zero fixes.
 - Write \`FINDINGS_FIXED:N\` if this wave found and fixed N verified findings; this intentionally resets the outer clean-pass counter.
 - Write \`FINDINGS:N\` or \`BLOCKED:reason\` if issues remain or the wave cannot complete.
+- Write \`ESCALATE_THOROUGH:reason\` if the profile is too shallow for the observed risk. Examples: auth/security/data-loss risk, public contract changes, broad dependency impact, complex shell/hooks/CI behavior, unclear acceptance coverage, or the wave/verifier cannot rule out serious issues at the current depth.
 
 If no approved plan / acceptance criteria are explicitly available in this prompt for this scope, mark plan-dependent sections (acceptance criteria verification, evidence table) as N/A and proceed without them. Do not infer criteria from stale session prompt files, previous conversation turns, session titles, AGENTS instructions, or unrelated ticket context.
 
@@ -1822,6 +2174,7 @@ $(__dk_provider_prompt)"
     # Stop hook config: phase 3, MIN_AUDITS=1
     __dk_write_state "$(dk_loop_config_file "$session_id")" "3:${DK_PHASE_PROMISES[3]}:${audit_file}:1"
 
+    local message="${message_template//__REVIEW_PROFILE__/$review_profile}"
     local pass_session_name="${session_name}-pass-${review_iteration}"
     local claude_args=("${DK_CLAUDE_FLAGS[@]}" -n "$pass_session_name")
 
@@ -1831,6 +2184,7 @@ $(__dk_provider_prompt)"
     DOYAKEN_LOOP_PROMPT="$audit_prompt" \
     DOYAKEN_LOOP_PHASE="3" \
     DOYAKEN_REVIEW_PASS_ACTIVE=1 \
+    DOYAKEN_REVIEW_PROFILE="$review_profile" \
     DOYAKEN_DIR="$DOYAKEN_DIR" \
     __dk_claude "${claude_args[@]}" "$message"
 
@@ -1866,6 +2220,16 @@ $(__dk_provider_prompt)"
     if [[ "$result" == "CLEAN" ]]; then
       clean_passes=$((clean_passes + 1))
       echo "  Iteration ${review_iteration}: CLEAN (${clean_passes}/${required_clean})"
+    elif [[ "$result" == ESCALATE_THOROUGH* ]]; then
+      clean_passes=0
+      if [[ "$review_profile" != "thorough" ]]; then
+        review_profile="thorough"
+        [[ -z "${DOYAKEN_REVIEW_CLEAN_PASSES:-}" ]] && required_clean="$DK_REVIEW_THOROUGH_CLEAN_PASSES"
+        [[ -z "${DOYAKEN_REVIEW_MAX_ITERATIONS:-}" ]] && max_iter="$DK_REVIEW_THOROUGH_MAX_ITERATIONS"
+        echo "  Iteration ${review_iteration}: ${result} — escalating to thorough (${required_clean} clean, max ${max_iter} iterations)"
+      else
+        echo "  Iteration ${review_iteration}: ${result} — already thorough; resetting clean pass counter"
+      fi
     else
       clean_passes=0
       echo "  Iteration ${review_iteration}: ${result} — resetting clean pass counter"
@@ -1958,7 +2322,7 @@ dkrm() {
       found=1
       local active_in_place_phase
       if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch"); then
-        echo "Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})"
+        echo "Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dk_phase_name "$active_in_place_phase"))"
         skipped_active_in_place=1
         continue
       fi
@@ -2058,7 +2422,7 @@ dkrm() {
   if [[ $has_dir -eq 0 ]] && [[ $has_branch -eq 1 ]]; then
     local active_in_place_phase
     if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch_name"); then
-      dk_error "Refusing to remove active in-place lifecycle branch ${branch_name} (phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})."
+      dk_error "Refusing to remove active in-place lifecycle branch ${branch_name} (phase ${active_in_place_phase}/6: $(__dk_phase_name "$active_in_place_phase"))."
       dk_info "Resume it with dk --resume, or finish the lifecycle before cleaning it up."
       return 1
     fi
@@ -2135,8 +2499,8 @@ dkls() {
     if [[ -f "$phase_file" ]]; then
       local phase_num
       phase_num=$(cat "$phase_file" 2>/dev/null)
-      if [[ "$phase_num" =~ ^[1-6]$ ]]; then
-        wt_status="${wt_status} [phase ${phase_num}/6: ${DK_PHASE_NAMES[$phase_num]}]"
+      if [[ "$phase_num" =~ ^[0-6]$ ]]; then
+        wt_status="${wt_status} [phase ${phase_num}/6: $(__dk_phase_name "$phase_num")]"
       elif [[ "$phase_num" =~ ^[0-9]+$ ]] && [[ "$phase_num" -gt 6 ]]; then
         wt_status="${wt_status} [complete]"
       fi
@@ -2233,8 +2597,8 @@ dkclean() {
       if [[ -f "$phase_file" ]]; then
         local phase_val
         phase_val=$(cat "$phase_file" 2>/dev/null)
-        if [[ "$phase_val" =~ ^[1-6]$ ]]; then
-          echo "  Skipping ${wt_name} (active phase ${phase_val}/6: ${DK_PHASE_NAMES[$phase_val]})"
+        if [[ "$phase_val" =~ ^[0-6]$ ]]; then
+          echo "  Skipping ${wt_name} (active phase ${phase_val}/6: $(__dk_phase_name "$phase_val"))"
           continue
         fi
       fi
@@ -2287,7 +2651,7 @@ dkclean() {
     fi
     local active_in_place_phase
     if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch"); then
-      echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})"
+      echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dk_phase_name "$active_in_place_phase"))"
       continue
     fi
     # Don't delete branches with active worktrees
@@ -2321,7 +2685,7 @@ dkclean() {
     [[ -z "$branch" ]] && continue
     local active_in_place_phase
     if active_in_place_phase=$(__dk_active_in_place_phase_for_branch "$branch"); then
-      echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: ${DK_PHASE_NAMES[$active_in_place_phase]})"
+      echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dk_phase_name "$active_in_place_phase"))"
       continue
     fi
     local ticket_name="${branch#worktree-}"

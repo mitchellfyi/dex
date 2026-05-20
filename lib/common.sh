@@ -6,7 +6,8 @@
 #
 # Provides: DOYAKEN_DIR, DK_STATE_DIR, DK_LOOP_DIR, DK_ARTIFACT_DIR, dk_repo_root()
 # Also sources: lib/git.sh, lib/session.sh, lib/output.sh, lib/worktree.sh,
-# lib/provider.sh, lib/codex.sh, lib/ui-capture.sh, lib/maintenance.sh
+# lib/provider.sh, lib/codex.sh, lib/ui-capture.sh, lib/agent-tools.sh,
+# and lib/maintenance.sh
 
 if [[ -z "${DOYAKEN_DIR:-}" ]]; then
   # Auto-detect from this file's location (lib/common.sh → repo root).
@@ -58,5 +59,7 @@ source "$DOYAKEN_DIR/lib/provider.sh"
 source "$DOYAKEN_DIR/lib/codex.sh"
 # shellcheck disable=SC1091
 source "$DOYAKEN_DIR/lib/ui-capture.sh"
+# shellcheck disable=SC1091
+source "$DOYAKEN_DIR/lib/agent-tools.sh"
 # shellcheck disable=SC1091
 source "$DOYAKEN_DIR/lib/maintenance.sh"
