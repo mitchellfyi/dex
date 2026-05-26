@@ -37,6 +37,38 @@ score_scenario() {
 
   log_step "Scoring scenario: $scenario"
 
+  # ── Resolve weights (per-scenario overrides fall back to globals) ────────
+  local w_corr=$W_CORRECTNESS w_test=$W_TEST_QUALITY w_rob=$W_ROBUSTNESS
+  local w_ver=$W_VERIFICATION w_iss=$W_ISSUE_DETECTION w_code=$W_CODE_QUALITY
+  if [[ -f "$sc_dir/scenario.json" ]]; then
+    local override
+    override=$(W_CORR="$W_CORRECTNESS" W_TEST="$W_TEST_QUALITY" W_ROB="$W_ROBUSTNESS" \
+               W_VER="$W_VERIFICATION" W_ISS="$W_ISSUE_DETECTION" W_CODE="$W_CODE_QUALITY" \
+               SC="$sc_dir/scenario.json" python3 -c '
+import json, os, sys
+try:
+    d = json.load(open(os.environ["SC"]))
+    w = d.get("weights")
+    if isinstance(w, dict):
+        out = [
+            int(w.get("correctness", os.environ["W_CORR"])),
+            int(w.get("test_quality", os.environ["W_TEST"])),
+            int(w.get("robustness", os.environ["W_ROB"])),
+            int(w.get("verification", os.environ["W_VER"])),
+            int(w.get("issue_detection", os.environ["W_ISS"])),
+            int(w.get("code_quality", os.environ["W_CODE"])),
+        ]
+        if sum(out) == 100:
+            print(" ".join(str(x) for x in out))
+except Exception:
+    pass
+' 2>/dev/null)
+    if [[ -n "$override" ]]; then
+      read -r w_corr w_test w_rob w_ver w_iss w_code <<< "$override"
+      log_info "  Per-scenario weights: $w_corr/$w_test/$w_rob/$w_ver/$w_iss/$w_code"
+    fi
+  fi
+
   # ── Run each dimension ───────────────────────────────────────────────────
   local correctness=0 test_quality=0 robustness=0 verification=0 issue_detection=0 code_quality=0
 
@@ -87,7 +119,7 @@ score_scenario() {
 
   # ── Compute weighted total ───────────────────────────────────────────────
   local total
-  total=$(( (correctness * W_CORRECTNESS + test_quality * W_TEST_QUALITY + robustness * W_ROBUSTNESS + verification * W_VERIFICATION + issue_detection * W_ISSUE_DETECTION + code_quality * W_CODE_QUALITY) / 100 ))
+  total=$(( (correctness * w_corr + test_quality * w_test + robustness * w_rob + verification * w_ver + issue_detection * w_iss + code_quality * w_code) / 100 ))
 
   log_success "  Total: $total/100"
 
@@ -102,12 +134,12 @@ score_scenario() {
     \"code_quality\": $code_quality,
     \"total\": $total,
     \"weights\": {
-      \"correctness\": $W_CORRECTNESS,
-      \"test_quality\": $W_TEST_QUALITY,
-      \"robustness\": $W_ROBUSTNESS,
-      \"verification\": $W_VERIFICATION,
-      \"issue_detection\": $W_ISSUE_DETECTION,
-      \"code_quality\": $W_CODE_QUALITY
+      \"correctness\": $w_corr,
+      \"test_quality\": $w_test,
+      \"robustness\": $w_rob,
+      \"verification\": $w_ver,
+      \"issue_detection\": $w_iss,
+      \"code_quality\": $w_code
     }
   }"
 

@@ -2,6 +2,6 @@
   "name": "sql-orm-api",
   "type": "feature",
   "description": "Build an Express API with SQLite database, migrations, relationships, and query optimization.",
-  "timeout": 3600,
+  "timeout": 7200,
   "language": "node"
 }

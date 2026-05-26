@@ -1,0 +1,35 @@
+services:
+  api:
+    build: ./services/api
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://orderly:orderly@db:5432/orderly
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - db
+      - redis
+
+  worker:
+    build: ./services/worker
+    environment:
+      DATABASE_URL: postgres://orderly:orderly@db:5432/orderly
+      REDIS_URL: redis://redis:6379
+      SMTP_URL: smtp://mailhog:1025
+    depends_on:
+      - db
+      - redis
+      - mailhog
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: orderly
+      POSTGRES_PASSWORD: orderly
+      POSTGRES_DB: orderly
+
+  redis:
+    image: redis:7-alpine
+
+  mailhog:
+    image: mailhog/mailhog

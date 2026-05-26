@@ -36,6 +36,9 @@ SCENARIO_TIMEOUT="${SCENARIO_TIMEOUT:-3600}"
 MAX_LOOP_ITERATIONS="${MAX_LOOP_ITERATIONS:-20}"
 
 # ── Scoring weights (must sum to 100) ─────────────────────────────────────
+# Per-scenario weight overrides live in scenario.json under a "weights" object.
+# Overrides must include all six dimensions and sum to 100, otherwise the
+# scenario falls back to the globals below.
 W_CORRECTNESS=30
 W_TEST_QUALITY=20
 W_ROBUSTNESS=15

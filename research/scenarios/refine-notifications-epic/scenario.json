@@ -1,0 +1,15 @@
+{
+  "name": "refine-notifications-epic",
+  "type": "refinement",
+  "description": "Multi-ticket epic decomposition for a notifications platform. Tests dxrefine: surface assumptions, decompose into shippable tickets, register risks, no implementation.",
+  "timeout": 3600,
+  "language": "any",
+  "weights": {
+    "correctness": 20,
+    "test_quality": 5,
+    "robustness": 10,
+    "verification": 5,
+    "issue_detection": 10,
+    "code_quality": 50
+  }
+}

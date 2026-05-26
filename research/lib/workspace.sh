@@ -38,6 +38,21 @@ GITIGNORE
   git -C "$ws" add .gitignore
   git -C "$ws" commit --quiet -m "init: empty workspace"
 
+  # Optional: copy the scenario's seed/ directory into the workspace so
+  # scenarios can start with pre-existing code. Seed files are folded into the
+  # baseline commit so workspace_diff / workspace_files_changed only report
+  # what DX actually changed.
+  local seed_dir
+  seed_dir="$(scenario_dir "$name")/seed"
+  if [[ -d "$seed_dir" ]]; then
+    (cd "$seed_dir" && cp -R . "$ws/")
+    if [[ -n "$(git -C "$ws" status --porcelain)" ]]; then
+      git -C "$ws" add -A
+      git -C "$ws" commit --quiet --amend --no-edit
+      log_info "Seeded workspace from $seed_dir"
+    fi
+  fi
+
   log_info "Created workspace: $ws"
   echo "$ws"
 }
