@@ -4,10 +4,17 @@
 # Checks in every iteration and monitors progress.
 #
 # Usage:
-#   ./research/orchestrate.sh                    # Run continuously
-#   ./research/orchestrate.sh --max-cycles 5     # Limit cycles
-#   ./research/orchestrate.sh --interval 600     # Check every 10 min (default)
-#   ./research/orchestrate.sh --allow-main       # Intentionally run on main/master
+#   ./research/orchestrate.sh                            # Run continuously (default 30s gap between cycles)
+#   ./research/orchestrate.sh --max-cycles 5             # Limit cycles
+#   ./research/orchestrate.sh --scenario-timeout 7200    # Force 2h per scenario (overrides scenario.json)
+#   ./research/orchestrate.sh --allow-main               # Intentionally run on main/master
+#
+# Notes:
+#   • The between-cycle sleep is intentionally short (30s) — each cycle already
+#     runs a full suite (~1h with 12 scenarios at the default budget), so this is
+#     just a breather for log flushing, not a rate limiter.
+#   • SCENARIO_TIMEOUT (per-scenario agent budget) defaults to 3600s. Override
+#     via `--scenario-timeout N` here, or set SCENARIO_TIMEOUT_OVERRIDE in env.
 
 set -euo pipefail
 
@@ -21,17 +28,24 @@ source "$SCRIPT_DIR/lib/safety.sh"
 
 # ── Parse arguments ────────────────────────────────────────────────────────
 MAX_CYCLES=0   # 0 = infinite
-INTERVAL=600   # seconds between cycles
+INTERVAL=30    # seconds between cycles — short on purpose; each cycle is the slow part
 CYCLE=0
 ALLOW_MAIN=0
+SCENARIO_TIMEOUT_FLAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --max-cycles) MAX_CYCLES="$2"; shift 2 ;;
-    --interval) INTERVAL="$2"; shift 2 ;;
+    --scenario-timeout) SCENARIO_TIMEOUT_FLAG="$2"; shift 2 ;;
     --allow-main) ALLOW_MAIN=1; shift ;;
     --help|-h)
-      echo "Usage: $0 [--max-cycles N] [--interval SECONDS] [--allow-main]"
+      echo "Usage: $0 [--max-cycles N] [--scenario-timeout SECONDS] [--allow-main]"
+      echo ""
+      echo "  --max-cycles N           Stop after N cycles (0 = infinite, default 0)"
+      echo "  --scenario-timeout N     Force every scenario to use N-second budget,"
+      echo "                           ignoring scenario.json overrides. Default budget"
+      echo "                           is 3600s (set in research/config.sh)."
+      echo "  --allow-main             Allow running on main/master (off by default)."
       exit 0
       ;;
     *) shift ;;
@@ -42,6 +56,10 @@ if [[ $ALLOW_MAIN -eq 1 ]]; then
   export RESEARCH_ALLOW_MAIN=1
 fi
 
+if [[ -n "$SCENARIO_TIMEOUT_FLAG" ]]; then
+  export SCENARIO_TIMEOUT_OVERRIDE="$SCENARIO_TIMEOUT_FLAG"
+fi
+
 # ── Pre-flight safety checks ──────────────────────────────────────────────
 safety_check_branch
 safety_check_clean
@@ -49,10 +67,11 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  DX AUTORESEARCH — Autonomous Orchestrator"
 echo ""
-echo "  Branch:     $(dx_branch)"
-echo "  Max cycles: ${MAX_CYCLES:-∞}"
-echo "  Interval:   ${INTERVAL}s"
-echo "  Started:    $(date)"
+echo "  Branch:           $(dx_branch)"
+echo "  Max cycles:       ${MAX_CYCLES:-∞}"
+echo "  Cycle gap:        ${INTERVAL}s"
+echo "  Scenario timeout: ${SCENARIO_TIMEOUT_OVERRIDE:-per-scenario (scenario.json), default ${SCENARIO_TIMEOUT}s}"
+echo "  Started:          $(date)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 

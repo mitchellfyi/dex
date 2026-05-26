@@ -50,6 +50,20 @@ __dx_cli() {
     tools)     bash "$DEX_DIR/bin/tools.sh" "$@" ;;
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
     provider)  dx_provider_command "$@" ;;
+    research)
+      local _dx_has_max_cycles=0 _dx_arg
+      for _dx_arg in "$@"; do
+        if [[ "$_dx_arg" == "--max-cycles" || "$_dx_arg" == --max-cycles=* ]]; then
+          _dx_has_max_cycles=1
+          break
+        fi
+      done
+      if [[ $_dx_has_max_cycles -eq 0 ]]; then
+        bash "$DEX_DIR/research/orchestrate.sh" --max-cycles 20 "$@"
+      else
+        bash "$DEX_DIR/research/orchestrate.sh" "$@"
+      fi
+      ;;
     uninit)    bash "$DEX_DIR/bin/uninit.sh" "$@" ;;
     reload)
       source "$DEX_DIR/dx.sh"
@@ -68,6 +82,10 @@ __dx_cli() {
       echo "  dx tools            Check or install Claude/Codex tooling bootstrap"
       echo "  dx config           Configure integrations (ticket tracker, Figma, etc.)"
       echo "  dx provider         Configure provider/model execution profiles"
+      echo "  dx research         Run autonomous research orchestrator"
+      echo "                        Defaults: --max-cycles 20; SCENARIO_TIMEOUT 3600s (1h) per scenario"
+      echo "                        Override timeout: dx research --scenario-timeout 7200"
+      echo "                        On main/master, pass --allow-main"
       echo "  dx uninit           Remove Dex from current repo"
       echo "  dx reload           Reload shell functions after editing dx.sh"
       echo "  dx status           Show installation status"
@@ -1459,7 +1477,7 @@ dx() {
     echo "       dx --from-pr <N>   Resume session linked to a PR"
     echo "       dx refine <N|description>  Refine a ticket before implementation"
     echo ""
-    echo "       dx init|sync|rename|maintain|tools|config|install|uninstall|uninit|status|reload|help"
+    echo "       dx init|sync|rename|maintain|tools|config|research|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -1494,7 +1512,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|rename|maintain|tools|config|provider|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|rename|maintain|tools|config|provider|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;

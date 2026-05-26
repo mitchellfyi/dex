@@ -1,7 +1,7 @@
 {
   "name": "edge-ambiguous-spec",
   "type": "edge-case",
-  "description": "Deliberately vague prompt — does DX make reasonable assumptions and build something functional?",
-  "timeout": 900,
+  "description": "Deliberately vague prompt \u2014 does DX make reasonable assumptions and build something functional?",
+  "timeout": 3600,
   "language": "any"
 }

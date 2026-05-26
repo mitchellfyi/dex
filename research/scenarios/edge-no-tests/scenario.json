@@ -1,7 +1,7 @@
 {
   "name": "edge-no-tests",
   "type": "edge-case",
-  "description": "Build Go string utilities — tests not mentioned in prompt. Does DX write them anyway?",
-  "timeout": 600,
+  "description": "Build Go string utilities \u2014 tests not mentioned in prompt. Does DX write them anyway?",
+  "timeout": 3600,
   "language": "go"
 }

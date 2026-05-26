@@ -2,6 +2,6 @@
   "name": "rest-api-crud",
   "type": "feature",
   "description": "Build a REST API with Express.js for managing books with CRUD and validation.",
-  "timeout": 900,
+  "timeout": 3600,
   "language": "node"
 }

@@ -2,6 +2,6 @@
   "name": "react-component-lib",
   "type": "feature",
   "description": "Build a React component library with form components, accessibility, and comprehensive tests.",
-  "timeout": 900,
+  "timeout": 3600,
   "language": "node"
 }

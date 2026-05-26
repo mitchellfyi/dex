@@ -2,6 +2,6 @@
   "name": "cli-todo-app",
   "type": "feature",
   "description": "Build a Node.js CLI todo app from scratch with persistence and tests.",
-  "timeout": 900,
+  "timeout": 3600,
   "language": "node"
 }

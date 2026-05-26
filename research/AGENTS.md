@@ -26,7 +26,7 @@ bash research/loop.sh --max-iterations 5 --skip-llm-judge
 
 Every iteration:
 
-1. **Run a suite**: `bash research/run.sh --skip-llm-judge` — takes ~15 min for all 12 scenarios
+1. **Run a suite**: `bash research/run.sh --skip-llm-judge` — each scenario has a 1-hour budget by default (set in `research/config.sh` via `SCENARIO_TIMEOUT`; per-scenario overrides live in `scenarios/<name>/scenario.json`). Pass `dx research --scenario-timeout N` to force a different budget across all scenarios. Most scenarios finish well before the budget; the cap is a backstop, not a target.
 2. **Analyze results**: Read scores.tsv, identify low-scoring scenarios and dimensions
 3. **Diagnose**: Is the low score a rubric bug or a DX weakness?
    - Rubric bug: fix the rubric (wrong API convention, stdout leak, etc.)
@@ -137,7 +137,7 @@ Key improvements applied to DX:
   "name": "<name>",
   "type": "feature|library|bugfix|refactor|edge",
   "language": "node|python|go|react",
-  "timeout": 900,
+  "timeout": 3600,
   "difficulty": "medium|hard"
 }
 ```

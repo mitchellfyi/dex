@@ -1,7 +1,7 @@
 {
   "name": "template",
   "type": "feature",
-  "description": "Template scenario — copy this directory to create a new scenario.",
-  "timeout": 900,
+  "description": "Template scenario \u2014 copy this directory to create a new scenario.",
+  "timeout": 3600,
   "language": "node"
 }

@@ -26,8 +26,11 @@ CLAUDE_PERMISSION_MODE="bypassPermissions"
 LLM_JUDGE_MODEL="${LLM_JUDGE_MODEL:-opus}"
 
 # ── Execution ──────────────────────────────────────────────────────────────
-# Max seconds per scenario execution (0 = no limit)
-SCENARIO_TIMEOUT="${SCENARIO_TIMEOUT:-900}"
+# Max seconds per scenario execution (0 = no limit).
+# Default: 3600s (1 hour). Per-scenario scenario.json `timeout` values still
+# override this. Pass `dx research --scenario-timeout N` (or set
+# SCENARIO_TIMEOUT_OVERRIDE in env) to force a value regardless of scenario.json.
+SCENARIO_TIMEOUT="${SCENARIO_TIMEOUT:-3600}"
 
 # Max audit loop iterations (keeps scenarios bounded)
 MAX_LOOP_ITERATIONS="${MAX_LOOP_ITERATIONS:-20}"

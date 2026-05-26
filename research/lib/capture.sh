@@ -59,13 +59,17 @@ capture_run() {
   local prompt
   prompt=$(cat "$prompt_file")
 
-  # Read scenario config for timeout override
+  # Resolve scenario timeout. Priority (highest first):
+  #   1. SCENARIO_TIMEOUT_OVERRIDE — global force (set by `--scenario-timeout`)
+  #   2. scenario.json "timeout"   — per-scenario value (non-zero)
+  #   3. SCENARIO_TIMEOUT          — global default from config.sh
   local timeout="$SCENARIO_TIMEOUT"
   if [[ -f "$scenario_dir/scenario.json" ]]; then
     local custom_timeout
     custom_timeout=$(json_field "$scenario_dir/scenario.json" "timeout")
     [[ -n "$custom_timeout" && "$custom_timeout" != "0" ]] && timeout="$custom_timeout"
   fi
+  [[ -n "${SCENARIO_TIMEOUT_OVERRIDE:-}" ]] && timeout="$SCENARIO_TIMEOUT_OVERRIDE"
 
   mkdir -p "$result_dir"
 
