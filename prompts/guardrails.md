@@ -75,6 +75,8 @@ These are recurring mistakes observed across many implementations. Check against
 - **Don't concatenate strings in a loop.** Use the language's efficient string builder (StringBuilder, strings.Builder, StringIO, etc.) instead of repeated concatenation, which allocates a new string on every iteration.
 - **Don't keep unreachable defensive branches.** If a branch cannot execute under the function's stated preconditions, delete it or make the precondition explicit. A fallback kept "just in case" is dead code: it weakens coverage signal, adds review noise, and obscures the real contract.
 - **Don't bend tests to fit a flawed implementation.** When a new test fails, first decide whether the implementation or the expectation is wrong. Fix the test only when the expectation conflicts with the spec or with a deliberate documented interpretation. If the implementation matches deprecated, known-broken, or accidental behavior, fix the implementation.
+- **Don't bury the required deliverable.** When the prompt names a specific output (a file path, a directory layout, a document, a runnable command), create a minimal version at the exact named path as one of your first concrete actions, then fill it in. A non-existent file at the required path scores nothing — no amount of supporting planning, scaffolding, or tests compensates for a missing primary deliverable.
+- **Don't postpone test execution to the end.** Run the test suite incrementally as modules become complete, not only as a final step. Tests that exist on disk but were never executed are not verification, and a single late run risks discovering failures with no time left to diagnose them.
 
 ### Fail Fast, Fail Loud
 

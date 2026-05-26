@@ -76,6 +76,8 @@ If during implementation you discover:
 - Don't create multiple interacting modules without an integration test. If Module A calls Module B, write a test that exercises A→B together, not just each in isolation.
 - Don't assume the first API design you choose is stable. After implementing, run the tests — if the tests import your module and call your functions, the API is real. If you change function signatures after writing tests, update the tests too.
 - Don't save the README or other required documentation for the final task on library/module work. Draft it in the first half of the task list once the public API is stable enough to describe; an unexpected retry or wall-clock limit should not leave the deliverable undocumented.
+- Don't postpone creating the primary deliverable. When the prompt names a specific output (file path, package layout, document), create a minimal but runnable version at the exact named path as the first concrete artifact, before extensive scaffolding, planning, or test setup. A time-bounded or interrupted run that never produces the named output scores zero on correctness no matter how good the surrounding work is.
+- Don't write tests against a deliverable that does not yet exist at its target path. Establish the implementation module or file at the path the prompt named first (even as a thin working skeleton), then layer tests against it. Tests importing a path that was never created run nothing.
 
 When stopping for scope changes, do NOT output a completion promise (e.g., `PHASE_2_COMPLETE`). Simply halt and wait for user input. The phase audit loop will detect that the completion signal file was not written and keep the session alive. Once the user provides direction, resume implementation from where you left off.
 

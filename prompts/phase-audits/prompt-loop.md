@@ -134,6 +134,8 @@ All checks must pass before proceeding to Step 7.
 
 ## Step 7: Evidence Table
 
+Before filling the table, list every concrete output the prompt explicitly named — file paths, directory structures, required artifacts — and confirm each exists at the exact path specified. Use `git status`, `git ls-files`, and directory listings rather than recalling from memory. A required output that is missing, empty, or located at a different path is a blocking defect: return to implementation and produce the artifact before continuing. Do not paper over the gap with a note in the table.
+
 For each acceptance criterion from Step 1, fill in the evidence table:
 
 ```
