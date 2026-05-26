@@ -1,0 +1,12 @@
+{
+  "name": "review-target",
+  "version": "0.1.0",
+  "main": "src/api.js",
+  "scripts": {
+    "start": "node src/api.js"
+  },
+  "dependencies": {
+    "express": "^4.19.0",
+    "sqlite3": "^5.1.7"
+  }
+}
