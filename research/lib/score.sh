@@ -290,13 +290,13 @@ _score_issue_detection_default() {
   # Check stream output for evidence of self-review and fixing
   if [[ -f "$result_dir/stream.jsonl" ]]; then
     # Look for patterns indicating DX reviewed its work
-    if grep -qE '"name"\s*:\s*"Bash"' "$result_dir/stream.jsonl" 2>/dev/null; then
+    if grep -qE '"name"\s*:\s*"Bash"|exec_command|run_command|"cmd"|npm test|pytest|go test' "$result_dir/stream.jsonl" 2>/dev/null; then
       # DX ran commands (likely tests/lint) — that's good
       score=$((score + 20))
     fi
     # Look for evidence of iteration (multiple edit rounds)
     local edit_count
-    edit_count="$(grep -cE '"name"\s*:\s*"(Edit|Write)"' "$result_dir/stream.jsonl" 2>/dev/null)" || edit_count=0
+    edit_count="$(grep -cE '"name"\s*:\s*"(Edit|Write)"|apply_patch|file_change|write_file|update_file|patch' "$result_dir/stream.jsonl" 2>/dev/null)" || edit_count=0
     if [[ $edit_count -gt 3 ]]; then
       score=$((score + 15))  # Multiple edits suggest iteration/fixing
     fi

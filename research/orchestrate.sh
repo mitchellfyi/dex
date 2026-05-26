@@ -7,6 +7,7 @@
 #   ./research/orchestrate.sh                            # Run continuously (default 30s gap between cycles)
 #   ./research/orchestrate.sh --max-cycles 5             # Limit cycles
 #   ./research/orchestrate.sh --scenario-timeout 7200    # Force 2h per scenario (overrides scenario.json)
+#   ./research/orchestrate.sh --runner codex             # Execute scenarios with Codex CLI
 #   ./research/orchestrate.sh --allow-main               # Intentionally run on main/master
 #
 # Notes:
@@ -32,19 +33,22 @@ INTERVAL=30    # seconds between cycles — short on purpose; each cycle is the 
 CYCLE=0
 ALLOW_MAIN=0
 SCENARIO_TIMEOUT_FLAG=""
+RUNNER_FLAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --max-cycles) MAX_CYCLES="$2"; shift 2 ;;
     --scenario-timeout) SCENARIO_TIMEOUT_FLAG="$2"; shift 2 ;;
+    --runner) RUNNER_FLAG="$2"; shift 2 ;;
     --allow-main) ALLOW_MAIN=1; shift ;;
     --help|-h)
-      echo "Usage: $0 [--max-cycles N] [--scenario-timeout SECONDS] [--allow-main]"
+      echo "Usage: $0 [--max-cycles N] [--scenario-timeout SECONDS] [--runner claude|codex] [--allow-main]"
       echo ""
       echo "  --max-cycles N           Stop after N cycles (0 = infinite, default 0)"
       echo "  --scenario-timeout N     Force every scenario to use N-second budget,"
       echo "                           ignoring scenario.json overrides. Default budget"
       echo "                           is 3600s (set in research/config.sh)."
+      echo "  --runner <name>          Scenario runner: claude (default) or codex."
       echo "  --allow-main             Allow running on main/master (off by default)."
       exit 0
       ;;
@@ -60,6 +64,18 @@ if [[ -n "$SCENARIO_TIMEOUT_FLAG" ]]; then
   export SCENARIO_TIMEOUT_OVERRIDE="$SCENARIO_TIMEOUT_FLAG"
 fi
 
+RUN_FLAGS=()
+if [[ -n "$RUNNER_FLAG" ]]; then
+  case "$RUNNER_FLAG" in
+    claude|codex) RUN_FLAGS+=(--runner "$RUNNER_FLAG") ;;
+    *)
+      log_error "Unknown runner: $RUNNER_FLAG"
+      log_info "Supported runners: claude, codex"
+      exit 1
+      ;;
+  esac
+fi
+
 # ── Pre-flight safety checks ──────────────────────────────────────────────
 safety_check_branch
 safety_check_clean
@@ -70,6 +86,7 @@ echo ""
 echo "  Branch:           $(dx_branch)"
 echo "  Max cycles:       ${MAX_CYCLES:-∞}"
 echo "  Cycle gap:        ${INTERVAL}s"
+echo "  Runner:           ${RUNNER_FLAG:-${RESEARCH_RUNNER:-claude}}"
 echo "  Scenario timeout: ${SCENARIO_TIMEOUT_OVERRIDE:-per-scenario (scenario.json), default ${SCENARIO_TIMEOUT}s}"
 echo "  Started:          $(date)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -110,7 +127,7 @@ while true; do
   # Step 1: Run full suite
   _orchestrate_log "Running full suite..."
   RUN_ID=""
-  RUN_ID=$(bash "$SCRIPT_DIR/run.sh" --skip-llm-judge --iteration "$CYCLE" 2>&1 | tail -1) || true
+  RUN_ID=$(bash "$SCRIPT_DIR/run.sh" "${RUN_FLAGS[@]}" --skip-llm-judge --iteration "$CYCLE" 2>&1 | tail -1) || true
 
   if [[ -z "$RUN_ID" || ! -f "$RESULTS_DIR/$RUN_ID/summary.json" ]]; then
     _orchestrate_log "Suite run failed. Waiting before retry..."
@@ -186,7 +203,7 @@ while true; do
         _orchestrate_log "Applied improvement patch"
 
         # Validate with a quick run
-        VALIDATE_ID=$(bash "$SCRIPT_DIR/run.sh" --skip-llm-judge --iteration "${CYCLE}-validate" 2>&1 | tail -1) || true
+        VALIDATE_ID=$(bash "$SCRIPT_DIR/run.sh" "${RUN_FLAGS[@]}" --skip-llm-judge --iteration "${CYCLE}-validate" 2>&1 | tail -1) || true
 
         if [[ -n "$VALIDATE_ID" && -f "$RESULTS_DIR/$VALIDATE_ID/summary.json" ]]; then
           NEW_SCORE=$(json_field "$RESULTS_DIR/$VALIDATE_ID/summary.json" "aggregate_score")

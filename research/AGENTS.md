@@ -15,6 +15,9 @@ bash research/run.sh --skip-llm-judge
 # Run one scenario for quick testing
 bash research/run.sh --scenario cli-todo-app --skip-llm-judge
 
+# Run scenarios with Codex instead of Claude
+bash research/run.sh --runner codex --skip-llm-judge
+
 # Check scores
 tail -20 research/results/scores.tsv
 
@@ -26,7 +29,7 @@ bash research/loop.sh --max-iterations 5 --skip-llm-judge
 
 Every iteration:
 
-1. **Run a suite**: `bash research/run.sh --skip-llm-judge` — each scenario has a 1-hour budget by default (set in `research/config.sh` via `SCENARIO_TIMEOUT`; per-scenario overrides live in `scenarios/<name>/scenario.json`). Pass `dx research --scenario-timeout N` to force a different budget across all scenarios. Most scenarios finish well before the budget; the cap is a backstop, not a target.
+1. **Run a suite**: `bash research/run.sh --skip-llm-judge` — each scenario has a 1-hour budget by default (set in `research/config.sh` via `SCENARIO_TIMEOUT`; per-scenario overrides live in `scenarios/<name>/scenario.json`). Pass `dx research --scenario-timeout N` to force a different budget across all scenarios. Most scenarios finish well before the budget; the cap is a backstop, not a target. Use `--runner codex` or `RESEARCH_RUNNER=codex` to execute scenarios through Codex CLI instead of Claude.
 2. **Analyze results**: Read scores.tsv, identify low-scoring scenarios and dimensions
 3. **Diagnose**: Is the low score a rubric bug or a DX weakness?
    - Rubric bug: fix the rubric (wrong API convention, stdout leak, etc.)
@@ -71,7 +74,7 @@ Every iteration:
 ## Key Technical Details
 
 ### Workspace Isolation
-Each scenario runs in `research/workspaces/<scenario>/` with `git init`. The workspace is separate from the parent repo. `lib/capture.sh` injects a `CLAUDE.md` into each workspace with guardrails from `prompts/guardrails.md`.
+Each scenario runs in `research/workspaces/<scenario>/` with `git init`. The workspace is separate from the parent repo. `lib/capture.sh` injects runner-specific guardrails from `prompts/guardrails.md`: `CLAUDE.md` for Claude and `AGENTS.md` for Codex.
 
 ### Rubric Pitfalls (common issues to watch for)
 

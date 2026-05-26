@@ -7,6 +7,7 @@
 #   ./research/run.sh --scenario cli-todo-app   # Run one scenario
 #   ./research/run.sh --skip-llm-judge          # Skip LLM-judged scoring
 #   ./research/run.sh --lifecycle               # Use multi-phase execution
+#   ./research/run.sh --runner codex            # Execute scenarios with Codex CLI
 #   ./research/run.sh --iteration 3             # Tag results with iteration number
 
 set -euo pipefail
@@ -28,6 +29,7 @@ SCENARIO_FILTER=""
 SKIP_LLM=""
 EXEC_MODE="dxloop"
 ITERATION="0"
+RUNNER="$RESEARCH_RUNNER"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,17 +45,22 @@ while [[ $# -gt 0 ]]; do
       EXEC_MODE="--lifecycle"
       shift
       ;;
+    --runner)
+      RUNNER="$2"
+      shift 2
+      ;;
     --iteration)
       ITERATION="$2"
       shift 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--scenario <name>] [--skip-llm-judge] [--lifecycle] [--iteration N]"
+      echo "Usage: $0 [--scenario <name>] [--skip-llm-judge] [--lifecycle] [--runner claude|codex] [--iteration N]"
       echo ""
       echo "Options:"
       echo "  --scenario <name>   Run only this scenario"
       echo "  --skip-llm-judge    Skip LLM-judged code quality scoring"
       echo "  --lifecycle         Use multi-phase execution (plan then implement)"
+      echo "  --runner <name>     Scenario runner: claude (default) or codex"
       echo "  --iteration N       Tag results with iteration number (for loop.sh)"
       exit 0
       ;;
@@ -63,6 +70,20 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$RUNNER" in
+  claude|codex) ;;
+  *)
+    log_error "Unknown runner: $RUNNER"
+    log_info "Supported runners: claude, codex"
+    exit 1
+    ;;
+esac
+
+MODEL_LABEL="$CLAUDE_MODEL"
+if [[ "$RUNNER" == "codex" ]]; then
+  MODEL_LABEL="codex-provider"
+fi
 
 # ── Setup ──────────────────────────────────────────────────────────────────
 RUN_ID=$(run_id)
@@ -76,7 +97,8 @@ echo ""
 echo "  Run ID:    $RUN_ID"
 echo "  Iteration: $ITERATION"
 echo "  DX commit: $(dx_commit_hash)"
-echo "  Model:     $CLAUDE_MODEL"
+echo "  Runner:    $RUNNER"
+echo "  Model:     $MODEL_LABEL"
 echo "  Mode:      ${EXEC_MODE:-dxloop}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -122,7 +144,7 @@ for scenario in "${SCENARIOS[@]}"; do
   workspace_create "$scenario" > /dev/null
 
   # 2. Execute DX (exit code unused — scoring proceeds regardless of execution outcome)
-  capture_run "$scenario" "$local_result_dir" "$EXEC_MODE" || true
+  capture_run "$scenario" "$local_result_dir" "$EXEC_MODE" "$RUNNER" || true
 
   # 3. Score the output
   scenario_score=0

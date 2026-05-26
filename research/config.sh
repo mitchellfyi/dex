@@ -16,6 +16,11 @@ RESULTS_DIR="$RESEARCH_DIR/results"
 IMPROVEMENTS_DIR="$RESEARCH_DIR/improvements"
 SCORES_TSV="$RESULTS_DIR/scores.tsv"
 
+# ── Agent runners ──────────────────────────────────────────────────────────
+# Scenario execution defaults to Claude Code. Set RESEARCH_RUNNER=codex or pass
+# `research/run.sh --runner codex` to run scenarios through Codex CLI instead.
+RESEARCH_RUNNER="${RESEARCH_RUNNER:-claude}"
+
 # ── Claude CLI ─────────────────────────────────────────────────────────────
 CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 CLAUDE_EFFORT="${CLAUDE_EFFORT:-max}"

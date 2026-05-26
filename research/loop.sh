@@ -8,6 +8,7 @@
 #   ./research/loop.sh --cost-limit 100         # Custom cost limit (USD)
 #   ./research/loop.sh --scenario cli-todo-app  # Focus on one scenario
 #   ./research/loop.sh --skip-llm-judge         # Faster runs without LLM scoring
+#   ./research/loop.sh --runner codex           # Execute scenarios with Codex CLI
 #   ./research/loop.sh --allow-main             # Intentionally run on main/master
 
 set -euo pipefail
@@ -48,12 +49,16 @@ while [[ $# -gt 0 ]]; do
       RUN_FLAGS+=("--skip-llm-judge")
       shift
       ;;
+    --runner)
+      RUN_FLAGS+=(--runner "$2")
+      shift 2
+      ;;
     --allow-main)
       ALLOW_MAIN=1
       shift
       ;;
     --help|-h)
-      echo "Usage: $0 [--max-iterations N] [--cost-limit USD] [--scenario name] [--skip-llm-judge] [--allow-main]"
+      echo "Usage: $0 [--max-iterations N] [--cost-limit USD] [--scenario name] [--skip-llm-judge] [--runner claude|codex] [--allow-main]"
       exit 0
       ;;
     *)

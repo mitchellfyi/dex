@@ -46,6 +46,17 @@ dx_provider_codex_ready_check
 case "$subcmd" in
   exec)
     codex_args=(exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
+    case "${DX_CODEX_JSON:-0}" in
+      1) codex_args+=(--json) ;;
+      0|"") ;;
+      *)
+        dx_error "DX_CODEX_JSON must be 0 or 1."
+        exit 2
+        ;;
+    esac
+    if [[ -n "${DX_CODEX_OUTPUT_LAST_MESSAGE:-}" ]]; then
+      codex_args+=(-o "$DX_CODEX_OUTPUT_LAST_MESSAGE")
+    fi
     if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
       codex_args+=(-m "$DX_CODEX_MODEL")
     fi
