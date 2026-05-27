@@ -93,7 +93,7 @@ Status: active
 Scope: bin/install-settings.sh, bin/uninstall.sh, bin/config.sh, settings.json install/uninstall paths, MCP server configuration
 Applies to phases: install, uninstall, config (outside the per-ticket lifecycle)
 Applies to paths: bin/install-settings.sh, bin/uninstall.sh, bin/config.sh, ~/.claude/.dex-install-state.json
-Last verified: 2026-05-15
+Last verified: 2026-05-27
 Recheck when: install/uninstall logic changes, settings.json schema changes, MCP server config rules change, or the install-state file moves
 
 Lesson:
@@ -111,6 +111,10 @@ Evidence:
   entries with install-state provenance, fails existing-settings installs
   without jq, avoids overwriting global MCP server definitions.
 - `bin/install-settings.sh` declares `INSTALL_STATE_FILE="$CLAUDE_DIR/.dex-install-state.json"`.
+- `71ab07b feat(tooling): bootstrap RTK token reduction` adds the new
+  `rtk-claude-hook.sh` to the Dex-owned hook provenance detector in
+  `bin/install-settings.sh`, confirming new hooks are registered for scoped
+  uninstall rather than left untracked (see [[architecture-decisions]] M-008).
 
 Future agent behavior:
 - When modifying install or uninstall logic for `~/.claude/settings.json` or
