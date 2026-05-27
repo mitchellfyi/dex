@@ -27,14 +27,15 @@ dx.sh                Main shell functions (zsh only, ~2800 lines)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
 agents/              Sub-agents (symlinked to ~/.claude/agents/)
-bin/                 CLI scripts: install, uninstall, init, uninit, config, status, sync, maintain, log, rename, tools, ui-capture, dxcodex, install-settings, status-line
-docs/                Extended docs: guards, autonomous mode
+bin/                 CLI scripts: install, uninstall, init, uninit, config, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
+docs/                Extended docs: guards, autonomous mode, RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (5 rules)
-lib/                 Shared shell libraries (10 modules: common, agent-tools, codex, git, maintenance, output, provider, session, ui-capture, worktree)
+lib/                 Shared shell libraries (11 modules: common, agent-tools, codex, git, maintenance, output, provider, rtk, session, ui-capture, worktree)
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
-skills/              Lifecycle skills (17 total, linked into ~/.claude/skills/)
+research/            DX evaluation harness (scenarios, scoring, improvement loop)
+skills/              Lifecycle skills (18 total, linked into ~/.claude/skills/)
 .dex/                Per-project config (this directory)
   providers.json     Repo-local default agent/provider profile
 ```
@@ -61,11 +62,21 @@ skills/              Lifecycle skills (17 total, linked into ~/.claude/skills/)
 When an integration is "not configured", skip any workflow steps that reference it.
 For ticket tracking: use the enabled tracker for all status updates, context gathering, and ticket lifecycle management.
 
+## Tooling
+
+Dex bootstraps [RTK](https://github.com/rtk-ai/rtk) — a Rust output-filtering
+CLI — during `dx install`, `dx init`, `dx sync`, and `dx tools bootstrap` to cut
+command-output tokens. Claude Code uses a fail-open PreToolUse rewrite hook
+(`hooks/rtk-claude-hook.sh`) that runs *after* the guards; Codex receives
+instruction-based RTK guidance instead. RTK is optional — set `DX_RTK_ENABLED=0`
+to disable. See `docs/rtk-token-reduction.md`.
+
 ## Provider
 
 This repo uses `.dex/providers.json` to default Dex runs to the Codex agent with
 `gpt-5.3-codex`. Use `dx --agent claude` for a one-run fallback to the built-in
-Claude/Opus 4.7 profile.
+Claude/Opus 4.7 profile, or `dx --model <model>` to override the model passed to
+the selected agent.
 
 ## Reviewers
 

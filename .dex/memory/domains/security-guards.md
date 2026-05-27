@@ -10,7 +10,7 @@ Status: active
 Scope: hooks/guard-handler.py detectors, hooks/guards/destructive-commands.md, hooks/guards/raw-codex-delegation.md, hooks/guards/sensitive-files.md, hooks/guards/hardcoded-secrets.md, .dex/guards/*.md
 Applies to phases: any phase that runs a Bash tool; guard authoring/maintenance
 Applies to paths: hooks/guard-handler.py, hooks/guards/*.md, .dex/guards/*.md
-Last verified: 2026-05-15
+Last verified: 2026-05-27
 Recheck when: a new dangerous-command class is added, a guard adds a new event type, or the guard frontmatter parser changes
 
 Lesson:

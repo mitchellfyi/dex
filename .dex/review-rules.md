@@ -22,6 +22,9 @@ Path-specific review focus for Dex review waves.
 - Bash scripts should use `#!/usr/bin/env bash` and `set -euo pipefail`.
 - User-facing output should use Dex output helpers when common.sh is sourced.
 - Hook behavior is security-sensitive; fail closed for dangerous operations.
+- In `settings.json`, security guards must stay ordered before any
+  rewrite/enhancement Bash hook; enhancement hooks (e.g. `rtk-claude-hook.sh`)
+  must fail open so a missing or broken optional tool never blocks the command.
 - After changes, run `bash -n <file>` and `shellcheck` when available.
 
 ## `hooks/guard-handler.py`

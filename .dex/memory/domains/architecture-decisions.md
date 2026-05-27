@@ -50,3 +50,55 @@ Future agent behavior:
 - When a feature truly needs a framework-specific path (e.g., Playwright for
   UI capture), gate it on detection or explicit user configuration rather than
   assuming presence.
+
+## M-008: PreToolUse Bash hooks run guards-first and split fail-closed vs fail-open
+
+Domain: architecture-decisions
+Status: active
+Scope: settings.json PreToolUse hook arrays, hooks/rtk-claude-hook.sh, hooks/guard-handler.py, hooks/stop-sound.sh, lib/rtk.sh, bin/install-settings.sh hook-provenance logic
+Applies to phases: any phase that adds, reorders, or edits a Claude Code hook; guard and tooling maintenance
+Applies to paths: settings.json, hooks/*.sh, hooks/guard-handler.py, lib/rtk.sh
+Last verified: 2026-05-27
+Recheck when: a new PreToolUse hook is added, hook registration order in settings.json changes, the RTK integration changes, or any hook's failure mode (exit code) changes
+
+Lesson:
+Dex's Claude Code hooks divide by responsibility into two failure contracts.
+Security/guard hooks fail CLOSED: `guard-handler.py` exits 2 to block a
+dangerous command, and surrounding logic treats other non-zero exits as errors,
+not blocks. Enhancement and notification hooks fail OPEN: they must exit 0 on
+every error path so a missing or broken optional tool never blocks or breaks the
+user's command. In `settings.json` the PreToolUse/Bash array is ordered so the
+guard runs before the RTK rewrite hook; a rewrite/enhancement hook must never
+run before the guard, or it could mutate a command the guard would have blocked.
+
+Evidence:
+- `71ab07b feat(tooling): bootstrap RTK token reduction` adds
+  `hooks/rtk-claude-hook.sh`, commented "Fail-open Claude Code hook", which
+  exits 0 when RTK is disabled, the binary is unresolved, the payload is empty,
+  or the rewrite fails.
+- `settings.json` registers two PreToolUse/Bash hooks in order: `guard-handler.py`
+  then `rtk-claude-hook.sh`.
+- `docs/rtk-token-reduction.md`: "Bash tool calls now run through Dex guards
+  first... If RTK is unavailable or fails, the wrapper exits successfully and
+  leaves the original command untouched."
+- `hooks/stop-sound.sh` is a "best-effort" notification hook that also exits 0
+  unconditionally.
+- Fail-closed side: `8b62b46 fix(guards): harden destructive command detection`,
+  `4290403 feat: block unsafe raw codex delegation`, and `guard-handler.py`
+  exit 2 == block (see [[security-guards]] M-005).
+- `bin/install-settings.sh` records `rtk-claude-hook.sh` in its Dex-owned hook
+  provenance detector, keeping install/uninstall scoped (see
+  [[workflow-operations]] M-004).
+
+Future agent behavior:
+- When adding a PreToolUse Bash hook that rewrites or enhances commands, fail
+  open: exit 0 on missing tooling, empty payload, or any internal error, and
+  leave the original command untouched.
+- When adding a security/guard hook, fail closed: exit 2 to block; never let a
+  detection failure silently allow a dangerous command.
+- Preserve guard-before-rewrite ordering in `settings.json`. Do not register a
+  rewrite/enhancement hook ahead of `guard-handler.py`.
+- When adding any Dex-owned hook, register it in the `bin/install-settings.sh`
+  provenance detector so uninstall removes only Dex's entries (M-004).
+- Reference `.dex/dex.md` § Tooling and `docs/rtk-token-reduction.md` for the
+  RTK integration surface before changing it.
