@@ -6,7 +6,22 @@ set -euo pipefail
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 SYNC_PROVIDER_SESSION_ID=""
+SYNC_RUN_SESSION_ID=""
+SYNC_RUN_ID=""
 __dx_sync_cleanup() {
+  local status=$?
+  if [[ -n "${SYNC_RUN_ID:-}" ]]; then
+    if [[ $status -eq 0 ]]; then
+      dx_event_emit_safe "$SYNC_RUN_ID" "run.completed" "info" "Dex sync completed" "" "{\"command\":\"dx sync\"}"
+      dx_run_write_summary_safe "$SYNC_RUN_ID" "completed" "Dex sync completed"
+    elif [[ $status -eq 130 ]]; then
+      dx_event_emit_safe "$SYNC_RUN_ID" "run.blocked" "warn" "Dex sync interrupted" "" "{\"command\":\"dx sync\",\"exit_code\":${status}}"
+      dx_run_write_summary_safe "$SYNC_RUN_ID" "blocked" "Dex sync interrupted"
+    else
+      dx_event_emit_safe "$SYNC_RUN_ID" "run.failed" "error" "Dex sync failed" "" "{\"command\":\"dx sync\",\"exit_code\":${status}}"
+      dx_run_write_summary_safe "$SYNC_RUN_ID" "failed" "Dex sync failed with code ${status}"
+    fi
+  fi
   if [[ -n "${SYNC_PROVIDER_SESSION_ID:-}" ]]; then
     dx_provider_cleanup_session_state "$SYNC_PROVIDER_SESSION_ID" 2>/dev/null || true
   fi
@@ -128,6 +143,16 @@ repo_name=$(basename "$repo_root")
 echo "Dex - Sync: $repo_name"
 echo ""
 
+SYNC_RUN_SESSION_ID="sync-$(dx_unique_session_id)"
+if SYNC_RUN_ID=$(dx_run_prepare "$SYNC_RUN_SESSION_ID" "$repo_root" "current-checkout" "$repo_name" "dx sync $*" "dx sync"); then
+  export DEX_RUN_ID="$SYNC_RUN_ID"
+  dx_run_maybe_emit_started "$SYNC_RUN_ID" "Dex sync started" "{\"command\":\"dx sync\"}"
+  dx_info "Run id: $SYNC_RUN_ID"
+else
+  dx_warn "Continuing without a local Dex run journal."
+  SYNC_RUN_ID=""
+fi
+
 if [[ "$READ_ONLY" -eq 1 ]]; then
   if ! dx_bootstrap_agent_tooling "$repo_root" "check"; then
     dx_warn "Read-only sync found Claude/Codex tooling drift; run 'dx sync' or 'dx tools bootstrap' to reinstall it."
@@ -214,7 +239,7 @@ retrieval is not N/A, do not modify files.
 EOF
 )
 
-SYNC_PROVIDER_SESSION_ID="sync-$(dx_unique_session_id)"
+SYNC_PROVIDER_SESSION_ID="${SYNC_RUN_SESSION_ID:-sync-$(dx_unique_session_id)}"
 dx_provider_cleanup_session_state "$SYNC_PROVIDER_SESSION_ID"
 
 sync_status_before=$(git -C "$repo_root" status --porcelain=v1 -- .dex 2>/dev/null || true)
@@ -230,7 +255,7 @@ dx_info "Large repos may be quiet while the provider reads context; timeout is $
 
 set +e
 set +o pipefail
-DEX_SESSION_ID="$SYNC_PROVIDER_SESSION_ID" dx_run_with_timeout "$budget_seconds" dx_provider_claude -p "${sync_prompt}${provider_prompt}${invocation}" \
+DEX_SESSION_ID="$SYNC_PROVIDER_SESSION_ID" DEX_RUN_ID="${SYNC_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_run_with_timeout "$budget_seconds" dx_provider_claude -p "${sync_prompt}${provider_prompt}${invocation}" \
   --model "$DX_CLAUDE_MODEL" --effort "$DX_CLAUDE_EFFORT" \
   --dangerously-skip-permissions --permission-mode bypassPermissions \
   --verbose --output-format stream-json --include-partial-messages \

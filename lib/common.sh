@@ -4,9 +4,9 @@
 # Source this from any script:
 #   source "$DEX_DIR/lib/common.sh"
 #
-# Provides: DEX_DIR, DX_STATE_DIR, DX_LOOP_DIR, DX_ARTIFACT_DIR, DX_TOOL_DIR, dx_repo_root()
+# Provides: DEX_DIR, DX_STATE_DIR, DX_LOOP_DIR, DX_ARTIFACT_DIR, DX_TOOL_DIR, DX_RUN_ROOT, dx_repo_root()
 # Also sources: lib/git.sh, lib/session.sh, lib/output.sh, lib/worktree.sh,
-# lib/provider.sh, lib/codex.sh, lib/ui-capture.sh, lib/rtk.sh,
+# lib/provider.sh, lib/codex.sh, lib/ui-capture.sh, lib/rtk.sh, lib/events.sh,
 # lib/agent-tools.sh, and lib/maintenance.sh
 
 if [[ -z "${DEX_DIR:-}" ]]; then
@@ -25,6 +25,8 @@ DX_LOOP_DIR="${DX_LOOP_DIR:-$HOME/.claude/.dex-loops}"
 DX_ARTIFACT_DIR="${DX_ARTIFACT_DIR:-$HOME/.claude/.dex-artifacts}"
 # shellcheck disable=SC2034  # exported by sourcing; used by Dex-managed tools
 DX_TOOL_DIR="${DX_TOOL_DIR:-$HOME/.claude/.dex-tools}"
+# shellcheck disable=SC2034  # exported by sourcing; used by run event helpers
+DX_RUN_ROOT="${DX_RUN_ROOT:-$HOME/.dex/runs}"
 
 # dx_repo_root — print the *main* repo toplevel or return 1
 # If cwd is inside a dex worktree (.dex/worktrees/<name>/...),
@@ -64,5 +66,6 @@ __dx_require_lib provider.sh
 __dx_require_lib codex.sh
 __dx_require_lib ui-capture.sh
 __dx_require_lib rtk.sh
+__dx_require_lib events.sh
 __dx_require_lib agent-tools.sh
 __dx_require_lib maintenance.sh

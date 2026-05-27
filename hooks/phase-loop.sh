@@ -120,14 +120,28 @@ dx_phase_start_epoch() {
 }
 
 dx_record_phase_result() {
-  local phase="$1" status="$2" exit_code="$3" start_epoch end_epoch duration iterations
+  local phase="$1" status="$2" exit_code="$3" start_epoch end_epoch duration iterations phase_name
   [[ "$phase" =~ ^[0-6]$ ]] || return 0
   end_epoch=$(date +%s)
   start_epoch=$(dx_phase_start_epoch "$phase")
   [[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch="$end_epoch"
   duration=$((end_epoch - start_epoch))
   iterations=$(dx_phase_iteration_count "$STATE_FILE")
-  dx_log_phase "$SESSION_ID" "$phase" "$(dx_phase_name "$phase")" "$start_epoch" "$end_epoch" "$duration" "$iterations" "$status" "$exit_code"
+  phase_name=$(dx_phase_name "$phase")
+  dx_log_phase "$SESSION_ID" "$phase" "$phase_name" "$start_epoch" "$end_epoch" "$duration" "$iterations" "$status" "$exit_code"
+
+  local event_type severity message data_json
+  if [[ "$status" == "advance" && "$exit_code" == "0" ]]; then
+    event_type="phase.completed"
+    severity="info"
+    message="Phase ${phase} completed: ${phase_name}"
+  else
+    event_type="phase.failed"
+    severity="error"
+    message="Phase ${phase} failed: ${phase_name} (${status})"
+  fi
+  data_json="{\"phase_name\":\"${phase_name}\",\"start_epoch\":${start_epoch},\"end_epoch\":${end_epoch},\"duration_s\":${duration},\"iterations\":${iterations},\"status\":\"${status}\",\"exit_code\":${exit_code}}"
+  dx_event_emit_for_session "$SESSION_ID" "$event_type" "$severity" "$message" "$phase" "$data_json"
 }
 
 dx_start_phase_timer() {
@@ -135,6 +149,7 @@ dx_start_phase_timer() {
   times_file=$(dx_times_file "$SESSION_ID")
   mkdir -p "$(dirname "$times_file")"
   printf '%s:%s\n' "$phase" "$(date +%s)" >> "$times_file"
+  dx_event_maybe_emit_phase_started_for_session "$SESSION_ID" "$phase" "$(dx_phase_name "$phase")" "hook"
 }
 
 # Claude hook subprocesses can inherit stale DEX_LOOP_PHASE values from the
@@ -423,6 +438,8 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
     if [[ "$BUSY_TIMEOUT" =~ ^[0-9]+$ && "$BUSY_TIMEOUT" -gt 0 && "$BUSY_AGE" -gt "$BUSY_TIMEOUT" ]]; then
       rm -f "$ACTIVE_FILE" "$CONFIG_FILE" "$PHASE_BUSY_FILE" "$PHASE_BUSY_NOTICE_FILE"
       dx_record_phase_result "3" "review-pass-timeout" "89"
+      dx_event_emit_for_session "$SESSION_ID" "run.blocked" "warn" "Dex lifecycle paused: review pass timeout" "3" "{\"reason\":\"review-pass-timeout\",\"age_s\":${BUSY_AGE},\"timeout_s\":${BUSY_TIMEOUT}}"
+      dx_run_write_summary_for_session "$SESSION_ID" "blocked" "Review pass timeout in Phase 3"
       touch "$PAUSED_FILE"
       printf '\n%s\n\n' "--- Dex phase paused: review pass timeout reached ($(dx_format_duration "$BUSY_AGE")/$(dx_format_duration "$BUSY_TIMEOUT")) ---" >&2
       printf '%s\n' "Do not advance to the next phase. Summarize the in-flight review pass, current clean-pass count, and whether the user wants to retry, reduce review depth, or continue with documented risk." >&2
@@ -585,6 +602,8 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     dx_record_phase_result "$CURRENT_PHASE" "advance" "0"
     rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dx_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dx_prompt_file "$SESSION_ID")" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
     printf '%s\n' "7" > "$(dx_state_file "$SESSION_ID")"
+    dx_event_emit_for_session "$SESSION_ID" "run.completed" "info" "Dex lifecycle completed" "6" "{\"final_phase\":6}"
+    dx_run_write_summary_for_session "$SESSION_ID" "completed" "Dex lifecycle completed"
     rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
     {
       printf '\n%s\n\n' "--- Dex lifecycle complete ---"
@@ -669,6 +688,8 @@ if [[ $ITERATION -gt $MAX_ITERATIONS ]]; then
   if [[ "$HANDOFF_MODE" == "inline" ]]; then
     CURRENT_PHASE="${DEX_LOOP_PHASE:-0}"
     dx_record_phase_result "$CURRENT_PHASE" "max-iter" "88"
+    dx_event_emit_for_session "$SESSION_ID" "run.blocked" "warn" "Dex lifecycle paused: max audit iterations reached" "$CURRENT_PHASE" "{\"reason\":\"max-iter\",\"max_iterations\":${MAX_ITERATIONS}}"
+    dx_run_write_summary_for_session "$SESSION_ID" "blocked" "Max audit iterations reached in Phase ${CURRENT_PHASE}"
     touch "$PAUSED_FILE"
     printf '\n%s\n\n' "--- Dex phase paused: max audit iterations reached (${MAX_ITERATIONS}) ---" >&2
     printf '%s\n' "Do not advance to the next phase. Summarize the blocker, current phase, and the exact user decision or intervention needed." >&2

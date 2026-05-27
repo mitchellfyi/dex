@@ -8,7 +8,22 @@ set -euo pipefail
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 INIT_PROVIDER_SESSION_ID=""
+INIT_RUN_SESSION_ID=""
+INIT_RUN_ID=""
 __dx_init_cleanup() {
+  local status=$?
+  if [[ -n "${INIT_RUN_ID:-}" ]]; then
+    if [[ $status -eq 0 ]]; then
+      dx_event_emit_safe "$INIT_RUN_ID" "run.completed" "info" "Dex init completed" "" "{\"command\":\"dx init\"}"
+      dx_run_write_summary_safe "$INIT_RUN_ID" "completed" "Dex init completed"
+    elif [[ $status -eq 130 ]]; then
+      dx_event_emit_safe "$INIT_RUN_ID" "run.blocked" "warn" "Dex init interrupted" "" "{\"command\":\"dx init\",\"exit_code\":${status}}"
+      dx_run_write_summary_safe "$INIT_RUN_ID" "blocked" "Dex init interrupted"
+    else
+      dx_event_emit_safe "$INIT_RUN_ID" "run.failed" "error" "Dex init failed" "" "{\"command\":\"dx init\",\"exit_code\":${status}}"
+      dx_run_write_summary_safe "$INIT_RUN_ID" "failed" "Dex init failed with code ${status}"
+    fi
+  fi
   if [[ -n "${INIT_PROVIDER_SESSION_ID:-}" ]]; then
     dx_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID" 2>/dev/null || true
   fi
@@ -65,6 +80,16 @@ fi
 repo_name=$(basename "$repo_root")
 echo "Dex — Init: $repo_name"
 echo ""
+
+INIT_RUN_SESSION_ID="init-$(dx_unique_session_id)"
+if INIT_RUN_ID=$(dx_run_prepare "$INIT_RUN_SESSION_ID" "$repo_root" "current-checkout" "$repo_name" "dx init $*" "dx init"); then
+  export DEX_RUN_ID="$INIT_RUN_ID"
+  dx_run_maybe_emit_started "$INIT_RUN_ID" "Dex init started" "{\"command\":\"dx init\"}"
+  dx_info "Run id: $INIT_RUN_ID"
+else
+  dx_warn "Continuing without a local Dex run journal."
+  INIT_RUN_ID=""
+fi
 
 # ── 1. Create .dex/ skeleton ──────────────────────────────────────
 
@@ -234,10 +259,10 @@ else
   dx_provider_apply
   analysis_prompt=$(cat "$DEX_DIR/prompts/init-analysis.md")
   provider_prompt=$(dx_provider_prompt)
-  INIT_PROVIDER_SESSION_ID="init-$(dx_unique_session_id)"
+  INIT_PROVIDER_SESSION_ID="${INIT_RUN_SESSION_ID:-init-$(dx_unique_session_id)}"
   dx_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID"
   set +o pipefail
-  DEX_SESSION_ID="$INIT_PROVIDER_SESSION_ID" dx_provider_claude -p "${analysis_prompt}${provider_prompt}" \
+  DEX_SESSION_ID="$INIT_PROVIDER_SESSION_ID" DEX_RUN_ID="${INIT_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_provider_claude -p "${analysis_prompt}${provider_prompt}" \
     --model "$DX_CLAUDE_MODEL" --effort "$DX_CLAUDE_EFFORT" \
     --dangerously-skip-permissions --permission-mode bypassPermissions \
     --verbose --output-format stream-json --include-partial-messages \

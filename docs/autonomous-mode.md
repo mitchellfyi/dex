@@ -188,6 +188,17 @@ During autonomous phases (2-6), a custom status line displays live information i
 
 The status line is driven by `bin/status-line.sh` which reads state files from `~/.claude/.dex-phases/` and `~/.claude/.dex-loops/`. It is injected per-session via `--settings` and does not affect the global settings.
 
+## Run Events
+
+Provider-backed Dex commands create a run ID and a local event journal under
+`~/.dex/runs/<run_id>/`. The main lifecycle emits `run.*` and `phase.*` events
+as the Stop hook advances, blocks, or completes phases. `dx init` and `dx sync`
+also emit run-level start and finish events.
+
+Events are append-only JSONL for machines. Human-facing phase logs still live in
+`~/.claude/.dex-phases/<session_id>.log`. See [events.md](events.md) for the
+schema and storage layout.
+
 ## Safety Controls
 
 ### Max Iterations
@@ -264,6 +275,7 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_LOOP_PROMPT` | (from file) | Audit prompt injected on each loop iteration |
 | `DEX_LOOP_PHASE` | (set by wrapper) | Current phase number (1-6) or `prompt-loop`, used to find audit file |
 | `DEX_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
+| `DEX_RUN_ID` | set by Dex | Current run ID passed into hooks and provider subprocesses |
 | `DEX_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DEX_PHASE_2_MIN_AUDITS=5`) |
 | `DEX_REVIEW_PROFILE` | `auto` | Starting Phase 3 review depth: `auto`, `light`, `standard`, or `thorough` |
 | `DEX_REVIEW_CLEAN_PASSES` | profile-based | Exact consecutive `CLEAN` review waves required to advance Phase 3 |
@@ -278,6 +290,7 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_COMPLETE_WAIT_MINUTES` | `5` | Minimum wait window per Phase 6 cycle (minutes) |
 | `DX_ARTIFACT_DIR` | `~/.claude/.dex-artifacts` | Screenshots, videos, traces, and logs produced by Dex |
 | `DX_TOOL_DIR` | `~/.claude/.dex-tools` | Dex-managed external tooling cache |
+| `DX_RUN_ROOT` | `~/.dex/runs` | Local run directories, event journals, summaries, and run artifacts |
 | `DX_RTK_ENABLED` | `1` | Set to `0` to skip RTK token-reduction bootstrap |
 | `DX_RTK_BIN` | unset | RTK binary path override for hooks and checks |
 | `DX_RTK_INSTALL_DIR` | `$DX_TOOL_DIR/rtk/bin` | RTK binary install directory |

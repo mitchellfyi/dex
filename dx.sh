@@ -1244,6 +1244,14 @@ __dx_run_phases_inline() {
 
   [[ -n "$session_id" ]] || session_id=$(__dx_session_id_for_workspace "$workspace_mode" "$wt_name")
 
+  local run_id
+  if ! run_id=$(dx_run_prepare "$session_id" "$wt_dir" "$workspace_mode" "$wt_name" "$raw_input" "dx"); then
+    dx_error "Unable to prepare Dex run journal."
+    return 1
+  fi
+  dx_run_maybe_emit_started "$run_id" "Dex lifecycle started" "{\"command\":\"dx\",\"start_phase\":${step},\"workspace_mode\":\"${workspace_mode}\",\"workspace_name\":\"${wt_name}\"}"
+  dx_event_maybe_emit_phase_started "$run_id" "$step" "$(__dx_phase_name "$step")" "launcher"
+
   local had_times_file=0
   [[ -f "$times_file" ]] && had_times_file=1
 
@@ -1298,6 +1306,7 @@ __dx_run_phases_inline() {
     sh -c 'echo $PPID' > "$_dx_pidfile"
     cd "$wt_dir" && \
     DEX_SESSION_ID="$session_id" \
+    DEX_RUN_ID="$run_id" \
     DEX_LOOP_ACTIVE=1 \
     DEX_LOOP_PROMISE="${DX_PHASE_PROMISES[$step]}" \
     DEX_LOOP_PHASE="$step" \
@@ -1305,6 +1314,7 @@ __dx_run_phases_inline() {
     DEX_COMPLETE_MAX_CYCLES="${DEX_COMPLETE_MAX_CYCLES:-$DX_COMPLETE_MAX_CYCLES}" \
     DEX_COMPLETE_WAIT_MINUTES="${DEX_COMPLETE_WAIT_MINUTES:-$DX_COMPLETE_WAIT_MINUTES}" \
     DEX_DIR="$DEX_DIR" \
+    DX_RUN_ROOT="$DX_RUN_ROOT" \
     __dx_claude "${claude_args[@]}" "$message"
   )
   local exit_code=$?
@@ -1318,6 +1328,8 @@ __dx_run_phases_inline() {
   local paused_file
   paused_file=$(dx_paused_file "$session_id")
   if [[ -f "$paused_file" ]]; then
+    dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "{\"reason\":\"manual-intervention\"}"
+    dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step")"
     rm -f \
       "$(dx_active_file "$session_id")" \
       "$(dx_loop_config_file "$session_id")" \
@@ -1346,6 +1358,8 @@ __dx_run_phases_inline() {
     fi
 
     rm -f "$loop_file" "$(dx_active_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
+    dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "{\"reason\":\"${pause_reason}\"}"
+    dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: ${pause_reason}"
     dx_provider_cleanup_session_state "$session_id"
 
     echo ""
@@ -1365,6 +1379,8 @@ __dx_run_phases_inline() {
 	  fi
 
   if [[ $exit_code -ne 0 ]]; then
+    dx_event_emit_for_session "$session_id" "run.failed" "error" "Dex lifecycle exited at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "{\"exit_code\":${exit_code}}"
+    dx_run_write_summary_for_session "$session_id" "failed" "Exited at Phase ${final_step} with code ${exit_code}"
     echo ""
     echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (exit ${exit_code})"
     echo "Resume with: ${resume_hint}"
@@ -1372,6 +1388,8 @@ __dx_run_phases_inline() {
   fi
 
   echo ""
+  dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Claude session exited before Dex lifecycle completed" "$final_step" "{\"reason\":\"session-exited\"}"
+  dx_run_write_summary_for_session "$session_id" "blocked" "Claude session exited at Phase ${final_step}"
   echo "Claude session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
   echo "Resume with: ${resume_hint}"
   return 0
@@ -1455,6 +1473,10 @@ __dx_show_header() {
     [[ "$commits_count" != "0" ]] && meta+=" | ${commits_count} commits"
     echo "$meta"
   fi
+
+  local run_id
+  run_id=$(dx_run_read_for_session "$session_id" 2>/dev/null || true)
+  [[ -n "$run_id" ]] && echo "  Run ID: ${run_id}"
 
   # Timing info
   if [[ -f "$times_file" ]] && [[ $step -gt 1 ]]; then

@@ -44,6 +44,8 @@ repo memory.
   typecheck, generation, and test commands instead of assuming one toolchain.
 - **UI evidence:** Browser-facing changes can capture before/after screenshots,
   Playwright traces, videos, console logs, and a PR-ready visual manifest.
+- **Local run events:** Each provider-backed run gets a stable run ID and an
+  append-only JSONL journal under `~/.dex/runs/`.
 - **PR follow-through:** Dex can mark a PR ready, request reviewers, watch CI and
   review comments, apply fixes, re-request review after pushes, and close the
   ticket when approved.
@@ -108,6 +110,9 @@ dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and pl
 Dex installs Playwright UI-capture tooling and RTK token-reduction tooling into
 `~/.claude/.dex-tools/`. Screenshots, traces, logs, and videos are stored under
 `~/.claude/.dex-artifacts/`. Dex does not commit those artifacts.
+
+Run IDs and lifecycle events are stored locally under `~/.dex/runs/`; see
+[docs/events.md](docs/events.md) for the JSONL schema.
 
 RTK support is installed by `dx install`, `dx init`, `dx sync`, and
 `dx tools bootstrap`. Claude Code sessions get a fail-open Bash rewrite hook;

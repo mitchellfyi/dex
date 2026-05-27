@@ -67,7 +67,7 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 ```
 
-Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, and `ui-capture.sh`.
+Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `agent-tools.sh`, and `maintenance.sh`.
 
 ### Output
 
@@ -285,6 +285,7 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `common.sh` | Bootstrap, constants, sources all others | `dx_repo_root()` |
 | `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap | `dx_bootstrap_agent_tooling()`, `dx_install_safe_official_claude_plugins()`, `dx_install_openai_docs_mcp_servers()` |
 | `codex.sh` | Codex CLI skill installation helpers | `dx_install_codex_skills()`, `dx_count_dex_skills()`, `dx_codex_dex_skills_complete()`, `dx_uninstall_codex_skills()` |
+| `events.sh` | Run IDs, local run directories, JSONL event journals, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_write_summary()` |
 | `git.sh` | Git helpers | `dx_default_branch()`, `dx_slugify()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
@@ -324,6 +325,8 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `DX_LOOP_DIR` | Loop state directory | `~/.claude/.dex-loops` |
 | `DX_ARTIFACT_DIR` | Dex-generated screenshots, videos, traces, and logs | `~/.claude/.dex-artifacts` |
 | `DX_TOOL_DIR` | Dex-managed external tooling cache | `~/.claude/.dex-tools` |
+| `DX_RUN_ROOT` | Dex run directories, event journals, summaries, and run artifacts | `~/.dex/runs` |
+| `DEX_RUN_ID` | Current run ID passed into hooks/provider subprocesses | unset |
 | `DX_RTK_ENABLED` | Enable RTK token-reduction bootstrap (`0` disables) | `1` |
 | `DX_RTK_BIN` | Override RTK binary path used by Dex hooks/checks | unset |
 | `DX_RTK_INSTALL_DIR` | RTK binary install directory | `$DX_TOOL_DIR/rtk/bin` |
