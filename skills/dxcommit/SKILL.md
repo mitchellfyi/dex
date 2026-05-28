@@ -57,4 +57,4 @@ else
 fi
 ```
 
-Verify the push succeeded. This handles newly created Dex lifecycle branches whose first checkout was based on `origin/main` or `origin/master`, but whose push target must be their own branch. If push fails due to diverged history, investigate — do not force push without user approval.
+Verify the push succeeded. This handles newly created Dex lifecycle branches whose first checkout was based on the default branch's upstream or remote-tracking ref, but whose push target must be their own branch. If push fails due to diverged history, investigate — do not force push without user approval.

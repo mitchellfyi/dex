@@ -392,17 +392,13 @@ __dx_maintain_copilot_review_enabled() {
 }
 
 __dx_maintain_base_ref() {
-  local repo_root="$1" default_branch
+  local repo_root="$1" default_branch base_ref
   default_branch=$(dx_default_branch "$repo_root")
-  if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/origin/${default_branch}"; then
-    printf 'origin/%s\n' "$default_branch"
+  if base_ref=$(dx_default_branch_base_ref "$repo_root" "$default_branch"); then
+    printf '%s\n' "$base_ref"
     return 0
   fi
-  if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${default_branch}"; then
-    printf '%s\n' "$default_branch"
-    return 0
-  fi
-  dx_error "Could not resolve the default branch. Fetch origin/${default_branch} or create local branch ${default_branch} before write-capable maintenance."
+  dx_error "Could not resolve the default branch base. Fetch ${default_branch}'s upstream or create local branch ${default_branch} before write-capable maintenance."
   return 1
 }
 

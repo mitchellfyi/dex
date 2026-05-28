@@ -125,10 +125,12 @@ dx --no-worktree "fix login bug"
 This runs the same six-phase lifecycle in the current git checkout. Dex does
 not create a worktree, but it still prepares the normal lifecycle branch
 (`worktree-ticket-*` or `worktree-task-*`) in the current checkout, using
-`origin/<default>` as the starting point just like worktree mode. Phase 4 commits
-and pushes that branch. If uncommitted changes are present and Dex would need
-to switch or create the lifecycle branch, it stops so you can commit or stash
-first. `dx --resume` resumes the most recent worktree or in-place lifecycle.
+the default branch's upstream or remote-tracking ref as the starting point just
+like worktree mode. It never branches new work from the current feature branch.
+Phase 4 commits and pushes that branch. If uncommitted changes are present and
+Dex would need to switch or create the lifecycle branch, it stops so you can
+commit or stash first. `dx --resume` resumes the most recent worktree or
+in-place lifecycle.
 
 ## Prompt Loop Mode (`dxloop`)
 

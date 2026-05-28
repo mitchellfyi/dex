@@ -21,8 +21,9 @@ Detect the default branch using the shared library function (see `lib/git.sh`):
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 DEFAULT_BRANCH=$(dx_default_branch)
-git log origin/$DEFAULT_BRANCH..HEAD --oneline
-git diff origin/$DEFAULT_BRANCH...HEAD --stat
+BASE_REF=$(dx_default_branch_base_ref "$(pwd)" "$DEFAULT_BRANCH")
+git log "$BASE_REF"..HEAD --oneline
+git diff "$BASE_REF"...HEAD --stat
 ```
 
 Understand the full scope of changes across all commits. Note any `.dex/` file changes — these should be called out in the PR description.

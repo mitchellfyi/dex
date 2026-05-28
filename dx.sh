@@ -797,7 +797,7 @@ __dx_setup_worktree() {
   __dx_resolve_workspace_name "$raw_input" || return 1
 
   _dx_wt_dir="${_dx_repo_root}/.dex/worktrees/${_dx_wt_name}"
-  _dx_default_branch=$(dx_default_branch)
+  _dx_default_branch=$(dx_default_branch "$_dx_repo_root")
   _dx_workspace_mode="worktree"
   _dx_session_id=$(__dx_session_id_for_workspace "$_dx_workspace_mode" "$_dx_wt_name")
 
@@ -832,15 +832,19 @@ __dx_setup_worktree() {
   # Auto-init if .dex doesn't exist yet
   if [[ ! -d "${_dx_repo_root}/.dex" ]]; then
     echo "Auto-initialising Dex for this repo..."
-    bash "$DEX_DIR/bin/init.sh" --skip-analysis --skip-config
+    (cd "$_dx_repo_root" && bash "$DEX_DIR/bin/init.sh" --skip-analysis --skip-config)
   fi
 
   # Create worktree
-  echo "Creating worktree ${_dx_wt_name}..."
-  git fetch origin "$_dx_default_branch" --quiet 2>/dev/null || true
+  local _dx_base_ref
+  if ! _dx_base_ref=$(dx_default_branch_base_ref "$_dx_repo_root" "$_dx_default_branch"); then
+    return 1
+  fi
+
+  echo "Creating worktree ${_dx_wt_name} from ${_dx_base_ref}..."
   mkdir -p "${_dx_repo_root}/.dex/worktrees"
 
-  if ! git worktree add --no-track "$_dx_wt_dir" -b "worktree-${_dx_wt_name}" "origin/${_dx_default_branch}" 2>&1; then
+  if ! git -C "$_dx_repo_root" worktree add --no-track "$_dx_wt_dir" -b "worktree-${_dx_wt_name}" "$_dx_base_ref" 2>&1; then
     dx_error "Failed to create worktree."
     return 1
   fi
@@ -917,8 +921,6 @@ __dx_setup_in_place() {
 
   dx_info "Running lifecycle in current checkout (no worktree): ${_dx_wt_dir}"
 
-  git -C "$_dx_wt_dir" fetch origin "$_dx_default_branch" --quiet 2>/dev/null || true
-
   local current_branch has_changes
   current_branch=$(git -C "$_dx_wt_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
   has_changes=0
@@ -967,12 +969,16 @@ __dx_setup_in_place() {
     fi
   else
     if [[ $has_changes -eq 1 ]]; then
-      dx_error "Cannot create branch ${branch_name} from origin/${_dx_default_branch} with uncommitted changes in the current checkout."
+      dx_error "Cannot create branch ${branch_name} from the default branch with uncommitted changes in the current checkout."
       dx_info "Commit, stash, or discard those changes, then re-run: dx --no-worktree ${raw_input}"
       return 1
     fi
-    dx_info "Creating branch ${branch_name} from origin/${_dx_default_branch}"
-    if ! git -C "$_dx_wt_dir" switch --no-track -c "$branch_name" "origin/${_dx_default_branch}"; then
+    local _dx_base_ref
+    if ! _dx_base_ref=$(dx_default_branch_base_ref "$_dx_wt_dir" "$_dx_default_branch"); then
+      return 1
+    fi
+    dx_info "Creating branch ${branch_name} from ${_dx_base_ref}"
+    if ! git -C "$_dx_wt_dir" switch --no-track -c "$branch_name" "$_dx_base_ref"; then
       dx_error "Failed to create branch ${branch_name}."
       return 1
     fi

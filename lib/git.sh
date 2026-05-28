@@ -25,6 +25,61 @@ dx_default_branch() {
   echo "$branch"
 }
 
+# dx_default_branch_base_ref [git_dir] [default_branch] [fetch|no-fetch]
+# Resolve the immutable starting point Dex should branch from for new lifecycle
+# work. This intentionally ignores the caller's current branch: prefer the
+# default branch's configured upstream, then origin/<default>, then
+# upstream/<default>, and only then a local default branch.
+dx_default_branch_base_ref() {
+  local git_dir="${1:-}" default_branch="${2:-}" fetch_mode="${3:-fetch}"
+  local git_args=() upstream_ref upstream_remote upstream_branch
+
+  [[ -n "$git_dir" ]] && git_args=(-C "$git_dir")
+  [[ -n "$default_branch" ]] || default_branch=$(dx_default_branch "$git_dir")
+  if [[ -z "$default_branch" ]]; then
+    printf 'ERROR: Could not resolve the default branch.\n' >&2
+    return 1
+  fi
+
+  if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet "refs/heads/${default_branch}" 2>/dev/null; then
+    upstream_ref=$(git ${git_args[@]+"${git_args[@]}"} rev-parse --abbrev-ref "${default_branch}@{upstream}" 2>/dev/null || true)
+  fi
+
+  if [[ "$fetch_mode" != "no-fetch" ]]; then
+    if [[ "$upstream_ref" == */* ]]; then
+      upstream_remote="${upstream_ref%%/*}"
+      upstream_branch="${upstream_ref#*/}"
+      git ${git_args[@]+"${git_args[@]}"} fetch "$upstream_remote" "$upstream_branch" --quiet 2>/dev/null || true
+    fi
+    if git ${git_args[@]+"${git_args[@]}"} remote get-url origin >/dev/null 2>&1; then
+      git ${git_args[@]+"${git_args[@]}"} fetch origin "$default_branch" --quiet 2>/dev/null || true
+    fi
+  fi
+
+  if [[ -n "$upstream_ref" ]] && git ${git_args[@]+"${git_args[@]}"} rev-parse --verify --quiet "$upstream_ref" >/dev/null 2>&1; then
+    printf '%s\n' "$upstream_ref"
+    return 0
+  fi
+
+  if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet "refs/remotes/origin/${default_branch}" 2>/dev/null; then
+    printf 'origin/%s\n' "$default_branch"
+    return 0
+  fi
+
+  if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet "refs/remotes/upstream/${default_branch}" 2>/dev/null; then
+    printf 'upstream/%s\n' "$default_branch"
+    return 0
+  fi
+
+  if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet "refs/heads/${default_branch}" 2>/dev/null; then
+    printf '%s\n' "$default_branch"
+    return 0
+  fi
+
+  printf 'ERROR: Could not resolve a starting ref for default branch %s. Fetch its upstream or create the local default branch before starting Dex work.\n' "$default_branch" >&2
+  return 1
+}
+
 # dx_checkpoint_tag <step> <wt_dir>
 # Create a lightweight local git tag at the current HEAD as a phase checkpoint.
 # Uses --force so re-running a phase overwrites the previous checkpoint.

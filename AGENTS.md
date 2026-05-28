@@ -209,7 +209,7 @@ Derived from a stable repo key plus worktree names (`worktree-<name>`) or branch
 
 Each ticket gets its own git worktree in `.dex/worktrees/`. The `dx` shell function manages creation, cleanup, and resumption.
 
-Exception: `dx --no-worktree <ticket-or-description>` runs the same phased lifecycle in the current checkout. It still creates or switches to the normal Dex lifecycle branch (`worktree-ticket-*` / `worktree-task-*`) from `origin/<default>`; it only skips `git worktree add`. In-place sessions persist their current branch in phase state so resume can switch back or stop rather than continuing on the wrong checkout branch.
+Exception: `dx --no-worktree <ticket-or-description>` runs the same phased lifecycle in the current checkout. It still creates or switches to the normal Dex lifecycle branch (`worktree-ticket-*` / `worktree-task-*`) from the default branch's upstream or remote-tracking ref; it only skips `git worktree add`. In-place sessions persist their current branch in phase state so resume can switch back or stop rather than continuing on the wrong checkout branch.
 
 ## Quality Gates
 
