@@ -67,6 +67,20 @@ For browser UI changes, Phase 2 also requires before/after UI capture evidence b
 
 Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from `.dex/dex.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer. The autonomous loop waits at least `DEX_COMPLETE_WAIT_MINUTES` (default 5) per cycle for CI and reviews, addresses failures through `/dxwatchpr` and `/dxprreview`, re-requests reviewers after each push, and closes the ticket once CI is green and all successfully requested reviewers approve. Reviewers GitHub says are not requestable for the repository are warnings, not approval gates. After `DEX_COMPLETE_MAX_CYCLES` (default 3) idle cycles with no progress, it pauses with manual follow-up instructions. It never merges the PR.
 
+DX maintain has a separate GitHub Actions path for background maintenance. The
+installed workflow can run on schedules, manual dispatch, trusted `issues`
+events, and maintenance PR feedback. Issue and schedule modes are read from
+`.dex/dex.md` (`issue_mode`, `schedule_mode`, then `default_mode`). Issue event
+actors must have write, maintain, or admin access before Dex launches the
+provider. The workflow collects issue JSON before token scrubbing and passes it
+as untrusted context files to `dx maintain`.
+
+Maintenance PRs remain draft by default. If trusted `.dex/dex.md` config sets
+`auto_merge` to `true`, the wrapper creates a ready maintenance PR and requests
+GitHub native auto-merge for the exact published head with
+`gh pr merge --auto --match-head-commit`. Dex does not use admin bypass, and the
+provider session still never receives GitHub write credentials.
+
 When the user submits a direct prompt during Phase 6, the `UserPromptSubmit` hook writes a `.watch-pause` marker. Scheduled `/dxwatchpr` cycles must no-op while the marker is active, so manual work is not interrupted by CI/review polling commands. The pause expires after `DEX_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`) unless the user runs `/dxcomplete` or asks to resume watching.
 
 Each watcher cycle also has a runtime lock with a default budget of `2m 0s`. If a later `/loop` tick fires while the previous `/dxwatchpr` cycle is still within that budget, the later tick skips instead of starting overlapping GitHub or CI work. Individual watcher shell commands default to `0m 30s`.

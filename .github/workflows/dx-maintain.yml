@@ -30,8 +30,8 @@ on:
 permissions: {}
 
 env:
-  DEX_REPO: __DEX_REPO__
-  DEX_REF: __DEX_REF__
+  DEX_REPO: mitchellfyi/dex
+  DEX_REF: main
 
 jobs:
   nightly:

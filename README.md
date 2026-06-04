@@ -172,6 +172,15 @@ Repo defaults live in `.dex/providers.json`; user defaults live in
 Subscription-safe profiles strip API-provider environment variables from
 launched subprocesses and require Dex-managed wrappers for delegated Codex work.
 
+## Background Maintenance
+
+`dx maintain install-workflow` installs the GitHub Actions workflow for scheduled
+maintenance, trusted issue intake, and maintenance PR feedback. Repo policy
+lives in `.dex/dex.md`: `schedule_mode` and `issue_mode` choose report or
+write-capable runs, while `auto_merge` controls whether the wrapper asks GitHub
+native auto-merge to merge ready maintenance PRs after required checks and
+reviews pass.
+
 ## Documentation
 
 - [Autonomous mode](docs/autonomous-mode.md) explains phase hooks, state files,

@@ -153,12 +153,21 @@ Run `dx help` in the terminal for all available commands.
 | branch_prefix | dex/maintain/ |
 | label | dex-maintenance |
 | default_mode | report |
+| schedule_mode | report |
+| issue_mode | report |
+| issue_label | _none_ |
+| issue_queue_limit | 10 |
 | max_prs | 1 |
 | low_risk_fix_categories | docs, rules, guards, memory, tests |
 | copilot_review | true |
+| auto_merge | false |
+| auto_merge_method | squash |
 
 `fix-scoped` may only patch the low-risk categories listed above unless a repo
-maintainer expands this table.
+maintainer expands this table. Set `issue_mode` or `schedule_mode` to
+`fix-scoped` only after configuring the GitHub workflow secrets and reviewing
+the categories. Set `auto_merge` to `true` only for repositories where GitHub
+branch protection or a merge queue should accept maintenance PRs automatically.
 DEXMD
   dx_done "Created .dex/dex.md (minimal)"
 else

@@ -115,15 +115,22 @@ current code before relying on them.
 | branch_prefix | dex/maintain/ |
 | label | dex-maintenance |
 | default_mode | report |
+| schedule_mode | fix-scoped |
+| issue_mode | fix-scoped |
+| issue_label | _none_ |
+| issue_queue_limit | 10 |
 | max_prs | 1 |
 | low_risk_fix_categories | docs, rules, guards, memory, tests |
 | copilot_review | true |
+| auto_merge | true |
+| auto_merge_method | squash |
 
 `fix-scoped` may only patch the configured low-risk categories above, plus
 verification updates in matching test files, unless a repo maintainer expands
-this table. Publication is handled by the `dx maintain` CLI wrapper after the
-provider exits so GitHub write credentials are not exposed to the agent
-process.
+this table. Issue and scheduled maintenance runs may open one ready PR and ask
+GitHub to auto-merge it with the squash strategy. Publication is handled by the
+`dx maintain` CLI wrapper after the provider exits so GitHub write credentials
+are not exposed to the agent process.
 
 ## Workflow
 Run `/dex` to begin the autonomous ticket lifecycle.

@@ -38,6 +38,7 @@ Usage: dx maintain [options]
        dx maintain respond --pr <number> [--event <kind>] [--dry-run]
        dx maintain publish --state-file <path>
        dx maintain publish-response --state-file <path>
+       dx maintain resolve-mode --event <event> [--explicit-mode <mode>]
 
 Run Dex background maintenance or install the GitHub Actions workflow.
 
@@ -54,6 +55,8 @@ Options:
   --no-pr                             Do not create or update PRs
   --dry-run                           Do not modify repo files, push, or create PRs
   --include-working-tree              Allow uncommitted changes as report evidence
+  --issue <number>                    Include a GitHub issue as the maintenance focus
+  --issue-context <dir>               Include pre-collected GitHub issue context files
   --defer-publish <state-file>        Write publication state instead of publishing
   -h, --help                          Show this help
 
@@ -62,6 +65,7 @@ Subcommands:
   respond                             Respond to comments on a Dex maintenance PR
   publish                             Publish a deferred maintenance PR
   publish-response                    Publish a deferred maintenance PR response
+  resolve-mode                        Print the mode for a workflow event
 USAGE
 }
 
@@ -301,26 +305,7 @@ __dx_maintain_worktree_dirty() {
 
 __dx_maintain_config_value() {
   local repo_root="$1" key="$2" default_value="${3:-}"
-  local value
-  value=$(awk -F'|' -v want="$key" '
-    /^## Maintenance[[:space:]]*$/ { in_section = 1; next }
-    in_section && /^## / { exit }
-    in_section && /^\|/ {
-      k = $2
-      v = $3
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-      if (k == want) {
-        print v
-        exit
-      }
-    }
-  ' "$repo_root/.dex/dex.md" 2>/dev/null || true)
-  if [[ -n "$value" && "$value" != "Value" && "$value" != "---" ]]; then
-    printf '%s\n' "$value"
-  else
-    printf '%s\n' "$default_value"
-  fi
+  dx_maintenance_config_value "$repo_root" "$key" "$default_value"
 }
 
 __dx_maintain_config_value_at_ref() {
@@ -378,6 +363,13 @@ __dx_maintain_enabled_at_ref() {
   esac
 }
 
+__dx_maintain_truthy() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    true|yes|1|enabled|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 __dx_maintain_copilot_review_enabled() {
   local repo_root="$1" trusted_ref="${2:-}" enabled
   if [[ -n "${DX_MAINTAIN_COPILOT_REVIEW:-}" ]]; then
@@ -388,6 +380,30 @@ __dx_maintain_copilot_review_enabled() {
   case "$(printf '%s' "$enabled" | tr '[:upper:]' '[:lower:]')" in
     false|no|0|disabled) return 1 ;;
     *) return 0 ;;
+  esac
+}
+
+__dx_maintain_auto_merge_enabled() {
+  local repo_root="$1" trusted_ref="${2:-}" enabled
+  if [[ -n "${DX_MAINTAIN_AUTO_MERGE:-}" ]]; then
+    enabled="$DX_MAINTAIN_AUTO_MERGE"
+  else
+    enabled=$(__dx_maintain_config_value_at_ref "$repo_root" "$trusted_ref" "auto_merge" "false")
+  fi
+  __dx_maintain_truthy "$enabled"
+}
+
+__dx_maintain_auto_merge_method() {
+  local repo_root="$1" trusted_ref="${2:-}" method
+  method="${DX_MAINTAIN_AUTO_MERGE_METHOD:-$(__dx_maintain_config_value_at_ref "$repo_root" "$trusted_ref" "auto_merge_method" "squash")}"
+  method=$(printf '%s' "$method" | tr '[:upper:]' '[:lower:]')
+  case "$method" in
+    merge|rebase|squash|queue)
+      printf '%s\n' "$method"
+      ;;
+    *)
+      printf '%s\n' "squash"
+      ;;
   esac
 }
 
@@ -852,10 +868,78 @@ __dx_maintain_request_reviewers() {
   done
 }
 
+__dx_maintain_mark_pr_ready() {
+  local pr_num="$1" report_file="$2" repo output command_status
+  repo=$(__dx_maintain_repo_arg)
+  set +e
+  if [[ -n "$repo" ]]; then
+    output=$(__dx_maintain_with_gh gh pr ready "$pr_num" --repo "$repo" 2>&1)
+  else
+    output=$(__dx_maintain_with_gh gh pr ready "$pr_num" 2>&1)
+  fi
+  command_status=$?
+  set -e
+  if [[ "$command_status" -eq 0 ]]; then
+    __dx_maintain_append_report_status "$report_file" "ready" "Marked maintenance PR #${pr_num} ready for review."
+    return 0
+  fi
+  case "$output" in
+    *"Pull request is not a draft"*|*"not in draft state"*)
+      return 0
+      ;;
+  esac
+  __dx_maintain_append_report_status "$report_file" "warning" "Could not mark maintenance PR #${pr_num} ready before auto-merge. gh output: ${output}"
+  return "$command_status"
+}
+
+__dx_maintain_enable_auto_merge() {
+  local repo_root="$1" pr_num="$2" report_file="$3" trusted_ref="${4:-}" repo method head_sha output command_status
+  local merge_args
+  repo=$(__dx_maintain_repo_arg)
+  method=$(__dx_maintain_auto_merge_method "$repo_root" "$trusted_ref")
+  head_sha=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -z "$head_sha" || ! "$head_sha" =~ ^[0-9A-Fa-f]{40,64}$ ]]; then
+    __dx_maintain_append_report_status "$report_file" "warning" "Could not enable auto-merge for PR #${pr_num}; maintenance head SHA was unavailable."
+    return 1
+  fi
+
+  __dx_maintain_mark_pr_ready "$pr_num" "$report_file" || return 1
+
+  merge_args=(pr merge "$pr_num" --auto --match-head-commit "$head_sha")
+  case "$method" in
+    merge|rebase|squash)
+      merge_args+=("--${method}")
+      ;;
+    queue)
+      ;;
+  esac
+  if [[ -n "$repo" ]]; then
+    merge_args+=(--repo "$repo")
+  fi
+
+  set +e
+  output=$(__dx_maintain_with_gh gh "${merge_args[@]}" 2>&1)
+  command_status=$?
+  set -e
+  if [[ "$command_status" -eq 0 ]]; then
+    __dx_maintain_append_report_status "$report_file" "auto-merge" "Enabled GitHub native auto-merge for maintenance PR #${pr_num} using ${method}."
+    dx_done "Enabled auto-merge for maintenance PR #${pr_num}"
+    return 0
+  fi
+
+  __dx_maintain_append_report_status "$report_file" "warning" "Could not enable auto-merge for maintenance PR #${pr_num}. gh output: ${output}"
+  dx_warn "Could not enable auto-merge for maintenance PR #${pr_num}."
+  return "$command_status"
+}
+
 __dx_maintain_publish_pr() {
   local repo_root="$1" branch="$2" mode="$3" run_id="$4" report_file="$5" label_name="$6" base_sha="$7" allowed_categories="$8"
-  local body_file pr_num create_output create_status current_branch repo
+  local body_file pr_num create_output create_status current_branch repo auto_merge_enabled=0 auto_merge_requested=0
+  local create_args
   repo=$(__dx_maintain_repo_arg)
+  if __dx_maintain_auto_merge_enabled "$repo_root" "$base_sha"; then
+    auto_merge_enabled=1
+  fi
   if git -C "$repo_root" diff --quiet "$base_sha" HEAD -- && [[ -z "$(git -C "$repo_root" status --porcelain=v1 -uall 2>/dev/null || true)" ]]; then
     __dx_maintain_append_report_status "$report_file" "skipped" "No maintenance changes were produced; no draft PR was opened."
     dx_skip "No maintenance changes produced; no PR opened."
@@ -892,12 +976,15 @@ __dx_maintain_publish_pr() {
     else
       __dx_maintain_with_gh gh label create "$label_name" --color "6f42c1" --description "Dex maintenance PR" >/dev/null 2>&1 || true
     fi
-    set +e
-    if [[ -n "$repo" ]]; then
-      create_output=$(__dx_maintain_with_gh gh pr create --repo "$repo" --draft --title "DX maintain: ${mode}" --body-file "$body_file" --head "$branch" --label "$label_name" 2>&1)
-    else
-      create_output=$(__dx_maintain_with_gh gh pr create --draft --title "DX maintain: ${mode}" --body-file "$body_file" --head "$branch" --label "$label_name" 2>&1)
+    create_args=(pr create --title "DX maintain: ${mode}" --body-file "$body_file" --head "$branch" --label "$label_name")
+    if [[ "$auto_merge_enabled" -ne 1 ]]; then
+      create_args+=(--draft)
     fi
+    if [[ -n "$repo" ]]; then
+      create_args+=(--repo "$repo")
+    fi
+    set +e
+    create_output=$(__dx_maintain_with_gh gh "${create_args[@]}" 2>&1)
     create_status=$?
     set -e
     if [[ "$create_status" -ne 0 ]]; then
@@ -909,8 +996,22 @@ __dx_maintain_publish_pr() {
   fi
   if [[ -n "$pr_num" && "$pr_num" =~ ^[0-9]+$ ]]; then
     __dx_maintain_request_reviewers "$repo_root" "$pr_num" "$report_file" "$base_sha"
-    __dx_maintain_append_report_status "$report_file" "published" "Published draft maintenance PR #${pr_num} from ${branch}."
-    dx_done "Published draft maintenance PR #${pr_num}"
+    if [[ "$auto_merge_enabled" -eq 1 ]]; then
+      if __dx_maintain_enable_auto_merge "$repo_root" "$pr_num" "$report_file" "$base_sha"; then
+        auto_merge_requested=1
+      fi
+    fi
+    if [[ "$auto_merge_enabled" -eq 1 ]]; then
+      if [[ "$auto_merge_requested" -eq 1 ]]; then
+        __dx_maintain_append_report_status "$report_file" "published" "Published maintenance PR #${pr_num} from ${branch}; GitHub native auto-merge is enabled."
+      else
+        __dx_maintain_append_report_status "$report_file" "published" "Published maintenance PR #${pr_num} from ${branch}; GitHub native auto-merge could not be enabled."
+      fi
+      dx_done "Published maintenance PR #${pr_num}"
+    else
+      __dx_maintain_append_report_status "$report_file" "published" "Published draft maintenance PR #${pr_num} from ${branch}."
+      dx_done "Published draft maintenance PR #${pr_num}"
+    fi
   else
     __dx_maintain_append_report_status "$report_file" "failed" "Could not create or identify the maintenance PR for ${branch}."
     dx_error "Could not create or identify the maintenance PR for ${branch}."
@@ -1131,6 +1232,38 @@ __dx_maintain_install_workflow() {
 
   repo_root=$(__dx_maintain_repo_root)
   dx_maintenance_install_workflow "$repo_root" "$force"
+}
+
+__dx_maintain_resolve_mode() {
+  local event_name="" explicit_mode="" repo_root
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --event)
+        __dx_maintain_require_value "$1" "$#"
+        event_name="$2"
+        shift 2
+        ;;
+      --explicit-mode)
+        __dx_maintain_require_value "$1" "$#"
+        explicit_mode="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        dx_error "Unknown resolve-mode option: $1"
+        usage
+        exit 1
+        ;;
+    esac
+  done
+  __dx_maintain_reject_control_chars "--event" "$event_name"
+  __dx_maintain_reject_control_chars "--explicit-mode" "$explicit_mode"
+  repo_root=$(__dx_maintain_repo_root)
+  dx_maintenance_event_mode "$repo_root" "$event_name" "$explicit_mode"
 }
 
 __dx_maintain_run_provider() {
@@ -1623,6 +1756,7 @@ __dx_maintain_run() {
   local repo_root provider_repo_root repo_name run_id artifact_dir report_file invocation worktree_info branch_name base_sha base_ref
   local local_state_file
   local maintain_label branch_prefix allowed_categories
+  local issue_number="" issue_context_dir="" issue_context_files=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1692,6 +1826,17 @@ __dx_maintain_run() {
         include_working_tree=1
         shift
         ;;
+      --issue)
+        __dx_maintain_require_value "$1" "$#"
+        __dx_maintain_require_number "$1" "$2"
+        issue_number="$2"
+        shift 2
+        ;;
+      --issue-context)
+        __dx_maintain_require_value "$1" "$#"
+        issue_context_dir="$2"
+        shift 2
+        ;;
       --defer-publish)
         __dx_maintain_require_value "$1" "$#"
         defer_publish_file="$2"
@@ -1718,6 +1863,8 @@ __dx_maintain_run() {
   __dx_maintain_reject_control_chars "--command-timeout-seconds" "$command_timeout_seconds"
   __dx_maintain_reject_control_chars "--max-surfaces" "$max_surfaces"
   __dx_maintain_reject_control_chars "--max-prs" "$max_prs"
+  __dx_maintain_reject_control_chars "--issue" "$issue_number"
+  __dx_maintain_reject_control_chars "--issue-context" "$issue_context_dir"
   __dx_maintain_reject_control_chars "--defer-publish" "$defer_publish_file"
   if [[ ! -d "$repo_root/.dex" ]]; then
     dx_error ".dex/ not found. Run 'dx init' before maintenance."
@@ -1751,6 +1898,9 @@ __dx_maintain_run() {
   fi
   if [[ -z "$since" ]]; then
     since=$(__dx_maintain_last_success_ref)
+  fi
+  if [[ -n "$issue_number" && -z "$focus" ]]; then
+    focus="issue #${issue_number}"
   fi
 
   if [[ -z "$max_prs" ]]; then
@@ -1795,6 +1945,9 @@ __dx_maintain_run() {
     MAINTAIN_LOCK_ACQUIRED=1
   fi
   provider_repo_root="$repo_root"
+  if [[ -n "$issue_context_dir" && -d "$issue_context_dir" ]]; then
+    issue_context_files=$(find "$issue_context_dir" -maxdepth 1 -type f | LC_ALL=C sort | sed 's/^/- /' || true)
+  fi
   if [[ "$dry_run" -eq 0 ]]; then
     base_ref=$(__dx_maintain_base_ref "$repo_root")
     base_sha=$(git -C "$repo_root" rev-parse "$base_ref")
@@ -1834,6 +1987,9 @@ Include working tree evidence: $include_working_tree
 Maintenance label: $maintain_label
 Maintenance branch prefix: $branch_prefix
 Allowed fix categories: $allowed_categories
+Issue number: ${issue_number:-N/A}
+Issue context:
+${issue_context_files:-N/A}
 
 Follow the DX Maintain prompt above. If Dry run is 1 or No PR is 1, do not
 create or update PRs. If Dry run is 1, do not modify repo files. If PR creation
@@ -2002,6 +2158,9 @@ main() {
       ;;
     publish-response)
       __dx_maintain_publish_response_deferred "$@"
+      ;;
+    resolve-mode)
+      __dx_maintain_resolve_mode "$@"
       ;;
     -h|--help|help)
       usage
