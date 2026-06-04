@@ -142,7 +142,10 @@ Use this flow when the invocation command is `respond`.
    - For inline review-comment replies, write JSON lines to the
      `inline-replies.jsonl` path named in the invocation. Each line must be an
      object with `comment_id`; optional body text is retained as artifact context
-     only and is not copied into the public inline reply.
+     only and is not copied into the public inline reply. Omit
+     `resolve_thread`, or set it to `true`, when the reply closes the comment.
+     Set `resolve_thread: false` only when the reply asks a follow-up question
+     or explicitly needs reviewer input.
    - Invoke the `humanizer` skill on response notes and optional inline reply
      body text before writing the artifacts. Preserve comment IDs, paths, SHAs,
      reviewer handles, and section headings exactly.

@@ -1020,14 +1020,54 @@ __dx_maintain_publish_pr() {
 }
 
 __dx_maintain_collect_pr_context() {
-  local pr_num="$1" artifact_dir="$2" repo context_file inline_file
+  local pr_num="$1" artifact_dir="$2" repo context_file inline_file thread_file inline_raw
   repo=$(__dx_maintain_repo_arg)
   context_file="$artifact_dir/pr-${pr_num}-context.json"
   inline_file="$artifact_dir/pr-${pr_num}-inline-comments.json"
+  thread_file="$artifact_dir/pr-${pr_num}-review-threads.json"
   mkdir -p "$artifact_dir"
   __dx_maintain_with_gh gh pr view "$pr_num" --repo "$repo" --json number,title,body,labels,headRefName,headRefOid,files,comments,reviews > "$context_file"
-  __dx_maintain_with_gh gh api --paginate --slurp "repos/${repo}/pulls/${pr_num}/comments" > "$inline_file"
-  printf '%s\n%s\n' "$context_file" "$inline_file"
+  inline_raw=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-inline-comments.XXXXXX")
+  if ! __dx_maintain_with_gh gh api --paginate "repos/${repo}/pulls/${pr_num}/comments" > "$inline_raw"; then
+    rm -f "$inline_raw"
+    return 1
+  fi
+  if ! python3 - "$inline_raw" "$inline_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+text = source.read_text(encoding="utf-8", errors="replace")
+decoder = json.JSONDecoder()
+docs = []
+index = 0
+
+while index < len(text):
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text):
+        break
+    value, index = decoder.raw_decode(text, index)
+    docs.append(value)
+
+items = []
+for doc in docs:
+    if isinstance(doc, list):
+        items.extend(doc)
+    elif isinstance(doc, dict):
+        items.append(doc)
+
+target.write_text(json.dumps(items), encoding="utf-8")
+PY
+  then
+    rm -f "$inline_raw"
+    return 1
+  fi
+  rm -f "$inline_raw"
+  __dx_maintain_fetch_review_threads "$pr_num" "$thread_file" 2>/dev/null || printf '[]\n' > "$thread_file"
+  printf '%s\n%s\n%s\n' "$context_file" "$inline_file" "$thread_file"
 }
 
 __dx_maintain_public_response_file() {
@@ -1063,7 +1103,7 @@ PY
 }
 
 __dx_maintain_publish_inline_replies() {
-  local pr_num="$1" artifact_dir="$2" report_file="$3" replies_file allowed_file repo tmp_dir index_file comment_id body_path
+  local pr_num="$1" artifact_dir="$2" report_file="$3" replies_file allowed_file repo tmp_dir index_file comment_id resolve_thread comment_node_id body_path
   replies_file="$artifact_dir/inline-replies.jsonl"
   allowed_file="$artifact_dir/pr-${pr_num}-inline-comments.json"
   [[ -f "$replies_file" ]] || return 0
@@ -1081,7 +1121,7 @@ from pathlib import Path
 source = Path(sys.argv[1])
 allowed_source = Path(sys.argv[2])
 out_dir = Path(sys.argv[3])
-allowed_ids = set()
+allowed_comments = {}
 
 try:
     allowed_data = json.loads(allowed_source.read_text(encoding="utf-8", errors="replace"))
@@ -1096,7 +1136,7 @@ def iter_comment_items(value):
 
 for item in iter_comment_items(allowed_data):
     if item.get("id") is not None:
-        allowed_ids.add(str(item["id"]))
+        allowed_comments[str(item["id"])] = str(item.get("node_id") or "")
 
 def redact(text: str) -> str:
     text = re.sub(r"(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]+", r"\1[redacted]", text)
@@ -1121,8 +1161,13 @@ for idx, raw in enumerate(source.read_text(encoding="utf-8", errors="replace").s
     comment_id = str(item.get("comment_id") or item.get("review_comment_id") or "")
     if not comment_id.isdigit():
         continue
-    if comment_id not in allowed_ids:
+    if comment_id not in allowed_comments:
         continue
+    resolve_thread = item.get("resolve_thread", True)
+    if isinstance(resolve_thread, str):
+        resolve_thread = resolve_thread.strip().lower() not in {"0", "false", "no", "off"}
+    else:
+        resolve_thread = bool(resolve_thread)
     body_file = out_dir / f"reply-{idx}.md"
     reply_body = (
         "DX maintain processed this review comment in the latest autonomous "
@@ -1132,16 +1177,23 @@ for idx, raw in enumerate(source.read_text(encoding="utf-8", errors="replace").s
         "<!-- dx-maintain-response -->\n"
     )
     body_file.write_text(reply_body, encoding="utf-8")
-    print(f"{comment_id}\t{body_file}")
+    should_resolve = "1" if resolve_thread else "0"
+    comment_node_id = allowed_comments.get(comment_id, "")
+    print(f"{comment_id}\t{should_resolve}\t{comment_node_id}\t{body_file}")
 PY
-  while IFS=$'\t' read -r comment_id body_path; do
+  while IFS=$'\t' read -r comment_id resolve_thread comment_node_id body_path; do
     [[ -n "$comment_id" && -f "$body_path" ]] || continue
     __dx_maintain_assert_publication_safe "$body_path" "$report_file" "inline reply for review comment ${comment_id}" || {
       rm -rf "$tmp_dir"
       return 1
     }
-    __dx_maintain_with_gh gh api -X POST "repos/${repo}/pulls/${pr_num}/comments/${comment_id}/replies" -f "body=$(cat "$body_path")" >/dev/null 2>&1 || \
+    if __dx_maintain_with_gh gh api -X POST "repos/${repo}/pulls/${pr_num}/comments/${comment_id}/replies" -f "body=$(cat "$body_path")" >/dev/null 2>&1; then
+      if [[ "$resolve_thread" == "1" ]]; then
+        __dx_maintain_resolve_review_thread_for_comment "$pr_num" "$comment_node_id" "$report_file"
+      fi
+    else
       __dx_maintain_append_report_status "$report_file" "warning" "Could not post inline reply for review comment ${comment_id} on PR #${pr_num}."
+    fi
   done < "$index_file"
   rm -rf "$tmp_dir"
 }
@@ -1171,6 +1223,156 @@ __dx_maintain_verify_pr_head() {
     dx_error "Refusing to publish response because PR #${pr_num} head changed."
     return 1
   fi
+}
+
+__dx_maintain_fetch_review_threads() {
+  local pr_num="$1" output_file="$2" repo owner name raw_file
+  repo=$(__dx_maintain_repo_arg)
+  [[ "$repo" == */* ]] || return 1
+  owner="${repo%%/*}"
+  name="${repo#*/}"
+  raw_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-review-threads-raw.XXXXXX")
+  # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not the shell.
+  if ! __dx_maintain_with_gh gh api graphql --paginate \
+    -f "owner=$owner" \
+    -f "name=$name" \
+    -F "number=$pr_num" \
+    -f query='
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes {
+          id
+          isResolved
+          viewerCanResolve
+          comments(first: 100) {
+            nodes { id }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}' > "$raw_file"; then
+    rm -f "$raw_file"
+    return 1
+  fi
+  if ! python3 - "$raw_file" "$output_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+text = source.read_text(encoding="utf-8", errors="replace")
+decoder = json.JSONDecoder()
+docs = []
+index = 0
+
+while index < len(text):
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text):
+        break
+    value, index = decoder.raw_decode(text, index)
+    docs.append(value)
+
+target.write_text(json.dumps(docs), encoding="utf-8")
+PY
+  then
+    rm -f "$raw_file"
+    return 1
+  fi
+  rm -f "$raw_file"
+}
+
+__dx_maintain_review_thread_lookup_for_comment() {
+  local pr_num="$1" comment_node_id="$2" thread_file
+  [[ -n "$comment_node_id" ]] || return 0
+  thread_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-review-threads.XXXXXX")
+  __dx_maintain_fetch_review_threads "$pr_num" "$thread_file" || {
+    rm -f "$thread_file"
+    return 1
+  }
+  if ! python3 - "$comment_node_id" "$thread_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+target = sys.argv[1]
+source = Path(sys.argv[2])
+
+try:
+    payloads = json.loads(source.read_text(encoding="utf-8", errors="replace"))
+except Exception:
+    payloads = []
+
+if isinstance(payloads, dict):
+    payloads = [payloads]
+
+for payload in payloads:
+    if not isinstance(payload, dict):
+        continue
+    threads = (
+        (((payload.get("data") or {}).get("repository") or {}).get("pullRequest") or {})
+        .get("reviewThreads")
+        or {}
+    )
+    for thread in threads.get("nodes") or []:
+        comments = (thread.get("comments") or {}).get("nodes") or []
+        if not any(comment.get("id") == target for comment in comments):
+            continue
+        if thread.get("isResolved"):
+            print("resolved")
+            sys.exit(0)
+        if thread.get("viewerCanResolve") is False:
+            print("unresolvable")
+            sys.exit(0)
+        thread_id = thread.get("id") or ""
+        if thread_id:
+            print(f"thread\t{thread_id}")
+        sys.exit(0)
+PY
+  then
+    rm -f "$thread_file"
+    return 1
+  fi
+  rm -f "$thread_file"
+}
+
+__dx_maintain_resolve_review_thread_for_comment() {
+  local pr_num="$1" comment_node_id="$2" report_file="$3" lookup thread_id
+  [[ -n "$comment_node_id" ]] || return 0
+  if ! lookup=$(__dx_maintain_review_thread_lookup_for_comment "$pr_num" "$comment_node_id" 2>/dev/null); then
+    __dx_maintain_append_report_status "$report_file" "warning" "Could not fetch review thread metadata while replying on PR #${pr_num}."
+    return 0
+  fi
+  case "$lookup" in
+    resolved|"")
+      return 0
+      ;;
+    unresolvable)
+      __dx_maintain_append_report_status "$report_file" "warning" "GitHub token cannot resolve the review thread for an inline comment on PR #${pr_num}."
+      return 0
+      ;;
+    thread$'\t'*)
+      thread_id="${lookup#*$'\t'}"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not the shell.
+  __dx_maintain_with_gh gh api graphql \
+    -f "threadId=$thread_id" \
+    -f query='
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread { id isResolved }
+  }
+}' >/dev/null 2>&1 || \
+    __dx_maintain_append_report_status "$report_file" "warning" "Could not resolve review thread ${thread_id} on PR #${pr_num} after posting an inline reply."
 }
 
 __dx_maintain_publish_response() {
@@ -1689,8 +1891,13 @@ EOF
   if [[ -n "$context_dir" ]]; then
     context_files="${context_dir}/pr-${pr_num}-context.json
 ${context_dir}/pr-${pr_num}-inline-comments.json"
+    if [[ -f "${context_dir}/pr-${pr_num}-review-threads.json" ]]; then
+      context_files="${context_files}
+${context_dir}/pr-${pr_num}-review-threads.json"
+    fi
     cp "${context_dir}/pr-${pr_num}-context.json" "$artifact_dir/pr-${pr_num}-context.json" 2>/dev/null || true
     cp "${context_dir}/pr-${pr_num}-inline-comments.json" "$artifact_dir/pr-${pr_num}-inline-comments.json" 2>/dev/null || true
+    cp "${context_dir}/pr-${pr_num}-review-threads.json" "$artifact_dir/pr-${pr_num}-review-threads.json" 2>/dev/null || true
   else
     context_files=$(__dx_maintain_collect_pr_context "$pr_num" "$artifact_dir")
   fi
@@ -1721,7 +1928,9 @@ Response artifact contract:
   and does not copy provider-authored free text into GitHub comments.
 - For inline review comment replies, write JSON lines to
   ${artifact_dir}/inline-replies.jsonl with field comment_id and optional
-  artifact-only context fields.
+  artifact-only context fields. Omit resolve_thread, or set it to true, when
+  the reply closes the comment. Set resolve_thread to false only when the reply
+  asks a follow-up question or explicitly needs reviewer input.
 "
   if [[ "$dry_run" -eq 0 ]]; then
     invocation="${invocation}

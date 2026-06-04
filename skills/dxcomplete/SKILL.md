@@ -95,7 +95,7 @@ When setup runs:
 /loop 5m /dxwatchpr
 ```
 
-This checks CI status, fixes CI failures when appropriate, addresses review comments via `/dxprreview`, and cancels itself when checks are green and all successfully requested reviews are approved.
+This checks CI status, fixes CI failures when appropriate, addresses review comments via `/dxprreview`, resolves clear review threads after replying, and cancels itself when checks are green and all successfully requested reviews are approved.
 
 If the user sends a direct prompt during Phase 6, the `UserPromptSubmit` hook pauses scheduled watcher cycles for `DEX_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`). During that pause the watcher skill must skip GitHub/CI commands until the user runs `/dxcomplete` or asks to resume watching.
 
@@ -112,6 +112,22 @@ Check overall PR state:
 ```bash
 gh pr checks "$PR_NUM"
 gh api repos/$(gh repo view --json nameWithOwner -q .nameWithOwner)/pulls/$PR_NUM/reviews
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+gh api graphql --paginate \
+  -f owner="${REPO%%/*}" \
+  -f name="${REPO#*/}" \
+  -F number="$PR_NUM" \
+  -f query='
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes { id isResolved }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}'
 ```
 
 - **All CI green AND all successfully requested `request` reviewers approved** → proceed to Step 6 (final verification + close).
@@ -125,7 +141,7 @@ Once Case A in Step 5 is met:
 
 1. **CI**: All checks green (`gh pr checks $PR_NUM` reports all pass).
 2. **Reviews**: All successfully requested `request` reviewers approved, no unresolved comments.
-3. **Mention reviewers**: Best-effort — if a `mention` reviewer commented with an actionable concern, it should already have been addressed by `/dxprreview`. The mention reviewers don't gate completion via review state.
+3. **Mention reviewers**: Best-effort — if a `mention` reviewer commented with an actionable concern, it should already have been addressed by `/dxprreview`, with clear review threads resolved after Dex replies. The mention reviewers don't gate completion via review state.
 4. **Tasks**: All implementation tasks marked completed.
 
 If any condition is not met, return to Step 5 (do not advance to closure).

@@ -116,19 +116,39 @@ Parse each check: name, status (pending/pass/fail), URL.
 ```bash
 dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/reviews"
 dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/comments"
+dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh api graphql --paginate \
+  -f owner="${REPO%%/*}" \
+  -f name="${REPO#*/}" \
+  -F number="$PR_NUM" \
+  -f query='
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes {
+          id
+          isResolved
+          comments(first: 100) { nodes { id } }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}'
 ```
 
 ### 4. Address Comments
 
 If there are unaddressed comments (comments not yet replied to or resolved):
 
-Run `/dxprreview --reply=inline` to critically evaluate and respond to each comment. Pass `--reply=inline` so the autonomous loop doesn't pause asking the user. `dxwatchpr` is running unattended and inline replies are the right default.
+Run `/dxprreview` to critically evaluate and respond to each comment. `dxprreview` replies inline by default and does not pause to ask how replies should be delivered.
 
 `/dxprreview` will:
 - Classify each comment (bug, security, request-change, question, suggestion, nitpick, approval)
 - Critically evaluate whether to fix, push back, answer, or escalate
 - Implement and push fixes for accepted comments
 - Reply to every comment inline with reasoning
+- Resolve each inline review thread after replying when the reply clearly closes the comment
 - Return a list of escalations (if any)
 
 If `/dxprreview` reports escalations, proceed to Step 7 (Escalation).
@@ -183,7 +203,7 @@ STOP, cancel the watcher, and escalate to the user when:
 - A reviewer's comment is unclear and you can't determine the right fix.
 - A human reviewer explicitly requests changes that conflict with the approved plan, require scope/architecture judgement, or remain unclear after reading the surrounding code.
 
-Clear, in-scope human feedback should be handled autonomously through `/dxprreview --reply=inline`; do not pause only because the commenter is human.
+Clear, in-scope human feedback should be handled autonomously through `/dxprreview`; do not pause only because the commenter is human.
 
 ## Timeout
 

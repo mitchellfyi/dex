@@ -5,7 +5,7 @@ description: "Critically evaluate PR review comments, fix valid issues, push bac
 
 # Skill: dxprreview
 
-Critically evaluate PR review comments — fix what should be fixed, push back on what should not, and escalate what needs human judgement. In autonomous Phase 6/watch mode, use inline replies without asking; standalone invocations may ask how the user wants replies delivered.
+Critically evaluate PR review comments — fix what should be fixed, push back on what should not, and escalate what needs human judgement. Normal PR review runs reply inline on GitHub without asking, then resolve each review thread when the reply clearly closes the comment.
 
 ## When to Use
 
@@ -17,11 +17,7 @@ Critically evaluate PR review comments — fix what should be fixed, push back o
 
 Optional: a PR number (e.g., `/dxprreview 456`). If omitted, operates on the current branch's open PR.
 
-Optional reply-mode override (skips the user prompt in Step 5.5):
-- `--reply=inline` — post a reply to each comment on the PR (default behaviour)
-- `--reply=terminal` — print proposed replies in the terminal report only; do not touch the PR
-
-The same overrides can be set via `DEX_PRREVIEW_REPLY_MODE=inline|terminal` in the environment.
+Reply delivery is not interactive: normal `/dxprreview` runs post inline replies on the PR. Do not ask how replies should be delivered.
 
 ## Steps
 
@@ -93,12 +89,39 @@ gh api repos/$REPO/pulls/$PR_NUM/reviews
 # Inline comments (the actual feedback)
 gh api repos/$REPO/pulls/$PR_NUM/comments
 
+# Review thread metadata, used to ignore already-resolved threads and to resolve
+# threads after Dex replies. Map REST comment `node_id` values to
+# `reviewThreads.nodes[].comments.nodes[].id`.
+gh api graphql --paginate \
+  -f owner="${REPO%%/*}" \
+  -f name="${REPO#*/}" \
+  -F number="$PR_NUM" \
+  -f query='
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes {
+          id
+          isResolved
+          viewerCanResolve
+          comments(first: 100) {
+            nodes { id }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}'
+
 # General PR-level comments (issue-style, not inline)
 gh api repos/$REPO/issues/$PR_NUM/comments
 ```
 
-Identify **unaddressed comments**: comments with no reply from the PR author. Filter out:
+Identify **unaddressed comments**: comments with no reply from the PR author and no resolved review thread. Filter out:
 - Your own prior replies (from earlier `/dxprreview` or `/dxwatchpr` runs)
+- Inline comments in review threads where `isResolved` is already `true`
 - Approval comments with no actionable content
 - Bot comments that are purely informational (CI status, coverage reports, deploy previews)
 
@@ -195,7 +218,10 @@ wrapper can detect the new HEAD, then write the publishable response artifacts:
   `## Not Fixed`, `## Escalated`, `## Verification`, and
   `## Reviewer Replies`.
 - `inline-replies.jsonl`: one JSON object per inline review-comment reply with
-  `comment_id` and `body`.
+  `comment_id` and optional artifact-only `body`. Omit `resolve_thread`, or set
+  it to `true`, when the reply closes the comment. Set `resolve_thread: false`
+  only when the reply asks a follow-up question or explicitly needs reviewer
+  input.
 
 Then skip the direct push/reply commands in the rest of this skill; the wrapper
 pushes, posts bounded replies, and re-requests reviewers after the provider
@@ -213,28 +239,14 @@ Otherwise, for normal Phase 6/manual `/dxprreview` runs:
    git push
    ```
 
-### 5.5. Resolve Reply Mode
+### 5.5. Inline Reply Default
 
-Before posting anything to GitHub, resolve how replies should be delivered. Do not ask in autonomous watch mode.
-
-**Resolution order:**
-
-1. **`--reply=` argument** — if the invocation included `--reply=inline` or `--reply=terminal`, use that and skip the question.
-2. **`DEX_PRREVIEW_REPLY_MODE` env var** — if set to `inline` or `terminal`, use that and skip the question.
-3. **Autonomous Phase 6/watch mode** — if invoked by `/dxwatchpr`, `/dxcomplete`, or another unattended loop, default to `inline` and skip the question.
-4. **Otherwise, ask via `AskUserQuestion`:**
-
-   Question: "How should I deliver replies to these review comments?"
-   - **Inline on the PR (per comment)** — post a reply to each comment via `gh api repos/.../comments/<id>/replies` and `gh api repos/.../issues/<n>/comments`. Each reviewer sees a thread under their own comment. (Recommended)
-   - **Terminal only (summary)** — print the proposed replies in the terminal report (Step 8). Do not touch the PR. The user can copy-paste any replies they want to post manually.
-
-If the answer is **terminal**, skip Step 6 entirely and expand Step 8's report to include each comment with the proposed reply text in a quote-block beneath it.
-
-If the answer is **inline**, proceed to Step 6 as written.
+Normal `/dxprreview` runs always post inline replies on GitHub. Do not ask the
+user how to deliver replies. The only exception is the special
+`dx maintain respond` artifact flow described in Step 5, where the wrapper
+publishes replies after the provider exits.
 
 ### 6. Reply to Comments
-
-(Skip this step if the user chose `terminal` mode in Step 5.5.)
 
 Also skip this step when running under `dx maintain respond`; write
 `response.md` and `inline-replies.jsonl` instead so the wrapper can publish
@@ -248,11 +260,33 @@ gh api repos/$REPO/pulls/$PR_NUM/comments/<comment-id>/replies \
   -f body="<reply>"
 ```
 
+After a successful inline reply, resolve the whole review thread when Dex has a
+clear resolution: fixed, not fixing with cited reasoning, question answered, or
+nitpick fixed. Do not resolve if the reply asks a follow-up question, asks the
+reviewer to clarify, or the comment is escalated.
+
+Use the GraphQL thread ID from the Step 1 review-thread metadata. If the thread
+ID is missing, re-fetch `reviewThreads` before giving up.
+
+```bash
+gh api graphql \
+  -f threadId="<review-thread-id>" \
+  -f query='
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread { id isResolved }
+  }
+}'
+```
+
 **PR-level comments (issue-style):**
 ```bash
 gh api repos/$REPO/issues/$PR_NUM/comments \
   -f body="<reply>"
 ```
+
+PR-level comments do not have review threads. Reply inline on the PR, but do not
+try to resolve them through `resolveReviewThread`.
 
 **Reply format by decision:**
 
@@ -287,14 +321,12 @@ If any comments were classified as Tier 3 (escalate):
 
 ### 8. Report
 
-Print a summary. The summary table is the same regardless of reply mode; in `terminal` mode, append a "Proposed replies" section with the full reply text per comment so the user can post them manually.
+Print a summary.
 
 Invoke the `humanizer` skill on any prose in the terminal report. Preserve tables, counts, comment numbers, reviewer handles, paths, and reply blocks exactly.
 
 ```
 ## PR Review Comments Addressed
-
-Reply mode: <inline | terminal>
 
 | # | Reviewer | Type | Decision | Detail |
 |---|----------|------|----------|--------|
@@ -306,41 +338,15 @@ Reply mode: <inline | terminal>
 **Fixed:** N comments (M commits pushed)
 **Not fixing:** N comments (all replied with reasoning)
 **Answered:** N questions
+**Resolved threads:** N threads
+**Left open:** N threads (follow-up question or escalation)
 **Escalated:** N comments (awaiting user direction)
 ```
-
-**Additional `terminal`-mode section** (only when reply mode = terminal):
-
-```
-## Proposed Replies (not posted to PR)
-
-### Comment #1 — @reviewer (Bug report)
-> "<original comment text, quoted>"
-on `path/to/file.ts:42`
-
-**Reply:**
-> Fixed in <short-sha>. <1-2 sentence explanation.>
-
----
-
-### Comment #2 — @reviewer (Suggestion)
-> "<original comment text>"
-on `path/to/file.ts:91`
-
-**Reply:**
-> Keeping current approach: matches the pattern in `auth/middleware.ts:42` and `auth/session.ts:91`. Open to discussion if you see something I'm missing.
-
----
-
-(... etc)
-```
-
-This block lets the user copy any individual reply into the GitHub UI, or skip them entirely.
 
 ## Notes
 
 - This skill critically evaluates comments. It does NOT blindly fix everything. Reviewers can be wrong, suggest personal preferences, or request changes that would make the code worse. The agent's job is to use judgement, not compliance.
 - When not fixing a comment, the reasoning must be substantive — reference specific code, patterns, or constraints. "I disagree" is not sufficient.
-- Do not resolve review threads — only GitHub's web UI or the reviewer should resolve threads.
+- Resolve review threads after replying when Dex's reply clearly closes the comment. Leave the thread unresolved when Dex asks a follow-up question or escalates.
 - Do not dismiss reviews — reply and let the reviewer re-review.
 - When invoked from `/dxwatchpr`, the comment fetching in Step 1 may duplicate what the caller already fetched. The skill re-fetches anyway for freshness and standalone compatibility.

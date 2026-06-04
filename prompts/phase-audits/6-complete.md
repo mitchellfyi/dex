@@ -78,7 +78,7 @@ Launch the PR watcher loop if it isn't already running. `/loop` is a built-in Cl
 /loop 5m /dxwatchpr
 ```
 
-This runs between turns and won't consume context. `/dxwatchpr` checks CI status, fixes CI failures when appropriate, reads review comments, hands them to `/dxprreview`, pushes fixes, and replies.
+This runs between turns and won't consume context. `/dxwatchpr` checks CI status, fixes CI failures when appropriate, reads review comments, hands them to `/dxprreview`, pushes fixes, replies inline, and resolves review threads when Dex's reply closes the comment.
 
 If the user sends a direct prompt while Phase 6 is active, the `UserPromptSubmit` hook writes a watcher-pause marker. Scheduled `/dxwatchpr` invocations must no-op while that marker is active and must not run GitHub/CI commands. Running `/dxcomplete` or explicitly asking to resume watchers clears the marker. The default pause TTL is `60m 0s`.
 
@@ -119,11 +119,27 @@ Check overall PR state:
 ```bash
 gh pr checks "$PR_NUM"  # CI status
 gh api repos/$(gh repo view --json nameWithOwner -q .nameWithOwner)/pulls/$PR_NUM/reviews
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+gh api graphql --paginate \
+  -f owner="${REPO%%/*}" \
+  -f name="${REPO#*/}" \
+  -F number="$PR_NUM" \
+  -f query='
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes { id isResolved }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}'
 ```
 
 ### Case A — All CI green and all successfully requested `request`-type reviewers have approved
 
-Note: `mention`-type reviewers (AI bots) do not issue native GitHub reviews and DO NOT gate completion via review state. Their substantive comments should already be addressed via `/dxprreview` during the cycle. Only successfully requested `request`-type reviewers' approval status matters for Case A.
+Note: `mention`-type reviewers (AI bots) do not issue native GitHub reviews and DO NOT gate completion via review state. Their substantive comments should already be addressed via `/dxprreview` during the cycle, with clear review threads resolved after Dex replies. Only successfully requested `request`-type reviewers' approval status matters for Case A.
 
 Update the ticket (if a tracker is configured — see `dex.md § Integrations`). Print the completion summary (per `skills/dxcomplete/SKILL.md` Step 5). Cycle is done — proceed to Termination.
 
