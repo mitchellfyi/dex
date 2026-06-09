@@ -20,12 +20,17 @@ Each run gets a stable ID and a directory under:
     ...
 ```
 
-`dx`, `dx init`, and `dx sync` print the current run ID near startup. Main
-lifecycle runs also show it in the phase header.
+`dx`, `dx run`, `dx init`, and `dx sync` print the current run ID near startup.
+Main lifecycle runs also show it in the phase header.
 
-Run data is local only. Dex does not sync events, logs, or artifacts to a
-service. Event, log, and artifact writes are treated as non-fatal after the run
-directory has been prepared.
+Run data is local by default. Dex can optionally sync events to a Dex Factory
+collector when sync is configured. Logs and artifacts remain local unless a
+future upload path is configured separately. Event, log, artifact, and remote
+sync writes are treated as non-fatal after the run directory has been prepared.
+
+Headless runs started with `dx run --spec` normalize the supplied run spec into
+`spec.json` before emitting events. See [run-specs.md](run-specs.md) for the
+headless startup contract.
 
 ## Mental Model
 
@@ -114,6 +119,88 @@ are rejected. Registering an artifact emits `artifact.created`.
 `summary.json` is the machine-readable final run summary. Dex also writes
 `artifacts/run-summary.md` and records it in the manifest when summaries are
 updated.
+
+## Factory Event Sync
+
+Factory sync is opt-in. Dex always appends to `events.jsonl` first, then tries
+to send unsynced events to the configured HTTP collector.
+
+Minimum configuration:
+
+```bash
+export DEX_FACTORY_SYNC=true
+export DEX_FACTORY_URL=https://factory.example.com
+export DEX_FACTORY_TOKEN=...
+```
+
+Dex posts event batches to:
+
+```text
+POST <DEX_FACTORY_URL>/api/dex/runs/<run_id>/events
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+The request body is:
+
+```json
+{
+  "events": [
+    {
+      "id": "evt_000001_abcd1234",
+      "run_id": "run_20260527T123456Z_1234_abcd",
+      "sequence": 1,
+      "type": "run.started",
+      "message": "Dex run started",
+      "data": {},
+      "created_at": "2026-05-27T12:34:56Z"
+    }
+  ]
+}
+```
+
+Factory should treat `event.id` as the idempotency key. If a request fails, Dex
+does not advance its local sync cursor, so the same events may be submitted
+again on a later retry.
+
+Configuration variables:
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `DEX_FACTORY_SYNC` | auto | `true`, `1`, `yes`, or `on` enables sync. `false`, `0`, `no`, or `off` disables it. If unset, a configured Factory URL or endpoint enables sync. |
+| `DEX_FACTORY_URL` | unset | Base Factory URL. Dex appends `/api/dex/runs/<run_id>/events`. |
+| `DEX_FACTORY_EVENTS_ENDPOINT` | unset | Exact event endpoint. Supports `{run_id}` replacement and takes precedence over `DEX_FACTORY_URL`. |
+| `DEX_FACTORY_TOKEN` | unset | Bearer token for event submission. |
+| `DEX_FACTORY_RUN_TOKEN` | unset | Run-scoped bearer token fallback. |
+| `DEX_RUN_TOKEN` | unset | Generic run token fallback for headless/remote launch flows. |
+| `DEX_FACTORY_BATCH_SIZE` | `50` | Maximum events per HTTP request. |
+| `DEX_FACTORY_TIMEOUT_SECONDS` | `5` | HTTP request timeout. |
+| `DEX_FACTORY_RETRY_BASE_SECONDS` | `1` | Initial backoff after a failed request. |
+| `DEX_FACTORY_RETRY_MAX_SECONDS` | `60` | Maximum backoff between retry attempts. |
+
+Sync state lives beside the run journal:
+
+```text
+~/.dex/runs/<run_id>/.factory-sync/
+  cursor
+  status.json
+```
+
+`cursor` stores the highest sequence that Factory accepted. `status.json`
+stores the latest sync or configuration failure and the next retry time. Failed
+sync attempts are logged to `logs.txt` with rate limiting so a broken collector
+does not flood the run log.
+
+Retries happen when another event is emitted or when a caller explicitly runs:
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+dx_factory_sync_pending_events <run_id>
+```
+
+Network errors, HTTP errors, missing tokens, and missing Factory configuration
+do not fail the Dex run. They leave local events queued until sync is configured
+and a retry succeeds.
 
 ## Reading Data
 

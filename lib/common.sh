@@ -7,7 +7,7 @@
 # Provides: DEX_DIR, DX_STATE_DIR, DX_LOOP_DIR, DX_ARTIFACT_DIR, DX_TOOL_DIR, DX_RUN_ROOT, dx_repo_root()
 # Also sources: lib/git.sh, lib/session.sh, lib/output.sh, lib/worktree.sh,
 # lib/provider.sh, lib/codex.sh, lib/ui-capture.sh, lib/rtk.sh, lib/events.sh,
-# lib/agent-tools.sh, and lib/maintenance.sh
+# lib/factory.sh, lib/run-spec.sh, lib/agent-tools.sh, and lib/maintenance.sh
 
 if [[ -z "${DEX_DIR:-}" ]]; then
   # Auto-detect from this file's location (lib/common.sh → repo root).
@@ -67,5 +67,7 @@ __dx_require_lib codex.sh
 __dx_require_lib ui-capture.sh
 __dx_require_lib rtk.sh
 __dx_require_lib events.sh
+__dx_require_lib factory.sh
+__dx_require_lib run-spec.sh
 __dx_require_lib agent-tools.sh
 __dx_require_lib maintenance.sh

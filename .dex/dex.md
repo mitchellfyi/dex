@@ -12,10 +12,10 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 ## Quality Gates
 | Check | Command | Scope |
 |-------|---------|-------|
-| Lint | `shellcheck dx.sh bin/*.sh hooks/*.sh lib/*.sh` | Core runtime shell scripts |
+| Lint | `shellcheck dx.sh bin/*.sh hooks/*.sh lib/*.sh tests/*.sh` | Core runtime and shell tests |
 | Syntax (bash) | `bash -n lib/<file>.sh` | Library modules, hooks, bin scripts |
 | Syntax (zsh) | `zsh -n dx.sh` | dx.sh only |
-| Test | N/A | No test suite |
+| Test | `bash tests/<name>.sh` | Focused shell integration tests |
 | Format | N/A | No formatter configured |
 | Typecheck | N/A | Not applicable (shell/Python) |
 | Generate | N/A | No code generation |
@@ -28,10 +28,10 @@ settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
 agents/              Sub-agents (symlinked to ~/.claude/agents/)
 bin/                 CLI scripts: install, uninstall, init, uninit, config, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
-docs/                Extended docs: guards, autonomous mode, RTK token reduction
+docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (5 rules)
-lib/                 Shared shell libraries (11 modules: common, agent-tools, codex, git, maintenance, output, provider, rtk, session, ui-capture, worktree)
+lib/                 Shared shell libraries (14 modules: agent-tools, codex, common, events, factory, git, maintenance, output, provider, rtk, run-spec, session, ui-capture, worktree)
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
 research/            DX evaluation harness (scenarios, scoring, improvement loop)

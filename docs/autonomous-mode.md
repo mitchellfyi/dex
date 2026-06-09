@@ -217,6 +217,19 @@ files such as run summaries. The existing TSV phase log still lives in
 `~/.claude/.dex-phases/<session_id>.log` for backward compatibility. See
 [events.md](events.md) for the schema and storage layout.
 
+## Headless Run Specs
+
+`dx run --spec <file>` and `dx run --spec-url <url>` start the same lifecycle
+from a structured JSON run spec. This mode is intended for Factory or worker
+launches where repo, source, harness, workflow, and sync context arrive as data
+instead of an interactive CLI prompt.
+
+Dex validates the spec, writes the normalized copy to
+`~/.dex/runs/<run_id>/spec.json`, applies harness and sync settings, then
+launches the in-place lifecycle in `repository.working_directory`. Manual CLI
+usage is unchanged. See [run-specs.md](run-specs.md) for the spec schema and
+startup commands.
+
 ## Safety Controls
 
 ### Max Iterations
@@ -294,6 +307,19 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_LOOP_PHASE` | (set by wrapper) | Current phase number (1-6) or `prompt-loop`, used to find audit file |
 | `DEX_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
 | `DEX_RUN_ID` | set by Dex | Current run ID passed into hooks and provider subprocesses |
+| `DEX_FACTORY_SYNC` | auto | Enable optional Factory event sync; `false`, `0`, `no`, or `off` disables it |
+| `DEX_FACTORY_URL` | unset | Base Factory URL for event submission |
+| `DEX_FACTORY_EVENTS_ENDPOINT` | unset | Exact Factory event endpoint; supports `{run_id}` replacement |
+| `DEX_FACTORY_TOKEN` | unset | Bearer token for Factory event submission |
+| `DEX_FACTORY_RUN_TOKEN` | unset | Run-scoped bearer token fallback for Factory event submission |
+| `DEX_RUN_TOKEN` | unset | Generic run token fallback for Factory event submission |
+| `DEX_FACTORY_BATCH_SIZE` | `50` | Maximum events per Factory sync request |
+| `DEX_FACTORY_TIMEOUT_SECONDS` | `5` | Factory HTTP request timeout |
+| `DEX_FACTORY_RETRY_BASE_SECONDS` | `1` | Initial retry backoff after a failed Factory sync request |
+| `DEX_FACTORY_RETRY_MAX_SECONDS` | `60` | Maximum retry backoff for Factory sync |
+| `DEX_HEADLESS_RUN` | unset | Internal marker for lifecycle sessions started by `dx run` |
+| `DEX_HEADLESS_RUN_SPEC_FILE` | unset | Normalized run spec path passed into the launched lifecycle |
+| `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | spec value | Whether Phase 1 must wait for interactive plan approval |
 | `DEX_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DEX_PHASE_2_MIN_AUDITS=5`) |
 | `DEX_REVIEW_PROFILE` | `auto` | Starting Phase 3 review depth: `auto`, `light`, `standard`, or `thorough` |
 | `DEX_REVIEW_CLEAN_PASSES` | profile-based | Exact consecutive `CLEAN` review waves required to advance Phase 3 |

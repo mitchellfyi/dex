@@ -184,6 +184,8 @@ dx_inline_phase_message() {
     1)
       cat <<'EOF'
 Phase 0 setup is complete (branch renamed and pushed, ticket assigned, status set to In Progress). Begin Phase 1: Plan. Call EnterPlanMode now, then immediately invoke the Skill tool with skill: "dxplan". Do not redo ticket setup unless something is clearly missing. After the user approves the plan via ExitPlanMode, write the Phase 1 approval marker and stop so the Stop hook can audit and advance.
+
+For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval.
 EOF
       ;;
     2)

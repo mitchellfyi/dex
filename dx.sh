@@ -25,6 +25,7 @@
 #   dx sync                 Refresh repo memory/rules from verified observations
 #   dx maintain             Run background maintenance or install workflow
 #   dx tools                Check or install Claude/Codex tooling bootstrap
+#   dx run --spec <file>    Run from a structured headless run spec
 #   dex                   Alias for dx
 #   dexter                Alias for dx
 
@@ -52,6 +53,7 @@ __dx_cli() {
     tools)     bash "$DEX_DIR/bin/tools.sh" "$@" ;;
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
     provider)  dx_provider_command "$@" ;;
+    run)       __dx_run_spec_cli "$@" ;;
     research)
       local _dx_has_max_cycles=0 _dx_has_runner=0 _dx_research_help=0 _dx_arg
       local _dx_research_args=("$@")
@@ -98,6 +100,8 @@ __dx_cli() {
       echo "  dx tools            Check or install Claude/Codex tooling bootstrap"
       echo "  dx config           Configure integrations (ticket tracker, Figma, etc.)"
       echo "  dx provider         Configure provider/model execution profiles"
+      echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
+      echo "  dx run --spec-url URL --run-token TOKEN"
       echo "  dx research         Run autonomous research orchestrator"
       echo "                        Defaults: --max-cycles 20; SCENARIO_TIMEOUT 3600s (1h) per scenario"
       echo "                        Override timeout: dx research --scenario-timeout 7200"
@@ -258,6 +262,8 @@ Phase 0 setup (branch rename, push, ticket status → In Progress, assignment) i
 Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill tool with skill: "dxplan" (or /dxplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dxplan skill unless the skill explicitly instructs you to.
 
 The dxplan skill writes the required Phase 1 lifecycle markers. After the user approves the plan via ExitPlanMode, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
+
+For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval.
 EOF
   else
     printf '%s\n' "${DX_PHASE_MESSAGES[$step]}"
@@ -915,6 +921,9 @@ __dx_setup_in_place() {
 
   _dx_wt_dir="$_dx_repo_root"
   _dx_default_branch=$(dx_default_branch "$_dx_wt_dir")
+  if [[ "${DEX_HEADLESS_RUN:-0}" == "1" && -n "${DEX_HEADLESS_DEFAULT_BRANCH:-}" ]]; then
+    _dx_default_branch="$DEX_HEADLESS_DEFAULT_BRANCH"
+  fi
   _dx_workspace_mode="in-place"
   _dx_session_id=$(__dx_session_id_for_workspace "$_dx_workspace_mode" "$_dx_wt_name")
   local branch_name="worktree-${_dx_wt_name}"
@@ -1062,6 +1071,32 @@ was created. Dex still prepared the normal lifecycle branch in this checkout
 before launching Claude. Treat existing files, staged changes, unstaged changes,
 and the current branch as user-owned context. Do not switch branches or create a
 new branch unless ticket setup instructions explicitly require a branch rename.
+EOF
+  fi
+
+  if [[ "${DEX_HEADLESS_RUN:-0}" == "1" && -f "${DEX_HEADLESS_RUN_SPEC_FILE:-}" ]]; then
+    local headless_plan_approval
+    headless_plan_approval=$(dx_run_spec_field "$DEX_HEADLESS_RUN_SPEC_FILE" "workflow.requires_plan_approval" 2>/dev/null || echo "true")
+    cat >> "$ctx_file" <<EOF
+
+## Headless Run Spec
+
+This lifecycle was started by \`dx run\` from a structured run spec, not by a
+human typing all task context into the CLI. Treat the run spec as the source of
+truth for repo, source, harness, workflow, and sync context.
+
+Run spec file: ${DEX_HEADLESS_RUN_SPEC_FILE}
+Plan approval required: ${headless_plan_approval}
+
+If \`workflow.requires_plan_approval\` is false, do not wait for interactive
+plan approval. The run spec authorizes the plan once the normal plan quality
+checks pass. Write the normal Phase 1 ready marker after the plan is complete.
+
+Normalized run spec:
+
+\`\`\`json
+$(python3 -m json.tool "$DEX_HEADLESS_RUN_SPEC_FILE" 2>/dev/null || cat "$DEX_HEADLESS_RUN_SPEC_FILE")
+\`\`\`
 EOF
   fi
 
@@ -1314,6 +1349,9 @@ __dx_run_phases_inline() {
     cd "$wt_dir" && \
     DEX_SESSION_ID="$session_id" \
     DEX_RUN_ID="$run_id" \
+    DEX_HEADLESS_RUN="${DEX_HEADLESS_RUN:-}" \
+    DEX_HEADLESS_RUN_SPEC_FILE="${DEX_HEADLESS_RUN_SPEC_FILE:-}" \
+    DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="${DEX_HEADLESS_REQUIRES_PLAN_APPROVAL:-}" \
     DEX_LOOP_ACTIVE=1 \
     DEX_LOOP_PROMISE="${DX_PHASE_PROMISES[$step]}" \
     DEX_LOOP_PHASE="$step" \
@@ -1417,6 +1455,331 @@ __dx_run_phases_inline() {
 # Returns non-zero if user interrupts or an error occurs.
 __dx_run_phases() {
   __dx_run_phases_inline "$@"
+}
+
+unalias __dx_run_spec_usage 2>/dev/null; unfunction __dx_run_spec_usage 2>/dev/null
+__dx_run_spec_usage() {
+  cat <<'USAGE'
+Usage:
+  dx run --spec <path> [--dry-run|--validate-only]
+  dx run --spec-url <url> [--run-token <token>] [--dry-run|--validate-only]
+
+Options:
+  --spec <path>          Read a local run spec JSON file
+  --spec-url <url>      Fetch a remote run spec JSON file
+  --run-token <token>   Bearer token for remote spec fetch and Factory sync
+  --dry-run             Validate, prepare the local run journal, and stop before launching the lifecycle
+  --validate-only       Validate the spec only; do not prepare a run journal
+  -h, --help            Show this help
+USAGE
+}
+
+unalias __dx_run_spec_failure_json 2>/dev/null; unfunction __dx_run_spec_failure_json 2>/dev/null
+__dx_run_spec_failure_json() {
+  local source="$1" error="$2" stage="${3:-validation}"
+  DX_RUN_SPEC_FAILURE_SOURCE="$source" \
+  DX_RUN_SPEC_FAILURE_ERROR="$error" \
+  DX_RUN_SPEC_FAILURE_STAGE="$stage" \
+  python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "source": os.environ.get("DX_RUN_SPEC_FAILURE_SOURCE", ""),
+    "stage": os.environ.get("DX_RUN_SPEC_FAILURE_STAGE", "validation"),
+    "error": os.environ.get("DX_RUN_SPEC_FAILURE_ERROR", ""),
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+unalias __dx_run_spec_record_failure 2>/dev/null; unfunction __dx_run_spec_record_failure 2>/dev/null
+__dx_run_spec_record_failure() {
+  local source="$1" message="$2" stage="${3:-validation}" repo_dir="${4:-$PWD}"
+  local session_id run_id data_json
+  if git -C "$repo_dir" rev-parse --show-toplevel >/dev/null 2>&1; then
+    session_id=$(cd "$repo_dir" 2>/dev/null && dx_unique_session_id)
+  else
+    session_id=$(dx_unique_session_id)
+    repo_dir="$PWD"
+  fi
+  if run_id=$(dx_run_prepare "headless-invalid-${session_id}" "$repo_dir" "headless" "invalid-run-spec" "$source" "dx run"); then
+    data_json=$(__dx_run_spec_failure_json "$source" "$message" "$stage")
+    dx_event_emit_safe "$run_id" "run.failed" "error" "Dex run spec ${stage} failed" "" "$data_json"
+    dx_run_log_append_safe "$run_id" "error" "run-spec" "$message"
+    dx_run_write_summary_safe "$run_id" "failed" "Dex run spec ${stage} failed"
+    dx_warn "Failure event written to run journal ${run_id}."
+  fi
+}
+
+unalias __dx_run_spec_apply_env 2>/dev/null; unfunction __dx_run_spec_apply_env 2>/dev/null
+__dx_run_spec_apply_env() {
+  local spec_file="$1" run_token="${2:-}"
+  local token factory_url events_endpoint harness_name harness_model plan_approval default_branch
+
+  token=$(dx_run_spec_token "$run_token" 2>/dev/null || true)
+  if [[ -n "$token" ]]; then
+    export DEX_RUN_TOKEN="$token"
+    [[ -n "${DEX_FACTORY_RUN_TOKEN:-}" ]] || export DEX_FACTORY_RUN_TOKEN="$token"
+  fi
+
+  factory_url=$(dx_run_spec_field "$spec_file" "sync.factory_url")
+  events_endpoint=$(dx_run_spec_field "$spec_file" "sync.events_endpoint")
+  if [[ -n "$factory_url" ]]; then
+    export DEX_FACTORY_URL="$factory_url"
+  fi
+  if [[ -n "$events_endpoint" ]]; then
+    export DEX_FACTORY_EVENTS_ENDPOINT="$events_endpoint"
+  fi
+  if [[ -z "${DEX_FACTORY_SYNC:-}" && -n "${factory_url}${events_endpoint}" ]]; then
+    export DEX_FACTORY_SYNC=true
+  fi
+
+  harness_name=$(dx_run_spec_field "$spec_file" "harness.name")
+  case "$harness_name" in
+    codex)
+      export DX_AGENT_OVERRIDE=codex
+      ;;
+    claude|claude-code|"")
+      export DX_AGENT_OVERRIDE=claude
+      ;;
+    *)
+      dx_error "Unsupported run spec harness: ${harness_name}"
+      return 1
+      ;;
+  esac
+
+  harness_model=$(dx_run_spec_field "$spec_file" "harness.model")
+  if [[ -n "$harness_model" ]]; then
+    dx_provider_validate_model_field "run spec harness.model" "$harness_model" || return 1
+    export DX_MODEL_OVERRIDE="$harness_model"
+  fi
+
+  plan_approval=$(dx_run_spec_field "$spec_file" "workflow.requires_plan_approval")
+  export DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="$plan_approval"
+  default_branch=$(dx_run_spec_field "$spec_file" "repository.default_branch")
+  export DEX_HEADLESS_DEFAULT_BRANCH="$default_branch"
+}
+
+unalias __dx_run_spec_cli 2>/dev/null; unfunction __dx_run_spec_cli 2>/dev/null
+__dx_run_spec_cli() {
+  local spec_path="" spec_url="" run_token="" dry_run=0 validate_only=0
+  local -x DEX_RUN_TOKEN="${DEX_RUN_TOKEN:-}"
+  local -x DEX_FACTORY_RUN_TOKEN="${DEX_FACTORY_RUN_TOKEN:-}"
+  local -x DEX_FACTORY_URL="${DEX_FACTORY_URL:-}"
+  local -x DEX_FACTORY_EVENTS_ENDPOINT="${DEX_FACTORY_EVENTS_ENDPOINT:-}"
+  local -x DEX_FACTORY_SYNC="${DEX_FACTORY_SYNC:-}"
+  local -x DX_AGENT_OVERRIDE="${DX_AGENT_OVERRIDE:-}"
+  local -x DX_MODEL_OVERRIDE="${DX_MODEL_OVERRIDE:-}"
+  local -x DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="${DEX_HEADLESS_REQUIRES_PLAN_APPROVAL:-}"
+  local -x DEX_HEADLESS_DEFAULT_BRANCH="${DEX_HEADLESS_DEFAULT_BRANCH:-}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --spec)
+        [[ $# -ge 2 && -n "${2:-}" ]] || { dx_error "--spec requires a path"; return 1; }
+        spec_path="$2"
+        shift 2
+        ;;
+      --spec=*)
+        spec_path="${1#--spec=}"
+        shift
+        ;;
+      --spec-url)
+        [[ $# -ge 2 && -n "${2:-}" ]] || { dx_error "--spec-url requires a URL"; return 1; }
+        spec_url="$2"
+        shift 2
+        ;;
+      --spec-url=*)
+        spec_url="${1#--spec-url=}"
+        shift
+        ;;
+      --run-token)
+        [[ $# -ge 2 && -n "${2:-}" ]] || { dx_error "--run-token requires a token"; return 1; }
+        run_token="$2"
+        shift 2
+        ;;
+      --run-token=*)
+        run_token="${1#--run-token=}"
+        shift
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      --validate-only)
+        validate_only=1
+        shift
+        ;;
+      -h|--help|help)
+        __dx_run_spec_usage
+        return 0
+        ;;
+      *)
+        dx_error "Unknown dx run option: $1"
+        __dx_run_spec_usage
+        return 1
+        ;;
+    esac
+  done
+
+  if [[ -n "$spec_path" && -n "$spec_url" ]]; then
+    dx_error "Use either --spec or --spec-url, not both."
+    return 1
+  fi
+  if [[ -z "$spec_path" && -z "$spec_url" ]]; then
+    __dx_run_spec_usage
+    return 1
+  fi
+
+  local tmp_dir source_label input_spec normalized_spec error_text
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-run-spec.XXXXXX") || return 1
+  normalized_spec="$tmp_dir/normalized-spec.json"
+  if [[ -n "$spec_url" ]]; then
+    source_label=$(dx_run_spec_redact_source "$spec_url")
+    input_spec="$tmp_dir/remote-spec.json"
+    local fetch_token
+    fetch_token=$(dx_run_spec_token "$run_token" 2>/dev/null || true)
+    if ! error_text=$(dx_run_spec_fetch "$spec_url" "$input_spec" "$fetch_token" 2>&1); then
+      dx_error "$error_text"
+      __dx_run_spec_record_failure "$source_label" "$error_text" "fetch" "$PWD"
+      command rm -rf "$tmp_dir" 2>/dev/null || true
+      return 1
+    fi
+  else
+    source_label="$spec_path"
+    input_spec="$spec_path"
+  fi
+
+  if ! error_text=$(dx_run_spec_normalize "$input_spec" "$normalized_spec" 2>&1); then
+    dx_error "$error_text"
+    __dx_run_spec_record_failure "$source_label" "$error_text" "validation" "$PWD"
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  fi
+
+  local run_id repo_dir workspace_input raw_input
+  run_id=$(dx_run_spec_field "$normalized_spec" "run_id")
+  repo_dir=$(dx_run_spec_field "$normalized_spec" "repository.working_directory")
+  workspace_input=$(dx_run_spec_field "$normalized_spec" "workspace_name")
+  raw_input=$(dx_run_spec_field "$normalized_spec" "input")
+
+  if [[ $validate_only -eq 1 ]]; then
+    dx_done "Run spec is valid: ${run_id}"
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 0
+  fi
+
+  if [[ ! -d "$repo_dir" ]]; then
+    error_text="repository.working_directory does not exist: ${repo_dir}"
+    dx_error "$error_text"
+    __dx_run_spec_record_failure "$source_label" "$error_text" "startup" "$PWD"
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  fi
+  if ! git -C "$repo_dir" rev-parse --show-toplevel >/dev/null 2>&1; then
+    error_text="repository.working_directory is not inside a git repository: ${repo_dir}"
+    dx_error "$error_text"
+    __dx_run_spec_record_failure "$source_label" "$error_text" "startup" "$repo_dir"
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  fi
+
+  local -x DEX_HEADLESS_RUN=1
+  __dx_run_spec_apply_env "$normalized_spec" "$run_token" || {
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  }
+
+  local original_dir="$PWD"
+  cd "$repo_dir" 2>/dev/null || return 1
+  __dx_resolve_workspace_name "$workspace_input" || {
+    cd "$original_dir" 2>/dev/null || true
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  }
+  local session_id
+  session_id=$(__dx_session_id_for_workspace "in-place" "$_dx_wt_name")
+
+  local final_spec
+  if ! final_spec=$(dx_run_spec_prepare_journal "$normalized_spec" "$session_id" "$repo_dir" "dx run"); then
+    error_text="could not prepare local run journal for ${run_id}"
+    dx_error "$error_text"
+    __dx_run_spec_record_failure "$source_label" "$error_text" "startup" "$repo_dir"
+    cd "$original_dir" 2>/dev/null || true
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  fi
+  local -x DEX_HEADLESS_RUN_SPEC_FILE="$final_spec"
+  local -x DEX_RUN_ID="$run_id"
+
+  dx_meta_write "$session_id" \
+    "wt_name=${_dx_wt_name}" \
+    "wt_dir=${repo_dir}" \
+    "workspace_mode=in-place" \
+    "raw_input=${workspace_input}" \
+    "headless=1" \
+    "run_id=${run_id}" \
+    "source_type=$(dx_run_spec_field "$normalized_spec" "source.type")" \
+    "source_id=$(dx_run_spec_field "$normalized_spec" "source.id")" \
+    "source_url=$(dx_run_spec_field "$normalized_spec" "source.url")"
+
+  dx_run_maybe_emit_started "$run_id" "Dex headless run started" "{\"command\":\"dx run\",\"dry_run\":$([[ $dry_run -eq 1 ]] && printf true || printf false)}"
+  dx_run_log_append_safe "$run_id" "info" "run-spec" "Prepared headless run spec ${run_id}"
+
+  if [[ $dry_run -eq 1 ]]; then
+    dx_event_emit_safe "$run_id" "run.blocked" "info" "Dex headless dry run completed before lifecycle launch" "" '{"reason":"dry-run"}'
+    dx_run_write_summary_safe "$run_id" "blocked" "Headless dry run validated startup"
+    dx_done "Run spec startup is valid: ${run_id}"
+    dx_info "Repository: ${repo_dir}"
+    dx_info "Journal: $(dx_run_dir "$run_id")"
+    cd "$original_dir" 2>/dev/null || true
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 0
+  fi
+
+  __dx_refresh_provider || {
+    cd "$original_dir" 2>/dev/null || true
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  }
+
+  __dx_setup_in_place "$workspace_input"
+  local setup_status=$?
+  if [[ $setup_status -ne 0 ]]; then
+    error_text="could not prepare in-place lifecycle workspace"
+    dx_event_emit_safe "$run_id" "run.failed" "error" "$error_text" "" "$(__dx_run_spec_failure_json "$source_label" "$error_text" "startup")"
+    dx_run_write_summary_safe "$run_id" "failed" "$error_text"
+    cd "$original_dir" 2>/dev/null || true
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return "$setup_status"
+  fi
+
+  session_id="$_dx_session_id"
+  final_spec=$(dx_run_spec_prepare_journal "$normalized_spec" "$session_id" "$repo_dir" "dx run") || {
+    cd "$original_dir" 2>/dev/null || true
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  }
+  local -x DEX_HEADLESS_RUN_SPEC_FILE="$final_spec"
+  local -x DEX_RUN_ID="$run_id"
+  dx_meta_write "$session_id" "headless=1" "run_id=${run_id}" "run_spec=${final_spec}"
+  __dx_write_last_session "$_dx_wt_name" "$_dx_wt_dir" "$_dx_workspace_mode"
+
+  local state_file times_file step=0
+  state_file=$(dx_state_file "$session_id")
+  times_file=$(dx_times_file "$session_id")
+  if [[ -f "$state_file" ]]; then
+    step=$(cat "$state_file" 2>/dev/null)
+    [[ "$step" =~ ^[0-7]$ ]] || step=0
+  fi
+
+  dx_info "Starting headless Dex run ${run_id}"
+  local resume_hint="dx run --spec ${source_label}"
+  [[ -n "$spec_url" ]] && resume_hint="dx run --spec-url ${source_label}"
+  __dx_run_phases "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
+  local run_status=$?
+  cd "$original_dir" 2>/dev/null || true
+  command rm -rf "$tmp_dir" 2>/dev/null || true
+  return "$run_status"
 }
 
 # __dx_format_elapsed <seconds>
@@ -1529,7 +1892,7 @@ dx() {
     echo "       dx --from-pr <N>   Resume session linked to a PR"
     echo "       dx refine <N|description>  Refine a ticket before implementation"
     echo ""
-    echo "       dx init|sync|rename|maintain|tools|config|research|install|uninstall|uninit|status|reload|help"
+    echo "       dx init|sync|rename|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -1607,7 +1970,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|rename|maintain|tools|config|provider|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|rename|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;

@@ -46,7 +46,8 @@ Before stopping, critically audit your plan:
    - Always ask when the unknown affects scope, contracts (types/schemas/APIs), naming of public symbols, observable behaviour, performance budgets, security, or visible UX.
 
 8. USER APPROVAL — Has the user explicitly approved this plan?
-   - If the user hasn't responded yet, wait. Do not proceed without approval.
+   - If this is a headless `dx run` session and the run spec has `workflow.requires_plan_approval: false`, the run spec is the approval source. Confirm the plan covers the spec and proceed after the normal plan quality checks pass.
+   - Otherwise, if the user hasn't responded yet, wait. Do not proceed without approval.
 
 If you find gaps in any of the above, fix them and re-present the plan.
 
@@ -55,6 +56,6 @@ If you find gaps in any of the above, fix them and re-present the plan.
 - Edge cases are accounted for
 - Every material risk has a mitigation, fallback, or explicit user acceptance
 - Every <100%-confidence assumption has been surfaced and answered (or labelled "fully reversible during implementation")
-- The user has explicitly approved the plan
+- The user has explicitly approved the plan, or a headless run spec with `workflow.requires_plan_approval: false` authorizes it
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

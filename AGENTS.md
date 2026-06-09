@@ -19,10 +19,10 @@ Dex is a standalone workflow automation framework for Claude Code. It provides a
 
 ```
 bin/                 CLI scripts (install, init, config, status, etc.)
-docs/                Extended documentation (guards, autonomous mode, UI capture)
+docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (common, codex, git, output, provider, session, ui-capture, worktree)
+lib/                 Shared shell libraries (agent-tools, codex, common, events, factory, git, maintenance, output, provider, rtk, run-spec, session, ui-capture, worktree)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
 scripts/             Node/helpers used by Dex-managed tooling
@@ -67,7 +67,7 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 ```
 
-Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `agent-tools.sh`, and `maintenance.sh`.
+Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `factory.sh`, `run-spec.sh`, `agent-tools.sh`, and `maintenance.sh`.
 
 ### Output
 
@@ -213,9 +213,12 @@ Exception: `dx --no-worktree <ticket-or-description>` runs the same phased lifec
 
 ## Quality Gates
 
-This project has no test suite, formatter, or unified check command. Linting is via `shellcheck` (if installed) on `dx.sh`, `bin/*.sh`, `hooks/*.sh`, `lib/*.sh`.
+This project has focused shell test scripts under `tests/`, but no formatter or
+unified check command. Linting is via `shellcheck` (if installed) on `dx.sh`,
+`bin/*.sh`, `hooks/*.sh`, `lib/*.sh`, and `tests/*.sh`.
 
-When modifying shell scripts, ensure they pass `shellcheck` if you have it available.
+When modifying shell scripts, ensure they pass `shellcheck` if you have it
+available. Run the relevant `tests/*.sh` scripts for the changed surface.
 
 ## Security Considerations
 
@@ -286,10 +289,12 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap | `dx_bootstrap_agent_tooling()`, `dx_install_safe_official_claude_plugins()`, `dx_install_openai_docs_mcp_servers()` |
 | `codex.sh` | Codex CLI skill installation helpers | `dx_install_codex_skills()`, `dx_count_dex_skills()`, `dx_codex_dex_skills_complete()`, `dx_uninstall_codex_skills()` |
 | `events.sh` | Run IDs, local run directories, JSONL event journals, redacted logs, artifact manifests, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_log_append()`, `dx_run_register_artifact()`, `dx_run_write_summary()` |
+| `factory.sh` | Optional Dex Factory event sync over HTTP | `dx_factory_sync_pending_events()`, `dx_factory_events_endpoint()`, `dx_factory_sync_requested()` |
 | `git.sh` | Git helpers | `dx_default_branch()`, `dx_slugify()` |
 | `maintenance.sh` | Background maintenance config, workflow install, run IDs, locks, and reviewer normalization | `dx_maintenance_event_mode()`, `dx_maintenance_install_workflow()`, `dx_maintenance_run_id()`, `dx_maintenance_request_reviewer()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
+| `run-spec.sh` | Structured headless run spec validation, fetch, normalization, and journal prep | `dx_run_spec_normalize()`, `dx_run_spec_fetch()`, `dx_run_spec_prepare_journal()` |
 | `session.sh` | Session ID derivation, state file paths | `dx_session_id()`, `dx_provider_state_file()`, `dx_cleanup_session()` |
 | `output.sh` | Formatted user-facing output | `dx_done()`, `dx_ok()`, `dx_warn()`, `dx_error()`, etc. |
 | `ui-capture.sh` | Playwright/UI capture tooling, artifact paths, MCP bootstrap | `dx_install_ui_capture_tooling()`, `dx_ui_capture_run_dir()`, `dx_ui_capture_playwright_ready()` |
@@ -328,6 +333,9 @@ When modifying shell scripts, ensure they pass `shellcheck` if you have it avail
 | `DX_TOOL_DIR` | Dex-managed external tooling cache | `~/.claude/.dex-tools` |
 | `DX_RUN_ROOT` | Dex run directories, event journals, summaries, and run artifacts | `~/.dex/runs` |
 | `DEX_RUN_ID` | Current run ID passed into hooks/provider subprocesses | unset |
+| `DEX_HEADLESS_RUN` | Internal marker for lifecycle sessions started by `dx run` | unset |
+| `DEX_HEADLESS_RUN_SPEC_FILE` | Normalized run spec path passed into the launched lifecycle | unset |
+| `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | Whether Phase 1 must wait for interactive plan approval | spec value |
 | `DX_RTK_ENABLED` | Enable RTK token-reduction bootstrap (`0` disables) | `1` |
 | `DX_RTK_BIN` | Override RTK binary path used by Dex hooks/checks | unset |
 | `DX_RTK_INSTALL_DIR` | RTK binary install directory | `$DX_TOOL_DIR/rtk/bin` |

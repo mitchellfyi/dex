@@ -92,6 +92,7 @@ dx 1234                    # Run the full lifecycle for a ticket
 dx "task description"      # Run the full lifecycle for a free-form task
 dx --agent codex --model gpt-5.3-codex "fix flaky import"
 dx --no-worktree 1234      # Run the lifecycle in the current checkout
+dx run --spec run-spec.json # Run from a structured headless run spec
 dxreviewloop               # Review current changes without the full lifecycle
 dxcomplete                 # Resume PR completion for the current branch
 dx provider current        # Show active agent/provider/model resolution
@@ -185,6 +186,7 @@ reviews pass.
 
 - [Autonomous mode](docs/autonomous-mode.md) explains phase hooks, state files,
   review loops, and watcher behavior.
+- [Run specs](docs/run-specs.md) covers headless/spec startup with `dx run`.
 - [Guards](docs/guards.md) covers hook-based safety rules.
 - [UI capture](docs/ui-capture.md) covers screenshots, traces, videos, and PR
   visual evidence.

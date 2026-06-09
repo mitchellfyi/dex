@@ -583,11 +583,15 @@ PY
     event_status=$?
   fi
   command rmdir "$lock_dir" 2>/dev/null || command rm -rf "$lock_dir" 2>/dev/null || true
+  if [[ "$event_status" -eq 0 ]] && command -v dx_factory_sync_pending_events_safe >/dev/null 2>&1; then
+    dx_factory_sync_pending_events_safe "$run_id" || true
+  fi
   return "$event_status"
 }
 
 dx_event_emit_safe() {
-  dx_event_emit "$@" 2>/dev/null || return 0
+  dx_event_emit "$@" 2>/dev/null || true
+  return 0
 }
 
 dx_event_emit_for_session() {
@@ -607,6 +611,7 @@ dx_run_maybe_emit_started() {
   if dx_event_emit "$run_id" "run.started" "info" "$message" "" "$data_json" 2>/dev/null; then
     : > "$marker" 2>/dev/null || true
   fi
+  return 0
 }
 
 dx_event_maybe_emit_phase_started() {
@@ -619,6 +624,7 @@ dx_event_maybe_emit_phase_started() {
   if dx_event_emit "$run_id" "phase.started" "info" "Phase ${phase} started: ${phase_name}" "$phase" "$data_json" 2>/dev/null; then
     : > "$marker" 2>/dev/null || true
   fi
+  return 0
 }
 
 dx_event_maybe_emit_phase_started_for_session() {

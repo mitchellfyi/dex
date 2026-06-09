@@ -194,7 +194,9 @@ When running in plan mode (e.g., via `dx` Phase 1 or `dxloop`), present the plan
 
 **Do not begin implementation until the user approves the plan.**
 
-When running under terminal `dx` Phase 1, approval is the handoff signal to the Stop hook. After `ExitPlanMode` is approved, write the Phase 1 approval marker:
+When running under terminal `dx` Phase 1, approval is the handoff signal to the Stop hook. For headless runs started by `dx run`, if `DEX_HEADLESS_RUN=1` and the run spec has `workflow.requires_plan_approval: false`, the run spec is the approval source; complete the same plan quality checks and then write the Phase 1 approval marker without waiting for interactive approval.
+
+After `ExitPlanMode` is approved, or after the headless run spec authorizes plan execution, write the Phase 1 approval marker:
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
