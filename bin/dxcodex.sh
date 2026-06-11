@@ -35,13 +35,10 @@ esac
 
 # Re-resolve from the selected provider profile. Keep DX_MODEL_OVERRIDE intact
 # so `dx --agent codex --model <model>` reaches this wrapper through Claude.
+# Any provider profile may delegate through this wrapper; codex-plugin profiles
+# resolve a codex_model override, other engines use the Codex session default.
 unset DX_CODEX_MODEL
 dx_provider_apply
-if [[ "$DX_PROVIDER_ENGINE" != "codex-plugin" ]]; then
-  dx_error "dxcodex requires a codex-plugin provider profile."
-  dx_info "Run 'dx provider use codex-subscription' or set DX_PROVIDER_PROFILE to a configured Codex subscription profile."
-  exit 2
-fi
 
 dx_provider_codex_ready_check
 

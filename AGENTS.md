@@ -181,7 +181,7 @@ Dex exposes stable agent names (`claude`, `codex`) through `dx --agent`, while
 agent support behind that provider layer rather than branching on agent names
 throughout `dx.sh`.
 
-Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Codex delegation must go through `bin/dxcodex.sh`, which owns `--ignore-user-config` and `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto` for Dex-managed Codex work. `dx --model <model>` targets the selected agent: Claude gets `claude --model`, while Codex gets `codex exec --model` through the wrapper.
+Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Codex delegation must go through `bin/dxcodex.sh`, which owns `--ignore-user-config` and `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto` for Dex-managed Codex work. The wrapper works under any provider profile, so a Claude-engine run can hand individual tasks to Codex; only codex-plugin profiles resolve a `codex_model` override, other engines use the Codex session default. `dx --model <model>` targets the selected agent: Claude gets `claude --model`, while Codex gets `codex exec --model` through the wrapper.
 
 ### Hook integration
 
