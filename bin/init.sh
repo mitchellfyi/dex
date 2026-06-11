@@ -128,7 +128,7 @@ Run `dxloop <prompt>` to execute a prompt in a loop until Claude confirms it's f
 
 ## Agent and model
 
-Dex defaults to Claude on Opus 4.7. Override a single run with:
+Dex defaults to Claude using your session's default model and effort. Override a single run with:
 
 ```bash
 dx --agent codex --model gpt-5.3-codex "<task>"
@@ -270,13 +270,20 @@ else
   # -p runs a one-shot prompt; Claude writes files directly to .dex/
   # --verbose --output-format stream-json enables real-time progress.
   dx_provider_apply
+  model_flags=()
+  if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
+    model_flags+=(--model "$DX_CLAUDE_MODEL")
+  fi
+  if [[ -n "${DX_CLAUDE_EFFORT:-}" ]]; then
+    model_flags+=(--effort "$DX_CLAUDE_EFFORT")
+  fi
   analysis_prompt=$(cat "$DEX_DIR/prompts/init-analysis.md")
   provider_prompt=$(dx_provider_prompt)
   INIT_PROVIDER_SESSION_ID="${INIT_RUN_SESSION_ID:-init-$(dx_unique_session_id)}"
   dx_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID"
   set +o pipefail
   DEX_SESSION_ID="$INIT_PROVIDER_SESSION_ID" DEX_RUN_ID="${INIT_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_provider_claude -p "${analysis_prompt}${provider_prompt}" \
-    --model "$DX_CLAUDE_MODEL" --effort "$DX_CLAUDE_EFFORT" \
+    ${model_flags[@]+"${model_flags[@]}"} \
     --dangerously-skip-permissions --permission-mode bypassPermissions \
     --verbose --output-format stream-json --include-partial-messages \
     | dx_progress_filter \

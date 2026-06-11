@@ -3,12 +3,7 @@
   "profiles": {
     "dex-codex": {
       "engine": "codex-plugin",
-      "auth": "chatgpt-subscription",
-      "model": "claude-opus-4-7",
-      "plan_model": "claude-opus-4-7",
-      "effort": "max",
-      "plan_effort": "max",
-      "codex_model": "gpt-5.3-codex"
+      "auth": "chatgpt-subscription"
     }
   }
 }

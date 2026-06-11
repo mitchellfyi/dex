@@ -105,10 +105,11 @@ dxloop "add rate limiting"  # Same mechanism
 ```
 
 `dx --agent <name>` currently supports `claude` and `codex`. The default is
-Claude on Opus 4.7 unless `.dex/providers.json` or `~/.dex/providers.json`
-selects a different provider profile. `dx --model <model>` passes the model to
-the selected agent: Claude receives it through `claude --model`, while Codex
-receives it through Dex's Codex wrapper as `codex exec --model`.
+Claude using your session's default model and effort, unless
+`.dex/providers.json` or `~/.dex/providers.json` selects a provider profile
+that pins them. `dx --model <model>` passes the model to the selected agent:
+Claude receives it through `claude --model`, while Codex receives it through
+Dex's Codex wrapper as `codex exec --model`.
 
 **From inside an existing Claude Code session** (via `/dxloop` skill):
 The `/dxloop` skill creates an `.active` signal file in `~/.claude/.dex-loops/`. The Stop hook checks for this file as an alternative to the environment variable, since env vars can't be injected into a running process.
@@ -124,7 +125,7 @@ To run without the audit loop:
 
 ```bash
 cd .dex/worktrees/ticket-999
-claude --model claude-opus-4-7 --dangerously-skip-permissions --permission-mode bypassPermissions  # No DEX_LOOP_ACTIVE set, no .active file
+claude --dangerously-skip-permissions --permission-mode bypassPermissions  # No DEX_LOOP_ACTIVE set, no .active file
 ```
 
 ## In-Place Lifecycle (`dx --no-worktree`)

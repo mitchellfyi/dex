@@ -1480,6 +1480,13 @@ __dx_maintain_run_provider() {
   fi
 
   dx_provider_apply
+  local model_flags=()
+  if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
+    model_flags+=(--model "$DX_CLAUDE_MODEL")
+  fi
+  if [[ -n "${DX_CLAUDE_EFFORT:-}" ]]; then
+    model_flags+=(--effort "$DX_CLAUDE_EFFORT")
+  fi
   local maintain_prompt provider_prompt
   maintain_prompt=$(cat "$DEX_DIR/prompts/maintain.md")
   provider_prompt=$(dx_provider_prompt)
@@ -1527,7 +1534,7 @@ dx_provider_claude "$@"
       GIT_SSH_COMMAND="ssh -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile=/dev/null" \
       bash -c "$provider_shell" bash "$MAINTAIN_PROVIDER_SESSION_ID" \
       -p "$prompt_payload" \
-      --model "$DX_CLAUDE_MODEL" --effort "$DX_CLAUDE_EFFORT" \
+      ${model_flags[@]+"${model_flags[@]}"} \
       --dangerously-skip-permissions --permission-mode bypassPermissions
   else
     dx_run_with_timeout "$budget_seconds" env \
@@ -1535,7 +1542,7 @@ dx_provider_claude "$@"
       DEX_SESSION_ID="$MAINTAIN_PROVIDER_SESSION_ID" \
       bash -c "$provider_shell" bash "$MAINTAIN_PROVIDER_SESSION_ID" \
       -p "$prompt_payload" \
-      --model "$DX_CLAUDE_MODEL" --effort "$DX_CLAUDE_EFFORT" \
+      ${model_flags[@]+"${model_flags[@]}"} \
       --dangerously-skip-permissions --permission-mode bypassPermissions
   fi
   local claude_exit=$?

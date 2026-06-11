@@ -358,11 +358,11 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `DX_AGENT` / `DX_AGENT_OVERRIDE` | Agent override (`claude` or `codex`) | profile/default |
 | `DX_MODEL` / `DX_MODEL_OVERRIDE` | Model override for the selected agent | profile/default |
 | `DX_PROVIDER_PROFILE` | Provider profile override (`claude-subscription`, `codex-subscription`, or custom) | config/default |
-| `DX_CLAUDE_MODEL` | Override Claude Code model passed to `--model` | profile model |
-| `DX_PLAN_MODEL` | Override Phase 1/plan model | `DX_CLAUDE_MODEL` or profile plan model |
-| `DX_CODEX_MODEL` | Resolved Codex model passed through `bin/dxcodex.sh` | profile/default |
-| `DX_CLAUDE_EFFORT` | Override Claude Code `--effort` | profile effort |
-| `DX_PLAN_EFFORT` | Override Phase 1/plan effort | `DX_CLAUDE_EFFORT` or profile plan effort |
+| `DX_CLAUDE_MODEL` | Override Claude Code model passed to `--model` | profile model, else session default |
+| `DX_PLAN_MODEL` | Override Phase 1/plan model | `DX_CLAUDE_MODEL`, profile plan model, else session default |
+| `DX_CODEX_MODEL` | Resolved Codex model passed through `bin/dxcodex.sh` | profile codex model, else Codex default |
+| `DX_CLAUDE_EFFORT` | Override Claude Code `--effort` | profile effort, else session default |
+| `DX_PLAN_EFFORT` | Override Phase 1/plan effort | `DX_CLAUDE_EFFORT`, profile plan effort, else session default |
 | `DX_ALLOW_API_BILLED_AUTH` | Allow `dx provider doctor` to tolerate API/gateway env vars | `0` |
 | `DX_ALLOW_REPO_GATEWAY_PROVIDER` | Explicitly allow a trusted repo-local gateway/API provider profile for the current invocation | `0` |
 

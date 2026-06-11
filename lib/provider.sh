@@ -217,16 +217,8 @@ __dx_provider_builtin_get() {
   case "$profile:$key" in
     claude-subscription:engine) printf '%s\n' "claude" ;;
     claude-subscription:auth) printf '%s\n' "subscription" ;;
-    claude-subscription:model) printf '%s\n' "claude-opus-4-7" ;;
-    claude-subscription:plan_model) printf '%s\n' "claude-opus-4-7" ;;
-    claude-subscription:effort) printf '%s\n' "max" ;;
-    claude-subscription:plan_effort) printf '%s\n' "max" ;;
     codex-subscription:engine) printf '%s\n' "codex-plugin" ;;
     codex-subscription:auth) printf '%s\n' "chatgpt-subscription" ;;
-    codex-subscription:model) printf '%s\n' "claude-opus-4-7" ;;
-    codex-subscription:plan_model) printf '%s\n' "claude-opus-4-7" ;;
-    codex-subscription:effort) printf '%s\n' "max" ;;
-    codex-subscription:plan_effort) printf '%s\n' "max" ;;
     *) return 1 ;;
   esac
 }
@@ -686,11 +678,11 @@ dx_provider_apply() {
   DX_PROVIDER_AUTH=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "auth" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   DX_PROVIDER_BASE_URL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "base_url" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   DX_PROVIDER_AUTH_ENV=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "auth_env" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
-  DX_PROVIDER_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "claude-opus-4-7")
+  DX_PROVIDER_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   DX_PROVIDER_PLAN_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "plan_model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "$DX_PROVIDER_MODEL")
   # shellcheck disable=SC2034
   DX_PROVIDER_HAIKU_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "haiku_model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "$DX_PROVIDER_MODEL")
-  DX_PROVIDER_EFFORT=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "effort" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "max")
+  DX_PROVIDER_EFFORT=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "effort" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   DX_PROVIDER_PLAN_EFFORT=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "plan_effort" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "$DX_PROVIDER_EFFORT")
   DX_CODEX_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "codex_model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   dx_provider_validate_model_field "Provider profile ${DX_PROVIDER_PROFILE_RESOLVED} model" "$DX_PROVIDER_MODEL" || return 1
@@ -1047,7 +1039,7 @@ Subscription-safety rules:
   "codex review", bare "codex <prompt>", direct "dx_provider_codex"
   delegation, or package-runner forms like "npx codex". The wrapper enforces
   "--ignore-user-config", "--dangerously-bypass-approvals-and-sandbox",
-  sanitized environment variables, and the configured Codex model.
+  sanitized environment variables, and any explicit Codex model override.
 - If Codex is missing or not logged in, stop and report that "dx provider doctor"
   or "/codex:setup" must be run.
 
@@ -1108,10 +1100,10 @@ dx_provider_current() {
   dx_info "Engine:  ${DX_PROVIDER_ENGINE}"
   dx_info "Auth:    ${DX_PROVIDER_AUTH:-unknown}"
   if [[ "$DX_PROVIDER_ENGINE" == "codex-plugin" ]]; then
-    dx_info "Harness: ${DX_CLAUDE_MODEL} (${DX_CLAUDE_EFFORT})"
-    dx_info "Codex:   ${DX_CODEX_MODEL:-default}"
+    dx_info "Harness: ${DX_CLAUDE_MODEL:-session default} (${DX_CLAUDE_EFFORT:-default effort})"
+    dx_info "Codex:   ${DX_CODEX_MODEL:-session default}"
   else
-    dx_info "Claude:  ${DX_CLAUDE_MODEL} (${DX_CLAUDE_EFFORT})"
+    dx_info "Claude:  ${DX_CLAUDE_MODEL:-session default} (${DX_CLAUDE_EFFORT:-default effort})"
   fi
   if [[ "$DX_PROVIDER_ENGINE" == "anthropic-gateway" ]]; then
     dx_info "Gateway: ${DX_PROVIDER_BASE_URL:-not configured}"

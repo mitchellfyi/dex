@@ -73,10 +73,11 @@ to disable. See `docs/rtk-token-reduction.md`.
 
 ## Provider
 
-This repo uses `.dex/providers.json` to default Dex runs to the Codex agent with
-`gpt-5.3-codex`. Use `dx --agent claude` for a one-run fallback to the built-in
-Claude/Opus 4.7 profile, or `dx --model <model>` to override the model passed to
-the selected agent.
+This repo uses `.dex/providers.json` to default Dex runs to the Codex agent.
+Model and effort are not pinned — each CLI uses its own session default. Use
+`dx --agent claude` for a one-run fallback to the built-in Claude subscription
+profile, or `dx --model <model>` to override the model passed to the selected
+agent.
 
 ## Reviewers
 

@@ -217,21 +217,45 @@ fi
 
 # Default Claude flags for all dx-launched sessions:
 #   --chrome           Enable browser automation tools (MCP)
-#   --model            Use Opus 4.7 for autonomous multi-phase work by default.
-#                      Override with DX_CLAUDE_MODEL for gateways/custom models.
 #   --dangerously-skip-permissions       No interactive permission prompts.
 #   --permission-mode bypassPermissions  Keep Claude's permission mode explicit.
-#   --effort           Maximum reasoning effort for complex tasks by default.
-#                      Override with DX_CLAUDE_EFFORT if the provider differs.
+#
+# Model and effort come from the user's Claude session defaults. Dex only
+# passes --model/--effort when an explicit override is set (dx --model,
+# DX_CLAUDE_MODEL/DX_CLAUDE_EFFORT, or a provider profile that pins them).
 unalias __dx_refresh_provider 2>/dev/null; unfunction __dx_refresh_provider 2>/dev/null
 __dx_refresh_provider() {
   dx_provider_apply || return 1
-  DX_CLAUDE_FLAGS=(--chrome --model "$DX_CLAUDE_MODEL" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "$DX_CLAUDE_EFFORT")
-  DX_PLAN_FLAGS=(--chrome --model "$DX_PLAN_MODEL" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "$DX_PLAN_EFFORT")
+  DX_CLAUDE_FLAGS=(--chrome --dangerously-skip-permissions --permission-mode bypassPermissions)
+  if [[ -n "$DX_CLAUDE_MODEL" ]]; then
+    DX_CLAUDE_FLAGS+=(--model "$DX_CLAUDE_MODEL")
+  fi
+  if [[ -n "$DX_CLAUDE_EFFORT" ]]; then
+    DX_CLAUDE_FLAGS+=(--effort "$DX_CLAUDE_EFFORT")
+  fi
+  DX_PLAN_FLAGS=(--chrome --dangerously-skip-permissions --permission-mode bypassPermissions)
+  if [[ -n "$DX_PLAN_MODEL" ]]; then
+    DX_PLAN_FLAGS+=(--model "$DX_PLAN_MODEL")
+  fi
+  if [[ -n "$DX_PLAN_EFFORT" ]]; then
+    DX_PLAN_FLAGS+=(--effort "$DX_PLAN_EFFORT")
+  fi
 }
 
-DX_CLAUDE_FLAGS=(--chrome --model "${DX_CLAUDE_MODEL:-claude-opus-4-7}" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "${DX_CLAUDE_EFFORT:-max}")
-DX_PLAN_FLAGS=(--chrome --model "${DX_PLAN_MODEL:-${DX_CLAUDE_MODEL:-claude-opus-4-7}}" --dangerously-skip-permissions --permission-mode bypassPermissions --effort "${DX_PLAN_EFFORT:-${DX_CLAUDE_EFFORT:-max}}")
+DX_CLAUDE_FLAGS=(--chrome --dangerously-skip-permissions --permission-mode bypassPermissions)
+if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
+  DX_CLAUDE_FLAGS+=(--model "$DX_CLAUDE_MODEL")
+fi
+if [[ -n "${DX_CLAUDE_EFFORT:-}" ]]; then
+  DX_CLAUDE_FLAGS+=(--effort "$DX_CLAUDE_EFFORT")
+fi
+DX_PLAN_FLAGS=(--chrome --dangerously-skip-permissions --permission-mode bypassPermissions)
+if [[ -n "${DX_PLAN_MODEL:-${DX_CLAUDE_MODEL:-}}" ]]; then
+  DX_PLAN_FLAGS+=(--model "${DX_PLAN_MODEL:-$DX_CLAUDE_MODEL}")
+fi
+if [[ -n "${DX_PLAN_EFFORT:-${DX_CLAUDE_EFFORT:-}}" ]]; then
+  DX_PLAN_FLAGS+=(--effort "${DX_PLAN_EFFORT:-$DX_CLAUDE_EFFORT}")
+fi
 
 # Phase 1 uses dangerous skip permissions plus bypassPermissions to avoid
 # interactive prompts. Claude calls EnterPlanMode as its first action to

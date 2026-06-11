@@ -144,8 +144,8 @@ every run.
 
 ## Provider Profiles
 
-Dex defaults to the `claude` agent on Claude Opus 4.7. You can override one run
-from the terminal:
+Dex defaults to the `claude` agent using your session's default model and
+effort. You can override one run from the terminal:
 
 ```bash
 dx --agent claude --model claude-opus-4-7 1234

@@ -252,7 +252,15 @@ if [[ "$SYNC_BUDGET_MINUTES" =~ ^[0-9]+$ && "$SYNC_BUDGET_MINUTES" -gt 0 ]]; the
   budget_seconds=$((SYNC_BUDGET_MINUTES * 60))
 fi
 
-dx_info "Launching provider: ${DX_PROVIDER_PROFILE_RESOLVED:-unknown} (${DX_PROVIDER_ENGINE:-unknown}), model ${DX_CLAUDE_MODEL}, effort ${DX_CLAUDE_EFFORT}"
+model_flags=()
+if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
+  model_flags+=(--model "$DX_CLAUDE_MODEL")
+fi
+if [[ -n "${DX_CLAUDE_EFFORT:-}" ]]; then
+  model_flags+=(--effort "$DX_CLAUDE_EFFORT")
+fi
+
+dx_info "Launching provider: ${DX_PROVIDER_PROFILE_RESOLVED:-unknown} (${DX_PROVIDER_ENGINE:-unknown}), model ${DX_CLAUDE_MODEL:-session default}, effort ${DX_CLAUDE_EFFORT:-session default}"
 dx_info "Session id: $SYNC_PROVIDER_SESSION_ID"
 dx_info "Re-analyzing current project context, rules, guards, and scoped memory."
 dx_info "Large repos may be quiet while the provider reads context; timeout is ${SYNC_BUDGET_MINUTES} minute(s)."
@@ -260,7 +268,7 @@ dx_info "Large repos may be quiet while the provider reads context; timeout is $
 set +e
 set +o pipefail
 DEX_SESSION_ID="$SYNC_PROVIDER_SESSION_ID" DEX_RUN_ID="${SYNC_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_run_with_timeout "$budget_seconds" dx_provider_claude -p "${sync_prompt}${provider_prompt}${invocation}" \
-  --model "$DX_CLAUDE_MODEL" --effort "$DX_CLAUDE_EFFORT" \
+  ${model_flags[@]+"${model_flags[@]}"} \
   --dangerously-skip-permissions --permission-mode bypassPermissions \
   --verbose --output-format stream-json --include-partial-messages \
   | dx_progress_filter \
