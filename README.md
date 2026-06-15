@@ -187,6 +187,8 @@ reviews pass.
 - [Autonomous mode](docs/autonomous-mode.md) explains phase hooks, state files,
   review loops, and watcher behavior.
 - [Run specs](docs/run-specs.md) covers headless/spec startup with `dx run`.
+- [Factory security](docs/factory-security.md) documents the v1 remote worker,
+  token, event-ingestion, and credential boundary.
 - [Guards](docs/guards.md) covers hook-based safety rules.
 - [UI capture](docs/ui-capture.md) covers screenshots, traces, videos, and PR
   visual evidence.
