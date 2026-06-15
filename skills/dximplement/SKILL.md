@@ -139,7 +139,18 @@ Artifacts must stay in Dex's artifact directory and must not be committed. Add a
 
 If no browser UI changed, add `UI capture: N/A — no UI-affecting files changed` to the evidence.
 
-### 7. Mark Phase 2 Ready
+### 7. Manual Local Smoke Test
+
+A green test suite is not the same as a working feature. Before marking Phase 2 ready, exercise the change end-to-end the way a human reviewer would — run it locally and watch it actually work.
+
+- **Run the change end-to-end locally**, not just the test suite. Start the app/server/CLI the way the project runs it (reuse the dev-server startup documented in `dxuicapture` for web apps), then drive the real user-facing path this ticket changed.
+- **Prefer a real browser, fall back to Playwright.** For browser-facing changes, drive the flow with the Claude-in-Chrome browser tools (`mcp__claude-in-chrome__*`) when a live browser is available; otherwise fall back to Playwright (the Playwright MCP, or the Playwright install `dxuicapture` provisions via `bin/ui-capture.sh --install-only`). For non-UI changes, exercise it the matching way: hit the endpoint, run the command, trigger the job, or call the public API against a running instance.
+- **Seed local data when the flow needs it.** Use the project's seeding path if one exists (factories, seed scripts, fixtures); otherwise insert the minimal rows the flow requires directly into the local dev/test database. Seed only what the flow needs.
+- **Judge it like a reviewer**: confirm it works *effectively* (the happy path does the right thing), is *robust* (a representative bad/edge input is handled gracefully, not a crash or 500), and is backed by *good test coverage* (the path you just exercised by hand has corresponding automated tests). If the smoke test exposes a coverage gap, add the test before finishing.
+- **Clean up after yourself.** Stop every process/server you started, remove any rows, temp data, or fixture files you created, and leave no Phase 2 background process in flight. Smoke-test artifacts follow the same rule as UI capture — do not commit them.
+- **Record the result** in the implementation evidence: what you ran, how you drove it (browser vs Playwright vs API/CLI), what you observed, and the cleanup you performed. If the change genuinely cannot be exercised locally, record `Manual smoke test: N/A — <reason>` instead of silently skipping it; the reason must clear the same bar as any other `N/A` (see the blocker rule above).
+
+### 8. Mark Phase 2 Ready
 
 When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), write the Phase 2 ready marker only after all of these are true:
 
@@ -147,6 +158,7 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
 - Every acceptance criterion and verification gate is exactly `MET`.
 - No evidence entry is deferred, skipped, blocked, missing, or delegated to future CI unless the user approved a plan change.
 - Final deterministic checks passed locally.
+- The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
 - Required UI capture evidence is linked, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A.
 - No Phase 2 background processes or long-running commands are still in flight.
 
@@ -171,6 +183,7 @@ You SHOULD:
 - Run quality checks on changed files after each task (format, lint, typecheck)
 - Run the self-review loop (Step 4) and final implementation checks (Step 5)
 - Run `/dxuicapture` for UI-affecting changes before UI edits and after implementation, then link the artifacts
+- Run the manual local smoke test (Step 7) before marking Phase 2 ready, cleaning up anything it starts or seeds
 - Update `.dex/` project docs if your changes require it
 
 ## Notes

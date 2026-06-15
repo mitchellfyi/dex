@@ -43,9 +43,10 @@ The terminal `dx` lifecycle runs phases in the same Claude Code session. Each ph
 1. Invoke the Skill tool with `skill: "dximplement"` — work through tasks with TDD discipline. The plan approval was the go-ahead; do not pause to ask for permission.
 2. **[STOP]** if ambiguous requirements, scope changes, or blocked dependencies arise.
 3. For UI-affecting changes, invoke `/dxuicapture` before UI edits for baseline evidence, then again after implementation. Capture screenshots/traces, record video for interactive flows, and link the `visual-evidence.md` manifest from Dex's artifact directory.
-4. The audit loop verifies all tasks are complete with tests passing, evidence table filled, and UI capture evidence present or explicitly N/A.
-5. **SCOPE**: implementation, testing, and UI capture evidence ONLY. Ticket setup belongs to Phase 0 — only re-run it here if Phase 0 left it incomplete. Do NOT commit or push implementation code (Phase 4 owns that), and do NOT update the PR description (Phase 5 owns that).
-6. Output `PHASE_2_COMPLETE` when all tasks are implemented and the evidence table shows all criteria MET.
+4. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
+5. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, the manual smoke test passed or explicitly N/A, and UI capture evidence present or explicitly N/A.
+6. **SCOPE**: implementation, testing, and UI capture evidence ONLY. Ticket setup belongs to Phase 0 — only re-run it here if Phase 0 left it incomplete. Do NOT commit or push implementation code (Phase 4 owns that), and do NOT update the PR description (Phase 5 owns that).
+7. Output `PHASE_2_COMPLETE` when all tasks are implemented and the evidence table shows all criteria MET.
 
 ### Phase 3: Review
 
