@@ -23,6 +23,7 @@
 #   dxclean                Clean stale worktrees + gone branches
 #   dxloop <prompt>         Run a prompt until fully implemented
 #   dx sync                 Refresh repo memory/rules from verified observations
+#   dx login                Connect this CLI to DexCode sync
 #   dx maintain             Run background maintenance or install workflow
 #   dx tools                Check or install Claude/Codex tooling bootstrap
 #   dx run --spec <file>    Run from a structured headless run spec
@@ -49,6 +50,10 @@ __dx_cli() {
     uninstall) bash "$DEX_DIR/bin/uninstall.sh" "$@" ;;
     init)      bash "$DEX_DIR/bin/init.sh" "$@" ;;
     sync)      bash "$DEX_DIR/bin/sync.sh" "$@" ;;
+    login)     dx_dexcode_login "$@" ;;
+    logout)    dx_dexcode_logout "$@" ;;
+    whoami)    dx_dexcode_whoami "$@" ;;
+    dexcode)   dx_dexcode_command "$@" ;;
     maintain)  bash "$DEX_DIR/bin/maintain.sh" "$@" ;;
     tools)     bash "$DEX_DIR/bin/tools.sh" "$@" ;;
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
@@ -96,6 +101,9 @@ __dx_cli() {
       echo "  dx uninstall        Global uninstall"
       echo "  dx init             Bootstrap current repo for Dex"
       echo "  dx sync             Refresh repo memory/rules from verified observations"
+      echo "  dx login            Connect this machine to DexCode sync"
+      echo "  dx whoami           Show the active DexCode account and project"
+      echo "  dx logout           Disconnect DexCode sync on this machine"
       echo "  dx maintain         Run background maintenance or install the GitHub workflow"
       echo "  dx tools            Check or install Claude/Codex tooling bootstrap"
       echo "  dx config           Configure integrations (ticket tracker, Figma, etc.)"
@@ -1314,6 +1322,7 @@ __dx_run_phases_inline() {
     dx_error "Unable to prepare Dex run journal."
     return 1
   fi
+  dx_dexcode_prepare_run_sync "$run_id" "$wt_dir" "$workspace_mode" "$wt_name" "$raw_input" "dx" || return 1
   dx_run_maybe_emit_started "$run_id" "Dex lifecycle started" "{\"command\":\"dx\",\"start_phase\":${step},\"workspace_mode\":\"${workspace_mode}\",\"workspace_name\":\"${wt_name}\"}"
   dx_event_maybe_emit_phase_started "$run_id" "$step" "$(__dx_phase_name "$step")" "launcher"
   dx_run_log_append_safe "$run_id" "info" "dx" "Lifecycle started at Phase ${step}: $(__dx_phase_name "$step")"
@@ -1994,7 +2003,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|rename|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|rename|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
