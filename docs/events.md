@@ -136,7 +136,7 @@ export DEX_FACTORY_TOKEN=...
 Dex posts event batches to:
 
 ```text
-POST <DEX_FACTORY_URL>/api/dex/runs/<run_id>/events
+POST <DEX_FACTORY_URL>/api/v1/runs/<run_id>/events/batch
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -168,7 +168,7 @@ Configuration variables:
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `DEX_FACTORY_SYNC` | auto | `true`, `1`, `yes`, or `on` enables sync. `false`, `0`, `no`, or `off` disables it. If unset, a configured Factory URL or endpoint enables sync. |
-| `DEX_FACTORY_URL` | unset | Base Factory URL. Dex appends `/api/dex/runs/<run_id>/events`. |
+| `DEX_FACTORY_URL` | unset | Base Factory URL. Dex appends `/api/v1/runs/<run_id>/events/batch`. |
 | `DEX_FACTORY_EVENTS_ENDPOINT` | unset | Exact event endpoint. Supports `{run_id}` replacement and takes precedence over `DEX_FACTORY_URL`. |
 | `DEX_FACTORY_TOKEN` | unset | Bearer token for event submission. |
 | `DEX_FACTORY_RUN_TOKEN` | unset | Run-scoped bearer token fallback. |

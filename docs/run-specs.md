@@ -26,7 +26,7 @@ dx run --spec ./run-spec.json
 Fetch from a Factory-style endpoint:
 
 ```bash
-dx run --spec-url https://factory.example.com/api/dex/runs/run_123/spec \
+dx run --spec-url https://factory.example.com/api/v1/runs/run_123/spec \
   --run-token "$DEX_RUN_TOKEN"
 ```
 
@@ -87,7 +87,7 @@ Run specs are plain JSON. They describe the run; they must not contain secrets.
   },
   "sync": {
     "factory_url": "https://factory.example.com",
-    "events_endpoint": "https://factory.example.com/api/dex/runs/run_01J_example/events"
+    "events_endpoint": "https://factory.example.com/api/v1/runs/run_01J_example/events/batch"
   }
 }
 ```

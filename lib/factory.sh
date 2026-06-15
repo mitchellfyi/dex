@@ -54,7 +54,7 @@ dx_factory_events_endpoint() {
 
   [[ -n "$base_url" ]] || return 1
   base_url="${base_url%/}"
-  printf '%s/api/dex/runs/%s/events\n' "$base_url" "$run_id"
+  printf '%s/api/v1/runs/%s/events/batch\n' "$base_url" "$run_id"
 }
 
 __dx_factory_nonnegative_int() {

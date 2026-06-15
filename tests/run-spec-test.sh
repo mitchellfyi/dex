@@ -92,7 +92,6 @@ spec = {
 if sync_url:
     spec["sync"] = {
         "factory_url": sync_url,
-        "events_endpoint": f"{sync_url}/api/dex/runs/{run_id}/events",
     }
 Path(path).write_text(json.dumps(spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
@@ -310,7 +309,7 @@ assert headers[-1]["authorization"] == "Bearer remote-token"
 posts = [json.loads(line) for line in (server_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
 assert posts
 assert all(post["authorization"] == "Bearer remote-token" for post in posts)
-assert any(post["path"].endswith("/api/dex/runs/run_test_remote/events") for post in posts)
+assert any(post["path"].endswith("/api/v1/runs/run_test_remote/events/batch") for post in posts)
 events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
 assert any(event["type"] == "run.started" for event in events)
 PY
