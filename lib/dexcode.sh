@@ -271,6 +271,7 @@ PY
         dx_dexcode_fetch_profile "$api_url" "$access_token" "$profile_file" || true
         dx_dexcode_write_login_config "$api_url" "$token_file" "$profile_file"
         dx_done "DexCode connected."
+        dx_dexcode_select_project
         dx_dexcode_whoami --offline
         command rm -rf "$tmp_dir"
         return 0
@@ -343,6 +344,90 @@ PY
   project=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'unknown')
   dx_info "DexCode: ${account} / ${project}"
   dx_info "API: ${api_url}"
+}
+
+dx_dexcode_project_count() {
+  local file
+  file=$(dx_dexcode_config_file)
+  [[ -f "$file" ]] || return 1
+  DX_DEXCODE_CONFIG_FILE="$file" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+data = json.loads(Path(os.environ["DX_DEXCODE_CONFIG_FILE"]).read_text(encoding="utf-8"))
+print(len(data.get("projects") or []))
+PY
+}
+
+dx_dexcode_select_project() {
+  local force="${1:-}" count account current answer config_file
+  if [[ "$force" != "--force" ]]; then
+    [[ -t 0 && -t 1 ]] || return 0
+    [[ "${DEXCODE_ASSUME_DEFAULTS:-0}" != "1" ]] || return 0
+  fi
+
+  config_file=$(dx_dexcode_config_file)
+  [[ -f "$config_file" ]] || {
+    dx_warn "DexCode is not connected. Run 'dx login' first."
+    return 1
+  }
+
+  count=$(dx_dexcode_project_count 2>/dev/null || printf '0')
+  [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || return 0
+
+  account=$(dx_dexcode_config_value "account.name" 2>/dev/null || dx_dexcode_config_value "account.slug" 2>/dev/null || printf 'DexCode')
+  current=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'Personal')
+
+  dx_info "Track sessions to organisation: ${account}"
+  DX_DEXCODE_CONFIG_FILE="$config_file" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+data = json.loads(Path(os.environ["DX_DEXCODE_CONFIG_FILE"]).read_text(encoding="utf-8"))
+default_slug = (data.get("default_project") or {}).get("slug")
+for index, project in enumerate(data.get("projects") or [], start=1):
+    suffix = " (default)" if project.get("slug") == default_slug else ""
+    print(f"  {index}. {project.get('name') or project.get('slug')}{suffix}")
+PY
+  printf 'Choose project [%s]: ' "$current"
+  read -r answer || answer=""
+  if [[ -z "$answer" ]]; then
+    dx_info "Using ${account} / ${current}."
+    return 0
+  fi
+  [[ "$answer" =~ ^[0-9]+$ && "$answer" -ge 1 && "$answer" -le "$count" ]] || {
+    dx_error "Choose a number from 1 to ${count}."
+    return 1
+  }
+
+  DX_DEXCODE_CONFIG_FILE="$config_file" DX_DEXCODE_PROJECT_INDEX="$answer" python3 - <<'PY'
+import json
+import os
+import tempfile
+from pathlib import Path
+
+path = Path(os.environ["DX_DEXCODE_CONFIG_FILE"])
+data = json.loads(path.read_text(encoding="utf-8"))
+project = data["projects"][int(os.environ["DX_DEXCODE_PROJECT_INDEX"]) - 1]
+data["default_project"] = dict(project, default=True)
+fd, tmp_name = tempfile.mkstemp(prefix=".dexcode.", suffix=".json", dir=str(path.parent))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.chmod(tmp_name, 0o600)
+    os.replace(tmp_name, path)
+finally:
+    try:
+        if Path(tmp_name).exists():
+            os.unlink(tmp_name)
+    except OSError:
+        pass
+PY
+  current=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'Personal')
+  dx_info "Using ${account} / ${current}."
 }
 
 dx_dexcode_repo_json() {
@@ -477,9 +562,10 @@ dx_dexcode_command() {
     login) dx_dexcode_login "$@" ;;
     logout) dx_dexcode_logout "$@" ;;
     whoami|status) dx_dexcode_whoami "$@" ;;
+    use|project) dx_dexcode_select_project --force ;;
     *)
       dx_error "Unknown DexCode command: ${cmd}"
-      dx_info "Usage: dx dexcode <login|logout|whoami>"
+      dx_info "Usage: dx dexcode <login|logout|whoami|use>"
       return 1
       ;;
   esac
