@@ -21,7 +21,7 @@ __dx_settings_have_dex_hooks() {
           or contains("$HOME/work/dex/hooks/")
           or contains("$DEX_DIR/hooks/")
           or (contains("export DEX_DIR=") and contains("/hooks/"))
-          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/dex(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|stop-sound\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
+          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/dex(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|rtk-claude-hook\\.sh|post-commit-guard\\.sh|phase-loop\\.sh|stop-sound\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
         );
       [(.hooks // {}) | to_entries[] | .value[]? | .hooks[]? | .command | select(is_dex_cmd)] | length > 0
     ' "$SETTINGS_FILE" >/dev/null 2>&1
@@ -31,7 +31,7 @@ __dx_settings_have_dex_hooks() {
   grep -Fq "$HOME/work/dex/hooks/" "$SETTINGS_FILE" 2>/dev/null && return 0
   grep -Fq "\$HOME/work/dex/hooks/" "$SETTINGS_FILE" 2>/dev/null && return 0
   grep -Fq "\$DEX_DIR/hooks/" "$SETTINGS_FILE" 2>/dev/null && return 0
-  grep -Eq 'export DEX_DIR=.*hooks/|/dex(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|post-commit-guard\.sh|phase-loop\.sh|stop-sound\.sh|pre-compact\.sh|session-end\.sh)' "$SETTINGS_FILE" 2>/dev/null
+  grep -Eq 'export DEX_DIR=.*hooks/|/dex(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|rtk-claude-hook\.sh|post-commit-guard\.sh|phase-loop\.sh|stop-sound\.sh|pre-compact\.sh|session-end\.sh)' "$SETTINGS_FILE" 2>/dev/null
 }
 
 __dx_settings_have_dex_worktree_settings() {
@@ -114,7 +114,7 @@ if __dx_settings_have_dex_hooks; then
           or contains("$HOME/work/dex/hooks/")
           or contains("$DEX_DIR/hooks/")
           or (contains("export DEX_DIR=") and contains("/hooks/"))
-          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/dex(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|post-commit-guard\\.sh|phase-loop\\.sh|stop-sound\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
+          or test("(^|[[:space:]\\\"])[^[:space:]\\\"]*/dex(-cli)?/hooks/(load-ticket-context\\.sh|user-prompt-submit\\.sh|guard-handler\\.py|rtk-claude-hook\\.sh|post-commit-guard\\.sh|phase-loop\\.sh|stop-sound\\.sh|pre-compact\\.sh|session-end\\.sh)([[:space:]\\\"]|$)")
         );
       .hooks |= (
         (. // {})

@@ -27,6 +27,7 @@ dx_run_spec_fetch() {
 import os
 import re
 import sys
+import http.client
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -37,9 +38,18 @@ output = Path(os.environ["DX_RUN_SPEC_OUTPUT"])
 token = os.environ.get("DX_RUN_SPEC_TOKEN", "")
 secret_query_re = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.I)
 
-parsed = urlparse(url)
+try:
+    parsed = urlparse(url)
+except ValueError as exc:
+    print(f"invalid spec URL: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
     print("invalid spec URL: expected http(s) URL", file=sys.stderr)
+    raise SystemExit(1)
+try:
+    parsed.port
+except ValueError:
+    print("invalid spec URL: port must be numeric", file=sys.stderr)
     raise SystemExit(1)
 if parsed.username or parsed.password:
     print("invalid spec URL: credentials must not be embedded in the URL", file=sys.stderr)
@@ -71,6 +81,9 @@ except urllib.error.URLError as exc:
 except TimeoutError as exc:
     print("could not fetch run spec: timeout", file=sys.stderr)
     raise SystemExit(1) from exc
+except (ValueError, http.client.InvalidURL) as exc:
+    print(f"invalid spec URL: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
 
 output.parent.mkdir(parents=True, exist_ok=True)
 output.write_bytes(data)
@@ -92,7 +105,11 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 source = os.environ.get("DX_RUN_SPEC_SOURCE", "")
 secret_key_re = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.I)
-parts = urlsplit(source)
+try:
+    parts = urlsplit(source)
+except ValueError:
+    print("invalid-spec-url")
+    raise SystemExit(0)
 if parts.scheme not in {"http", "https"} or not parts.netloc:
     print(source)
     raise SystemExit(0)
@@ -101,8 +118,12 @@ host = parts.hostname or ""
 if ":" in host and not host.startswith("["):
     host = f"[{host}]"
 netloc = host
-if parts.port:
-    netloc = f"{netloc}:{parts.port}"
+try:
+    port = parts.port
+except ValueError:
+    port = None
+if port:
+    netloc = f"{netloc}:{port}"
 
 query = []
 for key, value in parse_qsl(parts.query, keep_blank_values=True):
@@ -204,9 +225,16 @@ def validate_url(value, path, *, base=False):
         return
     from urllib.parse import parse_qsl, urlsplit
 
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+    except ValueError as exc:
+        fail(f"{path} is invalid: {exc}")
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         fail(f"{path} must be an http(s) URL")
+    try:
+        parsed.port
+    except ValueError:
+        fail(f"{path} port must be numeric")
     if parsed.username or parsed.password:
         fail(f"{path} must not include URL credentials")
     for key, _value in parse_qsl(parsed.query, keep_blank_values=True):

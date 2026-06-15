@@ -147,7 +147,7 @@ from pathlib import Path
 
 records = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
 record = records[-1]
-assert record["path"].endswith(f"/api/dex/runs/{sys.argv[2]}/events"), record["path"]
+assert record["path"].endswith(f"/api/v1/runs/{sys.argv[2]}/events/batch"), record["path"]
 assert record["authorization"] == "Bearer test-token"
 assert record["content_type"] == "application/json"
 events = record["body"]["events"]

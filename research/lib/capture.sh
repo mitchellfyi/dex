@@ -311,7 +311,7 @@ _capture_codex_exec() {
     DX_CODEX_JSON=1 \
     DX_CODEX_OUTPUT_LAST_MESSAGE="$result_dir/$last_name" \
     timeout "${timeout}s" \
-    "$codex_wrapper" exec "$prompt" \
+    "$codex_wrapper" exec -- "$prompt" \
     >"$result_dir/$stream_name" 2>"$result_dir/$stderr_name") || codex_exit=$?
 
   return $codex_exit

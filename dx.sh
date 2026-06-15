@@ -2743,6 +2743,7 @@ $(__dx_provider_prompt)"
     local message="${message_template//__REVIEW_PROFILE__/$review_profile}"
     local exit_code=0
     if [[ "$agent_host" == "codex" ]]; then
+      local codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
       local codex_message
       codex_message="You are running this Dex review-wave pass inside Codex.
 
@@ -2771,7 +2772,7 @@ ${message}"
       DEX_REVIEW_PASS_ACTIVE=1 \
       DEX_REVIEW_PROFILE="$review_profile" \
       DEX_DIR="$DEX_DIR" \
-      dx_provider_codex_exec "$codex_message" "$(pwd)"
+      bash "$codex_wrapper" exec -- "$codex_message"
       exit_code=$?
     else
       local pass_session_name="${session_name}-pass-${review_iteration}"

@@ -13,7 +13,7 @@ __dx_status_has_dex_hooks() {
   grep -Fq "$HOME/work/dex/hooks/" "$settings_file" 2>/dev/null && return 0
   grep -Fq "\$HOME/work/dex/hooks/" "$settings_file" 2>/dev/null && return 0
   grep -Fq "\$DEX_DIR/hooks/" "$settings_file" 2>/dev/null && return 0
-  grep -Eq 'export DEX_DIR=.*hooks/|/dex(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|post-commit-guard\.sh|phase-loop\.sh|stop-sound\.sh|pre-compact\.sh|session-end\.sh)' "$settings_file" 2>/dev/null
+  grep -Eq 'export DEX_DIR=.*hooks/|/dex(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|rtk-claude-hook\.sh|post-commit-guard\.sh|phase-loop\.sh|stop-sound\.sh|pre-compact\.sh|session-end\.sh)' "$settings_file" 2>/dev/null
 }
 
 echo "Dex — Status"

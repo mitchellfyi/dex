@@ -119,7 +119,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 
 def utc_now():
@@ -129,13 +129,13 @@ def utc_now():
 def parse_repo(remote_url, repo_dir):
     remote_url = (remote_url or "").strip()
     candidate = remote_url
-    if candidate.endswith(".git"):
-        candidate = candidate[:-4]
     if candidate:
         if "://" in candidate:
             candidate = urlparse(candidate).path.strip("/")
         elif "@" in candidate and ":" in candidate:
             candidate = candidate.split(":", 1)[1].strip("/")
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
     parts = [part for part in candidate.split("/") if part]
     if len(parts) >= 2:
         company = parts[-2]
@@ -146,11 +146,43 @@ def parse_repo(remote_url, repo_dir):
     return "", project, project
 
 
+def redact_remote_url(remote_url):
+    remote_url = (remote_url or "").strip()
+    if "://" not in remote_url:
+        return remote_url
+
+    parsed = urlsplit(remote_url)
+    if not parsed.netloc:
+        return remote_url
+
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = host
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port:
+        netloc = f"{netloc}:{port}"
+
+    query = []
+    secret_fragments = ("token", "secret", "password", "credential", "api_key", "api-key")
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if any(fragment in key.lower() for fragment in secret_fragments):
+            query.append((key, "[REDACTED]"))
+        else:
+            query.append((key, value))
+    fragment = "[REDACTED]" if any(secret in parsed.fragment.lower() for secret in secret_fragments) else parsed.fragment
+    return urlunsplit((parsed.scheme, netloc, parsed.path, urlencode(query), fragment))
+
+
 spec_path = Path(os.environ["DX_RUN_SPEC_FILE"])
 spec_path.parent.mkdir(parents=True, exist_ok=True)
 
+remote_url = os.environ.get("DX_RUN_REMOTE_URL", "")
 company_slug, project_slug, repo = parse_repo(
-    os.environ.get("DX_RUN_REMOTE_URL", ""),
+    remote_url,
     os.environ.get("DX_RUN_REPO_DIR", ""),
 )
 
@@ -163,7 +195,7 @@ spec = {
     "project_slug": project_slug,
     "repo": repo,
     "repo_path": os.environ.get("DX_RUN_REPO_DIR", ""),
-    "remote_url": os.environ.get("DX_RUN_REMOTE_URL", ""),
+    "remote_url": redact_remote_url(remote_url),
     "workspace_mode": os.environ.get("DX_RUN_WORKSPACE_MODE", "unknown"),
     "workspace_name": os.environ.get("DX_RUN_WORKSPACE_NAME", ""),
     "input": os.environ.get("DX_RUN_RAW_INPUT", ""),
@@ -412,13 +444,14 @@ from pathlib import Path
 
 
 SECRET_PATTERNS = [
-    re.compile(r"(?i)(\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)([\"']?)[^\"'\s]+"),
     re.compile(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)(\b(?!authorization\b)[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)([\"']?)[^\"'\s]+"),
     re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
 ]
+SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
 
 
 def utc_now():
@@ -426,8 +459,9 @@ def utc_now():
 
 
 def redact(text):
-    text = SECRET_PATTERNS[0].sub(r"\1\2[REDACTED]", text)
-    text = SECRET_PATTERNS[1].sub(r"\1[REDACTED]", text)
+    text = SECRET_URL_RE.sub(r"\1[REDACTED]@", text)
+    text = SECRET_PATTERNS[0].sub(r"\1[REDACTED]", text)
+    text = SECRET_PATTERNS[1].sub(r"\1\2[REDACTED]", text)
     for pattern in SECRET_PATTERNS[2:]:
         text = pattern.sub("[REDACTED]", text)
     return text
@@ -506,6 +540,7 @@ dx_event_emit() {
     python3 - "$data_json" <<'PY'
 import json
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -513,8 +548,43 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+SECRET_PATTERNS = [
+    re.compile(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)(\b(?!authorization\b)[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)([\"']?)[^\"'\s]+"),
+    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+]
+SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
+SECRET_KEY_RE = re.compile(r"(?i)(token|secret|password|passwd|api[_-]?key|credential)")
+
+
 def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def redact(text):
+    text = SECRET_URL_RE.sub(r"\1[REDACTED]@", text)
+    text = SECRET_PATTERNS[0].sub(r"\1[REDACTED]", text)
+    text = SECRET_PATTERNS[1].sub(r"\1\2[REDACTED]", text)
+    for pattern in SECRET_PATTERNS[2:]:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def redact_value(value, key=""):
+    normalized_key = str(key).lower().replace("-", "_")
+    auth_key = normalized_key in {"auth", "authorization"} or normalized_key.startswith("auth_") or normalized_key.endswith("_auth") or "_auth_" in normalized_key
+    if SECRET_KEY_RE.search(str(key)) or auth_key:
+        return "[REDACTED]" if value else value
+    if isinstance(value, dict):
+        return {item_key: redact_value(item_value, item_key) for item_key, item_value in value.items()}
+    if isinstance(value, list):
+        return [redact_value(item) for item in value]
+    if isinstance(value, str):
+        return redact(value)
+    return value
 
 
 run_dir = Path(os.environ["DX_EVENT_RUN_DIR"])
@@ -555,8 +625,8 @@ event = {
     "repo": spec.get("repo", ""),
     "phase": phase,
     "severity": os.environ.get("DX_EVENT_SEVERITY", "info"),
-    "message": os.environ.get("DX_EVENT_MESSAGE", ""),
-    "data": data,
+    "message": redact(os.environ.get("DX_EVENT_MESSAGE", "")),
+    "data": redact_value(data),
     "created_at": utc_now(),
 }
 
@@ -620,7 +690,16 @@ dx_event_maybe_emit_phase_started() {
   [[ "$phase" =~ ^[0-6]$ ]] || return 0
   marker=$(dx_run_phase_started_marker_file "$run_id" "$phase") || return 0
   [[ -f "$marker" ]] && return 0
-  data_json="{\"phase_name\":\"$phase_name\",\"source\":\"$source\"}"
+  data_json=$(DX_EVENT_PHASE_NAME="$phase_name" DX_EVENT_SOURCE="$source" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "phase_name": os.environ.get("DX_EVENT_PHASE_NAME", ""),
+    "source": os.environ.get("DX_EVENT_SOURCE", ""),
+}, sort_keys=True, separators=(",", ":")))
+PY
+  ) || return 0
   if dx_event_emit "$run_id" "phase.started" "info" "Phase ${phase} started: ${phase_name}" "$phase" "$data_json" 2>/dev/null; then
     : > "$marker" 2>/dev/null || true
   fi
@@ -648,13 +727,34 @@ dx_run_write_summary() {
   python3 - <<'PY'
 import json
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 
+SECRET_PATTERNS = [
+    re.compile(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)(\b(?!authorization\b)[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)([\"']?)[^\"'\s]+"),
+    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+]
+SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
+
+
 def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def redact(text):
+    text = SECRET_URL_RE.sub(r"\1[REDACTED]@", text)
+    text = SECRET_PATTERNS[0].sub(r"\1[REDACTED]", text)
+    text = SECRET_PATTERNS[1].sub(r"\1\2[REDACTED]", text)
+    for pattern in SECRET_PATTERNS[2:]:
+        text = pattern.sub("[REDACTED]", text)
+    return text
 
 
 summary_path = Path(os.environ["DX_RUN_SUMMARY_FILE"])
@@ -668,7 +768,7 @@ summary = {
     "schema_version": 1,
     "run_id": os.environ["DX_RUN_ID_VALUE"],
     "status": os.environ.get("DX_RUN_STATUS", "unknown"),
-    "message": os.environ.get("DX_RUN_MESSAGE", ""),
+    "message": redact(os.environ.get("DX_RUN_MESSAGE", "")),
     "last_sequence": last_sequence,
     "updated_at": utc_now(),
 }
@@ -708,13 +808,14 @@ from pathlib import Path
 
 
 SECRET_PATTERNS = [
-    re.compile(r"(?i)(\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)([\"']?)[^\"'\s]+"),
     re.compile(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)(\b(?!authorization\b)[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)([\"']?)[^\"'\s]+"),
     re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
 ]
+SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
 
 
 def utc_now():
@@ -722,8 +823,9 @@ def utc_now():
 
 
 def redact(text):
-    text = SECRET_PATTERNS[0].sub(r"\1\2[REDACTED]", text)
-    text = SECRET_PATTERNS[1].sub(r"\1[REDACTED]", text)
+    text = SECRET_URL_RE.sub(r"\1[REDACTED]@", text)
+    text = SECRET_PATTERNS[0].sub(r"\1[REDACTED]", text)
+    text = SECRET_PATTERNS[1].sub(r"\1\2[REDACTED]", text)
     for pattern in SECRET_PATTERNS[2:]:
         text = pattern.sub("[REDACTED]", text)
     return text

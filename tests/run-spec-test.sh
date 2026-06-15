@@ -257,6 +257,14 @@ if dx_run_spec_normalize "$RELATIVE_SPEC" "$TMP_DIR/relative-normalized.json" > 
 fi
 assert_contains "repository.working_directory must be an absolute path" "$TMP_DIR/relative.out"
 
+BAD_SYNC_SPEC="$TMP_DIR/bad-sync-run-spec.json"
+write_spec "$BAD_SYNC_SPEC" "run_test_bad_sync" "$REPO_DIR" "http://127.0.0.1:bad"
+if dx_run_spec_normalize "$BAD_SYNC_SPEC" "$TMP_DIR/bad-sync-normalized.json" > "$TMP_DIR/bad-sync.out" 2>&1; then
+  printf 'bad sync URL unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "sync.factory_url port must be numeric" "$TMP_DIR/bad-sync.out"
+
 DIRTY_REPO="$TMP_DIR/dirty-repo"
 create_repo "$DIRTY_REPO"
 printf 'dirty\n' > "$DIRTY_REPO/dirty.txt"
@@ -293,6 +301,26 @@ if zsh -fc 'source "$DEX_DIR/dx.sh"; dx run --spec-url "${REMOTE_URL}?run_token=
   exit 1
 fi
 assert_contains "use --run-token instead" "$TMP_DIR/remote-query-secret.out"
+
+if zsh -fc 'source "$DEX_DIR/dx.sh"; dx run --spec-url "http://127.0.0.1:bad/spec" --dry-run' > "$TMP_DIR/remote-invalid-port.out" 2>&1; then
+  printf 'remote URL invalid port unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "invalid spec URL: port must be numeric" "$TMP_DIR/remote-invalid-port.out"
+if grep -qF "Traceback" "$TMP_DIR/remote-invalid-port.out"; then
+  printf 'invalid port emitted a traceback\n' >&2
+  exit 1
+fi
+
+if zsh -fc 'source "$DEX_DIR/dx.sh"; dx run --spec-url "http://[bad/spec" --dry-run' > "$TMP_DIR/remote-invalid-ipv6.out" 2>&1; then
+  printf 'remote URL invalid IPv6 unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "invalid spec URL: Invalid IPv6 URL" "$TMP_DIR/remote-invalid-ipv6.out"
+if grep -qF "Traceback" "$TMP_DIR/remote-invalid-ipv6.out"; then
+  printf 'invalid IPv6 emitted a traceback\n' >&2
+  exit 1
+fi
 
 zsh -fc 'source "$DEX_DIR/dx.sh"; dx run --spec-url "$REMOTE_URL" --run-token remote-token --dry-run' > "$TMP_DIR/remote.out"
 assert_contains "Run spec startup is valid: run_test_remote" "$TMP_DIR/remote.out"
