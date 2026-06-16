@@ -107,6 +107,12 @@ from pathlib import Path
 config_file = Path(os.environ["DX_DEXCODE_CONFIG_FILE"])
 token_response = json.loads(Path(os.environ["DX_DEXCODE_TOKEN_FILE"]).read_text(encoding="utf-8"))
 profile_path = os.environ.get("DX_DEXCODE_PROFILE_FILE", "")
+existing = {}
+if config_file.exists():
+    try:
+        existing = json.loads(config_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        existing = {}
 token_profile = token_response.get("profile") or {}
 profile = token_profile
 if profile_path and Path(profile_path).exists():
@@ -114,6 +120,13 @@ if profile_path and Path(profile_path).exists():
         profile = json.loads(Path(profile_path).read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         profile = token_profile
+projects = profile.get("projects") or ([profile["default_project"]] if profile.get("default_project") else [])
+default_project = profile.get("default_project")
+selected_slug = (existing.get("default_project") or {}).get("slug")
+if selected_slug:
+    preserved_project = next((project for project in projects if project.get("slug") == selected_slug), None)
+    if preserved_project:
+        default_project = dict(preserved_project, default=True)
 
 config = {
     "api_url": os.environ["DX_DEXCODE_API_URL"].rstrip("/"),
@@ -123,8 +136,8 @@ config = {
     "scopes": token_response.get("scopes", []),
     "account": profile.get("account"),
     "organisations": profile.get("organisations") or ([profile["account"]] if profile.get("account") else []),
-    "default_project": profile.get("default_project"),
-    "projects": profile.get("projects") or ([profile["default_project"]] if profile.get("default_project") else []),
+    "default_project": default_project,
+    "projects": projects,
     "sync": profile.get("sync") or token_profile.get("sync") or {},
     "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }

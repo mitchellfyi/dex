@@ -76,7 +76,10 @@ PROFILE = {
     "account": {"slug": "mitchell", "name": "Mitchell", "personal": True},
     "organisations": [{"slug": "mitchell", "name": "Mitchell", "personal": True, "default": True}],
     "default_project": {"slug": "personal", "name": "Personal", "default_branch": "main", "default": True},
-    "projects": [{"slug": "personal", "name": "Personal", "default_branch": "main", "default": True}],
+    "projects": [
+        {"slug": "personal", "name": "Personal", "default_branch": "main", "default": True},
+        {"slug": "syntheticindustry-ai", "name": "syntheticindustry.ai", "default_branch": "main", "default": False},
+    ],
     "sync": {"factory_url": ""},
 }
 
@@ -178,6 +181,10 @@ assert_file "$DEXCODE_CONFIG_FILE"
 assert_eq "dc_live_test_token" "$(json_value "$DEXCODE_CONFIG_FILE" "access_token")" "saved token"
 assert_eq "personal" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "saved default project"
 dx_dexcode_whoami --offline >/dev/null
+printf '2\n' | dx_dexcode_select_project --force >/dev/null
+assert_eq "syntheticindustry-ai" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "selected project"
+dx_dexcode_whoami >/dev/null
+assert_eq "syntheticindustry-ai" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "preserved selected project"
 
 repo_dir="$TMP_DIR/repo"
 create_repo "$repo_dir"
@@ -207,7 +214,7 @@ PY
 
 assert_eq "Bearer dc_live_test_token" "$(json_value "$runs_request" "authorization")" "run auth"
 assert_eq "$run_id" "$(json_value "$runs_request" "body.external_id")" "run id"
-assert_eq "personal" "$(json_value "$runs_request" "body.project.slug")" "run project"
+assert_eq "syntheticindustry-ai" "$(json_value "$runs_request" "body.project.slug")" "run project"
 assert_eq "mitchellfyi" "$(json_value "$runs_request" "body.repository.owner")" "repo owner"
 assert_eq "dex" "$(json_value "$runs_request" "body.repository.name")" "repo name"
 assert_eq "local_cli" "$(json_value "$runs_request" "body.metadata.source_type")" "source type"
