@@ -1375,6 +1375,11 @@ __dx_run_phases_inline() {
       __dx_kill_process_tree "$tgt" KILL
     ) &
     _dx_watchdog_pid=$!
+    # Disown the just-backgrounded watchdog so zsh doesn't print a job-control
+    # "terminated" notice when we kill it during cleanup below. $! is already
+    # captured, so `kill "$_dx_watchdog_pid"` still works after disowning.
+    # (zsh's `disown` takes a job spec, not a PID, so disown the current job.)
+    disown 2>/dev/null || true
   fi
 
   (
