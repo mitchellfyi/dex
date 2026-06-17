@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Dex-managed commit-msg hook. Re-run 'dx init' or 'dx sync' to refresh.
+set -euo pipefail
+
+DEX_DIR="${DEX_DIR:-/Users/m12n/Dropbox/work/mitchellfyi/dex}"
+# shellcheck disable=SC1091
+source "$DEX_DIR/lib/common.sh"
+dx_commit_attribution_message "$1"

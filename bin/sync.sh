@@ -162,6 +162,7 @@ if [[ "$READ_ONLY" -eq 1 ]]; then
     dx_warn "Read-only sync found Claude/Codex tooling drift; run 'dx sync' or 'dx tools bootstrap' to reinstall it."
   fi
 else
+  dx_install_repo_attribution "$repo_root"
   if ! dx_bootstrap_agent_tooling "$repo_root" "install"; then
     dx_warn "Continuing sync without complete Claude/Codex tooling bootstrap"
   fi
