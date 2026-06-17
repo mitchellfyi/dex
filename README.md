@@ -101,6 +101,11 @@ dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and pl
 
 `dex` and `dexter` are aliases for `dx`.
 
+For `dx "task description"`, Phase 1 first produces an implementation plan.
+When a ticket tracker is configured, Dex asks after plan approval whether to
+continue directly, create a parent ticket, or create a parent plus sub-issues
+and choose the first issue to implement.
+
 ## Requirements
 
 - Claude Code CLI installed and signed in.

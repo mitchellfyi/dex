@@ -49,6 +49,19 @@ Before stopping, critically audit your plan:
    - If this is a headless `dx run` session and the run spec has `workflow.requires_plan_approval: false`, the run spec is the approval source. Confirm the plan covers the spec and proceed after the normal plan quality checks pass.
    - Otherwise, if the user hasn't responded yet, wait. Do not proceed without approval.
 
+9. FREEFORM TRACKER INTAKE — If this is a freeform `dx "<task>"` request and
+   `.dex/dex.md § Integrations` has an enabled ticket tracker, did you complete
+   or explicitly skip the tracker intake gate from `skills/dxplan/SKILL.md`?
+   - The acceptable outcomes are: user chose to continue without tracker
+     write-back; a parent ticket was created and selected; or a parent plus
+     sub-issues were created and the user selected the first implementation
+     ticket.
+   - If a ticket was selected, confirm session metadata records its tracker key
+     or GitHub issue number, and the chosen ticket is In Progress.
+   - If this is not a freeform request, no tracker is configured, or the run is
+     headless without explicit tracker write-back authorization, mark this check
+     not applicable.
+
 If you find gaps in any of the above, fix them and re-present the plan.
 
 **Completion criteria** — all must be true before you stop:
@@ -57,5 +70,6 @@ If you find gaps in any of the above, fix them and re-present the plan.
 - Every material risk has a mitigation, fallback, or explicit user acceptance
 - Every <100%-confidence assumption has been surfaced and answered (or labelled "fully reversible during implementation")
 - The user has explicitly approved the plan, or a headless run spec with `workflow.requires_plan_approval: false` authorizes it
+- Freeform tracker intake is complete, explicitly skipped, or not applicable
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

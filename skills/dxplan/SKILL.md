@@ -94,7 +94,7 @@ For each one, ask: "Could I be wrong about this?" If your confidence is below 10
 
 **Always ask** when the unknown affects: scope, contract (types, schemas, APIs), naming of public symbols, behaviour the user can observe, performance budgets, security posture, or visible UX.
 
-After the user answers, refine the plan. If new unknowns surface, ask again. Iterate until you can articulate every plan decision as either "the user said X" or "this is universally safe / fully reversible during implementation". Do not stop at an arbitrary question count. Do not present the final plan until every material assumption has been answered, explicitly deferred by the user, or proven fully reversible during implementation. Residual assumptions that survive this loop must be listed verbatim in Step 7 alongside the plan.
+After the user answers, refine the plan. If new unknowns surface, ask again. Iterate until you can articulate every plan decision as either "the user said X" or "this is universally safe / fully reversible during implementation". Do not stop at an arbitrary question count. Do not present the final plan until every material assumption has been answered, explicitly deferred by the user, or proven fully reversible during implementation. Residual assumptions that survive this loop must be listed verbatim in Step 6 alongside the plan.
 
 ### 2.5 Define the Target State
 
@@ -169,13 +169,7 @@ If any gate fails, fix the plan before proceeding.
 1. Call `TaskCreate` for each work item in the plan.
 2. Store task IDs for tracking during implementation.
 
-### 6. Update Ticket (if tracker configured)
-
-Before writing the plan summary, invoke the `humanizer` skill on the draft copy. Preserve task numbering, file paths, commands, ticket IDs, and acceptance criteria exactly.
-
-Add the plan summary to the ticket via the configured tracker. If no tracker is configured, skip — the plan exists in the conversation and task list.
-
-### 7. Present to User
+### 6. Present to User
 
 **STOP and present the plan to the user.**
 
@@ -194,9 +188,75 @@ When running in plan mode (e.g., via `dx` Phase 1 or `dxloop`), present the plan
 
 **Do not begin implementation until the user approves the plan.**
 
-When running under terminal `dx` Phase 1, approval is the handoff signal to the Stop hook. For headless runs started by `dx run`, if `DEX_HEADLESS_RUN=1` and the run spec has `workflow.requires_plan_approval: false`, the run spec is the approval source; complete the same plan quality checks and then write the Phase 1 approval marker without waiting for interactive approval.
+When running under terminal `dx` Phase 1, approval is the handoff signal to the Stop hook. For headless runs started by `dx run`, if `DEX_HEADLESS_RUN=1` and the run spec has `workflow.requires_plan_approval: false`, the run spec is the approval source; complete the same plan quality checks before continuing.
 
-After `ExitPlanMode` is approved, or after the headless run spec authorizes plan execution, write the Phase 1 approval marker:
+### 7. Tracker Intake Gate for Freeform Requests
+
+If this Phase 1 plan came from a freeform `dx "<task>"` request rather than an
+existing ticket id, run this gate after `ExitPlanMode` is approved and before
+writing the Phase 1 ready marker.
+
+First, check `.dex/dex.md § Integrations`:
+- If the ticket tracker is `not configured`, skip this gate and continue.
+- If the run is headless (`DEX_HEADLESS_RUN=1`), skip interactive write-back
+  unless the run spec explicitly asks for tracker ticket creation.
+- If a real ticket already exists for this work, record it in session metadata
+  and proceed with that ticket rather than creating a duplicate.
+
+Ask the user which path they want:
+1. Continue implementation from the approved plan without creating tracker
+   tickets.
+2. Create a parent ticket for the approved plan, then continue implementation
+   on that parent ticket.
+3. Create a parent ticket plus proposed sub-issues, then ask which created
+   issue should be implemented first.
+
+When creating tracker items:
+- Use the tracker configured in `.dex/dex.md § Integrations`.
+- Apply the `humanizer` skill to every ticket title/body before creating it.
+  Preserve file paths, commands, acceptance criteria, task numbering, risk
+  labels, and verification commands exactly.
+- Parent ticket body should include the approved plan summary, acceptance
+  criteria, risks, and verification commands.
+- Sub-issue bodies should be small enough for a single `dx <ticket>` lifecycle
+  and include scope, dependencies, affected files, risk level, and verification
+  commands.
+- Linear: create issues through the configured Linear MCP. Use parent/child
+  relations when the integration supports them.
+- GitHub Issues: create issues with `gh issue create`. Reference the parent
+  issue in each child body. Use existing labels only; do not create labels.
+
+After write-back:
+- Present the created ticket URLs and ask which ticket to implement first if
+  more than one was created.
+- For the chosen ticket, update session metadata:
+  ```bash
+  source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+  SID="${DEX_SESSION_ID:-$(dx_session_id)}"
+  dx_meta_write "$SID" "tracker_key=<KEY-OR-URL>" "ticket_number=<NUMBER-IF-GITHUB>"
+  ```
+- If the tracker provides a branch name for the chosen ticket, rename the
+  current lifecycle branch to that branch, push it, and record it:
+  ```bash
+  git branch -m "$(git rev-parse --abbrev-ref HEAD)" "<tracker-branch-name>"
+  git push -u origin "<tracker-branch-name>"
+  dx_meta_write "$SID" "current_branch=<tracker-branch-name>"
+  ```
+- Move only the chosen implementation ticket to In Progress. Leave backlog
+  sub-issues untouched unless the user explicitly says otherwise.
+
+Do not write the Phase 1 ready marker until this gate is complete or explicitly
+skipped by the user.
+
+### 8. Update Ticket (if tracker configured)
+
+Before writing the plan summary, invoke the `humanizer` skill on the draft copy. Preserve task numbering, file paths, commands, ticket IDs, and acceptance criteria exactly.
+
+Add the plan summary to the existing or newly selected ticket via the configured tracker. If no tracker is configured, skip — the plan exists in the conversation and task list.
+
+### 9. Mark Phase 1 Ready
+
+After `ExitPlanMode` is approved, or after the headless run spec authorizes plan execution, complete the tracker intake gate and ticket update steps above when they apply. Then write the Phase 1 approval marker:
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
@@ -210,3 +270,6 @@ Then print only a brief confirmation if needed and stop once so the hook can aud
 - Keep plans minimal — only what's needed for the current ticket.
 - Don't plan for hypothetical future work.
 - If the ticket is small (e.g., a typo fix or config change), the plan can be a single task.
+- For freeform `dx "<task>"` requests with a configured tracker, the user
+  chooses whether the approved plan becomes tracker work before implementation
+  starts.
