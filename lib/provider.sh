@@ -761,6 +761,15 @@ dx_provider_claude() {
     [[ -n "$_env_name" ]] && env_args+=(-u "$_env_name")
   done < <(__dx_provider_env_unset_args)
 
+  # Dex drives long autonomous Stop-hook loops — audit iterations (up to
+  # DEX_LOOP_MAX_ITERATIONS), Phase 3 review-pass waits (DEX_REVIEW_PASS_TIMEOUT
+  # at DEX_REVIEW_PASS_RECHECK_SECONDS granularity), and Phase 6 CI/review
+  # monitoring — that intentionally block the Stop hook far more than Claude
+  # Code's default cap (9) allows, which would force the turn to end mid-wait.
+  # Raise the cap so Dex's own iteration counters and timeouts govern
+  # termination. Still overridable from the environment.
+  env_args+=(CLAUDE_CODE_STOP_HOOK_BLOCK_CAP="${CLAUDE_CODE_STOP_HOOK_BLOCK_CAP:-1000}")
+
   case "$DX_PROVIDER_ENGINE" in
     anthropic-gateway)
       local token=""
