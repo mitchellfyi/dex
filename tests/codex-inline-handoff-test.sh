@@ -54,4 +54,27 @@ __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"
 [[ "$(cat "$state_file")" == "4" ]]
 '
 
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+set -e
+
+session_id="codex-inline-prelaunch-handoff"
+state_file="$(dx_state_file "$session_id")"
+times_file="$(dx_times_file "$session_id")"
+provider_file="$(dx_provider_state_file "$session_id")"
+mkdir -p "$(dirname "$state_file")" "$(dirname "$times_file")" "$(dirname "$provider_file")"
+printf "engine=codex-plugin\nsession=%s\n" "$session_id" > "$provider_file"
+printf "6\n" > "$state_file"
+touch "$(dx_complete_file "$session_id")"
+export DX_PROVIDER_ENGINE=codex-plugin
+
+__dx_claude() {
+  printf "%s\n" "provider launched despite completed direct-Codex phase" >&2
+  return 97
+}
+
+__dx_run_phases_inline "repo" "$TMP_DIR/repo" "master" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
+[[ "$(cat "$state_file")" == "7" ]]
+'
+
 printf 'codex inline handoff test passed\n'

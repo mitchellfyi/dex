@@ -1461,6 +1461,23 @@ __dx_run_phases_inline() {
   __dx_show_header "$wt_name" "$step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
   dx_record_session_branch "$session_id" "$wt_dir"
   __dx_write_state "$state_file" "$step"
+
+  dx_provider_write_session_state "$session_id" 2>/dev/null || true
+  if __dx_codex_direct_phase_handoff "$session_id" "$step" "$state_file" "$wt_dir"; then
+    local preflight_step="$step"
+    [[ -f "$state_file" ]] && preflight_step=$(cat "$state_file" 2>/dev/null || echo "$step")
+    if [[ "$preflight_step" -ge 7 ]]; then
+      dx_provider_cleanup_session_state "$session_id"
+      __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
+      echo ""
+      echo "Ticket lifecycle complete."
+      __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
+      return $?
+    fi
+    __dx_run_phases_inline "$wt_name" "$wt_dir" "$default_branch" "$preflight_step" "$state_file" "$times_file" "$resume_hint" "$workspace_mode" "$session_id" "$raw_input"
+    return $?
+  fi
+
   __dx_configure_inline_phase "$step" "$session_id"
 
   if [[ $step -ge 2 ]]; then
