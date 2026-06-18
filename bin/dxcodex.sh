@@ -79,17 +79,15 @@ case "$subcmd" in
     DX_PROVIDER_CODEX_WRAPPER=1 dx_provider_codex "${codex_args[@]}"
     ;;
   review)
-    codex_args=(exec review --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
-    if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
-      codex_args+=(-m "$DX_CODEX_MODEL")
-    fi
-
     has_review_scope=0
     prompt=""
+    scope_args=()
+    scope_notes=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --uncommitted)
-          codex_args+=(--uncommitted)
+          scope_args+=(--uncommitted)
+          scope_notes+=("Review uncommitted changes in the current checkout.")
           has_review_scope=1
           shift
           ;;
@@ -98,7 +96,8 @@ case "$subcmd" in
             dx_error "dxcodex review requires a value for $1."
             exit 2
           fi
-          codex_args+=("$1" "$2")
+          scope_args+=("$1" "$2")
+          scope_notes+=("Review scope: $1 $2.")
           has_review_scope=1
           shift 2
           ;;
@@ -127,12 +126,34 @@ case "$subcmd" in
       esac
     done
     if [[ $has_review_scope -eq 0 ]]; then
-      codex_args+=(--uncommitted)
+      scope_args+=(--uncommitted)
+      scope_notes+=("Review uncommitted changes in the current checkout.")
     fi
 
     if [[ -n "$prompt" ]]; then
+      codex_args=(exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
+      if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
+        codex_args+=(-m "$DX_CODEX_MODEL")
+      fi
+      review_scope=$(
+        printf '%s\n' "${scope_notes[@]}"
+      )
       codex_args+=(--)
-      codex_args+=("$prompt")
+      codex_args+=("You are running a Dex review request through the safe Codex wrapper.
+
+The current Codex CLI does not accept review scope flags together with a prompt
+in \`codex exec review\`, so Dex is routing this through \`codex exec\`.
+Apply the same review intent manually.
+
+${review_scope}
+
+${prompt}")
+    else
+      codex_args=(exec review --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
+      if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
+        codex_args+=(-m "$DX_CODEX_MODEL")
+      fi
+      codex_args+=("${scope_args[@]}")
     fi
     DX_PROVIDER_CODEX_WRAPPER=1 dx_provider_codex "${codex_args[@]}"
     ;;

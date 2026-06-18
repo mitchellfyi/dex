@@ -77,4 +77,19 @@ __dx_run_phases_inline "repo" "$TMP_DIR/repo" "master" 6 "$state_file" "$times_f
 [[ "$(cat "$state_file")" == "7" ]]
 '
 
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+set -e
+
+export DX_PROVIDER_ENGINE=codex-plugin
+session_id="codex-direct-context-marker"
+ctx_file="$(__dx_build_system_context "repo" 4 "$session_id" "$TMP_DIR/repo" "worktree" "test")"
+grep -q "Direct Codex Phase Marker" "$ctx_file"
+grep -q "dx_complete_file" "$ctx_file"
+
+ctx_file="$(__dx_build_system_context "repo" 2 "$session_id" "$TMP_DIR/repo" "worktree" "test")"
+grep -q "Direct Codex Phase Marker" "$ctx_file"
+grep -q "dx_phase_ready_file" "$ctx_file"
+'
+
 printf 'codex inline handoff test passed\n'

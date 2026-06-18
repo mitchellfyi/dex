@@ -96,4 +96,16 @@ grep -q -- "engine=codex-plugin" "$(dx_provider_state_file provider-codex-launch
 ! grep -q -- "DEX_FACTORY_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"
 ! grep -q -- "DEX_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"
 
+>"$DEX_TEST_CODEX_LAST_ARGS"
+>"$DEX_TEST_CODEX_PROMPT"
+bash "$ROOT/bin/dxcodex.sh" review --uncommitted "Review the current changes."
+grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
+! grep -q -- "exec review --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "Review uncommitted changes in the current checkout." "$DEX_TEST_CODEX_PROMPT"
+grep -q -- "Review the current changes." "$DEX_TEST_CODEX_PROMPT"
+
+>"$DEX_TEST_CODEX_LAST_ARGS"
+bash "$ROOT/bin/dxcodex.sh" review --uncommitted
+grep -q -- "exec review --ignore-user-config --dangerously-bypass-approvals-and-sandbox --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"
+
 printf 'provider codex launch test passed\n'

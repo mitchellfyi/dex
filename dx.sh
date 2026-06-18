@@ -1082,6 +1082,58 @@ __dx_build_system_context() {
 
   local phase_label
   phase_label=$(__dx_phase_name "$step")
+  local direct_codex_marker_contract=""
+  if [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" ]]; then
+    case "$step" in
+      2)
+        direct_codex_marker_contract="
+## Direct Codex Phase Marker
+
+This session is running through the direct Codex provider, so there is no
+Claude Stop hook to write the phase marker for you. After Phase 2 is genuinely
+complete, write this marker before your final response:
+
+\`\`\`bash
+source \"${DEX_DIR}/lib/common.sh\"
+SESSION_ID=\"${session_id}\"
+touch \"\$(dx_phase_ready_file \"\$SESSION_ID\" 2)\"
+\`\`\`
+" ;;
+      3|4|5)
+        direct_codex_marker_contract="
+## Direct Codex Phase Marker
+
+This session is running through the direct Codex provider, so there is no
+Claude Stop hook to write the phase marker for you. After Phase ${step} is
+genuinely complete, write this marker before your final response:
+
+\`\`\`bash
+source \"${DEX_DIR}/lib/common.sh\"
+SESSION_ID=\"${session_id}\"
+touch \"\$(dx_complete_file \"\$SESSION_ID\")\"
+\`\`\`
+" ;;
+      6)
+        direct_codex_marker_contract="
+## Direct Codex Phase Marker
+
+This session is running through the direct Codex provider, so there is no
+Claude Stop hook to write the phase marker for you. If Phase 6 reaches the
+successful completion criteria, write the normal complete marker before your
+final response. If Phase 6 hits a bounded wait or external blocker, write the
+pause marker instead and do not write the complete marker.
+
+\`\`\`bash
+source \"${DEX_DIR}/lib/common.sh\"
+SESSION_ID=\"${session_id}\"
+# Success only:
+touch \"\$(dx_complete_file \"\$SESSION_ID\")\"
+# Blocked/paused only:
+touch \"\$(dx_paused_file \"\$SESSION_ID\")\"
+\`\`\`
+" ;;
+    esac
+  fi
   local _ctx_tmp="${ctx_file}.tmp.$$"
   cat > "$_ctx_tmp" <<EOF
 You are Dex, running the Dex lifecycle for ${wt_name}.
@@ -1147,6 +1199,8 @@ Premature stop attempts will be caught and you will be asked to continue.
 Do NOT write any .complete signal files or output completion promise strings
 on your own. The Stop hook controls completion and will provide instructions
 when enough quality passes have been achieved.
+
+${direct_codex_marker_contract}
 
 CRITICAL: You MUST invoke skills using the Skill tool (e.g., Skill(skill="dximplement")).
 Do NOT implement skill functionality ad-hoc — invoke the actual skill.
