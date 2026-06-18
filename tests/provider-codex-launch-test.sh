@@ -40,6 +40,7 @@ fi
 if [[ "${1:-}" == "exec" ]]; then
   printf '%s\n' "$*" > "$DEX_TEST_CODEX_LAST_ARGS"
   printf '%s\n' "${*: -1}" > "$DEX_TEST_CODEX_PROMPT"
+  env | sort > "$DEX_TEST_CODEX_ENV"
   exit 0
 fi
 exit 0
@@ -64,6 +65,10 @@ git -C "$TMP_DIR/repo" commit -q -m init
 export DEX_TEST_CODEX_ARGS="$TMP_DIR/codex-args.log"
 export DEX_TEST_CODEX_LAST_ARGS="$TMP_DIR/codex-last-args.log"
 export DEX_TEST_CODEX_PROMPT="$TMP_DIR/codex-prompt.txt"
+export DEX_TEST_CODEX_ENV="$TMP_DIR/codex-env.log"
+export DEX_FACTORY_TOKEN="factory-secret"
+export DEX_FACTORY_RUN_TOKEN="factory-run-secret"
+export DEX_RUN_TOKEN="run-secret"
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
@@ -87,5 +92,8 @@ grep -q -- "System context for Dex." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "--- Dex phase task ---" "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Implement ticket 123." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "engine=codex-plugin" "$(dx_provider_state_file provider-codex-launch)"
+! grep -q -- "DEX_FACTORY_TOKEN=" "$DEX_TEST_CODEX_ENV"
+! grep -q -- "DEX_FACTORY_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"
+! grep -q -- "DEX_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"
 
 printf 'provider codex launch test passed\n'

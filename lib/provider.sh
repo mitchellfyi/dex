@@ -748,6 +748,11 @@ __dx_provider_env_unset_args() {
   dx_provider_external_env_names
   dx_provider_config_auth_env_unsets
   dx_provider_claude_override_env_names
+  cat <<'EOF'
+DEX_FACTORY_TOKEN
+DEX_FACTORY_RUN_TOKEN
+DEX_RUN_TOKEN
+EOF
 }
 
 dx_provider_claude() {

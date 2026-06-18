@@ -1301,6 +1301,133 @@ __dx_cleanup_completed_workspace() {
   dx_done "Local branch ${current_branch} removed."
 }
 
+unalias __dx_inline_phase_iteration_count 2>/dev/null; unfunction __dx_inline_phase_iteration_count 2>/dev/null
+__dx_inline_phase_iteration_count() {
+  local session_id="$1" raw iterations
+  raw=$(cat "$(dx_loop_file "$session_id")" 2>/dev/null || echo "0")
+  iterations="${raw%%:*}"
+  if [[ "$iterations" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$iterations"
+  else
+    printf '%s\n' "0"
+  fi
+}
+
+unalias __dx_record_inline_phase_result 2>/dev/null; unfunction __dx_record_inline_phase_result 2>/dev/null
+__dx_record_inline_phase_result() {
+  local session_id="$1" phase="$2" phase_status="$3" exit_code="$4"
+  local start_epoch end_epoch duration iterations phase_name data_json event_type severity message
+  [[ "$phase" =~ ^[0-6]$ ]] || return 0
+
+  end_epoch=$(date +%s)
+  start_epoch=$(awk -F: -v phase="$phase" '$1 == phase { start=$2 } END { if (start != "") print start }' "$(dx_times_file "$session_id")" 2>/dev/null || true)
+  [[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch="$end_epoch"
+  duration=$((end_epoch - start_epoch))
+  iterations=$(__dx_inline_phase_iteration_count "$session_id")
+  phase_name=$(__dx_phase_name "$phase")
+
+  dx_log_phase "$session_id" "$phase" "$phase_name" "$start_epoch" "$end_epoch" "$duration" "$iterations" "$phase_status" "$exit_code"
+  if [[ "$phase_status" == "advance" && "$exit_code" == "0" ]]; then
+    event_type="phase.completed"
+    severity="info"
+    message="Phase ${phase} completed: ${phase_name}"
+  else
+    event_type="phase.failed"
+    severity="error"
+    message="Phase ${phase} failed: ${phase_name} (${status})"
+  fi
+  data_json=$(
+    DX_PHASE_NAME="$phase_name" \
+    DX_PHASE_START_EPOCH="$start_epoch" \
+    DX_PHASE_END_EPOCH="$end_epoch" \
+    DX_PHASE_DURATION="$duration" \
+    DX_PHASE_ITERATIONS="$iterations" \
+    DX_PHASE_STATUS="$phase_status" \
+    DX_PHASE_EXIT_CODE="$exit_code" \
+    python3 - <<'PY'
+import json
+import os
+
+
+def as_int(name):
+    try:
+        return int(os.environ.get(name, "0"))
+    except ValueError:
+        return 0
+
+
+print(json.dumps({
+    "phase_name": os.environ.get("DX_PHASE_NAME", ""),
+    "start_epoch": as_int("DX_PHASE_START_EPOCH"),
+    "end_epoch": as_int("DX_PHASE_END_EPOCH"),
+    "duration_s": as_int("DX_PHASE_DURATION"),
+    "iterations": as_int("DX_PHASE_ITERATIONS"),
+    "status": os.environ.get("DX_PHASE_STATUS", ""),
+    "exit_code": as_int("DX_PHASE_EXIT_CODE"),
+}, sort_keys=True, separators=(",", ":")))
+PY
+  )
+  dx_event_emit_for_session "$session_id" "$event_type" "$severity" "$message" "$phase" "$data_json"
+  dx_run_log_append_for_session "$session_id" "$severity" "dx" "${message}; status=${phase_status}; duration_s=${duration}; iterations=${iterations}; exit_code=${exit_code}"
+}
+
+unalias __dx_codex_direct_phase_handoff 2>/dev/null; unfunction __dx_codex_direct_phase_handoff 2>/dev/null
+__dx_codex_direct_phase_handoff() {
+  local session_id="$1" phase="$2" state_file="$3" wt_dir="$4"
+  local provider_state provider_engine="" line complete_file ready_file next_phase
+  provider_state=$(dx_provider_state_file "$session_id")
+  [[ -f "$provider_state" ]] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      engine=*) provider_engine="${line#engine=}" ;;
+    esac
+  done < "$provider_state"
+  [[ "$provider_engine" == "codex-plugin" ]] || return 1
+  [[ "$phase" =~ ^[0-6]$ ]] || return 1
+
+  complete_file=$(dx_complete_file "$session_id")
+  ready_file=$(dx_phase_ready_file "$session_id" "$phase")
+  if [[ ! -f "$complete_file" ]]; then
+    case "$phase" in
+      0|1|2)
+        [[ -f "$ready_file" ]] || return 1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  fi
+
+  __dx_record_inline_phase_result "$session_id" "$phase" "advance" "0"
+  rm -f \
+    "$(dx_loop_file "$session_id")" \
+    "$complete_file" \
+    "$(dx_loop_config_file "$session_id")" \
+    "$(dx_findings_file "$session_id")" \
+    "$(dx_paused_file "$session_id")" \
+    "$(dx_phase_started_file "$session_id" "$phase")" \
+    "$(dx_phase_ready_file "$session_id" "$phase")" \
+    "$(dx_phase_busy_file "$session_id" "$phase")" \
+    "$(dx_phase_busy_notice_file "$session_id" "$phase")" 2>/dev/null
+
+  if [[ "$phase" -lt 6 ]]; then
+    next_phase=$((phase + 1))
+    printf '%s\n' "$next_phase" > "$state_file"
+    if [[ "$next_phase" -ge 2 ]] && git -C "$wt_dir" rev-parse --git-dir >/dev/null 2>&1; then
+      dx_checkpoint_tag "$next_phase" "$wt_dir"
+    fi
+    dx_info "Codex completed Phase ${phase}; continuing with Phase ${next_phase}: $(__dx_phase_name "$next_phase")."
+    return 0
+  fi
+
+  printf '%s\n' "7" > "$state_file"
+  dx_event_emit_for_session "$session_id" "run.completed" "info" "Dex lifecycle completed" "6" "{\"final_phase\":6}"
+  dx_run_log_append_for_session "$session_id" "info" "dx" "Dex lifecycle completed"
+  dx_run_write_summary_for_session "$session_id" "completed" "Dex lifecycle completed"
+  rm -f "$(dx_active_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
+  return 0
+}
+
 __dx_run_phases_inline() {
   local wt_name="$1" wt_dir="$2" default_branch="$3" step="$4"
   local state_file="$5" times_file="$6" resume_hint="$7"
@@ -1309,7 +1436,8 @@ __dx_run_phases_inline() {
   local claude_session_name
   claude_session_name=$(__dx_claude_session_name "$workspace_mode" "$wt_name")
 
-  if ! command -v claude &>/dev/null; then
+  [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
+  if [[ "${DX_PROVIDER_ENGINE:-}" != "codex-plugin" ]] && ! command -v claude &>/dev/null; then
     dx_error "Claude Code CLI not found in PATH."
     dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
     return 1
@@ -1472,6 +1600,21 @@ __dx_run_phases_inline() {
     echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (exit ${exit_code})"
     echo "Resume with: ${resume_hint}"
     return "$exit_code"
+  fi
+
+  if __dx_codex_direct_phase_handoff "$session_id" "$final_step" "$state_file" "$wt_dir"; then
+    final_step="$step"
+    [[ -f "$state_file" ]] && final_step=$(cat "$state_file" 2>/dev/null || echo "$step")
+    if [[ "$final_step" -ge 7 ]]; then
+      dx_provider_cleanup_session_state "$session_id"
+      __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
+      echo ""
+      echo "Ticket lifecycle complete."
+      __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
+      return $?
+    fi
+    __dx_run_phases_inline "$wt_name" "$wt_dir" "$default_branch" "$final_step" "$state_file" "$times_file" "$resume_hint" "$workspace_mode" "$session_id" "$raw_input"
+    return $?
   fi
 
   echo ""
