@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"ok":true}\n' if 200 <= status < 300 else b'{"ok":false}\n')
+        self.wfile.write(b'{"ok":true}\n' if 200 <= status < 300 else b'{"ok":false,"error":"validation failed"}\n')
 
     def log_message(self, _format, *_args):
         return
@@ -165,6 +165,14 @@ after_failure_requests="$(request_count)"
 assert_eq "$((before_failure_requests + 1))" "$after_failure_requests" "failure request count"
 assert_no_file "$(dx_factory_sync_cursor_file "$failure_run")"
 assert_file "$(dx_factory_sync_status_file "$failure_run")"
+python3 - "$(dx_factory_sync_status_file "$failure_run")" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+status = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert "validation failed" in status["message"], status
+PY
 
 printf '200\n' > "$SERVER_DIR/status"
 dx_factory_sync_pending_events "$failure_run"

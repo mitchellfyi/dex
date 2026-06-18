@@ -343,15 +343,24 @@ request.add_header("Authorization", f"Bearer {token}")
 request.add_header("Content-Type", "application/json")
 request.add_header("User-Agent", "dex-factory-sync/1")
 
+def response_excerpt(response):
+    try:
+        body = response.read(4096).decode("utf-8", errors="replace").strip()
+    except Exception:
+        body = ""
+    if not body:
+        return ""
+    return f": {body}"
+
 try:
     with urllib.request.urlopen(request, timeout=timeout) as response:
         status = response.getcode()
         if 200 <= status < 300:
             raise SystemExit(0)
-        print(f"HTTP {status}", file=sys.stderr)
+        print(f"HTTP {status}{response_excerpt(response)}", file=sys.stderr)
         raise SystemExit(1)
 except urllib.error.HTTPError as exc:
-    print(f"HTTP {exc.code}", file=sys.stderr)
+    print(f"HTTP {exc.code}{response_excerpt(exc)}", file=sys.stderr)
     raise SystemExit(1) from exc
 except urllib.error.URLError as exc:
     print(f"network error: {exc.reason}", file=sys.stderr)

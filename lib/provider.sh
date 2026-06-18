@@ -826,9 +826,11 @@ dx_provider_claude() {
         DX_AGENT_OVERRIDE="${DX_AGENT_OVERRIDE:-}"
         DX_MODEL_OVERRIDE="${DX_MODEL_OVERRIDE:-}"
       )
+      local codex_prompt
+      codex_prompt=$(dx_provider_codex_prompt_from_claude_args "$@") || return 1
       env \
         "${env_args[@]}" \
-        claude "$@"
+        bash "$DEX_DIR/bin/dxcodex.sh" exec -- "$codex_prompt"
       ;;
     claude)
       env_args+=(
@@ -841,6 +843,59 @@ dx_provider_claude() {
         claude "$@"
       ;;
   esac
+}
+
+dx_provider_codex_prompt_from_claude_args() {
+  local system_prompt_file="" prompt="" arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      --append-system-prompt-file)
+        [[ $# -ge 2 ]] || {
+          dx_error "--append-system-prompt-file requires a path."
+          return 1
+        }
+        system_prompt_file="$2"
+        shift 2
+        ;;
+      -n|--settings|--model|--effort|--permission-mode)
+        [[ $# -ge 2 ]] || {
+          dx_error "${arg} requires a value."
+          return 1
+        }
+        shift 2
+        ;;
+      --chrome|--dangerously-skip-permissions)
+        shift
+        ;;
+      --)
+        shift
+        prompt="$*"
+        break
+        ;;
+      -*)
+        shift
+        ;;
+      *)
+        prompt="$arg"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -n "$system_prompt_file" ]]; then
+    if [[ ! -r "$system_prompt_file" ]]; then
+      dx_error "Codex lifecycle launch could not read system prompt file: $system_prompt_file"
+      return 1
+    fi
+    {
+      cat "$system_prompt_file"
+      printf '\n\n--- Dex phase task ---\n\n'
+      printf '%s\n' "$prompt"
+    }
+  else
+    printf '%s\n' "$prompt"
+  fi
 }
 
 dx_provider_codex() {
