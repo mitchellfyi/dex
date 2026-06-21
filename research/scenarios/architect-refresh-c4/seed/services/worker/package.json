@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "pg": "^8.11.0",
-    "nodemailer": "^8.0.8",
+    "nodemailer": "^9.0.1",
     "@orderly/shared": "*"
   }
 }
