@@ -69,6 +69,17 @@ For `env_var: DX_PROVIDER_ENGINE`, `guard-handler.py` treats the current Dex ses
 | `block-raw-codex-delegation` | bash | block | Raw Codex agent-work commands while the resolved provider engine is `codex-plugin`, including `codex`, `codex exec`, `codex e`, `codex review`, direct `dx_provider_codex` helper delegation, API-key login forms, shell-nested forms including literal variable-expanded and escape-decoded `bash -c`/`eval`/stdin payloads, generated heredoc scripts, direct executable script paths, readable executed or sourced script files, Python/Node/Ruby/Perl interpreter payloads that launch Codex, launch wrappers such as `nice`, `timeout`, `xargs`, and `find -exec`, and fail-closed shell execution from unresolved/unreadable script paths or unknown stdin/process-substitution producers; also blocks versioned/scoped package-runner forms such as `npx @openai/codex@latest` and runner shell payloads such as `npx -c "codex exec ..."` and `npm exec --call "codex exec ..."`; use `bin/dxcodex.sh` instead |
 | `warn-sensitive-files` | commit | warn | `.env`, credentials, keys, certs in commits |
 | `warn-hardcoded-secrets` | file | warn | `API_KEY = "..."`, `ACCESS_KEY`, `JWT_SECRET`, and other credential patterns in code |
+| `warn-await-in-loop` | file | warn | `await` directly inside a `for`/`while` loop body (N+1 query / sequential I/O). Uses the `await-in-loop` detector: brace-aware, skips `for await` async iteration and awaits inside closures collected for a later `Promise.all` |
+
+### Built-in detectors
+
+Some guards set `detector:` instead of `pattern:` to use a parser in `hooks/guard-handler.py` (registered in `guard_detector_matches`) for checks regex can't express reliably:
+
+| Detector | Used by | What it parses |
+|----------|---------|----------------|
+| `destructive-commands` | `block-destructive-commands` | Shell tokenization of `rm -rf` / `dd` / `mkfs` targets, incl. wrappers and nested payloads |
+| `raw-codex-delegation` | `block-raw-codex-delegation` | Shell/script delegation to the Codex CLI under the `codex-plugin` provider |
+| `await-in-loop` | `warn-await-in-loop` | Brace-matched `for`/`while` bodies, flagging an `await` that isn't inside a nested closure |
 
 Note: Conventional commit format validation is handled by `hooks/post-commit-guard.sh` directly (not via guards) because commit events combine file paths and the message into a single text, making it impossible to write a guard pattern that targets only the commit message.
 

@@ -3743,6 +3743,120 @@ def has_raw_codex_delegation(text, depth=0, cwd=None):
     return False
 
 
+_LOOP_HEADER_RE = re.compile(r'\bfor\b(?P<await>\s+await\b)?|\bwhile\b')
+_AWAIT_TOKEN_RE = re.compile(r'(?<![\w$])await(?![\w$])')
+_FUNCTION_TOKEN_RE = re.compile(r'(?<![\w$])function(?![\w$])')
+
+
+def strip_comments_and_strings(text):
+    """Blank string/template literals and comments so loop/brace/await scanning
+    only sees real code. Strings are blanked first (so a `//` or `/*` inside a
+    string is already gone), then line and block comments are removed."""
+    cleaned = code_without_string_literals(text)
+    cleaned = re.sub(r'/\*.*?\*/', ' ', cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r'//[^\n]*', '', cleaned)
+    return cleaned
+
+
+def matching_brace_body(text, open_index):
+    """Return the body between the '{' at open_index and its matching '}'. If the
+    brace is never closed (a partial Edit fragment), the body runs to end-of-text
+    so the pattern is still caught."""
+    depth = 0
+    i = open_index
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return text[open_index + 1:i]
+        i += 1
+    return text[open_index + 1:]
+
+
+def body_has_unnested_await(body):
+    """True if body contains an `await` that is NOT inside an inner function or
+    braced arrow scope. Awaits inside `if`/`try`/`for` blocks still count (they
+    run sequentially within the loop); awaits inside a closure belong to a
+    different async context (e.g. promises collected for a later Promise.all)
+    and do not."""
+    i = 0
+    n = len(body)
+    scope_is_fn = []          # one bool per currently-open '{'
+    next_brace_is_fn = False  # does the next '{' open a function scope?
+    while i < n:
+        if body.startswith('function', i) and _FUNCTION_TOKEN_RE.match(body, i):
+            next_brace_is_fn = True
+            i += 8
+            continue
+        if body.startswith('=>', i):
+            j = i + 2
+            while j < n and body[j].isspace():
+                j += 1
+            if j < n and body[j] == '{':
+                next_brace_is_fn = True
+            i += 2
+            continue
+        char = body[i]
+        if char == '{':
+            scope_is_fn.append(next_brace_is_fn)
+            next_brace_is_fn = False
+            i += 1
+            continue
+        if char == '}':
+            if scope_is_fn:
+                scope_is_fn.pop()
+            i += 1
+            continue
+        if body.startswith('await', i) and _AWAIT_TOKEN_RE.match(body, i):
+            if not any(scope_is_fn):
+                return True
+            i += 5
+            continue
+        i += 1
+    return False
+
+
+def has_await_in_loop(text):
+    """Detect `await` used directly inside a `for`/`while` loop body — the
+    language-level signature of an N+1 query or sequential I/O. `for await`
+    async iteration is intentional and is not flagged."""
+    cleaned = strip_comments_and_strings(text)
+    n = len(cleaned)
+    for header in _LOOP_HEADER_RE.finditer(cleaned):
+        if header.group('await'):  # `for await (...)` — async iteration
+            continue
+        i = header.end()
+        while i < n and cleaned[i].isspace():
+            i += 1
+        if i >= n or cleaned[i] != '(':
+            continue
+        depth = 0
+        while i < n:
+            char = cleaned[i]
+            if char == '(':
+                depth += 1
+            elif char == ')':
+                depth -= 1
+                if depth == 0:
+                    i += 1
+                    break
+            i += 1
+        while i < n and cleaned[i].isspace():
+            i += 1
+        if i < n and cleaned[i] == '{':
+            body = matching_brace_body(cleaned, i)
+        else:
+            semicolon = cleaned.find(';', i)
+            body = cleaned[i:semicolon if semicolon != -1 else n]
+        if body_has_unnested_await(body):
+            return True
+    return False
+
+
 def guard_detector_matches(guard, text):
     detector = guard.get('detector', '')
     if not detector:
@@ -3751,6 +3865,8 @@ def guard_detector_matches(guard, text):
         return has_destructive_command(text)
     if detector == 'raw-codex-delegation':
         return has_raw_codex_delegation(text)
+    if detector == 'await-in-loop':
+        return has_await_in_loop(text)
     print(f"[guard:{guard.get('name', 'unnamed')}] skipped — unknown detector: {detector}", file=sys.stderr)
     return False
 
