@@ -360,6 +360,66 @@ dx_maintenance_review_request_is_unavailable() {
   esac
 }
 
+dx_maintenance_review_request_persisted() {
+  local pr_num="${1:-}" reviewer="${2:-}" repo="${3:-}" api_repo response
+  [[ -n "$pr_num" && -n "$reviewer" ]] || return 3
+
+  api_repo="$repo"
+  if [[ -z "$api_repo" ]]; then
+    api_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || return 3
+  fi
+  [[ -n "$api_repo" ]] || return 3
+
+  response=$(gh api "repos/${api_repo}/pulls/${pr_num}" 2>/dev/null) || return 3
+  DX_REVIEWER_HANDLE="$reviewer" python3 - "$response" <<'PY'
+import json
+import os
+import sys
+
+COPILOT_ALIASES = {"copilot", "github-copilot", "github-copilot-review", "github-copilot[bot]"}
+
+
+def normalize(value):
+    value = str(value or "").strip()
+    value = value[1:] if value.startswith("@") else value
+    value = value.lower()
+    return "copilot" if value in COPILOT_ALIASES else value
+
+
+try:
+    payload = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError):
+    raise SystemExit(3)
+
+reviewer = normalize(os.environ.get("DX_REVIEWER_HANDLE", ""))
+if not reviewer:
+    raise SystemExit(3)
+
+author = normalize((payload.get("user") or {}).get("login", ""))
+if author and reviewer == author:
+    raise SystemExit(10)
+
+requested_users = {
+    normalize(item.get("login", ""))
+    for item in payload.get("requested_reviewers") or []
+    if isinstance(item, dict)
+}
+requested_teams = {
+    normalize(item.get("slug", ""))
+    for item in payload.get("requested_teams") or []
+    if isinstance(item, dict)
+}
+
+team_candidate = normalize(reviewer.rsplit("/", 1)[-1])
+if reviewer in requested_users or reviewer in requested_teams or team_candidate in requested_teams:
+    raise SystemExit(0)
+if reviewer == "copilot" and requested_users.intersection(COPILOT_ALIASES):
+    raise SystemExit(0)
+
+raise SystemExit(11)
+PY
+}
+
 dx_maintenance_request_reviewer() {
   local pr_num="${1:-}" handle="${2:-}" repo="${3:-}" reviewer output command_status
   local gh_args
@@ -382,7 +442,27 @@ dx_maintenance_request_reviewer() {
 
   output=$(gh "${gh_args[@]}" 2>&1) && command_status=0 || command_status=$?
   if [[ "$command_status" -eq 0 ]]; then
-    return 0
+    dx_maintenance_review_request_persisted "$pr_num" "$reviewer" "$repo" && command_status=0 || command_status=$?
+    case "$command_status" in
+      0)
+        return 0
+        ;;
+      10)
+        dx_warn "Could not request reviewer ${reviewer} on PR #${pr_num}; GitHub does not allow requesting the PR author."
+        return 0
+        ;;
+      11)
+        dx_warn "Could not confirm reviewer ${reviewer} on PR #${pr_num}; GitHub accepted the command but no review request persisted."
+        if [[ "$reviewer" == "@copilot" ]]; then
+          dx_info "Copilot review requests may be unavailable on draft PRs or disabled for this repository."
+        fi
+        return 0
+        ;;
+      *)
+        dx_warn "Could not verify reviewer ${reviewer} on PR #${pr_num} after GitHub accepted the request."
+        return 0
+        ;;
+    esac
   fi
 
   if dx_maintenance_review_request_is_unavailable "$output"; then
