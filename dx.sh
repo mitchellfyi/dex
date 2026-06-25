@@ -30,9 +30,29 @@
 #   dex                   Alias for dx
 #   dexter                Alias for dx
 
+if [ -n "${BASH_VERSION:-}" ]; then
+  printf '%s\n' "ERROR: dx.sh requires zsh. Run it with 'zsh dx.sh ...' or source it from a zsh session." >&2
+  if [ "${BASH_SOURCE[0]:-}" != "$0" ]; then
+    return 2
+  else
+    exit 2
+  fi
+fi
+
+__DX_SH_LOADED_PATH="${(%):-%N}"
+__DX_SH_EXECUTED=0
+if [[ ":${ZSH_EVAL_CONTEXT:-}:" != *":file:"* ]]; then
+  __DX_SH_EXECUTED=1
+fi
+
 if [[ -z "${DEX_DIR:-}" ]]; then
-  echo "ERROR: DEX_DIR not set. Run 'dx install' first." >&2
-  return 1
+  if [[ -n "$__DX_SH_LOADED_PATH" && -f "$__DX_SH_LOADED_PATH" ]]; then
+    __DX_SH_LOADED_ABS="${__DX_SH_LOADED_PATH:A}"
+    export DEX_DIR="${__DX_SH_LOADED_ABS:h}"
+  else
+    echo "ERROR: DEX_DIR not set. Run 'dx install' first." >&2
+    return 1
+  fi
 fi
 source "$DEX_DIR/lib/common.sh"
 
@@ -3561,3 +3581,11 @@ dxclean() {
     echo "Cleaned ${cleaned} item(s)."
   fi
 }
+
+if [[ "${__DX_SH_EXECUTED:-0}" -eq 1 ]]; then
+  dx "$@"
+  __dx_script_status=$?
+  exit $__dx_script_status
+fi
+
+unset __DX_SH_LOADED_PATH __DX_SH_LOADED_ABS __DX_SH_EXECUTED
