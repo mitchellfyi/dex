@@ -61,11 +61,13 @@ git -C "$TMP_DIR/repo" config user.name "Dex Test"
 printf '# repo\n' > "$TMP_DIR/repo/README.md"
 git -C "$TMP_DIR/repo" add README.md
 git -C "$TMP_DIR/repo" commit -q -m init
+git -C "$TMP_DIR/repo" branch -m main
 
 export DEX_TEST_CODEX_ARGS="$TMP_DIR/codex-args.log"
 export DEX_TEST_CODEX_LAST_ARGS="$TMP_DIR/codex-last-args.log"
 export DEX_TEST_CODEX_PROMPT="$TMP_DIR/codex-prompt.txt"
 export DEX_TEST_CODEX_ENV="$TMP_DIR/codex-env.log"
+export DEX_TEST_REPO="$TMP_DIR/repo"
 export DEX_FACTORY_TOKEN="factory-secret"
 export DEX_FACTORY_RUN_TOKEN="factory-run-secret"
 export DEX_RUN_TOKEN="run-secret"
@@ -92,20 +94,44 @@ grep -q -- "System context for Dex." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "--- Dex phase task ---" "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Implement ticket 123." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "engine=codex-plugin" "$(dx_provider_state_file provider-codex-launch)"
-! grep -q -- "DEX_FACTORY_TOKEN=" "$DEX_TEST_CODEX_ENV"
-! grep -q -- "DEX_FACTORY_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"
-! grep -q -- "DEX_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"
+if grep -q -- "DEX_FACTORY_TOKEN=" "$DEX_TEST_CODEX_ENV"; then
+  printf '%s\n' "factory token leaked into Codex environment" >&2
+  exit 1
+fi
+if grep -q -- "DEX_FACTORY_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"; then
+  printf '%s\n' "factory run token leaked into Codex environment" >&2
+  exit 1
+fi
+if grep -q -- "DEX_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"; then
+  printf '%s\n' "run token leaked into Codex environment" >&2
+  exit 1
+fi
 
->"$DEX_TEST_CODEX_LAST_ARGS"
->"$DEX_TEST_CODEX_PROMPT"
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+: > "$DEX_TEST_CODEX_PROMPT"
 bash "$ROOT/bin/dxcodex.sh" review --uncommitted "Review the current changes."
 grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
-! grep -q -- "exec review --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"
+if grep -q -- "exec review --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "review prompt was delegated through raw codex review" >&2
+  exit 1
+fi
 grep -q -- "Review uncommitted changes in the current checkout." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Review the current changes." "$DEX_TEST_CODEX_PROMPT"
 
->"$DEX_TEST_CODEX_LAST_ARGS"
+: > "$DEX_TEST_CODEX_LAST_ARGS"
 bash "$ROOT/bin/dxcodex.sh" review --uncommitted
 grep -q -- "exec review --ignore-user-config --dangerously-bypass-approvals-and-sandbox --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"
+
+: > "$DEX_TEST_CODEX_ARGS"
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+: > "$DEX_TEST_CODEX_PROMPT"
+DEXCODE_SYNC=0 zsh -fc 'source "$DEX_DIR/dx.sh"; cd "$DEX_TEST_REPO"; dx --agent codex --no-worktree "exercise codex setup"' > "$TMP_DIR/dx-agent-codex.out" 2>&1 || true
+if grep -q -- "claude should not be launched" "$TMP_DIR/dx-agent-codex.out"; then
+  printf '%s\n' "dx --agent codex launched Claude instead of Codex" >&2
+  exit 1
+fi
+grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "Initial phase: Phase 0 (Setup)." "$DEX_TEST_CODEX_PROMPT"
+grep -q -- "Begin Phase 0: Setup" "$DEX_TEST_CODEX_PROMPT"
 
 printf 'provider codex launch test passed\n'
