@@ -3743,6 +3743,258 @@ def has_raw_codex_delegation(text, depth=0, cwd=None):
     return False
 
 
+_LOOP_HEADER_RE = re.compile(
+    r'(?<![\w$])(?:(?P<async_prefix>async|await)\s+)?'
+    r'(?P<kind>foreach|for|while)(?:\s+(?P<await_suffix>await)\b)?'
+    r'(?![\w$])'
+)
+_AWAIT_TOKEN_RE = re.compile(r'(?<![\w$])await(?![\w$])')
+_FUNCTION_TOKEN_RE = re.compile(r'(?<![\w$])function(?![\w$])')
+_CONTROL_SCOPE_WORDS = {
+    'catch', 'class', 'do', 'else', 'finally', 'for', 'foreach', 'if',
+    'switch', 'try', 'while', 'with',
+}
+
+
+def strip_comments_and_strings(text):
+    """Blank string/template literals and comments so loop/brace/await scanning
+    only sees real code. Strings are blanked first (so a `//` or `/*` inside a
+    string is already gone), then line and block comments are removed."""
+    cleaned = code_without_string_literals(text)
+    cleaned = re.sub(r'/\*.*?\*/', ' ', cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r'//[^\n]*', '', cleaned)
+    cleaned = re.sub(r'#[^\n]*', '', cleaned)
+    return cleaned
+
+
+def previous_nonspace_index(text, index):
+    i = index
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    return i
+
+
+def previous_word(text, index):
+    i = previous_nonspace_index(text, index)
+    end = i + 1
+    while i >= 0 and (text[i].isalnum() or text[i] in {'_', '$'}):
+        i -= 1
+    return text[i + 1:end], i
+
+
+def matching_open_paren(text, close_index):
+    depth = 0
+    i = close_index
+    while i >= 0:
+        char = text[i]
+        if char == ')':
+            depth += 1
+        elif char == '(':
+            depth -= 1
+            if depth == 0:
+                return i
+        i -= 1
+    return -1
+
+
+def matching_brace_body(text, open_index):
+    """Return the body between the '{' at open_index and its matching '}'. If the
+    brace is never closed (a partial Edit fragment), the body runs to end-of-text
+    so the pattern is still caught."""
+    depth = 0
+    i = open_index
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return text[open_index + 1:i]
+        i += 1
+    return text[open_index + 1:]
+
+
+def matching_parenthesized_header_end(text, open_index):
+    depth = 0
+    i = open_index
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def colon_body(text, colon_index):
+    line_end = text.find('\n', colon_index)
+    if line_end == -1:
+        return text[colon_index + 1:]
+    inline = text[colon_index + 1:line_end]
+    if inline.strip():
+        return inline
+
+    header_line_start = text.rfind('\n', 0, colon_index) + 1
+    header_indent = len(text[header_line_start:colon_index]) - len(text[header_line_start:colon_index].lstrip())
+    body_start = line_end + 1
+    body_end = body_start
+    n = len(text)
+    while body_end < n:
+        next_end = text.find('\n', body_end)
+        if next_end == -1:
+            next_end = n
+        line = text[body_end:next_end]
+        if line.strip():
+            indent = len(line) - len(line.lstrip())
+            if indent <= header_indent:
+                break
+        body_end = next_end + 1
+    return text[body_start:body_end]
+
+
+def loop_body_after_header(text, header):
+    if header.group('async_prefix') in {'async', 'await'} or header.group('await_suffix'):
+        return None
+
+    i = header.end()
+    n = len(text)
+    while i < n and text[i].isspace():
+        i += 1
+
+    if i < n and text[i] == '(':
+        i = matching_parenthesized_header_end(text, i)
+    else:
+        while i < n and text[i] not in {'{', ':', '\n', ';'}:
+            i += 1
+
+    while i < n and text[i].isspace() and text[i] != '\n':
+        i += 1
+    if i < n and text[i] == '{':
+        return matching_brace_body(text, i)
+    if i < n and text[i] == ':':
+        return colon_body(text, i)
+
+    statement_end = n
+    for delimiter in (';', '\n'):
+        found = text.find(delimiter, i)
+        if found != -1:
+            statement_end = min(statement_end, found)
+    return text[i:statement_end]
+
+
+def skip_arrow_expression_body(text, index):
+    i = index
+    n = len(text)
+    paren_depth = bracket_depth = brace_depth = 0
+    while i < n:
+        char = text[i]
+        if char == '(':
+            paren_depth += 1
+        elif char == '[':
+            bracket_depth += 1
+        elif char == '{':
+            brace_depth += 1
+        elif char == ')':
+            if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+                return i
+            paren_depth = max(paren_depth - 1, 0)
+        elif char == ']':
+            if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+                return i
+            bracket_depth = max(bracket_depth - 1, 0)
+        elif char == '}':
+            if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+                return i
+            brace_depth = max(brace_depth - 1, 0)
+        elif char in {';', ',', '\n'} and paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+            return i
+        i += 1
+    return i
+
+
+def brace_opens_callable_scope(body, brace_index, next_brace_is_fn):
+    if next_brace_is_fn:
+        return True
+
+    prev = previous_nonspace_index(body, brace_index - 1)
+    if prev == -1:
+        return False
+    if body[prev] == ')':
+        open_paren = matching_open_paren(body, prev)
+        if open_paren == -1:
+            return False
+        word, _ = previous_word(body, open_paren - 1)
+        return bool(word) and word not in _CONTROL_SCOPE_WORDS
+
+    word, _ = previous_word(body, brace_index - 1)
+    return bool(word) and word not in _CONTROL_SCOPE_WORDS
+
+
+def body_has_unnested_await(body):
+    """True if body contains an `await` that is NOT inside an inner function or
+    callable scope. Awaits inside `if`/`try`/nested loop blocks still count;
+    awaits inside closures or methods belong to a different async context and
+    do not."""
+    i = 0
+    n = len(body)
+    scope_is_fn = []          # one bool per currently-open '{'
+    next_brace_is_fn = False  # does the next '{' open a function scope?
+    while i < n:
+        if body.startswith('function', i) and _FUNCTION_TOKEN_RE.match(body, i):
+            next_brace_is_fn = True
+            i += 8
+            continue
+        if body.startswith('=>', i):
+            j = i + 2
+            while j < n and body[j].isspace():
+                j += 1
+            if j < n and body[j] == '{':
+                next_brace_is_fn = True
+            else:
+                i = skip_arrow_expression_body(body, j)
+                continue
+            i += 2
+            continue
+        char = body[i]
+        if char == '{':
+            scope_is_fn.append(brace_opens_callable_scope(body, i, next_brace_is_fn))
+            next_brace_is_fn = False
+            i += 1
+            continue
+        if char == '}':
+            if scope_is_fn:
+                scope_is_fn.pop()
+            i += 1
+            continue
+        if body.startswith('await', i) and _AWAIT_TOKEN_RE.match(body, i):
+            if not any(scope_is_fn):
+                return True
+            i += 5
+            continue
+        i += 1
+    return False
+
+
+def has_await_in_loop(text):
+    """Detect `await` used directly inside a loop body. Async iteration forms
+    such as `for await`, `async for`, and `await foreach` are intentional and
+    are not flagged."""
+    cleaned = strip_comments_and_strings(text)
+    for header in _LOOP_HEADER_RE.finditer(cleaned):
+        body = loop_body_after_header(cleaned, header)
+        if body is None:
+            continue
+        if body_has_unnested_await(body):
+            return True
+    return False
+
+
 def guard_detector_matches(guard, text):
     detector = guard.get('detector', '')
     if not detector:
@@ -3751,6 +4003,8 @@ def guard_detector_matches(guard, text):
         return has_destructive_command(text)
     if detector == 'raw-codex-delegation':
         return has_raw_codex_delegation(text)
+    if detector == 'await-in-loop':
+        return has_await_in_loop(text)
     print(f"[guard:{guard.get('name', 'unnamed')}] skipped — unknown detector: {detector}", file=sys.stderr)
     return False
 
