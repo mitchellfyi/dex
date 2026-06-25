@@ -42,6 +42,16 @@ assert_eq() {
   }
 }
 
+assert_contains() {
+  local needle="$1" file="$2"
+  grep -Fq "$needle" "$file" || {
+    printf 'missing expected text: %s\n' "$needle" >&2
+    printf 'output was:\n' >&2
+    cat "$file" >&2
+    exit 1
+  }
+}
+
 json_value() {
   local file="$1" key="$2"
   DX_TEST_JSON_FILE="$file" DX_TEST_JSON_KEY="$key" python3 - <<'PY'
@@ -180,11 +190,14 @@ dx_dexcode_login --url "$SERVER_URL" --no-browser --timeout 10 >/dev/null
 assert_file "$DEXCODE_CONFIG_FILE"
 assert_eq "dc_live_test_token" "$(json_value "$DEXCODE_CONFIG_FILE" "access_token")" "saved token"
 assert_eq "personal" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "saved default project"
-dx_dexcode_whoami --offline >/dev/null
+dx_dexcode_whoami --offline > "$TMP_DIR/whoami-personal.out"
+assert_contains "DexCode account: Mitchell" "$TMP_DIR/whoami-personal.out"
+assert_contains "Connected project: Personal (personal)" "$TMP_DIR/whoami-personal.out"
 printf '2\n' | dx_dexcode_select_project --force >/dev/null
 assert_eq "syntheticindustry-ai" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "selected project"
-dx_dexcode_whoami >/dev/null
+dx_dexcode_whoami > "$TMP_DIR/whoami-syntheticindustry.out"
 assert_eq "syntheticindustry-ai" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "preserved selected project"
+assert_contains "Connected project: syntheticindustry.ai (syntheticindustry-ai)" "$TMP_DIR/whoami-syntheticindustry.out"
 
 repo_dir="$TMP_DIR/repo"
 create_repo "$repo_dir"

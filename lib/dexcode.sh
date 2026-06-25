@@ -328,7 +328,7 @@ dx_dexcode_whoami() {
     offline=1
   fi
 
-  local token api_url tmp_dir profile_file account project
+  local token api_url tmp_dir profile_file account project project_slug
   token=$(dx_dexcode_token 2>/dev/null || true)
   if [[ -z "$token" ]]; then
     dx_warn "DexCode is not connected. Run 'dx login' to sync local sessions."
@@ -355,7 +355,13 @@ PY
 
   account=$(dx_dexcode_config_value "account.name" 2>/dev/null || dx_dexcode_config_value "account.slug" 2>/dev/null || printf 'unknown')
   project=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'unknown')
-  dx_info "DexCode: ${account} / ${project}"
+  project_slug=$(dx_dexcode_config_value "default_project.slug" 2>/dev/null || true)
+  dx_info "DexCode account: ${account}"
+  if [[ -n "$project_slug" && "$project_slug" != "$project" ]]; then
+    dx_info "Connected project: ${project} (${project_slug})"
+  else
+    dx_info "Connected project: ${project}"
+  fi
   dx_info "API: ${api_url}"
 }
 
