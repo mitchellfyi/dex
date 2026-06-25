@@ -46,11 +46,26 @@ dx_claude_project_dir() {
   echo "$HOME/.claude/projects/$(echo "$1" | tr '/.' '--')"
 }
 
+# dx_exclude_claude_artifacts <wt_dir>
+# Keep Dex-managed Claude config links out of worktree status output.
+dx_exclude_claude_artifacts() {
+  local wt_dir="$1" exclude_file
+  exclude_file=$(git -C "$wt_dir" rev-parse --git-path info/exclude 2>/dev/null || true)
+  [[ -n "$exclude_file" ]] || return 0
+  mkdir -p "$(dirname "$exclude_file")" 2>/dev/null || return 0
+
+  touch "$exclude_file" 2>/dev/null || return 0
+  grep -Fxq ".claude" "$exclude_file" 2>/dev/null || printf '%s\n' ".claude" >> "$exclude_file"
+  grep -Fxq ".claude/*" "$exclude_file" 2>/dev/null || printf '%s\n' ".claude/*" >> "$exclude_file"
+}
+
 # dx_link_claude_to_worktree <repo_root> <wt_dir>
 # Create symlinks so the worktree shares .claude/ config and MCP auth
 # with the main repo. Idempotent and non-fatal.
 dx_link_claude_to_worktree() {
   local repo_root="$1" wt_dir="$2"
+
+  dx_exclude_claude_artifacts "$wt_dir"
 
   # 1. Symlink .claude/ (settings.local.json and project-local Claude config)
   if [[ -d "$repo_root/.claude" ]] && [[ ! -e "$wt_dir/.claude" ]]; then
