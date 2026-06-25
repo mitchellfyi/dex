@@ -252,6 +252,26 @@ __dx_factory_sync_clear_status() {
   command rm -f "$status_file" "$(__dx_factory_sync_last_log_file "$run_id")" 2>/dev/null || true
 }
 
+__dx_factory_endpoint_label() {
+  local endpoint="$1"
+  DX_FACTORY_ENDPOINT_LABEL_SOURCE="$endpoint" python3 - <<'PY'
+import os
+from urllib.parse import urlsplit, urlunsplit
+
+endpoint = os.environ.get("DX_FACTORY_ENDPOINT_LABEL_SOURCE", "")
+try:
+    parsed = urlsplit(endpoint)
+except ValueError:
+    print("remote endpoint")
+    raise SystemExit(0)
+
+if parsed.scheme and parsed.netloc:
+    print(urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", "")))
+else:
+    print(parsed.path or "remote endpoint")
+PY
+}
+
 __dx_factory_sync_build_payload() {
   local run_id="$1" cursor="$2" payload_file="$3" batch_size events_file
   events_file=$(dx_run_events_file "$run_id") || return 1
@@ -325,6 +345,7 @@ __dx_factory_sync_post_payload() {
   DX_FACTORY_TIMEOUT_SECONDS="$timeout_seconds" \
   python3 - <<'PY'
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -343,14 +364,29 @@ request.add_header("Authorization", f"Bearer {token}")
 request.add_header("Content-Type", "application/json")
 request.add_header("User-Agent", "dex-factory-sync/1")
 
+TOKEN_FIELD_RE = re.compile(r'("(?:access_)?token"\s*:\s*")[^"]+(")', re.I)
+BEARER_RE = re.compile(r'Bearer\s+[A-Za-z0-9._~+/=-]+', re.I)
+SECRET_ASSIGNMENT_RE = re.compile(r'(?i)\b(secret|token|api[_-]?key)=([^\s&;,]+)')
+
+
+def redact(text):
+    text = TOKEN_FIELD_RE.sub(r'\1[redacted]\2', text)
+    text = BEARER_RE.sub("Bearer [redacted]", text)
+    text = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
+    return text
+
+
 def response_excerpt(response):
     try:
-        body = response.read(4096).decode("utf-8", errors="replace").strip()
+        raw = response.read(4097)
+        body = raw[:4096].decode("utf-8", errors="replace").strip()
+        if len(raw) > 4096:
+            body = f"{body}..."
     except Exception:
         body = ""
     if not body:
         return ""
-    return f": {body}"
+    return f": {redact(body)}"
 
 try:
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -385,7 +421,7 @@ __dx_factory_sync_record_config_issue() {
 
 __dx_factory_sync_pending_events_locked() {
   local run_id="$1" sync_dir="$2" endpoint token cursor payload_file build_result
-  local count max_sequence post_error
+  local count max_sequence post_error first_sequence endpoint_label
 
   if ! endpoint=$(dx_factory_events_endpoint "$run_id" 2>/dev/null); then
     __dx_factory_sync_record_config_issue "$run_id" "Factory sync is enabled but DEX_FACTORY_URL or DEX_FACTORY_EVENTS_ENDPOINT is unset."
@@ -426,7 +462,9 @@ __dx_factory_sync_pending_events_locked() {
     __dx_factory_sync_clear_status "$run_id"
   else
     [[ -n "$post_error" ]] || post_error="remote collector rejected the event batch"
-    __dx_factory_sync_record_failure "$run_id" "$post_error"
+    first_sequence=$((cursor + 1))
+    endpoint_label=$(__dx_factory_endpoint_label "$endpoint" 2>/dev/null || printf 'remote endpoint\n')
+    __dx_factory_sync_record_failure "$run_id" "${post_error} while posting event sequences ${first_sequence}-${max_sequence} to ${endpoint_label}"
   fi
   command rm -f "$payload_file" 2>/dev/null || true
 }

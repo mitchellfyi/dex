@@ -83,7 +83,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"ok":true}\n' if 200 <= status < 300 else b'{"ok":false,"error":"validation failed"}\n')
+        self.wfile.write(
+            b'{"ok":true}\n'
+            if 200 <= status < 300
+            else b'{"ok":false,"error":"validation failed","access_token":"server-secret-token"}\n'
+        )
 
     def log_message(self, _format, *_args):
         return
@@ -172,6 +176,10 @@ from pathlib import Path
 
 status = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert "validation failed" in status["message"], status
+assert "event sequences 1-1" in status["message"], status
+assert "/api/v1/runs/" in status["message"], status
+assert "server-secret-token" not in status["message"], status
+assert '"access_token":"[redacted]"' in status["message"], status
 PY
 
 printf '200\n' > "$SERVER_DIR/status"
