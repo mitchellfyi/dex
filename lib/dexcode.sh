@@ -285,6 +285,7 @@ PY
         dx_dexcode_write_login_config "$api_url" "$token_file" "$profile_file"
         dx_done "DexCode connected."
         dx_dexcode_select_project
+        dx_dexcode_sync_project_context
         dx_dexcode_whoami --offline
         command rm -rf "$tmp_dir"
         return 0
@@ -447,6 +448,7 @@ finally:
 PY
   current=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'Personal')
   dx_info "Using ${account} / ${current}."
+  dx_dexcode_sync_project_context
 }
 
 dx_dexcode_repo_json() {
@@ -474,6 +476,180 @@ print(json.dumps({
     "provider": provider,
     "owner": owner,
     "name": name,
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+dx_dexcode_context_payload() {
+  local repo_dir="$1"
+  DX_DEXCODE_REPO_DIR="$repo_dir" python3 - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+repo = Path(os.environ["DX_DEXCODE_REPO_DIR"])
+max_bytes = 20000
+
+
+def read_text(path):
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def category_for(path):
+    parts = path.parts
+    if len(parts) >= 3 and parts[1] == "rules":
+        return "rule"
+    if len(parts) >= 3 and parts[1] == "guards":
+        return "rule"
+    if len(parts) >= 3 and parts[1] == "memory":
+        return "memory"
+    if path.name == "review-rules.md":
+        return "review"
+    return "architecture"
+
+
+def title_for(relative_path):
+    if relative_path.name == "dex.md":
+        return "Dex project context"
+    if relative_path.name == "index.md" and "memory" in relative_path.parts:
+        return "Dex memory index"
+    stem = relative_path.stem.replace("-", " ").replace("_", " ").strip().title()
+    return f"Dex {stem}"
+
+
+def collect_entries():
+    dex_dir = repo / ".dex"
+    if not dex_dir.is_dir():
+        return []
+    candidates = []
+    for path in dex_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(repo)
+        if "worktrees" in relative.parts:
+            continue
+        if path.suffix.lower() != ".md":
+            continue
+        candidates.append(path)
+
+    entries = []
+    for path in sorted(candidates):
+        body = read_text(path)
+        if not body:
+            continue
+        relative = path.relative_to(repo)
+        encoded = body.encode("utf-8")
+        entries.append({
+            "path": str(relative),
+            "title": title_for(relative),
+            "category": category_for(relative),
+            "body": body[:max_bytes],
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+        })
+    return entries
+
+
+def provider_for(name):
+    lowered = name.lower()
+    if "github" in lowered:
+        return "github"
+    if "google" in lowered or "drive" in lowered:
+        return "google_workspace"
+    if "slack" in lowered:
+        return "slack"
+    if "figma" in lowered:
+        return "figma"
+    if "linear" in lowered:
+        return "linear"
+    if "sentry" in lowered:
+        return "sentry"
+    if "notion" in lowered:
+        return "notion"
+    if "airtable" in lowered:
+        return "airtable"
+    if "vercel" in lowered:
+        return "vercel"
+    if "browser" in lowered or "playwright" in lowered or "chrome" in lowered:
+        return "browser"
+    return "other"
+
+
+def category_for_provider(provider):
+    return {
+        "github": "repo",
+        "google_workspace": "office_suite",
+        "slack": "comms",
+        "figma": "design",
+        "linear": "project_management",
+        "sentry": "observability",
+        "notion": "docs",
+        "airtable": "docs",
+        "vercel": "hosting",
+        "browser": "browser",
+    }.get(provider, "service")
+
+
+def mcp_servers_from(path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    servers = data.get("mcpServers") or {}
+    if not isinstance(servers, dict):
+        return []
+    records = []
+    for server_name, config in sorted(servers.items()):
+        if not isinstance(config, dict):
+            config = {}
+        provider = provider_for(server_name)
+        command = config.get("command")
+        command_name = Path(command).name if isinstance(command, str) and command else ""
+        env = config.get("env") if isinstance(config.get("env"), dict) else {}
+        args = config.get("args") if isinstance(config.get("args"), list) else []
+        metadata = {
+            "name": f"MCP: {server_name}",
+            "server_name": server_name,
+            "source_file": str(path.relative_to(repo)),
+            "transport": "http" if config.get("url") else "stdio",
+            "command": command_name,
+            "args_count": len(args),
+            "env_keys": sorted(str(key) for key in env.keys()),
+        }
+        records.append({
+            "name": f"MCP: {server_name}",
+            "provider": provider,
+            "category": category_for_provider(provider),
+            "connection_state": "manual",
+            "status": "configured",
+            "metadata": {key: value for key, value in metadata.items() if value not in ("", [], None)},
+        })
+    return records
+
+
+def collect_integrations():
+    seen = set()
+    records = []
+    for candidate in [repo / ".mcp.json", repo / ".claude" / "settings.json"]:
+        for record in mcp_servers_from(candidate):
+            key = (record["name"], record["metadata"].get("source_file", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append(record)
+    return records
+
+
+print(json.dumps({
+    "entries": collect_entries(),
+    "integrations": collect_integrations(),
 }, sort_keys=True, separators=(",", ":")))
 PY
 }
@@ -561,12 +737,59 @@ dx_dexcode_prepare_run_sync() {
     export DEX_FACTORY_EVENTS_ENDPOINT="${api_url}/api/v1/runs/${run_id}/events/batch"
     export DEX_FACTORY_SYNC=true
     dx_info "DexCode tracking enabled for ${run_id}."
+    dx_dexcode_sync_project_context "$repo_dir"
   elif [[ "${DEXCODE_SYNC_REQUIRED:-0}" == "1" ]]; then
     dx_error "DexCode run registration failed (HTTP ${http_status})."
     command rm -rf "$tmp_dir"
     return 1
   else
     dx_warn "DexCode run registration failed (HTTP ${http_status}); continuing locally."
+  fi
+
+  command rm -rf "$tmp_dir"
+  return 0
+}
+
+dx_dexcode_sync_project_context() {
+  local repo_dir="${1:-}" token api_url project_slug payload tmp_dir response_file http_status
+  [[ "${DEXCODE_CONTEXT_SYNC:-1}" != "0" ]] || return 0
+  [[ -n "$repo_dir" ]] || repo_dir=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  [[ -n "$repo_dir" && -d "$repo_dir/.dex" ]] || return 0
+
+  token=$(dx_dexcode_token 2>/dev/null || true)
+  project_slug=$(dx_dexcode_config_value "default_project.slug" 2>/dev/null || true)
+  [[ -n "$token" && -n "$project_slug" ]] || return 0
+
+  api_url=$(dx_dexcode_api_url)
+  payload=$(dx_dexcode_context_payload "$repo_dir") || return 0
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-context.XXXXXX") || return 0
+  response_file="$tmp_dir/context.json"
+
+  http_status=$(curl -sS -o "$response_file" -w "%{http_code}" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d "$payload" \
+    "${api_url}/api/v1/projects/${project_slug}/context" 2>/dev/null || printf '000')
+
+  if [[ "$http_status" == "200" || "$http_status" == "201" ]]; then
+    DX_DEXCODE_CONTEXT_RESPONSE="$response_file" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+try:
+    data = json.loads(Path(os.environ["DX_DEXCODE_CONTEXT_RESPONSE"]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+print(f"DexCode project context synced: {data.get('synced', 0)} knowledge entries, {data.get('integrations_synced', 0)} integrations.")
+PY
+  elif [[ "${DEXCODE_CONTEXT_SYNC_REQUIRED:-0}" == "1" ]]; then
+    dx_error "DexCode project context sync failed (HTTP ${http_status})."
+    command rm -rf "$tmp_dir"
+    return 1
+  else
+    dx_warn "DexCode project context sync failed (HTTP ${http_status}); continuing locally."
   fi
 
   command rm -rf "$tmp_dir"

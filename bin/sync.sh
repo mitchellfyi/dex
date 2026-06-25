@@ -303,4 +303,9 @@ else
 fi
 
 echo ""
+if [[ "$READ_ONLY" -eq 0 ]]; then
+  dx_dexcode_sync_project_context "$repo_root"
+fi
+
+echo ""
 dx_done "Sync complete for: $repo_name"

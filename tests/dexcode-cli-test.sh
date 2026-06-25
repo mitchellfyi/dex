@@ -23,6 +23,7 @@ export DX_TOOL_DIR="$TMP_DIR/tools"
 export DX_RUN_ROOT="$TMP_DIR/runs"
 export DEXCODE_CONFIG_FILE="$TMP_DIR/dexcode.json"
 export DEXCODE_OPEN_BROWSER=0
+export DEXCODE_CONTEXT_SYNC=0
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
@@ -88,7 +89,7 @@ PROFILE = {
     "default_project": {"slug": "personal", "name": "Personal", "default_branch": "main", "default": True},
     "projects": [
         {"slug": "personal", "name": "Personal", "default_branch": "main", "default": True},
-        {"slug": "syntheticindustry-ai", "name": "syntheticindustry.ai", "default_branch": "main", "default": False},
+        {"slug": "sample-repository", "name": "Sample Repository", "default_branch": "main", "default": False},
     ],
     "sync": {"factory_url": ""},
 }
@@ -148,6 +149,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/v1/runs":
             self._json(201, {"id": body.get("external_id"), "status": "running"})
             return
+        if self.path.startswith("/api/v1/projects/") and self.path.endswith("/context"):
+            self._json(201, {
+                "project": {"slug": "sample-repository", "name": "Sample Repository"},
+                "synced": len(body.get("entries") or []),
+                "stale": 0,
+                "integrations_synced": len(body.get("integrations") or []),
+            })
+            return
         self._json(404, {"error": "not_found"})
 
     def log_message(self, _format, *_args):
@@ -181,7 +190,27 @@ create_repo() {
   git -C "$repo_dir" add README.md
   git -C "$repo_dir" commit -q -m "init"
   git -C "$repo_dir" branch -M main
-  git -C "$repo_dir" remote add origin git@github.com:mitchellfyi/dex.git
+  git -C "$repo_dir" remote add origin git@github.com:example/sample-repository.git
+}
+
+create_dex_context() {
+  local repo_dir="$1"
+  mkdir -p "$repo_dir/.dex/rules"
+  printf '# Dex\n\nSample project context.\n' > "$repo_dir/.dex/dex.md"
+  printf '# Testing\n\nUse sample project fixtures.\n' > "$repo_dir/.dex/rules/testing.md"
+  cat > "$repo_dir/.mcp.json" <<'JSON'
+{
+  "mcpServers": {
+    "sample-browser": {
+      "command": "npx",
+      "args": ["-y", "@example/sample-browser"],
+      "env": {
+        "SAMPLE_TOKEN": "do-not-sync-value"
+      }
+    }
+  }
+}
+JSON
 }
 
 start_server
@@ -194,13 +223,15 @@ dx_dexcode_whoami --offline > "$TMP_DIR/whoami-personal.out"
 assert_contains "DexCode account: Mitchell" "$TMP_DIR/whoami-personal.out"
 assert_contains "Connected project: Personal (personal)" "$TMP_DIR/whoami-personal.out"
 printf '2\n' | dx_dexcode_select_project --force >/dev/null
-assert_eq "syntheticindustry-ai" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "selected project"
-dx_dexcode_whoami > "$TMP_DIR/whoami-syntheticindustry.out"
-assert_eq "syntheticindustry-ai" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "preserved selected project"
-assert_contains "Connected project: syntheticindustry.ai (syntheticindustry-ai)" "$TMP_DIR/whoami-syntheticindustry.out"
+assert_eq "sample-repository" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "selected project"
+dx_dexcode_whoami > "$TMP_DIR/whoami-sample.out"
+assert_eq "sample-repository" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "preserved selected project"
+assert_contains "Connected project: Sample Repository (sample-repository)" "$TMP_DIR/whoami-sample.out"
 
 repo_dir="$TMP_DIR/repo"
 create_repo "$repo_dir"
+create_dex_context "$repo_dir"
+export DEXCODE_CONTEXT_SYNC=1
 
 run_id="$(dx_run_prepare "dexcode-cli-session" "$repo_dir" "in-place" "dexcode-cli-test" "Track this run" "dx")"
 dx_dexcode_prepare_run_sync "$run_id" "$repo_dir" "in-place" "dexcode-cli-test" "Track this run" "dx" >/dev/null
@@ -227,9 +258,38 @@ PY
 
 assert_eq "Bearer dc_live_test_token" "$(json_value "$runs_request" "authorization")" "run auth"
 assert_eq "$run_id" "$(json_value "$runs_request" "body.external_id")" "run id"
-assert_eq "syntheticindustry-ai" "$(json_value "$runs_request" "body.project.slug")" "run project"
-assert_eq "mitchellfyi" "$(json_value "$runs_request" "body.repository.owner")" "repo owner"
-assert_eq "dex" "$(json_value "$runs_request" "body.repository.name")" "repo name"
+assert_eq "sample-repository" "$(json_value "$runs_request" "body.project.slug")" "run project"
+assert_eq "example" "$(json_value "$runs_request" "body.repository.owner")" "repo owner"
+assert_eq "sample-repository" "$(json_value "$runs_request" "body.repository.name")" "repo name"
 assert_eq "local_cli" "$(json_value "$runs_request" "body.metadata.source_type")" "source type"
+
+context_request="$TMP_DIR/context-request.json"
+python3 - "$SERVER_DIR/requests.jsonl" "$context_request" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+records = [
+    json.loads(line)
+    for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+for record in reversed(records):
+    if record["path"] == "/api/v1/projects/sample-repository/context":
+        Path(sys.argv[2]).write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+        break
+else:
+    raise SystemExit("missing project context request")
+PY
+
+assert_eq "Bearer dc_live_test_token" "$(json_value "$context_request" "authorization")" "context auth"
+assert_eq ".dex/dex.md" "$(json_value "$context_request" "body.entries.0.path")" "context entry path"
+assert_eq "MCP: sample-browser" "$(json_value "$context_request" "body.integrations.0.name")" "context integration"
+assert_eq "sample-browser" "$(json_value "$context_request" "body.integrations.0.metadata.server_name")" "mcp server name"
+assert_eq "SAMPLE_TOKEN" "$(json_value "$context_request" "body.integrations.0.metadata.env_keys.0")" "mcp env key"
+if grep -Fq "do-not-sync-value" "$context_request"; then
+  printf 'context request leaked an MCP env value\n' >&2
+  exit 1
+fi
 
 printf 'dexcode-cli-test passed\n'

@@ -321,6 +321,8 @@ if [[ $INSTALL_MAINTENANCE_WORKFLOW -eq 1 ]]; then
   bash "$DEX_DIR/bin/maintain.sh" install-workflow
 fi
 
+dx_dexcode_sync_project_context "$repo_root"
+
 echo ""
 echo "Init complete for: $repo_name"
 echo ""
