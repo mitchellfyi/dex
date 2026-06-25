@@ -1445,6 +1445,41 @@ PY
   dx_run_log_append_for_session "$session_id" "$severity" "dx" "${message}; status=${phase_status}; duration_s=${duration}; iterations=${iterations}; exit_code=${exit_code}"
 }
 
+unalias __dx_terminal_event_data 2>/dev/null; unfunction __dx_terminal_event_data 2>/dev/null
+__dx_terminal_event_data() {
+  local terminal_status="$1" reason="$2" phase="$3" phase_name="$4" exit_code="${5:-}" resume_command="${6:-}"
+  DX_TERMINAL_STATUS="$terminal_status" \
+  DX_TERMINAL_REASON="$reason" \
+  DX_TERMINAL_PHASE="$phase" \
+  DX_TERMINAL_PHASE_NAME="$phase_name" \
+  DX_TERMINAL_EXIT_CODE="$exit_code" \
+  DX_TERMINAL_RESUME_COMMAND="$resume_command" \
+  python3 - <<'PY'
+import json
+import os
+
+payload = {
+    "status": os.environ.get("DX_TERMINAL_STATUS", ""),
+    "reason": os.environ.get("DX_TERMINAL_REASON", ""),
+    "phase": os.environ.get("DX_TERMINAL_PHASE", ""),
+    "phase_name": os.environ.get("DX_TERMINAL_PHASE_NAME", ""),
+}
+
+exit_code = os.environ.get("DX_TERMINAL_EXIT_CODE", "")
+if exit_code:
+    try:
+        payload["exit_code"] = int(exit_code)
+    except ValueError:
+        payload["exit_code"] = exit_code
+
+resume_command = os.environ.get("DX_TERMINAL_RESUME_COMMAND", "")
+if resume_command:
+    payload["resume_command"] = resume_command
+
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+PY
+}
+
 unalias __dx_codex_direct_phase_handoff 2>/dev/null; unfunction __dx_codex_direct_phase_handoff 2>/dev/null
 __dx_codex_direct_phase_handoff() {
   local session_id="$1" phase="$2" state_file="$3" wt_dir="$4"
@@ -1630,7 +1665,9 @@ __dx_run_phases_inline() {
   local paused_file
   paused_file=$(dx_paused_file "$session_id")
   if [[ -f "$paused_file" ]]; then
-    dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "{\"reason\":\"manual-intervention\"}"
+    local terminal_data
+    terminal_data=$(__dx_terminal_event_data "blocked" "manual-intervention" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
+    dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
     dx_run_log_append_for_session "$session_id" "warn" "dx" "Lifecycle paused at Phase ${final_step}: manual intervention requested"
     dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step")"
     rm -f \
@@ -1661,7 +1698,9 @@ __dx_run_phases_inline() {
     fi
 
     rm -f "$loop_file" "$(dx_active_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
-    dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "{\"reason\":\"${pause_reason}\"}"
+    local terminal_data
+    terminal_data=$(__dx_terminal_event_data "blocked" "$pause_reason" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
+    dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
     dx_run_log_append_for_session "$session_id" "warn" "dx" "Lifecycle paused at Phase ${final_step}: ${pause_reason}"
     dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: ${pause_reason}"
     dx_provider_cleanup_session_state "$session_id"
@@ -1684,7 +1723,9 @@ __dx_run_phases_inline() {
 	  fi
 
   if [[ $exit_code -ne 0 ]]; then
-    dx_event_emit_for_session "$session_id" "run.failed" "error" "Dex lifecycle exited at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "{\"exit_code\":${exit_code}}"
+    local terminal_data
+    terminal_data=$(__dx_terminal_event_data "failed" "provider-exit" "$final_step" "$(__dx_phase_name "$final_step")" "$exit_code" "$resume_hint")
+    dx_event_emit_for_session "$session_id" "run.failed" "error" "Dex lifecycle exited at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
     dx_run_log_append_for_session "$session_id" "error" "dx" "Lifecycle exited at Phase ${final_step} with code ${exit_code}"
     dx_run_write_summary_for_session "$session_id" "failed" "Exited at Phase ${final_step} with code ${exit_code}"
     echo ""
@@ -1709,7 +1750,9 @@ __dx_run_phases_inline() {
   fi
 
   echo ""
-  dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Claude session exited before Dex lifecycle completed" "$final_step" "{\"reason\":\"session-exited\"}"
+  local terminal_data
+  terminal_data=$(__dx_terminal_event_data "blocked" "session-exited" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
+  dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Claude session exited before Dex lifecycle completed" "$final_step" "$terminal_data"
   dx_run_log_append_for_session "$session_id" "warn" "dx" "Claude session exited before lifecycle completed at Phase ${final_step}"
   dx_run_write_summary_for_session "$session_id" "blocked" "Claude session exited at Phase ${final_step}"
   echo "Claude session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
