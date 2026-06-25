@@ -58,6 +58,9 @@ Use the integrations configured in dex.md § Integrations. Skip any that are "no
    memory as context to verify, not proof.
 4. Explore affected code paths — identify files to modify, patterns to follow, similar features to reference.
 5. Search for existing utilities, components, and helpers that can be reused.
+6. Map the change against the surrounding architecture: ownership boundaries,
+   data flow, public contracts, configuration surfaces, and test strategy. Note
+   where the request naturally fits and where it would fight the current design.
 
 **Understanding check** — before drafting the plan, answer these five questions (to yourself):
 
@@ -68,6 +71,42 @@ Use the integrations configured in dex.md § Integrations. Skip any that are "no
 5. What would a reviewer challenge about this approach?
 
 If you cannot answer all five confidently, gather more context.
+
+### 2.3 Challenge the Obvious Approach
+
+Do not accept the requested implementation shape at face value. The user owns
+the desired outcome; your job is to test whether the first apparent solution is
+the best way to reach it in this codebase.
+
+For every non-trivial ticket, run this challenge pass before defining the
+target state:
+
+1. **Restate the outcome, not the proposed mechanism.** Separate what the user
+   needs from any assumed implementation detail in the ticket or prompt.
+2. **Find codebase prior art.** Search for existing patterns, extension points,
+   shared helpers, nearby tests, and constraints that should shape the plan.
+3. **Research current practice.** When the change involves a framework,
+   language feature, dependency, platform API, security-sensitive behavior, data
+   modeling, accessibility, performance, or deployment concern, use online
+   research if available. Prefer official docs, standards, release notes,
+   migration guides, maintainer-written material, and primary sources. Use
+   secondary articles only to identify pitfalls, then verify claims against
+   primary sources.
+4. **Compare alternatives.** Consider at least the smallest viable change, the
+   codebase-idiomatic change, and one clearly different approach. Reject
+   options that add avoidable scope, contradict established local patterns, or
+   depend on unverified assumptions.
+5. **Check holistic fit.** Ask whether the approach improves or harms module
+   boundaries, reuse, testability, operational behavior, security posture,
+   accessibility, and future maintenance.
+6. **Decide deliberately.** Choose the approach that best satisfies the outcome
+   while fitting the existing system. If the best approach differs from the
+   literal request, surface that tradeoff to the user before presenting the
+   plan.
+
+If online research tools are unavailable, say so in the plan and rely on local
+docs, dependency source, installed package metadata, and codebase precedent. Do
+not invent best-practice claims without a source.
 
 ### 2.4 Surface Assumptions and Ask the User
 
@@ -83,7 +122,8 @@ For each one, ask: "Could I be wrong about this?" If your confidence is below 10
 
 **How to ask:**
 - Use the `AskUserQuestion` tool to batch related clarifying questions. If the UI/tool limits each batch (for example, 3 questions), that is only a per-call limit, not a total planning limit.
-- Ask as many batches as needed. After each answer, re-check assumptions, risks, and unknowns; if new ones appear, ask another batch before drafting or presenting the plan.
+- Ask as many batches as needed. There is no expected or preferred maximum question count. Keep asking until every material assumption, concern, and unknown is either answered by the user, resolved from authoritative context, explicitly deferred by the user, or proven fully reversible during implementation.
+- After each answer, re-check assumptions, risks, and unknowns; if new ones appear, ask another batch before drafting or presenting the plan.
 - Group related questions in one call when possible, but do not suppress lower-priority questions just because the current batch is full.
 - For genuinely free-form questions where options don't fit, ask in plain text.
 
@@ -94,7 +134,7 @@ For each one, ask: "Could I be wrong about this?" If your confidence is below 10
 
 **Always ask** when the unknown affects: scope, contract (types, schemas, APIs), naming of public symbols, behaviour the user can observe, performance budgets, security posture, or visible UX.
 
-After the user answers, refine the plan. If new unknowns surface, ask again. Iterate until you can articulate every plan decision as either "the user said X" or "this is universally safe / fully reversible during implementation". Do not stop at an arbitrary question count. Do not present the final plan until every material assumption has been answered, explicitly deferred by the user, or proven fully reversible during implementation. Residual assumptions that survive this loop must be listed verbatim in Step 6 alongside the plan.
+After the user answers, refine the plan. If new unknowns surface, ask again. Iterate until you can articulate every plan decision as either "the user said X", "the docs/code prove X", "the user explicitly deferred X", or "this is universally safe / fully reversible during implementation". Do not stop at an arbitrary question count, because the goal is not to ask a small number of questions; the goal is to remove unresolved assumptions. Do not present the final plan until every material assumption has been answered, explicitly deferred by the user, resolved from authoritative context, or proven fully reversible during implementation. Residual assumptions that survive this loop must be listed verbatim in Step 6 alongside the plan.
 
 ### 2.5 Define the Target State
 
@@ -116,7 +156,7 @@ This step exists because plans naturally construct backward from a target. Makin
 
 ### 3. Draft the Plan
 
-For non-trivial tickets (more than a config change, typo fix, or single-file edit), present **2-3 approaches** before detailing the chosen one:
+For non-trivial tickets (more than a config change, typo fix, or single-file edit), present **2-3 approaches** before detailing the chosen one. These options must come from Step 2.3's challenge pass, not from generic "small/medium/large" templates if those labels do not fit the actual work:
 
 #### Approach Options (non-trivial tickets only)
 
@@ -126,9 +166,9 @@ For non-trivial tickets (more than a config change, typo fix, or single-file edi
 | **Balanced** | Clean implementation following existing patterns | Maintainable, idiomatic | Takes longer |
 | **Comprehensive** | Full solution with edge cases, optimisations, extensibility | Complete, future-proof | Largest scope, longest review |
 
-Present the approaches briefly (2-3 sentences each), then recommend one with reasoning. For trivial tickets, skip this and go straight to the task list.
+Present the approaches briefly (2-3 sentences each), then recommend one with reasoning. The recommendation must cite both local fit (existing paths, patterns, or constraints) and any external source that materially shaped the decision. For trivial tickets, skip this and go straight to the task list.
 
-**Research mandate** (non-trivial tickets): before finalizing the approach, search for common pitfalls related to the chosen technology or pattern. Check: official documentation, similar implementations in the codebase, known issues in dependencies you'll use.
+**Research mandate** (non-trivial tickets): before finalizing the approach, search for common pitfalls related to the chosen technology or pattern. Check: official documentation, similar implementations in the codebase, known issues in dependencies you'll use. If the best practice has changed recently or depends on a current library/framework version, verify it online or from installed package docs before relying on it.
 
 #### Task List
 
@@ -157,10 +197,11 @@ Before presenting the plan, verify it against these quality gates:
 1. **COMPLETENESS** — Does the plan cover every acceptance criterion? Re-read the ticket/prompt requirements. For each one, confirm there is a task that addresses it. If any criterion is missing or only partially covered, add a task. Every criterion must have a verification command — prose-only criteria must be rewritten as testable assertions.
 2. **EDGE CASES** — Have you considered failure modes? What happens with invalid/empty/boundary inputs? What happens when external services are unavailable? Are error messages helpful?
 3. **RESEARCH** — Were common pitfalls for the chosen approach checked? Is there prior art in the codebase? Is a migration strategy documented for breaking changes?
-4. **DEPENDENCIES** — Are tasks correctly ordered? Would any task fail if run before another? Are shared types/interfaces created before consumers?
-5. **SCOPE** — Is the plan minimal and focused? Remove any task not required by the acceptance criteria. Do not plan for hypothetical future work.
-6. **RISKS** — Are unknowns identified? For each risk, is there a mitigation, fallback, or explicit user acceptance? If any risk changes scope, behavior, contracts, security, performance, or visible UX, surface it to the user before presenting the plan.
-7. **ASSUMPTIONS** — Has every <100%-confidence assumption been surfaced to the user via Step 2.4 and answered? List the assumptions you made; for each, name the source: "user said X" or "universally safe / fully reversible". If you cannot name a source, you skipped Step 2.4 — go back and ask another batch.
+4. **BETTER-WAY CHECK** — Did you challenge the literal requested implementation against alternatives, current best practice, and holistic codebase fit? If the plan simply implements the first idea without comparison, go back to Step 2.3.
+5. **DEPENDENCIES** — Are tasks correctly ordered? Would any task fail if run before another? Are shared types/interfaces created before consumers?
+6. **SCOPE** — Is the plan minimal and focused? Remove any task not required by the acceptance criteria. Do not plan for hypothetical future work.
+7. **RISKS** — Are unknowns identified? For each risk, is there a mitigation, fallback, or explicit user acceptance? If any risk changes scope, behavior, contracts, security, performance, or visible UX, surface it to the user before presenting the plan.
+8. **ASSUMPTIONS** — Has every <100%-confidence assumption been surfaced to the user via Step 2.4 and answered? List the assumptions you made; for each, name the source: "user said X" or "universally safe / fully reversible". If you cannot name a source, you skipped Step 2.4 — go back and ask another batch.
 
 If any gate fails, fix the plan before proceeding.
 
@@ -178,6 +219,9 @@ Before presenting, invoke the `humanizer` skill on the user-facing plan text. Pr
 Include:
 - The numbered plan with task descriptions
 - Files that will be modified
+- **Approach recommendation** — the chosen approach, alternatives rejected,
+  why the choice fits this codebase, and any external sources that materially
+  changed the plan
 - **Assumptions surfaced and answered** — list each assumption resolved in Step 2.4 with a one-line note on what the user told you (so they can sanity-check)
 - **Residual unknowns or open decisions** — anything that survived Step 2.4 (e.g., implementation details deferred to TDD); flag explicitly so the user can correct course
 - Risks identified, with mitigation/fallback or explicit user acceptance
