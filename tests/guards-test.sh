@@ -19,7 +19,7 @@ mkpayload() {
 
 run_guard() {
   set +e
-  GUARD_OUT="$(printf '%s' "$1" | DEX_GUARD_EVENT=file python3 "$HANDLER" 2>/dev/null)"
+  GUARD_OUT="$(printf '%s' "$1" | env DEX_GUARD_EVENT=file python3 "$HANDLER" 2>/dev/null)"
   set -e
 }
 
@@ -52,6 +52,16 @@ assert_triggers "classic indexed for" \
   'for (let i = 0; i < items.length; i++) { await save(items[i]) }'
 assert_triggers "while loop with await" \
   'while (queue.length) { await process(queue.pop()) }'
+assert_triggers "Python for loop with await" \
+  'async def load(items):
+    for item in items:
+        await fetch(item)'
+assert_triggers "C# foreach loop with await" \
+  'foreach (var item in items) { await FetchAsync(item); }'
+assert_triggers "Rust-style loop with await expression" \
+  'for item in items { fetch(item).await; }'
+assert_triggers "brace loop without parenthesized header" \
+  'for item in items { await fetch(item) }'
 
 # --- should stay clean ---
 assert_clean "batched Promise.all" \
@@ -60,8 +70,19 @@ assert_clean "collect promises, await after loop" \
   'const ps = []; for (const i of items) { ps.push(repo.find(i.id)) } await Promise.all(ps)'
 assert_clean "deferred closure await in loop body" \
   'for (const i of items) { tasks.push(async () => { await repo.find(i) }) } await Promise.all(tasks.map((t) => t()))'
+assert_clean "expression-bodied async arrow in loop body" \
+  'for (const i of items) { tasks.push(async () => await repo.find(i)) } await Promise.all(tasks.map((t) => t()))'
+assert_clean "async object method in loop body" \
+  'for (const i of items) { tasks.push({ async run() { await repo.find(i) } }) } await Promise.all(tasks.map((t) => t.run()))'
+assert_clean "async class method in loop body" \
+  'for (const i of items) { tasks.push(class { async run() { await repo.find(i) } }) }'
 assert_clean "for await async iteration" \
   'for await (const chunk of stream) { handle(chunk) }'
+assert_clean "Python async for iteration" \
+  'async for item in stream:
+    await handle(item)'
+assert_clean "C# await foreach iteration" \
+  'await foreach (var item in stream) { await HandleAsync(item); }'
 assert_clean "loop pattern only inside a string" \
   'const sql = "for (x of y) { await z }"; doThing()'
 assert_clean "loop with no await" \

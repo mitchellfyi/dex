@@ -6,13 +6,13 @@ detector: await-in-loop
 action: warn
 ---
 
-WARNING: `await` inside a `for`/`while` loop — likely an N+1 query or sequential I/O.
+WARNING: `await` inside a loop - possible sequential I/O.
 
-Each iteration waits for the previous one, so N rows become N sequential round-trips. This is a leading cause of slow endpoints and, on the server side, database connection-pool exhaustion (every awaited call holds resources while the loop crawls).
+Each iteration waits for the previous one. That may be required when the next step depends on the previous result, but it can also turn independent work into a slow chain of network, database, file, SDK, or browser calls.
 
 Prefer one of:
 
-- **Batch the work** — collect the inputs and issue one set-based call instead of one per row (e.g. `WHERE id IN (...)`, a JOIN, or a bulk insert/upsert).
-- **Parallelize independent calls** — build an array of promises in the loop and `await Promise.all(...)` once, after it. Bound the fan-out with a concurrency limit when the list is large.
+- **Batch the work** - collect inputs and use a bulk or set-based operation when the API supports it.
+- **Parallelize independent calls** - collect tasks in the loop and await them together after it, using a concurrency limit when the list is large.
 
-Keep the sequential `await` only when each iteration genuinely depends on the previous one, or when you are deliberately rate-limiting — and say so in a comment. Note: `for await (...)` async iteration and awaits inside a closure collected for a later `Promise.all` are not flagged.
+Keep the sequential `await` when each iteration depends on the previous one, or when you are deliberately rate-limiting. Add a short comment for intentional sequencing. Async iteration forms and awaits inside nested closures or methods are not flagged.
