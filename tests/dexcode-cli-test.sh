@@ -84,8 +84,8 @@ requests_file = root / "requests.jsonl"
 port_file = root / "port"
 
 PROFILE = {
-    "account": {"slug": "mitchell", "name": "Mitchell", "personal": True},
-    "organisations": [{"slug": "mitchell", "name": "Mitchell", "personal": True, "default": True}],
+    "account": {"slug": "sample-org", "name": "Sample Organisation", "personal": True},
+    "organisations": [{"slug": "sample-org", "name": "Sample Organisation", "personal": True, "default": True}],
     "default_project": {"slug": "personal", "name": "Personal", "default_branch": "main", "default": True},
     "projects": [
         {"slug": "personal", "name": "Personal", "default_branch": "main", "default": True},
@@ -149,9 +149,28 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/v1/runs":
             self._json(201, {"id": body.get("external_id"), "status": "running"})
             return
+        if self.path == "/api/v1/projects":
+            name = (body.get("project") or {}).get("name") or "Example Project"
+            slug = name.lower().replace(" ", "-")
+            project = {
+                "slug": slug,
+                "name": name,
+                "default_branch": "main",
+                "organisation_slug": "sample-org",
+                "organisation_name": "Sample Organisation",
+                "default": True,
+            }
+            PROFILE["projects"] = [
+                dict(existing, default=False)
+                for existing in PROFILE.get("projects", [])
+                if existing.get("slug") != slug
+            ] + [project]
+            PROFILE["default_project"] = project
+            self._json(201, project)
+            return
         if self.path.startswith("/api/v1/projects/") and self.path.endswith("/context"):
             self._json(201, {
-                "project": {"slug": "sample-repository", "name": "Sample Repository"},
+                "project": {"slug": self.path.split("/")[4], "name": "Sample Repository"},
                 "synced": len(body.get("entries") or []),
                 "stale": 0,
                 "integrations_synced": len(body.get("integrations") or []),
@@ -220,13 +239,16 @@ assert_file "$DEXCODE_CONFIG_FILE"
 assert_eq "dc_live_test_token" "$(json_value "$DEXCODE_CONFIG_FILE" "access_token")" "saved token"
 assert_eq "personal" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "saved default project"
 dx_dexcode_whoami --offline > "$TMP_DIR/whoami-personal.out"
-assert_contains "DexCode account: Mitchell" "$TMP_DIR/whoami-personal.out"
+assert_contains "DexCode account: Sample Organisation" "$TMP_DIR/whoami-personal.out"
 assert_contains "Connected project: Personal (personal)" "$TMP_DIR/whoami-personal.out"
 printf '2\n' | dx_dexcode_select_project --force >/dev/null
 assert_eq "sample-repository" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "selected project"
 dx_dexcode_whoami > "$TMP_DIR/whoami-sample.out"
 assert_eq "sample-repository" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "preserved selected project"
 assert_contains "Connected project: Sample Repository (sample-repository)" "$TMP_DIR/whoami-sample.out"
+printf '3\nExample Workspace\n' | dx_dexcode_select_project --force >/dev/null
+assert_eq "example-workspace" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "created project selected"
+assert_eq "Example Workspace" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.name")" "created project name"
 
 repo_dir="$TMP_DIR/repo"
 create_repo "$repo_dir"
@@ -258,7 +280,7 @@ PY
 
 assert_eq "Bearer dc_live_test_token" "$(json_value "$runs_request" "authorization")" "run auth"
 assert_eq "$run_id" "$(json_value "$runs_request" "body.external_id")" "run id"
-assert_eq "sample-repository" "$(json_value "$runs_request" "body.project.slug")" "run project"
+assert_eq "example-workspace" "$(json_value "$runs_request" "body.project.slug")" "run project"
 assert_eq "example" "$(json_value "$runs_request" "body.repository.owner")" "repo owner"
 assert_eq "sample-repository" "$(json_value "$runs_request" "body.repository.name")" "repo name"
 assert_eq "local_cli" "$(json_value "$runs_request" "body.metadata.source_type")" "source type"
@@ -275,7 +297,7 @@ records = [
     if line.strip()
 ]
 for record in reversed(records):
-    if record["path"] == "/api/v1/projects/sample-repository/context":
+    if record["path"] == "/api/v1/projects/example-workspace/context":
         Path(sys.argv[2]).write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
         break
 else:

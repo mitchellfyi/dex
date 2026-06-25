@@ -380,8 +380,105 @@ print(len(data.get("projects") or []))
 PY
 }
 
+dx_dexcode_refresh_profile() {
+  local api_url token tmp_dir profile_file token_file
+  api_url=$(dx_dexcode_api_url)
+  token=$(dx_dexcode_token 2>/dev/null || true)
+  [[ -n "$token" ]] || return 1
+
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-profile.XXXXXX") || return 1
+  profile_file="$tmp_dir/profile.json"
+  token_file="$tmp_dir/token.json"
+  if dx_dexcode_fetch_profile "$api_url" "$token" "$profile_file"; then
+    DX_DEXCODE_TOKEN="$token" python3 - > "$token_file" <<'PY'
+import json
+import os
+
+print(json.dumps({"access_token": os.environ["DX_DEXCODE_TOKEN"]}))
+PY
+    dx_dexcode_write_login_config "$api_url" "$token_file" "$profile_file"
+    command rm -rf "$tmp_dir"
+    return 0
+  fi
+  command rm -rf "$tmp_dir"
+  return 1
+}
+
+dx_dexcode_create_project() {
+  local project_name="$1" token api_url payload tmp_dir response_file http_status config_file
+  project_name="${project_name#"${project_name%%[![:space:]]*}"}"
+  project_name="${project_name%"${project_name##*[![:space:]]}"}"
+  [[ -n "$project_name" ]] || {
+    dx_error "Project name cannot be blank."
+    return 1
+  }
+
+  token=$(dx_dexcode_token 2>/dev/null || true)
+  [[ -n "$token" ]] || {
+    dx_warn "DexCode is not connected. Run 'dx login' first."
+    return 1
+  }
+
+  api_url=$(dx_dexcode_api_url)
+  payload=$(DX_DEXCODE_PROJECT_NAME="$project_name" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"project": {"name": os.environ["DX_DEXCODE_PROJECT_NAME"]}}, sort_keys=True, separators=(",", ":")))
+PY
+  ) || return 1
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-project.XXXXXX") || return 1
+  response_file="$tmp_dir/project.json"
+
+  http_status=$(curl -sS -o "$response_file" -w "%{http_code}" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d "$payload" \
+    "${api_url}/api/v1/projects" 2>/dev/null || printf '000')
+
+  if [[ "$http_status" != "200" && "$http_status" != "201" ]]; then
+    dx_error "DexCode project creation failed (HTTP ${http_status})."
+    command rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  config_file=$(dx_dexcode_config_file)
+  DX_DEXCODE_CONFIG_FILE="$config_file" DX_DEXCODE_PROJECT_FILE="$response_file" python3 - <<'PY'
+import json
+import os
+import tempfile
+from pathlib import Path
+
+config_path = Path(os.environ["DX_DEXCODE_CONFIG_FILE"])
+project = json.loads(Path(os.environ["DX_DEXCODE_PROJECT_FILE"]).read_text(encoding="utf-8"))
+data = json.loads(config_path.read_text(encoding="utf-8"))
+projects = data.get("projects") or []
+projects = [existing for existing in projects if existing.get("slug") != project.get("slug")]
+projects.append(project)
+data["projects"] = projects
+data["default_project"] = dict(project, default=True)
+fd, tmp_name = tempfile.mkstemp(prefix=".dexcode.", suffix=".json", dir=str(config_path.parent))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.chmod(tmp_name, 0o600)
+    os.replace(tmp_name, config_path)
+finally:
+    try:
+        if Path(tmp_name).exists():
+            os.unlink(tmp_name)
+    except OSError:
+        pass
+PY
+  dx_done "Created DexCode project: ${project_name}"
+  dx_dexcode_refresh_profile >/dev/null 2>&1 || true
+  command rm -rf "$tmp_dir"
+}
+
 dx_dexcode_select_project() {
-  local force="${1:-}" count account current answer config_file
+  local force="${1:-}" count create_option account current answer config_file project_name
   if [[ "$force" != "--force" ]]; then
     [[ -t 0 && -t 1 ]] || return 0
     [[ "${DEXCODE_ASSUME_DEFAULTS:-0}" != "1" ]] || return 0
@@ -395,6 +492,7 @@ dx_dexcode_select_project() {
 
   count=$(dx_dexcode_project_count 2>/dev/null || printf '0')
   [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || return 0
+  create_option=$((count + 1))
 
   account=$(dx_dexcode_config_value "account.name" 2>/dev/null || dx_dexcode_config_value "account.slug" 2>/dev/null || printf 'DexCode')
   current=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'Personal')
@@ -411,16 +509,26 @@ for index, project in enumerate(data.get("projects") or [], start=1):
     suffix = " (default)" if project.get("slug") == default_slug else ""
     print(f"  {index}. {project.get('name') or project.get('slug')}{suffix}")
 PY
+  printf '  %s. Create a new project\n' "$create_option"
   printf 'Choose project [%s]: ' "$current"
   read -r answer || answer=""
   if [[ -z "$answer" ]]; then
     dx_info "Using ${account} / ${current}."
     return 0
   fi
-  [[ "$answer" =~ ^[0-9]+$ && "$answer" -ge 1 && "$answer" -le "$count" ]] || {
-    dx_error "Choose a number from 1 to ${count}."
+  [[ "$answer" =~ ^[0-9]+$ && "$answer" -ge 1 && "$answer" -le "$create_option" ]] || {
+    dx_error "Choose a number from 1 to ${create_option}."
     return 1
   }
+  if [[ "$answer" -eq "$create_option" ]]; then
+    printf 'New project name: '
+    read -r project_name || project_name=""
+    dx_dexcode_create_project "$project_name" || return 1
+    current=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf '%s' "$project_name")
+    dx_info "Using ${account} / ${current}."
+    dx_dexcode_sync_project_context
+    return 0
+  fi
 
   DX_DEXCODE_CONFIG_FILE="$config_file" DX_DEXCODE_PROJECT_INDEX="$answer" python3 - <<'PY'
 import json
