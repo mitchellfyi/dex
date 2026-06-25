@@ -17,9 +17,19 @@ mkpayload() {
   python3 -c 'import json,sys; print(json.dumps({"tool_input":{"file_path":"sample.ts","content":sys.argv[1]}}))' "$1"
 }
 
+mkbashpayload() {
+  python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' "$1"
+}
+
 run_guard() {
   set +e
   GUARD_OUT="$(printf '%s' "$1" | env DEX_GUARD_EVENT=file python3 "$HANDLER" 2>/dev/null)"
+  set -e
+}
+
+run_bash_guard() {
+  set +e
+  GUARD_OUT="$(printf '%s' "$1" | env DEX_GUARD_EVENT=bash DX_PROVIDER_ENGINE=codex-plugin python3 "$HANDLER" 2>&1)"
   set -e
 }
 
@@ -30,6 +40,26 @@ assert_triggers() {
   else
     printf 'FAIL (expected trigger): %s\n' "$1" >&2
     fail=$((fail + 1))
+  fi
+}
+
+assert_raw_codex_blocks() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'block-raw-codex-delegation'; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (expected raw Codex block): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_raw_codex_clean() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'block-raw-codex-delegation'; then
+    printf 'FAIL (raw Codex false positive): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
   fi
 }
 
@@ -101,6 +131,20 @@ assert_triggers "multi-line service method" \
   }
   return out
 }'
+
+# --- raw Codex guard trusted Dex helper regressions ---
+# shellcheck disable=SC2016
+assert_raw_codex_clean "source Dex common helper" \
+  'source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+SID="${DEX_SESSION_ID:-$(dx_session_id)}"'
+# shellcheck disable=SC2016
+assert_raw_codex_clean "run Dex UI capture helper" \
+  'bash "${DEX_DIR:-$HOME/work/dex}/bin/ui-capture.sh" --install-only 2>&1 | tail -15'
+assert_raw_codex_blocks "raw Codex remains blocked" \
+  'codex exec "do work"'
+# shellcheck disable=SC2016
+assert_raw_codex_blocks "trusted source plus direct provider call remains blocked" \
+  'source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"; dx_provider_codex exec "do work"'
 
 printf 'guards-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

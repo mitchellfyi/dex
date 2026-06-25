@@ -601,9 +601,9 @@ def apply_parameter_expansion_defaults(value):
 def resolve_shell_path(path, variables=None, cwd=None):
     root = dex_root()
     path = apply_literal_variables(path, variables)
-    path = apply_parameter_expansion_defaults(path)
     path = re.sub(r'\$\{DEX_DIR:-[^}]*\}', root, path)
     path = path.replace('${DEX_DIR}', root).replace('$DEX_DIR', root)
+    path = apply_parameter_expansion_defaults(path)
     path = os.path.expanduser(os.path.expandvars(path))
     if '$' in path or '`' in path:
         return ''
@@ -618,6 +618,23 @@ def is_dex_codex_wrapper(path, variables=None, cwd=None):
         return False
     expected = os.path.abspath(os.path.join(dex_root(), 'bin', 'dxcodex.sh'))
     return os.path.realpath(resolved) == os.path.realpath(expected)
+
+
+def is_trusted_dex_helper(path, variables=None, cwd=None):
+    resolved = resolve_shell_path(path, variables, cwd)
+    if not resolved:
+        return False
+    root = os.path.realpath(dex_root())
+    real = os.path.realpath(resolved)
+    try:
+        relative = os.path.relpath(real, root)
+    except ValueError:
+        return False
+    if relative.startswith('..' + os.sep) or relative == '..':
+        return False
+    if relative.startswith('lib' + os.sep) and relative.endswith('.sh'):
+        return True
+    return relative == os.path.join('bin', 'ui-capture.sh')
 
 
 def read_shell_file(path, variables=None, cwd=None):
@@ -2532,6 +2549,8 @@ def direct_script_command_is_blocked(command_token, generated_scripts, variables
 
     if '/' not in script_path:
         return False
+    if is_trusted_dex_helper(script_path, variables, cwd):
+        return False
 
     script_body, script_status = shell_file_body_status(script_path, variables, cwd)
     if script_body and executable_script_has_raw_codex(script_body, depth + 1, cwd):
@@ -3650,6 +3669,10 @@ def has_raw_codex_delegation(text, depth=0, cwd=None):
                         return True
                     if generated_body is not None and has_raw_codex_delegation(generated_body, depth + 1, cwd):
                         return True
+                    if generated_body is None and is_trusted_dex_helper(script_file, shell_vars, cwd):
+                        command_position = False
+                        index = command_segment_end(tokens, command_index + 1)
+                        continue
                     script_body, script_status = shell_file_body_status(script_file, shell_vars, cwd)
                     if script_body and has_raw_codex_delegation(script_body, depth + 1, cwd):
                         return True
@@ -3682,6 +3705,10 @@ def has_raw_codex_delegation(text, depth=0, cwd=None):
                         return True
                     if generated_body is not None and has_raw_codex_delegation(generated_body, depth + 1, cwd):
                         return True
+                    if generated_body is None and is_trusted_dex_helper(script_file, shell_vars, cwd):
+                        command_position = False
+                        index = command_segment_end(tokens, command_index + 1)
+                        continue
                     script_body, script_status = shell_file_body_status(script_file, shell_vars, cwd)
                     if script_body and has_raw_codex_delegation(script_body, depth + 1, cwd):
                         return True
