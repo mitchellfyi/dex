@@ -163,6 +163,14 @@ Factory should treat `event.id` as the idempotency key. If a request fails, Dex
 does not advance its local sync cursor, so the same events may be submitted
 again on a later retry.
 
+Each sync attempt drains queued events in bounded batches rather than sending
+only one batch. This matters at the end of a run: if earlier events are still
+queued, the terminal `run.completed`, `run.failed`, `run.blocked` or
+`run.cancelled` event must still reach DexCode during the final flush. Numeric
+token-count fields such as `total_input_tokens` and `total_output_tokens` are
+kept as telemetry; actual token, credential and authorization fields are still
+redacted before they are written or synced.
+
 Configuration variables:
 
 | Variable | Default | Notes |
@@ -174,6 +182,7 @@ Configuration variables:
 | `DEX_FACTORY_RUN_TOKEN` | unset | Run-scoped bearer token fallback. |
 | `DEX_RUN_TOKEN` | unset | Generic run token fallback for headless/remote launch flows. |
 | `DEX_FACTORY_BATCH_SIZE` | `50` | Maximum events per HTTP request. |
+| `DEX_FACTORY_MAX_BATCHES_PER_FLUSH` | `20` | Maximum queued batches to send in one flush. |
 | `DEX_FACTORY_TIMEOUT_SECONDS` | `5` | HTTP request timeout. |
 | `DEX_FACTORY_RETRY_BASE_SECONDS` | `1` | Initial backoff after a failed request. |
 | `DEX_FACTORY_RETRY_MAX_SECONDS` | `60` | Maximum backoff between retry attempts. |

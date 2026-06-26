@@ -421,7 +421,7 @@ __dx_factory_sync_record_config_issue() {
 
 __dx_factory_sync_pending_events_locked() {
   local run_id="$1" sync_dir="$2" endpoint token cursor payload_file build_result
-  local count max_sequence post_error first_sequence endpoint_label
+  local count max_sequence post_error first_sequence endpoint_label batch_count max_batches
 
   if ! endpoint=$(dx_factory_events_endpoint "$run_id" 2>/dev/null); then
     __dx_factory_sync_record_config_issue "$run_id" "Factory sync is enabled but DEX_FACTORY_URL or DEX_FACTORY_EVENTS_ENDPOINT is unset."
@@ -439,34 +439,42 @@ __dx_factory_sync_pending_events_locked() {
     return 0
   fi
 
+  batch_count=0
+  max_batches=$(__dx_factory_positive_int "${DEX_FACTORY_MAX_BATCHES_PER_FLUSH:-20}" 20)
   cursor=$(__dx_factory_sync_read_cursor "$run_id" 2>/dev/null || printf '0\n')
-  payload_file="$sync_dir/payload.$$.$RANDOM.json"
-  if ! build_result=$(__dx_factory_sync_build_payload "$run_id" "$cursor" "$payload_file" 2>&1); then
-    __dx_factory_sync_record_failure "$run_id" "could not build event payload"
-    command rm -f "$payload_file" 2>/dev/null || true
-    return 0
-  fi
-  count="${build_result%% *}"
-  max_sequence="${build_result##* }"
-  if [[ "$count" == "0" ]]; then
-    command rm -f "$payload_file" 2>/dev/null || true
-    return 0
-  fi
-
-  if post_error=$(__dx_factory_sync_post_payload "$endpoint" "$token" "$payload_file" 2>&1); then
-    __dx_factory_sync_write_cursor "$run_id" "$max_sequence" || {
-      __dx_factory_sync_record_failure "$run_id" "could not update Factory sync cursor"
+  while [[ "$batch_count" -lt "$max_batches" ]]; do
+    payload_file="$sync_dir/payload.$$.$RANDOM.json"
+    if ! build_result=$(__dx_factory_sync_build_payload "$run_id" "$cursor" "$payload_file" 2>&1); then
+      __dx_factory_sync_record_failure "$run_id" "could not build event payload"
       command rm -f "$payload_file" 2>/dev/null || true
       return 0
-    }
-    __dx_factory_sync_clear_status "$run_id"
-  else
-    [[ -n "$post_error" ]] || post_error="remote collector rejected the event batch"
-    first_sequence=$((cursor + 1))
-    endpoint_label=$(__dx_factory_endpoint_label "$endpoint" 2>/dev/null || printf 'remote endpoint\n')
-    __dx_factory_sync_record_failure "$run_id" "${post_error} while posting event sequences ${first_sequence}-${max_sequence} to ${endpoint_label}"
-  fi
-  command rm -f "$payload_file" 2>/dev/null || true
+    fi
+    count="${build_result%% *}"
+    max_sequence="${build_result##* }"
+    if [[ "$count" == "0" ]]; then
+      command rm -f "$payload_file" 2>/dev/null || true
+      return 0
+    fi
+
+    if post_error=$(__dx_factory_sync_post_payload "$endpoint" "$token" "$payload_file" 2>&1); then
+      __dx_factory_sync_write_cursor "$run_id" "$max_sequence" || {
+        __dx_factory_sync_record_failure "$run_id" "could not update Factory sync cursor"
+        command rm -f "$payload_file" 2>/dev/null || true
+        return 0
+      }
+      __dx_factory_sync_clear_status "$run_id"
+      cursor="$max_sequence"
+      batch_count=$((batch_count + 1))
+    else
+      [[ -n "$post_error" ]] || post_error="remote collector rejected the event batch"
+      first_sequence=$((cursor + 1))
+      endpoint_label=$(__dx_factory_endpoint_label "$endpoint" 2>/dev/null || printf 'remote endpoint\n')
+      __dx_factory_sync_record_failure "$run_id" "${post_error} while posting event sequences ${first_sequence}-${max_sequence} to ${endpoint_label}"
+      command rm -f "$payload_file" 2>/dev/null || true
+      return 0
+    fi
+    command rm -f "$payload_file" 2>/dev/null || true
+  done
 }
 
 dx_factory_sync_pending_events() {

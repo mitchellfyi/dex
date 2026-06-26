@@ -1408,7 +1408,7 @@ __dx_record_inline_phase_result() {
   else
     event_type="phase.failed"
     severity="error"
-    message="Phase ${phase} failed: ${phase_name} (${status})"
+    message="Phase ${phase} failed: ${phase_name} (${phase_status})"
   fi
   data_json=$(
     DX_PHASE_NAME="$phase_name" \

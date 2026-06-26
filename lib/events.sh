@@ -558,6 +558,12 @@ SECRET_PATTERNS = [
 ]
 SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
 SECRET_KEY_RE = re.compile(r"(?i)(token|secret|password|passwd|api[_-]?key|credential)")
+TOKEN_COUNT_KEYS = {
+    "total_input_tokens",
+    "total_output_tokens",
+    "total_cache_read_tokens",
+    "total_cache_write_tokens",
+}
 
 
 def utc_now():
@@ -576,6 +582,8 @@ def redact(text):
 def redact_value(value, key=""):
     normalized_key = str(key).lower().replace("-", "_")
     auth_key = normalized_key in {"auth", "authorization"} or normalized_key.startswith("auth_") or normalized_key.endswith("_auth") or "_auth_" in normalized_key
+    if normalized_key in TOKEN_COUNT_KEYS:
+        return value
     if SECRET_KEY_RE.search(str(key)) or auth_key:
         return "[REDACTED]" if value else value
     if isinstance(value, dict):

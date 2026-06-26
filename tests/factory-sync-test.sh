@@ -161,6 +161,38 @@ assert events[0]["sequence"] == 1
 assert events[0]["type"] == "run.started"
 PY
 
+backlog_run="$(dx_run_prepare "remote-backlog" "$ROOT" "test" "factory-sync-test" "issue-48" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$backlog_run" "run.started" "info" "Backlog sync" "" '{"mode":"backlog"}'
+dx_event_emit "$backlog_run" "phase.started" "info" "Phase 1 started" "1" '{"phase_name":"Plan"}'
+dx_event_emit "$backlog_run" "phase.completed" "info" "Phase 1 completed" "1" '{"phase_name":"Plan"}'
+dx_event_emit "$backlog_run" "phase.started" "info" "Phase 2 started" "2" '{"phase_name":"Implement"}'
+dx_event_emit "$backlog_run" "run.completed" "info" "Backlog run completed" "2" '{"final_phase":2}'
+export DEX_FACTORY_SYNC=true
+export DEX_FACTORY_BATCH_SIZE=2
+before_backlog_requests="$(request_count)"
+dx_factory_sync_pending_events "$backlog_run"
+after_backlog_requests="$(request_count)"
+assert_eq "$((before_backlog_requests + 3))" "$after_backlog_requests" "backlog drained request count"
+assert_eq "5" "$(cat "$(dx_factory_sync_cursor_file "$backlog_run")")" "backlog cursor"
+
+python3 - "$SERVER_DIR/requests.jsonl" "$backlog_run" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+records = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+events = [
+    event
+    for record in records
+    for event in record["body"].get("events", [])
+    if event.get("run_id") == sys.argv[2]
+]
+assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5], events
+assert events[-1]["type"] == "run.completed", events[-1]
+PY
+export DEX_FACTORY_BATCH_SIZE=25
+
 failure_run="$(dx_run_prepare "remote-failure" "$ROOT" "test" "factory-sync-test" "issue-47" "dx test")"
 printf '500\n' > "$SERVER_DIR/status"
 before_failure_requests="$(request_count)"

@@ -56,6 +56,7 @@ dx_run_maybe_emit_started "$run_id" "Test run started" '{"command":"test"}'
 dx_event_maybe_emit_phase_started "$run_id" "1" "Plan" "test"
 dx_event_emit "$run_id" "plan.created" "info" "Plan created" "1" '{"items":2}'
 dx_event_emit "$run_id" "phase.completed" "info" "Phase 1 completed with Authorization: Bearer ghp_eventmessage1234567890" "1" '{"duration_s":3,"iterations":1,"token":"event-token-secret","tokens":["list-secret-value"],"credentials":{"value":"nested-secret-value"},"details":{"remote":"https://token-user:event-secret-token@github.com/example/private.git","auth_header":"Authorization: Basic abcdefghijklmnop"}}'
+dx_event_emit "$run_id" "run.completed" "info" "Run completed" "1" '{"total_input_tokens":1200,"total_output_tokens":340,"total_cache_read_tokens":5600,"total_cache_write_tokens":78,"estimated_cost_cents":91,"access_token":"secret-token-value"}'
 artifact_file="$(dx_run_artifact_file "$run_id" "reports/test-output.txt")"
 mkdir -p "$(dirname "$artifact_file")"
 printf 'test output\n' > "$artifact_file"
@@ -98,12 +99,13 @@ events = [
     for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
     if line.strip()
 ]
-assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5, 6]
+assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5, 6, 7]
 assert [event["type"] for event in events] == [
     "run.started",
     "phase.started",
     "plan.created",
     "phase.completed",
+    "run.completed",
     "artifact.created",
     "artifact.created",
 ]
@@ -123,18 +125,24 @@ assert events[3]["data"]["tokens"] == "[REDACTED]"
 assert events[3]["data"]["credentials"] == "[REDACTED]"
 assert events[3]["data"]["details"]["auth_header"] == "[REDACTED]"
 assert events[3]["data"]["details"]["remote"] == "https://[REDACTED]@github.com/example/private.git"
+assert events[4]["data"]["total_input_tokens"] == 1200
+assert events[4]["data"]["total_output_tokens"] == 340
+assert events[4]["data"]["total_cache_read_tokens"] == 5600
+assert events[4]["data"]["total_cache_write_tokens"] == 78
+assert events[4]["data"]["access_token"] == "[REDACTED]"
 assert "event-token-secret" not in json.dumps(events)
 assert "list-secret-value" not in json.dumps(events)
 assert "nested-secret-value" not in json.dumps(events)
 assert "event-secret-token" not in json.dumps(events)
+assert "secret-token-value" not in json.dumps(events)
 assert "ghp_eventmessage1234567890" not in json.dumps(events)
-assert events[4]["data"]["path"] == "reports/test-output.txt"
-assert events[5]["data"]["path"] == "run-summary.md"
+assert events[5]["data"]["path"] == "reports/test-output.txt"
+assert events[6]["data"]["path"] == "run-summary.md"
 
 summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 assert summary["run_id"] == run_id
 assert summary["status"] == "completed"
-assert summary["last_sequence"] == 6
+assert summary["last_sequence"] == 7
 assert "super-secret-token" not in json.dumps(summary)
 assert "ghp_12345678901234567890" not in json.dumps(summary)
 assert "Authorization: Bearer [REDACTED]" in summary["message"]
