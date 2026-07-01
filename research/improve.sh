@@ -251,7 +251,7 @@ Focus on the lowest-scoring scenarios first. Prefer small, precise edits over br
 Output your proposed changes as a series of unified diffs that can be applied with git apply. Wrap each diff in a markdown code block with the diff language tag.
 "
 
-# ── Run Claude to generate improvements ────────────────────────────────────
+# ── Run analyzer to generate improvements ──────────────────────────────────
 log_step "Generating improvement proposals..."
 
 PROPOSAL_DIR="$IMPROVEMENTS_DIR/proposals"
@@ -260,18 +260,60 @@ mkdir -p "$PROPOSAL_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 PROPOSAL_FILE="$PROPOSAL_DIR/proposal-${TIMESTAMP}.md"
 PATCH_FILE="$PROPOSAL_DIR/patch-${TIMESTAMP}.diff"
+ANALYZER="${RESEARCH_IMPROVE_RUNNER:-claude}"
 
-# Run Claude for analysis
-claude_response=$(claude -p \
-  --model "$CLAUDE_MODEL" \
-  "$CLAUDE_BYPASS_FLAG" \
-  --permission-mode "$CLAUDE_PERMISSION_MODE" \
-  --effort "$CLAUDE_EFFORT" \
-  --output-format text \
-  "$ANALYSIS_PROMPT" 2>/dev/null) || {
-    log_error "Claude analysis failed"
+run_claude_analysis() {
+  claude -p \
+    --model "$CLAUDE_MODEL" \
+    "$CLAUDE_BYPASS_FLAG" \
+    --permission-mode "$CLAUDE_PERMISSION_MODE" \
+    --effort "$CLAUDE_EFFORT" \
+    --output-format text \
+    "$ANALYSIS_PROMPT"
+}
+
+run_codex_analysis() {
+  local output_file="$1"
+  DX_CODEX_OUTPUT_LAST_MESSAGE="$output_file" \
+    bash "$DEX_DIR/bin/dxcodex.sh" exec -- "$ANALYSIS_PROMPT" >/dev/null
+}
+
+claude_response=""
+analysis_stderr="$PROPOSAL_DIR/proposal-${TIMESTAMP}.stderr.log"
+case "$ANALYZER" in
+  claude)
+    if ! claude_response=$(run_claude_analysis 2>"$analysis_stderr"); then
+      if command -v codex >/dev/null 2>&1; then
+        log_warn "Claude analysis failed; falling back to Codex. See $analysis_stderr"
+        if ! run_codex_analysis "$PROPOSAL_FILE" 2>>"$analysis_stderr"; then
+          log_error "Codex analysis failed. See $analysis_stderr"
+          exit 1
+        fi
+        claude_response=$(cat "$PROPOSAL_FILE" 2>/dev/null || true)
+      else
+        log_error "Claude analysis failed. See $analysis_stderr"
+        exit 1
+      fi
+    fi
+    ;;
+  codex)
+    if ! run_codex_analysis "$PROPOSAL_FILE" 2>"$analysis_stderr"; then
+      log_error "Codex analysis failed. See $analysis_stderr"
+      exit 1
+    fi
+    claude_response=$(cat "$PROPOSAL_FILE" 2>/dev/null || true)
+    ;;
+  *)
+    log_error "Unknown research improvement analyzer: $ANALYZER"
+    log_info "Supported analyzers: claude, codex"
     exit 1
-  }
+    ;;
+esac
+
+if [[ -z "$claude_response" ]]; then
+  log_error "Analyzer produced no response. See $analysis_stderr"
+  exit 1
+fi
 
 # Save the full response
 echo "$claude_response" > "$PROPOSAL_FILE"

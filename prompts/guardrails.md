@@ -54,6 +54,16 @@ Before writing any implementation code, answer these five questions (briefly, to
 
 If you cannot answer all five confidently, gather more context first.
 
+### Test Design Before Implementation
+
+Before writing implementation code, design the test strategy:
+
+- Start with tests. Write or update the first failing test against the requested public behavior before implementing the behavior. If the target file, module, route, command, or package does not exist yet, create the smallest runnable skeleton first, then write the failing test against that exact surface.
+- Think through the full use-case space before choosing test files: expected use, invalid input, empty/null values, boundaries, unusually large inputs, unicode or locale-sensitive input, duplicate data, permission failures, dependency failures, timing/concurrency, persistence/restart behavior, and cleanup paths where relevant.
+- Put tests at the right level. Use unit tests for isolated logic, integration tests for cross-module or storage behavior, contract/API tests for public interfaces, and end-to-end tests for user-visible flows, CLI commands, API routes, background jobs, and external integrations.
+- Make the suite robust and balanced. Every public behavior needs at least one success case and one meaningful failure, boundary, or outlier case unless the behavior is genuinely non-branching and documented as such.
+- Do not treat end-to-end coverage as optional for user-facing or operational workflows. If a real end-to-end test is impractical, add the closest automated integration path and record the gap in the evidence.
+
 ## Implementation Principles
 
 ### Common Mistakes to Avoid
@@ -145,6 +155,7 @@ When the deliverable is a document (design doc, refinement, architecture map, RF
 When creating a standalone library, package, or module:
 
 - **Standard importability**: The module must be loadable via the language's standard mechanism without requiring the consumer to run a separate build step. If using a compiled language or transpiler, configure the build so installation triggers compilation automatically.
+- **Exact requested API first**: If the prompt names specific functions, commands, classes, modules, file paths, or package layout, implement those exact public entry points before adding broader abstractions. Extra helpers are fine only after the requested surface exists and is tested.
 - **README.md**: Always include a README documenting what the library does, usage with code examples, and the rationale behind non-obvious design decisions. Treat it as a required deliverable, not a final polish task. Draft it once the public API is stable enough to describe, then refine it after verification so a time-bounded run does not ship an undocumented library.
 - **Conventional naming**: Export the primary API using the most natural name for the domain. Avoid abbreviations in public exports.
 - **Doc comments on all exports**: Every exported function, type, and constant must have a documentation comment following the language's convention.

@@ -30,6 +30,7 @@ Identify what quality tools the project uses by checking for these files at the 
 | `.github/workflows/` | CI config | Read CI workflows to understand what checks will run remotely |
 
 For monorepos, check each workspace/package for its own toolchain. Scope checks to the packages that have changes.
+If the change creates a new project, package, or standalone deliverable, treat that new directory as a full workspace even if the parent repo has no matching root-level tooling. Discover and run its local build, lint, type-check, and test commands before reporting success.
 
 ### 2. Check What Changed
 

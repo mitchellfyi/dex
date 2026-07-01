@@ -19,6 +19,8 @@ If the prompt references external context (a ticket, a URL, a document), ensure 
 Verify your understanding against the guardrails:
 - Can you answer the five understanding-check questions from `prompts/guardrails.md`?
 - Have you identified the failure modes and resource cleanup needs?
+- If this was a time-bounded or non-interactive run, did you create the exact requested deliverable and smallest runnable public API before optional scaffolding, broad abstractions, or extra approaches?
+- Did you design the test strategy before implementation, including where unit, integration, contract/API, and end-to-end tests belong for this change?
 
 **Session classification:** Run `git diff --name-only` and `git status --porcelain`. If any production code files were created or modified (not just docs/config), this is a **code-change session**. Otherwise it is a **non-code session**. This classification determines whether the `/dxreview --single-pass` review wave runs in subsequent steps.
 
@@ -42,6 +44,7 @@ Reference `prompts/review.md` for the full criteria behind each pass.
 
 For each acceptance criterion from Step 1, trace the implementing code end-to-end:
 - Happy path, failure paths, edge cases (empty/null/zero/boundary)
+- Test coverage for expected use, invalid input, boundaries, outliers, concurrency/timing, persistence/restart, permission failures, dependency failures, and cleanup paths where applicable
 - Try to BREAK each function — construct inputs that cause failure, states that cause inconsistency
 - Off-by-one errors, null checks, race conditions
 - Missing error handling — swallowed errors, generic catch-alls, empty catch blocks
@@ -152,6 +155,8 @@ For each acceptance criterion from Step 1, fill in the evidence table:
 **Rules:**
 - Implementation evidence must be a specific `file:line` in production code.
 - Test evidence must be a specific test name or `test-file:line`. For non-code acceptance criteria (research, analysis, documentation), cite the document section that satisfies the criterion as `path:heading` plus a one-line summary of what evidence the section contains; write `N/A` only when the criterion is genuinely untestable and unverifiable (rare).
+- For small libraries, CLIs, or packages, include at least one evidence row for each requested public function, command, module, or entry point. If the prompt named a public surface and the table has no row for it, the work is incomplete.
+- For user-facing flows, API routes, CLI commands, background jobs, integrations, or persistence paths, include end-to-end or closest-equivalent integration evidence. If true end-to-end coverage is impractical, cite the automated fallback and explain the remaining gap.
 - Prose claims ("I verified this") are NOT evidence. Cite specific locations.
 - Any NOT MET entry blocks completion — go back and implement/test it.
 

@@ -16,6 +16,89 @@ RESULTS_DIR="$RESEARCH_DIR/results"
 IMPROVEMENTS_DIR="$RESEARCH_DIR/improvements"
 SCORES_TSV="$RESULTS_DIR/scores.tsv"
 
+# ── Local tool compatibility ───────────────────────────────────────────────
+# Research scripts and rubrics use GNU `timeout`. macOS does not ship it by
+# default, so create a local PATH shim when only `gtimeout` is available, or a
+# Python fallback when neither binary exists. The fallback implements the subset this harness uses:
+# `timeout <seconds>[s|m|h|d] <command> ...` and exits 124 on timeout.
+RESEARCH_TOOL_DIR="$RESEARCH_DIR/.tools"
+if ! command -v timeout >/dev/null 2>&1; then
+  mkdir -p "$RESEARCH_TOOL_DIR"
+  if command -v gtimeout >/dev/null 2>&1; then
+    cat > "$RESEARCH_TOOL_DIR/timeout" <<'SH'
+#!/usr/bin/env bash
+exec gtimeout "$@"
+SH
+    chmod +x "$RESEARCH_TOOL_DIR/timeout"
+  else
+    cat > "$RESEARCH_TOOL_DIR/timeout" <<'PY'
+#!/usr/bin/env python3
+import os
+import signal
+import subprocess
+import sys
+
+
+def parse_duration(raw):
+    raw = str(raw or "").strip()
+    if not raw:
+        raise ValueError("missing duration")
+    suffix = raw[-1].lower()
+    multiplier = {"s": 1, "m": 60, "h": 3600, "d": 86400}.get(suffix)
+    if multiplier is None:
+        suffix = ""
+        multiplier = 1
+    value = float(raw[:-1] if suffix else raw)
+    return max(0.0, value * multiplier)
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("usage: timeout DURATION COMMAND [ARG...]", file=sys.stderr)
+        return 125
+    try:
+        timeout_s = parse_duration(sys.argv[1])
+    except ValueError as exc:
+        print(f"timeout: invalid duration: {exc}", file=sys.stderr)
+        return 125
+
+    command = sys.argv[2:]
+    try:
+        proc = subprocess.Popen(command, preexec_fn=os.setsid)
+    except FileNotFoundError:
+        print(f"timeout: failed to run command '{command[0]}': No such file or directory", file=sys.stderr)
+        return 127
+    except PermissionError:
+        print(f"timeout: failed to run command '{command[0]}': Permission denied", file=sys.stderr)
+        return 126
+
+    try:
+        return proc.wait(timeout=None if timeout_s <= 0 else timeout_s)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+        return 124
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY
+    chmod +x "$RESEARCH_TOOL_DIR/timeout"
+  fi
+  PATH="$RESEARCH_TOOL_DIR:$PATH"
+  export PATH
+fi
+
 # ── Agent runners ──────────────────────────────────────────────────────────
 # Scenario execution defaults to Claude Code. Set RESEARCH_RUNNER=codex or pass
 # `research/run.sh --runner codex` to run scenarios through Codex CLI instead.

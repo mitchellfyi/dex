@@ -25,13 +25,23 @@ old lesson.
 
 Before editing UI-affecting files, decide whether the approved plan changes browser UI, visual layout, styles, routes, or user flows. If it does, invoke `dxuicapture` immediately for before evidence and add the generated `visual-evidence.md` manifest path to your working notes. Capture the representative routes/flows you expect to change. If UI files have already been modified before the baseline can be captured, do not synthesize a before state; record `Before capture: unavailable — UI was already modified before capture` in the manifest and final evidence.
 
+### 1. Design the Test Strategy First
+
+Before writing implementation code, map the test surface for the approved plan:
+
+- List the public behaviors, commands, endpoints, components, jobs, or APIs that must change.
+- Identify normal use, invalid input, boundaries, empty/null cases, unusually large inputs, unicode or locale-sensitive values, concurrency or timing edges, persistence/restart behavior, permission failures, and downstream dependency failures where relevant.
+- Decide which tests belong at each level: unit tests for pure logic, integration tests for cross-module behavior, contract/API tests for public interfaces, and end-to-end tests for the user-visible or operational workflow.
+- Write or update the first failing test before changing the implementation. If the requested artifact does not exist yet, create the smallest runnable skeleton at the exact requested path, then write the failing test against that public surface.
+- Record any test level that is genuinely not applicable and why. Do not skip end-to-end coverage silently when the change affects a user flow, CLI command, API route, background job, integration, or persistence path.
+
 For each task in the approved plan:
 
 1. `TaskUpdate(task_id, "in_progress")`
 2. Implement the task:
    - Follow the patterns and conventions established in the codebase (check AGENTS.md, README.md, and existing code in the area you're modifying).
    - If the project has code generation (API clients, DB types, OpenAPI specs), run the generator after schema or API changes.
-3. Follow **Red-Green-Refactor** (TDD) where the project has a test suite:
+3. Follow **Red-Green-Refactor** (TDD):
    - Write a failing test first.
    - Write the minimum code to make it pass.
    - Refactor while keeping tests green.
@@ -60,13 +70,14 @@ If during implementation you discover:
 - **A dependency is blocked**: STOP. Document the blocker. Ask how to proceed.
 
 **When running non-interactively** (no user to respond — e.g., `-p` mode, automated harness, or if the user is unavailable): do NOT stop on ambiguity. Instead, choose the **most comprehensive reasonable interpretation** and document your assumptions in a README. Specifically:
+- Start with a time-bounded execution order: create the exact requested deliverable first, add the smallest runnable public API, then add tests and documentation around that concrete artifact. Avoid spending the early part of a run on optional architecture, broad scaffolding, or alternative implementations before the named output exists.
 - For algorithmic or strategic choices: implement **at least two approaches** (e.g., fixed-window + sliding-window + token-bucket for rate limiting, multiple sort algorithms, etc.) and let the caller choose via a factory or configuration parameter.
 - For data modeling: default to **per-client/per-key isolation** and **configurable limits** with sensible defaults.
 - For scope: when the prompt is vague, build a complete library with a clean exported API, comprehensive tests covering edge cases, and a README explaining design decisions and usage.
 - For REST APIs: always include the production API defaults from guardrails.md (pagination, search/filter, PATCH, timestamps, uniqueness constraints, health check, request logging) even when not explicitly requested. These are expected in any production API.
 - For stateful systems (caches, rate limiters, session stores): implement automatic memory cleanup of expired entries and export a destroy/close method for resource cleanup.
 - For HTTP middleware: if building a library that could be used as middleware, export a middleware adapter alongside the core API.
-- For ALL projects: write tests even if the prompt does not ask for them. Aim for **>20 test cases** spread across **at least three test files** covering: every public function/command with valid input, every public function/command with invalid/edge input (empty, null, boundary, unicode), error paths, and at least one concurrency or stress test. Use the language's idiomatic test organization (named subtests, describe/it blocks, table-driven tests, etc.).
+- For ALL projects: write tests even if the prompt does not ask for them. Scale the suite to the size of the deliverable: small single-purpose libraries still need coverage for every public function/command, valid input, invalid/edge input (empty, null, boundary, unicode), and error paths; larger packages should aim for **>20 test cases** spread across **at least three test files**. Add concurrency or stress coverage when the code has shared state, async work, caching, rate limiting, I/O, or resource cleanup. Use the language's idiomatic test organization (named subtests, describe/it blocks, table-driven tests, etc.).
 - For CLI tools: test every command for both success and error cases. Test with empty input, non-existent IDs, corrupted data files, and missing arguments. Organize tests into **at least three files**: (1) unit tests for individual modules/functions, (2) integration tests for end-to-end command flows, (3) edge case and error recovery tests (corrupted data, boundary values, concurrent access).
 
 **Non-interactive mistakes to avoid** (these cause the most quality failures):
