@@ -64,6 +64,14 @@ Before writing implementation code, design the test strategy:
 - Make the suite robust and balanced. Every public behavior needs at least one success case and one meaningful failure, boundary, or outlier case unless the behavior is genuinely non-branching and documented as such.
 - Do not treat end-to-end coverage as optional for user-facing or operational workflows. If a real end-to-end test is impractical, add the closest automated integration path and record the gap in the evidence.
 
+### Review Probe Discipline
+
+When reviewing existing code instead of implementing it, prove suspected defects
+with the smallest runnable probe the project supports. For functions that accept
+caller-owned collections, objects, buffers, files, handles, or request data,
+include a side-effect probe: call the function, then assert the caller's input
+state is unchanged unless mutation is documented as part of the contract.
+
 ## Implementation Principles
 
 ### Common Mistakes to Avoid
@@ -76,6 +84,8 @@ These are recurring mistakes observed across many implementations. Check against
 - **Don't write tests that only cover happy paths.** For every success test, write at least one error/edge test. A test suite with 20 happy-path tests and zero error tests is worse than 10 tests with proper error coverage — it creates false confidence.
 - **Don't assume your code works without running it.** After writing implementation code, run the tests. After writing tests, run them. After fixing a bug, run the tests again. "It should work" is not verification.
 - **Don't ignore test failures.** If most tests fail, the implementation has a fundamental problem — don't declare done. Read the error output, identify the root cause, and fix it. Common root causes: missing type definitions in config, wrong import paths, missing dependencies.
+- **Don't expand scope after verification fails.** Once a test, typecheck, build, lint, or smoke command fails, stop adding features and spend the remaining budget on that failing command until it passes. Fix the root cause in production code, tests, or config; then rerun the same command before moving on.
+- **Don't leave a configured test runner with zero tests.** As soon as you add a test script or test framework, add at least one executable smoke or regression test against the public surface and run it before expanding optional endpoints, helpers, or documentation.
 - **Don't use string interpolation for database queries.** Always use parameterized queries (placeholders or bindings). String interpolation in queries is a SQL/NoSQL injection vulnerability. The only exception is for table/column names that come from your own code (never user input).
 - **Don't hardcode locale-specific formats.** Phone numbers, dates, currency, and addresses vary by country. Unless the spec explicitly says one locale only, support international formats. Validate structure, not specific country patterns.
 - **Don't create multi-file projects without testing cross-file integration.** If Module A calls Module B, write a test that exercises the full A→B flow. Modules that work in isolation but break when composed are a common failure mode.

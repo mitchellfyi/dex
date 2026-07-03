@@ -98,6 +98,7 @@ Trace the code path end-to-end:
 - **State transitions** — are all state changes atomic? Can partial failures leave inconsistent state? Is there a rollback path? Is the state machine exhaustive — every state has a defined transition for every input?
 - **Resource cleanup** — are all opened resources (connections, handles, subscriptions, timers, file descriptors, watchers, listeners) closed on both success and failure paths? Is cleanup ordering correct (e.g., flush before close)?
 - **Return values** — are all branches returning the correct type? Any implicit undefined/null? Sentinel values that callers might mistake for valid data?
+- **Caller-owned input mutation** — do functions mutate arrays, maps, objects, buffers, files, request payloads, or handles supplied by the caller without documenting that side effect? Construct a before/after probe for sorting, filtering, normalization, parsing, serialization, and validation helpers.
 - **Boundary conditions** — off-by-one in loops/slices, empty vs. missing vs. null, first/last element handling, inclusive vs. exclusive bounds on ranges
 - **Error propagation depth** — does the error carry enough context to diagnose at the top of the stack? Is the error type narrowed appropriately or do callers have to switch on a raw string?
 

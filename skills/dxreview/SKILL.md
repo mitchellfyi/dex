@@ -26,15 +26,17 @@ Follow `prompts/review-wave.md` as the source of truth. In one wave:
    supplies a whole-codebase file inventory instead.
 2. Build the compact context pack first in `dx_review_context_file`.
 3. Run deterministic checks before semantic review.
-4. Harvest candidate issues according to the supplied profile:
+4. Create lightweight repro probes for suspected correctness, contract, or
+   regression findings when the repo has runnable tests or scripts.
+5. Harvest candidate issues according to the supplied profile:
    - `light`: core domain sweep
    - `standard`: core sweep plus targeted domain sweeps for concrete changed
      surfaces
    - `thorough`: all domain sweeps across the full caller-supplied scope
-5. Verify, deduplicate, and rank candidate findings before fixing.
-6. Batch-fix all verified findings, then re-run affected checks and targeted
+6. Verify, deduplicate, and rank candidate findings before fixing.
+7. Batch-fix all verified findings, then re-run affected checks and targeted
    review once.
-7. Write the review result signal and findings hash.
+8. Write the review result signal and findings hash.
 
 Run in the current checkout. Do not run `dk <ticket-or-description>`, Phase 0
 setup, or any branch/worktree setup from this skill. Do not create, switch,

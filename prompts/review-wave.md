@@ -73,7 +73,27 @@ Run available scoped checks first: format/check, lint, typecheck, targeted tests
 generated-code freshness, shell syntax/`shellcheck`, and CI/config validation
 when relevant. Mechanical fixes make the wave non-`CLEAN`.
 
-## 3. Issue Harvest
+## 3. Repro Probe Plan
+
+Before semantic review, decide whether the changed surface supports lightweight
+repro tests. If the repo has runnable tests or scripts, create the smallest
+temporary or committed-in-scope probe needed to prove suspected correctness,
+contract, or regression findings. Prefer the repo's existing test framework; use
+a short standalone script only when that is the local convention or faster for a
+review-only reproduction.
+
+For every high-confidence correctness finding, either:
+
+- cite a failing targeted test/probe command and the observed failure, or
+- explain why no executable repro is practical and cite the static trace that
+  makes the issue mechanically verifiable.
+
+Do not modify production code while creating probes. If a probe file belongs in
+the final change set as a regression test, keep it and include it in the fix. If
+it was review-only, remove it before the wave result and keep the command/output
+in the context pack.
+
+## 4. Issue Harvest
 
 Collect all candidate issues before fixing anything.
 
@@ -115,7 +135,7 @@ Report only confidence >= 50, cite exact file/line unless cross-file evidence
 requires multiple paths, and filter style-only nits unless project rules require
 them.
 
-## 4. Verification
+## 5. Verification
 
 Run an explicit verifier pass over the candidate inventory. Deduplicate by root
 cause, re-read cited code, check project context and accepted debt, reject
@@ -124,7 +144,7 @@ weak/stale evidence, confirm change relevance, and normalize severity.
 Only verified findings may drive fixes. If `ESCALATE_THOROUGH` survives
 verification, write it instead of fixing.
 
-## 5. Batch Fix
+## 6. Batch Fix
 
 If verified findings exist:
 
@@ -143,7 +163,7 @@ allowed only when verified findings remain after a concrete local fix attempt is
 blocked, unsafe, or requires user judgment; include the residual reason in the
 context pack and final report.
 
-## 6. Result Signal
+## 7. Result Signal
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
