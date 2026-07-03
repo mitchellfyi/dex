@@ -135,11 +135,11 @@ W_ISSUE_DETECTION=10
 W_CODE_QUALITY=10
 
 # ── Improvement loop ──────────────────────────────────────────────────────
-# Max improvement iterations per loop.sh invocation
-MAX_IMPROVE_ITERATIONS="${MAX_IMPROVE_ITERATIONS:-20}"
+# Max improvement iterations per loop.sh invocation (0 = run until stopped).
+MAX_IMPROVE_ITERATIONS="${MAX_IMPROVE_ITERATIONS:-0}"
 
-# Cumulative cost limit in USD (abort loop if exceeded)
-COST_LIMIT_USD="${COST_LIMIT_USD:-200}"
+# Cumulative cost limit in USD (0 = disabled).
+COST_LIMIT_USD="${COST_LIMIT_USD:-0}"
 
 # Regression threshold: revert if aggregate score drops by more than this %
 REGRESSION_THRESHOLD="${REGRESSION_THRESHOLD:-5}"

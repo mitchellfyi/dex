@@ -218,6 +218,9 @@ safety_cost_check() {
 import os, sys
 cumulative = float(os.environ['CUMULATIVE_COST'])
 limit = float(os.environ['COST_LIMIT_EFFECTIVE'])
+if limit <= 0:
+    print(f'Cost tracking: \${cumulative:.2f} spent; no limit configured')
+    sys.exit(0)
 if cumulative > limit:
     print(f'COST LIMIT: \${cumulative:.2f} exceeds limit of \${limit:.2f}')
     sys.exit(1)

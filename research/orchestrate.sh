@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Research harness — autonomous orchestrator
-# Runs continuously: execute suite → analyze → improve → validate → merge → repeat
+# Runs continuously: execute suite → analyze → improve → validate → repeat
 # Checks in every iteration and monitors progress.
 #
 # Usage:
@@ -8,6 +8,8 @@
 #   ./research/orchestrate.sh --max-cycles 5             # Limit cycles
 #   ./research/orchestrate.sh --scenario-timeout 7200    # Force 2h per scenario (overrides scenario.json)
 #   ./research/orchestrate.sh --runner codex             # Execute scenarios with Codex CLI
+#   ./research/orchestrate.sh --commit                   # Commit accepted changes
+#   ./research/orchestrate.sh --merge-main               # Merge accepted research branch to main
 #   ./research/orchestrate.sh --allow-main               # Intentionally run on main/master
 #
 # Notes:
@@ -32,6 +34,8 @@ MAX_CYCLES=0   # 0 = infinite
 INTERVAL=30    # seconds between cycles — short on purpose; each cycle is the slow part
 CYCLE=0
 ALLOW_MAIN=0
+COMMIT_ACCEPTED=0
+MERGE_MAIN=0
 SCENARIO_TIMEOUT_FLAG=""
 RUNNER_FLAG=""
 
@@ -40,15 +44,19 @@ while [[ $# -gt 0 ]]; do
     --max-cycles) MAX_CYCLES="$2"; shift 2 ;;
     --scenario-timeout) SCENARIO_TIMEOUT_FLAG="$2"; shift 2 ;;
     --runner) RUNNER_FLAG="$2"; shift 2 ;;
+    --commit) COMMIT_ACCEPTED=1; shift ;;
+    --merge-main) MERGE_MAIN=1; COMMIT_ACCEPTED=1; shift ;;
     --allow-main) ALLOW_MAIN=1; shift ;;
     --help|-h)
-      echo "Usage: $0 [--max-cycles N] [--scenario-timeout SECONDS] [--runner claude|codex] [--allow-main]"
+      echo "Usage: $0 [--max-cycles N] [--scenario-timeout SECONDS] [--runner claude|codex] [--commit] [--merge-main] [--allow-main]"
       echo ""
       echo "  --max-cycles N           Stop after N cycles (0 = infinite, default 0)"
       echo "  --scenario-timeout N     Force every scenario to use N-second budget,"
       echo "                           ignoring scenario.json overrides. Default budget"
       echo "                           is 3600s (set in research/config.sh)."
       echo "  --runner <name>          Scenario runner: claude (default) or codex."
+      echo "  --commit                 Commit accepted improvements. By default, accepted changes remain unstaged."
+      echo "  --merge-main             After committing, merge accepted research branches to main."
       echo "  --allow-main             Allow running on main/master (off by default)."
       exit 0
       ;;
@@ -88,6 +96,8 @@ echo "  Max cycles:       ${MAX_CYCLES:-∞}"
 echo "  Cycle gap:        ${INTERVAL}s"
 echo "  Runner:           ${RUNNER_FLAG:-${RESEARCH_RUNNER:-claude}}"
 echo "  Scenario timeout: ${SCENARIO_TIMEOUT_OVERRIDE:-per-scenario (scenario.json), default ${SCENARIO_TIMEOUT}s}"
+echo "  Commit changes:   $([[ $COMMIT_ACCEPTED -eq 1 ]] && echo yes || echo no)"
+echo "  Merge to main:    $([[ $MERGE_MAIN -eq 1 ]] && echo yes || echo no)"
 echo "  Started:          $(date)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -101,6 +111,11 @@ _orchestrate_commit_pending() {
   local body="${2:-}"
 
   if [[ -z "$(git -C "$DEX_DIR" status --porcelain)" ]]; then
+    return 0
+  fi
+
+  if [[ $COMMIT_ACCEPTED -ne 1 ]]; then
+    _orchestrate_log "Pending changes left unstaged: $subject"
     return 0
   fi
 
@@ -167,17 +182,17 @@ while true; do
   done
 
   if $ALL_HIGH && ! $HAS_ZERO; then
-    _orchestrate_log "All scenarios scoring 90+! Merging to main."
+    _orchestrate_log "All scenarios scoring 90+."
 
     # Commit any pending changes
     _orchestrate_commit_pending \
       "research: all scenarios 90+ (cycle $CYCLE, aggregate $AGG_SCORE)" \
       "Recorded research results for a passing cycle."
 
-    # Merge to main
+    # Merge to main only when explicitly requested.
     current_branch=""
     current_branch=$(dx_branch)
-    if [[ "$current_branch" != "main" && "$current_branch" != "master" ]]; then
+    if [[ $MERGE_MAIN -eq 1 && "$current_branch" != "main" && "$current_branch" != "master" ]]; then
       (cd "$DEX_DIR" && \
         git checkout main && \
         git merge "$current_branch" --no-ff -m "Merge research: all scenarios 90+ (aggregate $AGG_SCORE)" && \
@@ -217,11 +232,11 @@ while true; do
               "research: improve DX (cycle $CYCLE, $AGG_SCORE to $NEW_SCORE)" \
               "Accepted generated research improvements after validation."
 
-            # Merge to main if improved
+            # Merge to main only when explicitly requested.
             if python3 -c "exit(0 if $NEW_SCORE > $AGG_SCORE else 1)" 2>/dev/null; then
               current_branch=""
               current_branch=$(dx_branch)
-              if [[ "$current_branch" != "main" && "$current_branch" != "master" ]]; then
+              if [[ $MERGE_MAIN -eq 1 && "$current_branch" != "main" && "$current_branch" != "master" ]]; then
                 (cd "$DEX_DIR" && \
                   git checkout main && \
                   git merge "$current_branch" --no-ff -m "Merge research improvement: cycle $CYCLE ($AGG_SCORE → $NEW_SCORE)" && \

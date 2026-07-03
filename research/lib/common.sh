@@ -81,6 +81,42 @@ list_scenarios() {
   done
 }
 
+scenario_language() {
+  local name="$1"
+  local file
+  file="$(scenario_dir "$name")/scenario.json"
+  [[ -f "$file" ]] || { echo "any"; return; }
+  json_field "$file" "language"
+}
+
+scenario_missing_prerequisites() {
+  local name="$1"
+  local language
+  language="$(scenario_language "$name")"
+  [[ -n "$language" ]] || language="any"
+
+  case "$language" in
+    any)
+      return 0
+      ;;
+    go)
+      command -v go >/dev/null 2>&1 || { echo "go"; return 0; }
+      ;;
+    node|typescript)
+      command -v node >/dev/null 2>&1 || { echo "node"; return 0; }
+      command -v npm >/dev/null 2>&1 || { echo "npm"; return 0; }
+      ;;
+    python)
+      command -v python3 >/dev/null 2>&1 || { echo "python3"; return 0; }
+      ;;
+    polyglot)
+      command -v node >/dev/null 2>&1 || { echo "node"; return 0; }
+      command -v npm >/dev/null 2>&1 || { echo "npm"; return 0; }
+      command -v python3 >/dev/null 2>&1 || { echo "python3"; return 0; }
+      ;;
+  esac
+}
+
 # ── JSON helpers (no external deps) ────────────────────────────────────────
 
 # Read a field from a simple JSON file (no nested objects)

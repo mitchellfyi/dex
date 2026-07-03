@@ -28,13 +28,13 @@ rubric_correctness() {
 
   local sections=(
     "[Gg]oal"
-    "[Nn]on-goal\|[Oo]ut of scope"
-    "[Ss]ub-ticket\|[Tt]icket\|[Bb]reakdown"
+    "[Nn]on-goal|[Oo]ut of scope"
+    "[Ss]ub-ticket|[Tt]icket|[Bb]reakdown"
     "[Dd]ependenc"
     "[Rr]isk"
-    "[Oo]pen question\|[Aa]ssumption"
-    "[Aa]rchitect\|[Cc]omponent"
-    "[Ss]equenc\|[Oo]rder"
+    "[Oo]pen question|[Aa]ssumption"
+    "[Aa]rchitect|[Cc]omponent"
+    "[Ss]equenc|[Oo]rder"
   )
   for s in "${sections[@]}"; do
     grep -Eq "$s" "$doc" && score=$((score + 5))
@@ -48,7 +48,7 @@ rubric_correctness() {
     score=$((score + 10))
   fi
 
-  if grep -Eqi 'size[: ]+[sml]|story point|[0-9]+ ?pts?' "$doc"; then
+  if grep -Eqi 'size[: ]+[sml]|story point|[0-9]+ ?pts?|\|[[:space:]]*[SML][[:space:]]*\|' "$doc"; then
     score=$((score + 5))
   fi
 
@@ -101,7 +101,7 @@ rubric_issue_detection() {
 
   local score=0
   local questions
-  questions=$(awk '/[Oo]pen question|[Aa]ssumption/{flag=1} flag && /\?/{count++} END{print count+0}' "$doc")
+  questions=$(awk '/[Oo]pen [Qq]uestion|[Aa]ssumption/{flag=1} flag && /\?/{count++} END{print count+0}' "$doc")
   if [[ "$questions" -ge 3 ]]; then
     score=$((score + 50))
   elif [[ "$questions" -ge 1 ]]; then

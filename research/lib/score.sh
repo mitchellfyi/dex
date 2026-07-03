@@ -172,9 +172,15 @@ _score_verification() {
     score=$(_verify_go "$ws")
   else
     # No recognizable project — check if any code files exist at all
-    local code_files
+    local code_files doc_files
     code_files=$(find "$ws" -maxdepth 3 \( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.go" \) ! -path "*/node_modules/*" 2>/dev/null | wc -l)
-    [[ $code_files -gt 0 ]] && score=50  # Partial credit for producing code
+    if [[ $code_files -gt 0 ]]; then
+      score=50  # Partial credit for producing code without recognizable tooling
+    else
+      doc_files=$(find "$ws" -maxdepth 3 -type f -name "*.md" \
+        ! -name "AGENTS.md" ! -name "CLAUDE.md" ! -path "*/.git/*" 2>/dev/null | wc -l)
+      [[ $doc_files -gt 0 ]] && score=100
+    fi
   fi
 
   echo "$score"
@@ -211,7 +217,7 @@ _verify_node() {
     checks=$((checks + 1))
     local test_output test_exit=0
     test_output=$(cd "$ws" && npm test 2>&1) || test_exit=$?
-    if [[ $test_exit -eq 0 ]]; then
+    if [[ $test_exit -eq 0 ]] && ! _node_test_output_has_zero_tests "$test_output"; then
       passed=$((passed + 1))
     else
       # Parse Jest output for pass rate (e.g., "Tests: 1 failed, 77 passed, 78 total")
@@ -232,6 +238,11 @@ _verify_node() {
   echo "$score"
 }
 
+_node_test_output_has_zero_tests() {
+  local output="$1"
+  grep -qiE 'no tests found|(^|[^0-9])tests?[[:space:]]+0([^0-9]|$)|(^|[^0-9])0[[:space:]]+(passing|tests?[[:space:]]+total)([^0-9]|$)' <<< "$output"
+}
+
 _verify_python() {
   local ws="$1"
   local score=0 checks=0 passed=0
@@ -246,14 +257,23 @@ _verify_python() {
     passed=$((passed + 1))  # No deps needed
   fi
 
-  # Run tests
+  # Run tests. Prefer the project's pytest path, but do not depend on pytest
+  # being installed globally when uv can run it hermetically.
   checks=$((checks + 1))
-  if (cd "$ws" && python3 -m pytest &>/dev/null) || (cd "$ws" && python3 -m unittest discover &>/dev/null); then
+  if (cd "$ws" && python3 -m pytest &>/dev/null) || \
+    { command -v uv >/dev/null 2>&1 && _python_has_test_files "$ws" && (cd "$ws" && uvx pytest &>/dev/null); } || \
+    (cd "$ws" && python3 -m unittest discover &>/dev/null); then
     passed=$((passed + 1))
   fi
 
   [[ $checks -gt 0 ]] && score=$(( (passed * 100) / checks ))
   echo "$score"
+}
+
+_python_has_test_files() {
+  local ws="$1"
+  [[ -d "$ws/tests" ]] || return 1
+  find "$ws/tests" -type f -name "test_*.py" 2>/dev/null | grep -q .
 }
 
 _verify_go() {

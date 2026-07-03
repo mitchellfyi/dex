@@ -130,12 +130,23 @@ echo ""
 # ── Run each scenario ──────────────────────────────────────────────────────
 TOTAL_SCORE=0
 SCENARIO_COUNT=0
+SCENARIO_INDEX=0
 FAILED=()
+SKIPPED=()
 
 for scenario in "${SCENARIOS[@]}"; do
+  SCENARIO_INDEX=$((SCENARIO_INDEX + 1))
   echo "────────────────────────────────────────────────────────────────────"
-  log_step "[$((SCENARIO_COUNT + 1))/${#SCENARIOS[@]}] $scenario"
+  log_step "[$SCENARIO_INDEX/${#SCENARIOS[@]}] $scenario"
   echo "────────────────────────────────────────────────────────────────────"
+
+  missing_prereq="$(scenario_missing_prerequisites "$scenario")"
+  if [[ -n "$missing_prereq" ]]; then
+    log_warn "Skipping $scenario: missing required toolchain command: $missing_prereq"
+    SKIPPED+=("$scenario ($missing_prereq)")
+    echo ""
+    continue
+  fi
 
   local_result_dir="$RUN_DIR/$scenario"
   mkdir -p "$local_result_dir"
@@ -166,15 +177,24 @@ done
 # ── Generate summary ───────────────────────────────────────────────────────
 log_step "Generating summary..."
 
-report_summary "$RUN_ID" "$RUN_DIR" > /dev/null 2>&1 || true
+if [[ $SCENARIO_COUNT -gt 0 ]]; then
+  report_summary "$RUN_ID" "$RUN_DIR" > /dev/null 2>&1 || true
+fi
 
 # Update latest symlink
 ln -sfn "$RUN_ID" "$RESULTS_DIR/latest"
 
 # ── Print results ──────────────────────────────────────────────────────────
-report_table "$RUN_DIR"
+if [[ $SCENARIO_COUNT -gt 0 ]]; then
+  report_table "$RUN_DIR"
+else
+  log_warn "No runnable scenarios in this selection"
+fi
 
-AVG_SCORE=$((TOTAL_SCORE / SCENARIO_COUNT))
+AVG_SCORE=0
+if [[ $SCENARIO_COUNT -gt 0 ]]; then
+  AVG_SCORE=$((TOTAL_SCORE / SCENARIO_COUNT))
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Run complete: $RUN_ID"
 echo "  Average score: $AVG_SCORE / 100"
@@ -186,6 +206,14 @@ if [[ ${#FAILED[@]} -gt 0 ]]; then
   echo "  Low-scoring scenarios:"
   for f in "${FAILED[@]}"; do
     echo "    - $f"
+  done
+fi
+
+if [[ ${#SKIPPED[@]} -gt 0 ]]; then
+  echo ""
+  echo "  Skipped scenarios:"
+  for s in "${SKIPPED[@]}"; do
+    echo "    - $s"
   done
 fi
 

@@ -86,45 +86,69 @@ rubric_issue_detection() {
 
   local score=0
 
-  # Helper — look for tier classification of a specific comment.
+  # Helper — extract one markdown section for a specific comment ID.
   _section() {
-    awk -v id="$1" '
-      $0 ~ ("\\b" id "\\b") { capture = 1; out = ""; next }
-      capture { out = out "\n" $0; if (/\\bC[1-8]\\b/ && $0 !~ ("\\b" id "\\b")) { print out; exit } }
-      END { print out }
-    ' "$doc"
+    python3 - "$doc" "$1" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+target = sys.argv[2]
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+section = []
+capturing = False
+target_re = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(target)}(?![A-Za-z0-9_])")
+next_re = re.compile(r"(?<![A-Za-z0-9_])C[1-8](?![A-Za-z0-9_])")
+
+for line in lines:
+    if target_re.search(line):
+        capturing = True
+        section = [line]
+        continue
+    if capturing and next_re.search(line):
+        break
+    if capturing:
+        section.append(line)
+
+print("\n".join(section))
+PY
+  }
+
+  _has_tier() {
+    _section "$1" | grep -qiE "tier[^0-9A-Za-z]*$2|tier $2"
   }
 
   # C1 — bug, expect Tier 1, expect fix
-  if _section C1 | grep -qiE 'tier[: ]+1|tier 1' && _section C1 | grep -qiE 'fix|guard|null check'; then
+  if _has_tier C1 1 && _section C1 | grep -qiE 'fix|guard|null check'; then
     score=$((score + 14))
   fi
   # C2 — security, expect Tier 1, expect fix + blocking
-  if _section C2 | grep -qiE 'tier[: ]+1|tier 1' && _section C2 | grep -qiE 'fix|hash|bcrypt|remove|block'; then
+  if _has_tier C2 1 && _section C2 | grep -qiE 'fix|hash|bcrypt|remove|block'; then
     score=$((score + 14))
   fi
   # C3 — nit, expect Tier 2
-  if _section C3 | grep -qiE 'tier[: ]+2|tier 2|nit'; then
+  if _has_tier C3 2 || _section C3 | grep -qiE 'nit'; then
     score=$((score + 12))
   fi
   # C4 — style; partially wrong (one of the two would-be `let`s IS reassigned)
   # Reward DX for catching the inconsistency (decline part of the suggestion)
-  if _section C4 | grep -qiE 'tier[: ]+2|tier 2'; then
+  if _has_tier C4 2; then
     score=$((score + 8))
     if _section C4 | grep -qiE 'reassign|order.*reassign|partial'; then
       score=$((score + 8))
     fi
   fi
   # C5 — architecture; expect Tier 3 escalate
-  if _section C5 | grep -qiE 'tier[: ]+3|tier 3|escalat|out of scope|separate'; then
+  if _has_tier C5 3 || _section C5 | grep -qiE 'escalat|out of scope|separate'; then
     score=$((score + 14))
   fi
   # C6 — question; Tier 2 (clarify, ask, or explain)
-  if _section C6 | grep -qiE 'tier[: ]+2|tier 2|clarif|explain|ask'; then
+  if _has_tier C6 2 || _section C6 | grep -qiE 'clarif|explain|ask'; then
     score=$((score + 10))
   fi
   # C7 — scope creep; expect Tier 3 escalate / decline
-  if _section C7 | grep -qiE 'tier[: ]+3|tier 3|scope|separate ticket|defer|decline'; then
+  if _has_tier C7 3 || _section C7 | grep -qiE 'scope|separate ticket|defer|decline'; then
     score=$((score + 14))
   fi
   # C8 — approval; expect no-action or acknowledge

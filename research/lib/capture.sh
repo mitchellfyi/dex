@@ -101,12 +101,21 @@ capture_run() {
   #   2. scenario.json "timeout"   — per-scenario value (non-zero)
   #   3. SCENARIO_TIMEOUT          — global default from config.sh
   local timeout="$SCENARIO_TIMEOUT"
+  local configured_timeout=""
   if [[ -f "$scenario_dir/scenario.json" ]]; then
     local custom_timeout
     custom_timeout=$(json_field "$scenario_dir/scenario.json" "timeout")
-    [[ -n "$custom_timeout" && "$custom_timeout" != "0" ]] && timeout="$custom_timeout"
+    if [[ -n "$custom_timeout" && "$custom_timeout" != "0" ]]; then
+      timeout="$custom_timeout"
+      configured_timeout="$custom_timeout"
+    fi
   fi
-  [[ -n "${SCENARIO_TIMEOUT_OVERRIDE:-}" ]] && timeout="$SCENARIO_TIMEOUT_OVERRIDE"
+  if [[ -n "${SCENARIO_TIMEOUT_OVERRIDE:-}" ]]; then
+    if [[ -n "$configured_timeout" && "$SCENARIO_TIMEOUT_OVERRIDE" =~ ^[0-9]+$ && "$configured_timeout" =~ ^[0-9]+$ && "$SCENARIO_TIMEOUT_OVERRIDE" -lt "$configured_timeout" ]]; then
+      log_warn "Forced timeout ${SCENARIO_TIMEOUT_OVERRIDE}s is below $scenario's configured ${configured_timeout}s budget; treat this as a stress run."
+    fi
+    timeout="$SCENARIO_TIMEOUT_OVERRIDE"
+  fi
 
   mkdir -p "$result_dir"
 

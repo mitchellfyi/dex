@@ -3,12 +3,13 @@
 # Runs suite → analyzes failures → improves DX → validates → repeats.
 #
 # Usage:
-#   ./research/loop.sh                          # Default: 20 iterations
+#   ./research/loop.sh                          # Run until stopped
 #   ./research/loop.sh --max-iterations 5       # Custom iteration limit
 #   ./research/loop.sh --cost-limit 100         # Custom cost limit (USD)
 #   ./research/loop.sh --scenario cli-todo-app  # Focus on one scenario
 #   ./research/loop.sh --skip-llm-judge         # Faster runs without LLM scoring
 #   ./research/loop.sh --runner codex           # Execute scenarios with Codex CLI
+#   ./research/loop.sh --commit                 # Commit accepted changes
 #   ./research/loop.sh --allow-main             # Intentionally run on main/master
 
 set -euo pipefail
@@ -28,6 +29,7 @@ SCENARIO_FLAG=""
 SKIP_LLM_FLAG=""
 RUN_FLAGS=()
 ALLOW_MAIN=0
+COMMIT_ACCEPTED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,12 +55,20 @@ while [[ $# -gt 0 ]]; do
       RUN_FLAGS+=(--runner "$2")
       shift 2
       ;;
+    --commit)
+      COMMIT_ACCEPTED=1
+      shift
+      ;;
     --allow-main)
       ALLOW_MAIN=1
       shift
       ;;
     --help|-h)
-      echo "Usage: $0 [--max-iterations N] [--cost-limit USD] [--scenario name] [--skip-llm-judge] [--runner claude|codex] [--allow-main]"
+      echo "Usage: $0 [--max-iterations N] [--cost-limit USD] [--scenario name] [--skip-llm-judge] [--runner claude|codex] [--commit] [--allow-main]"
+      echo ""
+      echo "  --max-iterations N   Stop after N experiments (0 = run until stopped, default 0)"
+      echo "  --cost-limit USD     Stop when estimated cost exceeds USD (0 = disabled, default 0)"
+      echo "  --commit             Commit accepted improvements. By default, accepted changes remain unstaged."
       exit 0
       ;;
     *)
@@ -82,9 +92,10 @@ echo "  DX AUTORESEARCH — Improvement Loop"
 echo ""
 echo "  Branch:         $(dx_branch)"
 echo "  DX commit:      $(dx_commit_hash)"
-echo "  Max iterations: $MAX_ITER"
-echo "  Cost limit:     \$$COST_LIMIT"
+echo "  Max iterations: ${MAX_ITER:-0} (0 = until stopped)"
+echo "  Cost limit:     ${COST_LIMIT:-0} (0 = disabled)"
 echo "  Scenario:       ${SCENARIO_FLAG:-all}"
+echo "  Commit changes: $([[ $COMMIT_ACCEPTED -eq 1 ]] && echo yes || echo no)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -121,12 +132,23 @@ PREV_RUN_ID="$BASELINE_RUN_ID"
 CUMULATIVE_COST=0
 ITERS_COMPLETED=0
 
+if [[ ! "$MAX_ITER" =~ ^[0-9]+$ ]]; then
+  log_error "--max-iterations must be a non-negative integer"
+  exit 1
+fi
+
 # ── Improvement loop ──────────────────────────────────────────────────────
-for iter in $(seq 1 "$MAX_ITER"); do
+iter=0
+while [[ "$MAX_ITER" -eq 0 || "$iter" -lt "$MAX_ITER" ]]; do
+  iter=$((iter + 1))
   ITERS_COMPLETED=$iter
   echo ""
   echo "════════════════════════════════════════════════════════════════════"
-  log_step "Iteration $iter / $MAX_ITER"
+  if [[ "$MAX_ITER" -eq 0 ]]; then
+    log_step "Iteration $iter / infinity"
+  else
+    log_step "Iteration $iter / $MAX_ITER"
+  fi
   echo "════════════════════════════════════════════════════════════════════"
   echo ""
 
@@ -176,7 +198,7 @@ for iter in $(seq 1 "$MAX_ITER"); do
 
   # Copy patch to applied/
   cp "$PATCH_FILE" "$IMPROVEMENTS_DIR/applied/$(basename "$PATCH_FILE")"
-  log_info "Applied changes; validating before commit"
+  log_info "Applied experimental changes; validating before accept/reject"
 
   # ── Smoke test ─────────────────────────────────────────────────────────
   log_step "Running smoke test ($SMOKE_SCENARIO)..."
@@ -232,14 +254,17 @@ for iter in $(seq 1 "$MAX_ITER"); do
   _changelog "$(report_comparison "$PREV_SUMMARY" "$CURR_DIR/summary.json" 2>/dev/null || echo "")"
   _changelog ""
 
-  (cd "$DEX_DIR" && \
-    git add -A && \
-    git commit \
-      -m "research: iteration $iter - improve DX based on harness results" \
-      -m "Accepted generated research changes after smoke and full-suite validation." \
-      -m "Co-Authored-By: DX Autoresearch <noreply@dexcode.ai>" 2>/dev/null) || true
-
-  log_info "Committed accepted changes"
+  if [[ $COMMIT_ACCEPTED -eq 1 ]]; then
+    (cd "$DEX_DIR" && \
+      git add -A && \
+      git commit \
+        -m "research: iteration $iter - improve DX based on harness results" \
+        -m "Accepted generated research changes after smoke and full-suite validation." \
+        -m "Co-Authored-By: DX Autoresearch <noreply@dexcode.ai>" 2>/dev/null) || true
+    log_info "Committed accepted changes"
+  else
+    log_info "Accepted changes remain unstaged for review"
+  fi
 
   PREV_SUMMARY="$CURR_DIR/summary.json"
   PREV_RUN_ID="$CURR_RUN_ID"

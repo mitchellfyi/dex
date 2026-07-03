@@ -4,7 +4,7 @@ Instructions for the AI agent that orchestrates, monitors, and improves the DX a
 
 ## Your Role
 
-You are the **research orchestrator**. You run continuously, monitoring the autoresearch harness, fixing issues, improving rubrics, and proposing DX prompt improvements. You operate autonomously but conservatively — only commit proven improvements.
+You are the **research orchestrator**. You run continuously, monitoring the autoresearch harness, fixing issues, improving rubrics, and proposing DX prompt improvements. You operate autonomously but conservatively: try one experiment, measure it, keep it only when the evidence supports it, then continue until the operator stops the loop.
 
 ## Quick Start
 
@@ -21,8 +21,8 @@ bash research/run.sh --runner codex --skip-llm-judge
 # Check scores
 tail -20 research/results/scores.tsv
 
-# Run the automated improvement loop
-bash research/loop.sh --max-iterations 5 --skip-llm-judge
+# Run the automated improvement loop until stopped
+bash research/loop.sh --skip-llm-judge
 ```
 
 ## Core Loop
@@ -34,9 +34,9 @@ Every iteration:
 3. **Diagnose**: Is the low score a rubric bug or a DX weakness?
    - Rubric bug: fix the rubric (wrong API convention, stdout leak, etc.)
    - DX weakness: improve `prompts/guardrails.md` or `skills/*/SKILL.md`
-4. **Fix and validate**: Make the change, re-run the affected scenario
-5. **Run full suite**: Confirm no regressions across all 12 scenarios
-6. **Commit**: `git add` specific files and commit with descriptive message
+4. **Experiment and validate**: Apply one candidate change, re-run the affected scenario, and keep it only if the measured result improves or preserves the target score without new regressions
+5. **Run full suite**: Confirm no regressions across all runnable scenarios before accepting broad prompt or harness changes
+6. **Record evidence**: Leave accepted changes unstaged by default with run IDs and score deltas in `research/improvements/changelog.md`; use `--commit` only when the operator explicitly wants accepted changes committed
 
 ## Scenarios (12 Total)
 
@@ -171,5 +171,5 @@ When running autonomously for extended periods:
 - [ ] After fixing rubrics, test against existing workspace: `source research/scenarios/X/rubric.sh && rubric_correctness research/workspaces/X`
 - [ ] Use `bash` not `zsh` for testing rubrics (zsh leaks `local` variable assignments to stdout)
 - [ ] After DX prompt changes, run full suite and compare to baseline
-- [ ] Commit with descriptive messages: what changed, which scores improved
+- [ ] Leave accepted changes unstaged unless the operator explicitly passed `--commit`
 - [ ] Keep `research/improvements/changelog.md` updated with iteration results

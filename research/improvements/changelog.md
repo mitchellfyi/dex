@@ -287,3 +287,18 @@ Rubric fixes validated: edge-ambiguous-spec +7 (naming), sql-orm-api +5 (SQL inj
 - Baseline edge-no-tests run `run-20260526-082450`: **87** total, exit 124, duration 600s, robustness 70.
 - Post-change edge-no-tests run `run-20260526-084424`: **87** total, exit 0, duration 576s, robustness 80.
 - Signal: aggregate unchanged, but the timeout/README failure was removed and robustness improved by 10 points. Test quality dropped 90 -> 85, so this needs broader reruns before treating it as a net score gain.
+
+### Manual Run: Continuous Experiment Loop + Python Verification (2026-07-01)
+
+**Harness changes:**
+- **research/loop.sh / research/config.sh:** The improvement loop now runs until stopped by default (`MAX_IMPROVE_ITERATIONS=0`). Accepted changes stay unstaged unless the operator passes `--commit`.
+- **research/orchestrate.sh:** Continuous orchestration no longer commits or merges to main by default. `--commit` and `--merge-main` make those actions explicit.
+- **research/lib/safety.sh:** A cost limit of `0` now means disabled, matching the continuous-run default.
+- **research/lib/score.sh:** Python verification can run pytest through `uvx pytest` when pytest-style tests exist but global `python3 -m pytest` is unavailable.
+
+**Validation:**
+- Script checks: `bash -n` and `shellcheck -x` passed for the changed research scripts.
+- Help probes: `research/loop.sh --help` and `research/orchestrate.sh --help` show the new no-commit defaults and explicit commit flags.
+- Config probe: sourcing `research/config.sh` reports `MAX_IMPROVE_ITERATIONS=0` and `COST_LIMIT_USD=0`.
+- Python verifier probe: `_verify_python research/workspaces/data-validation-lib` improved from **50** to **100** by using `uvx pytest`.
+- Rescore with the original stream evidence: `data-validation-lib` improved from **64** to **71** total (`run-20260701-164131` baseline), with verification **50 -> 100**.
