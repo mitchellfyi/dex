@@ -125,6 +125,11 @@ updated.
 Factory sync is opt-in. Dex always appends to `events.jsonl` first, then tries
 to send unsynced events to the configured HTTP collector.
 
+When DexCode login is configured, `dx whoami` shows the connected account,
+project, API URL, sync URL, and whether session and project-context sync are
+enabled. This is the quickest local check that new runs will be associated with
+the intended DexCode project before starting a long lifecycle.
+
 Minimum configuration:
 
 ```bash

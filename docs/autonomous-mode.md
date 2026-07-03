@@ -315,6 +315,7 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_FACTORY_RUN_TOKEN` | unset | Run-scoped bearer token fallback for Factory event submission |
 | `DEX_RUN_TOKEN` | unset | Generic run token fallback for Factory event submission |
 | `DEX_FACTORY_BATCH_SIZE` | `50` | Maximum events per Factory sync request |
+| `DEX_FACTORY_MAX_BATCHES_PER_FLUSH` | `20` | Maximum queued event batches to send in one flush |
 | `DEX_FACTORY_TIMEOUT_SECONDS` | `5` | Factory HTTP request timeout |
 | `DEX_FACTORY_RETRY_BASE_SECONDS` | `1` | Initial retry backoff after a failed Factory sync request |
 | `DEX_FACTORY_RETRY_MAX_SECONDS` | `60` | Maximum retry backoff for Factory sync |

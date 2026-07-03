@@ -43,6 +43,18 @@ dx_dexcode_api_url() {
   printf '%s\n' "${configured%/}"
 }
 
+dx_dexcode_factory_url() {
+  local configured api_url
+  configured=$(dx_dexcode_config_value "sync.factory_url" 2>/dev/null || true)
+  configured="${DEX_FACTORY_URL:-$configured}"
+  if [[ -n "$configured" ]]; then
+    printf '%s\n' "${configured%/}"
+    return 0
+  fi
+  api_url=$(dx_dexcode_api_url)
+  printf '%s\n' "$api_url"
+}
+
 dx_dexcode_token() {
   if [[ -n "${DEXCODE_TOKEN:-}" ]]; then
     printf '%s\n' "$DEXCODE_TOKEN"
@@ -329,7 +341,7 @@ dx_dexcode_whoami() {
     offline=1
   fi
 
-  local token api_url tmp_dir profile_file account project project_slug
+  local token api_url sync_url tmp_dir profile_file account project project_slug session_sync context_sync
   token=$(dx_dexcode_token 2>/dev/null || true)
   if [[ -z "$token" ]]; then
     dx_warn "DexCode is not connected. Run 'dx login' to sync local sessions."
@@ -354,9 +366,14 @@ PY
     command rm -rf "$tmp_dir"
   fi
 
+  sync_url=$(dx_dexcode_factory_url)
   account=$(dx_dexcode_config_value "account.name" 2>/dev/null || dx_dexcode_config_value "account.slug" 2>/dev/null || printf 'unknown')
   project=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'unknown')
   project_slug=$(dx_dexcode_config_value "default_project.slug" 2>/dev/null || true)
+  session_sync="enabled"
+  context_sync="enabled"
+  [[ "${DEXCODE_SYNC:-1}" == "0" ]] && session_sync="disabled"
+  [[ "${DEXCODE_CONTEXT_SYNC:-1}" == "0" ]] && context_sync="disabled"
   dx_info "DexCode account: ${account}"
   if [[ -n "$project_slug" && "$project_slug" != "$project" ]]; then
     dx_info "Connected project: ${project} (${project_slug})"
@@ -364,6 +381,9 @@ PY
     dx_info "Connected project: ${project}"
   fi
   dx_info "API: ${api_url}"
+  dx_info "DexCode sync URL: ${sync_url}"
+  dx_info "Session sync: ${session_sync}"
+  dx_info "Project context sync: ${context_sync}"
 }
 
 dx_dexcode_project_count() {
@@ -822,11 +842,12 @@ dx_dexcode_prepare_run_sync() {
   local run_id="$1" repo_dir="$2" workspace_mode="$3" workspace_name="$4" raw_input="$5" command_name="${6:-dx}"
   [[ "${DEXCODE_SYNC:-1}" != "0" ]] || return 0
 
-  local token api_url payload tmp_dir response_file http_status
+  local token api_url factory_url payload tmp_dir response_file http_status
   token=$(dx_dexcode_token 2>/dev/null || true)
   [[ -n "$token" ]] || return 0
 
   api_url=$(dx_dexcode_api_url)
+  factory_url=$(dx_dexcode_factory_url)
   payload=$(dx_dexcode_create_run_payload "$run_id" "$repo_dir" "$workspace_mode" "$workspace_name" "$raw_input" "$command_name") || return 0
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-run.XXXXXX") || return 0
   response_file="$tmp_dir/run.json"
@@ -841,8 +862,8 @@ dx_dexcode_prepare_run_sync() {
   if [[ "$http_status" == "200" || "$http_status" == "201" ]]; then
     export DEX_RUN_TOKEN="$token"
     export DEX_FACTORY_TOKEN="$token"
-    export DEX_FACTORY_URL="$api_url"
-    export DEX_FACTORY_EVENTS_ENDPOINT="${api_url}/api/v1/runs/${run_id}/events/batch"
+    export DEX_FACTORY_URL="$factory_url"
+    export DEX_FACTORY_EVENTS_ENDPOINT="${factory_url}/api/v1/runs/${run_id}/events/batch"
     export DEX_FACTORY_SYNC=true
     dx_info "DexCode tracking enabled for ${run_id}."
     dx_dexcode_sync_project_context "$repo_dir"
