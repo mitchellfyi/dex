@@ -436,13 +436,16 @@ DX_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 # Auto chooses a starting depth from diff size/risk; review waves may escalate.
 # Override depth: DEX_REVIEW_PROFILE=thorough
 # Override exact loop gates: DEX_REVIEW_CLEAN_PASSES=5 DEX_REVIEW_MAX_ITERATIONS=25
+# Review waves launch with MCP servers disabled (waves only use local tools);
+# this avoids each spawned session forking node/Chromium MCP processes. Restore
+# the inherited MCP config with DEX_REVIEW_DISABLE_MCP=0.
 DX_REVIEW_PROFILE=auto
 DX_REVIEW_LIGHT_CLEAN_PASSES=1
 DX_REVIEW_STANDARD_CLEAN_PASSES=2
 DX_REVIEW_THOROUGH_CLEAN_PASSES=3
 DX_REVIEW_LIGHT_MAX_ITERATIONS=4
 DX_REVIEW_STANDARD_MAX_ITERATIONS=6
-DX_REVIEW_THOROUGH_MAX_ITERATIONS=10
+DX_REVIEW_THOROUGH_MAX_ITERATIONS=20
 # Backward-compatible fallback for callers that source these constants directly.
 # shellcheck disable=SC2034
 DX_REVIEW_CLEAN_PASSES=$DX_REVIEW_THOROUGH_CLEAN_PASSES
@@ -2963,6 +2966,20 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
   fi
   rm -f "$review_context_file" 2>/dev/null
 
+  # Review waves only need local tools (Read/Grep/Bash/git); they never call
+  # MCP servers. Left enabled, every spawned wave session loads the full MCP
+  # config, and browser-backed servers (playwright, chrome-devtools) each fork
+  # a Chromium at startup — measured at ~500MB and 5 extra processes per
+  # session, multiplied by every concurrent agent. Launch waves with MCP off by
+  # default. Set DEX_REVIEW_DISABLE_MCP=0 to restore the inherited MCP config.
+  local review_mcp_flags=()
+  if [[ "${DEX_REVIEW_DISABLE_MCP:-1}" != "0" ]]; then
+    local review_empty_mcp="$DX_LOOP_DIR/empty-mcp.json"
+    mkdir -p "$DX_LOOP_DIR"
+    __dx_write_state "$review_empty_mcp" '{"mcpServers":{}}'
+    review_mcp_flags=(--strict-mcp-config --mcp-config "$review_empty_mcp")
+  fi
+
   local clean_passes=0
   local review_iteration=0
 
@@ -3067,7 +3084,7 @@ ${message}"
       exit_code=$?
     else
       local pass_session_name="${session_name}-pass-${review_iteration}"
-      local claude_args=("${DX_CLAUDE_FLAGS[@]}" -n "$pass_session_name")
+      local claude_args=("${DX_CLAUDE_FLAGS[@]}" "${review_mcp_flags[@]}" -n "$pass_session_name")
 
       DEX_SESSION_ID="$session_id" \
       DEX_LOOP_ACTIVE=1 \
