@@ -29,7 +29,7 @@ Optional: a PR number (e.g., `/dxwatchpr 456`). If omitted, operates on the curr
 Before running any PR, CI, GitHub, or repository commands, check whether a direct user prompt has paused scheduled Phase 6 watchers:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 WATCH_NAME="pr"
 if dx_watch_pause_active "$SESSION_ID"; then
@@ -160,7 +160,7 @@ If this cycle pushed any new commits (from a CI fix or `/dxprreview`), re-trigge
 ```bash
 POST_HEAD=$(git rev-parse HEAD)
 if [[ "$PRE_HEAD" != "$POST_HEAD" ]]; then
-  source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+  source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
   # For each request-type reviewer:
   for h in "${REQUEST_REVIEWERS[@]}"; do
     dx_maintenance_request_reviewer "$PR_NUM" "$h"

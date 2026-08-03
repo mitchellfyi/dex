@@ -121,6 +121,10 @@ touch "$(dx_active_file "$(dx_session_id)")"
 
 The `.active` file is cleaned up automatically when the loop completes (`.complete` file found) or reaches max iterations.
 
+**Ownership.** Dex session ids are derived from the repo + worktree/branch path, so two Claude sessions opened in the same checkout resolve the same id. To keep a loop from capturing bystander sessions, the Stop hook records the owning Claude session id (from the hook payload) in an `.owner` file next to `.active`. Env-activated sessions (`DEX_LOOP_ACTIVE=1` with an explicit `DEX_SESSION_ID`) own their loop and (re)claim it on every stop; file-activated sessions claim only when unclaimed and otherwise stay inert. Wrappers clear the claim before each launch so relaunch/`--resume` re-claims cleanly.
+
+**Review-wave passes.** Sessions launched with `DEX_REVIEW_PASS_ACTIVE=1` (dxreviewloop waves) run under a pass-scoped session id (`<session>-pass-<N>-<pid>`) and are hard-isolated in the Stop hook: the inline phase handoff never runs for them, so a completing wave can only take the plain loop-complete exit — it can never advance the lifecycle phase or be instructed to commit/push. A push-blocking guard additionally rejects `git push` and `gh pr` mutations in review passes and in active-loop Phases 1-3 (see `hooks/guards/review-pass-no-push.md` and `hooks/guards/lifecycle-phase-push.md`).
+
 To run without the audit loop:
 
 ```bash

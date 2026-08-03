@@ -1310,7 +1310,9 @@ __dx_configure_inline_phase() {
   mkdir -p "$DX_LOOP_DIR"
   touch "$(dx_active_file "$session_id")"
   printf '%s\n' "inline" > "$(dx_handoff_mode_file "$session_id")"
-  rm -f "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" "$(dx_watch_pause_file "$session_id")"
+  # Clear any ownership claim so the Claude session launched next can claim
+  # this loop (relaunch/--resume gets a fresh Claude session id).
+  rm -f "$(dx_owner_file "$session_id")" "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" "$(dx_watch_pause_file "$session_id")"
 
   min_audits=$(__dx_phase_min_audits "$step")
   promise=$(__dx_phase_promise "$step")
@@ -1536,7 +1538,7 @@ __dx_codex_direct_phase_handoff() {
   dx_event_emit_for_session "$session_id" "run.completed" "info" "Dex lifecycle completed" "6" "{\"final_phase\":6}"
   dx_run_log_append_for_session "$session_id" "info" "dx" "Dex lifecycle completed"
   dx_run_write_summary_for_session "$session_id" "completed" "Dex lifecycle completed"
-  rm -f "$(dx_active_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
   return 0
 }
 
@@ -1674,7 +1676,7 @@ __dx_run_phases_inline() {
     dx_run_log_append_for_session "$session_id" "warn" "dx" "Lifecycle paused at Phase ${final_step}: manual intervention requested"
     dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step")"
     rm -f \
-      "$(dx_active_file "$session_id")" \
+      "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
       "$(dx_loop_config_file "$session_id")" \
       "$(dx_loop_file "$session_id")" \
       "$(dx_handoff_mode_file "$session_id")" \
@@ -1700,7 +1702,7 @@ __dx_run_phases_inline() {
       pause_reason="max audit iterations reached (${iterations}/${max_iterations})"
     fi
 
-    rm -f "$loop_file" "$(dx_active_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
+    rm -f "$loop_file" "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
     local terminal_data
     terminal_data=$(__dx_terminal_event_data "blocked" "$pause_reason" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
     dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
@@ -1717,7 +1719,7 @@ __dx_run_phases_inline() {
 	  if [[ "$final_step" -ge 7 ]]; then
 	    dx_run_log_append_for_session "$session_id" "info" "dx" "Ticket lifecycle complete"
 	    dx_provider_cleanup_session_state "$session_id"
-	    rm -f "$(dx_active_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" 2>/dev/null
+	    rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" 2>/dev/null
 	    __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
 	    echo ""
 	    echo "Ticket lifecycle complete."
@@ -2494,7 +2496,7 @@ dxloop() {
   # Remove any loop files that happen to share this unique session ID (harmless
   # no-op in practice since each dxloop gets a fresh ID via dx_unique_session_id).
   dx_provider_cleanup_session_state "$session_id"
-  rm -f "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" "$(dx_active_file "$session_id")"
+  rm -f "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")"
 
   # Persist the original prompt so the Stop hook can re-inject it on each audit
   # iteration. Context compaction may lose the initial message after several rounds.
@@ -2558,11 +2560,11 @@ $(__dx_provider_prompt)"
     plan_status="max-iter"
     plan_exit=1
   fi
-  rm -f "$(dx_active_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null
   if [[ $plan_exit -ne 0 ]]; then
     rm -f "$(dx_loop_file "$session_id")" \
           "$(dx_complete_file "$session_id")" \
-          "$(dx_active_file "$session_id")" \
+          "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
           "$(dx_prompt_file "$session_id")" 2>/dev/null
     dx_provider_cleanup_session_state "$session_id"
     echo ""
@@ -2599,7 +2601,7 @@ $(__dx_provider_prompt)"
   # Clean up state files
   rm -f "$(dx_loop_file "$session_id")" \
         "$(dx_complete_file "$session_id")" \
-        "$(dx_active_file "$session_id")" \
+        "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
         "$(dx_prompt_file "$session_id")" 2>/dev/null
   dx_provider_cleanup_session_state "$session_id"
 
@@ -2799,7 +2801,7 @@ $(__dx_provider_prompt)"
   [[ -f "$paused_file" ]] && complete_paused=1
 
   # Clean up
-  rm -f "$(dx_active_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" "$paused_file" 2>/dev/null
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" "$paused_file" 2>/dev/null
   dx_provider_cleanup_session_state "$session_id"
 
   if [[ $complete_paused -eq 1 ]]; then
@@ -2947,24 +2949,23 @@ dxreviewloop() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
+  # Waves are keyed by a per-pass session id derived from the wrapper's
+  # path-based id. Sharing the wrapper's id with waves lets a wave's Stop hook
+  # act on the wrapper's loop state (and, inside a lifecycle, run the inline
+  # phase handoff that instructs commit/push), and collides with any other
+  # Claude session open on the same branch/worktree.
   local session_id
   session_id=$(dx_session_id)
-  local review_context_file
-  review_context_file=$(dx_review_context_file "$session_id")
-  local pass_complete_file
-  pass_complete_file=$(dx_complete_file "$session_id")
-  local prompt_file
-  prompt_file=$(dx_prompt_file "$session_id")
   local standalone_review_prompt=0
+  local standalone_prompt_content=""
   if [[ "${DEX_LOOP_ACTIVE:-}" != "1" ]]; then
     standalone_review_prompt=1
-    __dx_write_state "$prompt_file" "Standalone /dxreviewloop invocation for branch ${branch}.
+    standalone_prompt_content="Standalone /dxreviewloop invocation for branch ${branch}.
 
 Review scope: ${scope_name} (${files_changed} files).
 
 No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan-dependent sections as N/A unless explicit criteria are present in the review-pass prompt."
   fi
-  rm -f "$review_context_file" 2>/dev/null
 
   # Review waves only need local tools (Read/Grep/Bash/git); they never call
   # MCP servers. Left enabled, every spawned wave session loads the full MCP
@@ -3009,8 +3010,8 @@ ${scope_source_detail}
 - Stat:        \`${stat_cmd}\`
 - File names:  \`${name_cmd}\`
 
-Use this review context pack path: \`${review_context_file}\`
-Use this per-pass completion path only after the review result signal and findings hash are written: \`${pass_complete_file}\`
+Use this review context pack path: \`__REVIEW_CONTEXT_FILE__\`
+Use this per-pass completion path only after the review result signal and findings hash are written: \`__PASS_COMPLETE_FILE__\`
 
 Review depth profile for this pass: \`__REVIEW_PROFILE__\`.
 - \`light\`: deterministic checks, core domain sweep, verifier pass, batch fix, targeted recheck.
@@ -3040,15 +3041,27 @@ $(__dx_provider_prompt)"
     echo "  Iteration ${review_iteration}/${max_iter} (${clean_passes}/${required_clean} clean passes)"
     echo ""
 
-    rm -f "$review_context_file" "$(dx_review_result_file "$session_id")"
+    # Per-pass session id: keeps each wave's Stop-hook state, result, and
+    # completion signal isolated from the wrapper's id (and from any lifecycle
+    # session sharing this branch/worktree).
+    local pass_session_id="${session_id}-pass-${review_iteration}-$$"
+    local review_context_file pass_complete_file pass_result_file
+    review_context_file=$(dx_review_context_file "$pass_session_id")
+    pass_complete_file=$(dx_complete_file "$pass_session_id")
+    pass_result_file=$(dx_review_result_file "$pass_session_id")
+
     mkdir -p "$DX_LOOP_DIR"
-    touch "$(dx_active_file "$session_id")"
-    rm -f "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")"
+    dx_cleanup_session "$pass_session_id"
+    touch "$(dx_active_file "$pass_session_id")"
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_write_state "$(dx_prompt_file "$pass_session_id")" "$standalone_prompt_content"
+    dx_provider_write_session_state "$pass_session_id" 2>/dev/null || true
 
     # Stop hook config: phase 3, MIN_AUDITS=1
-    __dx_write_state "$(dx_loop_config_file "$session_id")" "3:${DX_PHASE_PROMISES[3]}:${audit_file}:1"
+    __dx_write_state "$(dx_loop_config_file "$pass_session_id")" "3:${DX_PHASE_PROMISES[3]}:${audit_file}:1"
 
     local message="${message_template//__REVIEW_PROFILE__/$review_profile}"
+    message="${message//__REVIEW_CONTEXT_FILE__/$review_context_file}"
+    message="${message//__PASS_COMPLETE_FILE__/$pass_complete_file}"
     local exit_code=0
     if [[ "$agent_host" == "codex" ]]; then
       local codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
@@ -3063,7 +3076,7 @@ single-pass review-wave contract yourself.
 Dex review waves cover the requested review domains inside this CLI pass.
 
 Before your final response, you MUST write exactly one allowed result to:
-  $(dx_review_result_file "$session_id")
+  ${pass_result_file}
 
 Then touch:
   ${pass_complete_file}
@@ -3072,8 +3085,9 @@ Allowed results: CLEAN, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, ESCALATE_T
 
 ${message}"
 
-      DEX_SESSION_ID="$session_id" \
+      DEX_SESSION_ID="$pass_session_id" \
       DEX_LOOP_ACTIVE=1 \
+      DEX_PHASE_HANDOFF="" \
       DEX_LOOP_PROMISE="${DX_PHASE_PROMISES[3]}" \
       DEX_LOOP_PROMPT="$audit_prompt" \
       DEX_LOOP_PHASE="3" \
@@ -3086,8 +3100,9 @@ ${message}"
       local pass_session_name="${session_name}-pass-${review_iteration}"
       local claude_args=("${DX_CLAUDE_FLAGS[@]}" "${review_mcp_flags[@]}" -n "$pass_session_name")
 
-      DEX_SESSION_ID="$session_id" \
+      DEX_SESSION_ID="$pass_session_id" \
       DEX_LOOP_ACTIVE=1 \
+      DEX_PHASE_HANDOFF="" \
       DEX_LOOP_PROMISE="${DX_PHASE_PROMISES[3]}" \
       DEX_LOOP_PROMPT="$audit_prompt" \
       DEX_LOOP_PHASE="3" \
@@ -3099,17 +3114,28 @@ ${message}"
     fi
 
     local audit_max_iter=0
-    if [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
+    if [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$pass_session_id")" ]]; then
       audit_max_iter=1
     fi
 
-    rm -f "$(dx_active_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" 2>/dev/null
+    local result="UNKNOWN"
+    [[ -f "$pass_result_file" ]] && result=$(cat "$pass_result_file" 2>/dev/null || echo "UNKNOWN")
+
+    # Preserve the findings-hash history across passes for stuck-loop
+    # diagnostics before the pass-scoped file is cleaned up. Skip CLEAN waves:
+    # they hash the literal EMPTY inventory, so consecutive clean passes (the
+    # success gate) would read as recurring identical findings to the parent
+    # Stop hook's semantic stuck detection.
+    if [[ "$result" != "CLEAN" && -f "$(dx_findings_file "$pass_session_id")" ]]; then
+      cat "$(dx_findings_file "$pass_session_id")" >> "$(dx_findings_file "$session_id")" 2>/dev/null || true
+    fi
+    dx_cleanup_session "$pass_session_id"
 
     if [[ $audit_max_iter -eq 1 ]]; then
       echo ""
       dx_info "dxreviewloop paused: max audit iterations reached without completion."
       dx_provider_cleanup_session_state "$session_id"
-      [[ $standalone_review_prompt -eq 1 ]] && rm -f "$prompt_file" 2>/dev/null
+      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
       return 1
     fi
 
@@ -3117,20 +3143,16 @@ ${message}"
       echo ""
       dx_info "dxreviewloop interrupted (exit code: $exit_code)."
       dx_provider_cleanup_session_state "$session_id"
-      [[ $standalone_review_prompt -eq 1 ]] && rm -f "$prompt_file" 2>/dev/null
+      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
       return $exit_code
     fi
 
-    local result="UNKNOWN"
-    local result_file
-    result_file=$(dx_review_result_file "$session_id")
-    [[ -f "$result_file" ]] && result=$(cat "$result_file" 2>/dev/null || echo "UNKNOWN")
     if [[ "$result" != "CLEAN" && "$result" != BLOCKED:* && "$result" != ESCALATE_THOROUGH:* ]] && \
        ! printf '%s\n' "$result" | grep -Eq '^(FINDINGS_FIXED|FINDINGS):[0-9]+$'; then
       echo ""
       dx_info "dxreviewloop received invalid review result from ${agent_host}: ${result}"
       dx_provider_cleanup_session_state "$session_id"
-      [[ $standalone_review_prompt -eq 1 ]] && rm -f "$prompt_file" 2>/dev/null
+      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
       return 1
     fi
 
@@ -3153,9 +3175,8 @@ ${message}"
     fi
   done
 
-  rm -f "$(dx_review_result_file "$session_id")" 2>/dev/null
   dx_provider_cleanup_session_state "$session_id"
-  [[ $standalone_review_prompt -eq 1 ]] && rm -f "$prompt_file" 2>/dev/null
+  rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
 
   echo ""
   if [[ $clean_passes -ge $required_clean ]]; then
@@ -3621,7 +3642,7 @@ dxclean() {
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
   local old_files
-  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active prompt config findings debt provider review-state review-result review-context busy busy-notice started ready watch-pause watch-lock" 7)
+  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context busy busy-notice started ready watch-pause watch-lock" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))

@@ -89,7 +89,7 @@ If you have already run this analysis in a previous iteration and chose a strate
 When accepting findings as debt (via ACCEPT_WITH_DEBT, SPLIT_TASK, or RELAX_CRITERIA), record each item in the debt ledger:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 cat >> "$(dx_debt_file "${DEX_SESSION_ID:-$(dx_session_id)}")" <<'DEBT'
 - **[TYPE]** | Severity: [low|medium] | [description]
   - File: [file:line if applicable]

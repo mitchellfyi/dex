@@ -43,8 +43,9 @@ Only `CLEAN` increments the outer clean counter. Every other result resets it.
 Create or refresh the context pack in global Dex state:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+[[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
 REVIEW_CONTEXT_FILE="$(dx_review_context_file "$SESSION_ID")"
 mkdir -p "$(dirname "$REVIEW_CONTEXT_FILE")"
 ```
@@ -166,8 +167,9 @@ context pack and final report.
 ## 7. Result Signal
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+[[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
 echo "<result>" > "$(dx_review_result_file "$SESSION_ID")"
 FINDINGS_HASH=$(printf '%s\n' "<sorted verified finding descriptions or EMPTY>" | shasum -a 256 | cut -c1-16)
 echo "$FINDINGS_HASH" >> "$(dx_findings_file "$SESSION_ID")"

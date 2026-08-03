@@ -27,7 +27,7 @@ If the change does not affect UI, record `UI capture: N/A — no UI-affecting fi
 - If `DX_ARTIFACT_DIR` is overridden to a path inside the repo, verify it is ignored before writing artifacts:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 artifact_root="$(dx_artifacts_dir)"
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -n "$repo_root" ]]; then
@@ -79,7 +79,7 @@ If only backend/CLI/docs/test-only files changed and no visible browser behavior
 Create the session artifact directory outside the repo. `bin/ui-capture.sh` creates and appends to the manifest automatically on each capture run:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
 capture_dir="$(dx_ui_capture_session_dir "$session_id")"
 manifest="$(dx_ui_capture_manifest_file "$session_id")"
@@ -175,7 +175,7 @@ For changed flows involving clicks, forms, navigation, drag/drop, modals, menus,
 Create the flow file inside the artifact directory, never in the repo:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
 flow_dir="$(dx_ui_capture_session_dir "$session_id")/flows"
 mkdir -p "$flow_dir"

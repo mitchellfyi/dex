@@ -23,7 +23,7 @@ The argument is the prompt/task to execute. Example: `/dxloop add input validati
 Run this bash command to activate the stop hook loop and clean stale state:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 mkdir -p "$DX_LOOP_DIR"
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 touch "$(dx_active_file "$SESSION_ID")"

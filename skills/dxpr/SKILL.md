@@ -19,7 +19,7 @@ Generate a PR description, create a draft pull request, and attach `request`-typ
 Detect the default branch using the shared library function (see `lib/git.sh`):
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 DEFAULT_BRANCH=$(dx_default_branch)
 BASE_REF=$(dx_default_branch_base_ref "$(pwd)" "$DEFAULT_BRANCH")
 git log "$BASE_REF"..HEAD --oneline
@@ -38,7 +38,7 @@ Apply Dex attribution rules to every PR body:
 **Debt ledger check**: Before generating the description, check if a debt ledger exists for this session:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 DEBT_FILE=$(dx_debt_file "${DEX_SESSION_ID:-$(dx_session_id)}")
 [[ -f "$DEBT_FILE" ]] && cat "$DEBT_FILE"
 ```
@@ -56,7 +56,7 @@ Before creating or updating the PR, invoke the `humanizer` skill on the title an
 If the PR includes browser UI, visual layout, style, route, or user-flow changes, prepare a user-facing visual evidence bundle before creating or updating the PR body:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
 manifest="$(dx_ui_capture_manifest_file "$session_id")"
 printf '%s\n' "$manifest"
@@ -105,7 +105,7 @@ Before either command, inspect the exact body text. If it contains Claude attrib
 Read the `## Reviewers` section of `.dex/dex.md`. For every row whose Type column is `request`, attach the reviewer to the draft PR:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 dx_maintenance_request_reviewer "$PR_NUM" "<handle>"
 ```
 

@@ -329,9 +329,49 @@ def resolved_provider_engine():
     return PROVIDER_BUILTIN_ENGINES['claude-subscription']
 
 
+def resolved_current_phase():
+    """Resolve the lifecycle phase for this session. The phase state file is
+    authoritative after inline handoffs (DEX_LOOP_PHASE env goes stale); fall
+    back to the loop config file, then the env var."""
+    session_id = os.environ.get('DEX_SESSION_ID', '')
+    if session_id:
+        state_dir = os.environ.get('DX_STATE_DIR') or os.path.expanduser('~/.claude/.dex-phases')
+        try:
+            with open(os.path.join(state_dir, f'{session_id}.phase'), 'r', encoding='utf-8') as f:
+                phase = f.read().strip()
+            if phase:
+                return phase
+        except Exception:
+            pass
+        loop_dir = os.environ.get('DX_LOOP_DIR') or os.path.expanduser('~/.claude/.dex-loops')
+        try:
+            with open(os.path.join(loop_dir, f'{session_id}.config'), 'r', encoding='utf-8') as f:
+                phase = f.read().split(':', 1)[0].strip()
+            if phase:
+                return phase
+        except Exception:
+            pass
+    return os.environ.get('DEX_LOOP_PHASE', '')
+
+
+def resolved_lifecycle_push_forbidden():
+    """'1' when this session must not push: any review-wave pass, or an active
+    dex lifecycle loop in Phase 1-3 (Plan/Implement/Review). Phase 0 is exempt
+    (setup pushes the bootstrap branch); Phase 4+ owns commit/push/PR work."""
+    if os.environ.get('DEX_REVIEW_PASS_ACTIVE', '') == '1':
+        return '1'
+    if os.environ.get('DEX_LOOP_ACTIVE', '') != '1':
+        return ''
+    if resolved_current_phase() in ('1', '2', '3'):
+        return '1'
+    return ''
+
+
 def resolved_guard_environment_value(env_var):
     if env_var == 'DX_PROVIDER_ENGINE':
         return resolved_provider_engine()
+    if env_var == 'DX_LIFECYCLE_PUSH_FORBIDDEN':
+        return resolved_lifecycle_push_forbidden()
     return ''
 
 

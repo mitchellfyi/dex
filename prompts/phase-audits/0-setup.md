@@ -29,7 +29,7 @@ Evidence: tracker output shows the assignee, or N/A.
 - The Dex meta sidecar reflects the rename: run
 
   ```bash
-  source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+  source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
   SID="${DEX_SESSION_ID:-$(dx_session_id)}"
   dx_meta_write "$SID" "tracker_key=<KEY-N>" "current_branch=$(git rev-parse --abbrev-ref HEAD)"
   ```

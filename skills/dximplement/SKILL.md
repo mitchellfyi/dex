@@ -176,7 +176,7 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
 - No Phase 2 background processes or long-running commands are still in flight.
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 2)"
 ```
 

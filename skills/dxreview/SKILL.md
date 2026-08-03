@@ -62,8 +62,9 @@ unrelated tickets.
 When `DEX_SESSION_ID` is available, write exactly one result:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+[[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
 echo "<result>" > "$(dx_review_result_file "$SESSION_ID")"
 ```
 

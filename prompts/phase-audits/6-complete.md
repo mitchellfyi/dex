@@ -13,7 +13,7 @@ commands, counts, status labels, and required audit wording exactly.
 Detect the cycle counter and whether setup has already run:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 COMPLETE_STATE_FILE="$(dx_complete_state_file "$SESSION_ID")"
 CYCLE=0

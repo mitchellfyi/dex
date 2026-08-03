@@ -60,7 +60,7 @@ gh pr view "$PR_NUM" --json reviewRequests
 If any `request` reviewer from the config is missing, attach them now (idempotent):
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 dx_maintenance_request_reviewer "$PR_NUM" "<handle>"
 ```
 

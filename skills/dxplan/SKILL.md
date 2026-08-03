@@ -20,7 +20,7 @@ When running under `dx` Phase 1, write the Phase 1 started marker before
 gathering context:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 touch "$(dx_phase_started_file "${DEX_SESSION_ID:-$(dx_session_id)}" 1)"
 ```
 
@@ -275,7 +275,7 @@ After write-back:
   more than one was created.
 - For the chosen ticket, update session metadata:
   ```bash
-  source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+  source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
   SID="${DEX_SESSION_ID:-$(dx_session_id)}"
   dx_meta_write "$SID" "tracker_key=<KEY-OR-URL>" "ticket_number=<NUMBER-IF-GITHUB>"
   ```
@@ -303,7 +303,7 @@ Add the plan summary to the existing or newly selected ticket via the configured
 After `ExitPlanMode` is approved, or after the headless run spec authorizes plan execution, complete the tracker intake gate and ticket update steps above when they apply. Then write the Phase 1 approval marker:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 1)"
 ```
 

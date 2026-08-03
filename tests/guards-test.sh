@@ -146,5 +146,9 @@ assert_raw_codex_blocks "raw Codex remains blocked" \
 assert_raw_codex_blocks "trusted source plus direct provider call remains blocked" \
   'source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"; dx_provider_codex exec "do work"'
 
+# Push-blocking guards (review-pass-no-push, lifecycle-phase-push) are covered
+# by tests/push-guards-test.sh, kept separate so that file contains no raw
+# Codex payload strings.
+
 printf 'guards-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

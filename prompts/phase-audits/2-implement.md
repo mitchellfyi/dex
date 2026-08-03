@@ -111,7 +111,7 @@ ALL of these must be true before you stop:
 Before writing the completion signal in a terminal `dx` lifecycle, write the Phase 2 ready marker. Do this only after every completion criterion above is true:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 2)"
 ```
 

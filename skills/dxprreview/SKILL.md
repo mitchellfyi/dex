@@ -134,7 +134,7 @@ If there are no unaddressed comments, report that and exit immediately.
 Before evaluating any comment, build context on the PR's scope and intent:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 DEFAULT_BRANCH=$(dx_default_branch)
 
 # If reviewing a different PR, use its branch; otherwise use HEAD

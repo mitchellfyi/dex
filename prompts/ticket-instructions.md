@@ -25,7 +25,7 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
 
    - After renaming, update the per-session meta sidecar so `dx <N>` can find this worktree later even though the branch no longer matches `worktree-ticket-*`:
      ```bash
-     source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+     source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
      SID="${DEX_SESSION_ID:-$(dx_session_id)}"
      dx_meta_write "$SID" "tracker_key=<KEY-N>" "current_branch=$(git rev-parse --abbrev-ref HEAD)"
      ```
@@ -47,7 +47,7 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
 6. Once setup steps 1–5 are complete, write the Phase 0 ready marker so the Stop hook can audit and advance:
 
    ```bash
-   source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+   source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
    touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 0)"
    ```
 

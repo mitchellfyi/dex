@@ -18,16 +18,17 @@ if [[ -z "${DEX_DIR:-}" ]]; then
   export DEX_DIR
   unset _dx_self
 fi
-# shellcheck disable=SC2034  # exported by sourcing; used by dx.sh and sibling libs
-DX_STATE_DIR="${DX_STATE_DIR:-$HOME/.claude/.dex-phases}"
-# shellcheck disable=SC2034  # exported by sourcing; used by dx.sh and sibling libs
-DX_LOOP_DIR="${DX_LOOP_DIR:-$HOME/.claude/.dex-loops}"
-# shellcheck disable=SC2034  # exported by sourcing; used by UI capture helpers
-DX_ARTIFACT_DIR="${DX_ARTIFACT_DIR:-$HOME/.claude/.dex-artifacts}"
-# shellcheck disable=SC2034  # exported by sourcing; used by Dex-managed tools
-DX_TOOL_DIR="${DX_TOOL_DIR:-$HOME/.claude/.dex-tools}"
-# shellcheck disable=SC2034  # exported by sourcing; used by run event helpers
-DX_RUN_ROOT="${DX_RUN_ROOT:-$HOME/.dex/runs}"
+# State dirs are exported so child processes that cannot source this file
+# (python hooks, spawned CLI sessions, per-pass review waves) resolve the same
+# paths as the launching shell — including any user override of these vars.
+export DX_STATE_DIR="${DX_STATE_DIR:-$HOME/.claude/.dex-phases}"
+export DX_LOOP_DIR="${DX_LOOP_DIR:-$HOME/.claude/.dex-loops}"
+# Used by UI capture helpers
+export DX_ARTIFACT_DIR="${DX_ARTIFACT_DIR:-$HOME/.claude/.dex-artifacts}"
+# Used by Dex-managed tools
+export DX_TOOL_DIR="${DX_TOOL_DIR:-$HOME/.claude/.dex-tools}"
+# Used by run event helpers
+export DX_RUN_ROOT="${DX_RUN_ROOT:-$HOME/.dex/runs}"
 
 # dx_repo_root — print the *main* repo toplevel or return 1
 # If cwd is inside a dex worktree (.dex/worktrees/<name>/...),

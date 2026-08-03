@@ -283,10 +283,64 @@ if [[ "$LOOP_ACTIVE" != "1" ]] && [[ ! -f "$ACTIVE_FILE" ]]; then
   exit 0
 fi
 
+# Claude Code sends the hook payload on stdin; session_id identifies the
+# concrete Claude session this Stop fired in. Used for the ownership guard
+# below — dx session ids are path-derived, so multiple Claude sessions in the
+# same checkout resolve the same SESSION_ID. Parsed only after the activation
+# check above so stops in non-Dex sessions never pay the python3 spawn.
+HOOK_INPUT=$(cat 2>/dev/null || true)
+HOOK_CLAUDE_SESSION_ID=""
+if [[ -n "$HOOK_INPUT" ]]; then
+  HOOK_CLAUDE_SESSION_ID=$(printf '%s' "$HOOK_INPUT" | python3 -c '
+import json, sys
+try:
+    value = json.load(sys.stdin).get("session_id", "")
+except Exception:
+    value = ""
+if isinstance(value, str):
+    print(value)
+' 2>/dev/null || true)
+fi
+
+# Ownership guard — SESSION_ID is path-derived, so a bystander Claude session
+# opened in the same worktree/branch resolves the same id and would otherwise
+# be captured by this hook (injected audits, phase handoffs). Claim rules:
+#   - env-activated sessions (DEX_LOOP_ACTIVE=1 with an explicit
+#     DEX_SESSION_ID) were launched by a dx wrapper for exactly this loop;
+#     they own it and (re)claim on every stop.
+#   - file-activated sessions (.active only) claim only when unclaimed; on a
+#     mismatch they stay inert.
+# Wrappers remove the claim before each launch (relaunch/--resume gets a fresh
+# Claude session id). Empty HOOK_CLAUDE_SESSION_ID (payload missing/unparsable)
+# skips enforcement rather than breaking active loops.
+OWNER_FILE=$(dx_owner_file "$SESSION_ID")
+if [[ -n "$HOOK_CLAUDE_SESSION_ID" ]]; then
+  OWNER_ID=""
+  [[ -f "$OWNER_FILE" ]] && OWNER_ID=$(cat "$OWNER_FILE" 2>/dev/null || echo "")
+  if [[ "$OWNER_ID" != "$HOOK_CLAUDE_SESSION_ID" ]]; then
+    if [[ "$LOOP_ACTIVE" == "1" && -n "${DEX_SESSION_ID:-}" ]]; then
+      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
+    elif [[ -n "$OWNER_ID" ]]; then
+      exit 0
+    else
+      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
+    fi
+  fi
+fi
+
 HANDOFF_MODE="${DEX_PHASE_HANDOFF:-}"
 HANDOFF_MODE_FILE=$(dx_handoff_mode_file "$SESSION_ID")
 if [[ -z "$HANDOFF_MODE" && -f "$HANDOFF_MODE_FILE" ]]; then
   HANDOFF_MODE=$(cat "$HANDOFF_MODE_FILE" 2>/dev/null || echo "")
+fi
+
+# Review-wave passes are single-shot child sessions. They must never run the
+# inline lifecycle handoff — advancing the shared phase state and instructing
+# the wave to commit/push — even when they inherit lifecycle loop env or share
+# a handoff-mode file with the parent session. Forcing non-inline here routes a
+# completed pass to the plain "loop complete" stop below.
+if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
+  HANDOFF_MODE=""
 fi
 PAUSED_FILE=$(dx_paused_file "$SESSION_ID")
 COMPLETE_FILE=$(dx_complete_file "$SESSION_ID")
@@ -299,7 +353,7 @@ PHASE_STATE_FILE=$(dx_state_file "$SESSION_ID")
 if [[ "$HANDOFF_MODE" == "inline" && -f "$PHASE_STATE_FILE" ]]; then
   PHASE_STATE=$(cat "$PHASE_STATE_FILE" 2>/dev/null || echo "")
   if [[ "$PHASE_STATE" == "7" ]]; then
-    rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE" "$COMPLETE_FILE" "$(dx_loop_file "$SESSION_ID")" "$(dx_loop_config_file "$SESSION_ID")" "$(dx_findings_file "$SESSION_ID")" "$(dx_prompt_file "$SESSION_ID")" "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.started "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.ready "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.busy "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.busy-notice 2>/dev/null
+    rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE" "$COMPLETE_FILE" "$(dx_loop_file "$SESSION_ID")" "$(dx_loop_config_file "$SESSION_ID")" "$(dx_findings_file "$SESSION_ID")" "$(dx_prompt_file "$SESSION_ID")" "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.started "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.ready "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.busy "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.busy-notice 2>/dev/null
     exit 0
   fi
 fi
@@ -421,7 +475,7 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "0" ]]; then
     printf '%s\n' "" >&2
     printf '%s\n' "When all of the above is done, write the Phase 0 ready marker and stop once:" >&2
     printf '%s\n' '```bash' >&2
-    printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\"" >&2
+    printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
     printf '%s\n' "touch \"\$(dx_phase_ready_file \"\${DEX_SESSION_ID:-\$(dx_session_id)}\" 0)\"" >&2
     printf '%s\n' '```' >&2
     printf '%s\n' "" >&2
@@ -572,7 +626,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       printf '%s\n' "Write exactly one of these values to the review result file, then touch the completion file again:" >&2
       printf '%s\n' '```bash' >&2
-      printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\"" >&2
+      printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
       printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
       printf '%s\n' "printf '%s\n' '<CLEAN|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|ESCALATE_THOROUGH:reason>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
       printf '%s\n' "touch \"\$(dx_complete_file \"\$SESSION_ID\")\"" >&2
@@ -595,7 +649,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       printf '%s\n' "If all of that is true, write the ready marker, then stop again for the completion signal:" >&2
       printf '%s\n' '```bash' >&2
-      printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\"" >&2
+      printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
       printf '%s\n' "touch \"\$(dx_phase_ready_file \"\${DEX_SESSION_ID:-\$(dx_session_id)}\" 2)\"" >&2
       printf '%s\n' '```' >&2
       printf '%s\n' "" >&2
@@ -640,7 +694,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     dx_event_emit_for_session "$SESSION_ID" "run.completed" "info" "Dex lifecycle completed" "6" "{\"final_phase\":6}"
     dx_run_log_append_for_session "$SESSION_ID" "info" "phase-loop" "Dex lifecycle completed"
     dx_run_write_summary_for_session "$SESSION_ID" "completed" "Dex lifecycle completed"
-    rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
+    rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
     {
       printf '\n%s\n\n' "--- Dex lifecycle complete ---"
       printf '%s\n' "All phases are complete. Present the final summary to the user, including PR status and any cleanup command."
@@ -648,8 +702,12 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     exit 2
   fi
 
-  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dx_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
-  rm -f "$ACTIVE_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
+  # Review-wave passes: leave the findings-hash file so the launching wrapper
+  # can fold it into the parent session's stuck-loop history after the wave
+  # exits; the wrapper removes the pass-scoped file via dx_cleanup_session.
+  [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]] || rm -f "$(dx_findings_file "$SESSION_ID")"
+  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
+  rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
   printf '%s\n' '{"continue":false,"stopReason":"Dex loop complete."}'
   exit 0
 fi

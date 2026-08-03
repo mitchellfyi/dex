@@ -88,7 +88,7 @@ OR
 If a debt ledger exists for this session, include its contents here:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 DEBT_FILE=$(dx_debt_file "${DEX_SESSION_ID:-$(dx_session_id)}")
 [[ -f "$DEBT_FILE" ]] && cat "$DEBT_FILE"
 ```

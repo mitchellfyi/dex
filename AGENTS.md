@@ -354,6 +354,8 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `DEX_COMPLETE_MAX_CYCLES` | Max idle PR watch cycles before Phase 6 pauses for manual follow-up | 3 |
 | `DEX_COMPLETE_WAIT_MINUTES` | Minimum wait window per Phase 6 cycle (minutes) | 5 |
 | `DEX_SESSION_ID` | Unique session ID (set by dxloop for stop hook) | unset |
+| `DEX_REVIEW_PASS_ACTIVE` | Marks a session as a single-shot review-wave pass: the Stop hook never runs the inline phase handoff, and the push guard blocks `git push`/`gh pr` mutations | unset |
+| `DX_LIFECYCLE_PUSH_FORBIDDEN` | Resolved by the guard handler: `1` in review passes and active-loop Phases 1-3, blocking `git push`/`gh pr` mutations; overriding requires launching the session with `0` exported (per-command env prefixes never reach the guard hook) | resolved |
 | `CODEX_HOME` | Codex config root used for Dex skill links | `~/.codex` |
 | `DX_AGENT` / `DX_AGENT_OVERRIDE` | Agent override (`claude` or `codex`) | profile/default |
 | `DX_MODEL` / `DX_MODEL_OVERRIDE` | Model override for the selected agent | profile/default |

@@ -25,7 +25,7 @@ as `dx sync` unless the user requested `--dry-run` or `--trace-retrieval`:
 
 ```bash
 repo_root=$(git rev-parse --show-toplevel)
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 dx_bootstrap_agent_tooling "$repo_root" "install"
 ```
 

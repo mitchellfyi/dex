@@ -104,7 +104,7 @@ If `/dxreview --single-pass` did not run (non-code session), omit that source.
 After building the inventory, compute and record a findings hash so the stop hook can detect stuck loops:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 FINDINGS_HASH=$(echo "<sorted list of INV-N descriptions>" | shasum -a 256 | cut -c1-16)
 echo "$FINDINGS_HASH" >> "$(dx_findings_file "${DEX_SESSION_ID:-$(dx_session_id)}")"
 ```

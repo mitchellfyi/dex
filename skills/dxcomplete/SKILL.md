@@ -33,7 +33,7 @@ tables, counts, and status labels exactly.
 `/dxcomplete` is the explicit signal to resume autonomous Phase 6 monitoring. Clear any pause left by a direct user prompt before launching `/dxwatchpr`:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 dx_clear_watch_pause "$SESSION_ID"
 ```
@@ -72,7 +72,7 @@ When setup runs:
 
 2. **Re-sync request reviewers** (idempotent):
    ```bash
-   source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+   source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
    for h in "${REQUEST_REVIEWERS[@]}"; do
      dx_maintenance_request_reviewer "$PR_NUM" "$h"
    done

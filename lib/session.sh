@@ -103,6 +103,13 @@ dx_complete_file() { echo "${DX_LOOP_DIR}/${1}.complete"; }
 # dx_active_file <session_id>  — loop activation signal file path (for in-session /dxloop)
 dx_active_file() { echo "${DX_LOOP_DIR}/${1}.active"; }
 
+# dx_owner_file <session_id> — Claude session id that owns this loop's state.
+# Session IDs are derived from the repo+worktree/branch path, so an unrelated
+# Claude session opened in the same checkout resolves the same session_id. The
+# Stop hook records the owning Claude session id here and stays inert in any
+# other session, so bystander sessions are never captured by an active loop.
+dx_owner_file() { echo "${DX_LOOP_DIR}/${1}.owner"; }
+
 # dx_prompt_file <session_id>  — original prompt file path (for dxloop prompt persistence)
 dx_prompt_file() { echo "${DX_LOOP_DIR}/${1}.prompt"; }
 
@@ -507,7 +514,7 @@ dx_record_session_branch() {
 dx_cleanup_session() {
   local sid="$1"
   if [[ -d "$DX_LOOP_DIR" ]]; then
-    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_watch_pause_file "$sid")" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
+    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_watch_pause_file "$sid")" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" \) -exec rm -f {} + 2>/dev/null || true
   fi
   [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" 2>/dev/null
