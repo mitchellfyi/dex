@@ -305,12 +305,15 @@ PY
   chmod 600 "$config_file" 2>/dev/null || true
 }
 
+# Records the status in DX_DEXCODE_LAST_HTTP_STATUS so callers can tell a
+# revoked machine from an unreachable server.
 dx_dexcode_fetch_profile() {
   local api_url="$1" token="$2" out_file="$3" http_status
   http_status=$(curl -sS -o "$out_file" -w "%{http_code}" \
     -H "Authorization: Bearer ${token}" \
     -H "Accept: application/json" \
     "${api_url}/api/v1/profile" 2>/dev/null || printf '000')
+  DX_DEXCODE_LAST_HTTP_STATUS="$http_status"
   [[ "$http_status" == "200" ]]
 }
 
@@ -497,6 +500,15 @@ import os
 print(json.dumps({"access_token": os.environ["DX_DEXCODE_TOKEN"]}))
 PY
       dx_dexcode_write_login_config "$api_url" "$token_file" "$profile_file"
+    elif [[ "${DX_DEXCODE_LAST_HTTP_STATUS:-}" == "401" ]]; then
+      # Revoking a lost laptop is worth nothing if that laptop still
+      # reports itself as connected. Say so instead of showing stale
+      # details that look healthy.
+      command rm -rf "$tmp_dir"
+      dx_error "This machine is no longer connected to DexCode. Run 'dx login' to reconnect."
+      return 1
+    elif [[ "${DX_DEXCODE_LAST_HTTP_STATUS:-}" == "000" ]]; then
+      dx_warn "Could not reach DexCode; showing the last known details."
     fi
     command rm -rf "$tmp_dir"
   fi
