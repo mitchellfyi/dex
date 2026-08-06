@@ -879,6 +879,129 @@ dx_dexcode_prepare_run_sync() {
   return 0
 }
 
+# Uploads a locally captured artifact to DexCode.
+#
+# Three steps, because the bytes never pass through the API: register to get a
+# signed URL, PUT the file straight to storage, then confirm. Until that last
+# call lands the artifact counts as unfinished and DexCode refuses to serve it,
+# so a half-finished upload is invisible rather than broken.
+#
+# Prints the DexCode artifact id on success. Never fails a run: no token, sync
+# disabled, or an unreachable server all leave the local artifact untouched.
+dx_dexcode_upload_artifact() {
+  local run_id="$1" file_path="$2" kind="$3" title="$4"
+  local token api_url tmp_dir response_file http_status artifact_id upload_url
+  local filename content_type size sha
+
+  [[ "${DEXCODE_SYNC:-1}" != "0" ]] || return 0
+  [[ -n "$run_id" && -f "$file_path" ]] || return 0
+
+  token=$(dx_dexcode_token 2>/dev/null || true)
+  [[ -n "$token" ]] || return 0
+
+  api_url=$(dx_dexcode_api_url)
+  filename=$(basename "$file_path")
+  content_type=$(dx_dexcode_content_type "$filename")
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-artifact.XXXXXX") || return 0
+  response_file="$tmp_dir/artifact.json"
+
+  local payload
+  payload=$(DX_ARTIFACT_KIND="$kind" DX_ARTIFACT_TITLE="$title" \
+    DX_ARTIFACT_FILENAME="$filename" DX_ARTIFACT_CONTENT_TYPE="$content_type" \
+    python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "kind": os.environ["DX_ARTIFACT_KIND"],
+    "title": os.environ["DX_ARTIFACT_TITLE"],
+    "filename": os.environ["DX_ARTIFACT_FILENAME"],
+    "content_type": os.environ["DX_ARTIFACT_CONTENT_TYPE"],
+}, sort_keys=True, separators=(",", ":")))
+PY
+  ) || { command rm -rf "$tmp_dir"; return 0; }
+
+  http_status=$(curl -sS -o "$response_file" -w "%{http_code}" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d "$payload" \
+    "${api_url}/api/v1/runs/${run_id}/artifacts" 2>/dev/null || printf '000')
+  if [[ "$http_status" != "201" ]]; then
+    dx_warn "DexCode artifact registration failed (HTTP ${http_status}); keeping it locally."
+    command rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  artifact_id=$(dx_dexcode_json_field "$response_file" "id" 2>/dev/null || true)
+  upload_url=$(dx_dexcode_json_field "$response_file" "upload.url" 2>/dev/null || true)
+  if [[ -z "$artifact_id" || -z "$upload_url" ]]; then
+    command rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  http_status=$(curl -sS -o /dev/null -w "%{http_code}" \
+    -X PUT \
+    -H "Content-Type: ${content_type}" \
+    --data-binary @"$file_path" \
+    "$upload_url" 2>/dev/null || printf '000')
+  if [[ "$http_status" != "200" ]]; then
+    # The registration row stays with no upload recorded, which DexCode treats
+    # as unfinished rather than serving an empty file.
+    dx_warn "DexCode artifact upload failed (HTTP ${http_status}); keeping it locally."
+    command rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  size=$(wc -c < "$file_path" 2>/dev/null | tr -d '[:space:]')
+  sha=$(shasum -a 256 "$file_path" 2>/dev/null | cut -d' ' -f1)
+  local complete_payload
+  complete_payload=$(DX_ARTIFACT_SIZE="${size:-0}" DX_ARTIFACT_SHA="${sha:-}" \
+    DX_ARTIFACT_CONTENT_TYPE="$content_type" python3 - <<'PY'
+import json
+import os
+
+body = {
+    "byte_size": int(os.environ.get("DX_ARTIFACT_SIZE") or 0),
+    "content_type": os.environ["DX_ARTIFACT_CONTENT_TYPE"],
+}
+sha = os.environ.get("DX_ARTIFACT_SHA") or ""
+if len(sha) == 64:
+    body["sha256"] = sha
+print(json.dumps(body, sort_keys=True, separators=(",", ":")))
+PY
+  ) || { command rm -rf "$tmp_dir"; return 0; }
+
+  http_status=$(curl -sS -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d "$complete_payload" \
+    "${api_url}/api/v1/runs/${run_id}/artifacts/${artifact_id}" 2>/dev/null || printf '000')
+  if [[ "$http_status" != "200" ]]; then
+    dx_warn "DexCode artifact was uploaded but not confirmed (HTTP ${http_status})."
+    command rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  command rm -rf "$tmp_dir"
+  printf '%s\n' "$artifact_id"
+  return 0
+}
+
+# Only what the CLI actually captures; anything else is left to the server.
+dx_dexcode_content_type() {
+  case "${1##*.}" in
+    md) printf 'text/markdown\n' ;;
+    json) printf 'application/json\n' ;;
+    txt|log) printf 'text/plain\n' ;;
+    diff|patch) printf 'text/x-diff\n' ;;
+    html) printf 'text/html\n' ;;
+    png) printf 'image/png\n' ;;
+    *) printf 'application/octet-stream\n' ;;
+  esac
+}
+
 dx_dexcode_sync_project_context() {
   local repo_dir="${1:-}" token api_url project_slug payload tmp_dir response_file http_status
   [[ "${DEXCODE_CONTEXT_SYNC:-1}" != "0" ]] || return 0
