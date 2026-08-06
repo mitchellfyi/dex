@@ -55,12 +55,67 @@ dx_dexcode_factory_url() {
   printf '%s\n' "$api_url"
 }
 
+# The token for the organisation that owns the selected project. A token
+# reaches exactly one organisation, so using the wrong one would create a
+# duplicate project in the wrong place rather than fail loudly.
 dx_dexcode_token() {
+  local file
   if [[ -n "${DEXCODE_TOKEN:-}" ]]; then
     printf '%s\n' "$DEXCODE_TOKEN"
     return 0
   fi
-  dx_dexcode_config_value "access_token"
+  file=$(dx_dexcode_config_file)
+  [[ -f "$file" ]] || return 1
+
+  DX_DEXCODE_CONFIG_FILE="$file" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+try:
+    data = json.loads(Path(os.environ["DX_DEXCODE_CONFIG_FILE"]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+connections = data.get("connections")
+wanted = (data.get("default_project") or {}).get("organisation_slug")
+if isinstance(connections, dict) and wanted:
+    token = (connections.get(wanted) or {}).get("access_token")
+    if token:
+        print(token)
+        raise SystemExit(0)
+
+# No selection yet, or a config written before connections existed.
+token = data.get("access_token")
+if not token:
+    raise SystemExit(1)
+print(token)
+PY
+}
+
+# Token for a named organisation, used when work is scoped to one explicitly.
+dx_dexcode_token_for() {
+  local slug="$1" file
+  file=$(dx_dexcode_config_file)
+  [[ -f "$file" ]] || return 1
+  DX_DEXCODE_CONFIG_FILE="$file" DX_DEXCODE_ORG_SLUG="$slug" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+try:
+    data = json.loads(Path(os.environ["DX_DEXCODE_CONFIG_FILE"]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+slug = os.environ["DX_DEXCODE_ORG_SLUG"]
+connection = (data.get("connections") or {}).get(slug) or {}
+token = connection.get("access_token")
+if not token and (data.get("account") or {}).get("slug") == slug:
+    token = data.get("access_token")
+if not token:
+    raise SystemExit(1)
+print(token)
+PY
 }
 
 dx_dexcode_machine_name() {
@@ -132,26 +187,106 @@ if profile_path and Path(profile_path).exists():
         profile = json.loads(Path(profile_path).read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         profile = token_profile
-projects = profile.get("projects") or ([profile["default_project"]] if profile.get("default_project") else [])
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# A DexCode token reaches exactly one organisation, by design. People work
+# across several from one laptop, so the config keeps a connection per
+# organisation and logging into a second one adds to the set rather than
+# replacing the first. The flat fields below still describe the active
+# connection, so anything reading access_token or account keeps working.
+account = profile.get("account") or {}
+account_slug = account.get("slug") or ""
+own_projects = profile.get("projects") or (
+    [profile["default_project"]] if profile.get("default_project") else []
+)
+for project in own_projects:
+    project.setdefault("organisation_slug", account_slug)
+    project.setdefault("organisation_name", account.get("name") or account_slug)
+
+connections = existing.get("connections")
+if not isinstance(connections, dict):
+    connections = {}
+    # An older single-connection config becomes the first entry, so nothing is
+    # lost on the upgrade.
+    previous_account = existing.get("account") or {}
+    previous_slug = previous_account.get("slug")
+    if previous_slug and existing.get("access_token"):
+        connections[previous_slug] = {
+            "access_token": existing["access_token"],
+            "token_type": existing.get("token_type", "Bearer"),
+            "scopes": existing.get("scopes", []),
+            "account": previous_account,
+            "projects": existing.get("projects") or [],
+            "updated_at": existing.get("updated_at") or now,
+        }
+
+if account_slug:
+    connections[account_slug] = {
+        "access_token": token_response["access_token"],
+        "token_type": token_response.get("token_type", "Bearer"),
+        "scopes": token_response.get("scopes", []),
+        "account": account,
+        "projects": own_projects,
+        "updated_at": now,
+    }
+
+# Every project the machine can reach, labelled with the organisation that
+# owns it so the picker can tell two similarly named ones apart.
+projects = []
+seen = set()
+for slug, connection in connections.items():
+    for project in connection.get("projects") or []:
+        key = (project.get("organisation_slug") or slug, project.get("slug"))
+        if key in seen:
+            continue
+        seen.add(key)
+        entry = dict(project)
+        entry.setdefault("organisation_slug", slug)
+        projects.append(entry)
+
 default_project = profile.get("default_project")
-selected_slug = (existing.get("default_project") or {}).get("slug")
+if default_project is not None:
+    default_project = dict(default_project)
+    default_project.setdefault("organisation_slug", account_slug)
+selected = existing.get("default_project") or {}
+selected_slug = selected.get("slug")
 if selected_slug:
-    preserved_project = next((project for project in projects if project.get("slug") == selected_slug), None)
-    if preserved_project:
-        default_project = dict(preserved_project, default=True)
+    # Keep the user's choice even when this login was for a different
+    # organisation; re-authenticating one connection should not silently move
+    # them to another organisation's project.
+    preserved = next(
+        (
+            project
+            for project in projects
+            if project.get("slug") == selected_slug
+            and (
+                not selected.get("organisation_slug")
+                or project.get("organisation_slug") == selected.get("organisation_slug")
+            )
+        ),
+        None,
+    )
+    if preserved:
+        default_project = dict(preserved, default=True)
+
+# The flat fields describe whichever connection owns the selected project, so
+# a plain read of access_token stays correct for the work in hand.
+active_slug = (default_project or {}).get("organisation_slug") or account_slug
+active = connections.get(active_slug) or connections.get(account_slug) or {}
 
 config = {
     "api_url": os.environ["DX_DEXCODE_API_URL"].rstrip("/"),
-    "access_token": token_response["access_token"],
-    "token_type": token_response.get("token_type", "Bearer"),
+    "access_token": active.get("access_token") or token_response["access_token"],
+    "token_type": active.get("token_type", "Bearer"),
     "expires_at": token_response.get("expires_at"),
-    "scopes": token_response.get("scopes", []),
-    "account": profile.get("account"),
-    "organisations": profile.get("organisations") or ([profile["account"]] if profile.get("account") else []),
+    "scopes": active.get("scopes", []),
+    "account": active.get("account") or account,
+    "organisations": profile.get("organisations") or ([account] if account else []),
+    "connections": connections,
     "default_project": default_project,
     "projects": projects,
     "sync": profile.get("sync") or token_profile.get("sync") or {},
-    "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "updated_at": now,
 }
 fd, tmp_name = tempfile.mkstemp(prefix=".dexcode.", suffix=".json", dir=str(config_file.parent))
 try:
@@ -374,12 +509,39 @@ PY
   context_sync="enabled"
   [[ "${DEXCODE_SYNC:-1}" == "0" ]] && session_sync="disabled"
   [[ "${DEXCODE_CONTEXT_SYNC:-1}" == "0" ]] && context_sync="disabled"
-  dx_info "DexCode account: ${account}"
+  dx_info "DexCode organisation: ${account}"
   if [[ -n "$project_slug" && "$project_slug" != "$project" ]]; then
     dx_info "Connected project: ${project} (${project_slug})"
+  elif [[ "$project" == "unknown" ]]; then
+    dx_info "Connected project: none selected yet (run 'dx dexcode use')"
   else
     dx_info "Connected project: ${project}"
   fi
+  # A token reaches one organisation, so a machine holds one connection per
+  # organisation. Say which ones, and what to do about the rest.
+  DX_DEXCODE_CONFIG_FILE="$(dx_dexcode_config_file)" python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+from pathlib import Path
+
+try:
+    data = json.loads(Path(os.environ["DX_DEXCODE_CONFIG_FILE"]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+
+connected = sorted((data.get("connections") or {}).keys())
+if not connected:
+    raise SystemExit(0)
+known = {(o or {}).get("slug") for o in (data.get("organisations") or [])}
+missing = sorted(slug for slug in known if slug and slug not in connected)
+print("[info]  Connected organisations: " + ", ".join(connected))
+if missing:
+    print(
+        "[info]  Not connected on this machine: "
+        + ", ".join(missing)
+        + " (run 'dx login' and pick it to add)"
+    )
+PY
   dx_info "API: ${api_url}"
   dx_info "DexCode sync URL: ${sync_url}"
   dx_info "Session sync: ${session_sync}"
@@ -517,17 +679,25 @@ dx_dexcode_select_project() {
   account=$(dx_dexcode_config_value "account.name" 2>/dev/null || dx_dexcode_config_value "account.slug" 2>/dev/null || printf 'DexCode')
   current=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'Personal')
 
-  dx_info "Track sessions to organisation: ${account}"
   DX_DEXCODE_CONFIG_FILE="$config_file" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 data = json.loads(Path(os.environ["DX_DEXCODE_CONFIG_FILE"]).read_text(encoding="utf-8"))
-default_slug = (data.get("default_project") or {}).get("slug")
+selected = data.get("default_project") or {}
+connections = data.get("connections") or {}
+# Only worth naming the organisation when more than one is connected.
+show_org = len(connections) > 1
 for index, project in enumerate(data.get("projects") or [], start=1):
-    suffix = " (default)" if project.get("slug") == default_slug else ""
-    print(f"  {index}. {project.get('name') or project.get('slug')}{suffix}")
+    current = (
+        project.get("slug") == selected.get("slug")
+        and project.get("organisation_slug") == selected.get("organisation_slug")
+    )
+    suffix = " (default)" if current else ""
+    org = project.get("organisation_name") or project.get("organisation_slug") or ""
+    prefix = f"{org} / " if show_org and org else ""
+    print(f"  {index}. {prefix}{project.get('name') or project.get('slug')}{suffix}")
 PY
   printf '  %s. Create a new project\n' "$create_option"
   printf 'Choose project [%s]: ' "$current"
@@ -560,6 +730,16 @@ path = Path(os.environ["DX_DEXCODE_CONFIG_FILE"])
 data = json.loads(path.read_text(encoding="utf-8"))
 project = data["projects"][int(os.environ["DX_DEXCODE_PROJECT_INDEX"]) - 1]
 data["default_project"] = dict(project, default=True)
+
+# Follow the project to its organisation: the flat fields describe the active
+# connection, and syncing with another organisation's token would create a
+# duplicate project there instead of failing.
+connection = (data.get("connections") or {}).get(project.get("organisation_slug"))
+if connection:
+    data["access_token"] = connection.get("access_token", data.get("access_token"))
+    data["token_type"] = connection.get("token_type", data.get("token_type"))
+    data["scopes"] = connection.get("scopes", data.get("scopes"))
+    data["account"] = connection.get("account", data.get("account"))
 fd, tmp_name = tempfile.mkstemp(prefix=".dexcode.", suffix=".json", dir=str(path.parent))
 try:
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
