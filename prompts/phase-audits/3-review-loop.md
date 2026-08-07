@@ -18,8 +18,8 @@ All of these must be true before you stop:
   profile or explicit environment override.
 - Each clean report came from a full review wave that found zero verified
   findings and applied zero fixes. Waves that wrote `FINDINGS_FIXED:N`,
-  `FINDINGS:N`, `BLOCKED:reason`, or `ESCALATE_THOROUGH:reason` reset the
-  counter and do not count as clean.
+  `FINDINGS:N`, or `ESCALATE_THOROUGH:reason` reset the counter and do not count
+  as clean. `BLOCKED:reason` stops the loop immediately.
 - Any findings discovered by the loop were fixed.
 - The review was re-run after the most recent code change.
 - The loop did not stop after a pass that merely found or reported issues; those
