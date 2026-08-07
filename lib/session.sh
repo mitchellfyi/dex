@@ -428,51 +428,271 @@ dx_kill_process_tree() {
   kill "-$signal" "$pid" 2>/dev/null || true
 }
 
-# dx_run_with_timeout <seconds> <command> [args...] — portable timeout wrapper
-dx_run_with_timeout() (
-  local timeout="$1" marker="" cmd_pid="" watchdog_pid="" cmd_status
+# __dx_timeout_token_pids <token_file> — find a supervised command after reparenting
+#
+# PPID walks stop working as soon as a command exits and one of its background
+# children is reparented. Every command launched by dx_run_with_timeout inherits
+# a unique token in both its environment and an open file descriptor, so cleanup
+# can still identify those children. Linux exposes both through /proc. macOS
+# ships lsof, which can resolve the inherited descriptor after reparenting.
+__dx_timeout_token_pids() {
+  local token_file="$1"
+  [[ -f "$token_file" ]] || return 0
+
+  python3 - "$token_file" <<'PY'
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+try:
+    token = Path(sys.argv[1]).read_bytes().strip()
+except OSError:
+    raise SystemExit(0)
+if not re.fullmatch(rb"[A-Za-z0-9._-]{16,160}", token):
+    raise SystemExit(0)
+marker = b"DX_TIMEOUT_PROCESS_TOKEN=" + token
+
+
+def linux_processes(token_path):
+    matches = set()
+    proc = Path("/proc")
+    try:
+        token_stat = token_path.stat()
+    except OSError:
+        return matches
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            environment = (entry / "environ").read_bytes().split(b"\0")
+        except OSError:
+            environment = ()
+        if marker in environment:
+            matches.add(int(entry.name))
+            continue
+        fd_dir = entry / "fd"
+        try:
+            descriptors = tuple(fd_dir.iterdir())
+        except OSError:
+            continue
+        for descriptor in descriptors:
+            try:
+                descriptor_stat = descriptor.stat()
+            except OSError:
+                continue
+            if (
+                descriptor_stat.st_dev == token_stat.st_dev
+                and descriptor_stat.st_ino == token_stat.st_ino
+            ):
+                matches.add(int(entry.name))
+                break
+    return matches
+
+
+def lsof_processes(token_path):
+    lsof = shutil.which("lsof")
+    if not lsof and sys.platform == "darwin":
+        lsof = "/usr/sbin/lsof"
+    if not lsof or not Path(lsof).is_file():
+        return set()
+    try:
+        output = subprocess.check_output(
+            [lsof, "-t", "--", str(token_path)], stderr=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+    matches = set()
+    for raw_pid in output.split():
+        try:
+            matches.add(int(raw_pid))
+        except ValueError:
+            continue
+    return matches
+
+
+if sys.platform.startswith("linux"):
+    matches = linux_processes(Path(sys.argv[1]))
+else:
+    matches = lsof_processes(Path(sys.argv[1]))
+
+for process_id in sorted(matches):
+    print(process_id)
+PY
+}
+
+# __dx_timeout_signal_processes <token_file> <root_pid> <signal>
+__dx_timeout_signal_processes() {
+  local token_file="$1" root_pid="${2:-}" signal="${3:-TERM}" pids pid
+
+  # Capture token-bearing processes before the root is signalled. The PID list
+  # remains useful even if descendants are reparented during the PPID walk.
+  pids=$(__dx_timeout_token_pids "$token_file" 2>/dev/null || true)
+  [[ -n "$root_pid" ]] && dx_kill_process_tree "$root_pid" "$signal"
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill "-$signal" "$pid" 2>/dev/null || true
+  done <<EOF
+$pids
+EOF
+}
+
+# __dx_timeout_processes_alive <token_file> — whether supervised work remains
+__dx_timeout_processes_alive() {
+  local token_file="$1" pids
+  pids=$(__dx_timeout_token_pids "$token_file" 2>/dev/null || true)
+  [[ -n "$pids" ]]
+}
+
+# __dx_timeout_terminate_processes <token_file> [root_pid]
+__dx_timeout_terminate_processes() {
+  local token_file="$1" root_pid="${2:-}"
+
+  __dx_timeout_signal_processes "$token_file" "$root_pid" TERM
+  if __dx_timeout_processes_alive "$token_file"; then
+    sleep 2 2>/dev/null || true
+    if __dx_timeout_processes_alive "$token_file"; then
+      __dx_timeout_signal_processes "$token_file" "$root_pid" KILL
+    fi
+  fi
+}
+
+__dx_timeout_stop_watchdog() {
+  local watchdog_pid="${1:-}"
+  [[ -n "$watchdog_pid" ]] || return 0
+  dx_kill_process_tree "$watchdog_pid" TERM
+  wait "$watchdog_pid" 2>/dev/null || true
+}
+
+__dx_timeout_remove_state() {
+  local temp_dir="${1:-}" marker_file="${2:-}" token_file="${3:-}"
+  command rm -f "$marker_file" "$token_file" 2>/dev/null || true
+  [[ -n "$temp_dir" ]] && command rmdir "$temp_dir" 2>/dev/null || true
+}
+
+__dx_timeout_abort() {
+  local exit_status="$1" temp_dir="$2" marker_file="$3" token_file="$4"
+  local cmd_pid="${5:-}" watchdog_pid="${6:-}"
+  __dx_timeout_stop_watchdog "$watchdog_pid"
+  __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+  [[ -n "$cmd_pid" ]] && wait "$cmd_pid" 2>/dev/null || true
+  __dx_timeout_remove_state "$temp_dir" "$marker_file" "$token_file"
+  exit "$exit_status"
+}
+
+# __dx_run_with_timeout_core <seconds> <command> [args...] — isolated supervisor
+__dx_run_with_timeout_core() {
+  local timeout="$1" temp_dir="" marker="" token_file="" token=""
+  local cmd_pid="" watchdog_pid="" cmd_status timeout_enabled=0
   shift
   [[ $# -gt 0 ]] || return 2
 
-  if [[ ! "$timeout" =~ ^[0-9]+$ || "$timeout" -eq 0 ]]; then
-    "$@"
-    return $?
+  if [[ "$timeout" =~ ^[0-9]+$ && "$timeout" -gt 0 ]]; then
+    timeout_enabled=1
   fi
 
-  marker="${TMPDIR:-/tmp}/dex-timeout-${$}-${RANDOM}"
-  trap 'dx_kill_process_tree "$cmd_pid" TERM; dx_kill_process_tree "$watchdog_pid" TERM; rm -f "$marker" 2>/dev/null || true; exit 130' INT
-  trap 'dx_kill_process_tree "$cmd_pid" TERM; dx_kill_process_tree "$watchdog_pid" TERM; rm -f "$marker" 2>/dev/null || true; exit 143' TERM HUP
+  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-timeout.XXXXXX") || return 2
+  marker="$temp_dir/expired"
+  token_file="$temp_dir/token"
+  token="dx-${$}-${RANDOM}-${RANDOM}-$(date +%s)"
+  (umask 077 && printf '%s\n' "$token" > "$token_file") || {
+    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
+    return 2
+  }
+
+  trap '__dx_timeout_abort 130 "$temp_dir" "$marker" "$token_file" "$cmd_pid" "$watchdog_pid"' INT
+  trap '__dx_timeout_abort 143 "$temp_dir" "$marker" "$token_file" "$cmd_pid" "$watchdog_pid"' TERM
+  trap '__dx_timeout_abort 129 "$temp_dir" "$marker" "$token_file" "$cmd_pid" "$watchdog_pid"' HUP
   # Explicit subshell preserves full function execution and exit status when the
   # command is a shell function with invocation-scoped environment variables.
-  ( "$@" ) &
+  (
+    export DX_TIMEOUT_PROCESS_TOKEN="$token"
+    # A low, explicitly opened descriptor survives ordinary shell fork/exec
+    # chains on both supported platforms and is discoverable after reparenting.
+    exec 9< "$token_file"
+    "$@"
+  ) &
   cmd_pid=$!
 
-  (
-    sleep "$timeout" 2>/dev/null
-    if kill -0 "$cmd_pid" 2>/dev/null; then
-      : > "$marker"
-      dx_kill_process_tree "$cmd_pid" TERM
-      sleep 2 2>/dev/null
-      dx_kill_process_tree "$cmd_pid" KILL
-    fi
-  ) >/dev/null 2>&1 &
-  watchdog_pid=$!
+  if [[ $timeout_enabled -eq 1 ]]; then
+    (
+      sleep "$timeout" 2>/dev/null
+      if kill -0 "$cmd_pid" 2>/dev/null; then
+        : > "$marker"
+        __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+      fi
+    ) >/dev/null 2>&1 &
+    watchdog_pid=$!
+  fi
 
   cmd_status=0
   wait "$cmd_pid" 2>/dev/null || cmd_status=$?
-  # Stop the watchdog and its current sleep child. Killing only the subshell
-  # would orphan one sleep process for every command that finished early.
-  dx_kill_process_tree "$watchdog_pid" TERM
-  wait "$watchdog_pid" 2>/dev/null || true
 
   if [[ -f "$marker" ]]; then
-    rm -f "$marker" 2>/dev/null || true
+    # The watchdog owns TERM-to-KILL escalation. Waiting here prevents the
+    # command root's exit from cancelling cleanup before resistant children die.
+    [[ -n "$watchdog_pid" ]] && wait "$watchdog_pid" 2>/dev/null || true
+    __dx_timeout_terminate_processes "$token_file"
+    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
     return 124
   fi
 
-  rm -f "$marker" 2>/dev/null || true
+  # A natural command exit may still leave background children. Stop the timer,
+  # then terminate every process that inherited this invocation's token.
+  __dx_timeout_stop_watchdog "$watchdog_pid"
+  if [[ -f "$marker" ]]; then
+    __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
+    return 124
+  fi
+  __dx_timeout_terminate_processes "$token_file"
+  __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
   return "$cmd_status"
-)
+}
+
+# dx_run_with_timeout <seconds> <command> [args...] — portable timeout wrapper
+dx_run_with_timeout() {
+  local timeout_supervisor_pid="" timeout_status=0 timeout_signal_status=0
+  local timeout_prior_int="" timeout_prior_term="" timeout_prior_hup=""
+
+  # zsh can scope traps to this function. Bash 3.2 cannot, so preserve and
+  # restore its caller's handlers explicitly after the supervisor exits.
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    setopt localoptions localtraps
+  elif [[ -n "${BASH_VERSION:-}" ]]; then
+    timeout_prior_int=$(trap -p INT)
+    timeout_prior_term=$(trap -p TERM)
+    timeout_prior_hup=$(trap -p HUP)
+  fi
+
+  trap 'timeout_signal_status=130; if [[ -n "$timeout_supervisor_pid" ]]; then kill -INT "$timeout_supervisor_pid" 2>/dev/null || true; wait "$timeout_supervisor_pid" 2>/dev/null || true; fi' INT
+  trap 'timeout_signal_status=143; if [[ -n "$timeout_supervisor_pid" ]]; then kill -TERM "$timeout_supervisor_pid" 2>/dev/null || true; wait "$timeout_supervisor_pid" 2>/dev/null || true; fi' TERM
+  trap 'timeout_signal_status=129; if [[ -n "$timeout_supervisor_pid" ]]; then kill -HUP "$timeout_supervisor_pid" 2>/dev/null || true; wait "$timeout_supervisor_pid" 2>/dev/null || true; fi' HUP
+
+  (
+    local timeout_core_status=0
+    __dx_run_with_timeout_core "$@" || timeout_core_status=$?
+    exit "$timeout_core_status"
+  ) &
+  timeout_supervisor_pid=$!
+  wait "$timeout_supervisor_pid" 2>/dev/null || timeout_status=$?
+  [[ $timeout_signal_status -ne 0 ]] && timeout_status=$timeout_signal_status
+
+  trap - INT TERM HUP
+  if [[ -n "${BASH_VERSION:-}" ]]; then
+    # shellcheck disable=SC2294  # trusted trap definitions captured from this shell
+    [[ -n "$timeout_prior_int" ]] && eval "$timeout_prior_int"
+    # shellcheck disable=SC2294  # trusted trap definitions captured from this shell
+    [[ -n "$timeout_prior_term" ]] && eval "$timeout_prior_term"
+    # shellcheck disable=SC2294  # trusted trap definitions captured from this shell
+    [[ -n "$timeout_prior_hup" ]] && eval "$timeout_prior_hup"
+  fi
+
+  return "$timeout_status"
+}
 
 # dx_review_state_file <session_id> — review sub-loop clean pass counter (survives interrupts)
 dx_review_state_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-state"; }
