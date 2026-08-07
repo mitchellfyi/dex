@@ -167,6 +167,77 @@ changed_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
 }
 git -C "$REPO" restore app.txt
 
+git -C "$REPO" switch -qc fingerprint-feature
+printf 'publishable\n' >> "$REPO/app.txt"
+unstaged_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
+publish_receipt_session="publish-receipt-stability"
+dx_review_write_selection "$publish_receipt_session" small environment operator-override "$REPO"
+for ledger_iteration in 1 2 3; do
+  dx_review_ledger_append "$publish_receipt_session" "$ledger_iteration" \
+    "publish-clean-${ledger_iteration}" "$unstaged_fingerprint" "$(printf '%016x' "$ledger_iteration")"
+done
+dx_review_write_receipt "$publish_receipt_session" small 3 3 "$REPO"
+dx_review_receipt_valid "$publish_receipt_session" "$REPO"
+git -C "$REPO" add app.txt
+assert_eq "$unstaged_fingerprint" "$(dx_review_scope_fingerprint "$REPO")" \
+  "staging identical content preserves scope fingerprint"
+dx_review_receipt_valid "$publish_receipt_session" "$REPO"
+publish_state_session="publish-state-stability"
+dx_review_write_selection "$publish_state_session" small environment operator-override "$REPO"
+dx_review_write_state "$publish_state_session" small 3 2 1 "$REPO"
+git -C "$REPO" commit -qm "test: publish identical review content"
+assert_eq "$unstaged_fingerprint" "$(dx_review_scope_fingerprint "$REPO")" \
+  "committing identical content preserves scope fingerprint"
+dx_review_receipt_valid "$publish_receipt_session" "$REPO"
+IFS=$'\t' read -r publish_state_tier publish_state_required publish_state_iteration \
+  publish_state_clean _ < <(dx_review_read_state "$publish_state_session" "$REPO")
+assert_eq "small" "$publish_state_tier" "commit preserves review state tier"
+assert_eq "3" "$publish_state_required" "commit preserves review state gate"
+assert_eq "2" "$publish_state_iteration" "commit preserves review state iteration"
+assert_eq "1" "$publish_state_clean" "commit preserves review clean credit"
+dx_cleanup_session "$publish_receipt_session"
+dx_cleanup_session "$publish_state_session"
+
+published_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
+chmod +x "$REPO/app.txt"
+[[ "$published_fingerprint" != "$(dx_review_scope_fingerprint "$REPO")" ]] || {
+  printf 'tracked executable mode did not alter the scope fingerprint\n' >&2
+  exit 1
+}
+chmod -x "$REPO/app.txt"
+
+printf 'target-one\n' > "$REPO/link-target-one"
+printf 'target-two\n' > "$REPO/link-target-two"
+ln -s link-target-one "$REPO/current-link"
+symlink_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
+ln -sfn link-target-two "$REPO/current-link"
+[[ "$symlink_fingerprint" != "$(dx_review_scope_fingerprint "$REPO")" ]] || {
+  printf 'symlink target change did not alter the scope fingerprint\n' >&2
+  exit 1
+}
+rm "$REPO/current-link" "$REPO/link-target-one" "$REPO/link-target-two"
+
+printf 'rename-me\n' > "$REPO/old-name.txt"
+rename_source_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
+mv "$REPO/old-name.txt" "$REPO/new-name.txt"
+[[ "$rename_source_fingerprint" != "$(dx_review_scope_fingerprint "$REPO")" ]] || {
+  printf 'file rename did not alter the scope fingerprint\n' >&2
+  exit 1
+}
+rm "$REPO/new-name.txt"
+
+printf 'delete-me\n' > "$REPO/delete-me.txt"
+git -C "$REPO" add delete-me.txt
+git -C "$REPO" commit -qm "test: add deletion fixture"
+delete_source_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
+rm "$REPO/delete-me.txt"
+[[ "$delete_source_fingerprint" != "$(dx_review_scope_fingerprint "$REPO")" ]] || {
+  printf 'tracked deletion did not alter the scope fingerprint\n' >&2
+  exit 1
+}
+git -C "$REPO" restore delete-me.txt
+git -C "$REPO" switch -q main
+
 printf 'staged-only\n' > "$REPO/app.txt"
 git -C "$REPO" add app.txt
 git -C "$REPO" restore --source=HEAD --worktree -- app.txt
@@ -248,11 +319,17 @@ moving_before=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
 dx_review_write_selection moving-ref small environment operator-override "$MOVING_REF_REPO"
 git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_advanced_oid"
 moving_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
-[[ "$moving_before" != "$moving_after" ]] || {
-  printf 'comparison ref movement did not alter the scope fingerprint\n' >&2
+assert_eq "$moving_before" "$moving_after" \
+  "comparison movement with unchanged merge base preserves scope fingerprint"
+dx_review_selection_valid moving-ref "$MOVING_REF_REPO"
+moving_feature_oid=$(git -C "$MOVING_REF_REPO" rev-parse HEAD)
+git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_feature_oid"
+moving_material_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
+[[ "$moving_before" != "$moving_material_after" ]] || {
+  printf 'material comparison-base change did not alter the scope fingerprint\n' >&2
   exit 1
 }
-assert_rejected "comparison ref movement invalidates selection" dx_review_selection_valid moving-ref "$MOVING_REF_REPO"
+assert_rejected "material comparison-base change invalidates selection" dx_review_selection_valid moving-ref "$MOVING_REF_REPO"
 
 UNBORN_REPO="$TMP_DIR/unborn-repo"
 git init -q -b main "$UNBORN_REPO"

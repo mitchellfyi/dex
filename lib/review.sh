@@ -499,6 +499,7 @@ dx_review_result_reason() {
 
 dx_review_scope_descriptor() {
   local repo_dir="${1:-$PWD}" repo_root default_branch candidate candidate_oid merge_base upstream ahead
+  local fallback_ref="" fallback_oid="" fallback_merge_base=""
   repo_root=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || return 1
   default_branch=$(dx_default_branch "$repo_root") || return 1
   candidate="origin/${default_branch}"
@@ -506,9 +507,14 @@ dx_review_scope_descriptor() {
   if git -C "$repo_root" rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null 2>&1; then
     candidate_oid=$(git -C "$repo_root" rev-parse --verify "${candidate}^{commit}" 2>/dev/null) || return 1
     merge_base=$(git -C "$repo_root" merge-base "$candidate_oid" HEAD 2>/dev/null || true)
-    if [[ -n "$merge_base" ]] && ! git -C "$repo_root" diff --quiet "$merge_base" HEAD -- 2>/dev/null; then
-      printf 'changes\t%s\t%s\t%s\n' "$candidate" "$candidate_oid" "$merge_base"
-      return 0
+    if [[ -n "$merge_base" ]]; then
+      fallback_ref="$candidate"
+      fallback_oid="$candidate_oid"
+      fallback_merge_base="$merge_base"
+      if ! git -C "$repo_root" diff --quiet "$merge_base" HEAD -- 2>/dev/null; then
+        printf 'changes\t%s\t%s\t%s\n' "$candidate" "$candidate_oid" "$merge_base"
+        return 0
+      fi
     fi
   fi
 
@@ -517,9 +523,14 @@ dx_review_scope_descriptor() {
     candidate_oid=$(git -C "$repo_root" rev-parse --verify "${upstream}^{commit}" 2>/dev/null || true)
     merge_base=$(git -C "$repo_root" merge-base "$candidate_oid" HEAD 2>/dev/null || true)
     ahead=$(git -C "$repo_root" rev-list --count "${upstream}..HEAD" 2>/dev/null || true)
-    if [[ -n "$candidate_oid" && -n "$merge_base" && "$ahead" =~ ^[0-9]+$ && "$ahead" -gt 0 ]]; then
+    if [[ -z "$fallback_merge_base" && -n "$candidate_oid" && -n "$merge_base" && "$ahead" =~ ^[0-9]+$ && "$ahead" -gt 0 ]]; then
       printf 'changes\t%s\t%s\t%s\n' "$upstream" "$candidate_oid" "$merge_base"
       return 0
+    fi
+    if [[ -z "$fallback_merge_base" && -n "$candidate_oid" && -n "$merge_base" ]]; then
+      fallback_ref="$upstream"
+      fallback_oid="$candidate_oid"
+      fallback_merge_base="$merge_base"
     fi
   fi
 
@@ -530,12 +541,21 @@ dx_review_scope_descriptor() {
   if git -C "$repo_root" rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null 2>&1; then
     candidate_oid=$(git -C "$repo_root" rev-parse --verify "${candidate}^{commit}" 2>/dev/null) || return 1
     merge_base=$(git -C "$repo_root" merge-base "$candidate_oid" HEAD 2>/dev/null || true)
-    if [[ -n "$merge_base" ]] && ! git -C "$repo_root" diff --quiet "$merge_base" HEAD -- 2>/dev/null; then
-      printf 'changes\t%s\t%s\t%s\n' "$candidate" "$candidate_oid" "$merge_base"
-      return 0
+    if [[ -n "$merge_base" && -z "$fallback_merge_base" ]]; then
+      fallback_ref="$candidate"
+      fallback_oid="$candidate_oid"
+      fallback_merge_base="$merge_base"
+      if ! git -C "$repo_root" diff --quiet "$merge_base" HEAD -- 2>/dev/null; then
+        printf 'changes\t%s\t%s\t%s\n' "$candidate" "$candidate_oid" "$merge_base"
+        return 0
+      fi
     fi
   fi
 
+  if [[ -n "$fallback_merge_base" ]]; then
+    printf 'none\t%s\t%s\t%s\n' "$fallback_ref" "$fallback_oid" "$fallback_merge_base"
+    return 0
+  fi
   printf '%s\n' $'none\t-\t-\t-'
 }
 
@@ -651,21 +671,140 @@ def git(*args, check=True):
     return completed.stdout
 
 
-digest = hashlib.sha256()
 if os.environ["DX_REVIEW_FINGERPRINT_MODE"] == "scope":
-    descriptor = os.environ["DX_REVIEW_SCOPE_DESCRIPTOR"].encode("utf-8", "surrogateescape")
-    head = git("rev-parse", "--verify", "HEAD", check=False)
-    digest.update(b"SCOPE\0" + descriptor + b"\0")
-    digest.update(b"HEAD\0" + head)
-    digest.update(b"CACHED\0" + git("diff", "--binary", "--cached", "--"))
-    digest.update(b"WORKTREE\0" + git("diff", "--binary", "--"))
-else:
-    head = git("rev-parse", "--verify", "HEAD", check=False).strip()
-    if head:
-        digest.update(b"FINAL_WORKTREE\0" + git("diff", "--binary", "HEAD", "--"))
+    descriptor = os.environ["DX_REVIEW_SCOPE_DESCRIPTOR"].split("\t")
+    if len(descriptor) != 4:
+        raise SystemExit(1)
+    _scope_mode, comparison_ref, _comparison_oid, merge_base = descriptor
+    current_ref = os.fsdecode(
+        git("symbolic-ref", "--quiet", "--short", "HEAD", check=False).strip()
+    )
+    comparison_tree = b""
+    if merge_base != "-" and comparison_ref != current_ref:
+        comparison_tree = git(
+            "rev-parse", "--verify", f"{merge_base}^{{tree}}", check=False
+        ).strip()
+        if not comparison_tree:
+            raise SystemExit(1)
+
+    cached_paths = {
+        item
+        for item in git(
+            "diff", "--cached", "--name-only", "--no-renames", "-z", "--"
+        ).split(b"\0")
+        if item
+    }
+    worktree_paths = {
+        item
+        for item in git(
+            "diff", "--name-only", "--no-renames", "-z", "--"
+        ).split(b"\0")
+        if item
+    }
+    untracked_paths = {
+        item
+        for item in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+        if item
+    }
+
+    if comparison_tree:
+        paths = {
+            item
+            for item in git(
+                "diff", "--name-only", "--no-renames", "-z", merge_base, "HEAD", "--"
+            ).split(b"\0")
+            if item
+        }
+        paths.update(cached_paths)
+        paths.update(worktree_paths)
+        paths.update(untracked_paths)
     else:
-        digest.update(b"UNBORN_CACHED\0" + git("diff", "--binary", "--cached", "--"))
-        digest.update(b"UNBORN_WORKTREE\0" + git("diff", "--binary", "--"))
+        paths = {
+            item for item in git("ls-files", "-z").split(b"\0") if item
+        }
+        paths.update(untracked_paths)
+
+    digest = hashlib.sha256()
+    digest.update(b"SCOPE_CONTENT_V2\0")
+    if comparison_tree:
+        digest.update(b"COMPARISON_TREE\0" + comparison_tree + b"\0")
+    else:
+        digest.update(b"WHOLE_CODEBASE\0")
+
+    for raw_path in sorted(paths):
+        path = root / os.fsdecode(raw_path)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            if comparison_tree:
+                digest.update(
+                    b"PATH\0"
+                    + len(raw_path).to_bytes(8, "big")
+                    + raw_path
+                    + b"\0MISSING\0"
+                )
+            continue
+        except OSError:
+            metadata = None
+
+        digest.update(b"PATH\0" + len(raw_path).to_bytes(8, "big") + raw_path)
+        if metadata is None:
+            digest.update(b"\0MODE\0UNREADABLE\0")
+        elif stat.S_ISLNK(metadata.st_mode):
+            digest.update(b"\0MODE\0" + b"120000" + b"\0TARGET\0" + os.fsencode(os.readlink(path)))
+        elif stat.S_ISREG(metadata.st_mode):
+            mode = b"100755" if metadata.st_mode & 0o111 else b"100644"
+            object_digest = hashlib.sha256()
+            try:
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        object_digest.update(chunk)
+            except OSError:
+                object_digest = None
+            digest.update(b"\0MODE\0" + mode + b"\0CONTENT_SHA256\0")
+            digest.update(object_digest.digest() if object_digest else b"UNREADABLE")
+        elif stat.S_ISDIR(metadata.st_mode):
+            submodule_head = subprocess.run(
+                ["git", "-C", str(path), "rev-parse", "--verify", "HEAD"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ).stdout.strip()
+            submodule_status = subprocess.run(
+                ["git", "-C", str(path), "status", "--porcelain=v1", "-z"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ).stdout
+            digest.update(
+                b"\0MODE\0" + b"160000" + b"\0HEAD\0"
+                + submodule_head
+                + b"\0STATUS\0"
+                + submodule_status
+            )
+        else:
+            digest.update(b"\0MODE\0SPECIAL\0")
+
+    partial_paths = sorted(cached_paths & worktree_paths)
+    if partial_paths:
+        decoded_paths = [os.fsdecode(item) for item in partial_paths]
+        digest.update(
+            b"PARTIAL_INDEX\0"
+            + git("diff", "--binary", "--cached", "--no-renames", "--", *decoded_paths)
+            + b"\0PARTIAL_WORKTREE\0"
+            + git("diff", "--binary", "--no-renames", "--", *decoded_paths)
+        )
+
+    print(digest.hexdigest())
+    raise SystemExit(0)
+
+digest = hashlib.sha256()
+head = git("rev-parse", "--verify", "HEAD", check=False).strip()
+if head:
+    digest.update(b"FINAL_WORKTREE\0" + git("diff", "--binary", "HEAD", "--"))
+else:
+    digest.update(b"UNBORN_CACHED\0" + git("diff", "--binary", "--cached", "--"))
+    digest.update(b"UNBORN_WORKTREE\0" + git("diff", "--binary", "--"))
 
 untracked = [item for item in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if item]
 for raw_path in sorted(untracked):
