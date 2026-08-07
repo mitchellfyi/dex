@@ -9,6 +9,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
+usage() {
+  cat <<'USAGE'
+Usage: dx log [session_id]
+
+Show structured phase execution logs, optionally filtered by session ID.
+
+Options:
+  -h, --help  Show this help
+USAGE
+}
+
 format_duration() {
   local secs=$1
   [[ "$secs" =~ ^[0-9]+$ ]] || secs=0
@@ -33,6 +44,24 @@ format_status() {
 }
 
 main() {
+  if [[ $# -gt 1 ]]; then
+    dx_error "dx log accepts at most one session ID."
+    usage >&2
+    return 1
+  fi
+
+  case "${1:-}" in
+    -h|--help|help)
+      usage
+      return 0
+      ;;
+    -*)
+      dx_error "Unknown dx log option: $1"
+      usage >&2
+      return 1
+      ;;
+  esac
+
   local session_filter="${1:-}"
 
   if [[ ! -d "$DX_STATE_DIR" ]]; then
@@ -74,7 +103,7 @@ main() {
 
     # Total duration
     local first_start last_end
-    first_start=$(tail -n +2 "$log_file" | head -1 | cut -f4)
+    first_start=$(awk -F '\t' 'NR == 2 { print $4; exit }' "$log_file")
     last_end=$(tail -1 "$log_file" | cut -f5)
     if [[ -n "$first_start" ]] && [[ -n "$last_end" ]] && [[ "$first_start" =~ ^[0-9]+$ ]] && [[ "$last_end" =~ ^[0-9]+$ ]]; then
       local total=$((last_end - first_start))
