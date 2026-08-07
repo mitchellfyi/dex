@@ -13,6 +13,33 @@ source "$DEX_DIR/lib/common.sh"
 CLAUDE_DIR="$HOME/.claude"
 ZSHRC="$HOME/.zshrc"
 
+usage() {
+  cat <<'USAGE'
+Usage: dx install
+
+Install Dex skills, hooks, tools, and shell integration for the current user.
+
+Options:
+  -h, --help  Show this help
+USAGE
+}
+
+show_help=0
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) show_help=1 ;;
+    *)
+      dx_error "Unknown install option: $arg"
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+if [[ $show_help -eq 1 ]]; then
+  usage
+  exit 0
+fi
+
 echo "Dex — Global Install"
 echo ""
 

@@ -11,10 +11,10 @@ phase used by `dx`.
 
 ## Workspace Boundary
 
-`/dkreviewloop` is a one-off review command unless it is invoked from an active
-`dk` lifecycle. Run it in the current checkout exactly as found.
+`/dxreviewloop` is a one-off review command unless it is invoked from an active
+`dx` lifecycle. Run it in the current checkout exactly as found.
 
-Do not run `dk <ticket-or-description>`, `dk --no-worktree`, Phase 0 setup, or
+Do not run `dx <ticket-or-description>`, `dx --no-worktree`, Phase 0 setup, or
 any branch/worktree setup from this skill. Do not create, switch, rename, or
 delete branches or worktrees. "Fresh review-wave session" means a fresh review
 context for the same checkout; it does not mean a fresh git workspace.

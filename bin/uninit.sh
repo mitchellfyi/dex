@@ -5,6 +5,34 @@ set -euo pipefail
 
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
+usage() {
+  cat <<'USAGE'
+Usage: dx uninit
+
+Remove Dex's generated project files from the current repository.
+Global Dex skills and hooks are left in place.
+
+Options:
+  -h, --help  Show this help
+USAGE
+}
+
+show_help=0
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) show_help=1 ;;
+    *)
+      dx_error "Unknown uninit option: $arg"
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+if [[ $show_help -eq 1 ]]; then
+  usage
+  exit 0
+fi
+
 if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   repo_root=""
 fi

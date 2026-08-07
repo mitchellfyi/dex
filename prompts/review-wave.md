@@ -13,7 +13,7 @@ resolved profile: `light`, `standard`, or `thorough`.
 - The review wave runs in one CLI session.
 - Do not commit, push, create branches, create or update PRs, or poll reviewers.
 - Do not create or switch worktrees or branches. A review wave runs in the
-  current checkout; only `dk <ticket-or-description>` owns lifecycle setup.
+  current checkout; only `dx <ticket-or-description>` owns lifecycle setup.
 - Acceptance criteria come only from the current caller; otherwise use `N/A`.
 - `CLEAN` means zero verified findings and zero fixes in this wave.
 

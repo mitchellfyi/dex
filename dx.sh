@@ -20,6 +20,7 @@
 #   dxreviewloop            Standalone adaptive review of changes, or whole codebase if clean
 #   dxrm <number|name|--all>  Remove a worktree
 #   dxls                   List worktrees
+#   dxcd [number|name]      Navigate to a worktree, or the repo root with no argument
 #   dxclean                Clean stale worktrees + gone branches
 #   dxloop <prompt>         Run a prompt until fully implemented
 #   dx sync                 Refresh repo memory/rules from verified observations
@@ -152,6 +153,7 @@ __dx_cli() {
       echo "  dxrm <number|name>    Remove a worktree"
       echo "  dxrm --all            Remove all worktrees"
       echo "  dxls                  List worktrees"
+      echo "  dxcd [number|name]    Open a worktree, or the repo root with no argument"
       echo "  dxclean               Clean stale worktrees + gone branches"
       echo ""
       echo "Refinement (pre-implementation):"
@@ -2261,7 +2263,7 @@ dx() {
     echo "       dx --from-pr <N>   Resume session linked to a PR"
     echo "       dx refine <N|description>  Refine a ticket before implementation"
     echo ""
-    echo "       dx init|sync|rename|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help"
+    echo "       dx init|sync|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -2337,9 +2339,15 @@ dx() {
     return $?
   fi
 
+  # Branch naming is part of lifecycle setup, not a standalone command.
+  if [[ "$1" == "rename" ]]; then
+    dx_error "'dx rename' is not a command. Dex names lifecycle branches during ticket setup."
+    return 1
+  fi
+
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|login|logout|whoami|dexcode|rename|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;

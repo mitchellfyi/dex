@@ -6,7 +6,7 @@ caller-supplied scope, fix verified findings that are safe to fix, write the
 review result signal, and then stop so the outer loop can decide whether the
 clean-pass counter advances or resets.
 
-Run in the current checkout. Do not run `dk <ticket-or-description>`, Phase 0
+Run in the current checkout. Do not run `dx <ticket-or-description>`, Phase 0
 setup, or any branch/worktree setup from this review skill. Do not create,
 switch, rename, or delete branches or worktrees.
 

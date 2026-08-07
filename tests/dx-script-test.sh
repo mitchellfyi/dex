@@ -19,9 +19,21 @@ assert_contains() {
   }
 }
 
+assert_not_contains() {
+  local needle="$1" file="$2"
+  if grep -Fq "$needle" "$file"; then
+    printf 'unexpected text: %s\n' "$needle" >&2
+    printf 'output was:\n' >&2
+    cat "$file" >&2
+    exit 1
+  fi
+}
+
 zsh "$ROOT/dx.sh" --help > "$TMP_DIR/zsh-help.out"
 assert_contains "Dex" "$TMP_DIR/zsh-help.out"
 assert_contains "dx run --spec FILE" "$TMP_DIR/zsh-help.out"
+assert_contains "dxcd [number|name]" "$TMP_DIR/zsh-help.out"
+assert_not_contains "dx rename" "$TMP_DIR/zsh-help.out"
 
 if zsh "$ROOT/dx.sh" > "$TMP_DIR/zsh-empty.out" 2>&1; then
   printf 'expected zsh dx.sh with no args to exit non-zero\n' >&2
@@ -37,6 +49,12 @@ assert_contains "dx.sh requires zsh" "$TMP_DIR/bash-help.out"
 
 DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; dx help' > "$TMP_DIR/source-help.out"
 assert_contains "Dex" "$TMP_DIR/source-help.out"
+
+if DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; dx rename' > "$TMP_DIR/rename.out" 2>&1; then
+  printf 'expected removed dx rename command to fail\n' >&2
+  exit 1
+fi
+assert_contains "'dx rename' is not a command" "$TMP_DIR/rename.out"
 
 DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"

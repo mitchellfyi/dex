@@ -38,7 +38,7 @@ Follow `prompts/review-wave.md` as the source of truth. In one wave:
    review once.
 8. Write the review result signal and findings hash.
 
-Run in the current checkout. Do not run `dk <ticket-or-description>`, Phase 0
+Run in the current checkout. Do not run `dx <ticket-or-description>`, Phase 0
 setup, or any branch/worktree setup from this skill. Do not create, switch,
 rename, or delete branches or worktrees.
 

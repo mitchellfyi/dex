@@ -16,6 +16,33 @@ __dx_status_has_dex_hooks() {
   grep -Eq 'export DEX_DIR=.*hooks/|/dex(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|rtk-claude-hook\.sh|post-commit-guard\.sh|phase-loop\.sh|stop-sound\.sh|pre-compact\.sh|session-end\.sh)' "$settings_file" 2>/dev/null
 }
 
+usage() {
+  cat <<'USAGE'
+Usage: dx status
+
+Show the global Dex installation and current repository status.
+
+Options:
+  -h, --help  Show this help
+USAGE
+}
+
+show_help=0
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) show_help=1 ;;
+    *)
+      dx_error "Unknown status option: $arg"
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+if [[ $show_help -eq 1 ]]; then
+  usage
+  exit 0
+fi
+
 echo "Dex — Status"
 echo ""
 

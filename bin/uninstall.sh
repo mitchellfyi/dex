@@ -38,6 +38,34 @@ __dx_remove_worktree_settings_json() {
   __dx_settings_json remove-worktree-dirs "$SETTINGS_FILE" "$managed_dirs_json"
 }
 
+usage() {
+  cat <<'USAGE'
+Usage: dx uninstall
+
+Remove Dex's global skills, hooks, and shell integration for the current user.
+The Dex source checkout is left in place.
+
+Options:
+  -h, --help  Show this help
+USAGE
+}
+
+show_help=0
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) show_help=1 ;;
+    *)
+      dx_error "Unknown uninstall option: $arg"
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+if [[ $show_help -eq 1 ]]; then
+  usage
+  exit 0
+fi
+
 echo "Dex — Global Uninstall"
 echo ""
 
