@@ -52,9 +52,9 @@ else:
 }
 
 dx_provider_validate_config_file() {
-  local file="$1" scope="${2:-config}"
+  local file="$1" scope="${2:-config}" validation_output validation_reason
   [[ -f "$file" ]] || return 0
-  if ! python3 -c '
+  if ! validation_output=$(python3 -c '
 import json
 import re
 import sys
@@ -196,8 +196,13 @@ for name, profile in profiles.items():
 default = data.get("default", "")
 if default and default not in BUILTINS and default not in profiles:
     raise ValueError(f"{scope} default does not resolve in this config")
-' "$file" "$scope" 2>/dev/null; then
+' "$file" "$scope" 2>&1); then
+    validation_reason="${validation_output##*$'\n'}"
+    validation_reason="${validation_reason#*: }"
     dx_error "Provider config is invalid: $file"
+    if [[ -n "$validation_reason" ]]; then
+      dx_info "Reason: ${validation_reason}"
+    fi
     dx_info "Use string values, unique non-built-in profile names, valid engines, and a default defined in that file or built in."
     return 1
   fi
@@ -1294,7 +1299,13 @@ dx_provider_doctor() {
   printf '\n'
 
   local failed=0
-  if command -v claude >/dev/null 2>&1; then
+  if [[ "$DX_PROVIDER_ENGINE" == "codex-plugin" ]]; then
+    if command -v claude >/dev/null 2>&1; then
+      dx_ok "Claude Code CLI found (optional Codex plugin host)"
+    else
+      dx_skip "Claude Code CLI not found; direct Codex delegation does not require it"
+    fi
+  elif command -v claude >/dev/null 2>&1; then
     dx_ok "Claude Code CLI found"
     if dx_provider_claude_required_flags_check; then
       dx_ok "Claude Code CLI supports required Dex permission flags"
@@ -1314,7 +1325,7 @@ dx_provider_doctor() {
           failed=1
         fi
       elif dx_provider_subscription_safe_check; then
-        dx_ok "Subscription-safe Claude environment"
+        dx_ok "Subscription-safe provider environment"
       else
         failed=1
       fi
@@ -1413,16 +1424,27 @@ dx_provider_command() {
 
   case "$subcmd" in
     list)
+      if [[ $# -ne 0 ]]; then
+        dx_error "Usage: dx provider list"
+        return 1
+      fi
       dx_provider_list
       ;;
     current)
+      if [[ $# -ne 0 ]]; then
+        dx_error "Usage: dx provider current"
+        return 1
+      fi
       dx_provider_current
       ;;
     doctor)
+      if [[ $# -ne 0 ]]; then
+        dx_error "Usage: dx provider doctor"
+        return 1
+      fi
       dx_provider_doctor
       ;;
     use)
-      dx_provider_validate_config_files || return 1
       local scope="global"
       if [[ "${1:-}" == "--repo" ]]; then
         scope="repo"
@@ -1433,6 +1455,12 @@ dx_provider_command() {
         dx_error "Usage: dx provider use [--repo] <profile>"
         return 1
       fi
+      shift
+      if [[ $# -ne 0 ]]; then
+        dx_error "Usage: dx provider use [--repo] <profile>"
+        return 1
+      fi
+      dx_provider_validate_config_files || return 1
       if [[ "$scope" == "global" ]]; then
         if ! __dx_provider_builtin_get "$profile" "engine" >/dev/null 2>&1 && ! __dx_provider_json_get "$DX_PROVIDER_GLOBAL_CONFIG" "$profile" "engine" >/dev/null 2>&1; then
           dx_error "Global provider profile is not defined globally: $profile"
@@ -1441,7 +1469,10 @@ dx_provider_command() {
         fi
       else
         local repo_config
-        repo_config=$(dx_provider_repo_config) || return 1
+        if ! repo_config=$(dx_provider_repo_config); then
+          dx_error "Cannot set a repo provider profile outside a git repository."
+          return 1
+        fi
         if ! __dx_provider_builtin_get "$profile" "engine" >/dev/null 2>&1 && ! __dx_provider_json_get "$repo_config" "$profile" "engine" >/dev/null 2>&1; then
           dx_error "Repo provider profile is not built in or defined in this repo: $profile"
           dx_info "Define custom repo profiles in .dex/providers.json, or use a built-in profile."
@@ -1458,6 +1489,10 @@ dx_provider_command() {
       dx_provider_write_default "$profile" "$scope"
       ;;
     help|--help|-h)
+      if [[ $# -ne 0 ]]; then
+        dx_error "Usage: dx provider help"
+        return 1
+      fi
       printf '%s\n' "Usage: dx provider <command>"
       printf '%s\n' ""
       printf '%s\n' "Global run overrides:"
