@@ -54,6 +54,36 @@ Dex writes locally first, advances the remote sync cursor only after a
 successful response and may submit the same event batch again after a network
 failure.
 
+The event endpoint must be a direct HTTP or HTTPS URL without embedded
+credentials. Dex does not follow redirects for event submissions. This keeps a
+collector redirect from forwarding the run token to another origin or changing
+the batch `POST` into a `GET`.
+
+Dex also starts its API curl calls with `-q`, so options in the worker's
+`~/.curlrc` cannot enable redirects, forward credentials, or redirect artifact
+bytes behind the CLI's back.
+
+## Artifact Upload
+
+Artifact bytes go directly from the worker to the signed storage URL returned
+by DexCode. The CLI sends the DexCode Bearer token when it registers and
+confirms an artifact, but never adds that token to the storage `PUT`. Signed
+upload URLs are limited to HTTP and HTTPS and cannot contain credentials or a
+fragment.
+
+The worker confirms the uploaded byte count, content type and SHA-256 digest.
+DexCode should keep an artifact unavailable until that confirmation succeeds.
+The worker snapshots a non-symlink regular file before it emits the artifact
+event, then hashes and uploads that snapshot. Replacing the original path while
+the run is active cannot change the bytes attached to the recorded digest.
+
+Treat every uploaded attachment as untrusted on the app side. HTML and SVG can
+execute active content when a browser renders them. Serve attachments with
+`Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`, or put
+renderable files on a separate, cookieless origin with a restrictive CSP such
+as `default-src 'none'; sandbox`. Do not render HTML or SVG inline on the
+authenticated DexCode origin. Keep signed download URLs short-lived.
+
 ## Remote Worker Start
 
 The v1 remote start model is SSH bootstrap:

@@ -51,6 +51,7 @@ start_server() {
   local server_dir="$TMP_DIR/server"
   mkdir -p "$server_dir"
   printf '200\n' > "$server_dir/status"
+  printf 'json\n' > "$server_dir/body-mode"
   cat > "$server_dir/server.py" <<'PY'
 import json
 import sys
@@ -60,6 +61,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 requests_file = root / "requests.jsonl"
 status_file = root / "status"
+body_mode_file = root / "body-mode"
 port_file = root / "port"
 
 
@@ -81,13 +83,25 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             status = 500
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        body_mode = body_mode_file.read_text(encoding="utf-8").strip()
+        self.send_header("Content-Type", "text/plain" if body_mode == "text" else "application/json")
         self.end_headers()
-        self.wfile.write(
-            b'{"ok":true}\n'
-            if 200 <= status < 300
-            else b'{"ok":false,"error":"validation failed","access_token":"server-secret-token"}\n'
-        )
+        if 200 <= status < 300:
+            self.wfile.write(b'{"ok":true}\n')
+        elif body_mode == "text":
+            active_token = (self.headers.get("Authorization", "").removeprefix("Bearer "))
+            self.wfile.write(f"collector echoed {active_token} in neutral text\n".encode("utf-8"))
+        else:
+            active_token = (self.headers.get("Authorization", "").removeprefix("Bearer "))
+            self.wfile.write(json.dumps({
+                "ok": False,
+                "error": "validation failed",
+                "access_token": "server-secret-token",
+                "password": "server-password",
+                "credential": "server-credential",
+                "neutral_echo": active_token,
+                "remote": "https://worker-user:worker-password@example.test/private",
+            }, separators=(",", ":")).encode("utf-8") + b"\n")
 
     def log_message(self, _format, *_args):
         return
@@ -121,6 +135,21 @@ request_count() {
 
 start_server
 
+assert_eq "5" "$(__dx_factory_positive_int "999999999999999999999" 5 3600)" "oversized timeout fallback"
+assert_eq "50" "$(__dx_factory_positive_int "08" 50 10000)" "leading-zero batch fallback"
+assert_eq "0" "$(__dx_factory_nonnegative_int "0" 1 86400)" "zero retry delay"
+
+cursor_validation_run="run_cursor_validation"
+mkdir -p "$(dx_factory_sync_dir "$cursor_validation_run")"
+printf '0001\n' > "$(dx_factory_sync_cursor_file "$cursor_validation_run")"
+assert_eq "0" "$(__dx_factory_sync_read_cursor "$cursor_validation_run")" "non-canonical cursor fallback"
+printf '999999999999999999999\n' > "$(dx_factory_sync_cursor_file "$cursor_validation_run")"
+assert_eq "0" "$(__dx_factory_sync_read_cursor "$cursor_validation_run")" "oversized cursor fallback"
+if __dx_factory_sync_write_cursor "$cursor_validation_run" "1000000000"; then
+  printf 'cursor writer accepted a value outside the supported range\n' >&2
+  exit 1
+fi
+
 local_run="$(dx_run_prepare "local-only" "$ROOT" "test" "factory-sync-test" "issue-47" "dx test")"
 dx_event_emit "$local_run" "run.started" "info" "Local only" "" '{"mode":"local"}'
 assert_eq "1" "$(python3 - "$(dx_run_events_file "$local_run")" <<'PY'
@@ -131,6 +160,12 @@ PY
 )" "local event count"
 assert_no_file "$(dx_factory_sync_cursor_file "$local_run")"
 assert_eq "0" "$(request_count)" "local-only requests"
+
+export DEX_FACTORY_TOKEN="machine-token"
+export DEX_FACTORY_RUN_TOKEN="factory-run-token"
+export DEX_RUN_TOKEN="scoped-run-token"
+assert_eq "scoped-run-token" "$(dx_factory_sync_token)" "run token precedence"
+unset DEX_FACTORY_RUN_TOKEN DEX_RUN_TOKEN
 
 export DEX_FACTORY_SYNC=true
 export DEX_FACTORY_URL="$SERVER_URL"
@@ -212,6 +247,13 @@ assert "event sequences 1-1" in status["message"], status
 assert "/api/v1/runs/" in status["message"], status
 assert "server-secret-token" not in status["message"], status
 assert '"access_token":"[redacted]"' in status["message"], status
+assert "server-password" not in status["message"], status
+assert "server-credential" not in status["message"], status
+assert "worker-password" not in status["message"], status
+assert '"password":"[redacted]"' in status["message"], status
+assert "https://[redacted]@example.test/private" in status["message"], status
+assert '"neutral_echo":"[redacted]"' in status["message"], status
+assert "test-token" not in status["message"], status
 PY
 
 printf '200\n' > "$SERVER_DIR/status"
@@ -234,6 +276,118 @@ assert len(matching) == 2
 assert matching[0]["id"] == matching[1]["id"]
 assert matching[0]["sequence"] == matching[1]["sequence"] == 1
 PY
+
+plain_echo_run="$(dx_run_prepare "plain-token-echo" "$ROOT" "test" "factory-sync-test" "issue-48" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$plain_echo_run" "run.started" "info" "Plain token echo" "" '{"mode":"plain-echo"}'
+printf '500\n' > "$SERVER_DIR/status"
+printf 'text\n' > "$SERVER_DIR/body-mode"
+export DEX_FACTORY_SYNC=true
+dx_factory_sync_pending_events "$plain_echo_run"
+python3 - "$(dx_factory_sync_status_file "$plain_echo_run")" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+status = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert "collector echoed [redacted] in neutral text" in status["message"], status
+assert "test-token" not in status["message"], status
+PY
+printf '200\n' > "$SERVER_DIR/status"
+printf 'json\n' > "$SERVER_DIR/body-mode"
+dx_factory_sync_pending_events "$plain_echo_run"
+
+stale_lock_run="$(dx_run_prepare "stale-lock" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$stale_lock_run" "run.started" "info" "Stale lock" "" '{"mode":"stale-lock"}'
+stale_lock_dir="$(dx_factory_sync_dir "$stale_lock_run")/.lock"
+mkdir -p "$stale_lock_dir"
+printf '999999\n' > "$stale_lock_dir/owner"
+export DEX_FACTORY_SYNC=true
+dx_factory_sync_pending_events "$stale_lock_run"
+assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$stale_lock_run")")" "stale-lock cursor"
+[[ ! -d "$stale_lock_dir" ]] || {
+  printf 'stale Factory sync lock was not released\n' >&2
+  exit 1
+}
+
+age_lock() {
+  DX_TEST_LOCK_DIR="$1" python3 - <<'PY'
+import os
+import time
+
+path = os.environ["DX_TEST_LOCK_DIR"]
+old = time.time() - 60
+os.utime(path, (old, old), follow_symlinks=False)
+PY
+}
+
+missing_owner_run="$(dx_run_prepare "missing-lock-owner" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$missing_owner_run" "run.started" "info" "Missing lock owner" "" '{}'
+missing_owner_lock="$(dx_factory_sync_dir "$missing_owner_run")/.lock"
+mkdir -p "$missing_owner_lock"
+export DEX_FACTORY_SYNC=true
+DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$missing_owner_run"
+[[ -d "$missing_owner_lock" ]] || {
+  printf 'Factory stole a fresh lock before its owner could be written\n' >&2
+  exit 1
+}
+age_lock "$missing_owner_lock"
+dx_factory_sync_pending_events "$missing_owner_run"
+assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$missing_owner_run")")" "missing-owner cursor"
+
+corrupt_owner_run="$(dx_run_prepare "corrupt-lock-owner" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$corrupt_owner_run" "run.started" "info" "Corrupt lock owner" "" '{}'
+corrupt_owner_lock="$(dx_factory_sync_dir "$corrupt_owner_run")/.lock"
+mkdir -p "$corrupt_owner_lock"
+printf 'not-a-pid\n' > "$corrupt_owner_lock/owner"
+age_lock "$corrupt_owner_lock"
+export DEX_FACTORY_SYNC=true
+dx_factory_sync_pending_events "$corrupt_owner_run"
+assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$corrupt_owner_run")")" "corrupt-owner cursor"
+
+interrupted_owner_run="$(dx_run_prepare "interrupted-lock-owner" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$interrupted_owner_run" "run.started" "info" "Interrupted lock owner" "" '{}'
+interrupted_owner_lock="$(dx_factory_sync_dir "$interrupted_owner_run")/.lock"
+interrupted_ready="$TMP_DIR/interrupted-lock-ready"
+mkdir -p "$(dirname "$interrupted_owner_lock")"
+DEX_TEST_LOCK_DIR="$interrupted_owner_lock" DEX_TEST_READY="$interrupted_ready" \
+  bash -c 'trap "exit 0" TERM; source "$DEX_DIR/lib/common.sh"; __dx_factory_sync_acquire_lock "$DEX_TEST_LOCK_DIR"; printf ready > "$DEX_TEST_READY"; while :; do sleep 1; done' &
+interrupted_pid=$!
+for _attempt in {1..100}; do
+  [[ -f "$interrupted_ready" ]] && break
+  sleep 0.05
+done
+[[ -f "$interrupted_ready" ]] || {
+  printf 'interrupted lock owner fixture did not acquire its lock\n' >&2
+  kill "$interrupted_pid" 2>/dev/null || true
+  wait "$interrupted_pid" 2>/dev/null || true
+  exit 1
+}
+kill "$interrupted_pid" 2>/dev/null || true
+wait "$interrupted_pid" 2>/dev/null || true
+export DEX_FACTORY_SYNC=true
+dx_factory_sync_pending_events "$interrupted_owner_run"
+assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$interrupted_owner_run")")" "interrupted-owner cursor"
+
+live_owner_run="$(dx_run_prepare "live-lock-owner" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$live_owner_run" "run.started" "info" "Live lock owner" "" '{}'
+live_owner_lock="$(dx_factory_sync_dir "$live_owner_run")/.lock"
+mkdir -p "$live_owner_lock"
+printf '%s\n' "$$" > "$live_owner_lock/owner"
+export DEX_FACTORY_SYNC=true
+DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$live_owner_run"
+[[ -d "$live_owner_lock" ]] || {
+  printf 'Factory stole a lock owned by a live process\n' >&2
+  exit 1
+}
+assert_no_file "$(dx_factory_sync_cursor_file "$live_owner_run")"
+rm -f "$live_owner_lock/owner"
+rmdir "$live_owner_lock"
 
 missing_token_run="$(dx_run_prepare "missing-token" "$ROOT" "test" "factory-sync-test" "issue-47" "dx test")"
 unset DEX_FACTORY_TOKEN

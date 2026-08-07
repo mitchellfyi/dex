@@ -39,6 +39,11 @@ run_b="$(dx_run_id)"
 [[ "$run_a" == run_* ]] || { printf 'run id missing prefix: %s\n' "$run_a" >&2; exit 1; }
 [[ "$run_a" != "$run_b" ]] || { printf 'run ids are not unique\n' >&2; exit 1; }
 dx_run_validate_id "$run_a"
+oversized_run_id="run_$(printf 'a%.0s' {1..200})"
+if dx_run_validate_id "$oversized_run_id"; then
+  printf 'run id validation accepted a filesystem component over 200 bytes\n' >&2
+  exit 1
+fi
 
 session_id="test-session"
 run_id="$(dx_run_prepare "$session_id" "$ROOT" "test" "events-test" "issue-46" "dx test")"

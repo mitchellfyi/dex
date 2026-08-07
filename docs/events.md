@@ -23,10 +23,10 @@ Each run gets a stable ID and a directory under:
 `dx`, `dx run`, `dx init`, and `dx sync` print the current run ID near startup.
 Main lifecycle runs also show it in the phase header.
 
-Run data is local by default. Dex can optionally sync events to a Dex Factory
-collector when sync is configured. Logs and artifacts remain local unless a
-future upload path is configured separately. Event, log, artifact, and remote
-sync writes are treated as non-fatal after the run directory has been prepared.
+Run data is written locally first. When a DexCode connection is active, Dex can
+sync events and captured artifacts after the local write succeeds. Logs stay on
+the worker. Event, log, artifact, and remote sync failures are non-fatal after
+the run directory has been prepared.
 
 Headless runs started with `dx run --spec` normalize the supplied run spec into
 `spec.json` before emitting events. See [run-specs.md](run-specs.md) for the
@@ -120,15 +120,71 @@ are rejected. Registering an artifact emits `artifact.created`.
 `artifacts/run-summary.md` and records it in the manifest when summaries are
 updated.
 
+### DexCode artifact upload
+
+An active DexCode connection or headless run token uploads each captured
+artifact in three steps:
+
+1. Register its metadata with `POST /api/v1/runs/<run_id>/artifacts`.
+2. Upload the file bytes to the returned `upload.url` with `PUT`.
+3. Confirm the byte count, content type, and SHA-256 digest with
+   `POST /api/v1/runs/<run_id>/artifacts/<artifact_id>`.
+
+The registration body contains `kind`, `title`, `filename`, and `content_type`.
+The confirmation body has this shape:
+
+```json
+{
+  "byte_size": 312,
+  "content_type": "text/markdown",
+  "sha256": "..."
+}
+```
+
+Dex sends its Bearer token to the registration and confirmation endpoints. It
+does not send that token to the signed upload URL. Upload URLs must use HTTP or
+HTTPS and cannot contain credentials or a fragment.
+
+For a headless run, Dex uses `DEX_FACTORY_URL` as the artifact API base. If the
+run spec supplies only the standard `.../api/v1/runs/<run_id>/events/batch`
+endpoint, Dex derives the same API base from that path.
+
+After confirmation succeeds, the local manifest records
+`dexcode_artifact_id`, `dexcode_artifact_sha256`, and a sync fingerprint.
+Registering unchanged content and metadata again does not upload it twice. If
+the file or remote-facing metadata changes, Dex uploads a fresh artifact and
+replaces those fields with the new remote identity, digest, and fingerprint.
+
+Artifact upload remains best effort. A registration, storage, or confirmation
+failure leaves the local file and manifest intact so the run can continue.
+Set `DEXCODE_SYNC=0` (or `false`, `no`, or `off`) to disable run and artifact
+sync. `DEXCODE_CONTEXT_SYNC` accepts the same values for project context.
+DexCode API requests time out after 15 seconds by default; set
+`DEXCODE_HTTP_TIMEOUT_SECONDS` to a value from 1 to 3600 to change that limit.
+
+Project-context requests are file-backed and size-limited. Each Markdown entry
+includes `source_byte_size`, `body_byte_size`, and `truncated`; the top-level
+`truncation` object records the candidate, included, omitted, and truncated
+entry counts. Defaults are 20,000 bytes per entry, 524,288 bytes for the full
+JSON request, and 100 entries. Adjust them with
+`DEXCODE_CONTEXT_ENTRY_MAX_BYTES`, `DEXCODE_CONTEXT_TOTAL_MAX_BYTES`, and
+`DEXCODE_CONTEXT_MAX_ENTRIES`. Dex still hashes the complete source file when
+its body is truncated.
+
+Use `dx login` to connect a machine, `dx whoami` to check its active
+organisation, project, and sync settings, and `dx logout` to remove the local
+connection. `dx login --timeout SECONDS` sets the browser-approval deadline;
+it does not change the per-request timeout above.
+
 ## Factory Event Sync
 
 Factory sync is opt-in. Dex always appends to `events.jsonl` first, then tries
 to send unsynced events to the configured HTTP collector.
 
-When DexCode login is configured, `dx whoami` shows the connected account,
-project, API URL, sync URL, and whether session and project-context sync are
-enabled. This is the quickest local check that new runs will be associated with
-the intended DexCode project before starting a long lifecycle.
+When DexCode login is configured, `dx whoami` shows the connected organisation,
+project, API URL, sync URL, and whether session, event, and project-context sync
+are enabled. This is the quickest local check that new runs will be associated
+with the intended DexCode project before starting a long lifecycle.
 
 Minimum configuration:
 
@@ -183,9 +239,9 @@ Configuration variables:
 | `DEX_FACTORY_SYNC` | auto | `true`, `1`, `yes`, or `on` enables sync. `false`, `0`, `no`, or `off` disables it. If unset, a configured Factory URL or endpoint enables sync. |
 | `DEX_FACTORY_URL` | unset | Base Factory URL. Dex appends `/api/v1/runs/<run_id>/events/batch`. |
 | `DEX_FACTORY_EVENTS_ENDPOINT` | unset | Exact event endpoint. Supports `{run_id}` replacement and takes precedence over `DEX_FACTORY_URL`. |
-| `DEX_FACTORY_TOKEN` | unset | Bearer token for event submission. |
-| `DEX_FACTORY_RUN_TOKEN` | unset | Run-scoped bearer token fallback. |
-| `DEX_RUN_TOKEN` | unset | Generic run token fallback for headless/remote launch flows. |
+| `DEX_RUN_TOKEN` | unset | Run token from `dx run`; takes precedence for headless event and artifact sync. |
+| `DEX_FACTORY_RUN_TOKEN` | unset | Run-scoped Bearer token fallback. |
+| `DEX_FACTORY_TOKEN` | unset | Machine-level Bearer token fallback for event submission. |
 | `DEX_FACTORY_BATCH_SIZE` | `50` | Maximum events per HTTP request. |
 | `DEX_FACTORY_MAX_BATCHES_PER_FLUSH` | `20` | Maximum queued batches to send in one flush. |
 | `DEX_FACTORY_TIMEOUT_SECONDS` | `5` | HTTP request timeout. |

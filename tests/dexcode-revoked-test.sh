@@ -7,7 +7,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dexcode-revoked-test.XXXXXX")"
 
 cleanup() {
-  [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null
+  if [[ -n "${SERVER_PID:-}" ]]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -40,11 +43,15 @@ state = Path(sys.argv[1])
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        status = int((state / "status").read_text().strip())
+        configured = (state / "status").read_text().strip()
+        invalid = configured == "invalid"
+        status = 200 if invalid else int(configured)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        if status == 200:
+        if invalid:
+            self.wfile.write(b'{not-json')
+        elif status == 200:
             project = ('{"slug":"app","name":"App","default_branch":"main",'
                        '"organisation_slug":"acme","organisation_name":"Acme","default":true}')
             self.wfile.write(
@@ -82,7 +89,8 @@ cat > "$DEXCODE_CONFIG_FILE" <<JSON
   "projects": [{"slug": "app", "name": "App", "organisation_slug": "acme"}],
   "connections": {
     "acme": {"access_token": "dc_live_still_valid", "account": {"slug": "acme", "name": "Acme"},
-             "projects": [{"slug": "app", "name": "App", "organisation_slug": "acme"}]}
+             "projects": [{"slug": "app", "name": "App", "organisation_slug": "acme"}],
+             "api_url": "$SERVER_URL", "sync": {"factory_url": "$SERVER_URL"}}
   },
   "sync": {"factory_url": "$SERVER_URL"}
 }
@@ -92,6 +100,17 @@ JSON
 
 dx_dexcode_whoami > "$TMP_DIR/live.out" 2>&1
 assert_contains "DexCode organisation:" "$TMP_DIR/live.out"
+
+# A temporary server failure keeps the saved details but labels them as stale.
+printf '500' > "$TMP_DIR/status"
+dx_dexcode_whoami > "$TMP_DIR/server-error.out" 2>&1
+assert_contains "profile refresh failed (HTTP 500); showing the last known details" "$TMP_DIR/server-error.out"
+assert_contains "Connected project: App" "$TMP_DIR/server-error.out"
+
+printf 'invalid' > "$TMP_DIR/status"
+dx_dexcode_whoami > "$TMP_DIR/invalid-response.out" 2>&1
+assert_contains "returned an invalid profile response; showing the last known details" "$TMP_DIR/invalid-response.out"
+assert_contains "Connected project: App" "$TMP_DIR/invalid-response.out"
 
 # --- after the machine is revoked -------------------------------------------
 
@@ -108,6 +127,16 @@ if grep -qF "Connected project: App" "$TMP_DIR/revoked.out"; then
   printf 'whoami printed stale details for a revoked machine\n' >&2
   exit 1
 fi
+
+# A forbidden profile response also means the saved machine credential is no
+# longer usable; it must not fall back to stale details that look current.
+printf '403' > "$TMP_DIR/status"
+if dx_dexcode_whoami > "$TMP_DIR/forbidden.out" 2>&1; then
+  printf 'whoami reported success for a forbidden machine credential\n' >&2
+  cat "$TMP_DIR/forbidden.out" >&2
+  exit 1
+fi
+assert_contains "no longer connected" "$TMP_DIR/forbidden.out"
 
 # --- offline still shows what is known --------------------------------------
 

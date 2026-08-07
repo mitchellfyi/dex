@@ -6,6 +6,7 @@ dx_run_root() { printf '%s\n' "${DX_RUN_ROOT:-$HOME/.dex/runs}"; }
 dx_run_validate_id() {
   local run_id="$1"
   [[ -n "$run_id" ]] || return 1
+  [[ ${#run_id} -le 200 ]] || return 1
   [[ "$run_id" == run_* ]] || return 1
   [[ "$run_id" != *".."* && "$run_id" != *"/"* ]] || return 1
   [[ "$run_id" != *$'\n'* && "$run_id" != *$'\r'* && "$run_id" != *$'\t'* ]] || return 1
@@ -292,9 +293,10 @@ from pathlib import Path, PurePosixPath
 
 root = Path(os.environ["DX_RUN_ARTIFACT_DIR"]).resolve()
 rel_raw = os.environ["DX_RUN_ARTIFACT_REL_PATH"]
-rel = PurePosixPath(rel_raw)
-if rel.is_absolute() or not rel.parts or any(part in ("", ".", "..") for part in rel.parts):
+raw_parts = rel_raw.split("/")
+if rel_raw.startswith("/") or not raw_parts or any(part in ("", ".", "..") for part in raw_parts):
     raise SystemExit(1)
+rel = PurePosixPath(rel_raw)
 target = (root / Path(*rel.parts)).resolve()
 if target != root and root not in target.parents:
     raise SystemExit(1)
@@ -304,7 +306,7 @@ PY
 
 dx_run_register_artifact() {
   local run_id="$1" artifact_type="$2" rel_path="$3" title="$4" metadata_json="${5:-}"
-  local manifest_file artifact_root event_data
+  local manifest_file artifact_root event_data snapshot_dir snapshot_file snapshot_stats artifact_size artifact_sha
   [[ -n "$metadata_json" ]] || metadata_json="{}"
   dx_run_validate_id "$run_id" || return 1
   dx_event_validate_type "$artifact_type" || return 1
@@ -313,13 +315,26 @@ dx_run_register_artifact() {
   artifact_root=$(dx_run_artifacts_dir "$run_id") || return 1
   dx_run_artifact_manifest_prepare "$run_id" || return 1
 
+  snapshot_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-artifact-snapshot.XXXXXX") || return 1
+  if ! chmod 700 "$snapshot_dir" 2>/dev/null; then
+    command rm -rf "$snapshot_dir"
+    return 1
+  fi
+  snapshot_file="$snapshot_dir/artifact"
+  if ! snapshot_stats=$(__dx_dexcode_snapshot_artifact "$artifact_root" "$rel_path" "$snapshot_file" 2>/dev/null); then
+    command rm -rf "$snapshot_dir"
+    return 1
+  fi
+  artifact_size="${snapshot_stats%% *}"
+  artifact_sha="${snapshot_stats#* }"
+
   event_data=$(DX_RUN_ARTIFACT_MANIFEST_FILE="$manifest_file" \
-    DX_RUN_ARTIFACT_ROOT="$artifact_root" \
     DX_RUN_ARTIFACT_TYPE="$artifact_type" \
     DX_RUN_ARTIFACT_PATH="$rel_path" \
     DX_RUN_ARTIFACT_TITLE="$title" \
+    DX_RUN_ARTIFACT_SIZE="$artifact_size" \
+    DX_RUN_ARTIFACT_SHA="$artifact_sha" \
     python3 - "$metadata_json" <<'PY'
-import hashlib
 import json
 import os
 import sys
@@ -333,14 +348,11 @@ def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def safe_artifact_path(root, rel_raw):
-    rel = PurePosixPath(rel_raw)
-    if rel.is_absolute() or not rel.parts or any(part in ("", ".", "..") for part in rel.parts):
+def safe_artifact_path(rel_raw):
+    raw_parts = rel_raw.split("/")
+    if rel_raw.startswith("/") or not raw_parts or any(part in ("", ".", "..") for part in raw_parts):
         raise SystemExit("unsafe artifact path")
-    target = (root / Path(*rel.parts)).resolve()
-    if target != root and root not in target.parents:
-        raise SystemExit("unsafe artifact path")
-    return rel, target
+    return PurePosixPath(*raw_parts)
 
 
 metadata = json.loads(sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else "{}")
@@ -348,9 +360,7 @@ if not isinstance(metadata, dict):
     raise SystemExit("artifact metadata must be a JSON object")
 
 manifest_path = Path(os.environ["DX_RUN_ARTIFACT_MANIFEST_FILE"])
-root = Path(os.environ["DX_RUN_ARTIFACT_ROOT"]).resolve()
-root.mkdir(parents=True, exist_ok=True)
-rel, target = safe_artifact_path(root, os.environ["DX_RUN_ARTIFACT_PATH"])
+rel = safe_artifact_path(os.environ["DX_RUN_ARTIFACT_PATH"])
 
 manifest = {"schema_version": 1, "artifacts": [], "created_at": utc_now(), "updated_at": utc_now()}
 if manifest_path.exists():
@@ -361,14 +371,8 @@ if manifest_path.exists():
             if not isinstance(manifest.get("artifacts"), list):
                 manifest["artifacts"] = []
 
-size_bytes = target.stat().st_size if target.exists() else None
-sha256 = None
-if target.exists() and target.is_file():
-    digest = hashlib.sha256()
-    with target.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    sha256 = digest.hexdigest()
+size_bytes = int(os.environ["DX_RUN_ARTIFACT_SIZE"])
+sha256 = os.environ["DX_RUN_ARTIFACT_SHA"]
 
 artifact = None
 for item in manifest["artifacts"]:
@@ -417,27 +421,38 @@ print(json.dumps({
     "created": created,
 }, sort_keys=True, separators=(",", ":")))
 PY
-  ) || return 1
+  ) || {
+    command rm -rf "$snapshot_dir"
+    return 1
+  }
 
   dx_event_emit_safe "$run_id" "artifact.created" "info" "Artifact captured: ${title}" "" "$event_data"
-  dx_run_sync_artifact "$run_id" "$manifest_file" "$artifact_root" "$artifact_type" "$rel_path" "$title"
+  dx_run_sync_artifact "$run_id" "$manifest_file" "$artifact_root" "$artifact_type" "$rel_path" "$title" "$snapshot_file"
+  command rm -rf "$snapshot_dir"
 }
 
-# Sends a captured artifact to DexCode, once. The manifest records the id it
-# comes back with, so re-registering the same artifact — which happens
-# whenever a run is resumed — does not upload it a second time.
+# Sends a captured artifact to DexCode. The manifest records the remote id,
+# digest, and metadata fingerprint, so an unchanged artifact is not uploaded
+# again when a run resumes. Changed bytes or remote-facing metadata are sent
+# as a fresh artifact.
 #
 # Always returns 0. Artifacts are evidence about a run; failing to ship one
 # must never be the thing that ends it.
 dx_run_sync_artifact() {
   local run_id="$1" manifest_file="$2" artifact_root="$3" artifact_type="$4" rel_path="$5" title="$6"
-  local existing remote_id
+  local snapshot_file="${7:-${artifact_root}/${rel_path}}"
+  local sync_state existing_id uploaded_sha current_sha uploaded_fingerprint current_fingerprint remainder remote_id filename
 
   command -v dx_dexcode_upload_artifact >/dev/null 2>&1 || return 0
-  [[ "${DEXCODE_SYNC:-1}" != "0" ]] || return 0
+  if command -v dx_dexcode_value_disabled >/dev/null 2>&1; then
+    dx_dexcode_value_disabled "${DEXCODE_SYNC:-1}" && return 0
+  else
+    [[ "${DEXCODE_SYNC:-1}" != "0" ]] || return 0
+  fi
 
-  existing=$(DX_SYNC_MANIFEST="$manifest_file" DX_SYNC_TYPE="$artifact_type" \
+  sync_state=$(DX_SYNC_MANIFEST="$manifest_file" DX_SYNC_TYPE="$artifact_type" \
     DX_SYNC_PATH="$rel_path" python3 - <<'PY' 2>/dev/null || true
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -448,18 +463,46 @@ except (OSError, json.JSONDecodeError):
     raise SystemExit(0)
 for item in manifest.get("artifacts", []):
     if item.get("type") == os.environ["DX_SYNC_TYPE"] and item.get("path") == os.environ["DX_SYNC_PATH"]:
-        print(item.get("dexcode_artifact_id") or "")
+        fingerprint_source = json.dumps({
+            "path": item.get("path") or "",
+            "sha256": item.get("sha256") or "",
+            "title": item.get("title") or "",
+            "type": item.get("type") or "",
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        print("|".join((
+            item.get("dexcode_artifact_id") or "",
+            item.get("dexcode_artifact_sha256") or "",
+            item.get("sha256") or "",
+            item.get("dexcode_artifact_fingerprint") or "",
+            hashlib.sha256(fingerprint_source).hexdigest(),
+        )))
         break
 PY
   )
-  [[ -z "$existing" ]] || return 0
+  existing_id="${sync_state%%|*}"
+  remainder="${sync_state#*|}"
+  uploaded_sha="${remainder%%|*}"
+  remainder="${remainder#*|}"
+  current_sha="${remainder%%|*}"
+  remainder="${remainder#*|}"
+  uploaded_fingerprint="${remainder%%|*}"
+  current_fingerprint="${remainder#*|}"
+  if [[ -n "$existing_id" && -n "$current_sha" \
+    && "$uploaded_sha" == "$current_sha" \
+    && -n "$current_fingerprint" \
+    && "$uploaded_fingerprint" == "$current_fingerprint" ]]; then
+    return 0
+  fi
 
+  filename="${rel_path##*/}"
   remote_id=$(dx_dexcode_upload_artifact \
-    "$run_id" "${artifact_root}/${rel_path}" "$artifact_type" "$title" 2>/dev/null || true)
+    "$run_id" "$snapshot_file" "$artifact_type" "$title" "$filename" 2>/dev/null || true)
   [[ -n "$remote_id" ]] || return 0
 
   DX_SYNC_MANIFEST="$manifest_file" DX_SYNC_TYPE="$artifact_type" \
-    DX_SYNC_PATH="$rel_path" DX_SYNC_REMOTE_ID="$remote_id" python3 - <<'PY' 2>/dev/null || true
+    DX_SYNC_PATH="$rel_path" DX_SYNC_REMOTE_ID="$remote_id" \
+    DX_SYNC_REMOTE_SHA="$current_sha" \
+    DX_SYNC_REMOTE_FINGERPRINT="$current_fingerprint" python3 - <<'PY' 2>/dev/null || true
 import json
 import os
 import tempfile
@@ -474,6 +517,8 @@ except (OSError, json.JSONDecodeError):
 for item in manifest.get("artifacts", []):
     if item.get("type") == os.environ["DX_SYNC_TYPE"] and item.get("path") == os.environ["DX_SYNC_PATH"]:
         item["dexcode_artifact_id"] = os.environ["DX_SYNC_REMOTE_ID"]
+        item["dexcode_artifact_sha256"] = os.environ["DX_SYNC_REMOTE_SHA"]
+        item["dexcode_artifact_fingerprint"] = os.environ["DX_SYNC_REMOTE_FINGERPRINT"]
         break
 else:
     raise SystemExit(0)

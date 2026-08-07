@@ -31,12 +31,12 @@ dx_factory_sync_requested() {
 }
 
 dx_factory_sync_token() {
-  if [[ -n "${DEX_FACTORY_TOKEN:-}" ]]; then
-    printf '%s\n' "$DEX_FACTORY_TOKEN"
+  if [[ -n "${DEX_RUN_TOKEN:-}" ]]; then
+    printf '%s\n' "$DEX_RUN_TOKEN"
   elif [[ -n "${DEX_FACTORY_RUN_TOKEN:-}" ]]; then
     printf '%s\n' "$DEX_FACTORY_RUN_TOKEN"
-  elif [[ -n "${DEX_RUN_TOKEN:-}" ]]; then
-    printf '%s\n' "$DEX_RUN_TOKEN"
+  elif [[ -n "${DEX_FACTORY_TOKEN:-}" ]]; then
+    printf '%s\n' "$DEX_FACTORY_TOKEN"
   else
     return 1
   fi
@@ -58,36 +58,180 @@ dx_factory_events_endpoint() {
 }
 
 __dx_factory_nonnegative_int() {
-  local value="$1" fallback="$2"
+  local value="$1" fallback="$2" maximum="${3:-86400}"
   case "$value" in
-    ''|*[!0-9]*)
+    ''|*[!0-9]*|0[0-9]*)
       printf '%s\n' "$fallback"
       ;;
     *)
-      printf '%s\n' "$value"
+      if [[ ${#value} -gt 9 || "$value" -gt "$maximum" ]]; then
+        printf '%s\n' "$fallback"
+      else
+        printf '%s\n' "$value"
+      fi
       ;;
   esac
 }
 
 __dx_factory_positive_int() {
-  local value="$1" fallback="$2"
+  local value="$1" fallback="$2" maximum="${3:-86400}"
   case "$value" in
-    ''|*[!0-9]*|0)
+    ''|*[!0-9]*|0|0[0-9]*)
       printf '%s\n' "$fallback"
       ;;
     *)
-      printf '%s\n' "$value"
+      if [[ ${#value} -gt 9 || "$value" -gt "$maximum" ]]; then
+        printf '%s\n' "$fallback"
+      else
+        printf '%s\n' "$value"
+      fi
       ;;
   esac
 }
 
 __dx_factory_sync_acquire_lock() {
-  local lock_dir="$1" attempts=0
+  local lock_dir="$1" attempts=0 owner_file owner_tmp max_attempts
+  owner_file="$lock_dir/owner"
+  max_attempts=$(__dx_factory_positive_int "${DEX_FACTORY_LOCK_ATTEMPTS:-40}" 40 1000)
   while ! mkdir "$lock_dir" 2>/dev/null; do
+    if __dx_factory_sync_recover_lock "$lock_dir"; then
+      continue
+    fi
     attempts=$((attempts + 1))
-    [[ "$attempts" -lt 40 ]] || return 1
+    [[ "$attempts" -lt "$max_attempts" ]] || return 1
     sleep 0.05
   done
+  owner_tmp="$lock_dir/.owner.$RANDOM"
+  if ! DX_FACTORY_LOCK_OWNER_TMP="$owner_tmp" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["DX_FACTORY_LOCK_OWNER_TMP"])
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="ascii") as fh:
+    fh.write(f"{os.getppid()}\n")
+PY
+  then
+    command rm -f "$owner_tmp" 2>/dev/null || true
+    command rmdir "$lock_dir" 2>/dev/null || true
+    return 1
+  fi
+  if ! command mv -f "$owner_tmp" "$owner_file"; then
+    command rm -f "$owner_tmp" 2>/dev/null || true
+    command rmdir "$lock_dir" 2>/dev/null || true
+    return 1
+  fi
+}
+
+__dx_factory_sync_recover_lock() {
+  local lock_dir="$1" stale_seconds
+  command -v python3 >/dev/null 2>&1 || return 1
+  stale_seconds=$(__dx_factory_positive_int "${DEX_FACTORY_LOCK_STALE_SECONDS:-5}" 5 3600)
+  DX_FACTORY_LOCK_DIR="$lock_dir" \
+  DX_FACTORY_LOCK_STALE_SECONDS="$stale_seconds" \
+  python3 - <<'PY'
+import os
+import re
+import stat
+import time
+from pathlib import Path
+
+lock = Path(os.environ["DX_FACTORY_LOCK_DIR"])
+owner = lock / "owner"
+claim = lock / ".recovery"
+stale_seconds = int(os.environ["DX_FACTORY_LOCK_STALE_SECONDS"])
+
+
+def read_owner():
+    try:
+        with owner.open("r", encoding="ascii") as fh:
+            raw = fh.read(64)
+            if fh.read(1):
+                return "invalid", raw
+    except (OSError, UnicodeError):
+        return "invalid", ""
+    stripped = raw.strip()
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", stripped):
+        return "invalid", raw
+    pid = int(stripped)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "dead", raw
+    except PermissionError:
+        return "live", raw
+    except OSError:
+        return "live", raw
+    return "live", raw
+
+
+try:
+    lock_stat = lock.lstat()
+except OSError:
+    raise SystemExit(1)
+if not stat.S_ISDIR(lock_stat.st_mode) or lock.is_symlink():
+    raise SystemExit(1)
+
+state, owner_raw = read_owner()
+if state == "live":
+    raise SystemExit(1)
+if state == "invalid" and time.time() - lock_stat.st_mtime < stale_seconds:
+    raise SystemExit(1)
+
+try:
+    claim.mkdir(mode=0o700)
+except OSError:
+    raise SystemExit(1)
+
+recovered = False
+try:
+    current_stat = lock.lstat()
+    if (current_stat.st_dev, current_stat.st_ino) != (lock_stat.st_dev, lock_stat.st_ino):
+        raise SystemExit(1)
+    current_state, current_raw = read_owner()
+    if current_raw != owner_raw or current_state != state:
+        raise SystemExit(1)
+    if current_state == "live":
+        raise SystemExit(1)
+    names = {entry.name for entry in lock.iterdir()}
+    if not names.issubset({"owner", ".recovery"}):
+        raise SystemExit(1)
+    if owner.exists() or owner.is_symlink():
+        owner.unlink()
+    claim.rmdir()
+    lock.rmdir()
+    recovered = True
+finally:
+    if not recovered:
+        try:
+            claim.rmdir()
+        except OSError:
+            pass
+
+raise SystemExit(0 if recovered else 1)
+PY
+}
+
+__dx_factory_sync_release_lock() {
+  local lock_dir="$1"
+  DX_FACTORY_LOCK_DIR="$lock_dir" python3 - <<'PY' 2>/dev/null || true
+import os
+from pathlib import Path
+
+lock = Path(os.environ["DX_FACTORY_LOCK_DIR"])
+owner = lock / "owner"
+try:
+    owner_pid = int(owner.read_text(encoding="ascii").strip())
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(0)
+if owner_pid != os.getppid():
+    raise SystemExit(0)
+try:
+    owner.unlink()
+    lock.rmdir()
+except OSError:
+    pass
+PY
 }
 
 __dx_factory_sync_read_cursor() {
@@ -98,18 +242,12 @@ __dx_factory_sync_read_cursor() {
     return 0
   }
   cursor=$(cat "$cursor_file" 2>/dev/null || true)
-  case "$cursor" in
-    ''|*[!0-9]*)
-      printf '0\n'
-      ;;
-    *)
-      printf '%s\n' "$cursor"
-      ;;
-  esac
+  __dx_factory_nonnegative_int "$cursor" 0 999999999
 }
 
 __dx_factory_sync_write_cursor() {
   local run_id="$1" sequence="$2" cursor_file tmp_file
+  [[ "$(__dx_factory_nonnegative_int "$sequence" invalid 999999999)" != "invalid" ]] || return 1
   cursor_file=$(dx_factory_sync_cursor_file "$run_id") || return 1
   mkdir -p "$(dirname "$cursor_file")"
   tmp_file="${cursor_file}.tmp.$$"
@@ -148,7 +286,7 @@ PY
 __dx_factory_sync_log_rate_limited() {
   local run_id="$1" level="$2" message="$3" last_log_file interval now last_logged
   last_log_file=$(__dx_factory_sync_last_log_file "$run_id") || return 0
-  interval=$(__dx_factory_nonnegative_int "${DEX_FACTORY_RETRY_LOG_INTERVAL_SECONDS:-60}" 60)
+  interval=$(__dx_factory_nonnegative_int "${DEX_FACTORY_RETRY_LOG_INTERVAL_SECONDS:-60}" 60 86400)
   now=$(date +%s)
   last_logged=0
   if [[ -f "$last_log_file" ]]; then
@@ -171,8 +309,8 @@ __dx_factory_sync_write_status() {
   local base_delay max_delay
   status_file=$(dx_factory_sync_status_file "$run_id") || return 1
   mkdir -p "$(dirname "$status_file")"
-  base_delay=$(__dx_factory_nonnegative_int "${DEX_FACTORY_RETRY_BASE_SECONDS:-1}" 1)
-  max_delay=$(__dx_factory_nonnegative_int "${DEX_FACTORY_RETRY_MAX_SECONDS:-60}" 60)
+  base_delay=$(__dx_factory_nonnegative_int "${DEX_FACTORY_RETRY_BASE_SECONDS:-1}" 1 86400)
+  max_delay=$(__dx_factory_nonnegative_int "${DEX_FACTORY_RETRY_MAX_SECONDS:-60}" 60 86400)
 
   tmp_file="${status_file}.tmp.$$"
   DX_FACTORY_STATUS_FILE="$status_file" \
@@ -205,6 +343,8 @@ try:
     max_delay = int(os.environ.get("DX_FACTORY_RETRY_MAX_SECONDS", "60"))
 except ValueError:
     max_delay = 60
+base_delay = min(max(base_delay, 0), 86400)
+max_delay = min(max(max_delay, 0), 86400)
 
 previous = {}
 if status_path.exists():
@@ -215,7 +355,11 @@ if status_path.exists():
     except (OSError, json.JSONDecodeError):
         previous = {}
 
-failure_count = int(previous.get("failure_count", 0) or 0)
+try:
+    failure_count = int(previous.get("failure_count", 0) or 0)
+except (TypeError, ValueError):
+    failure_count = 0
+failure_count = min(max(failure_count, 0), 30)
 if status_value == "failed":
     failure_count += 1
     delay = min(max_delay, base_delay * (2 ** max(0, failure_count - 1)))
@@ -266,7 +410,16 @@ except ValueError:
     raise SystemExit(0)
 
 if parsed.scheme and parsed.netloc:
-    print(urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", "")))
+    try:
+        port = parsed.port
+    except ValueError:
+        print("remote endpoint")
+        raise SystemExit(0)
+    hostname = parsed.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    netloc = f"{hostname}:{port}" if port is not None else hostname
+    print(urlunsplit((parsed.scheme, netloc, parsed.path or "/", "", "")))
 else:
     print(parsed.path or "remote endpoint")
 PY
@@ -275,7 +428,7 @@ PY
 __dx_factory_sync_build_payload() {
   local run_id="$1" cursor="$2" payload_file="$3" batch_size events_file
   events_file=$(dx_run_events_file "$run_id") || return 1
-  batch_size=$(__dx_factory_positive_int "${DEX_FACTORY_BATCH_SIZE:-50}" 50)
+  batch_size=$(__dx_factory_positive_int "${DEX_FACTORY_BATCH_SIZE:-50}" 50 10000)
   [[ -f "$events_file" ]] || {
     printf '0 0\n'
     return 0
@@ -311,7 +464,11 @@ with events_path.open("r", encoding="utf-8") as fh:
         if not line:
             continue
         event = json.loads(line)
-        sequence = int(event.get("sequence", 0))
+        sequence = event.get("sequence", 0)
+        if isinstance(sequence, bool) or not isinstance(sequence, int):
+            raise ValueError("event sequence must be an integer")
+        if sequence < 1 or sequence > 999999999:
+            raise ValueError("event sequence is outside the supported range")
         if sequence <= cursor:
             continue
         selected.append(event)
@@ -337,7 +494,7 @@ PY
 
 __dx_factory_sync_post_payload() {
   local endpoint="$1" token="$2" payload_file="$3" timeout_seconds
-  timeout_seconds=$(__dx_factory_positive_int "${DEX_FACTORY_TIMEOUT_SECONDS:-5}" 5)
+  timeout_seconds=$(__dx_factory_positive_int "${DEX_FACTORY_TIMEOUT_SECONDS:-5}" 5 3600)
 
   DX_FACTORY_ENDPOINT="$endpoint" \
   DX_FACTORY_TOKEN_VALUE="$token" \
@@ -350,6 +507,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 endpoint = os.environ["DX_FACTORY_ENDPOINT"]
 token = os.environ["DX_FACTORY_TOKEN_VALUE"]
@@ -359,21 +517,55 @@ try:
 except ValueError:
     timeout = 5
 
+TOKEN_FIELD_RE = re.compile(
+    r'("[^"]*(?:token|secret|password|api[_-]?key|authorization|credential)[^"]*"\s*:\s*")[^"]*(")',
+    re.I,
+)
+BEARER_RE = re.compile(r'Bearer\s+[A-Za-z0-9._~+/=-]+', re.I)
+SECRET_ASSIGNMENT_RE = re.compile(r'(?i)\b(secret|token|api[_-]?key)=([^\s&;,]+)')
+URL_CREDENTIAL_RE = re.compile(r"(?i)(https?://)[^/@\s]+@")
+
+
+def redact(text):
+    if token:
+        text = text.replace(token, "[redacted]")
+    text = TOKEN_FIELD_RE.sub(r'\1[redacted]\2', text)
+    text = BEARER_RE.sub("Bearer [redacted]", text)
+    text = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
+    text = URL_CREDENTIAL_RE.sub(r"\1[redacted]@", text)
+    return text
+
+
+try:
+    parsed_endpoint = urlsplit(endpoint)
+    _ = parsed_endpoint.port
+except ValueError:
+    print("invalid HTTP event endpoint", file=sys.stderr)
+    raise SystemExit(1)
+if (
+    any(ord(char) <= 32 or ord(char) == 127 for char in endpoint)
+    or parsed_endpoint.scheme.lower() not in {"http", "https"}
+    or not parsed_endpoint.hostname
+    or parsed_endpoint.username is not None
+    or parsed_endpoint.password is not None
+    or parsed_endpoint.fragment
+):
+    print("invalid HTTP event endpoint", file=sys.stderr)
+    raise SystemExit(1)
+allowed_token_chars = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/=")
+if not token or len(token) > 8192 or any(char not in allowed_token_chars for char in token):
+    print("invalid Bearer token", file=sys.stderr)
+    raise SystemExit(1)
+
 request = urllib.request.Request(endpoint, data=payload, method="POST")
 request.add_header("Authorization", f"Bearer {token}")
 request.add_header("Content-Type", "application/json")
 request.add_header("User-Agent", "dex-factory-sync/1")
 
-TOKEN_FIELD_RE = re.compile(r'("(?:access_)?token"\s*:\s*")[^"]+(")', re.I)
-BEARER_RE = re.compile(r'Bearer\s+[A-Za-z0-9._~+/=-]+', re.I)
-SECRET_ASSIGNMENT_RE = re.compile(r'(?i)\b(secret|token|api[_-]?key)=([^\s&;,]+)')
 
-
-def redact(text):
-    text = TOKEN_FIELD_RE.sub(r'\1[redacted]\2', text)
-    text = BEARER_RE.sub("Bearer [redacted]", text)
-    text = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
-    return text
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def response_excerpt(response):
@@ -389,7 +581,8 @@ def response_excerpt(response):
     return f": {redact(body)}"
 
 try:
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    opener = urllib.request.build_opener(NoRedirectHandler())
+    with opener.open(request, timeout=timeout) as response:
         status = response.getcode()
         if 200 <= status < 300:
             raise SystemExit(0)
@@ -440,7 +633,7 @@ __dx_factory_sync_pending_events_locked() {
   fi
 
   batch_count=0
-  max_batches=$(__dx_factory_positive_int "${DEX_FACTORY_MAX_BATCHES_PER_FLUSH:-20}" 20)
+  max_batches=$(__dx_factory_positive_int "${DEX_FACTORY_MAX_BATCHES_PER_FLUSH:-20}" 20 1000)
   cursor=$(__dx_factory_sync_read_cursor "$run_id" 2>/dev/null || printf '0\n')
   while [[ "$batch_count" -lt "$max_batches" ]]; do
     payload_file="$sync_dir/payload.$$.$RANDOM.json"
@@ -486,7 +679,7 @@ dx_factory_sync_pending_events() {
   lock_dir="$sync_dir/.lock"
   __dx_factory_sync_acquire_lock "$lock_dir" || return 0
   __dx_factory_sync_pending_events_locked "$run_id" "$sync_dir" || true
-  command rmdir "$lock_dir" 2>/dev/null || command rm -rf "$lock_dir" 2>/dev/null || true
+  __dx_factory_sync_release_lock "$lock_dir"
 }
 
 dx_factory_sync_pending_events_safe() {
