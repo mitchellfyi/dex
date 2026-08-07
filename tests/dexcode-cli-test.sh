@@ -239,7 +239,10 @@ assert_file "$DEXCODE_CONFIG_FILE"
 assert_eq "dc_live_test_token" "$(json_value "$DEXCODE_CONFIG_FILE" "access_token")" "saved token"
 assert_eq "personal" "$(json_value "$DEXCODE_CONFIG_FILE" "default_project.slug")" "saved default project"
 dx_dexcode_whoami --offline > "$TMP_DIR/whoami-personal.out"
-assert_contains "DexCode account: Sample Organisation" "$TMP_DIR/whoami-personal.out"
+# "account" was ambiguous once a machine can hold a connection per
+# organisation; the value was always the organisation's name.
+assert_contains "DexCode organisation: Sample Organisation" "$TMP_DIR/whoami-personal.out"
+assert_contains "Connected organisations: sample-org" "$TMP_DIR/whoami-personal.out"
 assert_contains "Connected project: Personal (personal)" "$TMP_DIR/whoami-personal.out"
 assert_contains "Session sync: enabled" "$TMP_DIR/whoami-personal.out"
 assert_contains "Project context sync: disabled" "$TMP_DIR/whoami-personal.out"

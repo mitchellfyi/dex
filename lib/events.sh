@@ -420,6 +420,80 @@ PY
   ) || return 1
 
   dx_event_emit_safe "$run_id" "artifact.created" "info" "Artifact captured: ${title}" "" "$event_data"
+  dx_run_sync_artifact "$run_id" "$manifest_file" "$artifact_root" "$artifact_type" "$rel_path" "$title"
+}
+
+# Sends a captured artifact to DexCode, once. The manifest records the id it
+# comes back with, so re-registering the same artifact — which happens
+# whenever a run is resumed — does not upload it a second time.
+#
+# Always returns 0. Artifacts are evidence about a run; failing to ship one
+# must never be the thing that ends it.
+dx_run_sync_artifact() {
+  local run_id="$1" manifest_file="$2" artifact_root="$3" artifact_type="$4" rel_path="$5" title="$6"
+  local existing remote_id
+
+  command -v dx_dexcode_upload_artifact >/dev/null 2>&1 || return 0
+  [[ "${DEXCODE_SYNC:-1}" != "0" ]] || return 0
+
+  existing=$(DX_SYNC_MANIFEST="$manifest_file" DX_SYNC_TYPE="$artifact_type" \
+    DX_SYNC_PATH="$rel_path" python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+from pathlib import Path
+
+try:
+    manifest = json.loads(Path(os.environ["DX_SYNC_MANIFEST"]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+for item in manifest.get("artifacts", []):
+    if item.get("type") == os.environ["DX_SYNC_TYPE"] and item.get("path") == os.environ["DX_SYNC_PATH"]:
+        print(item.get("dexcode_artifact_id") or "")
+        break
+PY
+  )
+  [[ -z "$existing" ]] || return 0
+
+  remote_id=$(dx_dexcode_upload_artifact \
+    "$run_id" "${artifact_root}/${rel_path}" "$artifact_type" "$title" 2>/dev/null || true)
+  [[ -n "$remote_id" ]] || return 0
+
+  DX_SYNC_MANIFEST="$manifest_file" DX_SYNC_TYPE="$artifact_type" \
+    DX_SYNC_PATH="$rel_path" DX_SYNC_REMOTE_ID="$remote_id" python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+import tempfile
+from pathlib import Path
+
+manifest_path = Path(os.environ["DX_SYNC_MANIFEST"])
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+
+for item in manifest.get("artifacts", []):
+    if item.get("type") == os.environ["DX_SYNC_TYPE"] and item.get("path") == os.environ["DX_SYNC_PATH"]:
+        item["dexcode_artifact_id"] = os.environ["DX_SYNC_REMOTE_ID"]
+        break
+else:
+    raise SystemExit(0)
+
+# Same temp-file-and-rename the manifest writer uses, so a crash mid-write
+# cannot leave a truncated manifest behind.
+tmp = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(manifest_path.parent), delete=False)
+try:
+    with tmp:
+        json.dump(manifest, tmp, indent=2, sort_keys=True)
+        tmp.write("\n")
+    os.replace(tmp.name, manifest_path)
+except Exception:
+    try:
+        os.unlink(tmp.name)
+    except OSError:
+        pass
+    raise
+PY
+  return 0
 }
 
 dx_run_register_artifact_safe() {
