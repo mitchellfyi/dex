@@ -504,10 +504,10 @@ __dx_phase_timeout() {
 unalias __dx_review_profile_clean_passes 2>/dev/null; unfunction __dx_review_profile_clean_passes 2>/dev/null
 __dx_review_profile_clean_passes() {
   case "$1" in
-    light) echo "$DX_REVIEW_LIGHT_CLEAN_PASSES" ;;
-    standard) echo "$DX_REVIEW_STANDARD_CLEAN_PASSES" ;;
-    thorough) echo "$DX_REVIEW_THOROUGH_CLEAN_PASSES" ;;
-    *) echo "$DX_REVIEW_THOROUGH_CLEAN_PASSES" ;;
+    light) echo "${DX_REVIEW_LIGHT_CLEAN_PASSES:-1}" ;;
+    standard) echo "${DX_REVIEW_STANDARD_CLEAN_PASSES:-2}" ;;
+    thorough) echo "${DX_REVIEW_THOROUGH_CLEAN_PASSES:-3}" ;;
+    *) echo "${DX_REVIEW_THOROUGH_CLEAN_PASSES:-3}" ;;
   esac
 }
 
@@ -516,11 +516,45 @@ __dx_review_profile_clean_passes() {
 unalias __dx_review_profile_max_iterations 2>/dev/null; unfunction __dx_review_profile_max_iterations 2>/dev/null
 __dx_review_profile_max_iterations() {
   case "$1" in
-    light) echo "$DX_REVIEW_LIGHT_MAX_ITERATIONS" ;;
-    standard) echo "$DX_REVIEW_STANDARD_MAX_ITERATIONS" ;;
-    thorough) echo "$DX_REVIEW_THOROUGH_MAX_ITERATIONS" ;;
-    *) echo "$DX_REVIEW_THOROUGH_MAX_ITERATIONS" ;;
+    light) echo "${DX_REVIEW_LIGHT_MAX_ITERATIONS:-4}" ;;
+    standard) echo "${DX_REVIEW_STANDARD_MAX_ITERATIONS:-6}" ;;
+    thorough) echo "${DX_REVIEW_THOROUGH_MAX_ITERATIONS:-20}" ;;
+    *) echo "${DX_REVIEW_THOROUGH_MAX_ITERATIONS:-20}" ;;
   esac
+}
+
+# __dx_review_is_positive_integer <value>
+# Return 0 only for positive decimals that fit zsh arithmetic safely.
+unalias __dx_review_is_positive_integer 2>/dev/null; unfunction __dx_review_is_positive_integer 2>/dev/null
+__dx_review_is_positive_integer() {
+  local value="${1:-}"
+  case "$value" in
+    ""|*[!0-9]*) return 1 ;;
+  esac
+  [[ "$value" == *[1-9]* ]] || return 1
+  [[ ${#value} -le 18 ]]
+}
+
+# __dx_review_validate_gates <max_iterations> <required_clean>
+# Reject unsafe counters before zsh evaluates them as arithmetic expressions.
+unalias __dx_review_validate_gates 2>/dev/null; unfunction __dx_review_validate_gates 2>/dev/null
+__dx_review_validate_gates() {
+  local max_iter="$1" required_clean="$2"
+  if ! __dx_review_is_positive_integer "$max_iter"; then
+    dx_error "Invalid review iteration limit '${max_iter:-<empty>}'. Use a whole number from 1 to 999999999999999999."
+    return 1
+  fi
+  if ! __dx_review_is_positive_integer "$required_clean"; then
+    dx_error "Invalid clean-pass requirement '${required_clean:-<empty>}'. Use a whole number from 1 to 999999999999999999."
+    return 1
+  fi
+}
+
+# __dx_review_phase_promise
+# Resolve the Phase 3 promise even when a child shell inherited functions only.
+unalias __dx_review_phase_promise 2>/dev/null; unfunction __dx_review_phase_promise 2>/dev/null
+__dx_review_phase_promise() {
+  echo "${DX_PHASE_PROMISES[3]:-PHASE_3_COMPLETE}"
 }
 
 # __dx_review_is_doc_path <path>
@@ -2908,7 +2942,7 @@ dxreviewloop() {
     dx_info "No current change set detected; falling back to an entire-codebase review."
   fi
 
-  local requested_profile="${DEX_REVIEW_PROFILE:-$DX_REVIEW_PROFILE}"
+  local requested_profile="${DEX_REVIEW_PROFILE:-${DX_REVIEW_PROFILE:-auto}}"
   local review_profile="$requested_profile"
   case "$review_profile" in
     auto|"") review_profile="$(__dx_review_auto_profile "$committed_ref")" ;;
@@ -2920,6 +2954,10 @@ dxreviewloop() {
 
   local max_iter="${DEX_REVIEW_MAX_ITERATIONS:-$(__dx_review_profile_max_iterations "$review_profile")}"
   local required_clean="${DEX_REVIEW_CLEAN_PASSES:-$(__dx_review_profile_clean_passes "$review_profile")}"
+
+  __dx_review_validate_gates "$max_iter" "$required_clean" || return 1
+  local review_promise
+  review_promise="$(__dx_review_phase_promise)"
 
   # File count preview for the review scope without eval.
   local files_changed
@@ -3031,7 +3069,7 @@ If no approved plan / acceptance criteria are explicitly available in this promp
 
 ${scope_boundary}
 
-After writing the review result signal and findings hash, touch the per-pass completion path above, output \`${DX_PHASE_PROMISES[3]}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
+After writing the review result signal and findings hash, touch the per-pass completion path above, output \`${review_promise}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
 $(__dx_provider_prompt)"
 
   while [[ $review_iteration -lt $max_iter ]] && [[ $clean_passes -lt $required_clean ]]; do
@@ -3057,7 +3095,7 @@ $(__dx_provider_prompt)"
     dx_provider_write_session_state "$pass_session_id" 2>/dev/null || true
 
     # Stop hook config: phase 3, MIN_AUDITS=1
-    __dx_write_state "$(dx_loop_config_file "$pass_session_id")" "3:${DX_PHASE_PROMISES[3]}:${audit_file}:1"
+    __dx_write_state "$(dx_loop_config_file "$pass_session_id")" "3:${review_promise}:${audit_file}:1"
 
     local message="${message_template//__REVIEW_PROFILE__/$review_profile}"
     message="${message//__REVIEW_CONTEXT_FILE__/$review_context_file}"
@@ -3088,7 +3126,7 @@ ${message}"
       DEX_SESSION_ID="$pass_session_id" \
       DEX_LOOP_ACTIVE=1 \
       DEX_PHASE_HANDOFF="" \
-      DEX_LOOP_PROMISE="${DX_PHASE_PROMISES[3]}" \
+      DEX_LOOP_PROMISE="$review_promise" \
       DEX_LOOP_PROMPT="$audit_prompt" \
       DEX_LOOP_PHASE="3" \
       DEX_REVIEW_PASS_ACTIVE=1 \
@@ -3103,7 +3141,7 @@ ${message}"
       DEX_SESSION_ID="$pass_session_id" \
       DEX_LOOP_ACTIVE=1 \
       DEX_PHASE_HANDOFF="" \
-      DEX_LOOP_PROMISE="${DX_PHASE_PROMISES[3]}" \
+      DEX_LOOP_PROMISE="$review_promise" \
       DEX_LOOP_PROMPT="$audit_prompt" \
       DEX_LOOP_PHASE="3" \
       DEX_REVIEW_PASS_ACTIVE=1 \
@@ -3163,8 +3201,13 @@ ${message}"
       clean_passes=0
       if [[ "$review_profile" != "thorough" ]]; then
         review_profile="thorough"
-        [[ -z "${DEX_REVIEW_CLEAN_PASSES:-}" ]] && required_clean="$DX_REVIEW_THOROUGH_CLEAN_PASSES"
-        [[ -z "${DEX_REVIEW_MAX_ITERATIONS:-}" ]] && max_iter="$DX_REVIEW_THOROUGH_MAX_ITERATIONS"
+        [[ -z "${DEX_REVIEW_CLEAN_PASSES:-}" ]] && required_clean="$(__dx_review_profile_clean_passes thorough)"
+        [[ -z "${DEX_REVIEW_MAX_ITERATIONS:-}" ]] && max_iter="$(__dx_review_profile_max_iterations thorough)"
+        if ! __dx_review_validate_gates "$max_iter" "$required_clean"; then
+          dx_provider_cleanup_session_state "$session_id"
+          rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
+          return 1
+        fi
         echo "  Iteration ${review_iteration}: ${result} — escalating to thorough (${required_clean} clean, max ${max_iter} iterations)"
       else
         echo "  Iteration ${review_iteration}: ${result} — already thorough; resetting clean pass counter"

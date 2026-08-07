@@ -26,7 +26,7 @@ The shell wrapper starts with `DEX_REVIEW_PROFILE` or `auto`:
 - `light`: 1 clean pass, max 4 iterations, core domain sweep.
 - `standard`: 2 clean passes, max 6 iterations, core sweep plus targeted domain
   sweeps.
-- `thorough`: 3 clean passes, max 10 iterations, all domain sweeps.
+- `thorough`: 3 clean passes, max 20 iterations, all domain sweeps.
 
 Exact gates still override profiles:
 

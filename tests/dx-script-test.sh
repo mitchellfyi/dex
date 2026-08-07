@@ -38,4 +38,73 @@ assert_contains "dx.sh requires zsh" "$TMP_DIR/bash-help.out"
 DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; dx help' > "$TMP_DIR/source-help.out"
 assert_contains "Dex" "$TMP_DIR/source-help.out"
 
+DEX_DIR="$ROOT" zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  set -e
+  unset DX_REVIEW_PROFILE \
+    DX_REVIEW_LIGHT_CLEAN_PASSES DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES \
+    DX_REVIEW_LIGHT_MAX_ITERATIONS DX_REVIEW_STANDARD_MAX_ITERATIONS DX_REVIEW_THOROUGH_MAX_ITERATIONS
+
+  [[ "$(__dx_review_profile_clean_passes light)" == "1" ]]
+  [[ "$(__dx_review_profile_clean_passes standard)" == "2" ]]
+  [[ "$(__dx_review_profile_clean_passes thorough)" == "3" ]]
+  [[ "$(__dx_review_profile_max_iterations light)" == "4" ]]
+  [[ "$(__dx_review_profile_max_iterations standard)" == "6" ]]
+  [[ "$(__dx_review_profile_max_iterations thorough)" == "20" ]]
+  __dx_review_is_positive_integer 08
+  unset DX_PHASE_PROMISES
+  [[ "$(__dx_review_phase_promise)" == "PHASE_3_COMPLETE" ]]
+' > "$TMP_DIR/review-profile-defaults.out"
+
+DEX_DIR="$ROOT" \
+DX_LOOP_DIR="$TMP_DIR/review-loop" \
+REVIEW_CALL_FILE="$TMP_DIR/review-calls.out" \
+zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  cd "$DEX_DIR"
+  __dx_refresh_provider() { DX_CLAUDE_FLAGS=(); return 0; }
+  dx_agent_host() { print -r -- claude; }
+  dx_agent_host_label() { print -r -- Claude; }
+  dx_session_id() { print -r -- review-profile-test; }
+  dx_provider_write_session_state() { return 0; }
+  dx_provider_cleanup_session_state() { return 0; }
+  __dx_provider_prompt() { return 0; }
+  claude() { return 0; }
+  __dx_claude() {
+    print -r -- "${DEX_LOOP_PROMISE:-<empty>}" >> "$REVIEW_CALL_FILE"
+    print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
+    touch "$(dx_complete_file "$DEX_SESSION_ID")"
+  }
+
+  if DEX_REVIEW_MAX_ITERATIONS=0 DEX_REVIEW_CLEAN_PASSES=3 dxreviewloop; then
+    print -u2 -- "expected a zero review iteration limit to fail"
+    return 1
+  fi
+  if DEX_REVIEW_MAX_ITERATIONS=4 DEX_REVIEW_CLEAN_PASSES=0 dxreviewloop; then
+    print -u2 -- "expected a zero clean-pass requirement to fail"
+    return 1
+  fi
+  if DEX_REVIEW_MAX_ITERATIONS=9999999999999999999 DEX_REVIEW_CLEAN_PASSES=3 dxreviewloop; then
+    print -u2 -- "expected an overflowing review iteration limit to fail"
+    return 1
+  fi
+  unset DX_REVIEW_PROFILE \
+    DX_REVIEW_LIGHT_CLEAN_PASSES DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES \
+    DX_REVIEW_LIGHT_MAX_ITERATIONS DX_REVIEW_STANDARD_MAX_ITERATIONS DX_REVIEW_THOROUGH_MAX_ITERATIONS \
+    DX_PHASE_PROMISES DEX_REVIEW_MAX_ITERATIONS DEX_REVIEW_CLEAN_PASSES
+  DEX_REVIEW_PROFILE=thorough dxreviewloop
+' > "$TMP_DIR/review-profile-validation.out" 2>&1
+assert_contains "Invalid review iteration limit '0'." "$TMP_DIR/review-profile-validation.out"
+assert_contains "Invalid clean-pass requirement '0'." "$TMP_DIR/review-profile-validation.out"
+assert_contains "Invalid review iteration limit '9999999999999999999'." "$TMP_DIR/review-profile-validation.out"
+assert_contains "Review complete: 3 consecutive clean passes." "$TMP_DIR/review-profile-validation.out"
+if [[ "$(wc -l < "$TMP_DIR/review-calls.out" | tr -d ' ')" -ne 3 ]]; then
+  printf 'expected three review-wave calls with missing shell globals\n' >&2
+  exit 1
+fi
+if grep -Fvxq "PHASE_3_COMPLETE" "$TMP_DIR/review-calls.out"; then
+  printf 'review wave received an unexpected completion promise\n' >&2
+  exit 1
+fi
+
 printf 'dx-script-test passed\n'
