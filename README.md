@@ -110,7 +110,7 @@ and choose the first issue to implement.
 
 - Claude Code CLI installed and signed in.
 - A git repository.
-- `jq` for settings merge/uninstall flows.
+- Python 3 (standard library only).
 - Optional: Codex CLI if you want the `codex-subscription` provider profile.
 - Optional: `shellcheck`, language toolchains, and test tools used by your repo.
 
