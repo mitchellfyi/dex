@@ -69,6 +69,31 @@ dx_maintenance_last_success_file() {
   printf '%s/%s.last-success\n' "$DX_MAINTENANCE_DIR" "$1"
 }
 
+dx_maintenance_atomic_replace() {
+  local source_file="$1" target_file="$2"
+  python3 - "$source_file" "$target_file" <<'PY'
+import os
+import sys
+
+source = sys.argv[1]
+target = sys.argv[2]
+os.replace(source, target)
+
+directory = os.path.dirname(target) or "."
+flags = os.O_RDONLY
+if hasattr(os, "O_DIRECTORY"):
+    flags |= os.O_DIRECTORY
+try:
+    descriptor = os.open(directory, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+except OSError:
+    pass
+PY
+}
+
 dx_maintenance_state_file() {
   printf '%s/%s.state\n' "$DX_MAINTENANCE_DIR" "$1"
 }
@@ -183,9 +208,15 @@ dx_maintenance_write_last_success() {
   mkdir -p "$DX_MAINTENANCE_DIR"
   ref=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
   target=$(dx_maintenance_last_success_file "$session_id")
-  tmp_file="${target}.tmp.$$"
-  printf 'run_id=%s\nref=%s\nepoch=%s\n' "$run_id" "$ref" "$(date +%s)" > "$tmp_file"
-  mv "$tmp_file" "$target"
+  tmp_file=$(mktemp "${target}.tmp.XXXXXX")
+  if ! printf 'run_id=%s\nref=%s\nepoch=%s\n' "$run_id" "$ref" "$(date +%s)" > "$tmp_file"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+  if ! dx_maintenance_atomic_replace "$tmp_file" "$target"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
 }
 
 dx_maintenance_workflow_template() {
@@ -291,11 +322,19 @@ dx_maintenance_install_workflow() {
     return 1
   fi
 
+  if [[ -L "$repo_root/.github" || -L "$target_dir" ]]; then
+    dx_error "Refusing to install the maintenance workflow through a linked .github path."
+    return 1
+  fi
   mkdir -p "$target_dir"
+  if [[ -L "$target" ]]; then
+    dx_error "Refusing to replace a linked maintenance workflow file: $target"
+    return 1
+  fi
   source_repo=$(dx_maintenance_source_repo)
   source_ref=$(dx_maintenance_source_ref "$source_repo") || return 1
-  tmp_file="${target}.tmp.$$"
-  python3 - "$template" "$tmp_file" "$source_repo" "$source_ref" <<'PY'
+  tmp_file=$(mktemp "$target_dir/.dx-maintain.yml.tmp.XXXXXX")
+  if ! python3 - "$template" "$tmp_file" "$source_repo" "$source_ref" <<'PY'
 import sys
 from pathlib import Path
 
@@ -309,6 +348,10 @@ content = content.replace("__DEX_REPO__", source_repo)
 content = content.replace("__DEX_REF__", source_ref)
 target.write_text(content, encoding="utf-8")
 PY
+  then
+    rm -f "$tmp_file"
+    return 1
+  fi
 
   if [[ -f "$target" ]]; then
     if cmp -s "$tmp_file" "$target"; then
@@ -324,7 +367,11 @@ PY
     fi
   fi
 
-  mv "$tmp_file" "$target"
+  if ! dx_maintenance_atomic_replace "$tmp_file" "$target"; then
+    rm -f "$tmp_file"
+    dx_error "Could not install the maintenance workflow atomically."
+    return 1
+  fi
   dx_done "Installed .github/workflows/dx-maintain.yml"
   dx_info "Pinned Dex source: ${source_repo}@${source_ref}"
 }

@@ -142,4 +142,51 @@ assert_contains "does not allow requesting the PR author" "$TMP_DIR/reviewer-aut
 GH_FAKE_PR_CASE=copilot dx_maintenance_request_reviewer 7 Copilot example/repo > "$TMP_DIR/reviewer-copilot.out" 2>&1
 assert_contains "pr edit 7 --repo example/repo --add-reviewer @copilot" "$GH_FAKE_CALLS"
 
+last_success_target=$(dx_maintenance_last_success_file "maintenance-test")
+mkdir -p "$(dirname "$last_success_target")"
+printf 'user-owned temp file\n' > "${last_success_target}.tmp.$$"
+dx_maintenance_write_last_success "maintenance-test" "maintain-20260807T120000Z-test-u-12345678"
+assert_contains "user-owned temp file" "${last_success_target}.tmp.$$"
+assert_contains "run_id=maintain-20260807T120000Z-test-u-12345678" "$last_success_target"
+
+dx_maintenance_source_repo() {
+  printf '%s\n' "example/dex"
+}
+
+dx_maintenance_source_ref() {
+  printf '%s\n' "test-ref"
+}
+
+workflow_target="$repo/.github/workflows/dx-maintain.yml"
+mkdir -p "$(dirname "$workflow_target")"
+printf 'user-owned workflow temp\n' > "${workflow_target}.tmp.$$"
+dx_maintenance_install_workflow "$repo" > "$TMP_DIR/workflow-install.out"
+assert_contains "user-owned workflow temp" "${workflow_target}.tmp.$$"
+assert_contains "DEX_REPO: example/dex" "$workflow_target"
+assert_contains "DEX_REF: test-ref" "$workflow_target"
+
+linked_repo="$TMP_DIR/linked-repo"
+linked_target="$TMP_DIR/linked-target"
+mkdir -p "$linked_repo/.dex" "$linked_target"
+printf '# Dex context\n' > "$linked_repo/.dex/dex.md"
+ln -s "$linked_target" "$linked_repo/.github"
+if dx_maintenance_install_workflow "$linked_repo" > "$TMP_DIR/linked-workflow.out" 2>&1; then
+  printf 'linked .github workflow install unexpectedly succeeded\n' >&2
+  exit 1
+fi
+assert_contains "linked .github path" "$TMP_DIR/linked-workflow.out"
+[[ ! -e "$linked_target/workflows/dx-maintain.yml" ]]
+
+linked_file_repo="$TMP_DIR/linked-file-repo"
+mkdir -p "$linked_file_repo/.dex" "$linked_file_repo/.github/workflows"
+printf '# Dex context\n' > "$linked_file_repo/.dex/dex.md"
+printf 'user workflow\n' > "$TMP_DIR/user-workflow.yml"
+ln -s "$TMP_DIR/user-workflow.yml" "$linked_file_repo/.github/workflows/dx-maintain.yml"
+if dx_maintenance_install_workflow "$linked_file_repo" 1 > "$TMP_DIR/linked-file-workflow.out" 2>&1; then
+  printf 'linked workflow file replacement unexpectedly succeeded\n' >&2
+  exit 1
+fi
+assert_contains "linked maintenance workflow file" "$TMP_DIR/linked-file-workflow.out"
+assert_contains "user workflow" "$TMP_DIR/user-workflow.yml"
+
 printf 'maintenance tests passed\n'
