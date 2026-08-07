@@ -1295,6 +1295,18 @@ def code_has_raw_codex_delegation(code, kind, depth=0, cwd=None):
     return False
 
 
+def code_has_destructive_command(code, depth=0):
+    """Inspect literal commands passed to process-launch APIs in inline code."""
+    if code is UNKNOWN_SHELL_STDIN or depth > 12:
+        return False
+    if not code or not code.strip():
+        return False
+    return any(
+        has_destructive_command(fragment, depth + 1)
+        for fragment in code_execution_fragments(code)
+    )
+
+
 def executable_script_has_raw_codex(script_body, depth=0, cwd=None, kind=''):
     if script_body is UNKNOWN_SHELL_STDIN:
         return True
@@ -3289,7 +3301,31 @@ def destructive_command_segment_is_blocked(tokens, command_index, variables=None
     if command_base == 'rm':
         return rm_invocation_is_destructive(tokens, command_index, variables, cwd)
     if command_base == 'dd':
-        return any(token.startswith('if=') for token in segment_tokens)
+        for token in segment_tokens:
+            expanded = expand_literal_shell_word(token, variables, cwd)
+            if expanded is UNKNOWN_SHELL_STDIN or not expanded.startswith('of='):
+                continue
+            target = expanded.split('=', 1)[1].strip('"\'')
+            if target.startswith('/dev/') and target not in {'/dev/null', '/dev/stdout'}:
+                return True
+            if re.match(r'^\\\\\.\\PhysicalDrive[0-9]+$', target, re.IGNORECASE):
+                return True
+        return False
+    if command_base == 'diskutil':
+        destructive_subcommands = {
+            'deletedisk', 'deletecontainer', 'deletevolume', 'erasedisk',
+            'erasevolume', 'partitiondisk', 'randomdisk', 'secureerase',
+            'zerodisk',
+        }
+        return any(token.lower() in destructive_subcommands for token in segment_tokens)
+    if command_base == 'busybox':
+        applet_index = 0
+        while applet_index < len(segment_tokens) and segment_tokens[applet_index].startswith('-'):
+            applet_index += 1
+        if applet_index < len(segment_tokens):
+            nested_tokens = segment_tokens[applet_index:]
+            return destructive_command_segment_is_blocked(nested_tokens, 0, variables, cwd)
+        return False
     if command_base == 'mkfs' or command_base.startswith('mkfs.'):
         return True
     if command_base == 'format':
@@ -3428,6 +3464,9 @@ def has_destructive_command(text, depth=0):
     for body in heredoc_bodies:
         if has_destructive_command(body, depth + 1):
             return True
+    for _kind, body in interpreter_heredoc_bodies(text):
+        if code_has_destructive_command(body, depth + 1):
+            return True
     for fragment in extract_executable_backticks(shell_text):
         if has_destructive_command(fragment, depth + 1):
             return True
@@ -3438,6 +3477,8 @@ def has_destructive_command(text, depth=0):
     tokens = shell_word_tokens(shell_text)
     shell_vars = collect_literal_variables(tokens)
     aliases = collect_aliases(tokens, shell_vars)
+    generated_scripts = redirect_generated_scripts(tokens, shell_vars, os.getcwd())
+    generated_scripts.update(heredoc_generated_scripts(text, shell_vars, os.getcwd()))
     for script in shell_c_scripts(shell_text, shell_vars):
         if script is UNKNOWN_SHELL_STDIN:
             return True
@@ -3506,6 +3547,11 @@ def has_destructive_command(text, depth=0):
                 return True
             if find_exec_destructive_command_is_blocked(tokens, command_index, shell_vars, None, depth):
                 return True
+            for _kind, script in interpreter_code_payloads(
+                tokens, command_index, index, generated_scripts, shell_vars, os.getcwd()
+            ):
+                if code_has_destructive_command(script, depth + 1):
+                    return True
             while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
                 index += 1
             command_position = False

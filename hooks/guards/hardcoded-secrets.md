@@ -3,6 +3,7 @@ name: warn-hardcoded-secrets
 enabled: true
 event: file
 pattern: (?<![A-Z0-9_])['"]?(?:[A-Z0-9]+_)*(API_KEY|SECRET_KEY|PRIVATE_KEY|ACCESS_KEY|ENCRYPTION_KEY|AUTH_TOKEN|JWT_SECRET|PASSWORD|TOKEN)(?:_[A-Z0-9]+)*['"]?\s*[=:]\s*(?:['"][^'"]{8,}['"]?|[^\s#;,'"}]{8,})
+allow_pattern: [=:]\s*(?:os\.(?:environ|getenv)|process\.env|Deno\.env|Bun\.env|ENV\[|getenv\s*\(|\$\{?[A-Z_][A-Z0-9_]*\}?)
 action: warn
 ---
 

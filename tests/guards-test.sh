@@ -63,6 +63,46 @@ assert_raw_codex_clean() {
   fi
 }
 
+assert_destructive_blocks() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (expected destructive-command block): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_destructive_clean() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+    printf 'FAIL (destructive-command false positive): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
+  fi
+}
+
+assert_secret_warns() {
+  run_guard "$(mkpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-hardcoded-secrets'; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (expected hardcoded-secret warning): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_secret_clean() {
+  run_guard "$(mkpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-hardcoded-secrets'; then
+    printf 'FAIL (hardcoded-secret false positive): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
+  fi
+}
+
 assert_clean() {
   run_guard "$(mkpayload "$2")"
   if printf '%s' "$GUARD_OUT" | grep -q 'warn-await-in-loop'; then
@@ -145,6 +185,35 @@ assert_raw_codex_blocks "raw Codex remains blocked" \
 # shellcheck disable=SC2016
 assert_raw_codex_blocks "trusted source plus direct provider call remains blocked" \
   'source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"; dx_provider_codex exec "do work"'
+
+# --- destructive-command bypass regressions ---
+assert_destructive_blocks "dd raw-device output" \
+  'dd of=/dev/disk0 bs=1m'
+assert_destructive_blocks "diskutil erase" \
+  'diskutil eraseDisk APFS Empty /dev/disk2'
+assert_destructive_blocks "BusyBox rm" \
+  'busybox rm -rf /'
+assert_destructive_blocks "Python process wrapper" \
+  'python3 -c '\''import os; os.system("rm -rf /")'\'''
+assert_destructive_blocks "Node process wrapper" \
+  'node -e '\''require("child_process").execSync("rm -rf /")'\'''
+assert_destructive_blocks "Perl process wrapper" \
+  'perl -e '\''system("rm -rf /")'\'''
+assert_destructive_clean "dd to a regular file" \
+  'dd if=/dev/zero of=./disk-image.bin bs=1024 count=1'
+assert_destructive_clean "dd to null" \
+  'dd if=/dev/zero of=/dev/null bs=1024 count=1'
+
+# --- hardcoded-secret remediation regressions ---
+assert_secret_warns "literal secret remains warned" \
+  'PASSWORD="hardcoded-secret-value"'
+assert_secret_clean "Python environment access" \
+  'PASSWORD=os.environ["PASSWORD"]'
+assert_secret_clean "Node environment access" \
+  'API_KEY=process.env.API_KEY'
+# shellcheck disable=SC2016
+assert_secret_clean "shell environment access" \
+  'AUTH_TOKEN=${AUTH_TOKEN_FROM_ENV}'
 
 # Push-blocking guards (review-pass-no-push, lifecycle-phase-push) are covered
 # by tests/push-guards-test.sh, kept separate so that file contains no raw
