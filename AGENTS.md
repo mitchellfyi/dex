@@ -67,7 +67,7 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 ```
 
-Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `review.sh`, `factory.sh`, `run-spec.sh`, `agent-tools.sh`, `maintenance.sh`, `project-state.sh`, and `attribution.sh`.
+Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `review.sh`, `factory.sh`, `run-spec.sh`, `agent-tools.sh`, `maintenance.sh`, `project-state.sh`, `lifecycle-control.sh`, and `attribution.sh`.
 
 ### Output
 
@@ -293,6 +293,7 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `events.sh` | Run IDs, local run directories, JSONL event journals, redacted logs, artifact manifests, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_log_append()`, `dx_run_register_artifact()`, `dx_run_write_summary()` |
 | `factory.sh` | Optional Dex Factory event sync over HTTP | `dx_factory_sync_pending_events()`, `dx_factory_events_endpoint()`, `dx_factory_sync_requested()` |
 | `git.sh` | Git helpers | `dx_default_branch()`, `dx_slugify()` |
+| `lifecycle-control.sh` | Direct-human lifecycle pause, stop, phase transition, ownership, and audit receipts | `dx_write_lifecycle_control()`, `dx_lifecycle_control_read()`, `dx_lifecycle_control_lock_acquire()` |
 | `maintenance.sh` | Background maintenance config, workflow install, run IDs, locks, and reviewer normalization | `dx_maintenance_event_mode()`, `dx_maintenance_install_workflow()`, `dx_maintenance_run_id()`, `dx_maintenance_request_reviewer()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `project-state.sh` | Init ownership snapshots and conservative project cleanup | `dx_project_state_begin()`, `dx_project_state_finalize()`, `dx_project_state_remove_managed()` |
@@ -363,8 +364,7 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `DEX_COMPLETE_WAIT_MINUTES` | Minimum wait window per Phase 6 cycle (minutes) | 5 |
 | `DEX_SESSION_ID` | Unique session ID (set by dxloop for stop hook) | unset |
 | `DEX_REVIEW_ASSESSMENT_ACTIVE` | Internal marker for the read-only preflight risk assessor | unset |
-| `DEX_REVIEW_PASS_ACTIVE` | Marks a session as a single-shot review-wave pass: the Stop hook never runs the inline phase handoff, and the push guard blocks `git push`/`gh pr` mutations | unset |
-| `DX_LIFECYCLE_PUSH_FORBIDDEN` | Resolved by the guard handler: `1` in review passes and active-loop Phases 1-3, blocking `git push`/`gh pr` mutations; overriding requires launching the session with `0` exported (per-command env prefixes never reach the guard hook) | resolved |
+| `DEX_REVIEW_PASS_ACTIVE` | Marks a session as a single-shot review-wave pass so its Stop hook can never run the parent lifecycle's inline phase handoff | unset |
 | `CODEX_HOME` | Codex config root used for Dex skill links | `~/.codex` |
 | `DX_AGENT` / `DX_AGENT_OVERRIDE` | Agent override (`claude` or `codex`) | profile/default |
 | `DX_MODEL` / `DX_MODEL_OVERRIDE` | Model override for the selected agent | profile/default |

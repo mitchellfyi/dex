@@ -28,6 +28,7 @@
 #   dx maintain             Run background maintenance or install workflow
 #   dx tools                Check or install Claude/Codex tooling bootstrap
 #   dx run --spec <file>    Run from a structured headless run spec
+#   dx control <action>     Pause, stop, advance, jump, or resume a lifecycle
 #   dex                   Alias for dx
 #   dexter                Alias for dx
 
@@ -80,6 +81,7 @@ __dx_cli() {
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
     provider)  dx_provider_command "$@" ;;
     run)       __dx_run_spec_cli "$@" ;;
+    control)   bash "$DEX_DIR/bin/control.sh" "$@" ;;
     research)
       local _dx_has_max_cycles=0 _dx_has_runner=0 _dx_research_help=0 _dx_arg
       local _dx_research_args=("$@")
@@ -142,6 +144,7 @@ __dx_cli() {
       echo "  dx provider         Configure provider/model execution profiles"
       echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
       echo "  dx run --spec-url URL --run-token TOKEN"
+      echo "  dx control          Pause, stop, advance, jump, or resume the current lifecycle"
       echo "  dx research         Run autonomous research orchestrator"
       echo "                        Defaults: --max-cycles 20; SCENARIO_TIMEOUT 3600s (1h) per scenario"
       echo "                        Override timeout: dx research --scenario-timeout 7200"
@@ -417,10 +420,10 @@ DX_PHASE_PROMISES=(\
 
 DX_PHASE_MESSAGES=(\
   "Call EnterPlanMode now, then immediately invoke the dxplan skill. Do not perform exploration or planning by hand outside dxplan unless the skill explicitly instructs you to. Ticket setup (branch rename, status update, assignment, push) was already done in Phase 0; if anything looks incomplete (status still Backlog/Todo, no assignee, branch not renamed/pushed), finish it before calling EnterPlanMode. For freeform task requests with a configured tracker, after the user approves the plan via ExitPlanMode, offer the dxplan tracker intake choices before writing the Phase 1 approval marker. After the gate is complete or explicitly skipped, write the Phase 1 approval marker and stop once so the Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt." \
-  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. For UI-affecting changes, Phase 2 must invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. SCOPE BOUNDARIES: implementation, testing, and UI capture evidence ONLY. Do NOT commit, push, create branches, or create PRs during this phase — those are handled by later phases. When done, stop — the audit loop will verify your work." \
-  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, create branches, or create PRs. When the loop writes a valid success receipt, stop — the audit loop will verify." \
-  "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dxcommit\" to commit and push. SCOPE BOUNDARIES: verify and commit ONLY. Do NOT create PRs or modify implementation beyond fixing verify failures. When pushed, stop — the audit loop will verify." \
-  "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from dex.md § Reviewers. SCOPE BOUNDARIES: PR creation, description, and artifact handoff ONLY. Do NOT mark the PR ready for review (Phase 6 owns that), do NOT post @mention comments, do NOT modify implementation code. When done, stop — the audit loop will verify." \
+  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. For UI-affecting changes, Phase 2 must invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. Phase focus: implementation, testing, and UI capture evidence. Commit, push, branch, and PR actions remain available when useful; later phases still perform the canonical verification, commit, and PR handoff. When done, stop — the audit loop will verify your work." \
+  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful; later phases still perform their normal handoff steps. When the loop writes a valid success receipt, stop — the audit loop will verify." \
+  "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dxcommit\" to commit and push. Phase focus: verification and the canonical commit, but PR creation and implementation fixes remain available when useful. When pushed, stop — the audit loop will verify." \
+  "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from dex.md § Reviewers. Phase focus: PR creation, description, and artifact handoff. Marking ready, posting @mentions, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, wait DEX_COMPLETE_WAIT_MINUTES per cycle, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
 )
 
@@ -434,7 +437,7 @@ DX_PHASE_0_PROMISE="PHASE_0_COMPLETE"
 DX_PHASE_0_AUDIT_FILE="0-setup"
 DX_PHASE_0_MIN_AUDITS="1"
 DX_PHASE_0_TIMEOUT="0"
-DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (c) rename the lifecycle branch to the tracker's git branch name and push it (do NOT create a draft PR — Phase 5 owns that); (d) set ticket status to In Progress; (e) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, push the current lifecycle branch and proceed. SCOPE BOUNDARIES: ticket setup only — do NOT call EnterPlanMode, do NOT draft a plan, do NOT implement, do NOT commit source code, do NOT create a draft PR. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
+DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (c) rename the lifecycle branch to the tracker's git branch name and push it; PR creation is normally deferred until Phase 5 but remains available when useful; (d) set ticket status to In Progress; (e) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, push the current lifecycle branch and proceed. Phase focus: ticket setup. Planning and implementation normally begin in later phases, but commits, pushes, branches, and PR actions remain available. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
 
 # __dx_phase_name <step>
 # Display name for the given phase number. Centralises Phase 0 (kept out of
@@ -1114,21 +1117,20 @@ __dx_build_system_context() {
   case $step in
     0) scope_lines="- DO read the ticket, assign it to the authenticated user (if unassigned), rename the lifecycle branch to the tracker's git branch name, push the renamed branch, and set ticket status to In Progress
 - DO operate in NORMAL mode — do NOT call EnterPlanMode in this phase
-- Do NOT draft a plan, implement code, commit source changes, or create a draft PR
+- Keep the phase focused on ticket bootstrap. Planning and implementation normally follow later; commit and PR actions remain available when the user or active workflow calls for them
 - DO write the Phase 0 ready marker (dx_phase_ready_file step 0) when setup is complete, then stop" ;;
     1) scope_lines="- DO invoke the dxplan skill immediately after entering Plan Mode
 - Phase 0 already handled branch rename and ticket setup; do not redo them unless the markers are missing
 - Do NOT explore code or draft a plan by hand outside dxplan unless the skill explicitly instructs you to
 - DO wait for explicit user approval via ExitPlanMode before marking Phase 1 ready" ;;
-    2) scope_lines="- Do NOT commit, push, create PRs, or modify git history
-- DO implement, test, and verify completeness via the Skill tool" ;;
-    3) scope_lines="- Do NOT commit, push, create PRs, or modify git history
-- DO run /dxreviewloop, fix all findings, and reach a SUCCESS result" ;;
-    4) scope_lines="- Do NOT create PRs or modify implementation beyond fixing verify failures
-- DO run format/lint/typecheck/test, fix failures, commit, push" ;;
-    5) scope_lines="- Do NOT mark the PR ready for review (that is Phase 6)
-- Do NOT post @mention comments yet (those happen at Phase 6)
-- DO create the draft PR, write the description, attach 'request' reviewers from dex.md § Reviewers" ;;
+    2) scope_lines="- DO implement, test, and verify completeness via the Skill tool
+- Commits, pushes, branches, and PR actions remain available; Phase 4 and Phase 5 still provide their normal canonical handoffs" ;;
+    3) scope_lines="- DO run /dxreviewloop, fix all findings, and reach a SUCCESS result
+- Commits, pushes, branches, and PR actions remain available; use them only when they help the current work" ;;
+    4) scope_lines="- DO run format/lint/typecheck/test, fix failures, commit, push
+- PR creation and broader implementation fixes remain available when useful" ;;
+    5) scope_lines="- DO create or update the PR, write the description, and attach 'request' reviewers from dex.md § Reviewers
+- Ready-state changes, @mention comments, implementation changes, commits, and pushes remain available; Phase 6 still performs the normal completion workflow" ;;
     6) scope_lines="- Do NOT modify implementation code unless fixing CI/review failures
 - DO mark the PR ready, request reviewers (request type), post @mention comment (mention type),
 - DO launch /loop 5m /dxwatchpr, address CI/review failures, close ticket only when checks and approvals are green" ;;
@@ -1292,6 +1294,27 @@ Human input is required only for:
 - Phase 6 waiting for CI and successfully requested reviewer approval
 
 If none of those applies, keep working autonomously.
+
+## Direct Human Control
+
+A direct human instruction always overrides the autonomous phase contract.
+Phrases such as "stop Dex", "leave the review loop", "skip verification",
+"mark this phase done", "jump to the PR phase", or "resume Dex" are control
+instructions. Follow the latest human request immediately.
+
+Claude sessions receive control through the UserPromptSubmit hook. Direct Codex
+sessions must run the matching provider-neutral command before stopping:
+
+\`\`\`bash
+bash "${DEX_DIR}/bin/control.sh" stop
+bash "${DEX_DIR}/bin/control.sh" done
+bash "${DEX_DIR}/bin/control.sh" jump verify
+bash "${DEX_DIR}/bin/control.sh" resume
+\`\`\`
+
+These controls waive only Dex lifecycle sequencing. Review-wave session
+isolation and the destructive-command, secret, and sensitive-file guards remain
+active; none of those guards blocks ordinary commit, push, or PR operations.
 
 ## Initial Scope Boundaries (Phase ${step})
 
@@ -1516,10 +1539,38 @@ print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 PY
 }
 
+unalias __dx_finish_inline_pause 2>/dev/null; unfunction __dx_finish_inline_pause 2>/dev/null
+__dx_finish_inline_pause() {
+  local session_id="$1" final_step="$2" resume_hint="$3" wt_name="$4"
+  local wt_dir="$5" default_branch="$6" workspace_mode="$7"
+  local pause_reason pause_source terminal_data
+  pause_reason=$(dx_pause_state_read "$session_id" reason)
+  pause_source=$(dx_pause_state_read "$session_id" source)
+  [[ -n "$pause_reason" ]] || pause_reason="manual-intervention"
+  [[ -n "$pause_source" ]] || pause_source="unknown"
+
+  terminal_data=$(__dx_terminal_event_data "blocked" "$pause_reason" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
+  dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
+  dx_run_log_append_for_session "$session_id" "warn" "dx" "Lifecycle paused at Phase ${final_step}: ${pause_reason}; source=${pause_source}"
+  dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: ${pause_reason}"
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+    "$(dx_loop_file "$session_id")" "$(dx_phase_busy_notice_file "$session_id" "$final_step")" 2>/dev/null || true
+  dx_clear_lifecycle_control "$session_id" 2>/dev/null || true
+  dx_provider_cleanup_session_state "$session_id"
+
+  __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
+  echo ""
+  echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (${pause_reason})"
+  echo "Resume with: ${resume_hint}"
+  return 1
+}
+
 unalias __dx_codex_direct_phase_handoff 2>/dev/null; unfunction __dx_codex_direct_phase_handoff 2>/dev/null
 __dx_codex_direct_phase_handoff() {
   local session_id="$1" phase="$2" state_file="$3" wt_dir="$4"
   local provider_state provider_engine="" line complete_file ready_file next_phase criteria_binding=""
+  local control_action control_target control_expected control_phase control_snapshot control_source
+  local config_file control_config control_busy_token
   provider_state=$(dx_provider_state_file "$session_id")
   [[ -f "$provider_state" ]] || return 1
   while IFS= read -r line; do
@@ -1529,6 +1580,77 @@ __dx_codex_direct_phase_handoff() {
   done < "$provider_state"
   [[ "$provider_engine" == "codex-plugin" ]] || return 1
   [[ "$phase" =~ ^[0-6]$ ]] || return 1
+
+  config_file=$(dx_loop_config_file "$session_id")
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  control_action=$(dx_lifecycle_control_value "$control_snapshot" action)
+  control_target=$(dx_lifecycle_control_value "$control_snapshot" target_phase)
+  control_expected=$(dx_lifecycle_control_value "$control_snapshot" expected_phase)
+  control_source=$(dx_lifecycle_control_value "$control_snapshot" source)
+  control_phase=$(dx_lifecycle_current_phase "$session_id")
+  if [[ "$control_action" == "pause" || "$control_action" == "cancel" ]]; then
+    dx_write_pause_state "$session_id" "manual-${control_action}" "${control_source:-terminal}" 2>/dev/null || true
+    [[ -f "$(dx_phase_busy_file "$session_id" 3)" ]] && dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
+    touch "$(dx_paused_file "$session_id")"
+    rm -f "$(dx_active_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" || true
+    return 2
+  fi
+  if [[ "$control_action" == "complete" || "$control_action" == "jump" ]]; then
+    if [[ -n "$control_expected" && "$control_expected" != "$control_phase" ]]; then
+      dx_warn "Ignoring stale human lifecycle transition for Phase ${control_expected}; current phase is ${control_phase}."
+      dx_clear_lifecycle_control_unlocked "$session_id"
+      dx_lifecycle_control_lock_release "$session_id" || true
+      return 1
+    fi
+    if dx_phase_busy_transition_blocked "$session_id" 3 "$control_phase" "$control_target"; then
+      dx_write_pause_state "$session_id" "review-child-active" "${control_source:-terminal}" 2>/dev/null || true
+      dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
+      touch "$(dx_paused_file "$session_id")"
+      rm -f "$(dx_active_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null || true
+      dx_lifecycle_control_lock_release "$session_id" || true
+      dx_warn "Dex detached at Phase 3 because a review child is still marked in flight."
+      return 2
+    fi
+    if [[ "$control_target" =~ ^[0-7]$ && "$control_target" != "$control_phase" ]]; then
+      control_config="${control_target}:$(__dx_phase_promise "$control_target"):$(__dx_inline_audit_file "$control_target"):$(__dx_phase_min_audits "$control_target")"
+      [[ "$control_target" == "7" ]] && control_config="7:::0"
+      if ! dx_lifecycle_atomic_write "$config_file" "$control_config" \
+        || ! dx_lifecycle_atomic_write "$state_file" "$control_target"; then
+        dx_lifecycle_control_lock_release "$session_id" || true
+        dx_warn "Dex could not commit the direct Codex phase transition; existing gate markers were preserved."
+        return 1
+      fi
+      for control_phase in 0 1 2 3 4 5 6; do
+        rm -f "$(dx_phase_started_file "$session_id" "$control_phase")" \
+          "$(dx_phase_ready_file "$session_id" "$control_phase")" 2>/dev/null || true
+        if [[ "$control_phase" != "3" ]]; then
+          rm -f "$(dx_phase_busy_file "$session_id" "$control_phase")" \
+            "$(dx_phase_busy_notice_file "$session_id" "$control_phase")" 2>/dev/null || true
+        fi
+      done
+      rm -f "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" \
+        "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" \
+        "$(dx_pause_state_file "$session_id")" 2>/dev/null || true
+      if dx_phase_busy_quiesced "$session_id" 3; then
+        control_busy_token=$(dx_phase_busy_token "$session_id" 3)
+        dx_phase_busy_finish "$session_id" 3 "$control_busy_token" 2>/dev/null || true
+      fi
+      dx_run_log_append_for_session "$session_id" "warn" "dx" \
+        "Direct Codex applied human lifecycle transition: phase=${phase}; target_phase=${control_target}; action=${control_action}" 2>/dev/null || true
+      dx_clear_lifecycle_control_unlocked "$session_id"
+      if [[ "$control_target" == "7" ]]; then
+        touch "$(dx_lifecycle_human_complete_file "$session_id")"
+        rm -f "$config_file" 2>/dev/null || true
+      fi
+      dx_lifecycle_control_lock_release "$session_id" || true
+      dx_info "Human control moved the direct Codex lifecycle from Phase ${phase} to Phase ${control_target}."
+      return 0
+    fi
+    dx_clear_lifecycle_control_unlocked "$session_id"
+  fi
+  dx_lifecycle_control_lock_release "$session_id" || true
 
   complete_file=$(dx_complete_file "$session_id")
   ready_file=$(dx_phase_ready_file "$session_id" "$phase")
@@ -1559,36 +1681,67 @@ __dx_codex_direct_phase_handoff() {
     return 1
   fi
 
-  __dx_record_inline_phase_result "$session_id" "$phase" "advance" "0"
-  if [[ "$phase" == "3" ]]; then
-    rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" "$(dx_review_state_file "$session_id")" "$(dx_review_ledger_file "$session_id")" 2>/dev/null
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  if [[ -n "$control_snapshot" ]]; then
+    dx_lifecycle_control_lock_release "$session_id" || true
+    return 1
   fi
-  rm -f \
-    "$(dx_loop_file "$session_id")" \
-    "$complete_file" \
-    "$(dx_loop_config_file "$session_id")" \
-    "$(dx_findings_file "$session_id")" \
-    "$(dx_paused_file "$session_id")" \
-    "$(dx_phase_started_file "$session_id" "$phase")" \
-    "$(dx_phase_ready_file "$session_id" "$phase")" \
-    "$(dx_phase_busy_file "$session_id" "$phase")" \
-    "$(dx_phase_busy_notice_file "$session_id" "$phase")" 2>/dev/null
-
   if [[ "$phase" -lt 6 ]]; then
     next_phase=$((phase + 1))
-    printf '%s\n' "$next_phase" > "$state_file"
+    if dx_phase_busy_transition_blocked "$session_id" 3 "$phase" "$next_phase"; then
+      dx_write_pause_state "$session_id" "review-child-active" "direct-codex" 2>/dev/null || true
+      dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
+      touch "$(dx_paused_file "$session_id")"
+      dx_lifecycle_control_lock_release "$session_id" || true
+      return 1
+    fi
+    control_config="${next_phase}:$(__dx_phase_promise "$next_phase"):$(__dx_inline_audit_file "$next_phase"):$(__dx_phase_min_audits "$next_phase")"
+    if ! dx_lifecycle_atomic_write "$config_file" "$control_config" \
+      || ! dx_lifecycle_atomic_write "$state_file" "$next_phase"; then
+      dx_lifecycle_control_lock_release "$session_id" || true
+      return 1
+    fi
+    __dx_record_inline_phase_result "$session_id" "$phase" "advance" "0"
+    if [[ "$phase" == "3" ]]; then
+      rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" "$(dx_review_state_file "$session_id")" "$(dx_review_ledger_file "$session_id")" 2>/dev/null
+      if dx_phase_busy_quiesced "$session_id" 3; then
+        control_busy_token=$(dx_phase_busy_token "$session_id" 3)
+        dx_phase_busy_finish "$session_id" 3 "$control_busy_token" 2>/dev/null || true
+      fi
+    fi
+    rm -f "$(dx_loop_file "$session_id")" "$complete_file" \
+      "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" \
+      "$(dx_pause_state_file "$session_id")" "$(dx_phase_started_file "$session_id" "$phase")" \
+      "$(dx_phase_ready_file "$session_id" "$phase")" 2>/dev/null || true
+    if [[ "$phase" != "3" ]]; then
+      rm -f "$(dx_phase_busy_file "$session_id" "$phase")" \
+        "$(dx_phase_busy_notice_file "$session_id" "$phase")" 2>/dev/null || true
+    fi
     if [[ "$next_phase" -ge 2 ]] && git -C "$wt_dir" rev-parse --git-dir >/dev/null 2>&1; then
       dx_checkpoint_tag "$next_phase" "$wt_dir"
     fi
+    dx_lifecycle_control_lock_release "$session_id" || true
     dx_info "Codex completed Phase ${phase}; continuing with Phase ${next_phase}: $(__dx_phase_name "$next_phase")."
     return 0
   fi
 
-  printf '%s\n' "7" > "$state_file"
+  if ! dx_lifecycle_atomic_write "$config_file" "7:::0" \
+    || ! dx_lifecycle_atomic_write "$state_file" "7"; then
+    dx_lifecycle_control_lock_release "$session_id" || true
+    return 1
+  fi
+  __dx_record_inline_phase_result "$session_id" "$phase" "advance" "0"
+  rm -f "$(dx_loop_file "$session_id")" "$complete_file" "$config_file" \
+    "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" \
+    "$(dx_pause_state_file "$session_id")" "$(dx_phase_started_file "$session_id" "$phase")" \
+    "$(dx_phase_ready_file "$session_id" "$phase")" "$(dx_phase_busy_file "$session_id" "$phase")" \
+    "$(dx_phase_busy_notice_file "$session_id" "$phase")" 2>/dev/null || true
   dx_event_emit_for_session "$session_id" "run.completed" "info" "Dex lifecycle completed" "6" "{\"final_phase\":6}"
   dx_run_log_append_for_session "$session_id" "info" "dx" "Dex lifecycle completed"
   dx_run_write_summary_for_session "$session_id" "completed" "Dex lifecycle completed"
   rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
+  dx_lifecycle_control_lock_release "$session_id" || true
   return 0
 }
 
@@ -1627,7 +1780,9 @@ __dx_run_phases_inline() {
   __dx_write_state "$state_file" "$step"
 
   dx_provider_write_session_state "$session_id" 2>/dev/null || true
-  if __dx_codex_direct_phase_handoff "$session_id" "$step" "$state_file" "$wt_dir"; then
+  local preflight_handoff_status=0
+  __dx_codex_direct_phase_handoff "$session_id" "$step" "$state_file" "$wt_dir" || preflight_handoff_status=$?
+  if [[ "$preflight_handoff_status" -eq 0 ]]; then
     local preflight_step="$step"
     [[ -f "$state_file" ]] && preflight_step=$(cat "$state_file" 2>/dev/null || echo "$step")
     if [[ "$preflight_step" -ge 7 ]]; then
@@ -1635,10 +1790,18 @@ __dx_run_phases_inline() {
       __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
       echo ""
       echo "Ticket lifecycle complete."
+      if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
+        dx_info "Human-controlled completion preserved the lifecycle workspace."
+        return 0
+      fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
       return $?
     fi
     __dx_run_phases_inline "$wt_name" "$wt_dir" "$default_branch" "$preflight_step" "$state_file" "$times_file" "$resume_hint" "$workspace_mode" "$session_id" "$raw_input"
+    return $?
+  elif [[ "$preflight_handoff_status" -eq 2 ]]; then
+    __dx_finish_inline_pause "$session_id" "$step" "$resume_hint" "$wt_name" "$wt_dir" \
+      "$default_branch" "$workspace_mode"
     return $?
   fi
 
@@ -1664,7 +1827,7 @@ __dx_run_phases_inline() {
   local message
   message=$(__dx_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")
   if [[ $step -eq 3 ]]; then
-    message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Scope boundaries: review and fix only; do not commit, push, create branches, or create PRs. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance."
+    message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance."
   fi
 
   local session_timeout="${DEX_SESSION_TIMEOUT:-$DX_SESSION_TIMEOUT}"
@@ -1720,23 +1883,9 @@ __dx_run_phases_inline() {
   local paused_file
   paused_file=$(dx_paused_file "$session_id")
   if [[ -f "$paused_file" ]]; then
-    local terminal_data
-    terminal_data=$(__dx_terminal_event_data "blocked" "manual-intervention" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
-    dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
-    dx_run_log_append_for_session "$session_id" "warn" "dx" "Lifecycle paused at Phase ${final_step}: manual intervention requested"
-    dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step")"
-    rm -f \
-      "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
-      "$(dx_loop_config_file "$session_id")" \
-      "$(dx_loop_file "$session_id")" \
-      "$(dx_handoff_mode_file "$session_id")" \
-      "$paused_file" 2>/dev/null
-    dx_provider_cleanup_session_state "$session_id"
-
-    echo ""
-    echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (manual intervention requested)"
-    echo "Resume with: ${resume_hint}"
-    return 1
+    __dx_finish_inline_pause "$session_id" "$final_step" "$resume_hint" "$wt_name" "$wt_dir" \
+      "$default_branch" "$workspace_mode"
+    return $?
   fi
 
   local loop_file
@@ -1773,6 +1922,10 @@ __dx_run_phases_inline() {
 	    __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
 	    echo ""
 	    echo "Ticket lifecycle complete."
+	    if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
+	      dx_info "Human-controlled completion preserved the lifecycle workspace."
+	      return 0
+	    fi
 	    __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
 	    return $?
 	  fi
@@ -1789,7 +1942,9 @@ __dx_run_phases_inline() {
     return "$exit_code"
   fi
 
-  if __dx_codex_direct_phase_handoff "$session_id" "$final_step" "$state_file" "$wt_dir"; then
+  local final_handoff_status=0
+  __dx_codex_direct_phase_handoff "$session_id" "$final_step" "$state_file" "$wt_dir" || final_handoff_status=$?
+  if [[ "$final_handoff_status" -eq 0 ]]; then
     final_step="$step"
     [[ -f "$state_file" ]] && final_step=$(cat "$state_file" 2>/dev/null || echo "$step")
     if [[ "$final_step" -ge 7 ]]; then
@@ -1797,10 +1952,18 @@ __dx_run_phases_inline() {
       __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
       echo ""
       echo "Ticket lifecycle complete."
+      if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
+        dx_info "Human-controlled completion preserved the lifecycle workspace."
+        return 0
+      fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
       return $?
     fi
     __dx_run_phases_inline "$wt_name" "$wt_dir" "$default_branch" "$final_step" "$state_file" "$times_file" "$resume_hint" "$workspace_mode" "$session_id" "$raw_input"
+    return $?
+  elif [[ "$final_handoff_status" -eq 2 ]]; then
+    __dx_finish_inline_pause "$session_id" "$final_step" "$resume_hint" "$wt_name" "$wt_dir" \
+      "$default_branch" "$workspace_mode"
     return $?
   fi
 
@@ -2351,7 +2514,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|login|logout|whoami|dexcode|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|maintain|tools|config|provider|run|control|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
@@ -2987,8 +3150,11 @@ __dx_review_standalone_session_id() {
 
 unalias __dx_review_runtime_cleanup 2>/dev/null; unfunction __dx_review_runtime_cleanup 2>/dev/null
 __dx_review_runtime_cleanup() {
-  local repo_root="$1" lock_token="$2" busy_file="$3" busy_notice_file="$4" invocation_dir="$5"
-  command rm -f "$busy_file" "$busy_notice_file" 2>/dev/null || true
+  local repo_root="$1" lock_token="$2" session_id="$3" invocation_dir="$4" busy_token=""
+  if dx_phase_busy_quiesced "$session_id" 3; then
+    busy_token=$(dx_phase_busy_token "$session_id" 3)
+    dx_phase_busy_finish "$session_id" 3 "$busy_token" 2>/dev/null || true
+  fi
   dx_review_lock_release "$repo_root" "$lock_token" 2>/dev/null || true
   builtin cd "$invocation_dir" 2>/dev/null || true
 }
@@ -3056,10 +3222,15 @@ __dx_review_pause_intervention() {
 unalias __dx_review_handle_interrupt 2>/dev/null; unfunction __dx_review_handle_interrupt 2>/dev/null
 __dx_review_handle_interrupt() {
   local run_id="$1" telemetry_session_id="$2" standalone="$3" session_id="$4"
-  local child_session_id="$5" review_phase="$6" reason="$7"
+  local child_session_id="$5" review_phase="$6" reason="$7" busy_token="${8:-}"
   if [[ -n "$child_session_id" ]]; then
     dx_provider_cleanup_session_state "$child_session_id" 2>/dev/null || true
     dx_cleanup_session "$child_session_id" 2>/dev/null || true
+  fi
+  if [[ "$standalone" != "1" && -n "$busy_token" ]]; then
+    if dx_phase_busy_acknowledge "$session_id" 3 "$busy_token"; then
+      dx_phase_busy_finish "$session_id" 3 "$busy_token" 2>/dev/null || true
+    fi
   fi
   __dx_review_emit_event "$run_id" "review.paused" "warn" "Review interrupted" "$review_phase" reason="$reason"
   if [[ "$standalone" == "1" ]]; then
@@ -3214,10 +3385,10 @@ __dx_review_wave_message_template() {
   local scope_source_detail scope_boundary
   if [[ "$scope_mode" == "codebase" ]]; then
     scope_source_detail="IMPORTANT: No current change set was found, so this pass is a whole-codebase review. Do not stop because \`git diff\` is empty. Use these commands as the authoritative codebase inventory, then read and review the listed files as needed:"
-    scope_boundary="SCOPE BOUNDARIES: review and fix the entire codebase in this repository. Publishing does not satisfy the review gate; any code or HEAD change requires a fresh wave."
+    scope_boundary="REVIEW FOCUS: review and fix the entire codebase in this repository. Commit, push, and PR actions remain available when useful, but publishing does not replace the review gate. Substantive content changes require a fresh wave."
   else
     scope_source_detail="IMPORTANT: When the audit prompt or /dxreview SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead. This is the full current change set, including committed branch changes, staged changes, unstaged changes, and untracked files:"
-    scope_boundary="SCOPE BOUNDARIES: review and fix the full current change set above ONLY. Publishing does not satisfy the review gate; any code or HEAD change requires a fresh wave."
+    scope_boundary="REVIEW FOCUS: review and fix the full current change set above. Commit, push, and PR actions remain available when useful, but publishing does not replace the review gate. Substantive content changes require a fresh wave."
   fi
 
   printf '%s\n' "Run one full Dex review wave using /dxreview --single-pass, scoped to **${scope_name}** on branch \`${branch}\`.
@@ -3381,7 +3552,7 @@ dxreviewloop() {
     fi
   fi
 
-  local review_lock_token="" review_lock_status=0 final_busy_file="" final_busy_notice_file=""
+  local review_lock_token="" review_lock_status=0
   review_lock_token=$(__dx_review_nonce)
   dx_review_lock_acquire "$repo_root" "$review_lock_token" "$$" || review_lock_status=$?
   if [[ $review_lock_status -ne 0 ]]; then
@@ -3393,11 +3564,8 @@ dxreviewloop() {
     fi
     return 1
   fi
-  final_busy_file=$(dx_phase_busy_file "$session_id" 3)
-  final_busy_notice_file=$(dx_phase_busy_notice_file "$session_id" 3)
-  : "$final_busy_notice_file"
   # shellcheck disable=SC2064  # zsh localtraps runs after local scope teardown, so capture quoted values now
-  trap "__dx_review_runtime_cleanup ${(q)repo_root} ${(q)review_lock_token} ${(q)final_busy_file} ${(q)final_busy_notice_file} ${(q)invocation_dir}" EXIT
+  trap "__dx_review_runtime_cleanup ${(q)repo_root} ${(q)review_lock_token} ${(q)session_id} ${(q)invocation_dir}" EXIT
   if ! builtin cd "$repo_root"; then
     dx_error "Could not enter the repository root: ${repo_root}"
     return 1
@@ -3453,10 +3621,10 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     fi
   fi
 
-  local current_review_child_session=""
-  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" user_interrupt; return 130' INT
-  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" terminated; return 143' TERM
-  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" hangup; return 129' HUP
+  local current_review_child_session="" parent_busy_token=""
+  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" user_interrupt "$parent_busy_token"; return 130' INT
+  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" terminated "$parent_busy_token"; return 143' TERM
+  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" hangup "$parent_busy_token"; return 129' HUP
 
   local review_empty_mcp="$DX_LOOP_DIR/empty-mcp.json"
   local assessment_mcp_flags=() review_mcp_flags=()
@@ -3593,7 +3761,7 @@ $(__dx_provider_prompt)"
         DEX_DIR="$DEX_DIR" \
         dx_run_with_timeout "$pass_timeout" bash "$assessment_codex_wrapper" exec -- "$assessment_message" || assessment_exit=$?
       else
-        local assessment_args=() assessment_arg
+        local assessment_args=() assessment_arg=""
         for assessment_arg in "${DX_CLAUDE_FLAGS[@]}"; do
           [[ "$assessment_arg" == "--chrome" ]] || assessment_args+=("$assessment_arg")
         done
@@ -3874,10 +4042,37 @@ $(__dx_provider_prompt)"
     __dx_review_emit_event "$review_run_id" "review.pass.started" "info" "Review pass started" "$review_phase" \
       pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" clean_before_int="$clean_passes" required_clean_int="$required_clean" scope_fingerprint="$scope_before"
 
-    local parent_busy_file=""
+    parent_busy_token=""
     if [[ $standalone_review_prompt -eq 0 ]]; then
-      parent_busy_file=$(dx_phase_busy_file "$session_id" 3)
-      __dx_write_state "$parent_busy_file" "$(date +%s)"$'\t'"independent review wave"
+      local review_control_snapshot="" review_control_action="" review_parent_phase="" busy_write_status=0
+      if ! dx_lifecycle_control_lock_acquire "$session_id"; then
+        terminal_reason="control_transition_busy"
+        clean_passes=0
+        dx_cleanup_session "$pass_session_id"
+        current_review_child_session=""
+        break
+      fi
+      review_control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+      review_control_action=$(dx_lifecycle_control_value "$review_control_snapshot" action)
+      review_parent_phase=$(dx_lifecycle_current_phase "$session_id")
+      if [[ "$review_control_action" == "pause" || "$review_control_action" == "cancel" \
+        || "$review_control_action" == "complete" || "$review_control_action" == "jump" \
+        || "$review_parent_phase" != "3" ]]; then
+        dx_lifecycle_control_lock_release "$session_id" || true
+        terminal_reason="human_intervention"
+        clean_passes=0
+        dx_cleanup_session "$pass_session_id"
+        current_review_child_session=""
+        break
+      fi
+      parent_busy_token=$(dx_phase_busy_begin "$session_id" 3 "independent review wave") || busy_write_status=$?
+      dx_lifecycle_control_lock_release "$session_id" || true
+      if [[ "$busy_write_status" -ne 0 || -z "$parent_busy_token" ]]; then
+        terminal_reason="busy_marker_write_failed"
+        dx_cleanup_session "$pass_session_id"
+        current_review_child_session=""
+        break
+      fi
     fi
 
     local exit_code=0
@@ -3946,9 +4141,35 @@ ${message}"
       dx_run_with_timeout "$pass_timeout" __dx_claude "${claude_args[@]}" "$message" || exit_code=$?
     fi
 
-    [[ -n "$parent_busy_file" ]] && rm -f "$parent_busy_file" "$(dx_phase_busy_notice_file "$session_id" 3)" 2>/dev/null
+    local review_intervention_requested=0 review_control_snapshot="" review_control_action=""
+    if [[ -n "$parent_busy_token" ]]; then
+      dx_phase_busy_cancel_requested "$session_id" 3 && review_intervention_requested=1
+      review_control_snapshot=$(dx_lifecycle_control_snapshot "$session_id")
+      review_control_action=$(dx_lifecycle_control_value "$review_control_snapshot" action)
+      if [[ "$review_control_action" == "pause" || "$review_control_action" == "cancel" ]]; then
+        review_intervention_requested=1
+      fi
+
+      # The provider call above is synchronous. Reaching this point is the
+      # review owner's acknowledgement that the child process has ended.
+      if dx_phase_busy_acknowledge "$session_id" 3 "$parent_busy_token"; then
+        dx_phase_busy_finish "$session_id" 3 "$parent_busy_token" 2>/dev/null || true
+        parent_busy_token=""
+      fi
+    fi
     pass_finished=$(date +%s)
     pass_duration=$((pass_finished - pass_started))
+
+    if [[ $review_intervention_requested -eq 1 ]]; then
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      current_review_child_session=""
+      terminal_reason="human_intervention"
+      clean_passes=0
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass stopped by human intervention" "$review_phase" \
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=human_intervention
+      break
+    fi
 
     local audit_max_iter=0
     if [[ $exit_code -eq 0 && -f "$(dx_loop_file "$pass_session_id")" ]]; then
@@ -4201,11 +4422,13 @@ ${message}"
     [[ -n "$terminal_reason" ]] && break
   done
 
-  local final_busy_file
+  local final_busy_token
   current_review_child_session=""
   trap - INT TERM HUP
-  final_busy_file=$(dx_phase_busy_file "$session_id" 3)
-  rm -f "$final_busy_file" "$(dx_phase_busy_notice_file "$session_id" 3)" 2>/dev/null
+  if dx_phase_busy_quiesced "$session_id" 3; then
+    final_busy_token=$(dx_phase_busy_token "$session_id" 3)
+    dx_phase_busy_finish "$session_id" 3 "$final_busy_token" 2>/dev/null || true
+  fi
 
   echo ""
   if [[ $clean_passes -ge $required_clean && -z "$terminal_reason" ]]; then

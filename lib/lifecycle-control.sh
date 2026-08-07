@@ -1,0 +1,439 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+# Direct-human lifecycle intervention state shared by hooks and CLI sessions.
+
+dx_lifecycle_session_id_valid() {
+  local session_id="${1:-}"
+  if command -v dx_session_id_valid >/dev/null 2>&1; then
+    dx_session_id_valid "$session_id"
+    return
+  fi
+  [[ -n "$session_id" && ${#session_id} -le 180 ]] || return 1
+  [[ "$session_id" != "." && "$session_id" != ".." ]]
+  [[ "$session_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+dx_lifecycle_control_file() {
+  dx_lifecycle_session_id_valid "$1" || return 1
+  printf '%s/%s.control\n' "$DX_LOOP_DIR" "$1"
+}
+
+dx_lifecycle_control_history_file() {
+  dx_lifecycle_session_id_valid "$1" || return 1
+  printf '%s/%s.interventions\n' "$DX_STATE_DIR" "$1"
+}
+
+dx_lifecycle_control_lock_dir() {
+  dx_lifecycle_session_id_valid "$1" || return 1
+  printf '%s/%s.control-lock\n' "$DX_LOOP_DIR" "$1"
+}
+
+dx_lifecycle_human_complete_file() {
+  dx_lifecycle_session_id_valid "$1" || return 1
+  printf '%s/%s.human-complete\n' "$DX_STATE_DIR" "$1"
+}
+
+dx_lifecycle_atomic_write() {
+  local target="$1" content="$2" target_dir tmp_file
+  target_dir=$(dirname "$target")
+  mkdir -p "$target_dir" || return 1
+  if [[ ( -e "$target" || -L "$target" ) && ( ! -f "$target" || -L "$target" ) ]]; then
+    return 1
+  fi
+  tmp_file=$(mktemp "${target}.tmp.XXXXXX") || return 1
+  chmod 600 "$tmp_file" 2>/dev/null || true
+  if ! printf '%s\n' "$content" > "$tmp_file" || ! command mv -f "$tmp_file" "$target"; then
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+}
+
+dx_lifecycle_control_snapshot_unlocked() {
+  local session_id="$1" control_file size
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+  control_file=$(dx_lifecycle_control_file "$session_id")
+  [[ -f "$control_file" && ! -L "$control_file" ]] || return 0
+  size=$(wc -c < "$control_file" 2>/dev/null | tr -d '[:space:]' || printf '4097')
+  [[ "$size" =~ ^[0-9]+$ && "$size" -le 4096 ]] || return 0
+  cat "$control_file" 2>/dev/null || true
+}
+
+dx_lifecycle_control_snapshot() {
+  local session_id="$1" snapshot=""
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+  dx_lifecycle_control_lock_acquire "$session_id" || return 0
+  snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  dx_lifecycle_control_lock_release "$session_id" || true
+  printf '%s\n' "$snapshot"
+}
+
+dx_lifecycle_control_value() {
+  local snapshot="$1" key="$2"
+  [[ -n "$key" ]] || return 0
+  printf '%s\n' "$snapshot" | awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
+}
+
+dx_lifecycle_control_read() {
+  local session_id="$1" key="$2" snapshot
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+  snapshot=$(dx_lifecycle_control_snapshot "$session_id")
+  dx_lifecycle_control_value "$snapshot" "$key"
+}
+
+dx_lifecycle_current_phase() {
+  local session_id="$1" phase="" config_file
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+
+  phase=$(cat "$(dx_state_file "$session_id")" 2>/dev/null || true)
+  if [[ "$phase" =~ ^[0-7]$ ]]; then
+    printf '%s\n' "$phase"
+    return 0
+  fi
+
+  config_file=$(dx_loop_config_file "$session_id")
+  if [[ -f "$config_file" && ! -L "$config_file" ]]; then
+    phase=$(cut -d: -f1 "$config_file" 2>/dev/null || true)
+    if [[ "$phase" =~ ^[0-7]$ ]]; then
+      printf '%s\n' "$phase"
+      return 0
+    fi
+  fi
+
+  phase="${DEX_LOOP_PHASE:-}"
+  [[ "$phase" =~ ^[0-7]$ ]] && printf '%s\n' "$phase"
+}
+
+dx_lifecycle_session_active() {
+  local session_id="$1" phase
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  phase=$(dx_lifecycle_current_phase "$session_id")
+  [[ "$phase" == "7" ]] && return 1
+  [[ "${DEX_LOOP_ACTIVE:-}" == "1" || "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]] && return 0
+  [[ -f "$(dx_active_file "$session_id")" || -f "$(dx_handoff_mode_file "$session_id")" ]] && return 0
+  [[ "$phase" =~ ^[0-6]$ && -f "$(dx_paused_file "$session_id")" \
+    && ! -L "$(dx_paused_file "$session_id")" ]] && return 0
+  [[ -f "$(dx_loop_config_file "$session_id")" ]] || return 1
+  [[ "$phase" =~ ^[0-6]$ ]]
+}
+
+dx_write_lifecycle_control() {
+  local session_id="$1" action="$2" target_phase="${3:-}" source="${4:-user-prompt}"
+  local prompt_sha256="${5:-}" expected_phase="${6:-}" owner_session="${7:-}"
+  local control_file history_file tmp_file history_tmp_file issued_at generation owner_file
+  local published=0 write_status=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  case "$action" in
+    pause|cancel|resume) [[ -z "$target_phase" ]] || return 1 ;;
+    complete|jump) [[ "$target_phase" =~ ^[0-7]$ ]] || return 1 ;;
+    *) return 1 ;;
+  esac
+  case "$source" in
+    user-prompt|terminal) ;;
+    *) return 1 ;;
+  esac
+  [[ -z "$prompt_sha256" || "$prompt_sha256" =~ ^[0-9a-f]{64}$ ]] || return 1
+  control_file=$(dx_lifecycle_control_file "$session_id")
+  history_file=$(dx_lifecycle_control_history_file "$session_id")
+  mkdir -p "$DX_LOOP_DIR" "$DX_STATE_DIR"
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+
+  if [[ -z "$expected_phase" ]]; then
+    expected_phase=$(dx_lifecycle_current_phase "$session_id")
+  fi
+  if [[ -n "$expected_phase" && "$expected_phase" != "prompt-loop" && ! "$expected_phase" =~ ^[0-7]$ ]]; then
+    write_status=1
+  fi
+  owner_file=$(dx_owner_file "$session_id")
+  if [[ -z "$owner_session" && -f "$owner_file" && ! -L "$owner_file" ]]; then
+    owner_session=$(cat "$owner_file" 2>/dev/null || true)
+  fi
+  if [[ -n "$owner_session" ]] && ! dx_lifecycle_session_id_valid "$owner_session"; then
+    write_status=1
+  fi
+
+  if [[ ( -e "$control_file" || -L "$control_file" ) && ( ! -f "$control_file" || -L "$control_file" ) ]]; then
+    write_status=1
+  fi
+  if [[ ( -e "$history_file" || -L "$history_file" ) && ( ! -f "$history_file" || -L "$history_file" ) ]]; then
+    write_status=1
+  fi
+  issued_at=$(date +%s)
+  generation="${issued_at}-$$-${RANDOM}"
+
+  tmp_file=""
+  history_tmp_file=""
+  if [[ "$write_status" -eq 0 ]]; then
+    tmp_file=$(mktemp "${control_file}.tmp.XXXXXX") || write_status=1
+  fi
+  if [[ "$write_status" -eq 0 ]] && ! {
+    printf 'version=1\n'
+    printf 'action=%s\n' "$action"
+    printf 'target_phase=%s\n' "$target_phase"
+    printf 'expected_phase=%s\n' "$expected_phase"
+    printf 'issued_at=%s\n' "$issued_at"
+    printf 'generation=%s\n' "$generation"
+    printf 'source=%s\n' "$source"
+    printf 'owner_session=%s\n' "$owner_session"
+    printf 'prompt_sha256=%s\n' "$prompt_sha256"
+  } > "$tmp_file"; then
+    write_status=1
+  fi
+
+  if [[ "$write_status" -eq 0 ]]; then
+    history_tmp_file=$(mktemp "${history_file}.tmp.XXXXXX") || write_status=1
+  fi
+  if [[ "$write_status" -eq 0 && -f "$history_file" ]]; then
+    if ! cat "$history_file" > "$history_tmp_file"; then
+      write_status=1
+    fi
+  elif [[ "$write_status" -eq 0 ]] && ! printf 'issued_at\tgeneration\taction\ttarget_phase\texpected_phase\tsource\towner_session\tprompt_sha256\n' > "$history_tmp_file"; then
+    write_status=1
+  fi
+  if [[ "$write_status" -eq 0 ]] && ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$issued_at" "$generation" "$action" "$target_phase" "$expected_phase" \
+    "$source" "$owner_session" "$prompt_sha256" >> "$history_tmp_file"; then
+    write_status=1
+  fi
+
+  # History is the durable audit record. Publish it before the live receipt so
+  # callers never receive a failure after a new control action became visible.
+  if [[ "$write_status" -eq 0 ]] && ! command mv -f "$history_tmp_file" "$history_file"; then
+    write_status=1
+  fi
+  if [[ "$write_status" -eq 0 ]]; then
+    history_tmp_file=""
+    if command mv -f "$tmp_file" "$control_file"; then
+      tmp_file=""
+      published=1
+    else
+      write_status=1
+    fi
+  fi
+
+  [[ -n "$tmp_file" ]] && command rm -f "$tmp_file" 2>/dev/null || true
+  [[ -n "$history_tmp_file" ]] && command rm -f "$history_tmp_file" 2>/dev/null || true
+  dx_lifecycle_control_lock_release "$session_id" || true
+  [[ "$published" -eq 1 && "$write_status" -eq 0 ]]
+}
+
+__dx_lifecycle_path_mtime() {
+  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null
+}
+
+__dx_lifecycle_control_lock_try() {
+  local session_id="$1" lock_dir owner_file owner_raw owner_pid owner_epoch owner_token
+  local now_epoch lock_epoch stale_after token current_raw tmp_owner
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  lock_dir=$(dx_lifecycle_control_lock_dir "$session_id")
+  owner_file="$lock_dir/owner"
+  mkdir -p "$DX_LOOP_DIR"
+  if mkdir "$lock_dir" 2>/dev/null; then
+    chmod 700 "$lock_dir" 2>/dev/null || true
+    now_epoch=$(date +%s)
+    token="${now_epoch}-$$-${RANDOM}"
+    tmp_owner="$lock_dir/.owner-${token}"
+    if ! ( umask 077; printf '%s\t%s\t%s\n' "$$" "$now_epoch" "$token" > "$tmp_owner" ) \
+      || ! command mv -f "$tmp_owner" "$owner_file"; then
+      command rm -f "$tmp_owner" 2>/dev/null || true
+      rmdir "$lock_dir" 2>/dev/null || true
+      return 1
+    fi
+    DX_LIFECYCLE_CONTROL_LOCK_SESSION="$session_id"
+    DX_LIFECYCLE_CONTROL_LOCK_TOKEN="$token"
+    return 0
+  fi
+  [[ -d "$lock_dir" && ! -L "$lock_dir" ]] || return 1
+  stale_after="${DEX_LIFECYCLE_CONTROL_LOCK_STALE_SECONDS:-2}"
+  [[ "$stale_after" =~ ^[0-9]+$ ]] || stale_after=2
+
+  if [[ ! -e "$owner_file" && ! -L "$owner_file" ]]; then
+    sleep 0.05
+    [[ ! -e "$owner_file" && ! -L "$owner_file" ]] || return 1
+    lock_epoch=$(__dx_lifecycle_path_mtime "$lock_dir" 2>/dev/null || printf '0')
+    now_epoch=$(date +%s)
+    [[ "$lock_epoch" =~ ^[0-9]+$ ]] || return 1
+    [[ $((now_epoch - lock_epoch)) -ge "$stale_after" ]] || return 1
+    rmdir "$lock_dir" 2>/dev/null || return 1
+    return 1
+  fi
+  [[ -f "$owner_file" && ! -L "$owner_file" ]] || return 1
+  owner_raw=$(cat "$owner_file" 2>/dev/null || true)
+  owner_pid="${owner_raw%%$'\t'*}"
+  owner_raw="${owner_raw#*$'\t'}"
+  owner_epoch="${owner_raw%%$'\t'*}"
+  owner_token="${owner_raw#*$'\t'}"
+  if [[ ! "$owner_pid" =~ ^[0-9]+$ || ! "$owner_epoch" =~ ^[0-9]+$ \
+    || ! "$owner_token" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] \
+    || ! kill -0 "$owner_pid" 2>/dev/null; then
+    current_raw=$(cat "$owner_file" 2>/dev/null || true)
+    [[ "$current_raw" == "${owner_pid}"$'\t'"${owner_epoch}"$'\t'"${owner_token}" ]] || return 1
+    rm -f "$owner_file" 2>/dev/null || true
+    rmdir "$lock_dir" 2>/dev/null || true
+  fi
+  return 1
+}
+
+dx_lifecycle_control_lock_acquire() {
+  local session_id="$1" attempts_raw="${2:-${DEX_LIFECYCLE_CONTROL_LOCK_ATTEMPTS:-40}}" attempt=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$attempts_raw" =~ ^[0-9]+$ && "$attempts_raw" -ge 1 && "$attempts_raw" -le 400 ]] || attempts_raw=40
+  while [[ "$attempt" -lt "$attempts_raw" ]]; do
+    if __dx_lifecycle_control_lock_try "$session_id"; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    [[ "$attempt" -lt "$attempts_raw" ]] && sleep 0.05
+  done
+  return 1
+}
+
+dx_lifecycle_control_lock_owned() {
+  local session_id="$1" lock_dir owner_raw expected
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" ]] || return 1
+  [[ -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  lock_dir=$(dx_lifecycle_control_lock_dir "$session_id")
+  [[ -f "$lock_dir/owner" && ! -L "$lock_dir/owner" ]] || return 1
+  owner_raw=$(cat "$lock_dir/owner" 2>/dev/null || true)
+  expected="$$"$'\t'"${owner_raw#*$'\t'}"
+  [[ "$owner_raw" == "$expected" && "${owner_raw##*$'\t'}" == "$DX_LIFECYCLE_CONTROL_LOCK_TOKEN" ]]
+}
+
+dx_lifecycle_control_lock_release() {
+  local session_id="$1" lock_dir owner_file owner_raw owner_pid owner_token
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  lock_dir=$(dx_lifecycle_control_lock_dir "$session_id")
+  owner_file="$lock_dir/owner"
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" ]] || return 1
+  [[ -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  [[ -f "$owner_file" && ! -L "$owner_file" ]] || return 1
+  owner_raw=$(cat "$owner_file" 2>/dev/null || true)
+  owner_pid="${owner_raw%%$'\t'*}"
+  owner_token="${owner_raw##*$'\t'}"
+  [[ "$owner_pid" == "$$" && "$owner_token" == "$DX_LIFECYCLE_CONTROL_LOCK_TOKEN" ]] || return 1
+  rm -f "$owner_file" 2>/dev/null || return 1
+  rmdir "$lock_dir" 2>/dev/null || return 1
+  DX_LIFECYCLE_CONTROL_LOCK_SESSION=""
+  DX_LIFECYCLE_CONTROL_LOCK_TOKEN=""
+}
+
+dx_clear_lifecycle_control_unlocked() {
+  local session_id="$1"
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+  rm -f "$(dx_lifecycle_control_file "$session_id")" 2>/dev/null || true
+}
+
+dx_clear_lifecycle_control() {
+  local session_id="$1"
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  dx_clear_lifecycle_control_unlocked "$session_id"
+  dx_lifecycle_control_lock_release "$session_id" || true
+}
+
+dx_write_pause_state() {
+  local session_id="$1" reason="$2" source="$3" pause_file
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$reason" =~ ^[A-Za-z0-9._-]+$ && "$source" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  pause_file=$(dx_pause_state_file "$session_id")
+  dx_lifecycle_atomic_write "$pause_file" "reason=${reason}"$'\n'"source=${source}"
+}
+
+dx_pause_state_read() {
+  local session_id="$1" key="$2" pause_file snapshot
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+  pause_file=$(dx_pause_state_file "$session_id")
+  [[ -f "$pause_file" && ! -L "$pause_file" ]] || return 0
+  snapshot=$(cat "$pause_file" 2>/dev/null || true)
+  dx_lifecycle_control_value "$snapshot" "$key"
+}
+
+dx_phase_busy_token() {
+  local session_id="$1" phase="$2" busy_file raw token
+  dx_lifecycle_session_id_valid "$session_id" || return 0
+  [[ "$phase" =~ ^[0-6]$ ]] || return 0
+  busy_file=$(dx_phase_busy_file "$session_id" "$phase")
+  [[ -f "$busy_file" && ! -L "$busy_file" ]] || return 0
+  raw=$(cat "$busy_file" 2>/dev/null || true)
+  raw="${raw#*$'\t'}"
+  token="${raw%%$'\t'*}"
+  [[ "$token" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] && printf '%s\n' "$token"
+}
+
+dx_phase_busy_begin() {
+  local session_id="$1" phase="$2" label="${3:-busy}" epoch token busy_file
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$phase" =~ ^[0-6]$ ]] || return 1
+  [[ "$label" != *$'\n'* && "$label" != *$'\r'* && ${#label} -le 500 ]] || return 1
+  epoch=$(date +%s)
+  token="${epoch}-$$-${RANDOM}"
+  busy_file=$(dx_phase_busy_file "$session_id" "$phase")
+  rm -f "$(dx_phase_busy_cancel_file "$session_id" "$phase")" \
+    "$(dx_phase_busy_quiesced_file "$session_id" "$phase")" 2>/dev/null || true
+  dx_lifecycle_atomic_write "$busy_file" "${epoch}"$'\t'"${token}"$'\t'"$$"$'\t'"${label}" || return 1
+  printf '%s\n' "$token"
+}
+
+dx_phase_busy_request_cancel() {
+  local session_id="$1" phase="$2" token cancel_file
+  token=$(dx_phase_busy_token "$session_id" "$phase")
+  [[ -n "$token" ]] || return 1
+  cancel_file=$(dx_phase_busy_cancel_file "$session_id" "$phase")
+  dx_lifecycle_atomic_write "$cancel_file" "$token"
+}
+
+dx_phase_busy_cancel_requested() {
+  local session_id="$1" phase="$2" token requested
+  token=$(dx_phase_busy_token "$session_id" "$phase")
+  [[ -n "$token" ]] || return 1
+  requested=$(cat "$(dx_phase_busy_cancel_file "$session_id" "$phase")" 2>/dev/null || true)
+  [[ "$requested" == "$token" ]]
+}
+
+dx_phase_busy_acknowledge() {
+  local session_id="$1" phase="$2" token="$3" current ack_file
+  current=$(dx_phase_busy_token "$session_id" "$phase")
+  [[ -n "$token" && "$current" == "$token" ]] || return 1
+  ack_file=$(dx_phase_busy_quiesced_file "$session_id" "$phase")
+  dx_lifecycle_atomic_write "$ack_file" "$token"
+}
+
+dx_phase_busy_quiesced() {
+  local session_id="$1" phase="$2" token acknowledged ack_file
+  token=$(dx_phase_busy_token "$session_id" "$phase")
+  [[ -n "$token" ]] || return 1
+  ack_file=$(dx_phase_busy_quiesced_file "$session_id" "$phase")
+  [[ -f "$ack_file" && ! -L "$ack_file" ]] || return 1
+  acknowledged=$(cat "$ack_file" 2>/dev/null || true)
+  [[ "$acknowledged" == "$token" ]]
+}
+
+dx_phase_busy_finish() {
+  local session_id="$1" phase="$2" token="$3" current
+  current=$(dx_phase_busy_token "$session_id" "$phase")
+  [[ -n "$token" && "$current" == "$token" ]] || return 1
+  dx_phase_busy_quiesced "$session_id" "$phase" || return 1
+  rm -f "$(dx_phase_busy_file "$session_id" "$phase")" \
+    "$(dx_phase_busy_notice_file "$session_id" "$phase")" \
+    "$(dx_phase_busy_cancel_file "$session_id" "$phase")" \
+    "$(dx_phase_busy_quiesced_file "$session_id" "$phase")" 2>/dev/null || true
+}
+
+dx_phase_transition_crosses() {
+  local current="$1" target="$2" boundary="$3"
+  [[ "$current" =~ ^[0-7]$ && "$target" =~ ^[0-7]$ && "$boundary" =~ ^[0-7]$ ]] || return 1
+  [[ "$current" != "$target" ]] || return 1
+  if [[ "$current" -le "$target" ]]; then
+    [[ "$current" -le "$boundary" && "$target" -ge "$boundary" ]]
+  else
+    [[ "$target" -le "$boundary" && "$current" -ge "$boundary" ]]
+  fi
+}
+
+dx_phase_busy_transition_blocked() {
+  local session_id="$1" phase="$2" current="$3" target="$4" busy_file
+  busy_file=$(dx_phase_busy_file "$session_id" "$phase")
+  [[ -f "$busy_file" && ! -L "$busy_file" ]] || return 1
+  dx_phase_transition_crosses "$current" "$target" "$phase" || return 1
+  dx_phase_busy_quiesced "$session_id" "$phase" && return 1
+  return 0
+}

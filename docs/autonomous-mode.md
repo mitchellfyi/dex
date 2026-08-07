@@ -142,6 +142,35 @@ explicit escalation condition such as missing credentials/tooling, a destructive
 git decision, repeated failed fix attempts, a max phase-audit count, review
 findings/blockers/churn, or feedback that needs human judgement.
 
+### Direct human control
+
+The latest direct human instruction always takes priority over the phase loop.
+During an active Claude lifecycle, natural instructions such as `stop Dex`,
+`leave the review loop`, `mark this phase done`, `skip verification`, `jump to
+the PR phase`, or `resume Dex` are applied by the `UserPromptSubmit` hook before
+the agent's next tool call. Pause and stop detach the session from Dex's Stop
+hook's phase sequencing while preserving the workspace and current phase for a
+later resume.
+
+The same controls are available from a terminal and to direct Codex sessions:
+
+```bash
+dx control status
+dx control pause
+dx control stop
+dx control done
+dx control jump verify
+dx control resume
+```
+
+Human control does not disable review-wave session isolation or the
+destructive-command, secret, and sensitive-file guards. Commit, push, and PR
+operations are not blocked by lifecycle phase, with or without a human control
+receipt. A requested Phase 3 jump becomes a safe detach if a review child is
+still marked in flight; the jump can be retried after that process ends.
+Human-marked lifecycle completion also preserves the workspace instead of
+running automatic worktree cleanup.
+
 Audit prompts are editable markdown files. Changes take effect on the next loop iteration without reloading shell functions.
 
 ## Activation
@@ -178,11 +207,9 @@ The `.active` file is cleaned up automatically when the loop completes (`.comple
 (`/dxreviewloop` waves) run under a pass-scoped session id
 (`<session>-pass-<N>-<pid>`) and are hard-isolated in the Stop hook. The inline
 phase handoff never runs for them, so a wave cannot advance the lifecycle or be
-instructed to commit and push. Each pass gets a new context-pack path and no
-prior review conclusions. A push-blocking guard rejects `git push` and `gh pr`
-mutations in review passes and in active-loop Phases 1-3 (see
-`hooks/guards/review-pass-no-push.md` and
-`hooks/guards/lifecycle-phase-push.md`).
+instructed to advance it. Each pass gets a new context-pack path and no prior
+review conclusions. This isolation does not restrict ordinary commit, push,
+branch, or PR actions; those remain available in every lifecycle phase.
 
 Risk assessors are stricter than review waves: they run without Bash or file
 editing, with inherited MCP servers disabled. Codex assessors use
@@ -361,6 +388,8 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - `.prompt` — original freeform task or `dxloop` prompt, re-injected during audits and kept outside the git checkout
 - `.handoff-mode` — marker that this `dx` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
+- `.control` — current direct-human pause, stop, complete, or phase-jump receipt; stores a prompt hash rather than prompt text
+- `.control-lock` — transition lock that prevents two Stop-hook invocations from applying the same receipt
 - `.watch-pause` — marker that scheduled Phase 6 PR watcher should no-op after a direct user prompt
 - `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dxwatchpr` cycle
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dxplan`; the Stop hook does not count plan audit iterations until the approval marker exists
@@ -398,6 +427,7 @@ Phase state is stored in `~/.claude/.dex-phases/`:
 - One `.times` file per worktree, tracking start times for elapsed calculations
 - One `.system-context` file per worktree, used by `--append-system-prompt-file` for compaction resilience (regenerated each phase, cleaned up by `SessionEnd` hook)
 - One `.branch` file per lifecycle session, used by in-place mode to resume on the correct branch after branch renames or shell navigation
+- One `.interventions` file per lifecycle session, recording human control receipts for audit without storing prompt text
 
 UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots, videos, traces, flow scripts, logs, and PR upload manifests stay out of git.
 

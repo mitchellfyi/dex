@@ -107,19 +107,33 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
       if [[ "$TEST_REVIEW_SCENARIO" != "missing-completion" ]]; then
         touch "$(dx_complete_file "$DEX_SESSION_ID")"
       fi
+
+      if [[ "$TEST_REVIEW_SCENARIO" == "human-cancel" ]]; then
+        local parent_session
+        parent_session=$(dx_session_id)
+        dx_write_lifecycle_control "$parent_session" cancel "" user-prompt "" 3 ""
+        dx_phase_busy_request_cancel "$parent_session" 3
+      fi
     }
 
-    assert_standalone_criteria_prompt() {
-      local invocation="$*" criteria_path
+    assert_review_criteria_prompt() {
+      local invocation="$*" criteria_path criteria_binding
       criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
+      if [[ -e "$criteria_path" ]]; then
+        criteria_binding=$(dx_review_criteria_hash "$criteria_path") || return 1
+        [[ "${DEX_REVIEW_CRITERIA_BINDING:-}" == "$criteria_binding" ]]
+        [[ "${DEX_REVIEW_CRITERIA_FILE:-}" == "$criteria_path" ]]
+        [[ "$invocation" == *"$criteria_path"* ]]
+        [[ "$invocation" == *"$criteria_binding"* ]]
+        return
+      fi
       [[ "${DEX_REVIEW_CRITERIA_BINDING:-}" == "standalone" ]]
-      [[ ! -e "$criteria_path" ]]
       [[ "$invocation" == *"Approved requirements: N/A — standalone review"* ]]
       [[ "$invocation" != *"$criteria_path"* ]]
     }
 
     __dx_claude() {
-      assert_standalone_criteria_prompt "$@" || return 96
+      assert_review_criteria_prompt "$@" || return 96
       emit_review_contract
       if [[ "$TEST_REVIEW_SCENARIO" == "valid-hook" ]]; then
         print -r -- "{\"session_id\":\"${DEX_SESSION_ID}\"}" | \
@@ -134,13 +148,23 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
     }
     bash() {
       if [[ "${1:-}" == "$DEX_DIR/bin/dxcodex.sh" ]]; then
-        assert_standalone_criteria_prompt "$@" || return 96
+        assert_review_criteria_prompt "$@" || return 96
         emit_review_contract
       else
         command bash "$@"
       fi
     }
 
+    if [[ "$TEST_REVIEW_SCENARIO" == "human-cancel" || "$TEST_REVIEW_SCENARIO" == "preflight-cancel" ]]; then
+      mkdir -p "$DX_STATE_DIR" "$DX_LOOP_DIR"
+      parent_session=$(dx_session_id)
+      print -r -- 3 > "$(dx_state_file "$parent_session")"
+      print -r -- "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise human review control.\"],\"acceptance_criteria\":[\"A direct human stop pauses the review loop.\"],\"verification_requirements\":[\"Run tests/review-loop-contract-test.sh.\"]}" > "$(dx_review_criteria_file "$parent_session")"
+      dx_review_approve_criteria "$parent_session" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$parent_session")")" >/dev/null
+    fi
+    if [[ "$TEST_REVIEW_SCENARIO" == "preflight-cancel" ]]; then
+      dx_write_lifecycle_control "$(dx_session_id)" cancel "" terminal "" 3 ""
+    fi
     DEX_REVIEW_TIER=small dxreviewloop
   ' > "$output_file" 2>&1
   rc=$?
@@ -156,9 +180,11 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
     cat "$output_file" >&2
     exit 1
   fi
-  if [[ "$(wc -l < "$call_file" | tr -d ' ')" -ne "$expected_waves" ]]; then
+  local actual_waves=0
+  [[ -f "$call_file" ]] && actual_waves=$(wc -l < "$call_file" | tr -d ' ')
+  if [[ "$actual_waves" -ne "$expected_waves" ]]; then
     printf 'FAIL: %s ran an unexpected number of review waves\n' "$name" >&2
-    cat "$call_file" >&2
+    [[ -f "$call_file" ]] && cat "$call_file" >&2
     exit 1
   fi
 }
@@ -173,5 +199,19 @@ run_case "codex-empty-context" "codex" "missing-context" 1 "context pack missing
 run_case "codex-missing-hash" "codex" "missing-hash" 1 "findings hash missing or invalid"
 run_case "codex-missing-completion" "codex" "missing-completion" 1 "completion receipt missing"
 run_case "codex-valid" "codex" "valid" 0 "Review complete: 3 consecutive clean passes." 3
+run_case "claude-human-cancel" "claude" "human-cancel" 1 "Review paused: human_intervention." 1
+run_case "claude-preflight-cancel" "claude" "preflight-cancel" 1 "Review paused: human_intervention." 0
+
+# Signal cleanup runs only after the supervised child has stopped. Its matching
+# quiescence acknowledgement must release the parent Phase 3 barrier.
+SIGNAL_STATE_DIR="$TMP_DIR/signal-phases"
+SIGNAL_LOOP_DIR="$TMP_DIR/signal-loops"
+mkdir -p "$SIGNAL_STATE_DIR" "$SIGNAL_LOOP_DIR"
+DEX_DIR="$ROOT" DX_STATE_DIR="$SIGNAL_STATE_DIR" DX_LOOP_DIR="$SIGNAL_LOOP_DIR" zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  token=$(dx_phase_busy_begin signal-review-parent 3 "signal fixture")
+  __dx_review_handle_interrupt "" "" 0 signal-review-parent "" 3 user_interrupt "$token"
+  [[ ! -f "$(dx_phase_busy_file signal-review-parent 3)" ]]
+'
 
 printf 'review-loop-contract-test passed\n'

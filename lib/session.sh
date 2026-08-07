@@ -290,6 +290,9 @@ dx_handoff_mode_file() { echo "${DX_LOOP_DIR}/${1}.handoff-mode"; }
 # dx_paused_file <session_id> — marker allowing a paused session to exit without success cleanup
 dx_paused_file() { echo "${DX_LOOP_DIR}/${1}.paused"; }
 
+# dx_pause_state_file <session_id> — machine-readable reason/source for a pause
+dx_pause_state_file() { echo "${DX_LOOP_DIR}/${1}.pause-state"; }
+
 # dx_watch_pause_file <session_id> — marker that scheduled CI/PR watchers should no-op
 dx_watch_pause_file() { echo "${DX_LOOP_DIR}/${1}.watch-pause"; }
 
@@ -916,6 +919,12 @@ dx_phase_busy_file() { echo "${DX_LOOP_DIR}/${1}.phase-${2}.busy"; }
 # dx_phase_busy_notice_file <session_id> <phase> — last busy-gate notice timestamp
 dx_phase_busy_notice_file() { echo "${DX_LOOP_DIR}/${1}.phase-${2}.busy-notice"; }
 
+# dx_phase_busy_cancel_file <session_id> <phase> — cancellation request for the busy owner
+dx_phase_busy_cancel_file() { echo "${DX_LOOP_DIR}/${1}.phase-${2}.busy-cancel"; }
+
+# dx_phase_busy_quiesced_file <session_id> <phase> — matching owner acknowledgement
+dx_phase_busy_quiesced_file() { echo "${DX_LOOP_DIR}/${1}.phase-${2}.busy-quiesced"; }
+
 # dx_log_phase <session_id> <step> <phase_name> <start_epoch> <end_epoch> <duration_s> <iterations> <status> <exit_code>
 # Append a TSV row to the structured phase log. Creates the header on first write.
 dx_log_phase() {
@@ -962,10 +971,12 @@ dx_cleanup_session() {
   local sid="$1"
   dx_session_id_valid "$sid" || return 2
   if [[ -d "$DX_LOOP_DIR" ]]; then
-    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_watch_pause_file "$sid")" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_ledger_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
-    find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" \) -exec rm -f {} + 2>/dev/null || true
+    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_ledger_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
+    rm -f "${DX_LOOP_DIR}/${sid}.control-lock/owner" 2>/dev/null || true
+    rmdir "${DX_LOOP_DIR}/${sid}.control-lock" 2>/dev/null || true
+    find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" -o -name "${sid}.phase-*.busy-cancel" -o -name "${sid}.phase-*.busy-quiesced" \) -exec rm -f {} + 2>/dev/null || true
   fi
-  [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" 2>/dev/null
+  [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null
 }
 
 # Remove every phase and loop artifact scoped to the current repository. This

@@ -544,6 +544,17 @@ run_case() {
         dxreviewloop
         first_status=$?
         printf "invocation\tfirst\t%s\n" "$first_status" >> "$CASE_CALLS"
+        if [[ "$CASE_LIFECYCLE_MODE" == "lifecycle" && "$CASE_ASSESSOR_TIER" == "mutate-once" ]]; then
+          criteria_file=$(dx_review_criteria_file "$CASE_SESSION_ID")
+          [[ -f "$criteria_file" ]] || {
+            printf "lifecycle criteria were removed after the first review invocation\n" >&2
+            return 99
+          }
+          dx_review_criteria_valid "$criteria_file" || {
+            printf "lifecycle criteria became invalid after the first review invocation\n" >&2
+            return 99
+          }
+        fi
         dxreviewloop
       else
         dxreviewloop

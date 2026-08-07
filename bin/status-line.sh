@@ -8,6 +8,19 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 
+CONTROL_SNAPSHOT=$(dx_lifecycle_control_snapshot_unlocked "$SESSION_ID")
+CONTROL_ACTION=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" action)
+if [[ "$CONTROL_ACTION" == "pause" || "$CONTROL_ACTION" == "cancel" ]]; then
+  [[ "$CONTROL_ACTION" == "pause" ]] && CONTROL_LABEL="paused" || CONTROL_LABEL="stopped"
+  echo "Dex ${CONTROL_LABEL} by human | phase sequencing detached"
+  exit 0
+fi
+if [[ -f "$(dx_paused_file "$SESSION_ID")" && ! -L "$(dx_paused_file "$SESSION_ID")" ]]; then
+  PAUSE_REASON=$(dx_pause_state_read "$SESSION_ID" reason)
+  echo "Dex paused${PAUSE_REASON:+ | ${PAUSE_REASON}} | phase sequencing detached"
+  exit 0
+fi
+
 # Phase info
 PHASE="?"
 PHASE_FILE=$(dx_state_file "$SESSION_ID")
