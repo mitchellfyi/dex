@@ -123,5 +123,7 @@ fi
 grep -Fq 'No .dex/ directory found; running baseline project analysis first' "$TMP_DIR/missing.out"
 
 grep -Fq 'exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox' "$TEST_CODEX_LOG"
+grep -Fq '# DXSync Invocation' "$TEST_CODEX_LOG"
+grep -Fq "Repo: $SYNC_REPO" "$TEST_CODEX_LOG"
 
 printf 'headless provider tests passed\n'

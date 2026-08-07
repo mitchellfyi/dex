@@ -86,13 +86,20 @@ DEX_SESSION_ID="provider-codex-launch" \
   dx_provider_claude --chrome --dangerously-skip-permissions --permission-mode bypassPermissions \
     -n "session-name" \
     --append-system-prompt-file "$system_prompt" \
+    --append-system-prompt "Inline safety context for Dex." \
     --settings '{"statusLine":{"type":"command","command":"true"}}' \
+    --verbose --output-format stream-json --include-partial-messages \
     "Implement ticket 123."
 
 grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
 grep -q -- "System context for Dex." "$DEX_TEST_CODEX_PROMPT"
+grep -q -- "Inline safety context for Dex." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "--- Dex phase task ---" "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Implement ticket 123." "$DEX_TEST_CODEX_PROMPT"
+if [[ "$(tail -n 1 "$DEX_TEST_CODEX_PROMPT")" != "Implement ticket 123." ]]; then
+  printf '%s\n' "Claude option values replaced the Codex task prompt" >&2
+  exit 1
+fi
 grep -q -- "engine=codex-plugin" "$(dx_provider_state_file provider-codex-launch)"
 if grep -q -- "DEX_FACTORY_TOKEN=" "$DEX_TEST_CODEX_ENV"; then
   printf '%s\n' "factory token leaked into Codex environment" >&2
@@ -106,6 +113,13 @@ if grep -q -- "DEX_RUN_TOKEN=" "$DEX_TEST_CODEX_ENV"; then
   printf '%s\n' "run token leaked into Codex environment" >&2
   exit 1
 fi
+
+if dx_provider_codex_prompt_from_claude_args --future-unknown value "task" \
+  > "$TMP_DIR/unknown-option.out" 2>&1; then
+  printf '%s\n' "unknown Claude launch option was silently accepted for Codex" >&2
+  exit 1
+fi
+grep -q -- "cannot translate Claude launch option" "$TMP_DIR/unknown-option.out"
 
 : > "$DEX_TEST_CODEX_LAST_ARGS"
 : > "$DEX_TEST_CODEX_PROMPT"

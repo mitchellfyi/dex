@@ -856,26 +856,44 @@ dx_provider_claude() {
 }
 
 dx_provider_codex_prompt_from_claude_args() {
-  local system_prompt_file="" prompt="" arg
+  local system_context="" prompt="" arg context_piece
   while [[ $# -gt 0 ]]; do
     arg="$1"
     case "$arg" in
-      --append-system-prompt-file)
+      --append-system-prompt|--system-prompt)
         [[ $# -ge 2 ]] || {
-          dx_error "--append-system-prompt-file requires a path."
+          dx_error "${arg} requires a value."
           return 1
         }
-        system_prompt_file="$2"
+        [[ -z "$system_context" ]] || system_context+=$'\n\n'
+        system_context+="$2"
         shift 2
         ;;
-      -n|--settings|--model|--effort|--permission-mode)
+      --append-system-prompt-file|--system-prompt-file)
+        [[ $# -ge 2 ]] || {
+          dx_error "${arg} requires a path."
+          return 1
+        }
+        if [[ ! -r "$2" ]]; then
+          dx_error "Codex lifecycle launch could not read system prompt file: $2"
+          return 1
+        fi
+        if ! context_piece=$(cat "$2"); then
+          dx_error "Codex lifecycle launch could not read system prompt file: $2"
+          return 1
+        fi
+        [[ -z "$system_context" ]] || system_context+=$'\n\n'
+        system_context+="$context_piece"
+        shift 2
+        ;;
+      -n|--settings|--model|--effort|--permission-mode|--output-format|--input-format|--max-turns|--fallback-model|--mcp-config|--session-id)
         [[ $# -ge 2 ]] || {
           dx_error "${arg} requires a value."
           return 1
         }
         shift 2
         ;;
-      --chrome|--dangerously-skip-permissions)
+      -p|--print|--chrome|--dangerously-skip-permissions|--verbose|--include-partial-messages|--resume|--continue|--fork-session|--strict-mcp-config|--no-session-persistence)
         shift
         ;;
       --)
@@ -884,22 +902,28 @@ dx_provider_codex_prompt_from_claude_args() {
         break
         ;;
       -*)
-        shift
+        dx_error "Codex provider cannot translate Claude launch option: ${arg}"
+        return 1
         ;;
       *)
+        if [[ -n "$prompt" ]]; then
+          dx_error "Codex provider received more than one task prompt."
+          return 1
+        fi
         prompt="$arg"
         shift
         ;;
     esac
   done
 
-  if [[ -n "$system_prompt_file" ]]; then
-    if [[ ! -r "$system_prompt_file" ]]; then
-      dx_error "Codex lifecycle launch could not read system prompt file: $system_prompt_file"
-      return 1
-    fi
+  if [[ -z "$prompt" ]]; then
+    dx_error "Codex provider launch requires an explicit task prompt."
+    return 1
+  fi
+
+  if [[ -n "$system_context" ]]; then
     {
-      cat "$system_prompt_file"
+      printf '%s\n' "$system_context"
       printf '\n\n--- Dex phase task ---\n\n'
       printf '%s\n' "$prompt"
     }
