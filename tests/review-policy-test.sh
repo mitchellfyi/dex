@@ -119,6 +119,15 @@ git -C "$REPO" add app.txt
 git -C "$REPO" commit -qm "test: initialize review fixture"
 
 base_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
+evidence_file="$TMP_DIR/review-evidence.json"
+printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
+dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint"
+printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"partial\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
+assert_rejected "clean evidence requires passing checks" dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint"
+printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":1,\"fixes_applied\":1}" > "$evidence_file"
+dx_review_evidence_valid "$evidence_file" FINDINGS_FIXED:1 light "$base_fingerprint"
+assert_rejected "evidence is bound to scope" dx_review_evidence_valid "$evidence_file" FINDINGS_FIXED:1 light "$(printf '0%.0s' {1..64})"
+
 printf 'changed\n' >> "$REPO/app.txt"
 changed_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
 [[ "$base_fingerprint" != "$changed_fingerprint" ]] || {
@@ -151,6 +160,11 @@ untracked_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
   printf 'untracked content did not alter the scope fingerprint\n' >&2
   exit 1
 }
+chmod +x "$REPO/new.txt"
+[[ "$untracked_fingerprint" != "$(dx_review_scope_fingerprint "$REPO")" ]] || {
+  printf 'untracked executable mode did not alter the scope fingerprint\n' >&2
+  exit 1
+}
 rm "$REPO/new.txt"
 
 mkdir -p "$REPO/subdir"
@@ -163,6 +177,68 @@ printf 'root-untracked-changed\n' > "$REPO/root-untracked.txt"
   exit 1
 }
 rm "$REPO/root-untracked.txt"
+
+LOCAL_ONLY_REPO="$TMP_DIR/local-only-repo"
+git init -q -b main "$LOCAL_ONLY_REPO"
+git -C "$LOCAL_ONLY_REPO" config user.name "Dex Test"
+git -C "$LOCAL_ONLY_REPO" config user.email "dex-test@example.com"
+printf 'base\n' > "$LOCAL_ONLY_REPO/app.txt"
+git -C "$LOCAL_ONLY_REPO" add app.txt
+git -C "$LOCAL_ONLY_REPO" commit -qm "test: initialize local-only fixture"
+local_main_oid=$(git -C "$LOCAL_ONLY_REPO" rev-parse main)
+git -C "$LOCAL_ONLY_REPO" switch -qc feature
+printf 'feature\n' >> "$LOCAL_ONLY_REPO/app.txt"
+git -C "$LOCAL_ONLY_REPO" commit -qam "test: add local feature change"
+IFS=$'\t' read -r local_mode local_ref local_comparison_oid local_merge_base < <(dx_review_scope_descriptor "$LOCAL_ONLY_REPO")
+assert_eq "changes" "$local_mode" "local-only feature scope mode"
+assert_eq "main" "$local_ref" "local-only feature comparison ref"
+assert_eq "$local_main_oid" "$local_comparison_oid" "local-only feature comparison oid"
+assert_eq "$local_main_oid" "$local_merge_base" "local-only feature merge base"
+
+MOVING_REF_REPO="$TMP_DIR/moving-ref-repo"
+git init -q -b main "$MOVING_REF_REPO"
+git -C "$MOVING_REF_REPO" config user.name "Dex Test"
+git -C "$MOVING_REF_REPO" config user.email "dex-test@example.com"
+printf 'base\n' > "$MOVING_REF_REPO/app.txt"
+git -C "$MOVING_REF_REPO" add app.txt
+git -C "$MOVING_REF_REPO" commit -qm "test: initialize moving-ref fixture"
+moving_base_oid=$(git -C "$MOVING_REF_REPO" rev-parse HEAD)
+git -C "$MOVING_REF_REPO" switch -qc feature
+printf 'feature\n' >> "$MOVING_REF_REPO/app.txt"
+git -C "$MOVING_REF_REPO" commit -qam "test: add moving-ref feature"
+git -C "$MOVING_REF_REPO" switch -q main
+printf 'upstream\n' > "$MOVING_REF_REPO/upstream.txt"
+git -C "$MOVING_REF_REPO" add upstream.txt
+git -C "$MOVING_REF_REPO" commit -qm "test: advance default branch"
+moving_advanced_oid=$(git -C "$MOVING_REF_REPO" rev-parse HEAD)
+git -C "$MOVING_REF_REPO" switch -q feature
+git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_base_oid"
+moving_before=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
+dx_review_write_selection moving-ref small environment operator-override "$MOVING_REF_REPO"
+git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_advanced_oid"
+moving_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
+[[ "$moving_before" != "$moving_after" ]] || {
+  printf 'comparison ref movement did not alter the scope fingerprint\n' >&2
+  exit 1
+}
+assert_rejected "comparison ref movement invalidates selection" dx_review_selection_valid moving-ref "$MOVING_REF_REPO"
+
+UNBORN_REPO="$TMP_DIR/unborn-repo"
+git init -q -b main "$UNBORN_REPO"
+printf 'staged\n' > "$UNBORN_REPO/staged.txt"
+git -C "$UNBORN_REPO" add staged.txt
+printf 'untracked\n' > "$UNBORN_REPO/untracked.txt"
+unborn_scope_before=$(dx_review_scope_fingerprint "$UNBORN_REPO")
+unborn_working_before=$(dx_review_working_fingerprint "$UNBORN_REPO")
+printf 'changed\n' >> "$UNBORN_REPO/staged.txt"
+[[ "$unborn_scope_before" != "$(dx_review_scope_fingerprint "$UNBORN_REPO")" ]] || {
+  printf 'unborn tracked change did not alter the scope fingerprint\n' >&2
+  exit 1
+}
+[[ "$unborn_working_before" != "$(dx_review_working_fingerprint "$UNBORN_REPO")" ]] || {
+  printf 'unborn tracked change did not alter the working fingerprint\n' >&2
+  exit 1
+}
 
 # Keep the policy fixture in change-set mode so lifecycle-agent selections are
 # checked against a localized implementation rather than a whole-codebase floor.

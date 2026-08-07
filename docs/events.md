@@ -92,8 +92,8 @@ reading agent transcripts.
 | Event | When emitted | Data fields |
 |-------|--------------|-------------|
 | `review.tier.selected` | Before the first review wave | `tier`, `profile`, `required_clean`, `source`, `reason_codes` |
-| `review.pass.started` | Immediately before a fresh wave starts | `tier`, `profile`, `iteration`, `clean_before`, `required_clean` |
-| `review.pass.finished` | After the wave result is validated and counters update | `tier`, `profile`, `iteration`, `result_kind`, `findings`, `duration_seconds`, `clean_before`, `clean_after`, `scope_changed`, `provider_exit`, normalized `terminal_reason`; early failure events emit the applicable subset |
+| `review.pass.started` | Immediately before a fresh wave starts | `pass_id`, `tier`, `profile`, `iteration`, `clean_before`, `required_clean`, `scope_fingerprint` |
+| `review.pass.finished` | After the wave result is validated and counters update | `pass_id`, `tier`, `profile`, `iteration`, `result_kind`, `result_reason`, `findings`, `duration_seconds`, `clean_before`, `clean_after`, `scope_changed`, `working_changed`, `provider_exit`, `terminal_reason`, `evidence_hash`, `deterministic_checks`, `verifier`, `coverage`, `evidence_valid`; validated results also include the evidence finding and fix counts |
 | `review.tier.escalated` | A verified risk signal raises the tier | `from_tier`, `tier`, `profile`, `required_clean`, `iteration` |
 | `review.completed` | The consecutive clean gate succeeds | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, `reason=clean_gate_reached` |
 | `review.paused` | Review needs intervention | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, normalized `reason` |
@@ -101,8 +101,10 @@ reading agent transcripts.
 Tier selection is `small`/`normal`/`complex`, mapping to `light`/`standard`/
 `thorough` review and 3/6/9 consecutive clean waves. These events make it
 possible to compare pass duration, findings discovered after earlier clean
-waves, clean-counter resets, escalation frequency, and churn without reading
-agent transcripts.
+waves, clean-counter resets, escalation frequency, coverage, and churn without
+reading agent transcripts. Evidence is recorded as bounded aggregate fields and
+an opaque hash; finding text stays out of telemetry so later waves remain
+independent.
 
 Review telemetry deliberately excludes raw agent rationale, result suffixes,
 findings, findings fingerprints, file paths, branch names, prompts, diffs, and

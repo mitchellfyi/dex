@@ -350,6 +350,49 @@ with open(sys.argv[1], "rb") as handle:
 PY
 }
 
+dx_review_evidence_summary() {
+  local evidence_file="$1"
+  [[ -f "$evidence_file" ]] || return 1
+  python3 - "$evidence_file" <<'PY'
+import json
+import os
+import sys
+
+try:
+    if os.path.getsize(sys.argv[1]) > 65536:
+        raise ValueError
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    checks = payload["deterministic_checks"]
+    verifier = payload["verifier"]
+    coverage = payload["coverage"]
+    findings = payload["verified_findings"]
+    fixes = payload["fixes_applied"]
+except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+
+if not isinstance(checks, str) or not isinstance(verifier, str):
+    raise SystemExit(1)
+if not isinstance(coverage, list) or any(not isinstance(item, str) for item in coverage):
+    raise SystemExit(1)
+if isinstance(findings, bool) or not isinstance(findings, int):
+    raise SystemExit(1)
+if isinstance(fixes, bool) or not isinstance(fixes, int):
+    raise SystemExit(1)
+print(f"{checks}\t{verifier}\t{','.join(coverage)}\t{findings}\t{fixes}")
+PY
+}
+
+dx_review_result_reason() {
+  local result="${1:-}"
+  dx_review_result_valid "$result" || return 1
+  case "$result" in
+    BLOCKED:*|CHURN:*|ESCALATE_THOROUGH:*) printf '%s\n' "${result#*:}" ;;
+    ESCALATE:normal:*|ESCALATE:complex:*) printf '%s\n' "${result#*:*:}" ;;
+    *) printf '%s\n' "none" ;;
+  esac
+}
+
 dx_review_scope_descriptor() {
   local repo_dir="${1:-$PWD}" repo_root default_branch candidate candidate_oid merge_base upstream ahead
   repo_root=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || return 1
@@ -372,6 +415,19 @@ dx_review_scope_descriptor() {
     ahead=$(git -C "$repo_root" rev-list --count "${upstream}..HEAD" 2>/dev/null || true)
     if [[ -n "$candidate_oid" && -n "$merge_base" && "$ahead" =~ ^[0-9]+$ && "$ahead" -gt 0 ]]; then
       printf 'changes\t%s\t%s\t%s\n' "$upstream" "$candidate_oid" "$merge_base"
+      return 0
+    fi
+  fi
+
+  # A local-only feature branch may have neither a remote-tracking default
+  # branch nor an upstream. Compare it with the local default branch before
+  # falling back to a whole-codebase review.
+  candidate="$default_branch"
+  if git -C "$repo_root" rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null 2>&1; then
+    candidate_oid=$(git -C "$repo_root" rev-parse --verify "${candidate}^{commit}" 2>/dev/null) || return 1
+    merge_base=$(git -C "$repo_root" merge-base "$candidate_oid" HEAD 2>/dev/null || true)
+    if [[ -n "$merge_base" ]] && ! git -C "$repo_root" diff --quiet "$merge_base" HEAD -- 2>/dev/null; then
+      printf 'changes\t%s\t%s\t%s\n' "$candidate" "$candidate_oid" "$merge_base"
       return 0
     fi
   fi
@@ -442,7 +498,7 @@ elif matches(r"(^|/)(deploy|deployment|packaging|docker|helm|terraform)(/|[._-])
     print("complex\tdeployment-packaging")
 elif matches(r"(^|/)(bin/|dx\.sh$|settings\.json$)|(^|/)(cli|config)(/|[._-])"):
     print("complex\tpublic-contract")
-elif matches(r"^lib/(session|provider|worktree|events|run-spec|factory)\.sh$"):
+elif matches(r"^lib/(review|session|provider|worktree|events|run-spec|factory)\.sh$"):
     print("complex\tcross-module")
 elif len(paths) >= 10 or len({path.split("/", 1)[0] for path in decoded}) >= 4:
     print("complex\tbroad-impact")
@@ -500,7 +556,12 @@ if os.environ["DX_REVIEW_FINGERPRINT_MODE"] == "scope":
     digest.update(b"CACHED\0" + git("diff", "--binary", "--cached", "--"))
     digest.update(b"WORKTREE\0" + git("diff", "--binary", "--"))
 else:
-    digest.update(b"FINAL_WORKTREE\0" + git("diff", "--binary", "HEAD", "--"))
+    head = git("rev-parse", "--verify", "HEAD", check=False).strip()
+    if head:
+        digest.update(b"FINAL_WORKTREE\0" + git("diff", "--binary", "HEAD", "--"))
+    else:
+        digest.update(b"UNBORN_CACHED\0" + git("diff", "--binary", "--cached", "--"))
+        digest.update(b"UNBORN_WORKTREE\0" + git("diff", "--binary", "--"))
 
 untracked = [item for item in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if item]
 for raw_path in sorted(untracked):

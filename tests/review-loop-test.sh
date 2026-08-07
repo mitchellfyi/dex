@@ -110,6 +110,7 @@ assert_standalone_telemetry() { # <status> <pass-count> <label>
   local expected_status="$1" expected_passes="$2" label="$3"
   if ! python3 - "$CASE_DIR/runs" "$expected_status" "$expected_passes" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -128,6 +129,33 @@ event_types = [event["type"] for event in events]
 assert event_types.count("run.started") == 1, event_types
 assert event_types.count("review.pass.started") == expected_passes, event_types
 assert event_types.count("review.pass.finished") == expected_passes, event_types
+finished = [event for event in events if event["type"] == "review.pass.finished"]
+required_fields = {
+    "pass_id",
+    "tier",
+    "profile",
+    "iteration",
+    "result_kind",
+    "result_reason",
+    "provider_exit",
+    "terminal_reason",
+    "evidence_hash",
+    "deterministic_checks",
+    "verifier",
+    "coverage",
+    "evidence_valid",
+}
+for event in finished:
+    data = event["data"]
+    assert required_fields.issubset(data), data
+    assert isinstance(data["evidence_valid"], bool), data
+    if data["evidence_valid"]:
+        assert re.fullmatch(r"[a-f0-9]{16}", data["evidence_hash"]), data
+        assert data["deterministic_checks"] in {"pass", "partial", "fail", "unavailable"}, data
+        assert data["verifier"] in {"pass", "fail", "not-run"}, data
+        assert data["coverage"] != "none", data
+    else:
+        assert data["evidence_hash"] in {"none"} or re.fullmatch(r"[a-f0-9]{16}", data["evidence_hash"]), data
 terminal_type = "run.completed" if expected_status == "completed" else "run.blocked"
 assert event_types.count(terminal_type) == 1, event_types
 summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
@@ -335,6 +363,20 @@ run_case() {
           return 97
         fi
 
+        if [[ "$CASE_PASS_MODE" == "expect-codebase" && "$pass_index" -ge 2 ]]; then
+          if [[ "$invocation_args" != *"No current change set was found"* || "$invocation_args" != *"git ls-files | sort"* ]]; then
+            printf "scope-refresh-failed\t%s\n" "$pass_index" >> "$CASE_CALLS"
+            return 95
+          fi
+          printf "scope-refresh-codebase\t%s\n" "$pass_index" >> "$CASE_CALLS"
+        elif [[ "$CASE_PASS_MODE" == "expect-changes" && "$pass_index" -ge 2 ]]; then
+          if [[ "$invocation_args" != *"full current change set"* || "$invocation_args" != *"git ls-files --others --exclude-standard"* ]]; then
+            printf "scope-refresh-failed\t%s\n" "$pass_index" >> "$CASE_CALLS"
+            return 95
+          fi
+          printf "scope-refresh-changes\t%s\n" "$pass_index" >> "$CASE_CALLS"
+        fi
+
         context_path=$(dx_review_context_file "$DEX_SESSION_ID")
         [[ "$invocation_args" == *"$context_path"* ]] && context_supplied=1
         while IFS= read -r sentinel; do
@@ -355,6 +397,14 @@ run_case() {
             result="CLEAN"
             ;;
           FINDINGS_FIXED_NO_CHANGE:*)
+            result="FINDINGS_FIXED:${result##*:}"
+            ;;
+          FINDINGS_FIXED_CLEAR_SCOPE:*)
+            git -C "$CASE_REPO" restore --source=HEAD --staged --worktree -- app.txt
+            result="FINDINGS_FIXED:${result##*:}"
+            ;;
+          FINDINGS_FIXED_ADD_UNTRACKED:*)
+            printf "added-by-review\n" > "$CASE_REPO/review-added.txt"
             result="FINDINGS_FIXED:${result##*:}"
             ;;
           FINDINGS_FIXED_SAME:*)
@@ -405,6 +455,9 @@ run_case() {
       }
 
       case "$CASE_SETUP_MODE" in
+        clean-codebase)
+          git -C "$CASE_REPO" restore --source=HEAD --staged --worktree -- app.txt
+          ;;
         corrupt-state)
           fingerprint=$(dx_review_scope_fingerprint "$CASE_REPO")
           dx_review_write_selection "$CASE_SESSION_ID" small environment operator-override "$CASE_REPO"
@@ -703,6 +756,21 @@ assert_success "fix reset"
 assert_eq "6" "$(call_count pass)" "fix reset pass count"
 assert_no_assessor "fix reset explicit tier"
 assert_receipt "small" "3" "fix reset"
+assert_standalone_telemetry "completed" "6" "fix reset telemetry"
+
+run_case "scope-refresh-codebase" "small" $'FINDINGS_FIXED_CLEAR_SCOPE:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
+  "standalone" "" "" "expect-codebase"
+assert_success "scope refresh from changes to codebase"
+assert_eq "10" "$(call_count pass)" "scope refresh to codebase pass count"
+assert_eq "9" "$(call_count scope-refresh-codebase)" "scope refresh to codebase prompt count"
+assert_receipt "complex" "9" "scope refresh from changes to codebase"
+
+run_case "scope-refresh-changes" "complex" $'FINDINGS_FIXED_ADD_UNTRACKED:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
+  "standalone" "clean-codebase" "" "expect-changes"
+assert_success "scope refresh from codebase to changes"
+assert_eq "10" "$(call_count pass)" "scope refresh to changes pass count"
+assert_eq "9" "$(call_count scope-refresh-changes)" "scope refresh to changes prompt count"
+assert_receipt "complex" "9" "scope refresh from codebase to changes"
 
 run_case "findings-stop" "small" "FINDINGS:1"
 assert_failure "findings stop"
@@ -715,6 +783,7 @@ assert_failure "blocked stop"
 assert_eq "1" "$(call_count pass)" "blocked stop pass count"
 assert_no_assessor "blocked stop explicit tier"
 assert_no_receipt "blocked stop"
+assert_standalone_telemetry "blocked" "1" "blocked stop telemetry"
 
 run_case "pass-timeout" "small" "" "" \
   "lifecycle" "" "" "timeout" "single" "derived" "1"
@@ -741,6 +810,35 @@ if [[ -e "$CASE_LOOP_DIR/${CASE_SESSION_ID}.phase-3.busy" ]]; then
   exit 1
 fi
 assert_no_receipt "review pass timeout"
+if ! python3 - "$CASE_DIR/runs" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+events = []
+for event_file in Path(sys.argv[1]).glob("run_*/events.jsonl"):
+    events.extend(
+        json.loads(line)
+        for line in event_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+finished = [event for event in events if event["type"] == "review.pass.finished"]
+assert len(finished) == 1, finished
+data = finished[0]["data"]
+assert data["result_kind"] == "pass_timeout", data
+assert data["terminal_reason"] == "pass_timeout", data
+assert data["evidence_valid"] is False, data
+assert data["evidence_hash"] == "none", data
+assert data["deterministic_checks"] == "not-recorded", data
+assert data["verifier"] == "not-recorded", data
+assert data["coverage"] == "none", data
+assert data["pass_id"], data
+PY
+then
+  printf 'review pass timeout: telemetry schema invalid\n' >&2
+  show_case_output
+  exit 1
+fi
 
 run_case "churn-stop" "small" "CHURN:repeated-fingerprint"
 assert_failure "churn stop"
@@ -759,6 +857,7 @@ assert_success "upward escalation"
 assert_eq "9" "$(call_count pass)" "upward escalation pass count"
 assert_no_assessor "upward escalation explicit tier"
 assert_receipt "normal" "6" "upward escalation"
+assert_standalone_telemetry "completed" "9" "upward escalation telemetry"
 
 run_case "escalation-raises-override" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
   "standalone" "" "" "" "single" "derived" "" "3"

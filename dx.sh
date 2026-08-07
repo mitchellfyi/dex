@@ -3103,6 +3103,118 @@ __dx_review_write_assessment_context() {
   command mv -f "$tmp_file" "$target"
 }
 
+unalias __dx_review_scope_snapshot 2>/dev/null; unfunction __dx_review_scope_snapshot 2>/dev/null
+__dx_review_scope_snapshot() {
+  local repo_root="$1" descriptor descriptor_mode comparison_ref comparison_oid committed_base
+  local has_committed=0 has_staged=0 has_unstaged=0 has_untracked=0 untracked_count
+  local scope_mode="changes" scope_name="full current change set" files_changed committed_ref=""
+
+  descriptor=$(dx_review_scope_descriptor "$repo_root") || return 1
+  IFS=$'\t' read -r descriptor_mode comparison_ref comparison_oid committed_base <<< "$descriptor"
+  if [[ "$descriptor_mode" == "changes" ]]; then
+    has_committed=1
+    committed_ref="${committed_base}..HEAD"
+  else
+    committed_base="-"
+  fi
+
+  git diff --cached --quiet 2>/dev/null || has_staged=1
+  git diff --quiet 2>/dev/null || has_unstaged=1
+  untracked_count=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+  [[ "$untracked_count" =~ ^[0-9]+$ && "$untracked_count" -gt 0 ]] && has_untracked=1
+
+  if [[ $has_committed -eq 0 && $has_staged -eq 0 && $has_unstaged -eq 0 && $has_untracked -eq 0 ]]; then
+    scope_mode="codebase"
+    scope_name="entire codebase"
+    files_changed=$(git ls-files 2>/dev/null | wc -l | tr -d ' ') || files_changed="?"
+  else
+    files_changed=$(
+      {
+        [[ -n "$committed_ref" ]] && git diff "$committed_ref" --name-only 2>/dev/null
+        git diff --cached --name-only 2>/dev/null
+        git diff --name-only 2>/dev/null
+        git ls-files --others --exclude-standard 2>/dev/null
+      } | sort -u | wc -l | tr -d ' '
+    ) || files_changed="?"
+  fi
+  [[ -n "$files_changed" ]] || files_changed="?"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$scope_mode" "$scope_name" "$files_changed" "$descriptor_mode" \
+    "$comparison_ref" "$comparison_oid" "$committed_base"
+}
+
+unalias __dx_review_scope_commands 2>/dev/null; unfunction __dx_review_scope_commands 2>/dev/null
+__dx_review_scope_commands() {
+  local scope_mode="$1" committed_base="$2"
+  local committed_diff_cmd=":" committed_stat_cmd=":" committed_name_cmd=":"
+  if [[ "$scope_mode" == "changes" && "$committed_base" != "-" ]]; then
+    committed_diff_cmd="git diff ${committed_base} HEAD --"
+    committed_stat_cmd="git diff ${committed_base} HEAD --stat --"
+    committed_name_cmd="git diff ${committed_base} HEAD --name-only --"
+  fi
+  if [[ "$scope_mode" == "codebase" ]]; then
+    printf '%s\t%s\t%s\n' \
+      "git ls-files | sort" \
+      "git ls-files | awk '{count++} END {printf \"tracked files: %d\\n\", count+0}'" \
+      "git ls-files | sort"
+  else
+    printf '%s\t%s\t%s\n' \
+      "{ ${committed_diff_cmd}; git diff --cached; git diff; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'test -f \"\$1\" && git diff --no-index -- /dev/null \"\$1\" 2>/dev/null || true' sh {}; }" \
+      "{ ${committed_stat_cmd}; git diff --cached --stat; git diff --stat; git ls-files --others --exclude-standard | sed 's/^/untracked: /'; }" \
+      "{ ${committed_name_cmd}; git diff --cached --name-only; git diff --name-only; git ls-files --others --exclude-standard; } | sort -u"
+  fi
+}
+
+unalias __dx_review_wave_message_template 2>/dev/null; unfunction __dx_review_wave_message_template 2>/dev/null
+__dx_review_wave_message_template() {
+  local scope_name="$1" branch="$2" scope_mode="$3" diff_cmd="$4" stat_cmd="$5" name_cmd="$6" review_promise="$7"
+  local scope_source_detail scope_boundary
+  if [[ "$scope_mode" == "codebase" ]]; then
+    scope_source_detail="IMPORTANT: No current change set was found, so this pass is a whole-codebase review. Do not stop because \`git diff\` is empty. Use these commands as the authoritative codebase inventory, then read and review the listed files as needed:"
+    scope_boundary="SCOPE BOUNDARIES: review and fix the entire codebase in this repository. Do NOT commit, push, or create PRs."
+  else
+    scope_source_detail="IMPORTANT: When the audit prompt or /dxreview SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead. This is the full current change set, including committed branch changes, staged changes, unstaged changes, and untracked files:"
+    scope_boundary="SCOPE BOUNDARIES: review and fix the full current change set above ONLY. Do NOT commit, push, or create PRs."
+  fi
+
+  printf '%s\n' "Run one full Dex review wave using /dxreview --single-pass, scoped to **${scope_name}** on branch \`${branch}\`.
+
+${scope_source_detail}
+
+- Scope input: \`${diff_cmd}\`
+- Stat:        \`${stat_cmd}\`
+- File names:  \`${name_cmd}\`
+
+Use this review context pack path: \`__REVIEW_CONTEXT_FILE__\`
+Use this machine-readable evidence path: \`__PASS_EVIDENCE_FILE__\`
+Use this per-pass completion path only after the review result signal and findings hash are written: \`__PASS_COMPLETE_FILE__\`
+The immutable scope fingerprint for this pass is: \`__SCOPE_FINGERPRINT__\`
+
+Review depth profile for this pass: \`__REVIEW_PROFILE__\`.
+- \`light\`: deterministic checks, core domain sweep, verifier pass, batch fix, targeted recheck.
+- \`standard\`: core sweep plus targeted domain sweeps for concrete changed surfaces, verifier pass.
+- \`thorough\`: all domain sweeps, verifier pass, batch fix, targeted recheck.
+
+Follow the audit prompt and \`prompts/review-wave.md\`: first materialize a compact context pack with \`## Scope\`, \`## Deterministic Checks\`, \`## Review Coverage\`, and \`## Verification\` sections; run deterministic checks; harvest candidate issues according to the depth profile; verify and deduplicate findings; batch-fix verified issues; re-check; and write the result and evidence files. Run in the current checkout; do not create or switch branches or worktrees.
+
+Result semantics:
+- Write \`CLEAN\` only if this wave found zero verified findings and applied zero fixes.
+- Write \`FINDINGS_FIXED:N\` if this wave found and fixed N verified findings; this intentionally resets the outer clean-pass counter.
+- Do not stop after only reporting verified findings. Fix safe verified findings before writing the result.
+- Write \`FINDINGS:N\` only if verified findings remain after a concrete local fix attempt is blocked, unsafe, or requires user judgment. Write \`BLOCKED:reason-code\` if the wave cannot complete.
+- Write \`CHURN:reason-code\` if the wave cannot make reliable progress.
+- Write \`ESCALATE:normal:reason-code\` or \`ESCALATE:complex:reason-code\` if the selected tier is too shallow. Escalation is upward-only. \`ESCALATE_THOROUGH:reason\` remains a legacy alias for complex.
+
+If no approved plan or acceptance criteria are explicitly available in this prompt for this scope, mark plan-dependent sections as N/A and proceed. Do not infer criteria from stale session prompt files, previous conversation turns, session titles, AGENTS instructions, or unrelated ticket context.
+
+${scope_boundary}
+
+This is an independent pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. Judge only the current checkout and the scope supplied above.
+
+After writing the review result signal, evidence JSON, and findings hash, touch the per-pass completion path above, output \`${review_promise}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
+$(__dx_provider_prompt)"
+}
+
 unalias dxreviewloop 2>/dev/null; unfunction dxreviewloop 2>/dev/null
 dxreviewloop() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
@@ -3223,60 +3335,26 @@ dxreviewloop() {
     return 1
   fi
 
-  local scope_name="" scope_mode="changes" diff_cmd="" stat_cmd="" name_cmd=""
-  local committed_diff_cmd="" committed_stat_cmd="" committed_name_cmd=""
-  local committed_ref="" scope_descriptor="" descriptor_mode="" comparison_ref="" comparison_oid="" committed_base=""
-  local has_committed=0 has_staged=0 has_unstaged=0 has_untracked=0
-  local untracked_count branch
+  local scope_name="" scope_mode="" diff_cmd="" stat_cmd="" name_cmd="" files_changed=""
+  local committed_ref="" scope_snapshot="" scope_commands=""
+  local descriptor_mode="" comparison_ref="" comparison_oid="" committed_base=""
+  local branch
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
   [[ -n "$branch" ]] || branch="HEAD"
-  scope_descriptor=$(dx_review_scope_descriptor "$PWD") || {
+  scope_snapshot=$(__dx_review_scope_snapshot "$PWD") || {
     dx_error "Could not resolve the review comparison scope."
     return 1
   }
-  IFS=$'\t' read -r descriptor_mode comparison_ref comparison_oid committed_base <<< "$scope_descriptor"
-  if [[ "$descriptor_mode" == "changes" ]]; then
-    has_committed=1
+  IFS=$'\t' read -r scope_mode scope_name files_changed descriptor_mode comparison_ref comparison_oid committed_base <<< "$scope_snapshot"
+  if [[ "$committed_base" != "-" ]]; then
     committed_ref="${committed_base}..HEAD"
-    committed_diff_cmd="git diff ${committed_base} HEAD --"
-    committed_stat_cmd="git diff ${committed_base} HEAD --stat --"
-    committed_name_cmd="git diff ${committed_base} HEAD --name-only --"
   fi
   : "$comparison_ref" "$comparison_oid"
-
-  git diff --cached --quiet 2>/dev/null || has_staged=1
-  git diff --quiet 2>/dev/null || has_unstaged=1
-  untracked_count=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
-  [[ "$untracked_count" =~ ^[0-9]+$ && "$untracked_count" -gt 0 ]] && has_untracked=1
-
-  if [[ $has_committed -eq 1 || $has_staged -eq 1 || $has_unstaged -eq 1 || $has_untracked -eq 1 ]]; then
-    scope_name="full current change set"
-    diff_cmd="{ ${committed_diff_cmd:-:}; git diff --cached; git diff; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'test -f \"\$1\" && git diff --no-index -- /dev/null \"\$1\" 2>/dev/null || true' sh {}; }"
-    stat_cmd="{ ${committed_stat_cmd:-:}; git diff --cached --stat; git diff --stat; git ls-files --others --exclude-standard | sed 's/^/untracked: /'; }"
-    name_cmd="{ ${committed_name_cmd:-:}; git diff --cached --name-only; git diff --name-only; git ls-files --others --exclude-standard; } | sort -u"
-  else
-    scope_name="entire codebase"
-    scope_mode="codebase"
-    diff_cmd="git ls-files | sort"
-    stat_cmd="git ls-files | awk '{count++} END {printf \"tracked files: %d\\n\", count+0}'"
-    name_cmd="git ls-files | sort"
+  scope_commands=$(__dx_review_scope_commands "$scope_mode" "$committed_base") || return 1
+  IFS=$'\t' read -r diff_cmd stat_cmd name_cmd <<< "$scope_commands"
+  if [[ "$scope_mode" == "codebase" ]]; then
     dx_info "No current change set detected; falling back to an entire-codebase review."
   fi
-
-  local files_changed
-  if [[ "$scope_mode" == "codebase" ]]; then
-    files_changed=$(git ls-files 2>/dev/null | wc -l | tr -d ' ') || files_changed="?"
-  else
-    files_changed=$(
-      {
-        [[ -n "$committed_ref" ]] && git diff "$committed_ref" --name-only 2>/dev/null
-        git diff --cached --name-only 2>/dev/null
-        git diff --name-only 2>/dev/null
-        git ls-files --others --exclude-standard 2>/dev/null
-      } | sort -u | wc -l | tr -d ' '
-    ) || files_changed="?"
-  fi
-  [[ -n "$files_changed" ]] || files_changed="?"
 
   if [[ $standalone_review_prompt -eq 1 ]]; then
     standalone_prompt_content="Standalone /dxreviewloop invocation for branch ${branch}.
@@ -3581,54 +3659,7 @@ $(__dx_provider_prompt)"
   local audit_file="$DEX_DIR/prompts/phase-audits/3-review.md" audit_prompt=""
   [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")
 
-  local scope_source_detail scope_boundary
-  if [[ "$scope_mode" == "codebase" ]]; then
-    scope_source_detail="IMPORTANT: No current change set was found, so this pass is a whole-codebase review. Do not stop because \`git diff\` is empty. Use these commands as the authoritative codebase inventory, then read and review the listed files as needed:"
-    scope_boundary="SCOPE BOUNDARIES: review and fix the entire codebase in this repository. Do NOT commit, push, or create PRs."
-  else
-    scope_source_detail="IMPORTANT: When the audit prompt or /dxreview SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead. This is the full current change set, including committed branch changes, staged changes, unstaged changes, and untracked files:"
-    scope_boundary="SCOPE BOUNDARIES: review and fix the full current change set above ONLY. Do NOT commit, push, or create PRs."
-  fi
-
-  local message_template
-  message_template="Run one full Dex review wave using /dxreview --single-pass, scoped to **${scope_name}** on branch \`${branch}\`.
-
-${scope_source_detail}
-
-- Scope input: \`${diff_cmd}\`
-- Stat:        \`${stat_cmd}\`
-- File names:  \`${name_cmd}\`
-
-Use this review context pack path: \`__REVIEW_CONTEXT_FILE__\`
-Use this machine-readable evidence path: \`__PASS_EVIDENCE_FILE__\`
-Use this per-pass completion path only after the review result signal and findings hash are written: \`__PASS_COMPLETE_FILE__\`
-The immutable scope fingerprint for this pass is: \`__SCOPE_FINGERPRINT__\`
-
-Review depth profile for this pass: \`__REVIEW_PROFILE__\`.
-- \`light\`: deterministic checks, core domain sweep, verifier pass, batch fix, targeted recheck.
-- \`standard\`: core sweep plus targeted domain sweeps for concrete changed surfaces, verifier pass.
-- \`thorough\`: all domain sweeps, verifier pass, batch fix, targeted recheck.
-
-Follow the audit prompt and \`prompts/review-wave.md\`: first materialize a compact context pack with \`## Scope\`, \`## Deterministic Checks\`, \`## Review Coverage\`, and \`## Verification\` sections; run deterministic checks; harvest candidate issues according to the depth profile; verify and deduplicate findings; batch-fix verified issues; re-check; and write the result and evidence files. Run in the current checkout; do not create or switch branches or worktrees.
-
-Result semantics:
-- Write \`CLEAN\` only if this wave found zero verified findings and applied zero fixes.
-- Write \`FINDINGS_FIXED:N\` if this wave found and fixed N verified findings; this intentionally resets the outer clean-pass counter.
-- Do not stop after only reporting verified findings. Fix safe verified findings before writing the result.
-- Write \`FINDINGS:N\` only if verified findings remain after a concrete local fix attempt is blocked, unsafe, or requires user judgment. Write \`BLOCKED:reason-code\` if the wave cannot complete.
-- Write \`CHURN:reason-code\` if the wave cannot make reliable progress.
-- Write \`ESCALATE:normal:reason-code\` or \`ESCALATE:complex:reason-code\` if the selected tier is too shallow. Escalation is upward-only. \`ESCALATE_THOROUGH:reason\` remains a legacy alias for complex.
-
-If no approved plan or acceptance criteria are explicitly available in this prompt for this scope, mark plan-dependent sections as N/A and proceed. Do not infer criteria from stale session prompt files, previous conversation turns, session titles, AGENTS instructions, or unrelated ticket context.
-
-${scope_boundary}
-
-This is an independent pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. Judge only the current checkout and the scope supplied above.
-
-After writing the review result signal, evidence JSON, and findings hash, touch the per-pass completion path above, output \`${review_promise}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
-$(__dx_provider_prompt)"
-
-  local terminal_reason="" terminal_detail="" terminal_exit=1 parent_findings_file
+  local terminal_reason="" terminal_detail="" terminal_exit=1 parent_findings_file message_template=""
   parent_findings_file=$(dx_findings_file "$session_id")
 
   while [[ $clean_passes -lt $required_clean ]]; do
@@ -3637,6 +3668,26 @@ $(__dx_provider_prompt)"
       clean_passes=0
       break
     fi
+
+    scope_snapshot=$(__dx_review_scope_snapshot "$PWD") || {
+      terminal_reason="scope_fingerprint_error"
+      clean_passes=0
+      break
+    }
+    IFS=$'\t' read -r scope_mode scope_name files_changed descriptor_mode comparison_ref comparison_oid committed_base <<< "$scope_snapshot"
+    committed_ref=""
+    [[ "$committed_base" != "-" ]] && committed_ref="${committed_base}..HEAD"
+    scope_commands=$(__dx_review_scope_commands "$scope_mode" "$committed_base") || {
+      terminal_reason="scope_fingerprint_error"
+      clean_passes=0
+      break
+    }
+    IFS=$'\t' read -r diff_cmd stat_cmd name_cmd <<< "$scope_commands"
+    message_template=$(__dx_review_wave_message_template "$scope_name" "$branch" "$scope_mode" "$diff_cmd" "$stat_cmd" "$name_cmd" "$review_promise") || {
+      terminal_reason="prompt_render_error"
+      clean_passes=0
+      break
+    }
 
     review_iteration=$((review_iteration + 1))
     echo ""
@@ -3691,10 +3742,10 @@ $(__dx_provider_prompt)"
       break
     }
     branch_before=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s\n' "DETACHED")
-    head_before=$(git rev-parse --verify HEAD 2>/dev/null || true)
+    head_before=$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' "UNBORN")
     pass_started=$(date +%s)
     __dx_review_emit_event "$review_run_id" "review.pass.started" "info" "Review pass started" "$review_phase" \
-      tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" clean_before_int="$clean_passes" required_clean_int="$required_clean"
+      pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" clean_before_int="$clean_passes" required_clean_int="$required_clean" scope_fingerprint="$scope_before"
 
     local parent_busy_file=""
     if [[ $standalone_review_prompt -eq 0 ]]; then
@@ -3775,12 +3826,25 @@ ${message}"
       audit_max_iter=1
     fi
 
-    local result="" findings_hash="" evidence_hash="" context_valid=0 evidence_valid=0 completion_valid=0 review_contract_error=""
+    local result="" findings_hash="" evidence_hash="" evidence_summary="" result_reason="invalid"
+    local evidence_checks="not-recorded" evidence_verifier="not-recorded" evidence_coverage="none" evidence_valid_json=false
+    local evidence_findings=0 evidence_fixes=0 context_valid=0 evidence_valid=0 completion_valid=0 review_contract_error=""
     [[ -f "$pass_result_file" ]] && result=$(cat "$pass_result_file" 2>/dev/null || true)
     findings_hash=$(dx_review_read_findings_hash "$pass_findings_file" 2>/dev/null || true)
     evidence_hash=$(dx_review_evidence_hash "$pass_evidence_file" 2>/dev/null || true)
     dx_review_context_valid "$review_context_file" && context_valid=1
-    dx_review_evidence_valid "$pass_evidence_file" "$result" "$pass_profile" "$scope_before" && evidence_valid=1
+    if dx_review_evidence_valid "$pass_evidence_file" "$result" "$pass_profile" "$scope_before"; then
+      evidence_valid=1
+      evidence_summary=$(dx_review_evidence_summary "$pass_evidence_file" 2>/dev/null || true)
+      if [[ -n "$evidence_summary" ]]; then
+        IFS=$'\t' read -r evidence_checks evidence_verifier evidence_coverage evidence_findings evidence_fixes <<< "$evidence_summary"
+        evidence_valid_json=true
+      else
+        evidence_valid=0
+      fi
+    fi
+    result_reason=$(dx_review_result_reason "$result" 2>/dev/null || printf '%s\n' "invalid")
+    [[ -n "$evidence_hash" ]] || evidence_hash="none"
     [[ -f "$pass_complete_file" ]] && completion_valid=1
     if dx_review_result_valid "$result"; then
       if [[ $completion_valid -ne 1 ]]; then
@@ -3802,7 +3866,7 @@ ${message}"
       terminal_reason="pass_audit_limit"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
-        tier="$review_tier" iteration_int="$review_iteration" result_kind=pass_audit_limit duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=pass_audit_limit
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=pass_audit_limit result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=pass_audit_limit evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
       break
     fi
 
@@ -3815,7 +3879,7 @@ ${message}"
       terminal_exit=$exit_code
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
-        tier="$review_tier" iteration_int="$review_iteration" result_kind="$terminal_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason"
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$terminal_reason" result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
       break
     fi
 
@@ -3823,7 +3887,7 @@ ${message}"
       terminal_reason="invalid_result"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
-        tier="$review_tier" iteration_int="$review_iteration" result_kind=invalid duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=invalid_result
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=invalid result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=invalid_result evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool=false
       break
     fi
 
@@ -3837,7 +3901,7 @@ ${message}"
       dx_warn "Review pass returned incomplete state: ${review_contract_error}."
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
-        tier="$review_tier" iteration_int="$review_iteration" result_kind=incomplete_evidence duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason"
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=incomplete_evidence result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
       break
     fi
 
@@ -3845,12 +3909,12 @@ ${message}"
     working_after=$(dx_review_working_fingerprint "$PWD" 2>/dev/null || true)
     descriptor_after=$(dx_review_scope_descriptor "$PWD" 2>/dev/null || true)
     branch_after=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s\n' "DETACHED")
-    head_after=$(git rev-parse --verify HEAD 2>/dev/null || true)
+    head_after=$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' "UNBORN")
     if [[ -z "$scope_after" || -z "$working_after" || -z "$descriptor_after" || -z "$head_after" ]]; then
       terminal_reason="scope_fingerprint_error"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
-        tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=scope_fingerprint_error duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=scope_fingerprint_error
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=scope_fingerprint_error result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=scope_fingerprint_error evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool=true
       break
     fi
     [[ "$scope_after" != "$scope_before" ]] && scope_changed="true"
@@ -3902,7 +3966,7 @@ ${message}"
           if [[ -n "$churn_kind" ]]; then
             terminal_reason="$churn_kind"
           else
-            local post_fix_floor="" post_fix_tier="" post_fix_reason="" post_fix_rank="" current_tier_rank="" old_tier=""
+            local post_fix_floor="" post_fix_tier="" post_fix_reason="" post_fix_rank="" current_tier_rank="" old_tier="" post_fix_escalated=0
             post_fix_floor=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
             IFS=$'\t' read -r post_fix_tier post_fix_reason <<< "$post_fix_floor"
             post_fix_rank=$(dx_review_tier_rank "$post_fix_tier" 2>/dev/null || true)
@@ -3917,12 +3981,15 @@ ${message}"
               fi
               selection_source="deterministic-floor"
               selection_reasons="$post_fix_reason"
-              __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated after fixes" "$review_phase" \
-                from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration" reason_code="$post_fix_reason"
+              post_fix_escalated=1
             fi
             if [[ -z "$terminal_reason" ]] && ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "$required_clean"; then
               terminal_reason="selection_write_failed"
             elif [[ -z "$terminal_reason" ]]; then
+              if [[ $post_fix_escalated -eq 1 ]]; then
+                __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated after fixes" "$review_phase" \
+                  from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration" reason_code="$post_fix_reason"
+              fi
               echo "  Wave result: ${result} — clean streak reset"
             fi
           fi
@@ -3991,7 +4058,7 @@ ${message}"
 
     [[ -n "$terminal_reason" ]] && event_severity="warn"
     __dx_review_emit_event "$review_run_id" "review.pass.finished" "$event_severity" "Review pass finished" "$review_phase" \
-      tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$result_kind" findings_int="$result_count" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" scope_changed_bool="$scope_changed" working_changed_bool="$working_changed" provider_exit_int="$exit_code" terminal_reason="${terminal_reason:-none}"
+      pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$result_kind" result_reason="$result_reason" findings_int="$result_count" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" scope_changed_bool="$scope_changed" working_changed_bool="$working_changed" provider_exit_int="$exit_code" terminal_reason="${terminal_reason:-none}" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_findings_int="$evidence_findings" evidence_fixes_int="$evidence_fixes" evidence_valid_bool=true
 
     [[ -n "$terminal_reason" ]] && break
   done
