@@ -1450,6 +1450,7 @@ unalias __dx_record_inline_phase_result 2>/dev/null; unfunction __dx_record_inli
 __dx_record_inline_phase_result() {
   local session_id="$1" phase="$2" phase_status="$3" exit_code="$4"
   local start_epoch end_epoch duration iterations phase_name data_json event_type severity message
+  local outcome_status=0 outcome_generation
   [[ "$phase" =~ ^[0-6]$ ]] || return 0
 
   end_epoch=$(date +%s)
@@ -1464,6 +1465,13 @@ __dx_record_inline_phase_result() {
     event_type="phase.completed"
     severity="info"
     message="Phase ${phase} completed: ${phase_name}"
+    outcome_generation="direct-codex-${phase}-${end_epoch}-$$-${RANDOM}"
+    dx_phase_outcome_record "$session_id" "$phase" "completed" "direct-codex" \
+      "$outcome_generation" "gates-passed" || outcome_status=$?
+    if [[ "$outcome_status" -ne 0 && "$outcome_status" -ne 3 ]]; then
+      dx_run_log_append_for_session "$session_id" "warn" "dx" \
+        "Could not append the explicit Phase ${phase} completion receipt; the successful phase log remains available for progress reconciliation"
+    fi
   else
     event_type="phase.failed"
     severity="error"
@@ -1539,20 +1547,44 @@ print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 PY
 }
 
+unalias __dx_pause_reason_message 2>/dev/null; unfunction __dx_pause_reason_message 2>/dev/null
+__dx_pause_reason_message() {
+  local session_id="$1" reason="$2" raw_iter iterations max_iterations
+  case "$reason" in
+    max-iter|max-iterations)
+      raw_iter=$(cat "$(dx_loop_file "$session_id")" 2>/dev/null || echo "")
+      iterations="${raw_iter%%:*}"
+      max_iterations="${DEX_LOOP_MAX_ITERATIONS:-30}"
+      if [[ "$iterations" =~ ^[0-9]+$ && "$max_iterations" =~ ^[0-9]+$ ]]; then
+        echo "max audit iterations reached (${iterations}/${max_iterations})"
+      else
+        echo "max audit iterations reached"
+      fi
+      ;;
+    manual-intervention) echo "manual intervention requested" ;;
+    manual-pause) echo "paused by direct human instruction" ;;
+    manual-cancel) echo "cancelled by direct human instruction" ;;
+    review-child-active) echo "review child still active" ;;
+    review-pass-timeout) echo "review pass timed out" ;;
+    *) echo "${reason//-/ }" ;;
+  esac
+}
+
 unalias __dx_finish_inline_pause 2>/dev/null; unfunction __dx_finish_inline_pause 2>/dev/null
 __dx_finish_inline_pause() {
   local session_id="$1" final_step="$2" resume_hint="$3" wt_name="$4"
   local wt_dir="$5" default_branch="$6" workspace_mode="$7"
-  local pause_reason pause_source terminal_data
+  local pause_reason pause_source pause_message terminal_data
   pause_reason=$(dx_pause_state_read "$session_id" reason)
   pause_source=$(dx_pause_state_read "$session_id" source)
   [[ -n "$pause_reason" ]] || pause_reason="manual-intervention"
   [[ -n "$pause_source" ]] || pause_source="unknown"
+  pause_message=$(__dx_pause_reason_message "$session_id" "$pause_reason")
 
   terminal_data=$(__dx_terminal_event_data "blocked" "$pause_reason" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
   dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Dex lifecycle paused at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
-  dx_run_log_append_for_session "$session_id" "warn" "dx" "Lifecycle paused at Phase ${final_step}: ${pause_reason}; source=${pause_source}"
-  dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: ${pause_reason}"
+  dx_run_log_append_for_session "$session_id" "warn" "dx" "Lifecycle paused at Phase ${final_step}: ${pause_message}; reason=${pause_reason}; source=${pause_source}"
+  dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: ${pause_message}"
   rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
     "$(dx_loop_file "$session_id")" "$(dx_phase_busy_notice_file "$session_id" "$final_step")" 2>/dev/null || true
   dx_clear_lifecycle_control "$session_id" 2>/dev/null || true
@@ -1560,7 +1592,7 @@ __dx_finish_inline_pause() {
 
   __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
   echo ""
-  echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (${pause_reason})"
+  echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (${pause_message})"
   echo "Resume with: ${resume_hint}"
   return 1
 }
@@ -1570,7 +1602,8 @@ __dx_codex_direct_phase_handoff() {
   local session_id="$1" phase="$2" state_file="$3" wt_dir="$4"
   local provider_state provider_engine="" line complete_file ready_file next_phase criteria_binding=""
   local control_action control_target control_expected control_phase control_snapshot control_source
-  local config_file control_config control_busy_token
+  local control_generation control_from control_recovery control_busy_token
+  local config_file control_config
   provider_state=$(dx_provider_state_file "$session_id")
   [[ -f "$provider_state" ]] || return 1
   while IFS= read -r line; do
@@ -1588,67 +1621,110 @@ __dx_codex_direct_phase_handoff() {
   control_target=$(dx_lifecycle_control_value "$control_snapshot" target_phase)
   control_expected=$(dx_lifecycle_control_value "$control_snapshot" expected_phase)
   control_source=$(dx_lifecycle_control_value "$control_snapshot" source)
+  control_generation=$(dx_lifecycle_control_value "$control_snapshot" generation)
   control_phase=$(dx_lifecycle_current_phase "$session_id")
   if [[ "$control_action" == "pause" || "$control_action" == "cancel" ]]; then
     dx_write_pause_state "$session_id" "manual-${control_action}" "${control_source:-terminal}" 2>/dev/null || true
     [[ -f "$(dx_phase_busy_file "$session_id" 3)" ]] && dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
     touch "$(dx_paused_file "$session_id")"
-    rm -f "$(dx_active_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" "$(dx_complete_file "$session_id")" \
+      "$(dx_loop_file "$session_id")" 2>/dev/null || true
     dx_lifecycle_control_lock_release "$session_id" || true
     return 2
   fi
   if [[ "$control_action" == "complete" || "$control_action" == "jump" ]]; then
-    if [[ -n "$control_expected" && "$control_expected" != "$control_phase" ]]; then
-      dx_warn "Ignoring stale human lifecycle transition for Phase ${control_expected}; current phase is ${control_phase}."
+    if [[ ! "$control_target" =~ ^[0-7]$ \
+      || ! "$control_generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ \
+      || ( "$control_source" != "user-prompt" && "$control_source" != "terminal" ) ]]; then
       dx_clear_lifecycle_control_unlocked "$session_id"
       dx_lifecycle_control_lock_release "$session_id" || true
       return 1
     fi
-    if dx_phase_busy_transition_blocked "$session_id" 3 "$control_phase" "$control_target"; then
+
+    control_from="$control_phase"
+    control_recovery=0
+    if [[ "$control_target" == "$control_phase" \
+      && "$control_expected" =~ ^[0-7]$ \
+      && "$control_expected" != "$control_phase" ]]; then
+      control_from="$control_expected"
+      control_recovery=1
+    elif [[ -n "$control_expected" && "$control_expected" != "$control_phase" ]]; then
+      dx_warn "Ignoring stale human lifecycle transition for Phase ${control_expected}; current phase is ${control_phase}."
+      dx_clear_lifecycle_control_unlocked "$session_id"
+      dx_lifecycle_control_lock_release "$session_id" || true
+      return 1
+    elif [[ "$control_target" == "$control_phase" ]]; then
+      dx_clear_lifecycle_control_unlocked "$session_id"
+      dx_lifecycle_control_lock_release "$session_id" || true
+      return 1
+    fi
+    if [[ "$control_action" == "complete" \
+      && "$control_target" -ne $((control_from + 1)) ]]; then
+      dx_clear_lifecycle_control_unlocked "$session_id"
+      dx_lifecycle_control_lock_release "$session_id" || true
+      return 1
+    fi
+    if dx_phase_busy_transition_blocked "$session_id" 3 "$control_from" "$control_target"; then
       dx_write_pause_state "$session_id" "review-child-active" "${control_source:-terminal}" 2>/dev/null || true
       dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
       touch "$(dx_paused_file "$session_id")"
-      rm -f "$(dx_active_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null || true
+      rm -f "$(dx_active_file "$session_id")" "$(dx_complete_file "$session_id")" \
+        "$(dx_loop_file "$session_id")" 2>/dev/null || true
       dx_lifecycle_control_lock_release "$session_id" || true
       dx_warn "Dex detached at Phase 3 because a review child is still marked in flight."
       return 2
     fi
-    if [[ "$control_target" =~ ^[0-7]$ && "$control_target" != "$control_phase" ]]; then
+
+    if ! dx_consume_completion_receipt "$session_id"; then
+      dx_lifecycle_control_lock_release "$session_id" || true
+      dx_warn "Dex could not consume the current phase completion receipt; the human transition remains pending."
+      return 1
+    fi
+    if [[ "$control_recovery" -eq 0 ]]; then
       control_config="${control_target}:$(__dx_phase_promise "$control_target"):$(__dx_inline_audit_file "$control_target"):$(__dx_phase_min_audits "$control_target")"
       [[ "$control_target" == "7" ]] && control_config="7:::0"
       if ! dx_lifecycle_atomic_write "$config_file" "$control_config" \
         || ! dx_lifecycle_atomic_write "$state_file" "$control_target"; then
         dx_lifecycle_control_lock_release "$session_id" || true
-        dx_warn "Dex could not commit the direct Codex phase transition; existing gate markers were preserved."
+        dx_warn "Dex could not commit the direct Codex phase transition. The current phase remains authoritative; retry its audit."
         return 1
       fi
-      for control_phase in 0 1 2 3 4 5 6; do
-        rm -f "$(dx_phase_started_file "$session_id" "$control_phase")" \
-          "$(dx_phase_ready_file "$session_id" "$control_phase")" 2>/dev/null || true
-        if [[ "$control_phase" != "3" ]]; then
-          rm -f "$(dx_phase_busy_file "$session_id" "$control_phase")" \
-            "$(dx_phase_busy_notice_file "$session_id" "$control_phase")" 2>/dev/null || true
-        fi
-      done
-      rm -f "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" \
-        "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" \
-        "$(dx_pause_state_file "$session_id")" 2>/dev/null || true
-      if dx_phase_busy_quiesced "$session_id" 3; then
-        control_busy_token=$(dx_phase_busy_token "$session_id" 3)
-        dx_phase_busy_finish "$session_id" 3 "$control_busy_token" 2>/dev/null || true
-      fi
-      dx_run_log_append_for_session "$session_id" "warn" "dx" \
-        "Direct Codex applied human lifecycle transition: phase=${phase}; target_phase=${control_target}; action=${control_action}" 2>/dev/null || true
-      dx_clear_lifecycle_control_unlocked "$session_id"
-      if [[ "$control_target" == "7" ]]; then
-        touch "$(dx_lifecycle_human_complete_file "$session_id")"
-        rm -f "$config_file" 2>/dev/null || true
-      fi
+    fi
+
+    if ! dx_record_human_phase_outcomes "$session_id" "$control_from" "$control_target" \
+      "$control_action" "$control_generation" "$control_source" "$control_recovery"; then
       dx_lifecycle_control_lock_release "$session_id" || true
-      dx_info "Human control moved the direct Codex lifecycle from Phase ${phase} to Phase ${control_target}."
-      return 0
+      dx_warn "Dex committed the direct Codex phase transition but could not finish its outcome ledger. Its control receipt remains available for recovery."
+      return 1
+    fi
+    for control_phase in 0 1 2 3 4 5 6; do
+      rm -f "$(dx_phase_started_file "$session_id" "$control_phase")" \
+        "$(dx_phase_ready_file "$session_id" "$control_phase")" 2>/dev/null || true
+      if [[ "$control_phase" != "3" ]]; then
+        rm -f "$(dx_phase_busy_file "$session_id" "$control_phase")" \
+          "$(dx_phase_busy_notice_file "$session_id" "$control_phase")" 2>/dev/null || true
+      fi
+    done
+    rm -f "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")" \
+      "$(dx_paused_file "$session_id")" "$(dx_pause_state_file "$session_id")" 2>/dev/null || true
+    if dx_phase_busy_quiesced "$session_id" 3; then
+      control_busy_token=$(dx_phase_busy_token "$session_id" 3)
+      dx_phase_busy_finish "$session_id" 3 "$control_busy_token" 2>/dev/null || true
+    fi
+    dx_run_log_append_for_session "$session_id" "warn" "dx" \
+      "Direct Codex applied human lifecycle transition: phase=${control_from}; target_phase=${control_target}; action=${control_action}; generation=${control_generation}; recovery=${control_recovery}" 2>/dev/null || true
+    if [[ "$control_target" == "7" ]]; then
+      if ! touch "$(dx_lifecycle_human_complete_file "$session_id")"; then
+        dx_lifecycle_control_lock_release "$session_id" || true
+        dx_warn "Dex could not persist the human-completion workspace marker. Its control receipt remains available for recovery."
+        return 1
+      fi
+      rm -f "$config_file" 2>/dev/null || true
     fi
     dx_clear_lifecycle_control_unlocked "$session_id"
+    dx_lifecycle_control_lock_release "$session_id" || true
+    dx_info "Human control moved the direct Codex lifecycle from Phase ${control_from} to Phase ${control_target}."
+    return 0
   fi
   dx_lifecycle_control_lock_release "$session_id" || true
 
@@ -1696,6 +1772,11 @@ __dx_codex_direct_phase_handoff() {
       dx_lifecycle_control_lock_release "$session_id" || true
       return 1
     fi
+    if ! dx_consume_completion_receipt "$session_id"; then
+      dx_lifecycle_control_lock_release "$session_id" || true
+      dx_warn "Dex could not consume the Phase ${phase} completion receipt; retry that phase's audit."
+      return 1
+    fi
     control_config="${next_phase}:$(__dx_phase_promise "$next_phase"):$(__dx_inline_audit_file "$next_phase"):$(__dx_phase_min_audits "$next_phase")"
     if ! dx_lifecycle_atomic_write "$config_file" "$control_config" \
       || ! dx_lifecycle_atomic_write "$state_file" "$next_phase"; then
@@ -1726,6 +1807,11 @@ __dx_codex_direct_phase_handoff() {
     return 0
   fi
 
+  if ! dx_consume_completion_receipt "$session_id"; then
+    dx_lifecycle_control_lock_release "$session_id" || true
+    dx_warn "Dex could not consume the Phase 6 completion receipt; retry that phase's audit."
+    return 1
+  fi
   if ! dx_lifecycle_atomic_write "$config_file" "7:::0" \
     || ! dx_lifecycle_atomic_write "$state_file" "7"; then
     dx_lifecycle_control_lock_release "$session_id" || true
@@ -1909,6 +1995,7 @@ __dx_run_phases_inline() {
     dx_run_write_summary_for_session "$session_id" "blocked" "Paused at Phase ${final_step}: ${pause_reason}"
     dx_provider_cleanup_session_state "$session_id"
 
+    __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
     echo ""
     echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (${pause_reason})"
     echo "Resume with: ${resume_hint}"
@@ -1936,6 +2023,7 @@ __dx_run_phases_inline() {
     dx_event_emit_for_session "$session_id" "run.failed" "error" "Dex lifecycle exited at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
     dx_run_log_append_for_session "$session_id" "error" "dx" "Lifecycle exited at Phase ${final_step} with code ${exit_code}"
     dx_run_write_summary_for_session "$session_id" "failed" "Exited at Phase ${final_step} with code ${exit_code}"
+    __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
     echo ""
     echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (exit ${exit_code})"
     echo "Resume with: ${resume_hint}"
@@ -1967,7 +2055,6 @@ __dx_run_phases_inline() {
     return $?
   fi
 
-  echo ""
   local terminal_data
   terminal_data=$(__dx_terminal_event_data "blocked" "session-exited" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
   dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Claude session exited before Dex lifecycle completed" "$final_step" "$terminal_data"
@@ -1978,6 +2065,8 @@ __dx_run_phases_inline() {
     "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" \
     "$(dx_paused_file "$session_id")" 2>/dev/null
   dx_provider_cleanup_session_state "$session_id"
+  __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
+  echo ""
   echo "Claude session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
   echo "Resume with: ${resume_hint}"
   return 1
@@ -2347,11 +2436,19 @@ __dx_show_header() {
 
   # Phase progress line (Phase 0 setup + 6 autonomous phases)
   local progress="  "
-  local i label
+  local i label outcome symbol
+  local has_skipped=0 has_waived=0 has_unknown=0
   for i in 0 1 2 3 4 5 6; do
     label=$(__dx_phase_name "$i")
     if [[ $i -lt $step ]]; then
-      progress+="✓ ${label}"
+      outcome=$(dx_phase_outcome_latest "$session_id" "$i")
+      case "$outcome" in
+        completed) symbol="✓" ;;
+        skipped) symbol="↷"; has_skipped=1 ;;
+        waived) symbol="◇"; has_waived=1 ;;
+        *) symbol="?"; has_unknown=1 ;;
+      esac
+      progress+="${symbol} ${label}"
     elif [[ $i -eq $step ]]; then
       progress+="→ ${label}"
     else
@@ -2364,6 +2461,13 @@ __dx_show_header() {
     progress+="  ✓ ticket complete"
   fi
   echo "$progress"
+  if [[ $has_skipped -eq 1 || $has_waived -eq 1 || $has_unknown -eq 1 ]]; then
+    local legend="  "
+    [[ $has_skipped -eq 1 ]] && legend+="↷ skipped by human  "
+    [[ $has_waived -eq 1 ]] && legend+="◇ marked done by human  "
+    [[ $has_unknown -eq 1 ]] && legend+="? terminal receipt missing"
+    echo "$legend"
+  fi
   echo ""
 
   # Metadata (only if worktree exists and has commits).

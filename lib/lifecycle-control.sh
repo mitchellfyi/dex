@@ -347,6 +347,71 @@ dx_pause_state_read() {
   dx_lifecycle_control_value "$snapshot" "$key"
 }
 
+# Remove a generic phase completion signal before publishing a new phase. A
+# consumed signal can be safely recreated after a failed publish; carrying it
+# across a phase boundary could falsely complete the next phase.
+dx_consume_completion_receipt() {
+  local session_id="$1" complete_file
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  complete_file=$(dx_complete_file "$session_id")
+  command rm -f "$complete_file" 2>/dev/null || return 1
+  [[ ! -e "$complete_file" && ! -L "$complete_file" ]]
+}
+
+# dx_record_human_phase_outcomes <session_id> <current> <target> <action> <generation> <source> [recovery]
+# Record the phases a direct human transition crosses. Callers hold the
+# lifecycle lock and clear the live control receipt only after this succeeds.
+dx_record_human_phase_outcomes() {
+  local session_id="$1" current="$2" target="$3" action="$4"
+  local generation="$5" source="$6" recovery="${7:-0}"
+  local outcome reason event_type phase record_status data_json
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$current" =~ ^[0-7]$ && "$target" =~ ^[0-7]$ ]] || return 1
+  [[ "$generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] || return 1
+  case "$source" in
+    user-prompt|terminal) ;;
+    *) return 1 ;;
+  esac
+  [[ "$recovery" == "0" || "$recovery" == "1" ]] || return 1
+  [[ "$target" -gt "$current" ]] || return 0
+
+  case "$action" in
+    complete)
+      [[ "$target" -eq $((current + 1)) ]] || return 1
+      outcome="waived"
+      reason="human-complete"
+      event_type="phase.waived"
+      ;;
+    jump)
+      outcome="skipped"
+      reason="human-jump"
+      event_type="phase.skipped"
+      ;;
+    *) return 1 ;;
+  esac
+
+  phase="$current"
+  while [[ "$phase" -lt "$target" && "$phase" -le 6 ]]; do
+    record_status=0
+    dx_phase_outcome_record "$session_id" "$phase" "$outcome" "$source" \
+      "$generation" "$reason" || record_status=$?
+    if [[ "$record_status" -eq 3 ]]; then
+      phase=$((phase + 1))
+      continue
+    fi
+    [[ "$record_status" -eq 0 ]] || return 1
+
+    data_json=$(printf \
+      '{"outcome":"%s","reason":"%s","source":"%s","generation":"%s","target_phase":%s}' \
+      "$outcome" "$reason" "$source" "$generation" "$target")
+    dx_event_emit_for_session "$session_id" "$event_type" "warn" \
+      "Phase ${phase} ${outcome} by direct human instruction" "$phase" "$data_json"
+    dx_run_log_append_for_session "$session_id" "warn" "lifecycle-control" \
+      "Phase ${phase} ${outcome} by direct human instruction; target_phase=${target}; generation=${generation}; source=${source}"
+    phase=$((phase + 1))
+  done
+}
+
 dx_phase_busy_token() {
   local session_id="$1" phase="$2" busy_file raw token
   dx_lifecycle_session_id_valid "$session_id" || return 0

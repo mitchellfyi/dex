@@ -47,6 +47,7 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 0 "$state_file" "$TMP_DIR/rep
 fi
 [[ "$(cat "$state_file")" == "1" ]]
 [[ ! -f "$(dx_phase_ready_file "$session_id" 0)" ]]
+[[ "$(dx_phase_outcome_latest "$session_id" 0)" == "completed" ]]
 
 printf "1\n" > "$state_file"
 printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise the direct handoff.\"],\"acceptance_criteria\":[\"Phase gates must reject missing state.\"],\"verification_requirements\":[\"Run tests/codex-inline-handoff-test.sh.\"]}" > "$(dx_review_criteria_file "$session_id")"
@@ -68,6 +69,7 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 1 "$state_file" "$TMP_DIR/rep
 fi
 [[ "$(cat "$state_file")" == "2" ]]
 [[ "$(cut -f2 "$(dx_review_criteria_approval_file "$session_id")")" == "1" ]]
+[[ "$(dx_phase_outcome_latest "$session_id" 1)" == "completed" ]]
 approved_criteria_hash=$(dx_review_read_criteria_approval "$session_id")
 
 printf "2\n" > "$state_file"
@@ -92,6 +94,7 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/rep
   exit 1
 fi
 [[ "$(cat "$state_file")" == "3" ]]
+[[ "$(dx_phase_outcome_latest "$session_id" 2)" == "completed" ]]
 
 printf "3\n" > "$state_file"
 if __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"; then
@@ -113,12 +116,15 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/rep
   exit 1
 fi
 [[ "$(cat "$state_file")" == "4" ]]
+[[ "$(dx_phase_outcome_latest "$session_id" 3)" == "completed" ]]
 
 printf "2\n" > "$state_file"
 dx_write_lifecycle_control "$session_id" jump 4 terminal "" 2 ""
 __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
 [[ "$(cat "$state_file")" == "4" ]]
 [[ ! -f "$(dx_lifecycle_control_file "$session_id")" ]]
+[[ "$(dx_phase_outcome_latest "$session_id" 2)" == "skipped" ]]
+[[ "$(dx_phase_outcome_latest "$session_id" 3)" == "skipped" ]]
 
 printf "2\n" > "$state_file"
 touch "$(dx_active_file "$session_id")"
@@ -193,6 +199,7 @@ __dx_claude() {
 
 __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
 [[ "$(cat "$state_file")" == "7" ]]
+[[ "$(dx_phase_outcome_latest "$session_id" 6)" == "completed" ]]
 '
 
 zsh -fc '

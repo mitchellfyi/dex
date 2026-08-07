@@ -135,6 +135,9 @@ dx_context_file() { echo "${DX_STATE_DIR}/${1}.system-context"; }
 # dx_log_file <session_id> — structured phase execution log (TSV)
 dx_log_file() { echo "${DX_STATE_DIR}/${1}.log"; }
 
+# dx_phase_outcomes_file <session_id> — durable terminal outcome ledger for phases 0-6
+dx_phase_outcomes_file() { echo "${DX_STATE_DIR}/${1}.phase-outcomes"; }
+
 # dx_branch_file <session_id> — branch last used by this lifecycle session
 dx_branch_file() { echo "${DX_STATE_DIR}/${1}.branch"; }
 
@@ -946,6 +949,163 @@ dx_log_phase() {
     "$duration_s" "$iterations" "$phase_status" "$exit_code" >> "$log_file"
 }
 
+# dx_phase_outcome_record <session_id> <phase> <outcome> <source> <generation> <reason>
+# Atomically append one idempotent phase outcome. Returns 3 when the same
+# phase/generation receipt is already present.
+dx_phase_outcome_record() {
+  local session_id="$1" phase="$2" outcome="$3" source="$4" generation="$5" reason="$6"
+  local outcome_file tmp_file recorded_at existing_status
+  dx_session_id_valid "$session_id" || return 1
+  [[ "$phase" =~ ^[0-6]$ ]] || return 1
+  case "$outcome" in
+    completed|skipped|waived) ;;
+    *) return 1 ;;
+  esac
+  [[ "$source" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  [[ "$generation" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  [[ "$reason" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+
+  outcome_file=$(dx_phase_outcomes_file "$session_id")
+  mkdir -p "$(dirname "$outcome_file")" || return 1
+  if [[ ( -e "$outcome_file" || -L "$outcome_file" ) \
+    && ( ! -f "$outcome_file" || -L "$outcome_file" ) ]]; then
+    return 1
+  fi
+  if [[ -f "$outcome_file" ]]; then
+    existing_status=$(awk -F '\t' -v phase="$phase" -v generation="$generation" \
+      -v outcome="$outcome" -v source="$source" -v reason="$reason" '
+      NR > 1 && $2 == phase && $5 == generation {
+        found = 1
+        if ($3 != outcome || $4 != source || $6 != reason) conflict = 1
+      }
+      END {
+        if (conflict) print "conflict"
+        else if (found) print "exact"
+      }
+    ' "$outcome_file" 2>/dev/null || true)
+    [[ "$existing_status" == "exact" ]] && return 3
+    [[ "$existing_status" == "conflict" ]] && return 1
+  fi
+
+  tmp_file=$(mktemp "${outcome_file}.tmp.XXXXXX") || return 1
+  chmod 600 "$tmp_file" 2>/dev/null || true
+  if [[ -f "$outcome_file" ]]; then
+    if ! command cat "$outcome_file" > "$tmp_file"; then
+      command rm -f "$tmp_file" 2>/dev/null || true
+      return 1
+    fi
+  elif ! printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    recorded_at phase outcome source generation reason > "$tmp_file"; then
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  recorded_at=$(date +%s)
+  if ! printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$recorded_at" "$phase" "$outcome" "$source" "$generation" "$reason" \
+    >> "$tmp_file" || ! command mv -f "$tmp_file" "$outcome_file"; then
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+}
+
+# dx_phase_outcome_latest <session_id> <phase>
+# Prefer the explicit ledger, then recognize successful legacy TSV phase rows.
+dx_phase_outcome_latest() {
+  local session_id="$1" phase="$2" outcome_file log_file outcome=""
+  local run_id="" events_file=""
+  dx_session_id_valid "$session_id" || return 0
+  [[ "$phase" =~ ^[0-6]$ ]] || return 0
+
+  outcome_file=$(dx_phase_outcomes_file "$session_id")
+  if [[ -f "$outcome_file" && ! -L "$outcome_file" ]]; then
+    outcome=$(awk -F '\t' -v phase="$phase" '
+      NR > 1 && $2 == phase { outcome = $3 }
+      END { print outcome }
+    ' "$outcome_file" 2>/dev/null || true)
+  fi
+  if [[ "$outcome" == "completed" || "$outcome" == "skipped" || "$outcome" == "waived" ]]; then
+    printf '%s\n' "$outcome"
+    return 0
+  fi
+
+  log_file=$(dx_log_file "$session_id")
+  if [[ -f "$log_file" && ! -L "$log_file" ]]; then
+    outcome=$(awk -F '\t' -v phase="$phase" '
+      NR > 1 && $2 == phase && $8 == "advance" && $9 == "0" { outcome = "completed" }
+      END { print outcome }
+    ' "$log_file" 2>/dev/null || true)
+    if [[ "$outcome" == "completed" ]]; then
+      printf '%s\n' "$outcome"
+      return 0
+    fi
+  fi
+
+  # Older sessions may retain their run journal after the compact phase log
+  # has been cleaned up. Reconcile the latest validated event for this phase;
+  # PR state and other external artifacts are never completion evidence.
+  if type dx_run_read_for_session >/dev/null 2>&1 \
+    && type dx_run_events_file >/dev/null 2>&1 \
+    && command -v python3 >/dev/null 2>&1; then
+    run_id=$(dx_run_read_for_session "$session_id" 2>/dev/null || true)
+    [[ -n "$run_id" ]] && events_file=$(dx_run_events_file "$run_id" 2>/dev/null || true)
+  fi
+  if [[ -n "$events_file" && -f "$events_file" && ! -L "$events_file" ]]; then
+    outcome=$(python3 - "$events_file" "$phase" "$run_id" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+events_path, expected_phase, expected_run = sys.argv[1:]
+relevant_types = {
+    "phase.started",
+    "phase.completed",
+    "phase.failed",
+    "phase.skipped",
+    "phase.waived",
+}
+terminal_outcomes = {
+    "phase.completed": "completed",
+    "phase.skipped": "skipped",
+    "phase.waived": "waived",
+}
+latest_sequence = -1
+latest_type = ""
+with open(events_path, "r", encoding="utf-8") as handle:
+    for raw_line in handle:
+        if len(raw_line) > 1_048_576:
+            continue
+        try:
+            event = json.loads(raw_line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = event.get("type")
+        sequence = event.get("sequence")
+        event_id = event.get("id")
+        if event_type not in relevant_types or event.get("phase") != expected_phase:
+            continue
+        if event.get("run_id") != expected_run or event.get("severity") not in {"info", "warn", "error"}:
+            continue
+        if not isinstance(sequence, int) or sequence <= 0:
+            continue
+        if not isinstance(event_id, str) or not event_id.startswith(f"evt_{sequence:06d}_"):
+            continue
+        if sequence > latest_sequence:
+            latest_sequence = sequence
+            latest_type = event_type
+outcome = terminal_outcomes.get(latest_type)
+if outcome:
+    print(outcome)
+PY
+)
+    case "$outcome" in
+      completed|skipped|waived) printf '%s\n' "$outcome" ;;
+    esac
+  fi
+  return 0
+}
+
 # dx_record_session_branch <session_id> [repo_dir]
 # Persist the branch used by this lifecycle. In-place sessions need this to
 # resume safely because the checkout can be moved to a different branch between
@@ -976,7 +1136,7 @@ dx_cleanup_session() {
     rmdir "${DX_LOOP_DIR}/${sid}.control-lock" 2>/dev/null || true
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" -o -name "${sid}.phase-*.busy-cancel" -o -name "${sid}.phase-*.busy-quiesced" \) -exec rm -f {} + 2>/dev/null || true
   fi
-  [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null
+  [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null
 }
 
 # Remove every phase and loop artifact scoped to the current repository. This
