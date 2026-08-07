@@ -25,6 +25,14 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
+TIMEOUT_TERMINATE_COUNT_FILE="$TMP_DIR/terminate-calls"
+timeout_terminate_definition=$(declare -f __dx_timeout_terminate_processes)
+eval "${timeout_terminate_definition/__dx_timeout_terminate_processes/__dx_timeout_terminate_processes_impl}"
+__dx_timeout_terminate_processes() {
+  printf 'call\n' >> "$TIMEOUT_TERMINATE_COUNT_FILE"
+  __dx_timeout_terminate_processes_impl "$@"
+}
+
 assert_eq() {
   local expected="$1" actual="$2" label="$3"
   if [[ "$expected" != "$actual" ]]; then
@@ -86,6 +94,7 @@ timeout_status=$?
 set -e
 timeout_elapsed=$(( $(date +%s) - started_epoch ))
 assert_eq "124" "$timeout_status" "timeout status"
+assert_eq "1" "$(wc -l < "$TIMEOUT_TERMINATE_COUNT_FILE" | tr -d ' ')" "timeout full termination passes"
 wait_for_file "$timeout_pid_file" "timeout cleanup"
 assert_process_gone "$(cat "$timeout_pid_file")" "timeout cleanup"
 if [[ $timeout_elapsed -gt 8 ]]; then

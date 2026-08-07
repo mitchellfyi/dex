@@ -641,7 +641,9 @@ __dx_run_with_timeout_core() {
     # The watchdog owns TERM-to-KILL escalation. Waiting here prevents the
     # command root's exit from cancelling cleanup before resistant children die.
     [[ -n "$watchdog_pid" ]] && wait "$watchdog_pid" 2>/dev/null || true
-    __dx_timeout_terminate_processes "$token_file"
+    # Sweep once more for a late orphan without repeating the watchdog's
+    # TERM grace period.
+    __dx_timeout_signal_processes "$token_file" "" KILL
     __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
     return 124
   fi
