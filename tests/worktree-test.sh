@@ -35,6 +35,14 @@ git -C "$repo" add README.md
 git -C "$repo" commit -q -m init
 git -C "$repo" worktree add -q "$wt" -b worktree-ticket-61 HEAD
 
+dx_wt_is_registered "$repo" "$wt"
+plain_dir="$repo/.dex/worktrees/task-plain"
+mkdir -p "$plain_dir"
+if dx_wt_is_registered "$repo" "$plain_dir"; then
+  printf 'plain directory unexpectedly accepted as a registered worktree\n' >&2
+  exit 1
+fi
+
 dx_link_claude_to_worktree "$repo" "$wt"
 [[ -L "$wt/.claude" ]]
 
@@ -53,5 +61,13 @@ grep -Fxq ".claude/*" "$exclude_file"
 dx_link_claude_to_worktree "$repo" "$wt"
 [[ "$(grep -Fxc ".claude" "$exclude_file")" -eq 1 ]]
 [[ "$(grep -Fxc ".claude/*" "$exclude_file")" -eq 1 ]]
+
+old_dir="$TMP_DIR/old-state"
+mkdir -p "$old_dir"
+touch "$old_dir/one.state" "$old_dir/two.complete"
+touch -t 202001010000 "$old_dir/one.state" "$old_dir/two.complete"
+export TEST_OLD_DIR="$old_dir"
+old_count=$(zsh -fc 'source "$DEX_DIR/lib/common.sh"; dx_cleanup_stale_files "$TEST_OLD_DIR" "state complete" 7')
+[[ "$old_count" -eq 2 ]]
 
 printf 'worktree-test passed\n'

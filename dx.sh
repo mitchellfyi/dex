@@ -898,6 +898,11 @@ __dx_setup_worktree() {
 
   # If worktree exists, ensure links are set up (retroactive fix) and return
   if [[ -d "$_dx_wt_dir" ]]; then
+    if ! dx_wt_is_registered "$_dx_repo_root" "$_dx_wt_dir"; then
+      dx_error "Workspace path exists but is not a registered Git worktree: $_dx_wt_dir"
+      dx_info "Move or remove that directory, then run the command again."
+      return 1
+    fi
     dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
     dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir"
     dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}"
@@ -914,6 +919,11 @@ __dx_setup_worktree() {
     local ticket_number="${_dx_wt_name#ticket-}"
     if [[ -n "$ticket_number" ]] && __dx_resolve_existing_workspace_by_ticket "$ticket_number"; then
       if [[ "$_dx_workspace_mode" == "worktree" ]]; then
+        if ! dx_wt_is_registered "$_dx_repo_root" "$_dx_wt_dir"; then
+          dx_error "Saved workspace is not a registered Git worktree: $_dx_wt_dir"
+          dx_info "Remove the stale Dex session metadata or recreate the worktree."
+          return 1
+        fi
         dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
       fi
       _dx_default_branch=$(dx_default_branch "$_dx_wt_dir")
@@ -3290,6 +3300,7 @@ dxrm() {
   if [[ "$1" == "--all" ]]; then
     local found=0
     local skipped_active_in_place=0
+    local removal_failed=0
     local renamed_branches=()
     local session_ids=()
 
@@ -3299,22 +3310,25 @@ dxrm() {
         found=1
         local wt_name
         wt_name="$(basename "$wt_dir")"
-        session_ids+=("$(dx_session_id "$wt_name")")
-
         # The SessionStart hook may rename the worktree branch (e.g. from
         # worktree-ticket-999 to feat/ENG-999-description) to follow project
         # conventions. Track these renamed branches so we can delete them below
         # — they won't match the 'worktree-*' glob pattern.
         local actual_branch
         actual_branch=$(dx_wt_branch "$wt_dir")
-        if [[ -n "$actual_branch" && "$actual_branch" != "worktree-${wt_name}" ]]; then
-          renamed_branches+=("$actual_branch")
-        fi
 
         echo "Removing ${wt_name}..."
         dx_cleanup_checkpoints "$wt_dir"
         dx_unlink_claude_from_worktree "$wt_dir"
-        dx_wt_remove "$wt_dir"
+        if ! dx_wt_remove "$wt_dir"; then
+          dx_error "Failed to remove worktree ${wt_name}; its branch and session state were left intact."
+          removal_failed=1
+          continue
+        fi
+        session_ids+=("$(dx_session_id "$wt_name")")
+        if [[ -n "$actual_branch" && "$actual_branch" != "worktree-${wt_name}" ]]; then
+          renamed_branches+=("$actual_branch")
+        fi
       done
     fi
 
@@ -3347,7 +3361,7 @@ dxrm() {
     __dx_last_session_active_in_place && last_session_active_in_place=1
 
     # Clean up last-session pointer unless it still points at a resumable in-place session.
-    if [[ $last_session_active_in_place -eq 0 ]]; then
+    if [[ $removal_failed -eq 0 && $last_session_active_in_place -eq 0 ]]; then
       rm -f "$DX_STATE_DIR/last-session" 2>/dev/null
     fi
 
@@ -3357,7 +3371,10 @@ dxrm() {
       dx_cleanup_session "$sid"
     done
 
-    if [[ $found -eq 0 ]]; then
+    if [[ $removal_failed -eq 1 ]]; then
+      dx_warn "Some worktrees could not be removed. Resolve the errors above and run dxrm --all again."
+      return 1
+    elif [[ $found -eq 0 ]]; then
       dx_info "No worktrees or branches found."
     elif [[ $skipped_active_in_place -eq 1 || $last_session_active_in_place -eq 1 ]]; then
       echo "Finished. Active in-place lifecycle branch(es) were left intact."
@@ -3432,9 +3449,14 @@ dxrm() {
 
   echo "Removing ${wt_name}..."
 
-  [[ $has_dir -eq 1 ]] && dx_cleanup_checkpoints "$wt_dir"
-  [[ $has_dir -eq 1 ]] && dx_unlink_claude_from_worktree "$wt_dir"
-  [[ $has_dir -eq 1 ]] && dx_wt_remove "$wt_dir"
+  if [[ $has_dir -eq 1 ]]; then
+    dx_cleanup_checkpoints "$wt_dir"
+    dx_unlink_claude_from_worktree "$wt_dir"
+    if ! dx_wt_remove "$wt_dir"; then
+      dx_error "Failed to remove worktree ${wt_name}; its branch and session state were left intact."
+      return 1
+    fi
+  fi
 
   if [[ $has_branch -eq 1 ]]; then
     echo "  Deleting branch ${branch_name}..."
@@ -3583,6 +3605,7 @@ dxclean() {
   # cwd — if the user was inside a removed worktree, returning there would fail.
   cd "$repo_root" || return 1
   local cleaned=0
+  local cleanup_failed=0
 
   # 1. Prune stale worktrees (no uncommitted changes)
   local worktrees_dir="${repo_root}/.dex/worktrees"
@@ -3627,7 +3650,11 @@ dxclean() {
 
       echo "  Removing stale worktree: ${wt_name}"
       dx_unlink_claude_from_worktree "$wt_dir"
-      dx_wt_remove "$wt_dir"
+      if ! dx_wt_remove "$wt_dir"; then
+        dx_error "Failed to remove stale worktree ${wt_name}; its branch and session state were left intact."
+        cleanup_failed=1
+        continue
+      fi
 
       # Delete the branch (wt_branch captured above; handles renamed branches too)
       [[ -n "$wt_branch" ]] && git branch -D "$wt_branch" 2>/dev/null || true
@@ -3725,6 +3752,7 @@ dxclean() {
   else
     echo "Cleaned ${cleaned} item(s)."
   fi
+  [[ $cleanup_failed -eq 0 ]]
 }
 
 if [[ "${__DX_SH_EXECUTED:-0}" -eq 1 ]]; then

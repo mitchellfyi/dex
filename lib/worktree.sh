@@ -20,6 +20,32 @@ dx_wt_branch() {
   fi
 }
 
+# dx_wt_is_registered <repo_root> <wt_dir>
+# Confirm a directory is a linked worktree of the expected repository. A plain
+# directory below .dex/worktrees can otherwise resolve Git commands against the
+# main checkout and defeat lifecycle isolation.
+dx_wt_is_registered() {
+  local repo_root="$1" wt_dir="$2" target_path top_level line listed_path listed_resolved
+  [[ -d "$repo_root" && -d "$wt_dir" ]] || return 1
+
+  target_path=$(cd "$wt_dir" 2>/dev/null && pwd -P) || return 1
+  top_level=$(git -C "$wt_dir" rev-parse --show-toplevel 2>/dev/null) || return 1
+  top_level=$(cd "$top_level" 2>/dev/null && pwd -P) || return 1
+  [[ "$top_level" == "$target_path" ]] || return 1
+
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        listed_path=${line#worktree }
+        listed_resolved=$(cd "$listed_path" 2>/dev/null && pwd -P) || continue
+        [[ "$listed_resolved" == "$target_path" ]] && return 0
+        ;;
+    esac
+  done < <(git -C "$repo_root" worktree list --porcelain 2>/dev/null)
+
+  return 1
+}
+
 # dx_wt_remove <wt_dir>
 # Force-remove a worktree. Tries git worktree remove first, falls back to rm -rf.
 dx_wt_remove() {
@@ -116,14 +142,15 @@ dx_cleanup_stale_files() {
   local find_args=()
   local first=1
   local ext
-  for ext in $extensions; do
+  while IFS= read -r ext; do
+    [[ -n "$ext" ]] || continue
     if [[ $first -eq 1 ]]; then
       find_args+=(-name "*.${ext}")
       first=0
     else
       find_args+=(-o -name "*.${ext}")
     fi
-  done
+  done < <(printf '%s\n' "$extensions" | tr ' ' '\n')
 
   # Single find pass: count deleted files via -print + -delete
   local count
