@@ -25,6 +25,8 @@ git -C "$TMP_DIR/repo" config user.name "Dex Test"
 printf '# repo\n' > "$TMP_DIR/repo/README.md"
 git -C "$TMP_DIR/repo" add README.md
 git -C "$TMP_DIR/repo" commit -q -m init
+export TEST_DEFAULT_BRANCH
+TEST_DEFAULT_BRANCH=$(git -C "$TMP_DIR/repo" branch --show-current)
 
 zsh -fc '
 source "$DEX_DIR/dx.sh"
@@ -73,7 +75,7 @@ __dx_claude() {
   return 97
 }
 
-__dx_run_phases_inline "repo" "$TMP_DIR/repo" "master" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
+__dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
 [[ "$(cat "$state_file")" == "7" ]]
 '
 
