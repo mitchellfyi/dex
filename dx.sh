@@ -3408,11 +3408,11 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     review_mcp_flags=("${assessment_mcp_flags[@]}")
   fi
 
-  local review_tier="" review_profile="" selection_source="" selection_reasons="" selection_required="" selection_fingerprint=""
-  local selection_record="" prior_selection_record="" prior_tier="" prior_source="" prior_reasons="" prior_required="" prior_fingerprint=""
+  local review_tier="" review_profile="" selection_source="" selection_reasons="" selection_required="" selection_fingerprint="" selection_binding=""
+  local selection_record="" prior_selection_record="" prior_tier="" prior_source="" prior_reasons="" prior_required="" prior_fingerprint="" prior_binding=""
   if prior_selection_record=$(dx_review_read_selection "$session_id" "$PWD" 2>/dev/null); then
-    IFS=$'\t' read -r prior_tier prior_source prior_reasons prior_required prior_fingerprint <<< "$prior_selection_record"
-    : "$prior_fingerprint"
+    IFS=$'\t' read -r prior_tier prior_source prior_reasons prior_required prior_fingerprint prior_binding <<< "$prior_selection_record"
+    : "$prior_fingerprint" "$prior_binding"
   fi
 
   if [[ -n "$requested_tier" ]]; then
@@ -3437,8 +3437,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     fi
   elif [[ $standalone_review_prompt -eq 0 && -n "$prior_selection_record" ]]; then
     selection_record="$prior_selection_record"
-    IFS=$'\t' read -r review_tier selection_source selection_reasons selection_required selection_fingerprint <<< "$selection_record"
-    : "$selection_fingerprint"
+    IFS=$'\t' read -r review_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding <<< "$selection_record"
+    : "$selection_fingerprint" "$selection_binding"
   else
     rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" 2>/dev/null
     local assessment_prompt_file="$DEX_DIR/prompts/review-risk-assessment.md" assessment_rubric=""

@@ -268,6 +268,34 @@ print(hashlib.sha256(canonical.encode("utf-8")).hexdigest())
 PY
 }
 
+dx_review_criteria_binding_valid() {
+  local binding="${1:-}"
+  [[ "$binding" == "standalone" || "$binding" =~ ^[a-f0-9]{64}$ ]]
+}
+
+# Resolve an explicit criteria binding, or infer one for compatibility callers.
+# A present-but-invalid criteria file is always an error.
+dx_review_resolve_criteria_binding() {
+  local session_id="$1" expected_binding="${2:-}" criteria_file current_hash
+  criteria_file=$(dx_review_criteria_file "$session_id") || return 1
+  if [[ -n "$expected_binding" ]]; then
+    dx_review_criteria_binding_valid "$expected_binding" || return 1
+    if [[ "$expected_binding" == "standalone" ]]; then
+      [[ ! -e "$criteria_file" ]] || return 1
+    else
+      current_hash=$(dx_review_criteria_hash "$criteria_file") || return 1
+      [[ "$current_hash" == "$expected_binding" ]] || return 1
+    fi
+    printf '%s\n' "$expected_binding"
+    return 0
+  fi
+  if [[ -e "$criteria_file" ]]; then
+    dx_review_criteria_hash "$criteria_file"
+  else
+    printf '%s\n' "standalone"
+  fi
+}
+
 dx_review_result_valid() {
   local result="${1:-}" reason=""
   [[ -n "$result" && "$result" != *$'\n'* && "$result" != *$'\r'* ]] || return 1
@@ -694,6 +722,7 @@ dx_review_write_atomic() {
 dx_review_write_selection() {
   local session_id="$1" requested_tier="$2" source="$3" reason_codes="$4" repo_dir="${5:-$PWD}"
   local required_clean="${6:-}" tier tier_min fingerprint selection_file floor_record floor_tier floor_reason tier_rank floor_rank
+  local expected_binding="${7:-}" criteria_binding
   [[ -n "$session_id" && "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_selection_reason_codes_valid "$tier" "$source" "$reason_codes" || return 1
@@ -713,24 +742,37 @@ EOF
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   selection_file=$(dx_review_selection_file "$session_id") || return 1
-  dx_review_write_atomic "$selection_file" "2"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"
+  criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
+  case "$source" in
+    lifecycle-agent|lifecycle-assessor)
+      [[ "$criteria_binding" != "standalone" ]] || return 1
+      ;;
+    standalone-assessor)
+      [[ "$criteria_binding" == "standalone" ]] || return 1
+      ;;
+  esac
+  dx_review_write_atomic "$selection_file" "3"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"
 }
 
 dx_review_read_selection() {
-  local session_id="$1" repo_dir="${2:-$PWD}" selection_file raw
-  local version tier source reason_codes required_clean fingerprint extra current_fingerprint tier_min
+  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" selection_file raw
+  local version tier source reason_codes required_clean fingerprint criteria_binding extra current_fingerprint tier_min
   local floor_record floor_tier floor_reason tier_rank floor_rank
+  local current_binding
   selection_file=$(dx_review_selection_file "$session_id") || return 1
   [[ -f "$selection_file" ]] || return 1
   raw=$(cat "$selection_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier source reason_codes required_clean fingerprint extra <<EOF
+  IFS=$'\t' read -r version tier source reason_codes required_clean fingerprint criteria_binding extra <<EOF
 $raw
 EOF
   if [[ "$version" == "1" ]]; then
     fingerprint="$required_clean"
     required_clean=""
-  elif [[ "$version" != "2" ]]; then
+    criteria_binding="standalone"
+  elif [[ "$version" == "2" ]]; then
+    criteria_binding="standalone"
+  elif [[ "$version" != "3" ]]; then
     return 1
   fi
   [[ -z "$extra" ]] || return 1
@@ -754,7 +796,18 @@ EOF
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   current_fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   [[ "$current_fingerprint" == "$fingerprint" ]] || return 1
-  printf '%s\t%s\t%s\t%s\t%s\n' "$tier" "$source" "$reason_codes" "$required_clean" "$fingerprint"
+  dx_review_criteria_binding_valid "$criteria_binding" || return 1
+  current_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
+  [[ "$current_binding" == "$criteria_binding" ]] || return 1
+  case "$source" in
+    lifecycle-agent|lifecycle-assessor)
+      [[ "$criteria_binding" != "standalone" ]] || return 1
+      ;;
+    standalone-assessor)
+      [[ "$criteria_binding" == "standalone" ]] || return 1
+      ;;
+  esac
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$source" "$reason_codes" "$required_clean" "$fingerprint" "$criteria_binding"
 }
 
 dx_review_selection_valid() {
@@ -901,8 +954,8 @@ PY
 }
 
 dx_review_write_receipt() {
-  local session_id="$1" requested_tier="$2" required_clean="$3" clean_count="$4" repo_dir="${5:-$PWD}"
-  local tier tier_min fingerprint receipt_file ledger_hash
+  local session_id="$1" requested_tier="$2" required_clean="$3" clean_count="$4" repo_dir="${5:-$PWD}" expected_binding="${6:-}"
+  local tier tier_min fingerprint receipt_file ledger_hash criteria_binding
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_positive_integer "$clean_count" || return 1
@@ -913,21 +966,27 @@ dx_review_write_receipt() {
   dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" || return 1
   ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+  criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   receipt_file=$(dx_review_receipt_file "$session_id") || return 1
-  dx_review_write_atomic "$receipt_file" "2"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${ledger_hash}"
+  dx_review_write_atomic "$receipt_file" "3"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${ledger_hash}"$'\t'"${criteria_binding}"
 }
 
 dx_review_read_receipt() {
-  local session_id="$1" repo_dir="${2:-$PWD}" receipt_file raw
-  local version tier tier_min required_clean clean_count fingerprint ledger_hash extra current_fingerprint current_ledger_hash
+  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" receipt_file raw
+  local version tier tier_min required_clean clean_count fingerprint ledger_hash criteria_binding extra current_fingerprint current_ledger_hash current_binding
   receipt_file=$(dx_review_receipt_file "$session_id") || return 1
   [[ -f "$receipt_file" ]] || return 1
   raw=$(cat "$receipt_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier required_clean clean_count fingerprint ledger_hash extra <<EOF
+  IFS=$'\t' read -r version tier required_clean clean_count fingerprint ledger_hash criteria_binding extra <<EOF
 $raw
 EOF
-  [[ "$version" == "2" && -z "$extra" ]] || return 1
+  if [[ "$version" == "2" ]]; then
+    criteria_binding="standalone"
+  elif [[ "$version" != "3" ]]; then
+    return 1
+  fi
+  [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_positive_integer "$clean_count" || return 1
@@ -941,21 +1000,24 @@ EOF
   dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" || return 1
   current_ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$current_ledger_hash" == "$ledger_hash" ]] || return 1
-  printf '%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$clean_count" "$fingerprint" "$ledger_hash"
+  dx_review_criteria_binding_valid "$criteria_binding" || return 1
+  current_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
+  [[ "$current_binding" == "$criteria_binding" ]] || return 1
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$clean_count" "$fingerprint" "$ledger_hash" "$criteria_binding"
 }
 
 dx_review_receipt_valid() {
-  local session_id="$1" repo_dir="${2:-$PWD}" receipt selection
-  local receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_tier_min
-  local selection_tier selection_source selection_reasons selection_required selection_fingerprint
+  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" receipt selection
+  local receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding receipt_tier_min
+  local selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding
   [[ ! -f "$(dx_paused_file "$session_id")" ]] || return 1
   [[ ! -f "$(dx_review_state_file "$session_id")" ]] || return 1
-  receipt=$(dx_review_read_receipt "$session_id" "$repo_dir") || return 1
-  selection=$(dx_review_read_selection "$session_id" "$repo_dir") || return 1
-  IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash <<EOF
+  receipt=$(dx_review_read_receipt "$session_id" "$repo_dir" "$expected_binding") || return 1
+  selection=$(dx_review_read_selection "$session_id" "$repo_dir" "$expected_binding") || return 1
+  IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding <<EOF
 $receipt
 EOF
-  IFS=$'\t' read -r selection_tier selection_source selection_reasons selection_required selection_fingerprint <<EOF
+  IFS=$'\t' read -r selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding <<EOF
 $selection
 EOF
   receipt_tier_min=$(dx_review_tier_min_clean_passes "$receipt_tier") || return 1
@@ -964,7 +1026,8 @@ EOF
   : "$selection_source" "$selection_reasons" "$receipt_ledger_hash"
   [[ "$receipt_tier" == "$selection_tier" && \
      "$receipt_required" == "$selection_required" && \
-     "$receipt_fingerprint" == "$selection_fingerprint" ]]
+     "$receipt_fingerprint" == "$selection_fingerprint" && \
+     "$receipt_binding" == "$selection_binding" ]]
 }
 
 dx_review_read_findings_hash() {

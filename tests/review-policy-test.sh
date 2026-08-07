@@ -277,16 +277,38 @@ printf 'candidate\n' > "$REPO/candidate.txt"
 base_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
 
 session_id="review-policy"
+session_criteria_file=$(dx_review_criteria_file "$session_id")
+session_criteria_json='{"version":1,"source":"approved-plan","objectives":["Keep review state bound to approved requirements."],"acceptance_criteria":["Changed criteria invalidate review authorization."],"verification_requirements":["Run tests/review-policy-test.sh."]}'
+printf '%s\n' "$session_criteria_json" > "$session_criteria_file"
 dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$REPO"
-IFS=$'\t' read -r tier source reason selection_required fingerprint < <(dx_review_read_selection "$session_id" "$REPO")
+[[ "$(cut -f1 "$(dx_review_selection_file "$session_id")")" == "3" ]] || {
+  printf 'selection was not written with the criteria-bound schema\n' >&2
+  exit 1
+}
+session_criteria_hash=$(dx_review_criteria_hash "$session_criteria_file")
+IFS=$'\t' read -r tier source reason selection_required fingerprint selection_binding < <(dx_review_read_selection "$session_id" "$REPO" "$session_criteria_hash")
 assert_eq "normal" "$tier" "selection tier"
 assert_eq "lifecycle-agent" "$source" "selection source"
 assert_eq "bounded-production-change" "$reason" "selection reason"
 assert_eq "6" "$selection_required" "selection requirement"
 assert_eq "$base_fingerprint" "$fingerprint" "selection fingerprint"
+assert_eq "$session_criteria_hash" "$selection_binding" "selection criteria binding"
 assert_rejected "invented selection reason" dx_review_write_selection "$session_id" normal lifecycle-agent invented-agent-rationale "$REPO"
 assert_rejected "reserved reason with assessor source" dx_review_write_selection "$session_id" normal lifecycle-agent operator-override "$REPO"
 assert_rejected "selection tier contradicts reason" dx_review_write_selection "$session_id" normal lifecycle-agent cross-module "$REPO"
+
+standalone_session_id="review-policy-standalone"
+dx_review_write_selection "$standalone_session_id" normal environment operator-override "$REPO"
+IFS=$'\t' read -r _ _ _ _ _ standalone_binding < <(dx_review_read_selection "$standalone_session_id" "$REPO" standalone)
+assert_eq "standalone" "$standalone_binding" "standalone selection binding"
+printf '2\tnormal\tenvironment\toperator-override\t6\t%s\n' "$base_fingerprint" > "$(dx_review_selection_file "$standalone_session_id")"
+dx_review_selection_valid "$standalone_session_id" "$REPO" standalone
+printf '%s\n' "$session_criteria_json" > "$(dx_review_criteria_file "$standalone_session_id")"
+assert_rejected "standalone selection rejects criteria state" dx_review_selection_valid "$standalone_session_id" "$REPO" standalone
+rm -f "$(dx_review_criteria_file "$standalone_session_id")"
+printf '3\tnormal\tenvironment\toperator-override\t6\t%s\tSHORT\n' "$base_fingerprint" > "$(dx_review_selection_file "$standalone_session_id")"
+assert_rejected "selection rejects malformed criteria binding" dx_review_selection_valid "$standalone_session_id" "$REPO"
+dx_cleanup_session "$standalone_session_id"
 
 dx_review_write_state "$session_id" normal 6 4 2 "$REPO"
 IFS=$'\t' read -r state_tier required iteration clean_count state_fingerprint < <(dx_review_read_state "$session_id" "$REPO")
@@ -316,12 +338,13 @@ for ledger_iteration in 1 2 3 4 5 6 7 8; do
   dx_review_ledger_append "$session_id" "$ledger_iteration" "higher-clean-${ledger_iteration}" "$base_fingerprint" "$(printf '%016x' "$ledger_iteration")"
 done
 dx_review_write_receipt "$session_id" normal 8 8 "$REPO"
-IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash < <(dx_review_read_receipt "$session_id" "$REPO")
+IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding < <(dx_review_read_receipt "$session_id" "$REPO" "$session_criteria_hash")
 assert_eq "normal" "$receipt_tier" "higher-gate receipt tier"
 assert_eq "8" "$receipt_required" "higher-gate receipt requirement"
 assert_eq "8" "$receipt_clean" "higher-gate receipt clean count"
 assert_eq "$base_fingerprint" "$receipt_fingerprint" "higher-gate receipt fingerprint"
 [[ "$receipt_ledger_hash" =~ ^[a-f0-9]{64}$ ]]
+assert_eq "$session_criteria_hash" "$receipt_binding" "receipt criteria binding"
 assert_rejected "receipt gate must match selection" dx_review_receipt_valid "$session_id" "$REPO"
 dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$REPO" 8
 dx_review_receipt_valid "$session_id" "$REPO"
@@ -335,6 +358,13 @@ for ledger_iteration in 1 2 3 4 5 6; do
   dx_review_ledger_append "$session_id" "$ledger_iteration" "final-clean-${ledger_iteration}" "$base_fingerprint" "$(printf '%016x' "$ledger_iteration")"
 done
 dx_review_write_receipt "$session_id" normal 6 6 "$REPO"
+
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Keep review state bound to changed requirements."],"acceptance_criteria":["Changed criteria invalidate review authorization."],"verification_requirements":["Run tests/review-policy-test.sh."]}' > "$session_criteria_file"
+assert_rejected "criteria changes invalidate selection" dx_review_selection_valid "$session_id" "$REPO"
+assert_rejected "criteria changes invalidate receipt" dx_review_receipt_valid "$session_id" "$REPO"
+printf '%s\n' "$session_criteria_json" > "$session_criteria_file"
+dx_review_selection_valid "$session_id" "$REPO"
+dx_review_receipt_valid "$session_id" "$REPO"
 
 printf 'external change\n' >> "$REPO/app.txt"
 assert_rejected "stale selection" dx_review_selection_valid "$session_id" "$REPO"
@@ -382,5 +412,6 @@ dx_cleanup_session "$session_id"
 [[ ! -e "$(dx_review_selection_file "$session_id")" ]]
 [[ ! -e "$(dx_review_state_file "$session_id")" ]]
 [[ ! -e "$(dx_review_receipt_file "$session_id")" ]]
+[[ ! -e "$(dx_review_criteria_file "$session_id")" ]]
 
 printf 'review-policy-test passed\n'
