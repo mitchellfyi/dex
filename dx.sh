@@ -106,6 +106,17 @@ __dx_cli() {
       ;;
     uninit)    bash "$DEX_DIR/bin/uninit.sh" "$@" ;;
     reload)
+      if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+        echo "Usage: dx reload"
+        echo ""
+        echo "Reload Dex shell functions after updating the installation."
+        return 0
+      fi
+      if [[ $# -gt 0 ]]; then
+        dx_error "dx reload does not accept arguments."
+        dx_info "Usage: dx reload"
+        return 1
+      fi
       source "$DEX_DIR/dx.sh"
       echo "Reloaded Dex shell functions."
       ;;

@@ -34,6 +34,18 @@ zsh -fc '
     grep -Fq "Usage:" "$TEST_REPO/$command_name-help.out"
   done
 
+  dx reload --help > "$TEST_REPO/reload-help.out"
+  grep -Fq "Usage: dx reload" "$TEST_REPO/reload-help.out"
+  if grep -Fq "Reloaded Dex shell functions" "$TEST_REPO/reload-help.out"; then
+    print -u2 -- "dx reload --help reloaded the shell"
+    exit 1
+  fi
+  if dx reload unexpected > /dev/null 2> "$TEST_REPO/reload-invalid.out"; then
+    print -u2 -- "dx reload accepted an unexpected argument"
+    exit 1
+  fi
+  grep -Fq "does not accept arguments" "$TEST_REPO/reload-invalid.out"
+
   invalid_cases=(
     "dxcomplete unexpected"
     "dxreviewloop unexpected"
