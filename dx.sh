@@ -184,17 +184,32 @@ __dx_cli() {
         return 1
       fi
       local rev_phase="${2:-}"
-      local rev_name
+      local rev_name ticket_number=""
       if __dx_is_ticket "$raw"; then
-        rev_name="ticket-${raw//[^0-9]/}"
+        ticket_number="${raw//[^0-9]/}"
+        rev_name="ticket-${ticket_number}"
       else
         rev_name="task-$(dx_slugify "$raw")"
       fi
       local rev_root
       rev_root=$(dx_repo_root) || return 1
       local rev_dir="${rev_root}/.dex/worktrees/${rev_name}"
+      if [[ -n "$ticket_number" && ! -d "$rev_dir" ]] \
+        && __dx_resolve_existing_workspace_by_ticket "$ticket_number"; then
+        if [[ "$_dx_workspace_mode" != "worktree" ]]; then
+          dx_error "Ticket ${ticket_number} uses an in-place lifecycle; dx revert only accepts linked worktrees."
+          return 1
+        fi
+        rev_name="$_dx_wt_name"
+        rev_dir="${rev_root}/.dex/worktrees/${rev_name}"
+        dx_info "Resolved ticket ${ticket_number} to existing workspace ${rev_name}"
+      fi
       if [[ ! -d "$rev_dir" ]]; then
         dx_error "Worktree ${rev_name} not found."
+        return 1
+      fi
+      if ! dx_wt_is_registered "$rev_root" "$rev_dir"; then
+        dx_error "Workspace path is not a registered Git worktree: ${rev_dir}"
         return 1
       fi
       if [[ -z "$rev_phase" ]]; then
@@ -891,7 +906,7 @@ __dx_parse_last_session() {
 # ticket-N directory does not exist (e.g. the worktree was originally created
 # with a freeform description and the agent later linked it to a ticket).
 __dx_resolve_existing_workspace_by_ticket() {
-  local ticket="$1" record session_id wt_name wt_dir workspace_mode
+  local ticket="$1" record session_id wt_name wt_dir workspace_mode repo_root expected_dir
   [[ -n "$ticket" ]] || return 1
 
   record=$(dx_meta_find_workspace_by_ticket "$ticket") || return 1
@@ -903,6 +918,19 @@ __dx_resolve_existing_workspace_by_ticket() {
   record="${record#*$'\t'}"
   wt_dir="${record%%$'\t'*}"
   workspace_mode="${record#*$'\t'}"
+
+  [[ "$wt_name" =~ ^ticket-[0-9]+$ || "$wt_name" =~ ^task-[a-z0-9]+(-[a-z0-9]+)*$ ]] || return 1
+  repo_root=$(dx_repo_root) || return 1
+  case "$workspace_mode" in
+    worktree)
+      expected_dir="${repo_root}/.dex/worktrees/${wt_name}"
+      [[ "${wt_dir:A}" == "${expected_dir:A}" ]] || return 1
+      ;;
+    in-place)
+      [[ "${wt_dir:A}" == "${repo_root:A}" ]] || return 1
+      ;;
+    *) return 1 ;;
+  esac
 
   _dx_wt_name="$wt_name"
   _dx_wt_dir="$wt_dir"
@@ -3483,6 +3511,12 @@ dxrm() {
   if __dx_is_ticket "$raw_input"; then
     local num="${raw_input//[^0-9]/}"  # strip everything except digits
     wt_name="ticket-${num}"
+    if [[ ! -d "${worktrees_dir}/${wt_name}" ]] \
+      && ! git show-ref --verify --quiet "refs/heads/worktree-${wt_name}" 2>/dev/null \
+      && __dx_resolve_existing_workspace_by_ticket "$num"; then
+      wt_name="$_dx_wt_name"
+      dx_info "Resolved ticket ${num} to existing workspace ${wt_name}"
+    fi
   else
     # For freeform names, try multiple matches so the user can pass:
     #   "task-fix-login"  → exact dir name from dxls output
