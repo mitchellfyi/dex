@@ -109,6 +109,33 @@ if grep -Ev '^-q ' "$DX_TEST_CURL_LOG" | grep -q .; then
   exit 1
 fi
 
+python3 - "$TMP_DIR/unsafe-path.tar.gz" "$TMP_DIR/unsafe-link.tar.gz" <<'PY'
+import io
+import sys
+import tarfile
+from pathlib import Path
+
+path_archive = Path(sys.argv[1])
+with tarfile.open(path_archive, "w:gz") as bundle:
+    payload = b"outside"
+    member = tarfile.TarInfo("../outside")
+    member.size = len(payload)
+    bundle.addfile(member, io.BytesIO(payload))
+
+link_archive = Path(sys.argv[2])
+with tarfile.open(link_archive, "w:gz") as bundle:
+    member = tarfile.TarInfo("rtk")
+    member.type = tarfile.SYMTYPE
+    member.linkname = "/tmp/outside-rtk"
+    bundle.addfile(member)
+PY
+for unsafe_archive in "$TMP_DIR/unsafe-path.tar.gz" "$TMP_DIR/unsafe-link.tar.gz"; do
+  if dx_rtk_archive_safe "$unsafe_archive"; then
+    printf 'unsafe RTK archive unexpectedly passed: %s\n' "$unsafe_archive" >&2
+    exit 1
+  fi
+done
+
 cp "$TMP_DIR/fixtures/checksums.txt" "$TMP_DIR/fixtures/checksums.valid"
 printf '%064d  %s\n' 0 "$archive_name" > "$TMP_DIR/fixtures/checksums.txt"
 if dx_rtk_verify_archive_checksum \

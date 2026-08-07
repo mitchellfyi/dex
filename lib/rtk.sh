@@ -143,6 +143,38 @@ raise SystemExit(0 if digest.hexdigest() == matches[0] else 1)
 PY
 }
 
+dx_rtk_archive_safe() {
+  local archive="$1"
+  [[ -f "$archive" ]] || return 1
+
+  DX_RTK_ARCHIVE="$archive" python3 - <<'PY'
+import os
+import tarfile
+from pathlib import Path, PurePosixPath
+
+archive = Path(os.environ["DX_RTK_ARCHIVE"])
+member_count = 0
+uncompressed_bytes = 0
+try:
+    with tarfile.open(archive, mode="r:gz") as bundle:
+        for member in bundle:
+            member_count += 1
+            if member_count > 1000:
+                raise SystemExit(1)
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+                raise SystemExit(1)
+            if member.issym() or member.islnk() or not (member.isfile() or member.isdir()):
+                raise SystemExit(1)
+            if member.isfile():
+                uncompressed_bytes += member.size
+                if member.size > 128 * 1024 * 1024 or uncompressed_bytes > 256 * 1024 * 1024:
+                    raise SystemExit(1)
+except (OSError, tarfile.TarError, UnicodeError):
+    raise SystemExit(1)
+PY
+}
+
 dx_install_rtk_user_path_link() {
   local managed local_bin target current path_entry
 
@@ -260,9 +292,9 @@ dx_install_rtk_binary() {
     return 1
   fi
 
-  if tar -tzf "$archive" | grep -qE '^/|(^|/)\.\.(/|$)'; then
+  if ! dx_rtk_archive_safe "$archive"; then
     rm -rf "$temp_dir"
-    dx_warn "RTK archive contains unsafe paths; refusing to extract"
+    dx_warn "RTK archive contains unsafe entries; refusing to extract"
     return 1
   fi
 

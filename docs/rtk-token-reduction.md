@@ -28,7 +28,9 @@ before extraction, then checks the installed binary with
 `rtk rewrite "git status"`. Missing, duplicate, malformed, or mismatched
 checksum entries stop the install. The behavior check also avoids the known
 package-name collision with the unrelated Rust Type Kit binary without
-depending on RTK's own hook-install diagnostics.
+depending on RTK's own hook-install diagnostics. Before extraction, Dex also
+rejects path traversal, links, special files, excessive entry counts, and
+oversized expanded contents.
 
 ## Runtime Behavior
 
