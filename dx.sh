@@ -1794,9 +1794,14 @@ __dx_run_phases_inline() {
   dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Claude session exited before Dex lifecycle completed" "$final_step" "$terminal_data"
   dx_run_log_append_for_session "$session_id" "warn" "dx" "Claude session exited before lifecycle completed at Phase ${final_step}"
   dx_run_write_summary_for_session "$session_id" "blocked" "Claude session exited at Phase ${final_step}"
+  rm -f \
+    "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+    "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" \
+    "$(dx_paused_file "$session_id")" 2>/dev/null
+  dx_provider_cleanup_session_state "$session_id"
   echo "Claude session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
   echo "Resume with: ${resume_hint}"
-  return 0
+  return 1
 }
 
 # __dx_run_phases <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
@@ -2593,6 +2598,9 @@ $(__dx_provider_prompt)"
   if [[ $plan_exit -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     plan_status="max-iter"
     plan_exit=1
+  elif [[ $plan_exit -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
+    plan_status="missing-receipt"
+    plan_exit=1
   fi
   rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null
   if [[ $plan_exit -ne 0 ]]; then
@@ -2604,6 +2612,8 @@ $(__dx_provider_prompt)"
     echo ""
     if [[ "$plan_status" == "max-iter" ]]; then
       dx_info "dxloop paused during planning: max audit iterations reached without completion."
+    elif [[ "$plan_status" == "missing-receipt" ]]; then
+      dx_info "dxloop paused during planning: the provider exited without a completion receipt."
     else
       dx_info "dxloop interrupted during planning (exit code: $plan_exit)."
     fi
@@ -2616,6 +2626,7 @@ $(__dx_provider_prompt)"
   [[ -n "$session_name" ]] && impl_args+=(-n "$session_name")
   impl_args+=(--append-system-prompt "You are in a dxloop session. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool before any audit step, or when you lose track of what you are working on.")
 
+  touch "$(dx_active_file "$session_id")"
   dx_info "Phase: Implement (autonomous)"
   DEX_SESSION_ID="$session_id" \
   DEX_LOOP_ACTIVE=1 \
@@ -2629,6 +2640,9 @@ $(__dx_provider_prompt)"
   local loop_status="advance"
   if [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     loop_status="max-iter"
+    exit_code=1
+  elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
+    loop_status="missing-receipt"
     exit_code=1
   fi
 
@@ -2646,6 +2660,8 @@ $(__dx_provider_prompt)"
     echo ""
     if [[ "$loop_status" == "max-iter" ]]; then
       dx_info "dxloop paused: max audit iterations reached without completion."
+    elif [[ "$loop_status" == "missing-receipt" ]]; then
+      dx_info "dxloop paused: the provider exited without a completion receipt."
     else
       dx_info "dxloop interrupted (exit code: $exit_code)."
     fi
@@ -2829,6 +2845,9 @@ $(__dx_provider_prompt)"
   if [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     loop_status="max-iter"
     exit_code=1
+  elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
+    loop_status="missing-receipt"
+    exit_code=1
   fi
   local paused_file complete_paused=0
   paused_file=$(dx_paused_file "$session_id")
@@ -2843,6 +2862,8 @@ $(__dx_provider_prompt)"
     exit_code=1
   elif [[ "$loop_status" == "max-iter" ]]; then
     dx_info "dxcomplete paused: max audit iterations reached without completion."
+  elif [[ "$loop_status" == "missing-receipt" ]]; then
+    dx_info "dxcomplete paused: the provider exited without a completion receipt."
   elif [[ $exit_code -eq 0 && "$cleanup_mode" == "worktree" ]]; then
     __dx_cleanup_completed_workspace "$cleanup_wt_name" "$cleanup_wt_dir" "$cleanup_default_branch" "$cleanup_mode" "$session_id"
     exit_code=$?
