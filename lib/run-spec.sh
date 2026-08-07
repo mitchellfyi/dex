@@ -262,6 +262,9 @@ def validate_branch(value, path):
         fail(f"{path} is not a safe branch name")
     if ".." in value or "//" in value or "@{" in value or "\\" in value:
         fail(f"{path} is not a safe branch name")
+    components = value.split("/")
+    if any(component.startswith(".") or component.endswith(".lock") for component in components):
+        fail(f"{path} is not a safe branch name")
 
 
 def validate_url(value, path, *, base=False):

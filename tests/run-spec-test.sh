@@ -274,6 +274,28 @@ if dx_run_spec_normalize "$RELATIVE_SPEC" "$TMP_DIR/relative-normalized.json" > 
 fi
 assert_contains "repository.working_directory must be an absolute path" "$TMP_DIR/relative.out"
 
+bad_branch_index=0
+for bad_branch in "feature/.hidden" "feature/release.lock"; do
+  bad_branch_index=$((bad_branch_index + 1))
+  bad_branch_spec="$TMP_DIR/bad-branch-${bad_branch_index}.json"
+  write_spec "$bad_branch_spec" "run_test_bad_branch_${bad_branch_index}" "$REPO_DIR"
+  python3 - "$bad_branch_spec" "$bad_branch" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+document["repository"]["default_branch"] = sys.argv[2]
+path.write_text(json.dumps(document), encoding="utf-8")
+PY
+  if dx_run_spec_normalize "$bad_branch_spec" "$TMP_DIR/bad-branch-normalized.json" > "$TMP_DIR/bad-branch.out" 2>&1; then
+    printf 'Git-invalid branch unexpectedly passed: %s\n' "$bad_branch" >&2
+    exit 1
+  fi
+  assert_contains "repository.default_branch is not a safe branch name" "$TMP_DIR/bad-branch.out"
+done
+
 BAD_SYNC_SPEC="$TMP_DIR/bad-sync-run-spec.json"
 write_spec "$BAD_SYNC_SPEC" "run_test_bad_sync" "$REPO_DIR" "http://127.0.0.1:bad"
 if dx_run_spec_normalize "$BAD_SYNC_SPEC" "$TMP_DIR/bad-sync-normalized.json" > "$TMP_DIR/bad-sync.out" 2>&1; then
