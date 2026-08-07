@@ -10,8 +10,12 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 INIT_PROVIDER_SESSION_ID=""
 INIT_RUN_SESSION_ID=""
 INIT_RUN_ID=""
+INIT_ANALYSIS_OUTPUT_FILE=""
 __dx_init_cleanup() {
   local status=$?
+  if [[ -n "${INIT_ANALYSIS_OUTPUT_FILE:-}" ]]; then
+    command rm -f "$INIT_ANALYSIS_OUTPUT_FILE" 2>/dev/null || true
+  fi
   if [[ -n "${INIT_RUN_ID:-}" ]]; then
     if [[ $status -eq 0 ]]; then
       dx_event_emit_safe "$INIT_RUN_ID" "run.completed" "info" "Dex init completed" "" "{\"command\":\"dx init\"}"
@@ -106,8 +110,19 @@ if [[ ! -f "$dex_gitignore" ]]; then
 worktrees/
 GITIGNORE
   dx_done "Created .dex/.gitignore"
+elif grep -qxF 'worktrees/' "$dex_gitignore" 2>/dev/null; then
+  dx_ok ".dex/.gitignore already ignores worktrees/"
 else
-  dx_ok ".dex/.gitignore already exists"
+  dex_gitignore_tmp="${dex_gitignore}.tmp.$$"
+  {
+    cat "$dex_gitignore"
+    if [[ -s "$dex_gitignore" ]] && [[ -n "$(tail -c 1 "$dex_gitignore")" ]]; then
+      printf '\n'
+    fi
+    printf 'worktrees/\n'
+  } > "$dex_gitignore_tmp"
+  mv "$dex_gitignore_tmp" "$dex_gitignore"
+  dx_done "Added worktrees/ to .dex/.gitignore"
 fi
 
 # Minimal dex.md (will be overwritten by codebase analysis if run)
@@ -254,6 +269,8 @@ fi
 
 # ── 4. Codebase analysis via Claude Code CLI ──────────────────────────
 
+ANALYSIS_COMPLETED=0
+
 if [[ $SKIP_ANALYSIS -eq 1 ]]; then
   echo ""
   echo "Skipped codebase analysis (--skip-analysis)."
@@ -285,11 +302,13 @@ else
   provider_prompt=$(dx_provider_prompt)
   INIT_PROVIDER_SESSION_ID="${INIT_RUN_SESSION_ID:-init-$(dx_unique_session_id)}"
   dx_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID"
+  INIT_ANALYSIS_OUTPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/dex-init-analysis.XXXXXX")
   set +o pipefail
   DEX_SESSION_ID="$INIT_PROVIDER_SESSION_ID" DEX_RUN_ID="${INIT_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_provider_claude -p "${analysis_prompt}${provider_prompt}" \
     ${model_flags[@]+"${model_flags[@]}"} \
     --dangerously-skip-permissions --permission-mode bypassPermissions \
     --verbose --output-format stream-json --include-partial-messages \
+    | tee "$INIT_ANALYSIS_OUTPUT_FILE" \
     | dx_progress_filter \
     | dx_run_log_tee "${INIT_RUN_ID:-}" "init-provider"
   CLAUDE_EXIT=${PIPESTATUS[0]}
@@ -298,11 +317,31 @@ else
   INIT_PROVIDER_SESSION_ID=""
   if [[ $CLAUDE_EXIT -ne 0 ]]; then
     echo ""
-    echo "WARNING: Codebase analysis exited with code $CLAUDE_EXIT."
-    echo "The .dex/ skeleton was created but project-specific config may be incomplete."
-    echo "You can re-run the analysis manually:"
-    echo "  dx init --skip-config"
+    dx_error "Codebase analysis exited with code $CLAUDE_EXIT."
+    dx_info "The .dex/ skeleton was created, but project-specific config is incomplete."
+    dx_info "Re-run the analysis with: dx init --skip-config"
+    exit "$CLAUDE_EXIT"
   fi
+  if [[ ! -s "$INIT_ANALYSIS_OUTPUT_FILE" ]]; then
+    echo ""
+    dx_error "Codebase analysis exited without returning any provider output."
+    dx_info "The .dex/ skeleton was created, but project-specific config is incomplete."
+    dx_info "Re-run the analysis with: dx init --skip-config"
+    exit 1
+  fi
+  if [[ ! -s "$dex_md" ]] \
+    || ! grep -q '^## Tech Stack[[:space:]]*$' "$dex_md" \
+    || ! grep -q '^## Quality Gates[[:space:]]*$' "$dex_md" \
+    || ! grep -q '^## Project Structure[[:space:]]*$' "$dex_md"; then
+    echo ""
+    dx_error "Codebase analysis did not produce a complete .dex/dex.md."
+    dx_info "Expected generated sections: Tech Stack, Quality Gates, and Project Structure."
+    dx_info "Re-run the analysis with: dx init --skip-config"
+    exit 1
+  fi
+  command rm -f "$INIT_ANALYSIS_OUTPUT_FILE"
+  INIT_ANALYSIS_OUTPUT_FILE=""
+  ANALYSIS_COMPLETED=1
 fi
 
 # ── 5. Configure integrations ─────────────────────────────────────────
@@ -338,7 +377,7 @@ fi
 if [[ "$TOOL_BOOTSTRAP_RAN" -eq 1 ]]; then
   echo "  - Claude/Codex tooling installed with Dex links, official MCPs, and safe official plugins"
 fi
-if [[ $SKIP_ANALYSIS -eq 0 ]] && command -v claude &>/dev/null; then
+if [[ $ANALYSIS_COMPLETED -eq 1 ]]; then
   echo "  - Claude analyzed the codebase and generated project-specific config"
 fi
 if [[ $SKIP_CONFIG -eq 0 ]]; then
