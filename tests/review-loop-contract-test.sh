@@ -24,7 +24,16 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
     source "$DEX_DIR/dx.sh"
     cd "$DEX_DIR"
 
-    __dx_refresh_provider() { DX_CLAUDE_FLAGS=(); return 0; }
+    __dx_refresh_provider() {
+      if [[ "$TEST_AGENT_HOST" == "codex" ]]; then
+        DX_PROVIDER_ENGINE=codex-plugin
+        DX_PROVIDER_AGENT=codex
+      else
+        DX_PROVIDER_ENGINE=claude
+        DX_PROVIDER_AGENT=claude
+      fi
+      DX_CLAUDE_FLAGS=()
+    }
     dx_agent_host() { print -r -- "$TEST_AGENT_HOST"; }
     dx_agent_host_label() { print -r -- "$TEST_AGENT_HOST"; }
     dx_session_id() { print -r -- "contract-${TEST_AGENT_HOST}-${TEST_REVIEW_SCENARIO}"; }

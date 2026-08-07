@@ -80,7 +80,11 @@ REVIEW_CALL_FILE="$TMP_DIR/review-calls.out" \
 zsh -fc '
   source "$DEX_DIR/dx.sh"
   cd "$DEX_DIR"
-  __dx_refresh_provider() { DX_CLAUDE_FLAGS=(); return 0; }
+  __dx_refresh_provider() {
+    DX_PROVIDER_ENGINE=claude
+    DX_PROVIDER_AGENT=claude
+    DX_CLAUDE_FLAGS=()
+  }
   dx_agent_host() { print -r -- claude; }
   dx_agent_host_label() { print -r -- Claude; }
   dx_session_id() { print -r -- review-profile-test; }

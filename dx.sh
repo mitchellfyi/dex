@@ -296,6 +296,38 @@ __dx_claude() {
   dx_provider_claude "$@"
 }
 
+unalias __dx_resolved_provider_agent 2>/dev/null; unfunction __dx_resolved_provider_agent 2>/dev/null
+__dx_resolved_provider_agent() {
+  local provider_agent
+  provider_agent=$(dx_agent_for_engine "${DX_PROVIDER_ENGINE:-}" 2>/dev/null || true)
+  if [[ -z "$provider_agent" ]]; then
+    dx_error "Dex could not resolve the selected provider engine."
+    return 1
+  fi
+  printf '%s\n' "$provider_agent"
+}
+
+unalias __dx_require_resolved_provider_cli 2>/dev/null; unfunction __dx_require_resolved_provider_cli 2>/dev/null
+__dx_require_resolved_provider_cli() {
+  local provider_agent
+  provider_agent=$(__dx_resolved_provider_agent) || return 1
+
+  if [[ "$provider_agent" == "codex" ]]; then
+    if ! command -v codex &>/dev/null; then
+      dx_error "Codex CLI not found in PATH."
+      dx_info "Install Codex and sign in with ChatGPT, then try again."
+      return 1
+    fi
+    return 0
+  fi
+
+  if ! command -v claude &>/dev/null; then
+    dx_error "Claude Code CLI not found in PATH."
+    dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
+    return 1
+  fi
+}
+
 unalias __dx_provider_prompt 2>/dev/null; unfunction __dx_provider_prompt 2>/dev/null
 __dx_provider_prompt() {
   dx_provider_prompt
@@ -2536,11 +2568,14 @@ dxloop() {
     prompt="${(j: :)@}"
   fi
 
-  if ! command -v claude &>/dev/null; then
-    dx_error "Claude Code CLI not found in PATH."
-    dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
+  local provider_agent
+  provider_agent=$(__dx_resolved_provider_agent) || return 1
+  if [[ "$provider_agent" == "codex" ]]; then
+    dx_error "dxloop requires an interactive Claude Code session for plan approval and session resume."
+    dx_info "The selected provider profile resolves to the non-interactive Codex CLI. Run 'DX_AGENT=claude dxloop <prompt>', or use 'dx --agent codex <task>' for the direct Codex lifecycle."
     return 1
   fi
+  __dx_require_resolved_provider_cli || return 1
 
   # Validate we're in a git repo (needed for session ID derivation)
   local repo_root
@@ -2708,11 +2743,14 @@ dxrefine() {
     return 1
   fi
 
-  if ! command -v claude &>/dev/null; then
-    dx_error "Claude Code CLI not found in PATH."
-    dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
+  local provider_agent
+  provider_agent=$(__dx_resolved_provider_agent) || return 1
+  if [[ "$provider_agent" == "codex" ]]; then
+    dx_error "dxrefine requires an interactive Claude Code session for clarification and plan approval."
+    dx_info "The selected provider profile resolves to the non-interactive Codex CLI. Run 'dx --agent claude refine <ticket-or-description>'."
     return 1
   fi
+  __dx_require_resolved_provider_cli || return 1
 
   # Must be in a git repo so the skill can read AGENTS.md and codebase context.
   local repo_root
@@ -2793,11 +2831,9 @@ unalias dxcomplete 2>/dev/null; unfunction dxcomplete 2>/dev/null
 dxcomplete() {
   __dx_refresh_provider || return 1
 
-  if ! command -v claude &>/dev/null; then
-    dx_error "Claude Code CLI not found in PATH."
-    dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
-    return 1
-  fi
+  local provider_agent
+  provider_agent=$(__dx_resolved_provider_agent) || return 1
+  __dx_require_resolved_provider_cli || return 1
 
   # Must be in a git repo (PR is required)
   if ! git rev-parse --git-dir &>/dev/null; then
@@ -2830,7 +2866,10 @@ dxcomplete() {
 
   # Use a session ID derived from the current location (worktree-aware via dx_session_id)
   local session_id start_dir cleanup_repo_root cleanup_default_branch cleanup_mode="" cleanup_wt_name="" cleanup_wt_dir=""
+  local complete_file paused_file
   session_id=$(dx_session_id)
+  complete_file=$(dx_complete_file "$session_id")
+  paused_file=$(dx_paused_file "$session_id")
   start_dir=$(pwd)
   cleanup_repo_root=$(dx_repo_root 2>/dev/null || echo "")
   cleanup_default_branch=$(dx_default_branch "$start_dir")
@@ -2845,7 +2884,24 @@ dxcomplete() {
   # enforces completion criteria. See: hooks/phase-loop.sh prompt-loop branch.
   mkdir -p "$DX_LOOP_DIR"
   touch "$(dx_active_file "$session_id")"
-  rm -f "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_paused_file "$session_id")" "$(dx_watch_pause_file "$session_id")"
+  rm -f "$complete_file" "$(dx_loop_file "$session_id")" "$paused_file" "$(dx_watch_pause_file "$session_id")"
+
+  local completion_prompt
+  completion_prompt="Invoke the Skill tool with skill: \"dxcomplete\". Run the full completion workflow: verify the PR is ready for review, request configured reviewers, post @mention comments, monitor CI and reviews via /loop 5m /dxwatchpr, address CI failures and review comments, and close the ticket when all checks pass and all successfully requested reviewers have approved.
+$(__dx_provider_prompt)"
+
+  if [[ "$provider_agent" == "codex" ]]; then
+    completion_prompt="Run the standalone Dex completion workflow for PR #${pr_num}. Read skills/dxcomplete/SKILL.md and skills/dxwatchpr/SKILL.md, then carry out their checks and fixes directly in this Codex session.
+
+Direct Codex completion contract:
+- Codex has no Claude Stop hook or /loop scheduler. Perform the bounded watcher cycles synchronously, with at most ${DEX_COMPLETE_MAX_CYCLES:-$DX_COMPLETE_MAX_CYCLES} cycles and the configured ${DEX_COMPLETE_WAIT_MINUTES:-$DX_COMPLETE_WAIT_MINUTES}-minute interval.
+- Do not merge the PR.
+- On success, and only after every completion criterion passes, touch: ${complete_file}
+- If the bounded watch window expires or external state blocks completion, touch: ${paused_file}
+- Write exactly one of those receipts. Do not claim completion without the success receipt.
+
+Use the humanizer skill before posting user-facing PR or ticket prose."
+  fi
 
   DEX_SESSION_ID="$session_id" \
   DEX_LOOP_ACTIVE=1 \
@@ -2855,27 +2911,35 @@ dxcomplete() {
   DEX_COMPLETE_WAIT_MINUTES="${DEX_COMPLETE_WAIT_MINUTES:-$DX_COMPLETE_WAIT_MINUTES}" \
   DEX_DIR="$DEX_DIR" \
   __dx_claude "${DX_CLAUDE_FLAGS[@]}" -n "dxcomplete-pr-${pr_num}" \
-    "Invoke the Skill tool with skill: \"dxcomplete\". Run the full completion workflow: verify the PR is ready for review, request configured reviewers, post @mention comments, monitor CI and reviews via /loop 5m /dxwatchpr, address CI failures and review comments, and close the ticket when all checks pass and all successfully requested reviewers have approved.
-$(__dx_provider_prompt)"
+    "$completion_prompt"
 
   local exit_code=$?
-  local loop_status="advance"
-  if [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
+  local loop_status="advance" receipt_conflict=0
+  if [[ "$provider_agent" == "codex" ]]; then
+    if [[ -f "$complete_file" && -f "$paused_file" ]]; then
+      receipt_conflict=1
+      exit_code=1
+    elif [[ $exit_code -eq 0 && ! -f "$complete_file" && ! -f "$paused_file" ]]; then
+      loop_status="missing-receipt"
+      exit_code=1
+    fi
+  elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     loop_status="max-iter"
     exit_code=1
   elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
     loop_status="missing-receipt"
     exit_code=1
   fi
-  local paused_file complete_paused=0
-  paused_file=$(dx_paused_file "$session_id")
+  local complete_paused=0
   [[ -f "$paused_file" ]] && complete_paused=1
 
   # Clean up
-  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" "$paused_file" 2>/dev/null
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_file "$session_id")" "$complete_file" "$paused_file" 2>/dev/null
   dx_provider_cleanup_session_state "$session_id"
 
-  if [[ $complete_paused -eq 1 ]]; then
+  if [[ $receipt_conflict -eq 1 ]]; then
+    dx_info "dxcomplete rejected the provider result: completion and pause receipts were both present."
+  elif [[ $complete_paused -eq 1 ]]; then
     dx_info "dxcomplete paused before completion; local worktree/branch cleanup was skipped."
     exit_code=1
   elif [[ "$loop_status" == "max-iter" ]]; then
@@ -2909,21 +2973,9 @@ unalias dxreviewloop 2>/dev/null; unfunction dxreviewloop 2>/dev/null
 dxreviewloop() {
   __dx_refresh_provider || return 1
 
-  local agent_host
-  agent_host=$(dx_agent_host)
-  if [[ "$agent_host" == "codex" ]]; then
-    if ! command -v codex &>/dev/null; then
-      dx_error "Codex CLI not found in PATH."
-      dx_info "Install Codex and sign in, then try again."
-      return 1
-    fi
-  else
-    if ! command -v claude &>/dev/null; then
-      dx_error "Claude Code CLI not found in PATH."
-      dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
-      return 1
-    fi
-  fi
+  local provider_agent
+  provider_agent=$(__dx_resolved_provider_agent) || return 1
+  __dx_require_resolved_provider_cli || return 1
 
   if ! git rev-parse --git-dir &>/dev/null; then
     dx_error "Not in a git repository."
@@ -3018,7 +3070,7 @@ dxreviewloop() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "  DEX — dxreviewloop (${review_profile}, ${required_clean} clean pass(es))"
   echo ""
-  echo "  Agent:  $(dx_agent_host_label)"
+  echo "  Agent:  $(dx_agent_label "$provider_agent")"
   echo "  Branch: ${branch}"
   echo "  Scope:  ${scope_name} (${files_changed} files)"
   echo "  Depth:  ${review_profile} (${required_clean} clean, max ${max_iter} iterations)"
@@ -3140,7 +3192,7 @@ $(__dx_provider_prompt)"
     message="${message//__REVIEW_CONTEXT_FILE__/$review_context_file}"
     message="${message//__PASS_COMPLETE_FILE__/$pass_complete_file}"
     local exit_code=0
-    if [[ "$agent_host" == "codex" ]]; then
+    if [[ "$provider_agent" == "codex" ]]; then
       local codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
       local codex_message
       codex_message="You are running this Dex review-wave pass inside Codex.
@@ -3209,9 +3261,9 @@ ${message}"
     # hook, and a provider can otherwise exit successfully with partial state.
     local review_contract_error=""
     if dx_review_result_valid "$result"; then
-      if [[ "$agent_host" == "codex" && ! -f "$pass_complete_file" ]]; then
+      if [[ "$provider_agent" == "codex" && ! -f "$pass_complete_file" ]]; then
         review_contract_error="completion receipt missing"
-      elif [[ "$agent_host" != "codex" && ! -f "$pass_complete_file" && -f "$(dx_active_file "$pass_session_id")" ]]; then
+      elif [[ "$provider_agent" != "codex" && ! -f "$pass_complete_file" && -f "$(dx_active_file "$pass_session_id")" ]]; then
         review_contract_error="completion receipt missing"
       elif ! dx_review_context_valid "$review_context_file"; then
         review_contract_error="context pack missing or empty"
@@ -3248,7 +3300,7 @@ ${message}"
 
     if ! dx_review_result_valid "$result"; then
       echo ""
-      dx_info "dxreviewloop received invalid review result from ${agent_host}: ${result}"
+      dx_info "dxreviewloop received invalid review result from ${provider_agent}: ${result}"
       dx_provider_cleanup_session_state "$session_id"
       rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
       return 1
@@ -3256,7 +3308,7 @@ ${message}"
 
     if [[ -n "$review_contract_error" ]]; then
       echo ""
-      dx_info "dxreviewloop rejected the ${agent_host} review pass: ${review_contract_error}."
+      dx_info "dxreviewloop rejected the ${provider_agent} review pass: ${review_contract_error}."
       dx_provider_cleanup_session_state "$session_id"
       rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
       return 1
