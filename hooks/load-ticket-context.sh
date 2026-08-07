@@ -17,7 +17,7 @@ BRANCH="${BRANCH//[^A-Za-z0-9._\/\-]/_}"
 TICKET_NUM=""
 if [[ "$BRANCH" != worktree-task-* ]]; then
   # Extract ticket number from branch name (handles: ticket-999, ENG-999, feature/ENG-999, etc.)
-  TICKET_NUM=$(echo "$BRANCH" | grep -oE 'ticket-[0-9]+' | grep -oE '[0-9]+' || true)
+  TICKET_NUM=$(printf '%s\n' "$BRANCH" | grep -oE 'ticket-[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
   if [[ -z "$TICKET_NUM" ]]; then
     # Fallback: look for UPPERCASE project prefixes (e.g., ENG-123, PROJ-456).
     # Requires uppercase to avoid false positives on common branch name segments

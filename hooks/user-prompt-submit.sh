@@ -45,6 +45,12 @@ __dx_complete_phase_active() {
 __dx_prompt_resumes_watchers() {
   local prompt_lc="$1"
 
+  # Keep the watcher paused when the user explicitly negates a nearby resume
+  # action. This check must run before the positive keyword checks below.
+  if [[ "$prompt_lc" =~ (do[[:space:]]+not|don.t|dont|never)[[:space:]]+([^[:space:]]+[[:space:]]+){0,3}(resume|restart|continue|run|start|enable|watch|monitor|/dxcomplete) ]]; then
+    return 1
+  fi
+
   [[ "$prompt_lc" == *"/dxcomplete"* ]] && return 0
 
   if [[ "$prompt_lc" == *"resume"* ]]; then
