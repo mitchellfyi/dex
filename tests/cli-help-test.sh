@@ -80,4 +80,24 @@ run_entrypoint_checks status "$ROOT/bin/status.sh" "Usage: dx status"
 run_entrypoint_checks config "$ROOT/bin/config.sh" "Usage: dx config"
 run_entrypoint_checks uninit "$ROOT/bin/uninit.sh" "Usage: dx uninit"
 
+tools_home="$TMP_DIR/tools/home"
+tools_repo="$TMP_DIR/tools/repo"
+mkdir -p "$tools_home" "$tools_repo"
+git -C "$tools_repo" init -q
+(
+  cd "$tools_repo"
+  HOME="$tools_home" DEX_DIR="$ROOT" DX_RTK_ENABLED=0 \
+    bash "$ROOT/bin/tools.sh" --help
+) > "$TMP_DIR/tools-help.out" 2>&1
+assert_contains "Usage: dx tools [command]" "$TMP_DIR/tools-help.out"
+if (
+  cd "$tools_repo"
+  HOME="$tools_home" DEX_DIR="$ROOT" DX_RTK_ENABLED=0 \
+    bash "$ROOT/bin/tools.sh" doctor unexpected
+) > "$TMP_DIR/tools-extra.out" 2>&1; then
+  printf 'tools accepted an extra argument\n' >&2
+  exit 1
+fi
+assert_contains "dx tools accepts one command" "$TMP_DIR/tools-extra.out"
+
 printf 'CLI help tests passed\n'

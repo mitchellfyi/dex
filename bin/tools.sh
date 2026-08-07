@@ -19,6 +19,12 @@ Commands:
 USAGE
 }
 
+if [[ $# -gt 1 ]]; then
+  dx_error "dx tools accepts one command."
+  usage >&2
+  exit 1
+fi
+
 repo_root=""
 if repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   :
