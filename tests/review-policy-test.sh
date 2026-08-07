@@ -80,6 +80,24 @@ assert_rejected "assessment result tier consistency" dx_review_parse_assessment_
 printf '%s\n' '{"tier":"complex","reason_codes":"cross-module","extra":"prose"}' > "$assessment_file"
 assert_rejected "assessment result extra field" dx_review_parse_assessment_file "$assessment_file"
 
+criteria_file=$(dx_review_criteria_file criteria-policy)
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Preserve the public behavior."],"acceptance_criteria":["The command returns the documented result."],"verification_requirements":["Run tests/review-policy-test.sh."]}' > "$criteria_file"
+dx_review_criteria_valid "$criteria_file"
+criteria_hash=$(dx_review_criteria_hash "$criteria_file")
+[[ "$criteria_hash" =~ ^[a-f0-9]{64}$ ]] || {
+  printf 'criteria hash is not a full lowercase SHA-256 digest\n' >&2
+  exit 1
+}
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":[],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"
+assert_rejected "criteria require an objective" dx_review_criteria_valid "$criteria_file"
+printf '%s\n' '{"version":1,"source":"conversation","objectives":["Implement the change."],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"
+assert_rejected "criteria source is bounded" dx_review_criteria_valid "$criteria_file"
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Implement the change."],"acceptance_criteria":["The command works.","The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"
+assert_rejected "criteria reject duplicates" dx_review_criteria_valid "$criteria_file"
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":[" Implement the change."],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."],"extra":true}' > "$criteria_file"
+assert_rejected "criteria reject whitespace and extra fields" dx_review_criteria_valid "$criteria_file"
+rm -f "$criteria_file"
+
 for result in \
   CLEAN \
   FINDINGS_FIXED:1 \

@@ -192,6 +192,72 @@ EOF
   printf '%s\t%s\n' "$tier" "$reason_codes"
 }
 
+# Lifecycle review criteria are deliberately small, one-line JSON strings. The
+# strict shape makes the approved requirements portable without turning a state
+# file into an unbounded prompt or command channel.
+dx_review_criteria_valid() {
+  local criteria_file="$1"
+  [[ -f "$criteria_file" ]] || return 1
+  python3 - "$criteria_file" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+try:
+    size = os.path.getsize(path)
+    if size < 1 or size > 65536:
+        raise ValueError
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+    raise SystemExit(1)
+
+required_keys = {
+    "version",
+    "source",
+    "objectives",
+    "acceptance_criteria",
+    "verification_requirements",
+}
+if not isinstance(payload, dict) or set(payload) != required_keys:
+    raise SystemExit(1)
+if payload["version"] != 1:
+    raise SystemExit(1)
+if payload["source"] not in {"approved-plan", "headless-run-spec"}:
+    raise SystemExit(1)
+
+limits = {
+    "objectives": 32,
+    "acceptance_criteria": 64,
+    "verification_requirements": 64,
+}
+for key, limit in limits.items():
+    values = payload[key]
+    if not isinstance(values, list) or not 1 <= len(values) <= limit:
+        raise SystemExit(1)
+    if len(values) != len(set(values)):
+        raise SystemExit(1)
+    for value in values:
+        if not isinstance(value, str) or not 1 <= len(value) <= 2000:
+            raise SystemExit(1)
+        if value != value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise SystemExit(1)
+PY
+}
+
+dx_review_criteria_hash() {
+  local criteria_file="$1"
+  dx_review_criteria_valid "$criteria_file" || return 1
+  python3 - "$criteria_file" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    print(hashlib.sha256(handle.read()).hexdigest())
+PY
+}
+
 dx_review_result_valid() {
   local result="${1:-}" reason=""
   [[ -n "$result" && "$result" != *$'\n'* && "$result" != *$'\r'* ]] || return 1

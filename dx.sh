@@ -4653,7 +4653,7 @@ dxclean() {
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
   local old_files
-  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context review-selection review-evidence.json review-ledger review-receipt busy busy-notice started ready watch-pause watch-lock" 7)
+  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context review-criteria.json review-selection review-evidence.json review-ledger review-receipt busy busy-notice started ready watch-pause watch-lock" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))
