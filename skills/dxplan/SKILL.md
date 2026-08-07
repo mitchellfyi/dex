@@ -331,6 +331,10 @@ dx_review_criteria_valid "$CRITERIA_FILE" || exit 1
 touch "$(dx_phase_ready_file "$SESSION_ID" 1)"
 ```
 
+On the first Stop after the ready marker exists, the lifecycle controller seals
+the canonical criteria hash as approval revision 1. A later replacement cannot
+advance until the user approves it and Phase 2 explicitly rotates that seal.
+
 Then print only a brief confirmation if needed and stop once so the hook can audit the plan and inject Phase 2 in the same Claude session. Do **not** tell the user to run `/dximplement`, do **not** ask whether to continue, and do **not** wait for another user prompt.
 
 ## Notes

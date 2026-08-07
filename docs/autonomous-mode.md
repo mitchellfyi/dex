@@ -79,6 +79,18 @@ findings, and rechecks affected surfaces. Later reviewers receive no prior
 reports, findings, fingerprints, clean counts, telemetry, or stale conversation
 context.
 
+Phase 1 also saves the approved objectives, acceptance criteria, and
+verification requirements in a strict JSON artifact. Lifecycle assessors and
+review waves receive a fresh child-scoped copy, never the parent path. The
+Phase 1 transition seals the canonical criteria hash. An explicitly reapproved
+replacement increments the seal revision and clears prior selection, state,
+ledger, and receipts. The sealed hash is bound to state, every clean ledger row,
+the risk selection, evidence, and the final receipt. Dex checks both criteria
+copies before and after each provider call, and evidence carries an ordered hash
+for every supplied item. Missing, changed, or partially covered criteria pause
+review without clean credit. Standalone review has no criteria artifact and
+carries an explicit `N/A` binding with empty criteria coverage.
+
 Only a wave with zero verified findings and zero fixes writes `CLEAN`. A wave
 that fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
 fresh review of the updated scope. A valid upward escalation also resets the
@@ -358,13 +370,20 @@ Loop state is stored in `~/.claude/.dex-loops/`:
   `PHASE_2_COMPLETE` without it
 - `.phase-3.busy` — Phase 3 marker written by `dxreviewloop` while a review wave is running; the Stop hook does not count audit iterations while waiting
 - `.phase-3.busy-notice` — timestamp used to throttle repeated Phase 3 busy-gate notices while the same review pass is still running
-- `.review-selection` — risk tier, selection source, bounded reason codes, and
-  scope fingerprint recorded before the first wave and rebound after review
-  fixes
+- `.review-criteria.json` — strict approved objectives, acceptance criteria,
+  and verification requirements created after plan approval; each lifecycle
+  assessor and wave gets a temporary child-scoped copy
+- `.review-criteria-approval` — versioned approval seal containing the canonical
+  criteria hash; replacements require explicit reapproval and invalidate prior
+  review authorization
+- `.review-selection` — risk tier, selection source, bounded reason codes,
+  scope fingerprint, and criteria binding recorded before the first wave and
+  rebound after review fixes
 - `.review-state` — selected tier, required clean count, iteration, clean count,
-  and scope fingerprint used to resume an unchanged review
-- `.review-receipt` — successful clean-gate receipt tied to the reviewed scope;
-  Phase 3 does not advance on prose success alone
+  scope fingerprint, and criteria binding used to resume an unchanged review
+- `.review-receipt` — successful clean-gate receipt tied to the reviewed scope,
+  clean ledger, and criteria binding; Phase 3 does not advance on prose success
+  alone
 - `.review-context` — pass-scoped compact context pack; each fresh reviewer gets
   a new path and no previous review report
 - `.findings` — transient findings fingerprints used only by the outer wrapper

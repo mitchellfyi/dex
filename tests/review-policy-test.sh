@@ -111,6 +111,55 @@ printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["<approved ob
 assert_rejected "criteria reject placeholders" dx_review_criteria_valid "$criteria_file"
 rm -f "$criteria_file"
 
+approval_session="criteria-approval-policy"
+approval_criteria_file=$(dx_review_criteria_file "$approval_session")
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Seal the approved requirements."],"acceptance_criteria":["Later changes require explicit reapproval."],"verification_requirements":["Run tests/review-policy-test.sh."]}' > "$approval_criteria_file"
+approval_hash_a=$(dx_review_criteria_hash "$approval_criteria_file")
+dx_review_approve_criteria "$approval_session" initial "$approval_hash_a" >/dev/null
+assert_eq "$approval_hash_a" "$(dx_review_read_criteria_approval "$approval_session")" "initial criteria approval"
+assert_eq "1" "$(cut -f2 "$(dx_review_criteria_approval_file "$approval_session")")" "initial approval revision"
+dx_review_approve_criteria "$approval_session" initial "$approval_hash_a" >/dev/null
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Seal the reapproved requirements."],"acceptance_criteria":["Rotation invalidates earlier authorization."],"verification_requirements":["Run tests/review-policy-test.sh."]}' > "$approval_criteria_file"
+approval_hash_b=$(dx_review_criteria_hash "$approval_criteria_file")
+assert_rejected "initial approval cannot rotate criteria" dx_review_approve_criteria "$approval_session" initial "$approval_hash_b"
+assert_rejected "reapproval rejects the wrong previous hash" dx_review_approve_criteria "$approval_session" reapproved "$(printf '0%.0s' {1..64})" "$approval_hash_b"
+touch "$(dx_review_state_file "$approval_session")" "$(dx_review_ledger_file "$approval_session")" "$(dx_review_receipt_file "$approval_session")"
+dx_review_approve_criteria "$approval_session" reapproved "$approval_hash_a" "$approval_hash_b" >/dev/null
+assert_eq "$approval_hash_b" "$(dx_review_read_criteria_approval "$approval_session")" "rotated criteria approval"
+assert_eq "2" "$(cut -f2 "$(dx_review_criteria_approval_file "$approval_session")")" "rotated approval revision"
+[[ ! -e "$(dx_review_state_file "$approval_session")" && ! -e "$(dx_review_ledger_file "$approval_session")" && ! -e "$(dx_review_receipt_file "$approval_session")" ]] || {
+  printf 'criteria reapproval retained derived authorization\n' >&2
+  exit 1
+}
+touch "$(dx_review_state_file "$approval_session")"
+dx_review_approve_criteria "$approval_session" reapproved "$approval_hash_b" "$approval_hash_b" >/dev/null
+[[ ! -e "$(dx_review_state_file "$approval_session")" ]] || {
+  printf 'idempotent criteria reapproval retained derived authorization\n' >&2
+  exit 1
+}
+dx_cleanup_session "$approval_session"
+[[ ! -e "$(dx_review_criteria_approval_file "$approval_session")" ]]
+
+copy_source=$(dx_review_criteria_file criteria-copy-source)
+copy_target=$(dx_review_criteria_file criteria-copy-target)
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Copy approved requirements safely."],"acceptance_criteria":["The copied artifact has the same canonical content."],"verification_requirements":["Run tests/review-policy-test.sh."]}' > "$copy_source"
+copy_hash=$(dx_review_criteria_hash "$copy_source")
+dx_review_copy_criteria "$copy_source" "$copy_target" "$copy_hash"
+assert_eq "$copy_hash" "$(dx_review_criteria_hash "$copy_target")" "criteria copy binding"
+assert_rejected "criteria copy rejects the wrong binding" dx_review_copy_criteria "$copy_source" "$copy_target" "$(printf '0%.0s' {1..64})"
+rm -f "$copy_source" "$copy_target"
+
+context_file="$TMP_DIR/review-context"
+{
+  printf '%s\n\n' '## Scope' 'Policy fixture scope.'
+  printf '%s\n\n' '## Acceptance Criteria' 'Criteria binding: standalone'
+  printf '%s\n\n' '## Deterministic Checks' 'The policy test passed.'
+  printf '%s\n\n' '## Review Coverage' 'Core domains covered.'
+  printf '%s\n' '## Verification' 'Verifier passed.'
+} > "$context_file"
+dx_review_context_valid "$context_file" standalone
+assert_rejected "context rejects the wrong criteria binding" dx_review_context_valid "$context_file" "$copy_hash"
+
 for result in \
   CLEAN \
   FINDINGS_FIXED:1 \
@@ -158,6 +207,17 @@ assert_rejected "clean evidence requires passing checks" dx_review_evidence_vali
 printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":1,\"fixes_applied\":1}" > "$evidence_file"
 dx_review_evidence_valid "$evidence_file" FINDINGS_FIXED:1 light "$base_fingerprint"
 assert_rejected "evidence is bound to scope" dx_review_evidence_valid "$evidence_file" FINDINGS_FIXED:1 light "$(printf '0%.0s' {1..64})"
+
+evidence_criteria_file="$TMP_DIR/evidence-criteria.json"
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Review every approved requirement."],"acceptance_criteria":["Evidence accounts for each criteria item."],"verification_requirements":["Run the focused policy test."]}' > "$evidence_criteria_file"
+evidence_criteria_hash=$(dx_review_criteria_hash "$evidence_criteria_file")
+evidence_criteria_coverage=$(dx_review_criteria_coverage_json "$evidence_criteria_hash" "$evidence_criteria_file")
+printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"${evidence_criteria_hash}\",\"criteria_coverage\":${evidence_criteria_coverage},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
+dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint" "$evidence_criteria_hash" "$evidence_criteria_file"
+printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"${evidence_criteria_hash}\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
+assert_rejected "lifecycle evidence rejects omitted criteria" dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint" "$evidence_criteria_hash" "$evidence_criteria_file"
+printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"standalone\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
+dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint" standalone "$TMP_DIR/no-criteria.json"
 
 printf 'changed\n' >> "$REPO/app.txt"
 changed_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
@@ -357,12 +417,13 @@ session_id="review-policy"
 session_criteria_file=$(dx_review_criteria_file "$session_id")
 session_criteria_json='{"version":1,"source":"approved-plan","objectives":["Keep review state bound to approved requirements."],"acceptance_criteria":["Changed criteria invalidate review authorization."],"verification_requirements":["Run tests/review-policy-test.sh."]}'
 printf '%s\n' "$session_criteria_json" > "$session_criteria_file"
+session_criteria_hash=$(dx_review_criteria_hash "$session_criteria_file")
+dx_review_approve_criteria "$session_id" initial "$session_criteria_hash" >/dev/null
 dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$REPO"
 [[ "$(cut -f1 "$(dx_review_selection_file "$session_id")")" == "3" ]] || {
   printf 'selection was not written with the criteria-bound schema\n' >&2
   exit 1
 }
-session_criteria_hash=$(dx_review_criteria_hash "$session_criteria_file")
 IFS=$'\t' read -r tier source reason selection_required fingerprint selection_binding < <(dx_review_read_selection "$session_id" "$REPO" "$session_criteria_hash")
 assert_eq "normal" "$tier" "selection tier"
 assert_eq "lifecycle-agent" "$source" "selection source"
@@ -388,12 +449,13 @@ assert_rejected "selection rejects malformed criteria binding" dx_review_selecti
 dx_cleanup_session "$standalone_session_id"
 
 dx_review_write_state "$session_id" normal 6 4 2 "$REPO"
-IFS=$'\t' read -r state_tier required iteration clean_count state_fingerprint < <(dx_review_read_state "$session_id" "$REPO")
+IFS=$'\t' read -r state_tier required iteration clean_count state_fingerprint state_binding < <(dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash")
 assert_eq "normal" "$state_tier" "state tier"
 assert_eq "6" "$required" "state requirement"
 assert_eq "4" "$iteration" "state iteration"
 assert_eq "2" "$clean_count" "state clean count"
 assert_eq "$base_fingerprint" "$state_fingerprint" "state fingerprint"
+assert_eq "$session_criteria_hash" "$state_binding" "state criteria binding"
 assert_rejected "state below tier gate" dx_review_write_state "$session_id" normal 5 1 0 "$REPO"
 assert_rejected "state clean exceeds iteration" dx_review_write_state "$session_id" normal 6 1 2 "$REPO"
 assert_rejected "completed state is not resumable" dx_review_write_state "$session_id" normal 6 6 6 "$REPO"
@@ -490,5 +552,6 @@ dx_cleanup_session "$session_id"
 [[ ! -e "$(dx_review_state_file "$session_id")" ]]
 [[ ! -e "$(dx_review_receipt_file "$session_id")" ]]
 [[ ! -e "$(dx_review_criteria_file "$session_id")" ]]
+[[ ! -e "$(dx_review_criteria_approval_file "$session_id")" ]]
 
 printf 'review-policy-test passed\n'

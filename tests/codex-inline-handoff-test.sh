@@ -67,6 +67,8 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 1 "$state_file" "$TMP_DIR/rep
   exit 1
 fi
 [[ "$(cat "$state_file")" == "2" ]]
+[[ "$(cut -f2 "$(dx_review_criteria_approval_file "$session_id")")" == "1" ]]
+approved_criteria_hash=$(dx_review_read_criteria_approval "$session_id")
 
 printf "2\n" > "$state_file"
 touch "$(dx_phase_ready_file "$session_id" 2)"
@@ -74,6 +76,13 @@ if __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
   printf "%s\n" "phase 2 advanced without a review risk selection" >&2
   exit 1
 fi
+printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Tamper with the direct handoff.\"],\"acceptance_criteria\":[\"Phase 2 rejects unapproved criteria.\"],\"verification_requirements\":[\"Run tests/codex-inline-handoff-test.sh.\"]}" > "$(dx_review_criteria_file "$session_id")"
+if __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 2 advanced with criteria changed after approval" >&2
+  exit 1
+fi
+printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise the direct handoff.\"],\"acceptance_criteria\":[\"Phase gates must reject missing state.\"],\"verification_requirements\":[\"Run tests/codex-inline-handoff-test.sh.\"]}" > "$(dx_review_criteria_file "$session_id")"
+[[ "$(dx_review_read_criteria_approval "$session_id")" == "$approved_criteria_hash" ]]
 if ! dx_review_write_selection "$session_id" complex lifecycle-agent broad-impact "$TMP_DIR/repo"; then
   printf "%s\n" "could not write the Phase 2 risk selection fixture" >&2
   exit 1

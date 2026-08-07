@@ -61,6 +61,10 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
           print -r -- ""
           print -r -- "Reviewed the complete caller-supplied scope for this independent contract pass."
           print -r -- ""
+          print -r -- "## Acceptance Criteria"
+          print -r -- ""
+          print -r -- "Criteria binding: ${DEX_REVIEW_CRITERIA_BINDING:-standalone}"
+          print -r -- ""
           print -r -- "## Deterministic Checks"
           print -r -- ""
           print -r -- "All applicable fixture checks passed."
@@ -82,7 +86,7 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
           verifier=not-run
           findings=0
         fi
-        print -r -- "{\"version\":1,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"deterministic_checks\":\"${checks}\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"${verifier}\",\"verified_findings\":${findings},\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
+        print -r -- "{\"version\":2,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"criteria_binding\":\"standalone\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"${checks}\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"${verifier}\",\"verified_findings\":${findings},\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
       fi
 
       case "$TEST_REVIEW_SCENARIO" in
@@ -105,7 +109,17 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
       fi
     }
 
+    assert_standalone_criteria_prompt() {
+      local invocation="$*" criteria_path
+      criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
+      [[ "${DEX_REVIEW_CRITERIA_BINDING:-}" == "standalone" ]]
+      [[ ! -e "$criteria_path" ]]
+      [[ "$invocation" == *"Approved requirements: N/A — standalone review"* ]]
+      [[ "$invocation" != *"$criteria_path"* ]]
+    }
+
     __dx_claude() {
+      assert_standalone_criteria_prompt "$@" || return 96
       emit_review_contract
       if [[ "$TEST_REVIEW_SCENARIO" == "valid-hook" ]]; then
         print -r -- "{\"session_id\":\"${DEX_SESSION_ID}\"}" | \
@@ -113,11 +127,14 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
             DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 \
             DEX_REVIEW_PROFILE="${DEX_REVIEW_PROFILE}" \
             DEX_REVIEW_SCOPE_FINGERPRINT="${DEX_REVIEW_SCOPE_FINGERPRINT}" \
+            DEX_REVIEW_CRITERIA_BINDING="${DEX_REVIEW_CRITERIA_BINDING}" \
+            DEX_REVIEW_CRITERIA_FILE="${DEX_REVIEW_CRITERIA_FILE}" \
             DEX_PHASE_HANDOFF="" bash "$DEX_DIR/hooks/phase-loop.sh" >/dev/null
       fi
     }
     bash() {
       if [[ "${1:-}" == "$DEX_DIR/bin/dxcodex.sh" ]]; then
+        assert_standalone_criteria_prompt "$@" || return 96
         emit_review_contract
       else
         command bash "$@"

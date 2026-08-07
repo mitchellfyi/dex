@@ -12,7 +12,20 @@ In terminal `dx` Phase 2, start by validating and reading
 approved objectives, acceptance criteria, and verification requirements that
 Phase 3 will receive. Do not delete, weaken, or silently reinterpret it. If the
 user approves a plan change during implementation, atomically replace the
-artifact with the updated approved requirements and validate it again.
+artifact with the updated approved requirements, validate it, and rotate the
+approval seal explicitly:
+
+```bash
+SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+CRITERIA_FILE="$(dx_review_criteria_file "$SESSION_ID")"
+PREVIOUS_CRITERIA_HASH="$(dx_review_read_criteria_approval "$SESSION_ID")" || exit 1
+# Atomically replace CRITERIA_FILE here with the newly reapproved requirements.
+CRITERIA_HASH="$(dx_review_criteria_hash "$CRITERIA_FILE")" || exit 1
+dx_review_approve_criteria "$SESSION_ID" reapproved "$PREVIOUS_CRITERIA_HASH" "$CRITERIA_HASH" || exit 1
+```
+
+Rotation clears earlier risk selection, clean credit, and receipts. Re-run the
+Phase 3 risk selection against the final scope afterward.
 
 ## When to Use
 
@@ -224,8 +237,8 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
 - No Phase 2 background processes or long-running commands are still in flight.
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
   recorded for the final current scope.
-- The approved review-criteria artifact is valid and reflects any plan change
-  the user approved during implementation.
+- The approved review-criteria artifact has a matching approval seal and
+  reflects any plan change the user approved during implementation.
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1

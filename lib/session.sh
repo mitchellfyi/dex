@@ -706,17 +706,25 @@ dx_review_context_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_
 # dx_review_criteria_file <session_id> — approved lifecycle requirements for review
 dx_review_criteria_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-criteria.json"; }
 
+# dx_review_criteria_approval_file <session_id> — sealed Phase 1 criteria hash and revision
+dx_review_criteria_approval_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-criteria-approval"; }
+
 # A review context pack must expose the four auditable sections used by the
 # evidence gate. This rejects placeholder sentinels while keeping the body
 # human-readable for later diagnostics.
 dx_review_context_valid() {
-  local context_file="$1"
+  local context_file="$1" expected_binding="${2:-}"
   [[ -f "$context_file" ]] || return 1
   [[ $(wc -c < "$context_file" 2>/dev/null | tr -d ' ') -ge 160 ]] || return 1
   LC_ALL=C grep -q '^## Scope' "$context_file" 2>/dev/null &&
     LC_ALL=C grep -q '^## Deterministic Checks' "$context_file" 2>/dev/null &&
     LC_ALL=C grep -q '^## Review Coverage' "$context_file" 2>/dev/null &&
-    LC_ALL=C grep -q '^## Verification' "$context_file" 2>/dev/null
+    LC_ALL=C grep -q '^## Verification' "$context_file" 2>/dev/null || return 1
+  if [[ -n "$expected_binding" ]]; then
+    [[ "$expected_binding" == "standalone" || "$expected_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
+    LC_ALL=C grep -q '^## Acceptance Criteria' "$context_file" 2>/dev/null &&
+      LC_ALL=C grep -Fqx "Criteria binding: ${expected_binding}" "$context_file" 2>/dev/null
+  fi
 }
 
 # Each pass owns one 16-character lowercase SHA-256 prefix.
@@ -954,7 +962,7 @@ dx_cleanup_session() {
   local sid="$1"
   dx_session_id_valid "$sid" || return 2
   if [[ -d "$DX_LOOP_DIR" ]]; then
-    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_watch_pause_file "$sid")" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_ledger_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
+    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_watch_pause_file "$sid")" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_ledger_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" \) -exec rm -f {} + 2>/dev/null || true
   fi
   [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" 2>/dev/null

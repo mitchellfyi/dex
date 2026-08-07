@@ -268,6 +268,104 @@ print(hashlib.sha256(canonical.encode("utf-8")).hexdigest())
 PY
 }
 
+__dx_review_invalidate_criteria_authorization() {
+  local session_id="$1" approval_mode="$2"
+  command rm -f \
+    "$(dx_review_selection_file "$session_id")" \
+    "$(dx_review_state_file "$session_id")" \
+    "$(dx_review_ledger_file "$session_id")" \
+    "$(dx_review_receipt_file "$session_id")" \
+    "$(dx_findings_file "$session_id")" 2>/dev/null || return 1
+  if [[ "$approval_mode" == "reapproved" ]]; then
+    command rm -f \
+      "$(dx_complete_file "$session_id")" \
+      "$(dx_phase_ready_file "$session_id" 2)" \
+      "$(dx_phase_ready_file "$session_id" 3)" 2>/dev/null || return 1
+  fi
+}
+
+dx_review_approve_criteria() {
+  local session_id="$1" approval_mode="${2:-}" expected_previous="" expected_hash=""
+  local criteria_file approval_file current_hash raw version revision approved_hash extra next_revision tmp_file
+  [[ "$approval_mode" == "initial" || "$approval_mode" == "reapproved" ]] || return 1
+  case "$approval_mode" in
+    initial)
+      [[ $# -eq 3 ]] || return 1
+      expected_hash="$3"
+      ;;
+    reapproved)
+      [[ $# -eq 4 ]] || return 1
+      expected_previous="$3"
+      expected_hash="$4"
+      [[ "$expected_previous" =~ ^[a-f0-9]{64}$ ]] || return 1
+      ;;
+  esac
+  [[ "$expected_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+  criteria_file=$(dx_review_criteria_file "$session_id") || return 1
+  approval_file=$(dx_review_criteria_approval_file "$session_id") || return 1
+  current_hash=$(dx_review_criteria_hash "$criteria_file") || return 1
+  [[ "$expected_hash" == "$current_hash" ]] || return 1
+
+  next_revision=1
+  if [[ -e "$approval_file" ]]; then
+    raw=$(cat "$approval_file" 2>/dev/null) || return 1
+    [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
+    IFS=$'\t' read -r version revision approved_hash extra <<EOF
+$raw
+EOF
+    [[ "$version" == "1" && -z "$extra" ]] || return 1
+    dx_review_is_positive_integer "$revision" || return 1
+    [[ "$approved_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+    if [[ "$approval_mode" == "reapproved" && "$approved_hash" != "$expected_previous" ]]; then
+      return 1
+    fi
+    if [[ "$approved_hash" == "$current_hash" ]]; then
+      if [[ "$approval_mode" == "reapproved" ]]; then
+        __dx_review_invalidate_criteria_authorization "$session_id" "$approval_mode" || return 1
+      fi
+      printf '%s\n' "$current_hash"
+      return 0
+    fi
+    [[ "$approval_mode" == "reapproved" ]] || return 1
+    next_revision=$((10#$revision + 1))
+    dx_review_is_positive_integer "$next_revision" || return 1
+  elif [[ "$approval_mode" != "initial" ]]; then
+    return 1
+  fi
+
+  __dx_review_invalidate_criteria_authorization "$session_id" "$approval_mode" || return 1
+  mkdir -p "$(dirname "$approval_file")" || return 1
+  tmp_file="${approval_file}.tmp.$$"
+  if ! printf '1\t%s\t%s\n' "$next_revision" "$current_hash" > "$tmp_file" ||
+     [[ "$(dx_review_criteria_hash "$criteria_file" 2>/dev/null)" != "$current_hash" ]] ||
+     ! command mv -f "$tmp_file" "$approval_file"; then
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+  if [[ "$(dx_review_criteria_hash "$criteria_file" 2>/dev/null)" != "$current_hash" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$current_hash"
+}
+
+dx_review_read_criteria_approval() {
+  local session_id="$1" criteria_file approval_file raw version revision approved_hash extra current_hash
+  criteria_file=$(dx_review_criteria_file "$session_id") || return 1
+  approval_file=$(dx_review_criteria_approval_file "$session_id") || return 1
+  [[ -f "$approval_file" ]] || return 1
+  raw=$(cat "$approval_file" 2>/dev/null) || return 1
+  [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
+  IFS=$'\t' read -r version revision approved_hash extra <<EOF
+$raw
+EOF
+  [[ "$version" == "1" && -z "$extra" ]] || return 1
+  dx_review_is_positive_integer "$revision" || return 1
+  [[ "$approved_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+  current_hash=$(dx_review_criteria_hash "$criteria_file") || return 1
+  [[ "$current_hash" == "$approved_hash" ]] || return 1
+  printf '%s\n' "$approved_hash"
+}
+
 dx_review_criteria_binding_valid() {
   local binding="${1:-}"
   [[ "$binding" == "standalone" || "$binding" =~ ^[a-f0-9]{64}$ ]]
@@ -276,24 +374,73 @@ dx_review_criteria_binding_valid() {
 # Resolve an explicit criteria binding, or infer one for compatibility callers.
 # A present-but-invalid criteria file is always an error.
 dx_review_resolve_criteria_binding() {
-  local session_id="$1" expected_binding="${2:-}" criteria_file current_hash
+  local session_id="$1" expected_binding="${2:-}" criteria_file approval_file current_hash
   criteria_file=$(dx_review_criteria_file "$session_id") || return 1
+  approval_file=$(dx_review_criteria_approval_file "$session_id") || return 1
   if [[ -n "$expected_binding" ]]; then
     dx_review_criteria_binding_valid "$expected_binding" || return 1
     if [[ "$expected_binding" == "standalone" ]]; then
-      [[ ! -e "$criteria_file" ]] || return 1
+      [[ ! -e "$criteria_file" && ! -e "$approval_file" ]] || return 1
     else
-      current_hash=$(dx_review_criteria_hash "$criteria_file") || return 1
+      current_hash=$(dx_review_read_criteria_approval "$session_id") || return 1
       [[ "$current_hash" == "$expected_binding" ]] || return 1
     fi
     printf '%s\n' "$expected_binding"
     return 0
   fi
   if [[ -e "$criteria_file" ]]; then
-    dx_review_criteria_hash "$criteria_file"
+    dx_review_read_criteria_approval "$session_id"
+  elif [[ -e "$approval_file" ]]; then
+    return 1
   else
     printf '%s\n' "standalone"
   fi
+}
+
+dx_review_criteria_coverage_json() {
+  local binding="${1:-}" criteria_file="${2:-}"
+  dx_review_criteria_binding_valid "$binding" || return 1
+  if [[ "$binding" == "standalone" ]]; then
+    [[ -z "$criteria_file" || ! -e "$criteria_file" ]] || return 1
+    printf '%s\n' '{"acceptance_criteria":[],"objectives":[],"verification_requirements":[]}'
+    return 0
+  fi
+  [[ -n "$criteria_file" ]] || return 1
+  [[ "$(dx_review_criteria_hash "$criteria_file" 2>/dev/null)" == "$binding" ]] || return 1
+  python3 - "$criteria_file" <<'PY'
+import hashlib
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+coverage = {}
+for section in ("objectives", "acceptance_criteria", "verification_requirements"):
+    coverage[section] = [
+        hashlib.sha256(
+            json.dumps([section, index, value], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        for index, value in enumerate(payload[section])
+    ]
+print(json.dumps(coverage, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+dx_review_copy_criteria() {
+  local source_file="$1" target_file="$2" expected_hash="$3" tmp_file
+  [[ "$source_file" != "$target_file" && "$expected_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+  [[ "$(dx_review_criteria_hash "$source_file" 2>/dev/null)" == "$expected_hash" ]] || return 1
+  mkdir -p "$(dirname "$target_file")" || return 1
+  tmp_file="${target_file}.tmp.$$"
+  if ! command cp "$source_file" "$tmp_file" ||
+     ! dx_review_criteria_valid "$tmp_file" ||
+     [[ "$(dx_review_criteria_hash "$tmp_file" 2>/dev/null)" != "$expected_hash" ]] ||
+     ! command mv -f "$tmp_file" "$target_file"; then
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+  [[ "$(dx_review_criteria_hash "$target_file" 2>/dev/null)" == "$expected_hash" ]]
 }
 
 dx_review_result_valid() {
@@ -347,14 +494,29 @@ dx_review_escalation_tier() {
 
 dx_review_evidence_valid() {
   local evidence_file="$1" result="$2" profile="$3" expected_fingerprint="$4"
+  local expected_binding="${5:-}" criteria_file="${6:-}" strict_criteria=0
   dx_review_result_valid "$result" || return 1
   [[ "$profile" == "light" || "$profile" == "standard" || "$profile" == "thorough" ]] || return 1
   [[ "$expected_fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   [[ -f "$evidence_file" ]] || return 1
+  if [[ $# -ge 5 ]]; then
+    strict_criteria=1
+    dx_review_criteria_binding_valid "$expected_binding" || return 1
+    if [[ "$expected_binding" == "standalone" ]]; then
+      [[ -z "$criteria_file" || ! -e "$criteria_file" ]] || return 1
+    else
+      [[ -n "$criteria_file" ]] || return 1
+      [[ "$(dx_review_criteria_hash "$criteria_file" 2>/dev/null)" == "$expected_binding" ]] || return 1
+    fi
+  fi
   DX_REVIEW_EVIDENCE_RESULT="$result" \
   DX_REVIEW_EVIDENCE_PROFILE="$profile" \
   DX_REVIEW_EVIDENCE_FINGERPRINT="$expected_fingerprint" \
+  DX_REVIEW_EVIDENCE_STRICT_CRITERIA="$strict_criteria" \
+  DX_REVIEW_EVIDENCE_CRITERIA_BINDING="$expected_binding" \
+  DX_REVIEW_EVIDENCE_CRITERIA_FILE="$criteria_file" \
   python3 - "$evidence_file" <<'PY'
+import hashlib
 import json
 import os
 import re
@@ -368,7 +530,7 @@ try:
 except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
     raise SystemExit(1)
 
-required_keys = {
+base_keys = {
     "version",
     "scope_fingerprint",
     "deterministic_checks",
@@ -377,12 +539,44 @@ required_keys = {
     "verified_findings",
     "fixes_applied",
 }
+strict_criteria = os.environ["DX_REVIEW_EVIDENCE_STRICT_CRITERIA"] == "1"
+required_keys = base_keys | ({"criteria_binding", "criteria_coverage"} if strict_criteria else set())
 if not isinstance(payload, dict) or set(payload) != required_keys:
     raise SystemExit(1)
-if payload["version"] != 1:
+expected_version = 2 if strict_criteria else 1
+if isinstance(payload["version"], bool) or payload["version"] != expected_version:
     raise SystemExit(1)
 if payload["scope_fingerprint"] != os.environ["DX_REVIEW_EVIDENCE_FINGERPRINT"]:
     raise SystemExit(1)
+
+if strict_criteria:
+    binding = os.environ["DX_REVIEW_EVIDENCE_CRITERIA_BINDING"]
+    if payload["criteria_binding"] != binding:
+        raise SystemExit(1)
+    sections = ("objectives", "acceptance_criteria", "verification_requirements")
+    if binding == "standalone":
+        expected_criteria_coverage = {section: [] for section in sections}
+    else:
+        try:
+            with open(os.environ["DX_REVIEW_EVIDENCE_CRITERIA_FILE"], "r", encoding="utf-8") as handle:
+                criteria = json.load(handle)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            raise SystemExit(1)
+        expected_criteria_coverage = {}
+        for section in sections:
+            expected_criteria_coverage[section] = [
+                hashlib.sha256(
+                    json.dumps(
+                        [section, index, value],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                for index, value in enumerate(criteria[section])
+            ]
+    if payload["criteria_coverage"] != expected_criteria_coverage:
+        raise SystemExit(1)
+
 if payload["deterministic_checks"] not in {"pass", "partial", "fail", "unavailable"}:
     raise SystemExit(1)
 if payload["verifier"] not in {"pass", "fail", "not-run"}:
@@ -955,7 +1149,7 @@ dx_review_selection_valid() {
 
 dx_review_write_state() {
   local session_id="$1" requested_tier="$2" required_clean="$3" iteration="$4" clean_count="$5" repo_dir="${6:-$PWD}"
-  local tier tier_min fingerprint state_file
+  local expected_binding="${7:-}" tier tier_min fingerprint state_file criteria_binding
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
@@ -965,21 +1159,27 @@ dx_review_write_state() {
   [[ $((10#$clean_count)) -lt $((10#$required_clean)) ]] || return 1
   [[ $((10#$clean_count)) -le $((10#$iteration)) ]] || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
+  criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   state_file=$(dx_review_state_file "$session_id") || return 1
-  dx_review_write_atomic "$state_file" "1"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"
+  dx_review_write_atomic "$state_file" "2"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"
 }
 
 dx_review_read_state() {
-  local session_id="$1" repo_dir="${2:-$PWD}" state_file raw
-  local version tier tier_min required_clean iteration clean_count fingerprint extra current_fingerprint
+  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" state_file raw
+  local version tier tier_min required_clean iteration clean_count fingerprint criteria_binding extra current_fingerprint current_binding
   state_file=$(dx_review_state_file "$session_id") || return 1
   [[ -f "$state_file" ]] || return 1
   raw=$(cat "$state_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint extra <<EOF
+  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding extra <<EOF
 $raw
 EOF
-  [[ "$version" == "1" && -z "$extra" ]] || return 1
+  if [[ "$version" == "1" ]]; then
+    criteria_binding="standalone"
+  elif [[ "$version" != "2" ]]; then
+    return 1
+  fi
+  [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
@@ -991,7 +1191,10 @@ EOF
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   current_fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   [[ "$current_fingerprint" == "$fingerprint" ]] || return 1
-  printf '%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$iteration" "$clean_count" "$fingerprint"
+  dx_review_criteria_binding_valid "$criteria_binding" || return 1
+  current_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
+  [[ "$current_binding" == "$criteria_binding" ]] || return 1
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$iteration" "$clean_count" "$fingerprint" "$criteria_binding"
 }
 
 dx_review_ledger_reset() {
@@ -1002,27 +1205,35 @@ dx_review_ledger_reset() {
 
 dx_review_ledger_append() {
   local session_id="$1" iteration="$2" pass_id="$3" fingerprint="$4" evidence_hash="$5"
-  local ledger_file tmp_file last_iteration=0 last_pass_id="" last_fingerprint="" last_hash="" version="" extra=""
+  local expected_binding="${6:-}" criteria_binding ledger_file tmp_file last_iteration=0 last_pass_id=""
+  local last_fingerprint="" last_hash="" last_binding="" version="" extra=""
   dx_review_is_positive_integer "$iteration" || return 1
   [[ "$pass_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$ ]] || return 1
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ && "$evidence_hash" =~ ^[a-f0-9]{16}$ ]] || return 1
+  criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   ledger_file=$(dx_review_ledger_file "$session_id") || return 1
   mkdir -p "$(dirname "$ledger_file")" || return 1
   if [[ -f "$ledger_file" && -s "$ledger_file" ]]; then
-    IFS=$'\t' read -r version last_iteration last_pass_id last_fingerprint last_hash extra <<EOF
+    IFS=$'\t' read -r version last_iteration last_pass_id last_fingerprint last_hash last_binding extra <<EOF
 $(tail -n 1 "$ledger_file" 2>/dev/null)
 EOF
-    [[ "$version" == "1" && -z "$extra" ]] || return 1
+    if [[ "$version" == "1" ]]; then
+      last_binding="standalone"
+    elif [[ "$version" != "2" ]]; then
+      return 1
+    fi
+    [[ -z "$extra" ]] || return 1
     dx_review_is_positive_integer "$last_iteration" || return 1
     [[ $((10#$iteration)) -eq $((10#$last_iteration + 1)) ]] || return 1
     [[ "$last_pass_id" != "$pass_id" && "$last_fingerprint" == "$fingerprint" && "$last_hash" =~ ^[a-f0-9]{16}$ ]] || return 1
+    [[ "$last_binding" == "$criteria_binding" ]] || return 1
   fi
   tmp_file="${ledger_file}.tmp.$$"
   if [[ -f "$ledger_file" ]] && ! command cp "$ledger_file" "$tmp_file"; then
     command rm -f "$tmp_file" 2>/dev/null || true
     return 1
   fi
-  if ! printf '1\t%s\t%s\t%s\t%s\n' "$iteration" "$pass_id" "$fingerprint" "$evidence_hash" >> "$tmp_file" || \
+  if ! printf '2\t%s\t%s\t%s\t%s\t%s\n' "$iteration" "$pass_id" "$fingerprint" "$evidence_hash" "$criteria_binding" >> "$tmp_file" || \
      ! command mv -f "$tmp_file" "$ledger_file"; then
     command rm -f "$tmp_file" 2>/dev/null || true
     return 1
@@ -1030,9 +1241,10 @@ EOF
 }
 
 dx_review_ledger_valid() {
-  local session_id="$1" expected_count="$2" expected_fingerprint="$3" ledger_file
+  local session_id="$1" expected_count="$2" expected_fingerprint="$3" expected_binding="${4:-}" ledger_file criteria_binding
   dx_review_is_nonnegative_integer "$expected_count" || return 1
   [[ "$expected_fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
+  criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   ledger_file=$(dx_review_ledger_file "$session_id") || return 1
   if [[ "$expected_count" == "0" ]]; then
     [[ ! -s "$ledger_file" ]]
@@ -1041,6 +1253,7 @@ dx_review_ledger_valid() {
   [[ -f "$ledger_file" ]] || return 1
   DX_REVIEW_LEDGER_REQUIRED="$expected_count" \
   DX_REVIEW_LEDGER_FINGERPRINT="$expected_fingerprint" \
+  DX_REVIEW_LEDGER_CRITERIA_BINDING="$criteria_binding" \
   python3 - "$ledger_file" <<'PY'
 import os
 import re
@@ -1048,6 +1261,7 @@ import sys
 
 required = int(os.environ["DX_REVIEW_LEDGER_REQUIRED"])
 fingerprint = os.environ["DX_REVIEW_LEDGER_FINGERPRINT"]
+criteria_binding = os.environ["DX_REVIEW_LEDGER_CRITERIA_BINDING"]
 try:
     with open(sys.argv[1], "r", encoding="ascii") as handle:
         lines = [line.rstrip("\n") for line in handle]
@@ -1060,14 +1274,18 @@ previous_iteration = None
 pass_ids = set()
 for line in lines:
     fields = line.split("\t")
-    if len(fields) != 5 or fields[0] != "1":
+    if len(fields) == 5 and fields[0] == "1":
+        fields = ["2", *fields[1:], "standalone"]
+    elif len(fields) != 6 or fields[0] != "2":
         raise SystemExit(1)
-    iteration_raw, pass_id, recorded_fingerprint, evidence_hash = fields[1:]
+    iteration_raw, pass_id, recorded_fingerprint, evidence_hash, recorded_binding = fields[1:]
     if not re.fullmatch(r"[1-9][0-9]{0,17}", iteration_raw):
         raise SystemExit(1)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,179}", pass_id):
         raise SystemExit(1)
     if recorded_fingerprint != fingerprint or not re.fullmatch(r"[a-f0-9]{16}", evidence_hash):
+        raise SystemExit(1)
+    if recorded_binding != criteria_binding:
         raise SystemExit(1)
     iteration = int(iteration_raw)
     if previous_iteration is not None and iteration != previous_iteration + 1:
@@ -1102,10 +1320,10 @@ dx_review_write_receipt() {
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   [[ $((10#$clean_count)) -eq $((10#$required_clean)) ]] || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
-  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" || return 1
+  criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
+  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$criteria_binding" || return 1
   ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
-  criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   receipt_file=$(dx_review_receipt_file "$session_id") || return 1
   dx_review_write_atomic "$receipt_file" "3"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${ledger_hash}"$'\t'"${criteria_binding}"
 }
@@ -1136,12 +1354,12 @@ EOF
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
   current_fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   [[ "$current_fingerprint" == "$fingerprint" ]] || return 1
-  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" || return 1
-  current_ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
-  [[ "$current_ledger_hash" == "$ledger_hash" ]] || return 1
   dx_review_criteria_binding_valid "$criteria_binding" || return 1
   current_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   [[ "$current_binding" == "$criteria_binding" ]] || return 1
+  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$current_binding" || return 1
+  current_ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
+  [[ "$current_ledger_hash" == "$ledger_hash" ]] || return 1
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$clean_count" "$fingerprint" "$ledger_hash" "$criteria_binding"
 }
 

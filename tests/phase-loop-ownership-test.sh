@@ -83,6 +83,8 @@ write_review_context() { # <session-id>
   {
     printf '%s\n\n' "## Scope"
     printf '%s\n\n' "Reviewed the complete supplied scope for this hook contract fixture."
+    printf '%s\n\n' "## Acceptance Criteria"
+    printf '%s\n\n' "Criteria binding: standalone"
     printf '%s\n\n' "## Deterministic Checks"
     printf '%s\n\n' "All applicable fixture checks passed."
     printf '%s\n\n' "## Review Coverage"
@@ -102,7 +104,7 @@ write_review_evidence() { # <session-id> <result> <fingerprint>
     BLOCKED:*|CHURN:*) checks=partial; verifier=not-run ;;
     ESCALATE:*|ESCALATE_THOROUGH:*) checks=partial; verifier=pass ;;
   esac
-  printf '{"version":1,"scope_fingerprint":"%s","deterministic_checks":"%s","coverage":["correctness","security","contracts","tests","architecture"],"verifier":"%s","verified_findings":0,"fixes_applied":0}\n' \
+  printf '{"version":2,"scope_fingerprint":"%s","criteria_binding":"standalone","criteria_coverage":{"acceptance_criteria":[],"objectives":[],"verification_requirements":[]},"deterministic_checks":"%s","coverage":["correctness","security","contracts","tests","architecture"],"verifier":"%s","verified_findings":0,"fixes_applied":0}\n' \
     "$fingerprint" "$checks" "$verifier" > "$(dx_review_evidence_file "$session_id")"
 }
 
@@ -294,7 +296,7 @@ OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-1-criteria"}' | 
 RC=$?
 set -e
 assert_rc "Phase 1 without approved criteria is blocked" 2
-assert_out_contains "missing Phase 1 criteria message shown" "approved review criteria missing or invalid"
+assert_out_contains "missing Phase 1 criteria message shown" "approved review criteria missing"
 assert_file_eq "missing Phase 1 criteria leaves phase active" "$DX_STATE_DIR/$SID.phase" "1"
 
 write_review_criteria "$SID"
@@ -306,6 +308,21 @@ set -e
 assert_rc "valid Phase 1 criteria reach handoff" 2
 assert_out_contains "Phase 1 criteria emit Phase 2 handoff" "Phase Handoff: Phase 1 complete"
 assert_file_eq "valid Phase 1 criteria advance to Phase 2" "$DX_STATE_DIR/$SID.phase" "2"
+if dx_review_read_criteria_approval "$SID" >/dev/null; then
+  report "Phase 1 transition seals approved criteria" 0
+else
+  report "Phase 1 transition seals approved criteria" 1
+fi
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Replace the approved lifecycle handoff."],"acceptance_criteria":["Unapproved replacements must be rejected."],"verification_requirements":["Run tests/phase-loop-ownership-test.sh."]}' > "$(dx_review_criteria_file "$SID")"
+touch "$DX_LOOP_DIR/$SID.phase-2.ready" "$DX_LOOP_DIR/$SID.complete"
+printf '%s\n' "2:PHASE_2_COMPLETE:$ROOT/prompts/phase-audits/2-implement.md:1" > "$DX_LOOP_DIR/$SID.config"
+set +e
+OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-criteria-tamper"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "criteria replacement after Phase 1 is blocked" 2
+assert_out_contains "criteria replacement reports approval mismatch" "changed after approval"
+assert_file_eq "criteria replacement leaves Phase 2 active" "$DX_STATE_DIR/$SID.phase" "2"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 # --- case 7: Phase 2 requires approved criteria and a current risk selection ---
@@ -319,10 +336,11 @@ OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' |
 RC=$?
 set -e
 assert_rc "Phase 2 without approved criteria is blocked" 2
-assert_out_contains "missing Phase 2 criteria message shown" "approved review criteria missing or invalid"
+assert_out_contains "missing Phase 2 criteria message shown" "approved review criteria missing"
 assert_file_eq "missing Phase 2 criteria leaves phase active" "$DX_STATE_DIR/$SID.phase" "2"
 
 write_review_criteria "$SID"
+dx_review_approve_criteria "$SID" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$SID")")" >/dev/null
 touch "$DX_LOOP_DIR/$SID.complete"
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
@@ -372,6 +390,8 @@ touch "$DX_LOOP_DIR/$SID.active"
 printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
 printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review-loop.md:1" > "$DX_LOOP_DIR/$SID.config"
+write_review_criteria "$SID"
+dx_review_approve_criteria "$SID" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$SID")")" >/dev/null
 dx_review_write_selection "$SID" normal lifecycle-agent bounded-production-change "$REVIEW_REPO"
 RECEIPT_FINGERPRINT=$(dx_review_scope_fingerprint "$REVIEW_REPO")
 if dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO"; then

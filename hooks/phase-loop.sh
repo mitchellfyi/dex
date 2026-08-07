@@ -546,14 +546,22 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "1" ]]; then
     exit 2
   fi
   REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
-  if ! dx_review_criteria_valid "$REVIEW_CRITERIA_FILE"; then
+  REVIEW_CRITERIA_APPROVAL_FILE=$(dx_review_criteria_approval_file "$SESSION_ID")
+  if dx_review_criteria_valid "$REVIEW_CRITERIA_FILE" && [[ ! -e "$REVIEW_CRITERIA_APPROVAL_FILE" ]]; then
+    REVIEW_CRITERIA_HASH=$(dx_review_criteria_hash "$REVIEW_CRITERIA_FILE" 2>/dev/null || true)
+    if [[ "$REVIEW_CRITERIA_HASH" =~ ^[a-f0-9]{64}$ ]]; then
+      dx_review_approve_criteria "$SESSION_ID" initial "$REVIEW_CRITERIA_HASH" >/dev/null || true
+    fi
+  fi
+  REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
+  if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]]; then
     rm -f "$COMPLETE_FILE" "$STATE_FILE"
-    printf '\n%s\n\n' "--- Dex Phase 1 Gate: approved review criteria missing or invalid ---" >&2
+    printf '\n%s\n\n' "--- Dex Phase 1 Gate: approved review criteria missing, invalid, or unsealed ---" >&2
     printf '%s\n' "No audit iteration was counted and Phase 1 did not advance." >&2
     printf '%s\n' "" >&2
     printf '%s\n' "After plan approval, export the approved objectives, acceptance criteria, and verification requirements to:" >&2
     printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
-    printf '%s\n' "Use the version 1 schema documented in dxplan Step 9, validate it with dx_review_criteria_valid, then stop again." >&2
+    printf '%s\n' "Use the version 1 schema documented in dxplan Step 9 and validate it. The Phase 1 transition seals its approved hash before advancing." >&2
     printf '%s\n' "Do not use placeholders, summaries that omit requirements, or unapproved additions." >&2
     printf '%s\n' "" >&2
     exit 2
@@ -681,6 +689,8 @@ if [[ -f "$COMPLETE_FILE" ]]; then
   if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
     REVIEW_RESULT_FILE=$(dx_review_result_file "$SESSION_ID")
     REVIEW_CONTEXT_FILE=$(dx_review_context_file "$SESSION_ID")
+    REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
+    REVIEW_CRITERIA_BINDING="${DEX_REVIEW_CRITERIA_BINDING:-standalone}"
     REVIEW_EVIDENCE_FILE=$(dx_review_evidence_file "$SESSION_ID")
     REVIEW_FINDINGS_FILE=$(dx_findings_file "$SESSION_ID")
     REVIEW_RESULT=$(cat "$REVIEW_RESULT_FILE" 2>/dev/null || true)
@@ -699,16 +709,35 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       exit 2
     fi
-    if ! dx_review_context_valid "$REVIEW_CONTEXT_FILE"; then
+    if [[ "$REVIEW_CRITERIA_BINDING" == "standalone" ]]; then
+      REVIEW_CRITERIA_VALID=1
+      [[ -e "$REVIEW_CRITERIA_FILE" ]] && REVIEW_CRITERIA_VALID=0
+    else
+      REVIEW_CRITERIA_VALID=0
+      if [[ "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] &&
+         [[ "${DEX_REVIEW_CRITERIA_FILE:-}" == "$REVIEW_CRITERIA_FILE" ]] &&
+         [[ "$(dx_review_criteria_hash "$REVIEW_CRITERIA_FILE" 2>/dev/null)" == "$REVIEW_CRITERIA_BINDING" ]]; then
+        REVIEW_CRITERIA_VALID=1
+      fi
+    fi
+    if [[ $REVIEW_CRITERIA_VALID -ne 1 ]]; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Review Pass Gate: approved criteria missing or changed ---" >&2
+      printf '%s\n' "Completion signal ignored; this pass must use the immutable criteria copy supplied by dxreviewloop." >&2
+      printf '%s\n' "Do not recreate or reinterpret the artifact. Return control to dxreviewloop so it can pause safely." >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
+    if ! dx_review_context_valid "$REVIEW_CONTEXT_FILE" "$REVIEW_CRITERIA_BINDING"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Review Pass Gate: context pack missing or empty ---" >&2
       printf '%s\n' "Completion signal ignored; this review-wave pass must write a non-empty context pack before it can exit." >&2
       printf '%s\n' "Context pack: ${REVIEW_CONTEXT_FILE}" >&2
-      printf '%s\n' "Write the review scope, checks, coverage, and verified findings to that file, then touch the completion file again." >&2
+      printf '%s\n' "Write the review scope, exact criteria binding, checks, coverage, and verified findings to that file, then touch the completion file again." >&2
       printf '%s\n' "" >&2
       exit 2
     fi
-    if ! dx_review_evidence_valid "$REVIEW_EVIDENCE_FILE" "$REVIEW_RESULT" "${DEX_REVIEW_PROFILE:-}" "${DEX_REVIEW_SCOPE_FINGERPRINT:-}"; then
+    if ! dx_review_evidence_valid "$REVIEW_EVIDENCE_FILE" "$REVIEW_RESULT" "${DEX_REVIEW_PROFILE:-}" "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "$REVIEW_CRITERIA_BINDING" "$REVIEW_CRITERIA_FILE"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Review Pass Gate: evidence manifest missing or invalid ---" >&2
       printf '%s\n' "Completion signal ignored; this pass must write valid versioned evidence for its result, profile, and scope fingerprint." >&2
@@ -729,7 +758,10 @@ if [[ -f "$COMPLETE_FILE" ]]; then
   fi
 
   if [[ "$CURRENT_PHASE" == "3" && "${DEX_REVIEW_PASS_ACTIVE:-}" != "1" ]]; then
-    if ! dx_review_receipt_valid "$SESSION_ID" "$(pwd)"; then
+    REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
+    REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
+    if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
+       ! dx_review_receipt_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Phase 3 Gate: review receipt missing or stale ---" >&2
       printf '%s\n' "Completion signal ignored; Phase 3 did not advance." >&2
@@ -761,18 +793,20 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       exit 2
     fi
     REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
-    if ! dx_review_criteria_valid "$REVIEW_CRITERIA_FILE"; then
+    REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
+    if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]]; then
       rm -f "$COMPLETE_FILE"
-      printf '\n%s\n\n' "--- Dex Phase 2 Gate: approved review criteria missing or invalid ---" >&2
+      printf '\n%s\n\n' "--- Dex Phase 2 Gate: approved review criteria missing, invalid, or changed after approval ---" >&2
       printf '%s\n' "Completion signal ignored; Phase 2 did not advance." >&2
       printf '%s\n' "" >&2
       printf '%s\n' "Restore the approved Phase 1 requirements at:" >&2
       printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
-      printf '%s\n' "Use the version 1 schema from dxplan Step 9. If the user approved a plan change during implementation, replace the artifact with that updated approved scope before validating it." >&2
+      printf '%s\n' "Use the version 1 schema from dxplan Step 9. If the user approved a plan change during implementation, replace the artifact and explicitly rotate its approval with dx_review_approve_criteria before continuing." >&2
       printf '%s\n' "" >&2
       exit 2
     fi
-    if ! dx_review_selection_valid "$SESSION_ID" "$(pwd)"; then
+    if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
+       ! dx_review_selection_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
       printf '%s\n' "Completion signal ignored; Phase 2 did not advance." >&2
