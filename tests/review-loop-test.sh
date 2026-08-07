@@ -183,7 +183,10 @@ run_case() {
   CASE_STATE_DIR="$CASE_DIR/state"
   CASE_LOOP_DIR="$CASE_DIR/loops"
   CASE_SESSION_ID="review-loop-${name}"
-  CASE_DERIVED_SESSION_ID="$CASE_SESSION_ID"
+  CASE_DERIVED_SESSION_ID="${CASE_SESSION_ID}-base"
+  if [[ "$lifecycle_mode" == "lifecycle" ]]; then
+    CASE_DERIVED_SESSION_ID="$CASE_SESSION_ID"
+  fi
   if [[ "$session_mode" == "explicit" ]]; then
     CASE_DERIVED_SESSION_ID="${CASE_SESSION_ID}-derived"
   fi
@@ -243,10 +246,16 @@ run_case() {
         DX_REVIEW_COMPLEX_CLEAN_PASSES DX_REVIEW_LIGHT_CLEAN_PASSES \
         DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES
 
-      if [[ "$CASE_LIFECYCLE_MODE" == "lifecycle" ]]; then
-        export DEX_LOOP_ACTIVE=1
-        export DEX_LOOP_PHASE=3
-      fi
+      case "$CASE_LIFECYCLE_MODE" in
+        lifecycle)
+          export DEX_LOOP_ACTIVE=1
+          export DEX_LOOP_PHASE=3
+          ;;
+        stale-env)
+          export DEX_LOOP_ACTIVE=1
+          export DEX_LOOP_PHASE=2
+          ;;
+      esac
       if [[ "$CASE_SESSION_MODE" == "explicit" ]]; then
         export DEX_SESSION_ID="$CASE_SESSION_ID"
       fi
@@ -279,6 +288,14 @@ run_case() {
       dx_provider_cleanup_session_state() { return 0; }
       __dx_provider_prompt() { return 0; }
       claude() { return 0; }
+      __dx_review_standalone_session_id() { print -r -- "$CASE_SESSION_ID"; }
+
+      if [[ "$CASE_LIFECYCLE_MODE" == "lifecycle" ]]; then
+        lifecycle_phase=3
+        [[ "$CASE_SETUP_MODE" == "phase-2" ]] && lifecycle_phase=2
+        lifecycle_session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
+        printf "%s\n" "$lifecycle_phase" >| "$(dx_state_file "$lifecycle_session_id")"
+      fi
 
       __dx_claude() {
         local invocation_args="$*"
@@ -483,6 +500,8 @@ run_concurrent_case() {
         __dx_provider_prompt() { return 0; }
         claude() { return 0; }
 
+        printf "3\n" >| "$(dx_state_file "$CASE_SESSION_ID")"
+
         __dx_claude() {
           if [[ "$CASE_ROLE" == "contender" ]]; then
             printf "contender-pass\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
@@ -596,6 +615,18 @@ if [[ -e "$CASE_LOOP_DIR/${CASE_DERIVED_SESSION_ID}.review-receipt" ]]; then
   show_case_output
   exit 1
 fi
+
+run_case "phase-2-rejected" "small" "CLEAN" "" \
+  "lifecycle" "phase-2"
+assert_failure "phase 2 lifecycle rejected"
+assert_eq "0" "$(call_count pass)" "phase 2 lifecycle starts no waves"
+assert_no_receipt "phase 2 lifecycle rejected"
+
+run_case "stale-lifecycle-env" "small" $'CLEAN\nCLEAN\nCLEAN' "" \
+  "stale-env"
+assert_success "stale lifecycle environment uses standalone isolation"
+assert_eq "3" "$(call_count pass)" "stale lifecycle environment pass count"
+assert_receipt "small" "3" "stale lifecycle environment"
 
 run_case "invalid-assessor" "" "CLEAN" "invalid"
 assert_failure "invalid standalone assessor"

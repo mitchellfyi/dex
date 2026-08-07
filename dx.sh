@@ -2969,6 +2969,14 @@ __dx_review_nonce() {
   printf '%s\n' "$nonce"
 }
 
+unalias __dx_review_standalone_session_id 2>/dev/null; unfunction __dx_review_standalone_session_id 2>/dev/null
+__dx_review_standalone_session_id() {
+  local base_session_id="$1" digest
+  digest=$(printf '%s' "$base_session_id" | cksum 2>/dev/null | awk '{print $1}') || digest=""
+  [[ -n "$digest" ]] || digest="nohash"
+  printf '%.150s-standalone-%s\n' "$base_session_id" "$digest"
+}
+
 unalias __dx_review_runtime_cleanup 2>/dev/null; unfunction __dx_review_runtime_cleanup 2>/dev/null
 __dx_review_runtime_cleanup() {
   local repo_root="$1" lock_token="$2" busy_file="$3" busy_notice_file="$4" invocation_dir="$5"
@@ -3117,26 +3125,47 @@ dxreviewloop() {
     return 1
   fi
 
-  local invocation_dir="$PWD" repo_root="" standalone_review_prompt=0 standalone_prompt_content=""
+  local invocation_dir="$PWD" repo_root="" standalone_review_prompt=1 standalone_prompt_content=""
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
   if [[ -z "$repo_root" ]]; then
     dx_error "Could not resolve the repository root."
     return 1
   fi
-  [[ "${DEX_LOOP_ACTIVE:-}" != "1" ]] && standalone_review_prompt=1
-
-  local session_id=""
-  if [[ $standalone_review_prompt -eq 0 && -n "${DEX_SESSION_ID:-}" ]]; then
-    session_id="$DEX_SESSION_ID"
+  local base_session_id="" session_id="" lifecycle_state_file="" persisted_phase=""
+  if [[ -n "${DEX_SESSION_ID:-}" ]]; then
+    base_session_id="$DEX_SESSION_ID"
   else
-    session_id=$(dx_session_id)
+    base_session_id=$(dx_session_id)
   fi
-  if [[ -z "$session_id" ]]; then
+  if [[ -z "$base_session_id" ]]; then
     dx_error "Could not resolve a review session id."
     return 1
   fi
+  if ! dx_session_id_valid "$base_session_id"; then
+    dx_error "Refusing unsafe review session id '${base_session_id}'."
+    return 1
+  fi
+
+  # Persisted lifecycle state is authoritative. Inline lifecycle environment
+  # variables can remain set after a phase handoff, so they cannot safely
+  # authorize Phase 3 on their own.
+  lifecycle_state_file=$(dx_state_file "$base_session_id")
+  if [[ -f "$lifecycle_state_file" ]]; then
+    persisted_phase=$(cat "$lifecycle_state_file" 2>/dev/null || true)
+    if [[ "$persisted_phase" != "3" ]]; then
+      dx_error "dxreviewloop is only available to an active lifecycle in Phase 3; persisted phase is '${persisted_phase:-unknown}'."
+      return 1
+    fi
+    standalone_review_prompt=0
+    session_id="$base_session_id"
+  elif [[ -f "$(dx_active_file "$base_session_id")" ]]; then
+    dx_error "Another active Dex loop owns this session; finish or pause it before starting dxreviewloop."
+    return 1
+  else
+    session_id=$(__dx_review_standalone_session_id "$base_session_id")
+  fi
   if ! dx_session_id_valid "$session_id"; then
-    dx_error "Refusing unsafe review session id '${session_id}'."
+    dx_error "Could not derive a safe review session id."
     return 1
   fi
 
@@ -3258,7 +3287,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
   fi
 
   local review_phase=""
-  [[ "${DEX_LOOP_PHASE:-}" == "3" ]] && review_phase="3"
+  [[ $standalone_review_prompt -eq 0 ]] && review_phase="3"
 
   local review_run_id="" telemetry_session_id review_started_epoch
   review_started_epoch=$(date +%s)
@@ -3668,7 +3697,7 @@ $(__dx_provider_prompt)"
       tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" clean_before_int="$clean_passes" required_clean_int="$required_clean"
 
     local parent_busy_file=""
-    if [[ $standalone_review_prompt -eq 0 && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
+    if [[ $standalone_review_prompt -eq 0 ]]; then
       parent_busy_file=$(dx_phase_busy_file "$session_id" 3)
       __dx_write_state "$parent_busy_file" "$(date +%s)"$'\t'"independent review wave"
     fi
