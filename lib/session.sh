@@ -55,7 +55,8 @@ dx_scoped_session_id() {
 #   - If inside a dex worktree (path contains /.dex/worktrees/),
 #     derive from the directory name. This is stable even if the branch
 #     is renamed by the SessionStart hook.
-#   - Otherwise, fall back to the current branch name (slashes → dashes).
+#   - Otherwise, fall back to a readable branch slug plus a digest of the exact
+#     branch name, so names such as feature/foo and feature-foo cannot collide.
 # shellcheck disable=SC2120  # Intentionally dual-mode: called with args from dx.sh, without from hooks
 dx_session_id() {
   local raw_id scoped_id
@@ -70,10 +71,17 @@ dx_session_id() {
   if [[ "$toplevel" == *"/.dex/worktrees/"* ]]; then
     raw_id="worktree-$(basename "$toplevel")"
   else
-    local branch
+    local branch branch_slug branch_hash
     branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-    [[ -n "$branch" ]] || branch="default"
-    raw_id="${branch//\//-}"
+    if [[ -z "$branch" ]]; then
+      branch="detached-$(git rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')"
+    fi
+    branch_slug=$(printf '%s' "$branch" | LC_ALL=C sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//')
+    [[ -n "$branch_slug" ]] || branch_slug="branch"
+    branch_slug=$(printf '%.64s' "$branch_slug")
+    branch_hash=$(printf '%s' "$branch" | cksum 2>/dev/null | awk '{print $1}') || branch_hash=""
+    [[ -n "$branch_hash" ]] || branch_hash="nohash"
+    raw_id="branch-${branch_slug}-${branch_hash}"
   fi
   scoped_id=$(dx_scoped_session_id "$raw_id")
   printf '%s\n' "$scoped_id"

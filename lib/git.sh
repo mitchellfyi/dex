@@ -2,8 +2,9 @@
 # Dex shared library — git helpers
 
 # dx_default_branch [git_dir]
-# Detect the default branch (main/master) for the given repo.
-# Tries: origin/HEAD symbolic ref → origin/main exists → origin/master exists → "main" fallback.
+# Detect the default branch for the given repo.
+# Prefer the remote's symbolic default, then conventional remote/local names,
+# the configured init.defaultBranch, and finally the current local branch.
 # Optional git_dir: pass a path to run git commands against a specific worktree.
 dx_default_branch() {
   local git_args=()
@@ -14,13 +15,30 @@ dx_default_branch() {
   branch=$(git ${git_args[@]+"${git_args[@]}"} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)
   branch="${branch#refs/remotes/origin/}"
   if [[ -z "$branch" ]]; then
-    if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet refs/remotes/origin/main 2>/dev/null; then
-      branch="main"
-    elif git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet refs/remotes/origin/master 2>/dev/null; then
-      branch="master"
-    else
-      branch="main"
+    local candidate configured_default
+    for candidate in main master trunk develop; do
+      if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet "refs/remotes/origin/${candidate}" 2>/dev/null; then
+        branch="$candidate"
+        break
+      fi
+    done
+    configured_default=$(git ${git_args[@]+"${git_args[@]}"} config --get init.defaultBranch 2>/dev/null || true)
+    if [[ -z "$branch" && -n "$configured_default" ]] \
+      && git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet "refs/heads/${configured_default}" 2>/dev/null; then
+      branch="$configured_default"
     fi
+    if [[ -z "$branch" ]]; then
+      for candidate in main master trunk develop; do
+        if git ${git_args[@]+"${git_args[@]}"} show-ref --verify --quiet "refs/heads/${candidate}" 2>/dev/null; then
+          branch="$candidate"
+          break
+        fi
+      done
+    fi
+    if [[ -z "$branch" ]]; then
+      branch=$(git ${git_args[@]+"${git_args[@]}"} symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    fi
+    [[ -n "$branch" ]] || branch="main"
   fi
   echo "$branch"
 }
