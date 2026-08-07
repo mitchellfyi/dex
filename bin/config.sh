@@ -120,10 +120,26 @@ ask_yn "Datadog (observability + APM)?" "n" && DATADOG_STATUS="enabled"
 echo ""
 echo "Reviewers (assigned in Phase 6 when PR is marked ready):"
 
+valid_reviewer_handle() {
+  local handle="${1#@}" segment
+
+  [[ -n "$handle" && ${#handle} -le 100 ]] || return 1
+  [[ "$handle" != */*/* ]] || return 1
+
+  while IFS= read -r segment; do
+    [[ -n "$segment" && ${#segment} -le 100 ]] || return 1
+    [[ "$segment" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+  done < <(printf '%s\n' "$handle" | tr '/' '\n')
+}
+
 # Auto-detect the current authenticated GitHub user
 CURRENT_GH_USER=""
 if command -v gh &>/dev/null; then
   CURRENT_GH_USER=$(gh api user --jq .login 2>/dev/null || echo "")
+  if [[ -n "$CURRENT_GH_USER" ]] && ! valid_reviewer_handle "$CURRENT_GH_USER"; then
+    dx_warn "Ignoring the GitHub CLI's invalid reviewer handle"
+    CURRENT_GH_USER=""
+  fi
 fi
 
 REVIEWER_ROWS=""
@@ -142,18 +158,27 @@ fi
 
 echo ""
 echo "Add additional reviewers? Enter '<handle> <type>' (type = request|mention),"
-echo "or empty to finish. Example: '@dependabot mention' or 'octocat request'"
+echo "or empty to finish. Handles may be GitHub users or org/team references."
+echo "Example: '@dependabot mention' or 'octocat request'"
 while true; do
   printf "Reviewer: "
   read -r reviewer_line
   [[ -z "$reviewer_line" ]] && break
-  read -r rev_handle rev_type _ <<< "$reviewer_line"
+  read -r rev_handle rev_type rev_extra <<< "$reviewer_line"
+  if [[ -n "$rev_extra" ]]; then
+    echo "  Invalid reviewer — enter exactly one handle and one type. Try again."
+    continue
+  fi
   case "$rev_type" in
     request|mention) ;;
     *) echo "  Invalid type '$rev_type' — must be 'request' or 'mention'. Try again."; continue ;;
   esac
   if [[ -z "$rev_handle" ]]; then
     echo "  Empty handle — skipping."
+    continue
+  fi
+  if ! valid_reviewer_handle "$rev_handle"; then
+    echo "  Invalid handle '$rev_handle' — use a GitHub user or org/team reference. Try again."
     continue
   fi
   REVIEWER_ROWS+="| ${rev_handle} | ${rev_type} | Added via dx config |"$'\n'
