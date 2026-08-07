@@ -5,9 +5,64 @@ DX_ATTRIBUTION_COAUTHOR_NAME="${DX_ATTRIBUTION_COAUTHOR_NAME:-Dex}"
 DX_ATTRIBUTION_COAUTHOR_EMAIL="${DX_ATTRIBUTION_COAUTHOR_EMAIL:-noreply@dexcode.ai}"
 DX_ATTRIBUTION_TRAILER="Co-Authored-By: ${DX_ATTRIBUTION_COAUTHOR_NAME} <${DX_ATTRIBUTION_COAUTHOR_EMAIL}>"
 
+__dx_attribution_effective_scope() {
+  local repo_root="$1" result status
+
+  if result=$(git -C "$repo_root" config --show-scope --get core.hooksPath 2>/dev/null); then
+    printf '%s\n' "$result" | awk 'NR == 1 { print $1 }'
+    return 0
+  else
+    status=$?
+  fi
+  if [[ "$status" == "1" ]]; then
+    printf '\n'
+    return 0
+  fi
+  return "$status"
+}
+
 dx_attribution_hook_dir() {
   local repo_root="$1"
-  printf '%s\n' "$repo_root/.dex/git-hooks"
+  local mode="${2:-existing}"
+  local state_file
+
+  state_file=$(dx_attribution_state_file "$repo_root" "$mode") || return 1
+  case "$(basename "$state_file")" in
+    dex-attribution-worktree-state.json)
+      printf '%s\n' "$(dirname "$state_file")/dex-hooks-worktree"
+      ;;
+    *)
+      printf '%s\n' "$(dirname "$state_file")/dex-hooks"
+      ;;
+  esac
+}
+
+dx_attribution_state_file() {
+  local repo_root="$1"
+  local mode="${2:-existing}"
+  local common_dir git_dir scope local_state worktree_state
+
+  if ! common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    return 1
+  fi
+  if ! git_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null); then
+    return 1
+  fi
+  local_state="$common_dir/dex-attribution-state.json"
+  worktree_state="$git_dir/dex-attribution-worktree-state.json"
+  scope=$(__dx_attribution_effective_scope "$repo_root") || return $?
+
+  if [[ -f "$worktree_state" ]]; then
+    printf '%s\n' "$worktree_state"
+  elif [[ "$mode" == "install" && "$scope" == "worktree" ]]; then
+    printf '%s\n' "$worktree_state"
+  elif [[ -f "$local_state" ]]; then
+    printf '%s\n' "$local_state"
+  elif [[ "$scope" == "worktree" ]]; then
+    printf '%s\n' "$worktree_state"
+  else
+    printf '%s\n' "$local_state"
+  fi
 }
 
 dx_attribution_pr_template() {
@@ -49,7 +104,7 @@ for line in lines:
         continue
     filtered.append(line)
 
-trailer_re = re.compile(r"^\s*Co-Authored-By:\s*Dex\s+<noreply@dexcode\.ai>\s*$", re.I)
+trailer_re = re.compile(r"^\s*" + re.escape(trailer) + r"\s*$", re.I)
 if not any(trailer_re.match(line) for line in filtered):
     substantive = any(line.strip() and not line.lstrip().startswith("#") for line in filtered)
     if not substantive:
@@ -72,34 +127,231 @@ path.write_text(new_text, encoding="utf-8", errors="surrogateescape")
 PY
 }
 
+__dx_attribution_state_get() {
+  local repo_root="$1"
+  local field="$2"
+  local state_file
+
+  state_file=$(dx_attribution_state_file "$repo_root") || return 1
+  python3 "$DEX_DIR/scripts/project-state.py" attribution-get "$state_file" "$field"
+}
+
+__dx_attribution_state_validate() {
+  local repo_root="$1"
+  local state_file
+
+  state_file=$(dx_attribution_state_file "$repo_root") || return 1
+  python3 "$DEX_DIR/scripts/project-state.py" attribution-validate "$state_file"
+}
+
+__dx_attribution_state_create() {
+  local repo_root="$1"
+  local config_scope="$2"
+  local previous_config_present="$3"
+  local previous_config_value="$4"
+  local installed_hooks_path="$5"
+  local original_hooks_configured="$6"
+  local original_hooks_path="$7"
+  local state_file
+
+  state_file=$(dx_attribution_state_file "$repo_root" install) || return 1
+  python3 "$DEX_DIR/scripts/project-state.py" attribution-create \
+    "$state_file" \
+    "$config_scope" \
+    "$previous_config_present" \
+    "$previous_config_value" \
+    "$installed_hooks_path" \
+    "$original_hooks_configured" \
+    "$original_hooks_path"
+}
+
+__dx_attribution_state_mark_installed() {
+  local repo_root="$1"
+  local state_file
+
+  state_file=$(dx_attribution_state_file "$repo_root") || return 1
+  python3 "$DEX_DIR/scripts/project-state.py" attribution-mark-installed "$state_file"
+}
+
+__dx_attribution_state_set_installed_path() {
+  local repo_root="$1"
+  local hook_dir="$2"
+  local state_file
+
+  state_file=$(dx_attribution_state_file "$repo_root") || return 1
+  python3 "$DEX_DIR/scripts/project-state.py" attribution-set-installed-path \
+    "$state_file" \
+    "$hook_dir"
+}
+
+__dx_attribution_generate_hook_proxies() {
+  local repo_root="$1"
+  local hook_dir="$2"
+  local original_hooks_dir="$3"
+  local state_file
+
+  state_file=$(dx_attribution_state_file "$repo_root") || return 1
+  python3 "$DEX_DIR/scripts/project-state.py" attribution-generate \
+    "$state_file" \
+    "$hook_dir" \
+    "$original_hooks_dir" \
+    "$DEX_DIR"
+}
+
 dx_install_attribution_hook() {
   local repo_root="$1"
-  local hook_dir hook_file
+  local hook_dir legacy_hook_dir state_file current_effective current_config config_scope
+  local previous_config_present installation_complete previous_config_value installed_hooks_path
+  local current_config_present current_effective_present config_status effective_scope
+  local original_hooks_configured original_hooks_path original_hooks_dir
 
+  if [[ -L "$repo_root/.dex" ]]; then
+    dx_error "Refusing to install hooks through a symlinked .dex directory"
+    return 1
+  fi
   mkdir -p "$repo_root/.dex"
-  hook_dir="$(dx_attribution_hook_dir "$repo_root")"
-  mkdir -p "$hook_dir"
-  hook_file="$hook_dir/commit-msg"
-
-  cat > "${hook_file}.tmp" <<EOF
-#!/usr/bin/env bash
-# Dex-managed commit-msg hook. Re-run 'dx init' or 'dx sync' to refresh.
-set -euo pipefail
-
-DEX_DIR="\${DEX_DIR:-$DEX_DIR}"
-# shellcheck disable=SC1091
-source "\$DEX_DIR/lib/common.sh"
-dx_commit_attribution_message "\$1"
-EOF
-  mv "${hook_file}.tmp" "$hook_file"
-  chmod +x "$hook_file"
-
-  if [[ -f "$hook_dir/prepare-commit-msg" ]] && grep -qF "Dex-managed prepare-commit-msg hook" "$hook_dir/prepare-commit-msg"; then
-    rm -f "$hook_dir/prepare-commit-msg"
+  hook_dir=$(dx_attribution_hook_dir "$repo_root" install) || return 1
+  legacy_hook_dir="$repo_root/.dex/git-hooks"
+  state_file=$(dx_attribution_state_file "$repo_root" install) || return 1
+  current_effective=""
+  current_effective_present=0
+  if current_effective=$(git -C "$repo_root" config --get core.hooksPath 2>/dev/null); then
+    current_effective_present=1
+  else
+    config_status=$?
+    [[ "$config_status" == "1" ]] || return "$config_status"
+  fi
+  if [[ "$current_effective_present" == "1" && -z "$current_effective" ]]; then
+    dx_error "core.hooksPath is configured with an empty value; leaving it unchanged"
+    return 1
   fi
 
-  git -C "$repo_root" config core.hooksPath ".dex/git-hooks"
-  dx_done "Installed Dex commit attribution hook"
+  if [[ -f "$state_file" ]]; then
+    __dx_attribution_state_validate "$repo_root" || return $?
+    config_scope=$(__dx_attribution_state_get "$repo_root" config_scope) || return 1
+    case "$config_scope" in
+      local|worktree) ;;
+      *)
+        dx_error "Invalid Git config scope in Dex attribution state"
+        return 1
+        ;;
+    esac
+    installed_hooks_path=$(__dx_attribution_state_get "$repo_root" installed_hooks_path) || return 1
+    current_config=""
+    current_config_present=0
+    if current_config=$(git -C "$repo_root" config "--$config_scope" --get core.hooksPath 2>/dev/null); then
+      current_config_present=1
+    else
+      config_status=$?
+      [[ "$config_status" == "1" ]] || return "$config_status"
+    fi
+    installation_complete=$(__dx_attribution_state_get "$repo_root" installation_complete) || return 1
+    previous_config_present=$(__dx_attribution_state_get "$repo_root" previous_config_present) || return 1
+    previous_config_value=$(__dx_attribution_state_get "$repo_root" previous_config_value) || return 1
+    if [[ "$current_config" != "$installed_hooks_path" ]] \
+      && [[ "$current_config" != "$hook_dir" ]] \
+      && [[ "$installation_complete" == "1" ]]; then
+      dx_warn "core.hooksPath changed after Dex was initialized; leaving it unchanged"
+      return 0
+    fi
+    if [[ "$current_config" != "$installed_hooks_path" ]] \
+      && [[ "$current_config" != "$hook_dir" ]] \
+      && { [[ "$current_config_present" != "$previous_config_present" ]] \
+        || [[ "$current_config" != "$previous_config_value" ]]; }; then
+      dx_error "core.hooksPath changed during an interrupted Dex install; leaving it unchanged"
+      return 1
+    fi
+    original_hooks_configured=$(__dx_attribution_state_get "$repo_root" original_hooks_configured) || return 1
+    original_hooks_path=$(__dx_attribution_state_get "$repo_root" original_hooks_path) || return 1
+  else
+    if [[ "$current_effective" == ".dex/git-hooks" ]]; then
+      if [[ -f "$legacy_hook_dir/commit-msg" ]] \
+        && grep -qF "Dex-managed commit-msg hook" "$legacy_hook_dir/commit-msg"; then
+        dx_warn "Legacy Dex hook has no restoration record; leaving it unchanged"
+        return 0
+      fi
+      dx_error "core.hooksPath already uses .dex/git-hooks, but Dex does not own it"
+      return 1
+    fi
+    installed_hooks_path="$hook_dir"
+    if [[ -L "$hook_dir" ]]; then
+      dx_error "Refusing to replace the symlinked Dex hook proxy directory"
+      return 1
+    fi
+    if [[ -d "$hook_dir" ]] && [[ -n "$(find "$hook_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+      dx_error "Refusing to replace the existing Dex hook proxy directory"
+      return 1
+    fi
+    if [[ -e "$hook_dir" ]] && [[ ! -d "$hook_dir" ]]; then
+      dx_error "Refusing to replace the existing Dex hook proxy path"
+      return 1
+    fi
+
+    config_scope="local"
+    effective_scope=$(__dx_attribution_effective_scope "$repo_root") || return $?
+    if [[ "$effective_scope" == "worktree" ]]; then
+      config_scope="worktree"
+    fi
+    current_config=""
+    previous_config_present=0
+    previous_config_value=""
+    if current_config=$(git -C "$repo_root" config "--$config_scope" --get core.hooksPath 2>/dev/null); then
+      previous_config_present=1
+      previous_config_value="$current_config"
+    else
+      config_status=$?
+      [[ "$config_status" == "1" ]] || return "$config_status"
+    fi
+    original_hooks_configured=0
+    original_hooks_path=""
+    if [[ "$current_effective_present" == "1" ]]; then
+      original_hooks_configured=1
+      original_hooks_path="$current_effective"
+    else
+      original_hooks_path=$(git -C "$repo_root" rev-parse --path-format=absolute \
+        --git-path hooks) || return $?
+    fi
+    original_hooks_dir=$(git -C "$repo_root" rev-parse --path-format=absolute \
+      --git-path hooks) || return $?
+    if [[ "$original_hooks_dir" == "$hook_dir" ]]; then
+      dx_error "The configured hook directory conflicts with Dex's hook proxy directory"
+      return 1
+    fi
+    __dx_attribution_state_create \
+      "$repo_root" \
+      "$config_scope" \
+      "$previous_config_present" \
+      "$previous_config_value" \
+      "$installed_hooks_path" \
+      "$original_hooks_configured" \
+      "$original_hooks_path" || return $?
+  fi
+
+  if [[ "$original_hooks_configured" == "1" ]]; then
+    original_hooks_dir=$(git -C "$repo_root" -c core.hooksPath="$original_hooks_path" \
+      rev-parse --path-format=absolute --git-path hooks) || return $?
+  else
+    original_hooks_dir=$(git -C "$repo_root" rev-parse --path-format=absolute \
+      --git-common-dir) || return $?
+    original_hooks_dir="$original_hooks_dir/hooks"
+  fi
+  __dx_attribution_generate_hook_proxies "$repo_root" "$hook_dir" "$original_hooks_dir" || return $?
+  git -C "$repo_root" config "--$config_scope" core.hooksPath "$hook_dir" || return $?
+  current_effective=""
+  if current_effective=$(git -C "$repo_root" config --get core.hooksPath 2>/dev/null); then
+    :
+  else
+    config_status=$?
+    [[ "$config_status" == "1" ]] || return "$config_status"
+  fi
+  if [[ "$current_effective" != "$hook_dir" ]]; then
+    dx_error "A higher-priority Git configuration prevented Dex from installing its hook proxy"
+    dx_uninstall_repo_attribution "$repo_root" || true
+    return 1
+  fi
+  __dx_attribution_state_set_installed_path "$repo_root" "$hook_dir" || return $?
+  __dx_attribution_state_mark_installed "$repo_root" || return $?
+  dx_done "Installed Dex attribution hooks"
 }
 
 dx_install_pr_attribution_template() {
@@ -107,21 +359,154 @@ dx_install_pr_attribution_template() {
   local template="$repo_root/.github/pull_request_template.md"
   local uppercase_template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
   local template_dir="$repo_root/.github/PULL_REQUEST_TEMPLATE"
+  local template_tmp
 
-  if [[ -f "$template" || -f "$uppercase_template" || -d "$template_dir" ]]; then
+  if [[ -e "$template" || -L "$template" \
+    || -e "$uppercase_template" || -L "$uppercase_template" \
+    || -e "$template_dir" || -L "$template_dir" ]]; then
     dx_ok "GitHub PR template already exists"
     return 0
   fi
+  if [[ -L "$repo_root/.github" ]]; then
+    dx_error "Refusing to create a PR template through a symlinked .github directory"
+    return 1
+  fi
 
-  mkdir -p "$repo_root/.github"
-  dx_attribution_pr_template > "${template}.tmp"
-  mv "${template}.tmp" "$template"
+  mkdir -p "$repo_root/.github" || return $?
+  template_tmp=$(mktemp "$repo_root/.github/.dex-pr-template.XXXXXX") || return $?
+  if ! dx_attribution_pr_template > "$template_tmp"; then
+    rm -f "$template_tmp"
+    return 1
+  fi
+  if ! chmod a-rw "$template_tmp" || ! chmod +rw "$template_tmp"; then
+    rm -f "$template_tmp"
+    return 1
+  fi
+  if ! mv "$template_tmp" "$template"; then
+    rm -f "$template_tmp"
+    return 1
+  fi
   dx_done "Created GitHub PR template with Dex attribution"
 }
 
 dx_install_repo_attribution() {
   local repo_root="$1"
 
-  dx_install_attribution_hook "$repo_root"
-  dx_install_pr_attribution_template "$repo_root"
+  dx_install_attribution_hook "$repo_root" || return $?
+  dx_install_pr_attribution_template "$repo_root" || return $?
+}
+
+dx_uninstall_repo_attribution() {
+  local repo_root="$1"
+  local state_file hook_dir legacy_hook_dir current_effective current_config config_scope
+  local previous_config_present previous_config_value
+  local installed_hooks_path template cleanup_output_file cleanup_status config_status
+  local restored_config other_state_status
+
+  state_file=$(dx_attribution_state_file "$repo_root") || return 1
+  hook_dir=$(dx_attribution_hook_dir "$repo_root") || return 1
+  legacy_hook_dir="$repo_root/.dex/git-hooks"
+  template="$repo_root/.github/pull_request_template.md"
+
+  if [[ ! -f "$state_file" ]]; then
+    current_effective=""
+    if current_effective=$(git -C "$repo_root" config --get core.hooksPath 2>/dev/null); then
+      :
+    else
+      config_status=$?
+      [[ "$config_status" == "1" ]] || return "$config_status"
+    fi
+    if [[ "$current_effective" == ".dex/git-hooks" ]] \
+      && [[ -f "$legacy_hook_dir/commit-msg" ]] \
+      && grep -qF "Dex-managed commit-msg hook" "$legacy_hook_dir/commit-msg"; then
+      dx_warn "Legacy Dex hooks have no restoration record; preserving them and core.hooksPath"
+    fi
+    if [[ -f "$template" ]] && grep -qF "Generated by Dex" "$template"; then
+      dx_warn "The PR template has no ownership record; preserving it"
+    fi
+    return 0
+  fi
+
+  __dx_attribution_state_validate "$repo_root" || return $?
+  installed_hooks_path=$(__dx_attribution_state_get "$repo_root" installed_hooks_path) || return 1
+  config_scope=$(__dx_attribution_state_get "$repo_root" config_scope) || return 1
+  case "$config_scope" in
+    local|worktree) ;;
+    *)
+      dx_error "Invalid Git config scope in Dex attribution state"
+      return 1
+      ;;
+  esac
+  previous_config_present=$(__dx_attribution_state_get "$repo_root" previous_config_present) || return 1
+  previous_config_value=$(__dx_attribution_state_get "$repo_root" previous_config_value) || return 1
+  current_config=""
+  if current_config=$(git -C "$repo_root" config "--$config_scope" --get core.hooksPath 2>/dev/null); then
+    :
+  else
+    config_status=$?
+    [[ "$config_status" == "1" ]] || return "$config_status"
+  fi
+
+  if [[ "$config_scope" == "local" ]]; then
+    other_state_status=0
+    dx_project_has_other_init_state "$repo_root" || other_state_status=$?
+    case "$other_state_status" in
+      0)
+        dx_ok "Other initialized worktrees still use the shared Dex attribution hooks"
+        return 0
+        ;;
+      1) ;;
+      *) return "$other_state_status" ;;
+    esac
+  fi
+
+  if [[ "$current_config" == "$installed_hooks_path" || "$current_config" == "$hook_dir" ]]; then
+    if [[ "$previous_config_present" == "1" ]]; then
+      git -C "$repo_root" config "--$config_scope" core.hooksPath "$previous_config_value" || return $?
+      if restored_config=$(git -C "$repo_root" config "--$config_scope" --get core.hooksPath 2>/dev/null); then
+        :
+      else
+        config_status=$?
+        return "$config_status"
+      fi
+      if [[ "$restored_config" != "$previous_config_value" ]]; then
+        dx_error "Could not restore the previous core.hooksPath value"
+        return 1
+      fi
+      dx_done "Restored core.hooksPath to $previous_config_value"
+    else
+      git -C "$repo_root" config "--$config_scope" --unset-all core.hooksPath 2>/dev/null || return $?
+      if git -C "$repo_root" config "--$config_scope" --get core.hooksPath >/dev/null 2>&1; then
+        dx_error "Could not remove the Dex core.hooksPath override"
+        return 1
+      else
+        config_status=$?
+        [[ "$config_status" == "1" ]] || return "$config_status"
+      fi
+      dx_done "Removed Dex core.hooksPath override"
+    fi
+  else
+    dx_ok "core.hooksPath was changed after init; preserving its current value"
+  fi
+
+  cleanup_output_file=$(mktemp "${TMPDIR:-/tmp}/dex-attribution-cleanup.XXXXXX") || return $?
+  cleanup_status=0
+  python3 "$DEX_DIR/scripts/project-state.py" attribution-cleanup \
+    "$state_file" \
+    "$hook_dir" > "$cleanup_output_file" || cleanup_status=$?
+  if [[ $cleanup_status -ne 0 ]]; then
+    rm -f "$cleanup_output_file"
+    return "$cleanup_status"
+  fi
+  if [[ -s "$cleanup_output_file" ]]; then
+    while IFS= read -r preserved_hook; do
+      [[ -n "$preserved_hook" ]] || continue
+      dx_warn "Preserving modified hook: $preserved_hook"
+    done < "$cleanup_output_file"
+  else
+    dx_done "Removed Dex attribution hooks"
+  fi
+  rm -f "$cleanup_output_file"
+
+  rm -f "$state_file"
 }

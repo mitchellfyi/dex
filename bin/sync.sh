@@ -8,8 +8,20 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 SYNC_PROVIDER_SESSION_ID=""
 SYNC_RUN_SESSION_ID=""
 SYNC_RUN_ID=""
+SYNC_PROJECT_STATE_ACTIVE=0
+SYNC_MEMORY_INDEX_TMP=""
 __dx_sync_cleanup() {
   local status=$?
+  if [[ -n "${SYNC_MEMORY_INDEX_TMP:-}" ]]; then
+    command rm -f "$SYNC_MEMORY_INDEX_TMP" 2>/dev/null || true
+    SYNC_MEMORY_INDEX_TMP=""
+  fi
+  if [[ "${SYNC_PROJECT_STATE_ACTIVE:-0}" == "1" ]] && [[ -n "${repo_root:-}" ]]; then
+    if ! dx_project_state_finalize "$repo_root"; then
+      dx_warn "Could not finalize Dex project ownership state"
+    fi
+    SYNC_PROJECT_STATE_ACTIVE=0
+  fi
   if [[ -n "${SYNC_RUN_ID:-}" ]]; then
     if [[ $status -eq 0 ]]; then
       dx_event_emit_safe "$SYNC_RUN_ID" "run.completed" "info" "Dex sync completed" "" "{\"command\":\"dx sync\"}"
@@ -173,7 +185,6 @@ if [[ "$READ_ONLY" -eq 1 ]]; then
     dx_warn "Read-only sync found Claude/Codex tooling drift; run 'dx sync' or 'dx tools bootstrap' to reinstall it."
   fi
 else
-  dx_install_repo_attribution "$repo_root"
   if ! dx_bootstrap_agent_tooling "$repo_root" "install"; then
     dx_warn "Continuing sync without complete Claude/Codex tooling bootstrap"
   fi
@@ -203,13 +214,44 @@ if [[ "$READ_ONLY" -eq 0 && "$BASELINE_ANALYSIS_RAN" -eq 1 ]] && ! __dx_sync_pro
   dx_info "Re-run 'dx init --skip-config' after resolving provider or tooling issues."
 fi
 
+if [[ "$READ_ONLY" -eq 0 ]]; then
+  # Baseline init owns its own transaction. Start sync's ownership window only
+  # after that command returns so attribution and later sync output share one
+  # unambiguous receipt set.
+  if [[ -L "$repo_root/.dex" ]]; then
+    dx_error "Refusing to sync through a symlinked .dex directory"
+    exit 1
+  fi
+  if [[ -d "$repo_root/.dex" ]]; then
+    sync_nested_dex_symlink=$(find "$repo_root/.dex" -mindepth 1 \
+      \( -path "$repo_root/.dex/worktrees" -o -path "$repo_root/.dex/git-hooks" \) -prune \
+      -o -type l -print -quit 2>/dev/null || true)
+    if [[ -n "$sync_nested_dex_symlink" ]]; then
+      dx_error "Refusing to sync while .dex contains a symlink: $sync_nested_dex_symlink"
+      exit 1
+    fi
+  fi
+  dx_project_state_begin "$repo_root"
+  SYNC_PROJECT_STATE_ACTIVE=1
+  dx_install_repo_attribution "$repo_root"
+fi
+
 if [[ ! -f "$repo_root/.dex/memory/index.md" ]]; then
   if [[ "$READ_ONLY" -eq 1 ]]; then
     dx_info "Read-only sync would create .dex/memory/index.md"
   else
+    if [[ -L "$repo_root/.dex" || -L "$repo_root/.dex/memory" ]]; then
+      dx_error "Refusing to create the memory index through a symlinked project directory"
+      exit 1
+    fi
     mkdir -p "$repo_root/.dex/memory/domains"
     memory_index="$repo_root/.dex/memory/index.md"
-    cat > "${memory_index}.tmp" <<'MEMORYINDEX'
+    if [[ -e "$memory_index" || -L "$memory_index" ]]; then
+      dx_error "Refusing to replace a non-regular memory index: $memory_index"
+      exit 1
+    fi
+    SYNC_MEMORY_INDEX_TMP=$(mktemp "$repo_root/.dex/memory/.dex-sync-index.XXXXXX")
+    cat > "$SYNC_MEMORY_INDEX_TMP" <<'MEMORYINDEX'
 # Dex Memory Index
 
 No durable repo memory has been promoted yet.
@@ -222,7 +264,13 @@ maintenance runs, or durable workflow lessons create evidence worth preserving.
 | Domain | File | Loads For | Status |
 |--------|------|-----------|--------|
 MEMORYINDEX
-    mv "${memory_index}.tmp" "$memory_index"
+    if ! chmod a-rw "$SYNC_MEMORY_INDEX_TMP" || ! chmod +rw "$SYNC_MEMORY_INDEX_TMP" \
+      || ! mv "$SYNC_MEMORY_INDEX_TMP" "$memory_index"; then
+      rm -f "$SYNC_MEMORY_INDEX_TMP"
+      SYNC_MEMORY_INDEX_TMP=""
+      exit 1
+    fi
+    SYNC_MEMORY_INDEX_TMP=""
     dx_done "Created .dex/memory/index.md"
   fi
 fi
@@ -312,6 +360,11 @@ fi
 echo ""
 if [[ "$READ_ONLY" -eq 0 ]]; then
   dx_dexcode_sync_project_context "$repo_root"
+fi
+
+if [[ "$SYNC_PROJECT_STATE_ACTIVE" == "1" ]]; then
+  dx_project_state_finalize "$repo_root"
+  SYNC_PROJECT_STATE_ACTIVE=0
 fi
 
 echo ""

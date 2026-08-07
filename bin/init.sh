@@ -11,8 +11,15 @@ INIT_PROVIDER_SESSION_ID=""
 INIT_RUN_SESSION_ID=""
 INIT_RUN_ID=""
 INIT_ANALYSIS_OUTPUT_FILE=""
+INIT_PROJECT_STATE_ACTIVE=0
 __dx_init_cleanup() {
   local status=$?
+  if [[ "${INIT_PROJECT_STATE_ACTIVE:-0}" == "1" ]] && [[ -n "${repo_root:-}" ]]; then
+    if ! dx_project_state_finalize "$repo_root"; then
+      dx_warn "Could not finalize Dex project ownership state"
+    fi
+    INIT_PROJECT_STATE_ACTIVE=0
+  fi
   if [[ -n "${INIT_ANALYSIS_OUTPUT_FILE:-}" ]]; then
     command rm -f "$INIT_ANALYSIS_OUTPUT_FILE" 2>/dev/null || true
   fi
@@ -52,6 +59,38 @@ Options:
 USAGE
 }
 
+__dx_init_atomic_write() {
+  local destination="$1" temporary new_destination=0
+
+  if [[ -L "$destination" ]] || { [[ -e "$destination" ]] && [[ ! -f "$destination" ]]; }; then
+    dx_error "Refusing to replace a non-regular project file: $destination"
+    return 1
+  fi
+  temporary=$(mktemp "$(dirname "$destination")/.dex-init.$(basename "$destination").XXXXXX") \
+    || return $?
+  if [[ -e "$destination" ]]; then
+    if ! command cp -p "$destination" "$temporary"; then
+      command rm -f "$temporary" 2>/dev/null || true
+      return 1
+    fi
+  else
+    new_destination=1
+  fi
+  if ! cat > "$temporary"; then
+    command rm -f "$temporary" 2>/dev/null || true
+    return 1
+  fi
+  if [[ "$new_destination" == "1" ]] \
+    && { ! chmod a-rw "$temporary" || ! chmod +rw "$temporary"; }; then
+    command rm -f "$temporary" 2>/dev/null || true
+    return 1
+  fi
+  if ! command mv -f "$temporary" "$destination"; then
+    command rm -f "$temporary" 2>/dev/null || true
+    return 1
+  fi
+}
+
 # Parse all flags upfront so they work independently of each other.
 # (Previously --skip-config was unreachable when --skip-analysis was set
 # because the analysis section exited early before config flag was parsed.)
@@ -88,6 +127,23 @@ repo_name=$(basename "$repo_root")
 echo "Dex — Init: $repo_name"
 echo ""
 
+if [[ -L "$repo_root/.dex" ]]; then
+  dx_error "Refusing to initialize through a symlinked .dex directory"
+  exit 1
+fi
+if [[ -d "$repo_root/.dex" ]]; then
+  nested_dex_symlink=$(find "$repo_root/.dex" -mindepth 1 \
+    \( -path "$repo_root/.dex/worktrees" -o -path "$repo_root/.dex/git-hooks" \) -prune \
+    -o -type l -print -quit 2>/dev/null || true)
+  if [[ -n "$nested_dex_symlink" ]]; then
+    dx_error "Refusing to initialize while .dex contains a symlink: $nested_dex_symlink"
+    exit 1
+  fi
+fi
+
+dx_project_state_begin "$repo_root"
+INIT_PROJECT_STATE_ACTIVE=1
+
 INIT_RUN_SESSION_ID="init-$(dx_unique_session_id)"
 if INIT_RUN_ID=$(dx_run_prepare "$INIT_RUN_SESSION_ID" "$repo_root" "current-checkout" "$repo_name" "dx init $*" "dx init"); then
   export DEX_RUN_ID="$INIT_RUN_ID"
@@ -106,29 +162,27 @@ mkdir -p "$repo_root/.dex"
 # .gitignore for worktree artifacts (don't overwrite — user may have added custom entries)
 dex_gitignore="$repo_root/.dex/.gitignore"
 if [[ ! -f "$dex_gitignore" ]]; then
-  cat > "$dex_gitignore" << 'GITIGNORE'
+  __dx_init_atomic_write "$dex_gitignore" << 'GITIGNORE'
 worktrees/
 GITIGNORE
   dx_done "Created .dex/.gitignore"
 elif grep -qxF 'worktrees/' "$dex_gitignore" 2>/dev/null; then
   dx_ok ".dex/.gitignore already ignores worktrees/"
 else
-  dex_gitignore_tmp="${dex_gitignore}.tmp.$$"
   {
     cat "$dex_gitignore"
     if [[ -s "$dex_gitignore" ]] && [[ -n "$(tail -c 1 "$dex_gitignore")" ]]; then
       printf '\n'
     fi
     printf 'worktrees/\n'
-  } > "$dex_gitignore_tmp"
-  mv "$dex_gitignore_tmp" "$dex_gitignore"
+  } | __dx_init_atomic_write "$dex_gitignore"
   dx_done "Added worktrees/ to .dex/.gitignore"
 fi
 
 # Minimal dex.md (will be overwritten by codebase analysis if run)
 dex_md="$repo_root/.dex/dex.md"
 if [[ ! -f "$dex_md" ]]; then
-  cat > "$dex_md" << 'DEXMD'
+  __dx_init_atomic_write "$dex_md" << 'DEXMD'
 # Dex
 
 This project uses Dex for workflow automation.
@@ -195,10 +249,10 @@ if [[ -f "$dex_agents_md" ]] && grep -qF '@dex.md' "$dex_agents_md" 2>/dev/null;
   dx_ok ".dex/AGENTS.md already imports dex.md"
 elif [[ -f "$dex_agents_md" ]]; then
   # File exists but doesn't import dex.md — prepend the import.
-  { printf '@dex.md\n\n'; cat "$dex_agents_md"; } > "${dex_agents_md}.tmp" && mv "${dex_agents_md}.tmp" "$dex_agents_md"
+  { printf '@dex.md\n\n'; cat "$dex_agents_md"; } | __dx_init_atomic_write "$dex_agents_md"
   dx_done "Added @import to existing .dex/AGENTS.md"
 else
-  printf '@dex.md\n' > "${dex_agents_md}.tmp" && mv "${dex_agents_md}.tmp" "$dex_agents_md"
+  printf '@dex.md\n' | __dx_init_atomic_write "$dex_agents_md"
   dx_done "Created .dex/AGENTS.md with @import"
 fi
 
@@ -207,14 +261,14 @@ dex_claude_md="$repo_root/.dex/CLAUDE.md"
 if [[ -f "$dex_claude_md" ]] && grep -qF '@AGENTS.md' "$dex_claude_md" 2>/dev/null; then
   dx_ok ".dex/CLAUDE.md already points to AGENTS.md"
 elif [[ -f "$dex_claude_md" ]] && [[ "$(sed '/^[[:space:]]*$/d' "$dex_claude_md")" == "@dex.md" ]]; then
-  printf '@AGENTS.md\n' > "${dex_claude_md}.tmp" && mv "${dex_claude_md}.tmp" "$dex_claude_md"
+  printf '@AGENTS.md\n' | __dx_init_atomic_write "$dex_claude_md"
   dx_done "Updated .dex/CLAUDE.md to point to AGENTS.md"
 elif [[ -f "$dex_claude_md" ]]; then
   # Preserve custom Claude instructions, but route generated context through AGENTS.md.
-  { printf '@AGENTS.md\n\n'; cat "$dex_claude_md"; } > "${dex_claude_md}.tmp" && mv "${dex_claude_md}.tmp" "$dex_claude_md"
+  { printf '@AGENTS.md\n\n'; cat "$dex_claude_md"; } | __dx_init_atomic_write "$dex_claude_md"
   dx_done "Added AGENTS.md pointer to existing .dex/CLAUDE.md"
 else
-  printf '@AGENTS.md\n' > "${dex_claude_md}.tmp" && mv "${dex_claude_md}.tmp" "$dex_claude_md"
+  printf '@AGENTS.md\n' | __dx_init_atomic_write "$dex_claude_md"
   dx_done "Created .dex/CLAUDE.md pointing to AGENTS.md"
 fi
 
@@ -224,7 +278,7 @@ memory_dir="$repo_root/.dex/memory"
 mkdir -p "$memory_dir/domains"
 memory_index="$memory_dir/index.md"
 if [[ ! -f "$memory_index" ]]; then
-  cat > "${memory_index}.tmp" << 'MEMORYINDEX'
+  __dx_init_atomic_write "$memory_index" << 'MEMORYINDEX'
 # Dex Memory Index
 
 No durable repo memory has been promoted yet.
@@ -237,7 +291,6 @@ maintenance runs, or durable workflow lessons create evidence worth preserving.
 | Domain | File | Loads For | Status |
 |--------|------|-----------|--------|
 MEMORYINDEX
-  mv "${memory_index}.tmp" "$memory_index"
   dx_done "Created .dex/memory/index.md"
 else
   dx_ok ".dex/memory/index.md already exists"
@@ -361,6 +414,9 @@ if [[ $INSTALL_MAINTENANCE_WORKFLOW -eq 1 ]]; then
 fi
 
 dx_dexcode_sync_project_context "$repo_root"
+
+dx_project_state_finalize "$repo_root"
+INIT_PROJECT_STATE_ACTIVE=0
 
 echo ""
 echo "Init complete for: $repo_name"

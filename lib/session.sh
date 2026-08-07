@@ -580,3 +580,144 @@ dx_cleanup_session() {
   fi
   [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" 2>/dev/null
 }
+
+# Remove every phase and loop artifact scoped to the current repository. This
+# also covers in-place sessions and worktrees that no longer exist on disk.
+dx_cleanup_repo_sessions() {
+  local repo_key last_session_file last_info last_path repo_root remainder state_dir prefix
+
+  repo_key=$(dx_session_repo_key) || return 1
+  for state_dir in "$DX_LOOP_DIR" "$DX_STATE_DIR"; do
+    [[ -d "$state_dir" ]] || continue
+    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+      find "$state_dir" -maxdepth 1 -type f -name "${prefix}${repo_key}-*" \
+        -exec rm -f {} + || return $?
+    done
+  done
+
+  last_session_file="$DX_STATE_DIR/last-session"
+  [[ -f "$last_session_file" ]] || return 0
+  last_info=$(cat "$last_session_file" 2>/dev/null) || return 0
+  remainder=${last_info#*:}
+  [[ "$remainder" != "$last_info" ]] || return 0
+  last_path=${remainder%%:*}
+  last_path=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' \
+    "$last_path" 2>/dev/null) || return 0
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  repo_root=$(cd "$repo_root" 2>/dev/null && pwd -P) || return 0
+  if [[ "$last_path" == "$repo_root" || "$last_path" == "$repo_root/.dex/worktrees/"* ]]; then
+    rm -f "$last_session_file"
+  fi
+}
+
+__dx_session_artifact_matches_checkout() {
+  local artifact_name="$1" checkout_session="$2" prefix
+
+  for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+    case "$artifact_name" in
+      "${prefix}${checkout_session}".*|"${prefix}${checkout_session}"-*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Remove state tied to the checkout running uninit without disturbing another
+# initialized worktree in the same repository.
+dx_cleanup_current_checkout_sessions() {
+  local current_root base_session repo_key meta_file session_id meta_root worktree_output
+  local last_session_file last_info remainder last_path state_dir prefix
+  local candidate name stem suffix pid epoch tail random line worktree_path sibling_root
+  local sibling_session protected_sessions="" git_status protected
+
+  current_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+  current_root=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' \
+    "$current_root" 2>/dev/null) || return 1
+  base_session=$(dx_session_id) || return 1
+  repo_key=$(dx_session_repo_key) || return 1
+  if worktree_output=$(git worktree list --porcelain 2>/dev/null); then
+    :
+  else
+    git_status=$?
+    return "$git_status"
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        worktree_path=${line#worktree }
+        sibling_root=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' \
+          "$worktree_path" 2>/dev/null) || return 1
+        [[ "$sibling_root" != "$current_root" ]] || continue
+        sibling_session=$(cd "$worktree_path" 2>/dev/null && dx_session_id) || return 1
+        protected_sessions="${protected_sessions}${sibling_session}
+"
+        ;;
+    esac
+  done < <(printf '%s\n' "$worktree_output")
+
+  for state_dir in "$DX_LOOP_DIR" "$DX_STATE_DIR"; do
+    [[ -d "$state_dir" ]] || continue
+    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+      stem="${prefix}${base_session}"
+      while IFS= read -r candidate; do
+        name=$(basename "$candidate")
+        protected=0
+        while IFS= read -r sibling_session; do
+          [[ -n "$sibling_session" ]] || continue
+          if __dx_session_artifact_matches_checkout "$name" "$sibling_session"; then
+            protected=1
+            break
+          fi
+        done <<EOF
+$protected_sessions
+EOF
+        [[ "$protected" == "0" ]] || continue
+        case "$name" in
+          "$stem".*)
+            rm -f "$candidate"
+            ;;
+          "$stem"-*)
+            suffix=${name#"$stem"-}
+            pid=${suffix%%-*}
+            tail=${suffix#*-}
+            [[ "$tail" != "$suffix" ]] || continue
+            epoch=${tail%%-*}
+            tail=${tail#*-}
+            [[ "$tail" != "$epoch" ]] || continue
+            random=${tail%%.*}
+            [[ "$random" != "$tail" ]] || continue
+            case "$pid" in ""|*[!0-9]*) continue ;; esac
+            case "$epoch" in ""|*[!0-9]*) continue ;; esac
+            case "$random" in ""|*[!0-9]*) continue ;; esac
+            rm -f "$candidate"
+            ;;
+        esac
+      done < <(find "$state_dir" -maxdepth 1 -type f -print 2>/dev/null)
+    done
+  done
+
+  if [[ -d "$DX_STATE_DIR" ]]; then
+    while IFS= read -r meta_file; do
+      meta_root=$(awk -F= '$1 == "wt_dir" { sub(/^[^=]*=/, ""); print; exit }' \
+        "$meta_file" 2>/dev/null)
+      [[ -n "$meta_root" ]] || continue
+      meta_root=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' \
+        "$meta_root" 2>/dev/null) || continue
+      [[ "$meta_root" == "$current_root" ]] || continue
+      session_id=$(basename "$meta_file" .meta)
+      dx_cleanup_session "$session_id"
+    done < <(find "$DX_STATE_DIR" -maxdepth 1 -type f -name "${repo_key}-*.meta" \
+      -print 2>/dev/null)
+  fi
+
+  last_session_file="$DX_STATE_DIR/last-session"
+  [[ -f "$last_session_file" ]] || return 0
+  last_info=$(cat "$last_session_file" 2>/dev/null) || return 0
+  remainder=${last_info#*:}
+  [[ "$remainder" != "$last_info" ]] || return 0
+  last_path=${remainder%%:*}
+  last_path=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' \
+    "$last_path" 2>/dev/null) || return 0
+  if [[ "$last_path" == "$current_root" ]]; then
+    rm -f "$last_session_file"
+  fi
+}

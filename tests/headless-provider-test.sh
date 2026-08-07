@@ -122,8 +122,26 @@ if ! grep -Eq '/missing-repo$' "$TEST_INIT_LOG"; then
 fi
 grep -Fq 'No .dex/ directory found; running baseline project analysis first' "$TMP_DIR/missing.out"
 
+# Sync may bootstrap attribution in an existing project that predates ownership
+# receipts. Its write window must claim the generated template so uninit can
+# remove it without treating the rest of the project as Dex-owned.
+OWNERSHIP_REPO="$TMP_DIR/sync-ownership-repo"
+make_repo "$OWNERSHIP_REPO" 1
+(
+  cd "$OWNERSHIP_REPO"
+  "$REAL_BASH" "$ROOT/bin/sync.sh" --no-pr --budget-minutes 1
+) > "$TMP_DIR/sync-ownership.out" 2>&1
+[[ -f "$OWNERSHIP_REPO/.github/pull_request_template.md" ]]
+(
+  cd "$OWNERSHIP_REPO"
+  "$REAL_BASH" "$ROOT/bin/uninit.sh"
+) > "$TMP_DIR/sync-ownership-uninit.out" 2>&1
+[[ ! -e "$OWNERSHIP_REPO/.github/pull_request_template.md" ]]
+[[ -f "$OWNERSHIP_REPO/.dex/dex.md" ]]
+
 grep -Fq 'exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox' "$TEST_CODEX_LOG"
 grep -Fq '# DXSync Invocation' "$TEST_CODEX_LOG"
-grep -Fq "Repo: $SYNC_REPO" "$TEST_CODEX_LOG"
+sync_repo_resolved=$(cd "$SYNC_REPO" && pwd -P)
+grep -Fq "Repo: $sync_repo_resolved" "$TEST_CODEX_LOG"
 
 printf 'headless provider tests passed\n'
