@@ -38,31 +38,107 @@ COMMIT_ACCEPTED=0
 MERGE_MAIN=0
 SCENARIO_TIMEOUT_FLAG=""
 RUNNER_FLAG=""
+MAX_CYCLES_SET=0
+
+_orchestrate_positive_integer() {
+  local value="${1:-}"
+
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  while [[ "$value" == 0* ]]; do
+    value="${value#0}"
+  done
+  [[ -n "$value" ]] || return 1
+
+  # Keep values within Bash's signed integer range before using arithmetic tests.
+  if [[ ${#value} -gt 18 ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$value"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --max-cycles) MAX_CYCLES="$2"; shift 2 ;;
-    --scenario-timeout) SCENARIO_TIMEOUT_FLAG="$2"; shift 2 ;;
-    --runner) RUNNER_FLAG="$2"; shift 2 ;;
+    --max-cycles|--scenario-timeout|--runner)
+      option="$1"
+      if [[ $# -lt 2 || "$2" == --* || "$2" == "-h" ]]; then
+        log_error "$option requires a value."
+        exit 1
+      fi
+      value="$2"
+      shift 2
+      ;;
+    --max-cycles=*|--scenario-timeout=*|--runner=*)
+      option="${1%%=*}"
+      value="${1#*=}"
+      if [[ -z "$value" ]]; then
+        log_error "$option requires a value."
+        exit 1
+      fi
+      shift
+      ;;
     --commit) COMMIT_ACCEPTED=1; shift ;;
     --merge-main) MERGE_MAIN=1; COMMIT_ACCEPTED=1; shift ;;
     --allow-main) ALLOW_MAIN=1; shift ;;
     --help|-h)
       echo "Usage: $0 [--max-cycles N] [--scenario-timeout SECONDS] [--runner claude|codex] [--commit] [--merge-main] [--allow-main]"
       echo ""
-      echo "  --max-cycles N           Stop after N cycles (0 = infinite, default 0)"
+      echo "  --max-cycles N           Stop after N cycles. N must be positive; omit this"
+      echo "                           option to run continuously."
       echo "  --scenario-timeout N     Force every scenario to use N-second budget,"
       echo "                           ignoring scenario.json overrides. Default budget"
-      echo "                           is 3600s (set in research/config.sh)."
+      echo "                           is 3600s (set in research/config.sh). N must be positive."
       echo "  --runner <name>          Scenario runner: claude (default) or codex."
       echo "  --commit                 Commit accepted improvements. By default, accepted changes remain unstaged."
       echo "  --merge-main             After committing, merge accepted research branches to main."
       echo "  --allow-main             Allow running on main/master (off by default)."
+      echo ""
+      echo "  Value options also accept --option=value."
       exit 0
       ;;
-    *) shift ;;
+    -*)
+      log_error "Unknown option: $1"
+      exit 1
+      ;;
+    *)
+      log_error "Unexpected argument: $1"
+      exit 1
+      ;;
   esac
+
+  case "${option:-}" in
+    --max-cycles)
+      MAX_CYCLES="$value"
+      MAX_CYCLES_SET=1
+      ;;
+    --scenario-timeout)
+      SCENARIO_TIMEOUT_FLAG="$value"
+      ;;
+    --runner)
+      RUNNER_FLAG="$value"
+      ;;
+  esac
+  option=""
+  value=""
 done
+
+if [[ $MAX_CYCLES_SET -eq 1 ]]; then
+  raw_value="$MAX_CYCLES"
+  if ! normalized_value=$(_orchestrate_positive_integer "$raw_value"); then
+    log_error "Invalid value for --max-cycles: '$raw_value'. Expected a positive whole number."
+    exit 1
+  fi
+  MAX_CYCLES="$normalized_value"
+fi
+
+if [[ -n "$SCENARIO_TIMEOUT_FLAG" ]]; then
+  raw_value="$SCENARIO_TIMEOUT_FLAG"
+  if ! normalized_value=$(_orchestrate_positive_integer "$raw_value"); then
+    log_error "Invalid value for --scenario-timeout: '$raw_value'. Expected a positive whole number."
+    exit 1
+  fi
+  SCENARIO_TIMEOUT_FLAG="$normalized_value"
+fi
 
 if [[ $ALLOW_MAIN -eq 1 ]]; then
   export RESEARCH_ALLOW_MAIN=1
