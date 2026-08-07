@@ -237,7 +237,7 @@ dx_meta_write() {
 # Used to resume by ticket number when the conventional ticket-N directory
 # does not exist (e.g. the worktree was originally named task-*).
 dx_meta_find_workspace_by_ticket() {
-  local ticket="$1" repo_key
+  local ticket="$1" repo_key match="" match_identity="" candidate candidate_identity
   [[ -n "$ticket" ]] || return 1
   [[ -d "$DX_STATE_DIR" ]] || return 1
   repo_key=$(dx_session_repo_key)
@@ -253,10 +253,18 @@ dx_meta_find_workspace_by_ticket() {
     workspace_mode=$(awk -F= '$1 == "workspace_mode" { sub(/^[^=]*=/, ""); print; exit }' "$meta_file" 2>/dev/null)
     [[ -n "$wt_name" && -n "$wt_dir" ]] || continue
     [[ -d "$wt_dir" ]] || continue
-    printf '%s\t%s\t%s\t%s\n' "$session_id" "$wt_name" "$wt_dir" "${workspace_mode:-worktree}"
-    return 0
+    candidate=$(printf '%s\t%s\t%s\t%s' "$session_id" "$wt_name" "$wt_dir" "${workspace_mode:-worktree}")
+    candidate_identity=$(printf '%s\t%s\t%s' "$wt_name" "$wt_dir" "${workspace_mode:-worktree}")
+    if [[ -z "$match" ]]; then
+      match="$candidate"
+      match_identity="$candidate_identity"
+    elif [[ "$candidate_identity" != "$match_identity" ]]; then
+      dx_error "Multiple Dex workspaces are linked to ticket ${ticket}; use a workspace name instead."
+      return 2
+    fi
   done < <(find "$DX_STATE_DIR" -maxdepth 1 -type f -name "${repo_key}-*.meta" -print 2>/dev/null)
-  return 1
+  [[ -n "$match" ]] || return 1
+  printf '%s\n' "$match"
 }
 
 # dx_findings_file <session_id> — findings hash history for stuck loop detection

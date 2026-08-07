@@ -87,6 +87,41 @@ zsh -fc '
   fi
   grep -Fq "Refusing to remove active in-place lifecycle branch" "$TEST_REPO/remove-inplace.out"
   git show-ref --verify --quiet refs/heads/worktree-task-inplace
+
+  mkdir -p "$TEST_REPO/.dex/worktrees"
+  git worktree add -q "$TEST_REPO/.dex/worktrees/task-first" -b worktree-task-first main
+  git worktree add -q "$TEST_REPO/.dex/worktrees/task-second" -b worktree-task-second main
+  first_session=$(dx_session_id task-first)
+  second_session=$(dx_session_id task-second)
+  dx_meta_write "$first_session" \
+    "ticket_number=999" \
+    "wt_name=task-first" \
+    "wt_dir=$TEST_REPO/.dex/worktrees/task-first" \
+    "workspace_mode=worktree"
+  dx_meta_write "$second_session" \
+    "ticket_number=999" \
+    "wt_name=task-second" \
+    "wt_dir=$TEST_REPO/.dex/worktrees/task-second" \
+    "workspace_mode=worktree"
+
+  for command_name in navigate revert remove setup setup-in-place; do
+    case "$command_name" in
+      navigate) command=(dxcd 999) ;;
+      revert) command=(__dx_cli revert 999) ;;
+      remove) command=(dxrm 999) ;;
+      setup) command=(__dx_setup_worktree 999) ;;
+      setup-in-place) command=(__dx_setup_in_place 999) ;;
+    esac
+    if "${command[@]}" > "$TEST_REPO/ambiguous-$command_name.out" 2>&1; then
+      print -u2 -- "$command_name accepted an ambiguous ticket workspace"
+      exit 1
+    fi
+    grep -Fq "Multiple Dex workspaces are linked to ticket 999" \
+      "$TEST_REPO/ambiguous-$command_name.out"
+  done
+  [[ -d "$TEST_REPO/.dex/worktrees/task-first" ]]
+  [[ -d "$TEST_REPO/.dex/worktrees/task-second" ]]
+  [[ ! -e "$TEST_REPO/.dex/worktrees/ticket-999" ]]
 '
 
 printf 'worktree ticket resolution tests passed\n'
