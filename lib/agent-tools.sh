@@ -178,6 +178,32 @@ dx_refresh_claude_settings() {
   fi
 }
 
+dx_claude_settings_complete() {
+  local settings_file="$HOME/.claude/settings.json"
+  local template_file="$DEX_DIR/settings.json"
+  local helper="$DEX_DIR/scripts/settings-json.py"
+
+  command -v python3 >/dev/null 2>&1 || return 1
+  [[ -f "$settings_file" && -f "$template_file" && -f "$helper" ]] || return 1
+
+  python3 "$helper" settings-complete \
+    "$settings_file" "$template_file" "$DEX_DIR" "$HOME" >/dev/null 2>&1
+}
+
+dx_check_claude_settings() {
+  if dx_claude_settings_complete; then
+    dx_ok "Claude hooks and worktree settings are complete"
+    return 0
+  fi
+
+  if [[ -f "$HOME/.claude/settings.json" ]]; then
+    dx_warn "Claude settings are incomplete; run 'dx tools bootstrap' to repair Dex-managed entries"
+  else
+    dx_warn "Claude settings are not installed; run 'dx tools bootstrap'"
+  fi
+  return 1
+}
+
 dx_claude_plugin_marketplace_configured() {
   local name="$1"
   command -v claude >/dev/null 2>&1 || return 1
@@ -633,6 +659,7 @@ dx_bootstrap_agent_tooling() {
   if [[ "$mode" == "check" ]]; then
     dx_info "Checking Claude/Codex tooling bootstrap"
     dx_check_claude_dex_links || failed=1
+    dx_check_claude_settings || failed=1
     dx_check_codex_skill_links || failed=1
     dx_check_ui_capture_tooling || failed=1
     dx_check_rtk_tooling || failed=1
@@ -654,7 +681,14 @@ dx_bootstrap_agent_tooling() {
   dx_install_rtk_tooling || failed=1
   dx_install_openai_docs_mcp_servers || failed=1
   dx_install_safe_official_claude_plugins "$root" || failed=1
-  dx_refresh_claude_settings 1 || failed=1
+  if dx_refresh_claude_settings 1; then
+    if ! dx_claude_settings_complete; then
+      dx_warn "Claude settings remain incomplete after repair"
+      failed=1
+    fi
+  else
+    failed=1
+  fi
 
   return "$failed"
 }

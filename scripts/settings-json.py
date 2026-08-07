@@ -101,6 +101,28 @@ def has_dex_hooks(settings, dex_dir, home):
     return False
 
 
+def required_settings_complete(settings, template):
+    hooks = settings.get("hooks")
+    template_hooks = template.get("hooks")
+    if not isinstance(hooks, dict) or not isinstance(template_hooks, dict):
+        return False
+
+    for event, required_groups in template_hooks.items():
+        installed_groups = hooks.get(event)
+        if not isinstance(required_groups, list) or not isinstance(installed_groups, list):
+            return False
+
+        unmatched = copy.deepcopy(installed_groups)
+        for required_group in required_groups:
+            try:
+                unmatched.remove(required_group)
+            except ValueError:
+                return False
+
+    installed_dirs = worktree_dirs(settings)
+    return all(directory in installed_dirs for directory in worktree_dirs(template))
+
+
 def filtered_groups(groups, dex_dir, home):
     retained = []
     for group in groups:
@@ -256,6 +278,12 @@ def command_has_hooks(settings_path, dex_dir, home):
     return 0 if has_dex_hooks(settings, dex_dir, home) else 1
 
 
+def command_settings_complete(settings_path, template_path, dex_dir, home):
+    settings = load_object(settings_path)
+    template = customized_template(template_path, dex_dir)
+    return 0 if required_settings_complete(settings, template) else 1
+
+
 def command_remove_hooks(settings_path, dex_dir, home):
     emit(remove_dex_hooks(load_object(settings_path), dex_dir, home))
 
@@ -297,6 +325,7 @@ COMMANDS = {
     "merge-settings": (4, command_merge_settings),
     "merge-install-state": (2, command_merge_state),
     "has-dex-hooks": (3, command_has_hooks),
+    "settings-complete": (4, command_settings_complete),
     "remove-dex-hooks": (3, command_remove_hooks),
     "state-dirs": (1, command_state_dirs),
     "remove-worktree-dirs": (2, command_remove_dirs),

@@ -6,16 +6,6 @@ set -euo pipefail
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 CLAUDE_DIR="$HOME/.claude"
 
-__dx_status_has_dex_hooks() {
-  local settings_file="$CLAUDE_DIR/settings.json"
-  [[ -f "$settings_file" ]] || return 1
-  grep -Fq "$DEX_DIR/hooks/" "$settings_file" 2>/dev/null && return 0
-  grep -Fq "$HOME/work/dex/hooks/" "$settings_file" 2>/dev/null && return 0
-  grep -Fq "\$HOME/work/dex/hooks/" "$settings_file" 2>/dev/null && return 0
-  grep -Fq "\$DEX_DIR/hooks/" "$settings_file" 2>/dev/null && return 0
-  grep -Eq 'export DEX_DIR=.*hooks/|/dex(-cli)?/hooks/(load-ticket-context\.sh|user-prompt-submit\.sh|guard-handler\.py|rtk-claude-hook\.sh|post-commit-guard\.sh|phase-loop\.sh|stop-sound\.sh|pre-compact\.sh|session-end\.sh)' "$settings_file" 2>/dev/null
-}
-
 usage() {
   cat <<'USAGE'
 Usage: dx status
@@ -71,8 +61,10 @@ else
   echo "  Skills:    NOT INSTALLED"
 fi
 
-if __dx_status_has_dex_hooks; then
+if dx_claude_settings_complete; then
   echo "  Hooks:     installed in ~/.claude/settings.json"
+elif [[ -f "$CLAUDE_DIR/settings.json" ]]; then
+  echo "  Hooks:     INCOMPLETE — run 'dx tools bootstrap'"
 else
   echo "  Hooks:     NOT INSTALLED"
 fi
@@ -97,7 +89,9 @@ else
   echo "  UI Tools:  Playwright not installed — run 'dx install'"
 fi
 
-if rtk_binary=$(dx_rtk_resolved_binary 2>/dev/null); then
+if ! dx_rtk_enabled; then
+  echo "  RTK:       disabled (DX_RTK_ENABLED=0)"
+elif rtk_binary=$(dx_rtk_resolved_binary 2>/dev/null); then
   echo "  RTK:       installed ($rtk_binary)"
 else
   echo "  RTK:       not installed or wrong binary — run 'dx install'"

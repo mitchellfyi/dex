@@ -12,6 +12,7 @@ fi
 source "$DEX_DIR/lib/common.sh"
 CLAUDE_DIR="$HOME/.claude"
 ZSHRC="$HOME/.zshrc"
+INSTALL_FAILED=0
 
 usage() {
   cat <<'USAGE'
@@ -59,18 +60,21 @@ if [[ -L "$CLAUDE_DIR/skills" ]]; then
 elif [[ -d "$CLAUDE_DIR/skills" ]]; then
   if ! dx_install_claude_skill_links "$CLAUDE_DIR/skills"; then
     dx_warn "Continuing install after incomplete Claude skill link setup"
+    INSTALL_FAILED=1
   fi
 else
   if ln -s "$DEX_DIR/skills" "$CLAUDE_DIR/skills"; then
     dx_done "Symlinked ~/.claude/skills → $DEX_DIR/skills"
   else
     dx_error "Failed to symlink ~/.claude/skills"
+    INSTALL_FAILED=1
   fi
 fi
 
 # 2. Install conservative Claude/Codex tooling.
 if ! dx_bootstrap_agent_tooling "" "install"; then
   dx_warn "Continuing install without complete Claude/Codex tooling bootstrap"
+  INSTALL_FAILED=1
 fi
 
 # 3. Source dx.sh in ~/.zshrc
@@ -93,8 +97,18 @@ if [[ "${SHELL:-}" != */zsh ]]; then
 fi
 
 # 4. Make scripts executable
-chmod +x "$DEX_DIR/hooks/"*.sh "$DEX_DIR/hooks/"*.py "$DEX_DIR/bin/"*.sh 2>/dev/null
-dx_done "Made scripts executable"
+if chmod +x "$DEX_DIR/hooks/"*.sh "$DEX_DIR/hooks/"*.py "$DEX_DIR/bin/"*.sh 2>/dev/null; then
+  dx_done "Made scripts executable"
+else
+  dx_error "Failed to make Dex scripts executable"
+  INSTALL_FAILED=1
+fi
+
+if [[ $INSTALL_FAILED -ne 0 ]]; then
+  echo ""
+  dx_error "Install incomplete. Fix the warnings above, then run 'dx install' again."
+  exit 1
+fi
 
 echo ""
 echo "Install complete. Run: source ~/.zshrc"
