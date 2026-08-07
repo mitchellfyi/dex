@@ -87,20 +87,60 @@ dx_rtk_target_triple() {
 dx_rtk_latest_release() {
   local version
 
-  version=$(curl -sI "https://github.com/${DX_RTK_REPO}/releases/latest" \
+  version=$(command curl -q -sI "https://github.com/${DX_RTK_REPO}/releases/latest" \
     | grep -i '^location:' \
     | sed -E 's|.*/tag/([^[:space:]]+).*|\1|' \
     | tr -d '\r' \
     | tail -n 1)
 
   if [[ -z "$version" ]]; then
-    version=$(curl -fsSL "https://api.github.com/repos/${DX_RTK_REPO}/releases/latest" \
+    version=$(command curl -q -fsSL "https://api.github.com/repos/${DX_RTK_REPO}/releases/latest" \
       | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
       | head -n 1)
   fi
 
   [[ -n "$version" ]] || return 1
+  [[ ${#version} -le 100 && "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
   printf '%s\n' "$version"
+}
+
+dx_rtk_verify_archive_checksum() {
+  local archive="$1" checksums_file="$2" archive_name="$3"
+  [[ -f "$archive" && -f "$checksums_file" && -n "$archive_name" ]] || return 1
+
+  DX_RTK_ARCHIVE="$archive" \
+  DX_RTK_CHECKSUMS_FILE="$checksums_file" \
+  DX_RTK_ARCHIVE_NAME="$archive_name" \
+  python3 - <<'PY'
+import hashlib
+import os
+import re
+from pathlib import Path
+
+archive = Path(os.environ["DX_RTK_ARCHIVE"])
+checksums = Path(os.environ["DX_RTK_CHECKSUMS_FILE"])
+archive_name = os.environ["DX_RTK_ARCHIVE_NAME"]
+matches = []
+try:
+    for line in checksums.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == archive_name:
+            matches.append(parts[0].lower())
+except (OSError, UnicodeDecodeError):
+    raise SystemExit(1)
+
+if len(matches) != 1 or not re.fullmatch(r"[0-9a-f]{64}", matches[0]):
+    raise SystemExit(1)
+
+digest = hashlib.sha256()
+try:
+    with archive.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+except OSError:
+    raise SystemExit(1)
+raise SystemExit(0 if digest.hexdigest() == matches[0] else 1)
+PY
 }
 
 dx_install_rtk_user_path_link() {
@@ -142,7 +182,8 @@ dx_install_rtk_user_path_link() {
 }
 
 dx_install_rtk_binary() {
-  local existing existing_path managed target version install_dir temp_dir archive url binary
+  local existing existing_path managed target version install_dir temp_dir archive archive_name
+  local checksums_file checksums_url url binary
 
   if ! dx_rtk_enabled; then
     dx_skip "RTK token-reduction tooling disabled (DX_RTK_ENABLED=0)"
@@ -189,16 +230,33 @@ dx_install_rtk_binary() {
       return 1
     fi
   fi
+  if [[ ${#version} -gt 100 || ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    dx_warn "DX_RTK_VERSION must be a release tag using letters, numbers, '.', '_', or '-'"
+    return 1
+  fi
 
   install_dir=$(dx_rtk_install_dir)
   temp_dir=$(mktemp -d)
-  archive="$temp_dir/rtk.tar.gz"
-  url="https://github.com/${DX_RTK_REPO}/releases/download/${version}/rtk-${target}.tar.gz"
+  archive_name="rtk-${target}.tar.gz"
+  archive="$temp_dir/$archive_name"
+  checksums_file="$temp_dir/checksums.txt"
+  url="https://github.com/${DX_RTK_REPO}/releases/download/${version}/${archive_name}"
+  checksums_url="https://github.com/${DX_RTK_REPO}/releases/download/${version}/checksums.txt"
 
   dx_info "Installing RTK ${version} into ${install_dir}"
-  if ! curl -fsSL "$url" -o "$archive"; then
+  if ! command curl -q -fsSL "$url" -o "$archive"; then
     rm -rf "$temp_dir"
     dx_warn "Could not download RTK from ${url}"
+    return 1
+  fi
+  if ! command curl -q -fsSL "$checksums_url" -o "$checksums_file"; then
+    rm -rf "$temp_dir"
+    dx_warn "Could not download RTK checksums for ${version}"
+    return 1
+  fi
+  if ! dx_rtk_verify_archive_checksum "$archive" "$checksums_file" "$archive_name"; then
+    rm -rf "$temp_dir"
+    dx_warn "RTK archive checksum verification failed"
     return 1
   fi
 
@@ -215,10 +273,10 @@ dx_install_rtk_binary() {
   fi
 
   binary="$temp_dir/rtk"
-  if [[ ! -f "$binary" ]]; then
+  if [[ ! -f "$binary" || -L "$binary" ]]; then
     binary=$(find "$temp_dir" -type f -name rtk -print -quit 2>/dev/null || true)
   fi
-  if [[ -z "$binary" || ! -f "$binary" ]]; then
+  if [[ -z "$binary" || ! -f "$binary" || -L "$binary" ]]; then
     rm -rf "$temp_dir"
     dx_warn "RTK archive did not contain an rtk binary"
     return 1

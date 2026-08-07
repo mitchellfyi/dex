@@ -23,9 +23,12 @@ entrypoint there without adding a large RTK instruction block to every project.
 - A fail-open Claude Code hook at `hooks/rtk-claude-hook.sh`.
 - A Codex global `RTK.md` plus an absolute import in `$CODEX_HOME/AGENTS.md`.
 
-Dex verifies the binary with `rtk rewrite "git status"` before trusting it. This
-avoids the known package-name collision with the unrelated Rust Type Kit binary
-without depending on RTK's own hook-install diagnostics.
+Dex verifies the downloaded archive against the release's `checksums.txt`
+before extraction, then checks the installed binary with
+`rtk rewrite "git status"`. Missing, duplicate, malformed, or mismatched
+checksum entries stop the install. The behavior check also avoids the known
+package-name collision with the unrelated Rust Type Kit binary without
+depending on RTK's own hook-install diagnostics.
 
 ## Runtime Behavior
 
