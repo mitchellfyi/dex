@@ -3677,13 +3677,47 @@ dxcd() {
   local target="$1"
   local worktrees_dir="${repo_root}/.dex/worktrees"
 
+  # Ticket IDs may point to a task-named workspace after tracker intake linked
+  # a freeform lifecycle to a ticket.
+  if __dx_is_ticket "$target"; then
+    local ticket_number="${target//[^0-9]/}"
+    local ticket_dir="$worktrees_dir/ticket-${ticket_number}"
+    if [[ -d "$ticket_dir" ]]; then
+      if ! dx_wt_is_registered "$repo_root" "$ticket_dir"; then
+        dx_error "Workspace path is not a registered Git worktree: ${ticket_dir}"
+        return 1
+      fi
+      cd "$ticket_dir" || return 1
+      return 0
+    fi
+    if __dx_resolve_existing_workspace_by_ticket "$ticket_number"; then
+      if [[ "$_dx_workspace_mode" == "in-place" ]]; then
+        dx_info "Ticket ${ticket_number} uses the current checkout"
+        cd "$repo_root" || return 1
+        return 0
+      fi
+      local linked_dir="$worktrees_dir/$_dx_wt_name"
+      if ! dx_wt_is_registered "$repo_root" "$linked_dir"; then
+        dx_error "Workspace path is not a registered Git worktree: ${linked_dir}"
+        return 1
+      fi
+      dx_info "Resolved ticket ${ticket_number} to existing workspace $_dx_wt_name"
+      cd "$linked_dir" || return 1
+      return 0
+    fi
+  fi
+
   if [[ ! -d "$worktrees_dir" ]]; then
     dx_error "No worktrees found."
     return 1
   fi
 
-  # Exact match first
+  # Exact match first, but do not present a plain directory as a worktree.
   if [[ -d "$worktrees_dir/$target" ]]; then
+    if ! dx_wt_is_registered "$repo_root" "$worktrees_dir/$target"; then
+      dx_error "Workspace path is not a registered Git worktree: $worktrees_dir/$target"
+      return 1
+    fi
     cd "$worktrees_dir/$target" || return 1
     return 0
   fi
@@ -3692,6 +3726,7 @@ dxcd() {
   local matches=() wt_dir name m
   for wt_dir in "$worktrees_dir"/*(/N); do
     [[ -d "$wt_dir" ]] || continue
+    dx_wt_is_registered "$repo_root" "$wt_dir" || continue
     name="$(basename "$wt_dir")"
     if [[ "$name" == *"$target"* ]]; then
       matches+=("$wt_dir")

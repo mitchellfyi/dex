@@ -48,8 +48,12 @@ zsh -fc '
     print -r -- "$1::$2" > "$TEST_REVERT_CAPTURE"
   }
 
-  __dx_cli revert 123 > /dev/null
   expected="$TEST_REPO/.dex/worktrees/task-linked"
+  dxcd ENG-123
+  [[ "${PWD:A}" == "${expected:A}" ]]
+  cd "$TEST_REPO"
+
+  __dx_cli revert 123 > /dev/null
   [[ "$(cat "$TEST_REVERT_CAPTURE")" == "2::$expected" ]]
 
   dxrm 123 > /dev/null
@@ -66,6 +70,10 @@ zsh -fc '
     "workspace_mode=in-place"
   printf "2\n" > "$(dx_state_file "$inplace_session")"
   printf "worktree-task-inplace\n" > "$(dx_branch_file "$inplace_session")"
+
+  rmdir "$TEST_REPO/.dex/worktrees"
+  dxcd 456 > /dev/null
+  [[ "${PWD:A}" == "${TEST_REPO:A}" ]]
 
   if __dx_cli revert 456 > "$TEST_REPO/revert-inplace.out" 2>&1; then
     print -u2 -- "dx revert accepted an in-place lifecycle"
