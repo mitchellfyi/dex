@@ -1,11 +1,13 @@
 ---
 name: "dxpr"
-description: "Generate a PR description, create a draft pull request, and attach request-type reviewers."
+description: "Generate or update a PR description, create new pull requests as drafts by default, and attach request-type reviewers."
 ---
 
 # Skill: dxpr
 
-Generate a PR description, create a draft pull request, and attach `request`-type reviewers. Stays in draft — Phase 6 (`dxcomplete`) marks it ready and posts `@mention` comments.
+Generate or update a PR description and attach `request`-type reviewers. New
+pull requests default to draft; Phase 6 (`dxcomplete`) normally marks them ready
+and posts `@mention` comments.
 
 ## When to Use
 
@@ -72,11 +74,11 @@ Rules:
 
 If the PR has no browser UI impact, write `Visual evidence: N/A — no browser UI changes` in your Phase 5 notes.
 
-### 4. Create or Update the PR (always as draft)
+### 4. Create or Update the PR
 
 Read the commit format prompt (`prompts/commit-format.md`) for title format guidance.
 
-If a PR doesn't yet exist for the current branch, create one as a **draft**:
+If a PR does not exist for the current branch, create it as a draft by default:
 
 ```bash
 PR_NUM=$(gh pr view --json number -q .number 2>/dev/null)
@@ -89,7 +91,9 @@ EOF
 fi
 ```
 
-If a PR already exists, update its title and body. Do NOT mark it ready — Phase 6 does that.
+If a PR already exists, update its title and body. Preserve its current draft or
+ready state unless the user or active workflow calls for a state change. Phase 6
+remains the default owner of the ready transition.
 
 ```bash
 gh pr edit "$PR_NUM" --title "<title>" --body "$(cat <<'EOF'
@@ -102,7 +106,7 @@ Before either command, inspect the exact body text. If it contains Claude attrib
 
 ### 5. Attach Request-Type Reviewers
 
-Read the `## Reviewers` section of `.dex/dex.md`. For every row whose Type column is `request`, attach the reviewer to the draft PR:
+Read the `## Reviewers` section of `.dex/dex.md`. For every row whose Type column is `request`, attach the reviewer to the PR:
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
@@ -111,7 +115,7 @@ dx_maintenance_request_reviewer "$PR_NUM" "<handle>"
 
 Notes:
 - `dx_maintenance_request_reviewer` normalizes handles and wraps `gh pr edit --add-reviewer`; it is idempotent when GitHub accepts the reviewer.
-- GitHub does NOT send notifications for review requests on a **draft** PR. The notifications fire when Phase 6 marks the PR ready. Attaching reviewers now is purely so they're already in place when the PR goes ready.
+- GitHub does not send notifications for review requests while a PR is in draft. Attaching reviewers now ensures they are in place when the PR becomes ready.
 - Normalize `Copilot`, `@copilot`, or Copilot aliases to `@copilot`. GitHub CLI requires the special `@copilot` value for Copilot review requests.
 - If GitHub says the reviewer is not requestable for this repository (for example Copilot is unavailable or a user is not a collaborator), record the warning and continue; do not pipe the error text into `jq`.
 - Skip rows whose Type is `mention` — those are posted as PR comments by Phase 6, not added as review requests.
@@ -130,7 +134,7 @@ Add an implementation summary to the ticket via the configured tracker (see dex.
 
 ### 7. Hand Off to Phase 6
 
-Print a summary of the draft PR for the user:
+Print a summary of the PR for the user:
 - PR link
 - PR description preview (title + summary section)
 - List of `request` reviewers attached
@@ -140,12 +144,14 @@ Print a summary of the draft PR for the user:
 Then output:
 
 ```
-Phase 5 complete. The PR is in DRAFT state with reviewers pre-attached.
-Phase 6 (Complete) will mark it ready, request reviews, post @mention comments,
-monitor CI/reviews, address comments, and close the ticket.
+Phase 5 complete. PR state: <DRAFT|READY>. Request reviewers are attached.
+Phase 6 (Complete) will reconcile readiness and reviewer notifications, monitor
+CI/reviews, address comments, and close the ticket.
 ```
 
-Do NOT call `gh pr ready`. Do NOT post `@mention` comments. Do NOT launch `/loop` monitoring. Those belong to Phase 6.
+Readiness, `@mention` comments, and `/loop` monitoring normally begin in Phase
+6. If any happened earlier, record their current state so Phase 6 can continue
+idempotently.
 
 ## Notes
 
@@ -153,4 +159,4 @@ Do NOT call `gh pr ready`. Do NOT post `@mention` comments. Do NOT launch `/loop
 - Run PR titles and body copy through `humanizer` before publishing.
 - PR bodies should attribute lifecycle generation to Dex, not Claude Code. GitHub will still show the authenticated account as the actor that created the PR; Dex controls the body attribution.
 - If a ticket link is available, include it in the PR body for auto-linking.
-- The PR is created as a DRAFT in Phase 5 so reviewers are not notified prematurely. Phase 6 flips it to ready and triggers the notifications by re-requesting the same reviewers.
+- New PRs default to draft so reviewers are not notified prematurely. Phase 6 normally moves them to ready and re-requests the same reviewers.

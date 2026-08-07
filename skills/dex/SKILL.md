@@ -90,9 +90,9 @@ resulting state and continue using the current phase's completion criteria.
 
 ### Phase 5: PR
 
-1. Run `/dxpr` — generate PR description, refresh any UI after-capture handoff, create draft PR, attach `request`-type reviewers from `dex.md § Reviewers`, update tracker if available.
+1. Run `/dxpr` — generate the PR description, refresh any UI after-capture handoff, create or update the PR, attach `request`-type reviewers from `dex.md § Reviewers`, and update the tracker if available. New PRs default to draft.
 2. Phase 6 normally owns marking the PR ready and posting `@mention` comments so reviewer notifications happen together. If the user directs either action in Phase 5, carry it out and record the updated PR state for Phase 6.
-3. Output `PHASE_5_COMPLETE` when the draft PR is created and reviewers are attached.
+3. Output `PHASE_5_COMPLETE` when the PR is current, its actual draft or ready state is recorded, and reviewers are attached.
 
 ### Phase 6: Complete (autonomous)
 
@@ -109,15 +109,21 @@ resulting state and continue using the current phase's completion criteria.
 
 If the session is interrupted, `dx 999` or `dx --resume` picks up from the saved phase. Phase tracking is handled by the `dx` shell lifecycle (see `dx.sh` `__dx_run_phases`), which persists the current phase number in `~/.claude/.dex-phases/<session_id>.phase`. The Stop hook is responsible for advancing phases in-session by updating phase state and injecting the next phase message and audit prompt.
 
-As a fallback (e.g., when running `/dex` interactively without the wrapper), the agent can infer the correct phase by checking current state:
+As a fallback (for example, `/dex` without the wrapper), use repository and PR
+state to orient the next action. External state is a hint, not proof that an
+unrecorded Review or Verify phase passed. Prefer persisted Dex phase outcomes
+when they exist, and ask for an explicit human waiver or jump before bypassing
+an unresolved gate.
 
 1. **Check for existing PR**: `gh pr view --json state,isDraft,statusCheckRollup`
    - No PR + branch still on `worktree-ticket-*` or `worktree-task-*` and ticket status is not yet In Progress → Phase 0 (Setup)
    - No PR + bootstrap done (branch renamed, status In Progress) → Phase 1 (Plan)
-   - Draft PR, no commits → Phase 1 (Plan)
-   - Draft PR with implementation commits → Phase 4 (Verify & Commit)
-   - Ready PR with failing CI → Phase 6 (Complete — monitor and fix)
-   - Ready PR with all checks green → Phase 6 (Complete — finalize)
+   - Existing draft or ready PR → record the PR state and resume the persisted
+     Dex phase; do not infer Review or Verify completion from the PR alone
+   - Merged PR with Dex already at Phase 5 or later → reconcile Phase 5 as
+     externally complete and continue Phase 6 cleanup
+   - Merged PR while Dex is still before Phase 5 → surface the mismatch and wait
+     for an explicit human waiver or phase jump
 
 2. **Check task list**: If tasks exist from a prior `/dxplan`, offer to resume from the first incomplete task rather than re-planning.
 
@@ -137,7 +143,7 @@ As a fallback (e.g., when running `/dex` interactively without the wrapper), the
 | 2 | Scope change needed | Explain impact, ask approval |
 | 3 | Findings, blocker, churn, invalid result, or provider failure | Pause with the normalized reason and required intervention |
 | 2-5 | Normal phase completion | Stop once; the Stop hook injects the next phase automatically |
-| 5 | Draft PR created | Stop; Phase 6 takes over automatically |
+| 5 | PR created or updated | Stop; Phase 6 takes over automatically |
 | 6 | CI secrets scan failure | Cancel all loops, alert immediately |
 | 6 | 3 failed CI fix attempts | Cancel loops, escalate with details |
 | 6 | Architectural review comment | Cancel loops, escalate to user |

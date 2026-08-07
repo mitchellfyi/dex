@@ -1,6 +1,9 @@
 Before stopping, audit the pull request quality.
 
-Phase 5 owns: draft PR creation, description, ticket link, attaching `request`-type reviewers from `dex.md § Reviewers`. Phase 6 owns: marking ready, posting `@mention` comments, monitoring CI/reviews, addressing comments, closing the ticket. Stay in your scope.
+Phase 5 focuses on PR creation, description, ticket links, and attaching
+`request`-type reviewers from `dex.md § Reviewers`. Phase 6 normally handles
+readiness, `@mention` comments, monitoring, feedback, and ticket closure. These
+are workflow defaults, not publishing restrictions.
 
 ## Step 1: PR description
 
@@ -32,7 +35,8 @@ Check:
 - Is the PR targeting the correct base branch?
 - Are labels or tags applied if the project uses them?
 - Is the ticket linked (if tracker configured)?
-- The PR is still in **draft** state (Phase 6 marks it ready, not Phase 5).
+- The PR state is recorded accurately. Draft is the Phase 5 default; an existing
+  or human-requested ready PR is valid and must not be moved backward.
 
 ## Step 4: Visual evidence handoff
 
@@ -72,16 +76,17 @@ pipe review-request command output into `jq`.
 
 If the `## Reviewers` section is missing or empty (or contains only the `_none_` placeholder), skip this step — the user has chosen not to assign anyone.
 
-Do NOT post `@mention` comments here — those happen in Phase 6.
+Phase 6 normally posts `@mention` comments. If they were posted earlier, record
+that state so Phase 6 does not duplicate them.
 
 ## Completion criteria
 
-ALL of these must be true before you stop:
+All of these must be true before you stop:
 - PR description is clear, complete, and explains what/why
 - PR description title/body has passed through `humanizer`
 - PR description attributes generation to Dex only, with no Claude Code generated-by footer
 - PR scope matches the plan — no unrelated changes, nothing missing
-- The PR is still in draft state
+- The PR state is recorded and matches the latest human instruction or workflow action
 - Visual evidence is prepared for manual upload when browser UI changed, or explicitly N/A
 - All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR (or the section is empty/`_none_`)
 

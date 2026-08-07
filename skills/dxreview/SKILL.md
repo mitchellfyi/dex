@@ -95,5 +95,4 @@ reviewers must never receive it.
 
 ## Final Report
 
-End with the `Review Wave Result` block from `prompts/review-wave.md`. Do not
-commit, push, create or update PRs, or request external reviewers.
+End with the `Review Wave Result` block from `prompts/review-wave.md`.

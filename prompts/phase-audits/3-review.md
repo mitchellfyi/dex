@@ -108,8 +108,8 @@ All of these must be true before you stop:
 - The review result signal file contains one allowed result value.
 - The context pack is non-empty and the findings file contains exactly one
   valid hash.
-- No commit, push, branch creation, PR creation/update, or external reviewer
-  request happened in this iteration.
+- Any commit, push, branch, PR, or reviewer action is reflected in the context
+  pack. Re-run the review after an action that changed the review scope.
 
 When those criteria are met, stop. The outer `/dxreviewloop` owns the selected
 3, 6, or 9 consecutive `CLEAN` gate.
