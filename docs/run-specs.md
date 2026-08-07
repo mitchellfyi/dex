@@ -46,6 +46,10 @@ dx run --spec ./run-spec.json --dry-run
 as `DEX_RUN_TOKEN` for Factory event sync. If it is omitted, Dex falls back to
 `DEX_RUN_TOKEN`, `DEX_FACTORY_RUN_TOKEN`, then `DEX_FACTORY_TOKEN`.
 
+Authenticated spec URLs may redirect within the same origin. Dex rejects
+cross-origin redirects before sending the request so a run token cannot be
+forwarded to another host.
+
 ## Spec Shape
 
 Run specs are plain JSON. They describe the run; they must not contain secrets.

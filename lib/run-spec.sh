@@ -31,33 +31,70 @@ import http.client
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urljoin, urlparse
 
 url = os.environ["DX_RUN_SPEC_URL"]
 output = Path(os.environ["DX_RUN_SPEC_OUTPUT"])
 token = os.environ.get("DX_RUN_SPEC_TOKEN", "")
 secret_query_re = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.I)
 
+
+class InvalidSpecURL(ValueError):
+    pass
+
+
+class UnsafeRedirectError(Exception):
+    pass
+
+
+def validate_spec_url(candidate):
+    try:
+        parsed_candidate = urlparse(candidate)
+    except ValueError as exc:
+        raise InvalidSpecURL(str(exc)) from exc
+    if parsed_candidate.scheme not in {"http", "https"} or not parsed_candidate.netloc:
+        raise InvalidSpecURL("expected http(s) URL")
+    try:
+        parsed_candidate.port
+    except ValueError as exc:
+        raise InvalidSpecURL("port must be numeric") from exc
+    if parsed_candidate.username or parsed_candidate.password:
+        raise InvalidSpecURL("credentials must not be embedded in the URL")
+    for key, _value in parse_qsl(parsed_candidate.query, keep_blank_values=True):
+        if secret_query_re.search(key):
+            raise InvalidSpecURL(
+                "use --run-token instead of secret-bearing query parameters"
+            )
+    return parsed_candidate
+
+
+def url_origin(parsed_url):
+    default_port = 443 if parsed_url.scheme == "https" else 80
+    return (
+        parsed_url.scheme.lower(),
+        (parsed_url.hostname or "").lower(),
+        parsed_url.port or default_port,
+    )
+
+
 try:
-    parsed = urlparse(url)
-except ValueError as exc:
+    parsed = validate_spec_url(url)
+except InvalidSpecURL as exc:
     print(f"invalid spec URL: {exc}", file=sys.stderr)
     raise SystemExit(1) from exc
-if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-    print("invalid spec URL: expected http(s) URL", file=sys.stderr)
-    raise SystemExit(1)
-try:
-    parsed.port
-except ValueError:
-    print("invalid spec URL: port must be numeric", file=sys.stderr)
-    raise SystemExit(1)
-if parsed.username or parsed.password:
-    print("invalid spec URL: credentials must not be embedded in the URL", file=sys.stderr)
-    raise SystemExit(1)
-for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
-    if secret_query_re.search(key):
-        print("invalid spec URL: use --run-token instead of secret-bearing query parameters", file=sys.stderr)
-        raise SystemExit(1)
+
+initial_origin = url_origin(parsed)
+
+
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target_url = urljoin(req.full_url, newurl)
+        target = validate_spec_url(target_url)
+        if token and url_origin(target) != initial_origin:
+            raise UnsafeRedirectError(
+                "authenticated run spec redirects must remain on the original origin"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, target_url)
 
 request = urllib.request.Request(url, method="GET")
 request.add_header("Accept", "application/json")
@@ -66,12 +103,19 @@ if token:
     request.add_header("Authorization", f"Bearer {token}")
 
 try:
-    with urllib.request.urlopen(request, timeout=15) as response:
+    opener = urllib.request.build_opener(SafeRedirectHandler())
+    with opener.open(request, timeout=15) as response:
         status = response.getcode()
         if not 200 <= status < 300:
             print(f"spec URL returned HTTP {status}", file=sys.stderr)
             raise SystemExit(1)
         data = response.read()
+except UnsafeRedirectError as exc:
+    print(f"could not fetch run spec: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+except InvalidSpecURL as exc:
+    print(f"invalid spec URL: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
 except urllib.error.HTTPError as exc:
     print(f"spec URL returned HTTP {exc.code}", file=sys.stderr)
     raise SystemExit(1) from exc

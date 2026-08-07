@@ -3,13 +3,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-run-spec-test.XXXXXX")"
-SERVER_PID=""
+SERVER_PIDS=()
+SERVER_COUNT=0
 
 cleanup() {
-  if [[ -n "$SERVER_PID" ]]; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
+  local server_pid
+  for server_pid in "${SERVER_PIDS[@]}"; do
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  done
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -98,7 +100,8 @@ PY
 }
 
 start_server() {
-  local server_dir="$TMP_DIR/server"
+  SERVER_COUNT=$((SERVER_COUNT + 1))
+  local server_dir="$TMP_DIR/server-$SERVER_COUNT"
   mkdir -p "$server_dir"
   cp "$REMOTE_SPEC" "$server_dir/spec.json"
   cat > "$server_dir/server.py" <<'PY'
@@ -121,6 +124,19 @@ class Handler(BaseHTTPRequestHandler):
             "authorization": self.headers.get("Authorization", ""),
         }, sort_keys=True) + "\n")
         if self.path != "/spec":
+            if self.path == "/same-origin-redirect":
+                self.send_response(302)
+                self.send_header("Location", "/spec")
+                self.end_headers()
+                return
+            if self.path == "/cross-origin-redirect":
+                self.send_response(302)
+                self.send_header(
+                    "Location",
+                    (root / "redirect-target").read_text(encoding="utf-8"),
+                )
+                self.end_headers()
+                return
             self.send_response(404)
             self.end_headers()
             return
@@ -154,6 +170,7 @@ server.serve_forever()
 PY
   python3 "$server_dir/server.py" "$server_dir" &
   SERVER_PID=$!
+  SERVER_PIDS+=("$SERVER_PID")
 
   local _attempt
   for _attempt in {1..100}; do
@@ -325,6 +342,39 @@ fi
 zsh -fc 'source "$DEX_DIR/dx.sh"; dx run --spec-url "$REMOTE_URL" --run-token remote-token --dry-run' > "$TMP_DIR/remote.out"
 assert_contains "Run spec startup is valid: run_test_remote" "$TMP_DIR/remote.out"
 
+export SAME_ORIGIN_REDIRECT_URL="$SERVER_URL/same-origin-redirect"
+zsh -fc 'source "$DEX_DIR/dx.sh"; dx_run_spec_fetch "$SAME_ORIGIN_REDIRECT_URL" "$DX_RUN_ROOT/same-origin-spec.json" same-origin-token'
+python3 - "$SERVER_DIR/headers.jsonl" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+headers = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+assert headers[-2]["path"] == "/same-origin-redirect"
+assert headers[-1]["path"] == "/spec"
+assert headers[-2]["authorization"] == "Bearer same-origin-token"
+assert headers[-1]["authorization"] == "Bearer same-origin-token"
+PY
+
+FIRST_SERVER_DIR="$SERVER_DIR"
+FIRST_SERVER_URL="$SERVER_URL"
+start_server
+DESTINATION_SERVER_DIR="$SERVER_DIR"
+printf '%s/spec\n' "$SERVER_URL" > "$FIRST_SERVER_DIR/redirect-target"
+export CROSS_ORIGIN_REDIRECT_URL="$FIRST_SERVER_URL/cross-origin-redirect"
+if zsh -fc 'source "$DEX_DIR/dx.sh"; dx_run_spec_fetch "$CROSS_ORIGIN_REDIRECT_URL" "$DX_RUN_ROOT/cross-origin-spec.json" run-token-secret' > "$TMP_DIR/cross-origin.out" 2>&1; then
+  printf 'authenticated cross-origin redirect unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "authenticated run spec redirects must remain on the original origin" "$TMP_DIR/cross-origin.out"
+if [[ -f "$DESTINATION_SERVER_DIR/headers.jsonl" ]]; then
+  printf 'authenticated cross-origin redirect reached its destination\n' >&2
+  exit 1
+fi
+
+SERVER_DIR="$FIRST_SERVER_DIR"
+SERVER_URL="$FIRST_SERVER_URL"
+
 python3 - "$SERVER_DIR" "$DX_RUN_ROOT/run_test_remote" <<'PY'
 import json
 import sys
@@ -333,7 +383,10 @@ from pathlib import Path
 server_dir = Path(sys.argv[1])
 run_dir = Path(sys.argv[2])
 headers = [json.loads(line) for line in (server_dir / "headers.jsonl").read_text(encoding="utf-8").splitlines()]
-assert headers[-1]["authorization"] == "Bearer remote-token"
+assert any(
+    header["path"] == "/spec" and header["authorization"] == "Bearer remote-token"
+    for header in headers
+)
 posts = [json.loads(line) for line in (server_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
 assert posts
 assert all(post["authorization"] == "Bearer remote-token" for post in posts)
