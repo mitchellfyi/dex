@@ -2600,6 +2600,11 @@ dexter() {
 
 unalias dxloop 2>/dev/null; unfunction dxloop 2>/dev/null
 dxloop() {
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxloop [prompt]"
+    echo "Run a prompt through an audited implementation loop. Without a prompt, use the default codebase-improvement task."
+    return 0
+  fi
   __dx_refresh_provider || return 1
 
   local prompt=""
@@ -2783,13 +2788,18 @@ $(__dx_provider_prompt)"
 
 unalias dxrefine 2>/dev/null; unfunction dxrefine 2>/dev/null
 dxrefine() {
-  __dx_refresh_provider || return 1
-
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxrefine <NUMBER|description>"
+    echo "Refine a ticket or task through an interactive Claude planning session."
+    return 0
+  fi
   if [[ $# -eq 0 ]]; then
     echo "Usage: dxrefine <NUMBER>           (e.g. dxrefine 123, dxrefine ENG-123)"
     echo "       dxrefine \"<description>\"    (e.g. dxrefine \"streaming export pipeline\")"
     return 1
   fi
+
+  __dx_refresh_provider || return 1
 
   local provider_agent
   provider_agent=$(__dx_resolved_provider_agent) || return 1
@@ -2877,6 +2887,14 @@ $(__dx_provider_prompt)"
 
 unalias dxcomplete 2>/dev/null; unfunction dxcomplete 2>/dev/null
 dxcomplete() {
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxcomplete"
+    echo "Complete the pull request for the current branch."
+    return 0
+  elif [[ $# -gt 0 ]]; then
+    dx_error "dxcomplete does not accept arguments."
+    return 1
+  fi
   __dx_refresh_provider || return 1
 
   local provider_agent
@@ -3019,6 +3037,14 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
 
 unalias dxreviewloop 2>/dev/null; unfunction dxreviewloop 2>/dev/null
 dxreviewloop() {
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxreviewloop"
+    echo "Run adaptive review waves until the selected clean-pass gate succeeds."
+    return 0
+  elif [[ $# -gt 0 ]]; then
+    dx_error "dxreviewloop does not accept arguments; configure review gates with DEX_REVIEW_* variables."
+    return 1
+  fi
   __dx_refresh_provider || return 1
 
   local provider_agent
@@ -3411,6 +3437,11 @@ ${message}"
 
 unalias dxrm 2>/dev/null; unfunction dxrm 2>/dev/null
 dxrm() {
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxrm <NUMBER|name>"
+    echo "       dxrm --all"
+    return 0
+  fi
   if [[ $# -eq 0 ]]; then
     echo "Usage: dxrm <NUMBER>     (e.g. dxrm 999)"
     echo "       dxrm <name>       (e.g. dxrm task-fix-login)"
@@ -3636,6 +3667,14 @@ dxrm() {
 
 unalias dxls 2>/dev/null; unfunction dxls 2>/dev/null
 dxls() {
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxls"
+    echo "List Dex worktrees for the current repository."
+    return 0
+  elif [[ $# -gt 0 ]]; then
+    dx_error "dxls does not accept arguments."
+    return 1
+  fi
   local repo_root
   repo_root=$(dx_repo_root) || return 1
 
@@ -3690,6 +3729,14 @@ dxls() {
 
 unalias dxcd 2>/dev/null; unfunction dxcd 2>/dev/null
 dxcd() {
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxcd [NUMBER|name]"
+    echo "Open a Dex worktree, or return to the repository root without an argument."
+    return 0
+  elif [[ $# -gt 1 ]]; then
+    dx_error "dxcd accepts at most one ticket or workspace name."
+    return 1
+  fi
   local repo_root
   repo_root=$(dx_repo_root) || return 1
 
@@ -3782,6 +3829,14 @@ dxcd() {
 
 unalias dxclean 2>/dev/null; unfunction dxclean 2>/dev/null
 dxclean() {
+  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    echo "Usage: dxclean"
+    echo "Remove stale Dex worktrees, branches, and session files."
+    return 0
+  elif [[ $# -gt 0 ]]; then
+    dx_error "dxclean does not accept arguments."
+    return 1
+  fi
   local repo_root
   repo_root=$(dx_repo_root) || return 1
 
