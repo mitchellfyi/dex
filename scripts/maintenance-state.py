@@ -16,6 +16,7 @@ FORMAT_VERSION = "1"
 MAX_STATE_BYTES = 64 * 1024
 MAX_PATCH_BYTES = 64 * 1024 * 1024
 MAX_REPORT_BYTES = 8 * 1024 * 1024
+MAX_REPORT_UPDATE_BYTES = 64 * 1024
 MAX_VALUE_BYTES = 4096
 
 METADATA_FIELDS = {
@@ -217,6 +218,67 @@ def serialize(fields: dict[str, str], order: tuple[str, ...]) -> bytes:
     return "".join(f"{key}\t{fields[key]}\n" for key in order).encode("utf-8")
 
 
+def report_io(args: argparse.Namespace) -> None:
+    report_path = Path(args.report).absolute()
+    artifact_root = Path(args.artifact_root).absolute()
+    input_path = Path(args.input).absolute()
+    validate_path_text(report_path, "maintenance report path")
+    validate_path_text(artifact_root, "maintenance artifact root")
+    validate_path_text(input_path, "maintenance report update path")
+
+    try:
+        root_info = artifact_root.lstat()
+    except OSError as exc:
+        fail(f"cannot inspect maintenance artifact root: {exc}")
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        fail("maintenance artifact root must be a real directory")
+    try:
+        relative = report_path.relative_to(artifact_root)
+    except ValueError:
+        fail("maintenance report escapes the artifact root")
+    if len(relative.parts) != 2 or relative.name != "report.md":
+        fail("maintenance report must use <run-id>/report.md inside the artifact root")
+    run_id = relative.parts[0]
+    if not re.fullmatch(r"maintain-[A-Za-z0-9._-]{1,180}", run_id) or ".." in run_id:
+        fail("maintenance report has an invalid run id")
+
+    update = read_regular_file(input_path, MAX_REPORT_UPDATE_BYTES, "maintenance report update")
+    directory_flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        directory_flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+    root_fd = os.open(artifact_root, directory_flags)
+    run_fd = None
+    report_fd = None
+    try:
+        run_fd = os.open(run_id, directory_flags, dir_fd=root_fd)
+        report_flags = os.O_WRONLY
+        if args.mode == "create":
+            report_flags |= os.O_CREAT | os.O_EXCL
+        else:
+            report_flags |= os.O_APPEND
+        if hasattr(os, "O_NOFOLLOW"):
+            report_flags |= os.O_NOFOLLOW
+        report_fd = os.open("report.md", report_flags, 0o600, dir_fd=run_fd)
+        report_info = os.fstat(report_fd)
+        if not stat.S_ISREG(report_info.st_mode) or report_info.st_nlink != 1:
+            fail("maintenance report must be one regular, unlinked file")
+        if report_info.st_size + len(update) > MAX_REPORT_BYTES:
+            fail(f"maintenance report exceeds the {MAX_REPORT_BYTES}-byte limit")
+        with os.fdopen(report_fd, "wb" if args.mode == "create" else "ab") as handle:
+            report_fd = None
+            handle.write(update)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if report_fd is not None:
+            os.close(report_fd)
+        if run_fd is not None:
+            os.close(run_fd)
+        os.close(root_fd)
+
+
 def seal(args: argparse.Namespace) -> None:
     state_path = Path(args.state).absolute()
     artifact_root = Path(args.artifact_root).absolute()
@@ -353,6 +415,15 @@ def parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--kind", choices=sorted(FINAL_FIELDS), required=True)
     verify_parser.add_argument("--state", required=True)
     verify_parser.set_defaults(handler=verify)
+
+    report_parser = subcommands.add_parser(
+        "report-io", help="create or append one maintenance report safely"
+    )
+    report_parser.add_argument("--mode", choices=("create", "append"), required=True)
+    report_parser.add_argument("--report", required=True)
+    report_parser.add_argument("--artifact-root", required=True)
+    report_parser.add_argument("--input", required=True)
+    report_parser.set_defaults(handler=report_io)
     return root
 
 

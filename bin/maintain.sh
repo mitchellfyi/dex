@@ -123,12 +123,29 @@ __dx_maintain_repo_root() {
   printf '%s\n' "$repo_root"
 }
 
+__dx_maintain_report_io() {
+  local mode="$1" report_file="$2" input_file="$3" error_file error_message
+  error_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-report-error.XXXXXX")
+  if ! python3 "$DEX_DIR/scripts/maintenance-state.py" report-io \
+    --mode "$mode" \
+    --report "$report_file" \
+    --artifact-root "$DX_ARTIFACT_DIR/maintenance" \
+    --input "$input_file" 2> "$error_file"; then
+    error_message=$(tail -1 "$error_file" 2>/dev/null || true)
+    rm -f "$error_file"
+    error_message="${error_message#maintenance state error: }"
+    dx_error "Could not update the maintenance report safely: ${error_message:-write failed}"
+    return 1
+  fi
+  rm -f "$error_file"
+}
+
 __dx_maintain_write_report_header() {
   local report_file="$1" command="$2" repo_root="$3" run_id="$4" status="$5" invocation="$6"
-  local tmp_file
+  local input_file
   mkdir -p "$(dirname "$report_file")"
-  tmp_file="${report_file}.tmp.$$"
-  cat > "$tmp_file" <<EOF
+  input_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-report-header.XXXXXX")
+  cat > "$input_file" <<EOF
 # Dex Maintenance Report
 
 Run: $run_id
@@ -143,20 +160,28 @@ Started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 $invocation
 \`\`\`
 EOF
-  mv "$tmp_file" "$report_file"
+  if ! __dx_maintain_report_io create "$report_file" "$input_file"; then
+    rm -f "$input_file"
+    return 1
+  fi
+  rm -f "$input_file"
 }
 
 __dx_maintain_append_report_status() {
   local report_file="$1" status="$2" detail="$3"
-  mkdir -p "$(dirname "$report_file")"
+  local input_file
+  input_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-report-update.XXXXXX")
   {
-    echo ""
-    echo "## Status Update"
-    echo ""
-    echo "Status: $status"
-    echo "Time: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    echo "Detail: $detail"
-  } >> "$report_file"
+    printf '\n## Status Update\n\n'
+    printf 'Status: %s\n' "$status"
+    printf 'Time: %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    printf 'Detail: %s\n' "$detail"
+  } > "$input_file"
+  if ! __dx_maintain_report_io append "$report_file" "$input_file"; then
+    rm -f "$input_file"
+    return 1
+  fi
+  rm -f "$input_file"
 }
 
 __dx_maintain_assert_publication_safe() {

@@ -48,6 +48,60 @@ expect_failure() {
   assert_contains "maintenance state error:" "$TEST_DIR/failure.out"
 }
 
+REPORT_IO_RUN_ID="maintain-20260807T115959Z-report-u-12345678"
+REPORT_IO_DIR="$ARTIFACT_ROOT/$REPORT_IO_RUN_ID"
+REPORT_IO_FILE="$REPORT_IO_DIR/report.md"
+REPORT_IO_INPUT="$TEST_DIR/report-input"
+mkdir -p "$REPORT_IO_DIR"
+printf '# Safe report\n' > "$REPORT_IO_INPUT"
+python3 "$TOOL" report-io \
+  --mode create \
+  --report "$REPORT_IO_FILE" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --input "$REPORT_IO_INPUT"
+printf '\nStatus: complete\n' > "$REPORT_IO_INPUT"
+python3 "$TOOL" report-io \
+  --mode append \
+  --report "$REPORT_IO_FILE" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --input "$REPORT_IO_INPUT"
+assert_contains "Status: complete" "$REPORT_IO_FILE"
+expect_failure "existing report replacement" python3 "$TOOL" report-io \
+  --mode create \
+  --report "$REPORT_IO_FILE" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --input "$REPORT_IO_INPUT"
+
+printf 'report victim\n' > "$TEST_DIR/report-victim"
+rm -f "$REPORT_IO_FILE"
+ln -s "$TEST_DIR/report-victim" "$REPORT_IO_FILE"
+expect_failure "linked report append" python3 "$TOOL" report-io \
+  --mode append \
+  --report "$REPORT_IO_FILE" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --input "$REPORT_IO_INPUT"
+[[ "$(cat "$TEST_DIR/report-victim")" == "report victim" ]]
+
+rm -f "$REPORT_IO_FILE"
+printf 'single report\n' > "$REPORT_IO_FILE"
+ln "$REPORT_IO_FILE" "$TEST_DIR/report-hardlink"
+expect_failure "hard-linked report append" python3 "$TOOL" report-io \
+  --mode append \
+  --report "$REPORT_IO_FILE" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --input "$REPORT_IO_INPUT"
+[[ "$(cat "$REPORT_IO_FILE")" == "single report" ]]
+
+LINKED_REPORT_RUN_ID="maintain-20260807T115958Z-linked-u-12345678"
+mkdir -p "$TEST_DIR/external-report-dir"
+ln -s "$TEST_DIR/external-report-dir" "$ARTIFACT_ROOT/$LINKED_REPORT_RUN_ID"
+expect_failure "linked report directory" python3 "$TOOL" report-io \
+  --mode create \
+  --report "$ARTIFACT_ROOT/$LINKED_REPORT_RUN_ID/report.md" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --input "$REPORT_IO_INPUT"
+[[ ! -e "$TEST_DIR/external-report-dir/report.md" ]]
+
 PUBLISH_META="$TEST_DIR/publish-metadata.tsv"
 PUBLISH_PATCH="$TEST_DIR/publish.patch"
 cat > "$PUBLISH_META" <<EOF
@@ -228,8 +282,24 @@ printf 'changed\n' > "$SHELL_REPO/docs/guide.md"
     "$PUBLISH_REPORT" \
     "$SHELL_BASE" \
     "docs"
+
+  shell_report_run_id="maintain-20260807T120003Z-shell-u-22222222"
+  shell_report="$ARTIFACT_ROOT/$shell_report_run_id/report.md"
+  mkdir -p "$(dirname "$shell_report")"
+  __dx_maintain_write_report_header \
+    "$shell_report" "run" "$SHELL_REPO" "$shell_report_run_id" "started" "test invocation"
+  __dx_maintain_append_report_status "$shell_report" "complete" "shell report append"
+  assert_contains "Detail: shell report append" "$shell_report"
+  rm -f "$shell_report"
+  ln -s "$TEST_DIR/report-victim" "$shell_report"
+  if __dx_maintain_append_report_status "$shell_report" "failed" "must not follow" > "$TEST_DIR/shell-linked-report.out" 2>&1; then
+    printf 'shell report append followed a linked report\n' >&2
+    exit 1
+  fi
+  assert_contains "Could not update the maintenance report safely" "$TEST_DIR/shell-linked-report.out"
 )
 python3 "$TOOL" verify --kind publish --state "$ARTIFACT_ROOT/shell-publish-state.tsv" > "$TEST_DIR/shell-verified.tsv"
 assert_contains $'base_sha\t'"$SHELL_BASE" "$TEST_DIR/shell-verified.tsv"
+[[ "$(cat "$TEST_DIR/report-victim")" == "report victim" ]]
 
 printf 'maintenance state tests passed\n'
