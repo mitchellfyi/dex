@@ -241,11 +241,9 @@ dx_install_rtk_binary() {
   dx_install_rtk_user_path_link || return 1
 }
 
-dx_write_rtk_codex_markdown() {
-  local path="$1" rtk_cmd="$2" tmp
-
-  tmp="${path}.tmp.$$"
-  cat > "$tmp" <<EOF
+dx_rtk_codex_markdown_block() {
+  local rtk_cmd="$1"
+  cat <<EOF
 ${DX_RTK_MARKER_START}
 # RTK - Rust Token Killer
 
@@ -271,13 +269,155 @@ ${rtk_cmd} rewrite "git status"
 If the rewrite check fails, the \`rtk\` command on PATH may be the unrelated Rust Type Kit package. Use the command path shown above or reinstall RTK from https://github.com/rtk-ai/rtk.
 ${DX_RTK_MARKER_END}
 EOF
+}
+
+dx_rtk_markers_valid() {
+  local path="$1"
+
+  [[ -f "$path" ]] || return 1
+  awk -v start="$DX_RTK_MARKER_START" -v finish="$DX_RTK_MARKER_END" '
+    $0 == start {
+      starts++
+      if (starts > 1 || open) invalid = 1
+      open = 1
+      next
+    }
+    $0 == finish {
+      finishes++
+      if (!open || finishes > 1) invalid = 1
+      open = 0
+    }
+    END {
+      if (starts != 1 || finishes != 1 || open || invalid) exit 1
+    }
+  ' "$path"
+}
+
+dx_write_rtk_codex_markdown() {
+  local path="$1" rtk_cmd="$2" tmp block_tmp
+
+  tmp="${path}.tmp.$$"
+  block_tmp="${path}.block.$$"
+  dx_rtk_codex_markdown_block "$rtk_cmd" > "$block_tmp"
+
+  if [[ -f "$path" ]]; then
+    if ! dx_rtk_markers_valid "$path"; then
+      rm -f "$tmp" "$block_tmp" 2>/dev/null || true
+      return 1
+    fi
+
+    if ! _DX_RTK_BLOCK="$block_tmp" awk -v start="$DX_RTK_MARKER_START" -v finish="$DX_RTK_MARKER_END" '
+      function emit_block(  line) {
+        while ((getline line < ENVIRON["_DX_RTK_BLOCK"]) > 0) print line
+        close(ENVIRON["_DX_RTK_BLOCK"])
+      }
+      $0 == start {
+        if (!inserted) { emit_block(); inserted = 1 }
+        skipping = 1
+        next
+      }
+      skipping && $0 == finish { skipping = 0; next }
+      !skipping { print }
+    ' "$path" > "$tmp"; then
+      rm -f "$tmp" "$block_tmp" 2>/dev/null || true
+      return 1
+    fi
+  else
+    if ! mv "$block_tmp" "$tmp"; then
+      rm -f "$tmp" "$block_tmp" 2>/dev/null || true
+      return 1
+    fi
+    block_tmp=""
+  fi
 
   if mv "$tmp" "$path"; then
+    [[ -z "$block_tmp" ]] || rm -f "$block_tmp" 2>/dev/null || true
     return 0
   fi
 
-  rm -f "$tmp" 2>/dev/null || true
+  rm -f "$tmp" "$block_tmp" 2>/dev/null || true
   return 1
+}
+
+dx_uninstall_rtk_codex_instructions() {
+  local codex_dir rtk_md agents_md rtk_ref tmp managed_link managed_binary failed=0
+
+  codex_dir=$(dx_rtk_codex_dir)
+  rtk_md="$codex_dir/RTK.md"
+  agents_md="$codex_dir/AGENTS.md"
+  rtk_ref="@${rtk_md}"
+
+  if [[ -f "$rtk_md" ]] && grep -Fq -e "$DX_RTK_MARKER_START" -e "$DX_RTK_MARKER_END" "$rtk_md" 2>/dev/null; then
+    if ! dx_rtk_markers_valid "$rtk_md"; then
+      dx_warn "Could not remove Dex RTK instructions from ${rtk_md}: managed markers are malformed"
+      failed=1
+    else
+      tmp="${rtk_md}.tmp.$$"
+      if awk -v start="$DX_RTK_MARKER_START" -v finish="$DX_RTK_MARKER_END" '
+      $0 == start { skipping = 1; next }
+      skipping && $0 == finish { skipping = 0; next }
+      !skipping { print }
+      ' "$rtk_md" > "$tmp"; then
+        if grep -q '[^[:space:]]' "$tmp" 2>/dev/null; then
+          if mv "$tmp" "$rtk_md"; then
+            dx_done "Removed Dex RTK instructions from ${rtk_md}"
+          else
+            rm -f "$tmp" 2>/dev/null || true
+            dx_warn "Could not update ${rtk_md}"
+            failed=1
+          fi
+        elif rm -f "$tmp" && rm -f "$rtk_md"; then
+          dx_done "Removed Dex RTK instructions from ${rtk_md}"
+        else
+          rm -f "$tmp" 2>/dev/null || true
+          dx_warn "Could not remove ${rtk_md}"
+          failed=1
+        fi
+      else
+        rm -f "$tmp" 2>/dev/null || true
+        dx_warn "Could not remove Dex RTK instructions from ${rtk_md}"
+        failed=1
+      fi
+    fi
+  fi
+
+  if [[ -f "$agents_md" ]] && grep -Fxq "$rtk_ref" "$agents_md" 2>/dev/null; then
+    tmp="${agents_md}.tmp.$$"
+    if awk -v managed_import="$rtk_ref" '$0 != managed_import { print }' "$agents_md" > "$tmp"; then
+      if grep -q '[^[:space:]]' "$tmp" 2>/dev/null; then
+        if mv "$tmp" "$agents_md"; then
+          dx_done "Removed the Dex RTK import from ${agents_md}"
+        else
+          rm -f "$tmp" 2>/dev/null || true
+          dx_warn "Could not update ${agents_md}"
+          failed=1
+        fi
+      elif rm -f "$tmp" && rm -f "$agents_md"; then
+        dx_done "Removed the Dex RTK import from ${agents_md}"
+      else
+        rm -f "$tmp" 2>/dev/null || true
+        dx_warn "Could not remove ${agents_md}"
+        failed=1
+      fi
+    else
+      rm -f "$tmp" 2>/dev/null || true
+      dx_warn "Could not remove the Dex RTK import from ${agents_md}"
+      failed=1
+    fi
+  fi
+
+  managed_binary=$(dx_rtk_managed_binary)
+  managed_link="$HOME/.local/bin/rtk"
+  if [[ -L "$managed_link" ]] && [[ "$(readlink "$managed_link")" == "$managed_binary" ]]; then
+    if rm -f "$managed_link"; then
+      dx_done "Removed the Dex-managed RTK path link"
+    else
+      dx_warn "Could not remove ${managed_link}"
+      failed=1
+    fi
+  fi
+
+  return "$failed"
 }
 
 dx_install_rtk_codex_instructions() {

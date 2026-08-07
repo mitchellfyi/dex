@@ -116,6 +116,13 @@ if ! dx_uninstall_codex_skills; then
   dx_warn "Continuing uninstall after incomplete Codex skill cleanup"
 fi
 
+# Remove marker-owned Codex instructions and Dex's RTK PATH link. Downloaded
+# tool and artifact caches stay in place so uninstall never discards evidence.
+if ! dx_uninstall_rtk_codex_instructions; then
+  dx_warn "Continuing uninstall after incomplete RTK instruction cleanup"
+  uninstall_failed=1
+fi
+
 # 3. Remove Dex hooks from settings (preserve non-Dex hooks)
 if __dx_settings_have_dex_hooks; then
   settings_tmp="${SETTINGS_FILE}.tmp.$$"
@@ -190,3 +197,4 @@ fi
 echo "Uninstall complete. Run: source ~/.zshrc"
 echo ""
 echo "Note: $DEX_DIR was NOT deleted. Remove it manually if you want."
+dx_info "Tool and artifact caches were retained under ${DX_TOOL_DIR:-$HOME/.claude/.dex-tools} and ${DX_ARTIFACT_DIR:-$HOME/.claude/.dex-artifacts}."
