@@ -124,6 +124,18 @@ class Handler(BaseHTTPRequestHandler):
             "authorization": self.headers.get("Authorization", ""),
         }, sort_keys=True) + "\n")
         if self.path != "/spec":
+            if self.path in {"/oversized", "/oversized-no-length"}:
+                raw = b"x" * (1024 * 1024 + 1)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                if self.path == "/oversized":
+                    self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                try:
+                    self.wfile.write(raw)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
             if self.path == "/same-origin-redirect":
                 self.send_response(302)
                 self.send_header("Location", "/spec")
@@ -275,7 +287,7 @@ fi
 assert_contains "repository.working_directory must be an absolute path" "$TMP_DIR/relative.out"
 
 bad_branch_index=0
-for bad_branch in "feature/.hidden" "feature/release.lock"; do
+for bad_branch in "feature/.hidden" "feature/release.lock" "HEAD"; do
   bad_branch_index=$((bad_branch_index + 1))
   bad_branch_spec="$TMP_DIR/bad-branch-${bad_branch_index}.json"
   write_spec "$bad_branch_spec" "run_test_bad_branch_${bad_branch_index}" "$REPO_DIR"
@@ -295,6 +307,72 @@ PY
   fi
   assert_contains "repository.default_branch is not a safe branch name" "$TMP_DIR/bad-branch.out"
 done
+
+DOT_SLUG_SPEC="$TMP_DIR/dot-slug-run-spec.json"
+write_spec "$DOT_SLUG_SPEC" "run_test_dot_slug" "$REPO_DIR"
+python3 - "$DOT_SLUG_SPEC" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+document["project"]["slug"] = ".."
+path.write_text(json.dumps(document), encoding="utf-8")
+PY
+if dx_run_spec_normalize "$DOT_SLUG_SPEC" "$TMP_DIR/dot-slug-normalized.json" > "$TMP_DIR/dot-slug.out" 2>&1; then
+  printf 'dot-segment project slug unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "project.slug must be a lowercase slug" "$TMP_DIR/dot-slug.out"
+
+OVERSIZED_BODY_SPEC="$TMP_DIR/oversized-body-run-spec.json"
+write_spec "$OVERSIZED_BODY_SPEC" "run_test_oversized_body" "$REPO_DIR"
+python3 - "$OVERSIZED_BODY_SPEC" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+document["source"]["body"] = "x" * (128 * 1024 + 1)
+path.write_text(json.dumps(document), encoding="utf-8")
+PY
+if dx_run_spec_normalize "$OVERSIZED_BODY_SPEC" "$TMP_DIR/oversized-body-normalized.json" > "$TMP_DIR/oversized-body.out" 2>&1; then
+  printf 'oversized source body unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "source.body must not exceed 131072 UTF-8 bytes" "$TMP_DIR/oversized-body.out"
+
+OVERSIZED_LOCAL_SPEC="$TMP_DIR/oversized-local-run-spec.json"
+python3 - "$OVERSIZED_LOCAL_SPEC" <<'PY'
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_bytes(b" " * (1024 * 1024 + 1))
+PY
+if dx_run_spec_normalize "$OVERSIZED_LOCAL_SPEC" "$TMP_DIR/oversized-local-normalized.json" > "$TMP_DIR/oversized-local.out" 2>&1; then
+  printf 'oversized local run spec unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "file exceeds 1048576 bytes" "$TMP_DIR/oversized-local.out"
+
+INVALID_UTF8_SPEC="$TMP_DIR/invalid-utf8-run-spec.json"
+python3 - "$INVALID_UTF8_SPEC" <<'PY'
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_bytes(b'{"run_id":"run_invalid_utf8","source":"\xff"}')
+PY
+if dx_run_spec_normalize "$INVALID_UTF8_SPEC" "$TMP_DIR/invalid-utf8-normalized.json" > "$TMP_DIR/invalid-utf8.out" 2>&1; then
+  printf 'invalid UTF-8 run spec unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "file must contain valid UTF-8 JSON" "$TMP_DIR/invalid-utf8.out"
+if grep -qF "Traceback" "$TMP_DIR/invalid-utf8.out"; then
+  printf 'invalid UTF-8 run spec emitted a traceback\n' >&2
+  exit 1
+fi
 
 BAD_SYNC_SPEC="$TMP_DIR/bad-sync-run-spec.json"
 write_spec "$BAD_SYNC_SPEC" "run_test_bad_sync" "$REPO_DIR" "http://127.0.0.1:bad"
@@ -355,6 +433,24 @@ if zsh -fc 'source "$DEX_DIR/dx.sh"; dx run --spec-url "http://[bad/spec" --dry-
   printf 'remote URL invalid IPv6 unexpectedly passed\n' >&2
   exit 1
 fi
+
+for oversized_path in oversized oversized-no-length; do
+  if dx_run_spec_fetch "$SERVER_URL/$oversized_path" "$TMP_DIR/$oversized_path.json" > "$TMP_DIR/$oversized_path.out" 2>&1; then
+    printf 'oversized remote run spec unexpectedly passed: %s\n' "$oversized_path" >&2
+    exit 1
+  fi
+  assert_contains "response exceeds 1048576 bytes" "$TMP_DIR/$oversized_path.out"
+  [[ ! -f "$TMP_DIR/$oversized_path.json" ]] || {
+    printf 'oversized remote run spec left an output file: %s\n' "$oversized_path" >&2
+    exit 1
+  }
+done
+
+if dx_run_spec_fetch "$REMOTE_URL" "$TMP_DIR/invalid-token.json" $'bad\nheader' > "$TMP_DIR/invalid-token.out" 2>&1; then
+  printf 'invalid run token unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "invalid run token" "$TMP_DIR/invalid-token.out"
 assert_contains "invalid spec URL: Invalid IPv6 URL" "$TMP_DIR/remote-invalid-ipv6.out"
 if grep -qF "Traceback" "$TMP_DIR/remote-invalid-ipv6.out"; then
   printf 'invalid IPv6 emitted a traceback\n' >&2

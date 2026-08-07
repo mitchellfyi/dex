@@ -50,6 +50,13 @@ Authenticated spec URLs may redirect within the same origin. Dex rejects
 cross-origin redirects before sending the request so a run token cannot be
 forwarded to another host.
 
+Remote and local spec files are limited to 1 MiB. `source.body` is limited to
+128 KiB of UTF-8 text, and identifiers, paths, URLs, branch names, and model
+names have smaller field-specific limits. These bounds keep the normalized
+prompt and its child-process arguments within predictable operating-system
+limits. Remote responses are read incrementally and rejected as soon as they
+cross the limit, including responses without a `Content-Length` header.
+
 ## Spec Shape
 
 Run specs are plain JSON. They describe the run; they must not contain secrets.
@@ -100,7 +107,7 @@ Required fields:
 
 | Field | Notes |
 |-------|-------|
-| `run_id` | Must start with `run_` and contain only letters, numbers, `.`, `_`, or `-`. |
+| `run_id` | Must start with `run_`, contain only letters, numbers, `.`, `_`, or `-`, and fit within 200 UTF-8 bytes. |
 | `repository.working_directory` | Existing git checkout where Dex should run. |
 | `source.type` | Source kind, such as `github_issue` or `task`. |
 | one source identifier | At least one of `source.id`, `source.url`, `source.title`, or `source.body`. |

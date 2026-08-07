@@ -36,7 +36,11 @@ from urllib.parse import parse_qsl, urljoin, urlparse
 url = os.environ["DX_RUN_SPEC_URL"]
 output = Path(os.environ["DX_RUN_SPEC_OUTPUT"])
 token = os.environ.get("DX_RUN_SPEC_TOKEN", "")
+max_spec_bytes = 1024 * 1024
 secret_query_re = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.I)
+allowed_token_chars = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/="
+)
 
 
 class InvalidSpecURL(ValueError):
@@ -47,12 +51,22 @@ class UnsafeRedirectError(Exception):
     pass
 
 
+class SpecTooLargeError(Exception):
+    pass
+
+
 def validate_spec_url(candidate):
+    if any(ord(char) <= 32 or ord(char) == 127 for char in candidate):
+        raise InvalidSpecURL("control characters are not allowed")
     try:
         parsed_candidate = urlparse(candidate)
     except ValueError as exc:
         raise InvalidSpecURL(str(exc)) from exc
-    if parsed_candidate.scheme not in {"http", "https"} or not parsed_candidate.netloc:
+    if (
+        parsed_candidate.scheme not in {"http", "https"}
+        or not parsed_candidate.netloc
+        or not parsed_candidate.hostname
+    ):
         raise InvalidSpecURL("expected http(s) URL")
     try:
         parsed_candidate.port
@@ -60,6 +74,8 @@ def validate_spec_url(candidate):
         raise InvalidSpecURL("port must be numeric") from exc
     if parsed_candidate.username or parsed_candidate.password:
         raise InvalidSpecURL("credentials must not be embedded in the URL")
+    if parsed_candidate.fragment:
+        raise InvalidSpecURL("fragments are not allowed")
     for key, _value in parse_qsl(parsed_candidate.query, keep_blank_values=True):
         if secret_query_re.search(key):
             raise InvalidSpecURL(
@@ -85,6 +101,13 @@ except InvalidSpecURL as exc:
 
 initial_origin = url_origin(parsed)
 
+if token and (
+    len(token) > 8192
+    or any(char not in allowed_token_chars for char in token)
+):
+    print("invalid run token: expected Bearer-token characters", file=sys.stderr)
+    raise SystemExit(1)
+
 
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -109,7 +132,27 @@ try:
         if not 200 <= status < 300:
             print(f"spec URL returned HTTP {status}", file=sys.stderr)
             raise SystemExit(1)
-        data = response.read()
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > max_spec_bytes:
+                    raise SpecTooLargeError
+            except ValueError:
+                pass
+        chunks = []
+        total = 0
+        while True:
+            chunk = response.read(min(64 * 1024, max_spec_bytes + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_spec_bytes:
+                raise SpecTooLargeError
+            chunks.append(chunk)
+        data = b"".join(chunks)
+except SpecTooLargeError:
+    print(f"could not fetch run spec: response exceeds {max_spec_bytes} bytes", file=sys.stderr)
+    raise SystemExit(1)
 except UnsafeRedirectError as exc:
     print(f"could not fetch run spec: {exc}", file=sys.stderr)
     raise SystemExit(1) from exc
@@ -194,6 +237,8 @@ from pathlib import Path
 
 input_path = Path(os.environ["DX_RUN_SPEC_INPUT"])
 output_path = Path(os.environ["DX_RUN_SPEC_OUTPUT"])
+MAX_SPEC_BYTES = 1024 * 1024
+MAX_SOURCE_BODY_BYTES = 128 * 1024
 
 RUN_ID_RE = re.compile(r"^run_[A-Za-z0-9._-]+$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")
@@ -233,6 +278,18 @@ def string_at(obj, key, path, required=True):
     return value
 
 
+def validate_text(value, path, max_bytes, *, multiline=False):
+    if len(value.encode("utf-8")) > max_bytes:
+        fail(f"{path} must not exceed {max_bytes} UTF-8 bytes")
+    for char in value:
+        codepoint = ord(char)
+        unsupported_control = codepoint < 32 and (
+            not multiline or char not in "\n\t"
+        )
+        if codepoint in {0, 127} or unsupported_control:
+            fail(f"{path} contains unsupported control characters")
+
+
 def bool_at(obj, key, path, default):
     value = obj.get(key, default)
     if not isinstance(value, bool):
@@ -253,11 +310,13 @@ def reject_secret_keys(value, path=""):
 
 
 def validate_slug(value, path):
-    if value and not SLUG_RE.match(value):
+    if value in {".", ".."} or (value and not SLUG_RE.match(value)):
         fail(f"{path} must be a lowercase slug using letters, numbers, '.', '_', or '-'")
 
 
 def validate_branch(value, path):
+    if len(value.encode("utf-8")) > 255 or value == "HEAD":
+        fail(f"{path} is not a safe branch name")
     if not BRANCH_RE.match(value) or value.startswith(("-", "/", ".")) or value.endswith(("/", ".")):
         fail(f"{path} is not a safe branch name")
     if ".." in value or "//" in value or "@{" in value or "\\" in value:
@@ -267,16 +326,17 @@ def validate_branch(value, path):
         fail(f"{path} is not a safe branch name")
 
 
-def validate_url(value, path, *, base=False):
+def validate_url(value, path, *, base=False, allow_fragment=False):
     if not value:
         return
     from urllib.parse import parse_qsl, urlsplit
 
+    validate_text(value, path, 8192)
     try:
         parsed = urlsplit(value)
     except ValueError as exc:
         fail(f"{path} is invalid: {exc}")
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         fail(f"{path} must be an http(s) URL")
     try:
         parsed.port
@@ -284,6 +344,8 @@ def validate_url(value, path, *, base=False):
         fail(f"{path} port must be numeric")
     if parsed.username or parsed.password:
         fail(f"{path} must not include URL credentials")
+    if parsed.fragment and not allow_fragment:
+        fail(f"{path} must not include a fragment")
     for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
         if SECRET_QUERY_RE.search(key):
             fail(f"{path} must not include secret-bearing query parameters")
@@ -292,11 +354,15 @@ def validate_url(value, path, *, base=False):
 
 
 try:
+    if input_path.stat().st_size > MAX_SPEC_BYTES:
+        fail(f"file exceeds {MAX_SPEC_BYTES} bytes")
     data = json.loads(input_path.read_text(encoding="utf-8"))
 except FileNotFoundError:
     fail(f"file not found: {input_path}")
 except json.JSONDecodeError as exc:
     fail(f"JSON parse error at line {exc.lineno} column {exc.colno}: {exc.msg}")
+except UnicodeDecodeError:
+    fail("file must contain valid UTF-8 JSON")
 except OSError as exc:
     fail(f"could not read file: {exc}")
 
@@ -306,6 +372,7 @@ if not isinstance(data, dict):
 reject_secret_keys(data)
 
 run_id = string_at(data, "run_id", "run_spec")
+validate_text(run_id, "run_id", 200)
 if not RUN_ID_RE.match(run_id) or ".." in run_id or "/" in run_id:
     fail("run_id must match run_[A-Za-z0-9._-]+ and must not contain path segments")
 
@@ -323,9 +390,17 @@ repo_provider = string_at(repository, "provider", "repository", required=False) 
 repo_full_name = string_at(repository, "full_name", "repository", required=False)
 default_branch = string_at(repository, "default_branch", "repository", required=False) or "main"
 working_directory = string_at(repository, "working_directory", "repository")
+validate_text(company_slug, "company.slug", 100)
+validate_text(project_slug, "project.slug", 100)
+validate_text(repo_provider, "repository.provider", 64)
+validate_text(repo_full_name, "repository.full_name", 256)
+validate_text(working_directory, "repository.working_directory", 4096)
 validate_slug(company_slug, "company.slug")
 validate_slug(project_slug, "project.slug")
-if repo_full_name and not REPO_FULL_NAME_RE.match(repo_full_name):
+if repo_full_name and (
+    not REPO_FULL_NAME_RE.match(repo_full_name)
+    or any(part in {".", ".."} for part in repo_full_name.split("/"))
+):
     fail("repository.full_name must look like owner/repo")
 validate_branch(default_branch, "repository.default_branch")
 if not Path(working_directory).is_absolute():
@@ -336,9 +411,13 @@ source_id = string_at(source, "id", "source", required=False)
 source_url = string_at(source, "url", "source", required=False)
 source_title = string_at(source, "title", "source", required=False)
 source_body = string_at(source, "body", "source", required=False)
+validate_text(source_type, "source.type", 100)
+validate_text(source_id, "source.id", 512)
+validate_text(source_title, "source.title", 1024)
+validate_text(source_body, "source.body", MAX_SOURCE_BODY_BYTES, multiline=True)
 if not any([source_id, source_url, source_title, source_body]):
     fail("source must include at least one of id, url, title, or body")
-validate_url(source_url, "source.url")
+validate_url(source_url, "source.url", allow_fragment=True)
 
 harness_name = string_at(harness, "name", "harness", required=False) or "claude-code"
 if harness_name not in VALID_HARNESS_NAMES:
@@ -350,11 +429,14 @@ elif not isinstance(harness_model, str) or not harness_model.strip():
     fail("harness.model must be a non-empty string or null")
 else:
     harness_model = harness_model.strip()
+    validate_text(harness_model, "harness.model", 256)
     if not MODEL_RE.match(harness_model):
         fail("harness.model contains unsupported characters")
 
 workflow_name = string_at(workflow, "name", "workflow", required=False) or "ticket_to_pr"
 workflow_version = string_at(workflow, "version", "workflow", required=False) or "v1"
+validate_text(workflow_name, "workflow.name", 100)
+validate_text(workflow_version, "workflow.version", 100)
 requires_plan_approval = bool_at(workflow, "requires_plan_approval", "workflow", True)
 auto_merge = bool_at(workflow, "auto_merge", "workflow", False)
 requires_ui_evidence = workflow.get("requires_ui_evidence", "auto")
