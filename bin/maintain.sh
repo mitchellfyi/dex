@@ -12,6 +12,7 @@ MAINTAIN_LOCK_OWNER="maintain-$$_${RANDOM}"
 MAINTAIN_GH_CONFIG_DIR=""
 MAINTAIN_RESPONSE_WORKTREE_REPO=""
 MAINTAIN_RESPONSE_WORKTREE_DIR=""
+MAINTAIN_LOCAL_STATE_FILE=""
 
 __dx_maintain_cleanup() {
   if [[ "${MAINTAIN_LOCK_ACQUIRED:-0}" == "1" && -n "${MAINTAIN_LOCK_SESSION_ID:-}" ]]; then
@@ -26,6 +27,9 @@ __dx_maintain_cleanup() {
   if [[ -n "${MAINTAIN_RESPONSE_WORKTREE_REPO:-}" && -n "${MAINTAIN_RESPONSE_WORKTREE_DIR:-}" ]]; then
     git -C "$MAINTAIN_RESPONSE_WORKTREE_REPO" worktree remove --force "$MAINTAIN_RESPONSE_WORKTREE_DIR" >/dev/null 2>&1 || rm -rf "$MAINTAIN_RESPONSE_WORKTREE_DIR" 2>/dev/null || true
     rmdir "$(dirname "$MAINTAIN_RESPONSE_WORKTREE_DIR")" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${MAINTAIN_LOCAL_STATE_FILE:-}" ]]; then
+    rm -f "$MAINTAIN_LOCAL_STATE_FILE" "${MAINTAIN_LOCAL_STATE_FILE}.patch" 2>/dev/null || true
   fi
 }
 trap __dx_maintain_cleanup EXIT
@@ -57,7 +61,7 @@ Options:
   --include-working-tree              Allow uncommitted changes as report evidence
   --issue <number>                    Include a GitHub issue as the maintenance focus
   --issue-context <dir>               Include pre-collected GitHub issue context files
-  --defer-publish <state-file>        Write publication state instead of publishing
+  --defer-publish <state-file>        Seal state in the maintenance artifact directory
   -h, --help                          Show this help
 
 Subcommands:
@@ -431,74 +435,101 @@ __dx_maintain_state_value() {
   awk -F'\t' -v want="$key" '$1 == want { sub(/^[^\t]*\t/, ""); print; exit }' "$state_file" 2>/dev/null || true
 }
 
+__dx_maintain_state_tool() {
+  printf '%s/scripts/maintenance-state.py\n' "$DEX_DIR"
+}
+
+__dx_maintain_state_artifact_root() {
+  printf '%s/maintenance\n' "$DX_ARTIFACT_DIR"
+}
+
+__dx_maintain_seal_state() {
+  local kind="$1" state_file="$2" metadata_file="$3" patch_file="$4" report_file="$5"
+  local artifact_root state_tool error_file error_message
+  artifact_root=$(__dx_maintain_state_artifact_root)
+  state_tool=$(__dx_maintain_state_tool)
+  error_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-state-error.XXXXXX")
+  if ! python3 "$state_tool" seal \
+    --kind "$kind" \
+    --state "$state_file" \
+    --metadata "$metadata_file" \
+    --patch "$patch_file" \
+    --report "$report_file" \
+    --artifact-root "$artifact_root" 2> "$error_file"; then
+    error_message=$(tail -1 "$error_file" 2>/dev/null || true)
+    rm -f "$error_file"
+    error_message="${error_message#maintenance state error: }"
+    dx_error "Could not create deferred maintenance state: ${error_message:-bundle creation failed}"
+    return 1
+  fi
+  rm -f "$error_file"
+}
+
+__dx_maintain_verify_state() {
+  local kind="$1" state_file="$2" verified_file="$3" state_tool error_file error_message
+  state_tool=$(__dx_maintain_state_tool)
+  error_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-state-error.XXXXXX")
+  if ! python3 "$state_tool" verify --kind "$kind" --state "$state_file" > "$verified_file" 2> "$error_file"; then
+    error_message=$(tail -1 "$error_file" 2>/dev/null || true)
+    rm -f "$error_file"
+    error_message="${error_message#maintenance state error: }"
+    dx_error "Invalid deferred maintenance state: ${error_message:-verification failed}"
+    return 1
+  fi
+  rm -f "$error_file"
+}
+
 __dx_maintain_write_publish_state() {
-  local state_file="$1" repo_root="$2" provider_repo_root="$3" branch="$4" mode="$5" run_id="$6" report_file="$7" label_name="$8" base_sha="$9" allowed_categories="${10}"
-  local tmp_file patch_file
-  patch_file="${state_file}.patch"
-  mkdir -p "$(dirname "$state_file")"
+  local state_file="$1" repo_root="$2" provider_repo_root="$3" branch="$4" mode="$5" run_id="$6" report_file="$7" base_sha="$8" allowed_categories="$9"
+  local metadata_file patch_file
   __dx_maintain_validate_publishable_diff "$provider_repo_root" "$base_sha" "$mode" "$allowed_categories" "$report_file"
   git -C "$provider_repo_root" add -A
-  git -C "$provider_repo_root" diff --cached --binary "$base_sha" > "$patch_file"
-  tmp_file="${state_file}.tmp.$$"
+  metadata_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-publish-metadata.XXXXXX")
+  patch_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-publish-patch.XXXXXX")
   {
     printf 'repo_root\t%s\n' "$repo_root"
     printf 'branch\t%s\n' "$branch"
     printf 'mode\t%s\n' "$mode"
     printf 'run_id\t%s\n' "$run_id"
-    printf 'report_file\t%s\n' "$report_file"
-    printf 'report_file_rel\t%s/%s\n' "$(basename "$(dirname "$report_file")")" "$(basename "$report_file")"
-    printf 'label_name\t%s\n' "$label_name"
     printf 'base_sha\t%s\n' "$base_sha"
-    printf 'allowed_categories\t%s\n' "$allowed_categories"
-    printf 'patch_file\t%s\n' "$patch_file"
-  } > "$tmp_file"
-  mv "$tmp_file" "$state_file"
-  chmod 600 "$state_file" 2>/dev/null || true
-  chmod 600 "$patch_file" 2>/dev/null || true
+  } > "$metadata_file"
+  if ! git -C "$provider_repo_root" diff --cached --binary "$base_sha" > "$patch_file"; then
+    rm -f "$metadata_file" "$patch_file"
+    return 1
+  fi
+  if ! __dx_maintain_seal_state publish "$state_file" "$metadata_file" "$patch_file" "$report_file"; then
+    rm -f "$metadata_file" "$patch_file"
+    return 1
+  fi
+  rm -f "$metadata_file" "$patch_file"
 }
 
 __dx_maintain_write_response_state() {
-  local state_file="$1" repo_root="$2" pr_num="$3" report_file="$4" base_sha="$5" expected_branch="$6" expected_sha="$7" allowed_categories="$8" trusted_ref="$9"
-  local tmp_file patch_file source_repo_root="${10:-$2}"
-  patch_file="${state_file}.patch"
-  mkdir -p "$(dirname "$state_file")"
+  local state_file="$1" repo_root="$2" pr_num="$3" run_id="$4" report_file="$5" base_sha="$6" expected_branch="$7" expected_sha="$8" allowed_categories="$9" trusted_ref="${10}"
+  local metadata_file patch_file source_repo_root="${11:-$2}"
   __dx_maintain_validate_publishable_diff "$source_repo_root" "$base_sha" "fix-scoped" "$allowed_categories" "$report_file"
   git -C "$source_repo_root" add -A
-  git -C "$source_repo_root" diff --cached --binary "$base_sha" > "$patch_file"
-  tmp_file="${state_file}.tmp.$$"
+  metadata_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-response-metadata.XXXXXX")
+  patch_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-response-patch.XXXXXX")
   {
     printf 'repo_root\t%s\n' "$repo_root"
     printf 'pr_num\t%s\n' "$pr_num"
-    printf 'report_file\t%s\n' "$report_file"
-    printf 'report_file_rel\t%s/%s\n' "$(basename "$(dirname "$report_file")")" "$(basename "$report_file")"
+    printf 'run_id\t%s\n' "$run_id"
     printf 'base_sha\t%s\n' "$base_sha"
     printf 'expected_branch\t%s\n' "$expected_branch"
     printf 'expected_sha\t%s\n' "$expected_sha"
     printf 'allowed_categories\t%s\n' "$allowed_categories"
     printf 'trusted_ref\t%s\n' "$trusted_ref"
-    printf 'patch_file\t%s\n' "$patch_file"
-  } > "$tmp_file"
-  mv "$tmp_file" "$state_file"
-  chmod 600 "$state_file" 2>/dev/null || true
-  chmod 600 "$patch_file" 2>/dev/null || true
-}
-
-__dx_maintain_resolve_state_path() {
-  local state_file="$1" value="$2" candidate
-  [[ -n "$value" ]] || return 0
-  if [[ -f "$value" ]]; then
-    printf '%s\n' "$value"
-    return 0
+  } > "$metadata_file"
+  if ! git -C "$source_repo_root" diff --cached --binary "$base_sha" > "$patch_file"; then
+    rm -f "$metadata_file" "$patch_file"
+    return 1
   fi
-  case "$value" in
-    /*) candidate="$(dirname "$state_file")/$(basename "$value")" ;;
-    *) candidate="$(dirname "$state_file")/$value" ;;
-  esac
-  if [[ -f "$candidate" ]]; then
-    printf '%s\n' "$candidate"
-  else
-    printf '%s\n' "$value"
+  if ! __dx_maintain_seal_state response "$state_file" "$metadata_file" "$patch_file" "$report_file"; then
+    rm -f "$metadata_file" "$patch_file"
+    return 1
   fi
+  rm -f "$metadata_file" "$patch_file"
 }
 
 __dx_maintain_validate_branch_name() {
@@ -1964,13 +1995,16 @@ exit. Do not push branches or call GitHub write APIs from the provider session.
   fi
   if [[ "$dry_run" -eq 0 ]]; then
     if [[ -n "$defer_publish_file" ]]; then
-      __dx_maintain_write_response_state "$defer_publish_file" "$repo_root" "$pr_num" "$report_file" "$response_base_sha" "$expected_branch" "$expected_head_sha" "$allowed_categories" "$trusted_config_ref" "$provider_repo_root"
+      __dx_maintain_write_response_state "$defer_publish_file" "$repo_root" "$pr_num" "$run_id" "$report_file" "$response_base_sha" "$expected_branch" "$expected_head_sha" "$allowed_categories" "$trusted_config_ref" "$provider_repo_root"
       __dx_maintain_append_report_status "$report_file" "deferred" "Maintenance response publication state written to ${defer_publish_file}."
       dx_info "Deferred maintenance response publication state: $defer_publish_file"
     else
-      local_response_state_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-response-state.XXXXXX")
-      __dx_maintain_write_response_state "$local_response_state_file" "$repo_root" "$pr_num" "$report_file" "$response_base_sha" "$expected_branch" "$expected_head_sha" "$allowed_categories" "$trusted_config_ref" "$provider_repo_root"
+      local_response_state_file="$(__dx_maintain_state_artifact_root)/.response-state.${run_id}.$$.tsv"
+      __dx_maintain_write_response_state "$local_response_state_file" "$repo_root" "$pr_num" "$run_id" "$report_file" "$response_base_sha" "$expected_branch" "$expected_head_sha" "$allowed_categories" "$trusted_config_ref" "$provider_repo_root"
+      MAINTAIN_LOCAL_STATE_FILE="$local_response_state_file"
       __dx_maintain_publish_response_deferred publish-response --state-file "$local_response_state_file"
+      rm -f "$local_response_state_file" "${local_response_state_file}.patch"
+      MAINTAIN_LOCAL_STATE_FILE=""
     fi
   fi
 }
@@ -2233,13 +2267,16 @@ EOF
     __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "0" "${budget_minutes:-0}" "0" "1"
     if [[ "$no_pr" -eq 0 && "$max_prs" -gt 0 ]]; then
       if [[ -n "$defer_publish_file" ]]; then
-        __dx_maintain_write_publish_state "$defer_publish_file" "$repo_root" "$provider_repo_root" "$branch_name" "$mode" "$run_id" "$report_file" "$maintain_label" "$base_sha" "$allowed_categories"
+        __dx_maintain_write_publish_state "$defer_publish_file" "$repo_root" "$provider_repo_root" "$branch_name" "$mode" "$run_id" "$report_file" "$base_sha" "$allowed_categories"
         __dx_maintain_append_report_status "$report_file" "deferred" "Maintenance PR publication state written to ${defer_publish_file}."
         dx_info "Deferred maintenance PR publication state: $defer_publish_file"
       else
-        local_state_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-publish-state.XXXXXX")
-        __dx_maintain_write_publish_state "$local_state_file" "$repo_root" "$provider_repo_root" "$branch_name" "$mode" "$run_id" "$report_file" "$maintain_label" "$base_sha" "$allowed_categories"
+        local_state_file="$(__dx_maintain_state_artifact_root)/.publish-state.${run_id}.$$.tsv"
+        __dx_maintain_write_publish_state "$local_state_file" "$repo_root" "$provider_repo_root" "$branch_name" "$mode" "$run_id" "$report_file" "$base_sha" "$allowed_categories"
+        MAINTAIN_LOCAL_STATE_FILE="$local_state_file"
         __dx_maintain_publish_deferred publish --state-file "$local_state_file"
+        rm -f "$local_state_file" "${local_state_file}.patch"
+        MAINTAIN_LOCAL_STATE_FILE=""
       fi
     elif [[ "$no_pr" -eq 1 && "$mode" != "report" ]]; then
       __dx_maintain_append_report_status "$report_file" "skipped" "PR creation was suppressed by --no-pr or max_prs=0."
@@ -2249,7 +2286,7 @@ EOF
 }
 
 __dx_maintain_publish_deferred() {
-  local state_file="" repo_root state_repo_root publish_repo_root branch mode run_id report_file label_name base_sha allowed_categories patch_file
+  local state_file="" verified_state repo_root state_repo_root publish_repo_root branch mode run_id report_file label_name base_sha allowed_categories patch_file
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2270,27 +2307,30 @@ __dx_maintain_publish_deferred() {
     esac
   done
   [[ -n "$state_file" && -f "$state_file" ]] || { dx_error "publish requires --state-file <path>"; exit 1; }
+  verified_state=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-verified-state.XXXXXX")
+  if ! __dx_maintain_verify_state publish "$state_file" "$verified_state"; then
+    rm -f "$verified_state"
+    exit 1
+  fi
+  state_repo_root=$(__dx_maintain_state_value "$verified_state" "repo_root")
+  branch=$(__dx_maintain_state_value "$verified_state" "branch")
+  mode=$(__dx_maintain_state_value "$verified_state" "mode")
+  run_id=$(__dx_maintain_state_value "$verified_state" "run_id")
+  report_file=$(__dx_maintain_state_value "$verified_state" "report_file")
+  base_sha=$(__dx_maintain_state_value "$verified_state" "base_sha")
+  patch_file=$(__dx_maintain_state_value "$verified_state" "patch_file_resolved")
+  rm -f "$verified_state"
   repo_root=$(__dx_maintain_repo_root)
   if ! __dx_maintain_enabled "$repo_root"; then
     dx_error "Refusing to publish maintenance PR because DX maintain is disabled in .dex/dex.md."
     exit 1
   fi
-  state_repo_root=$(__dx_maintain_state_value "$state_file" "repo_root")
   if [[ -n "$state_repo_root" && "$state_repo_root" != "$repo_root" ]]; then
     dx_error "Deferred publish state belongs to a different repo root: $state_repo_root"
     exit 1
   fi
-  branch=$(__dx_maintain_state_value "$state_file" "branch")
-  mode=$(__dx_maintain_state_value "$state_file" "mode")
-  run_id=$(__dx_maintain_state_value "$state_file" "run_id")
-  report_file=$(__dx_maintain_state_value "$state_file" "report_file")
-  if [[ ! -f "$report_file" ]]; then
-    report_file=$(__dx_maintain_resolve_state_path "$state_file" "$(__dx_maintain_state_value "$state_file" "report_file_rel")")
-  fi
   label_name="${DX_MAINTAIN_LABEL:-$(__dx_maintain_config_value "$repo_root" "label" "dex-maintenance")}"
-  base_sha=$(__dx_maintain_state_value "$state_file" "base_sha")
   allowed_categories="${DX_MAINTAIN_ALLOWED_CATEGORIES:-$(__dx_maintain_config_value "$repo_root" "low_risk_fix_categories" "docs, rules, guards, memory, tests")}"
-  patch_file=$(__dx_maintain_resolve_state_path "$state_file" "$(__dx_maintain_state_value "$state_file" "patch_file")")
   [[ -n "$branch" && -n "$mode" && -n "$run_id" && -n "$report_file" && -n "$label_name" && -n "$base_sha" && -n "$patch_file" && -f "$patch_file" ]] || {
     dx_error "Deferred publish state is incomplete: $state_file"
     exit 1
@@ -2303,7 +2343,7 @@ __dx_maintain_publish_deferred() {
 }
 
 __dx_maintain_publish_response_deferred() {
-  local state_file="" repo_root state_repo_root publish_repo_root pr_num report_file base_sha expected_branch expected_sha allowed_categories trusted_ref patch_file response_run_id maintain_label branch_prefix
+  local state_file="" verified_state repo_root state_repo_root publish_repo_root pr_num run_id report_file base_sha expected_branch expected_sha allowed_categories trusted_ref patch_file response_run_id maintain_label branch_prefix
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2324,27 +2364,31 @@ __dx_maintain_publish_response_deferred() {
     esac
   done
   [[ -n "$state_file" && -f "$state_file" ]] || { dx_error "publish-response requires --state-file <path>"; exit 1; }
+  verified_state=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-verified-response-state.XXXXXX")
+  if ! __dx_maintain_verify_state response "$state_file" "$verified_state"; then
+    rm -f "$verified_state"
+    exit 1
+  fi
+  state_repo_root=$(__dx_maintain_state_value "$verified_state" "repo_root")
+  pr_num=$(__dx_maintain_state_value "$verified_state" "pr_num")
+  run_id=$(__dx_maintain_state_value "$verified_state" "run_id")
+  report_file=$(__dx_maintain_state_value "$verified_state" "report_file")
+  base_sha=$(__dx_maintain_state_value "$verified_state" "base_sha")
+  expected_branch=$(__dx_maintain_state_value "$verified_state" "expected_branch")
+  expected_sha=$(__dx_maintain_state_value "$verified_state" "expected_sha")
+  allowed_categories="${DX_MAINTAIN_ALLOWED_CATEGORIES:-$(__dx_maintain_state_value "$verified_state" "allowed_categories")}"
+  trusted_ref="${DX_MAINTAIN_TRUSTED_CONFIG_REF:-$(__dx_maintain_state_value "$verified_state" "trusted_ref")}"
+  patch_file=$(__dx_maintain_state_value "$verified_state" "patch_file_resolved")
+  rm -f "$verified_state"
   repo_root=$(__dx_maintain_repo_root)
-  state_repo_root=$(__dx_maintain_state_value "$state_file" "repo_root")
   if [[ -n "$state_repo_root" && "$state_repo_root" != "$repo_root" ]]; then
     dx_error "Deferred publish-response state belongs to a different repo root: $state_repo_root"
     exit 1
   fi
-  pr_num=$(__dx_maintain_state_value "$state_file" "pr_num")
-  report_file=$(__dx_maintain_state_value "$state_file" "report_file")
-  if [[ ! -f "$report_file" ]]; then
-    report_file=$(__dx_maintain_resolve_state_path "$state_file" "$(__dx_maintain_state_value "$state_file" "report_file_rel")")
-  fi
-  base_sha=$(__dx_maintain_state_value "$state_file" "base_sha")
-  expected_branch=$(__dx_maintain_state_value "$state_file" "expected_branch")
-  expected_sha=$(__dx_maintain_state_value "$state_file" "expected_sha")
-  allowed_categories="${DX_MAINTAIN_ALLOWED_CATEGORIES:-$(__dx_maintain_state_value "$state_file" "allowed_categories")}"
-  trusted_ref="${DX_MAINTAIN_TRUSTED_CONFIG_REF:-$(__dx_maintain_state_value "$state_file" "trusted_ref")}"
   if ! __dx_maintain_enabled_at_ref "$repo_root" "$trusted_ref"; then
     dx_error "Refusing to publish maintenance response because DX maintain is disabled in trusted .dex/dex.md."
     exit 1
   fi
-  patch_file=$(__dx_maintain_resolve_state_path "$state_file" "$(__dx_maintain_state_value "$state_file" "patch_file")")
   [[ -n "$pr_num" && -n "$report_file" && -n "$base_sha" && -n "$expected_branch" && -n "$expected_sha" && -n "$patch_file" && -f "$patch_file" ]] || {
     dx_error "Deferred publish-response state is incomplete: $state_file"
     exit 1
@@ -2363,7 +2407,7 @@ __dx_maintain_publish_response_deferred() {
     dx_error "Refusing to publish maintenance response because PR eligibility changed."
     exit 1
   fi
-  response_run_id="$(basename "$(dirname "$report_file")")-response"
+  response_run_id="${run_id}-response"
   publish_repo_root=$(__dx_maintain_prepare_publish_worktree "$repo_root" "$expected_branch" "$expected_sha" "$response_run_id")
   if [[ -s "$patch_file" ]]; then
     git -C "$publish_repo_root" apply --index --binary "$patch_file"
@@ -2397,4 +2441,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -75,6 +75,13 @@ actors must have write, maintain, or admin access before Dex launches the
 provider. The workflow collects issue JSON before token scrubbing and passes it
 as untrusted context files to `dx maintain`.
 
+Write-capable maintenance jobs consume a sealed bundle from the earlier
+credential-free provider job. Dex creates the state and patch files without
+overwriting existing paths, stores only relative bundle members, bounds their
+sizes, and verifies the patch's SHA-256 receipt before applying it. A missing,
+linked, moved, or modified bundle member stops publication before GitHub write
+credentials are used.
+
 Maintenance PRs remain draft by default. If trusted `.dex/dex.md` config sets
 `auto_merge` to `true`, the wrapper creates a ready maintenance PR and requests
 GitHub native auto-merge for the exact published head with
