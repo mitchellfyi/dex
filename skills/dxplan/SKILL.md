@@ -300,11 +300,35 @@ Add the plan summary to the existing or newly selected ticket via the configured
 
 ### 9. Mark Phase 1 Ready
 
-After `ExitPlanMode` is approved, or after the headless run spec authorizes plan execution, complete the tracker intake gate and ticket update steps above when they apply. Then write the Phase 1 approval marker:
+After `ExitPlanMode` is approved, or after the headless run spec authorizes plan
+execution, complete the tracker intake gate and ticket update steps above when
+they apply. Before writing the ready marker, save the approved requirements for
+the independent Phase 3 reviewers. Write a version 1 JSON object to
+`dx_review_criteria_file` with exactly these fields:
+
+```json
+{
+  "version": 1,
+  "source": "approved-plan",
+  "objectives": ["One approved outcome per one-line string."],
+  "acceptance_criteria": ["Every approved criterion, without paraphrasing away constraints."],
+  "verification_requirements": ["Each concrete command or observable verification requirement."]
+}
+```
+
+Use `"headless-run-spec"` as `source` only when a headless run spec authorized
+the plan without interactive approval. Keep each array non-empty. Copy the
+approved plan faithfully: do not add requirements, omit edge cases, use
+placeholders, or include implementation notes that were not approved. Write via
+a temporary file and atomic `mv`, then validate the artifact before marking the
+phase ready:
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
-touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 1)"
+SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+CRITERIA_FILE="$(dx_review_criteria_file "$SESSION_ID")"
+dx_review_criteria_valid "$CRITERIA_FILE" || exit 1
+touch "$(dx_phase_ready_file "$SESSION_ID" 1)"
 ```
 
 Then print only a brief confirmation if needed and stop once so the hook can audit the plan and inject Phase 2 in the same Claude session. Do **not** tell the user to run `/dximplement`, do **not** ask whether to continue, and do **not** wait for another user prompt.

@@ -96,6 +96,8 @@ printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Implement th
 assert_rejected "criteria reject duplicates" dx_review_criteria_valid "$criteria_file"
 printf '%s\n' '{"version":1,"source":"approved-plan","objectives":[" Implement the change."],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."],"extra":true}' > "$criteria_file"
 assert_rejected "criteria reject whitespace and extra fields" dx_review_criteria_valid "$criteria_file"
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["<approved objective>"],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"
+assert_rejected "criteria reject placeholders" dx_review_criteria_valid "$criteria_file"
 rm -f "$criteria_file"
 
 for result in \

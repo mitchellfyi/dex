@@ -545,6 +545,19 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "1" ]]; then
     printf '%s\n' "" >&2
     exit 2
   fi
+  REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
+  if ! dx_review_criteria_valid "$REVIEW_CRITERIA_FILE"; then
+    rm -f "$COMPLETE_FILE" "$STATE_FILE"
+    printf '\n%s\n\n' "--- Dex Phase 1 Gate: approved review criteria missing or invalid ---" >&2
+    printf '%s\n' "No audit iteration was counted and Phase 1 did not advance." >&2
+    printf '%s\n' "" >&2
+    printf '%s\n' "After plan approval, export the approved objectives, acceptance criteria, and verification requirements to:" >&2
+    printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
+    printf '%s\n' "Use the version 1 schema documented in dxplan Step 9, validate it with dx_review_criteria_valid, then stop again." >&2
+    printf '%s\n' "Do not use placeholders, summaries that omit requirements, or unapproved additions." >&2
+    printf '%s\n' "" >&2
+    exit 2
+  fi
 fi
 
 if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
@@ -744,6 +757,18 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
       printf '%s\n' "touch \"\$(dx_phase_ready_file \"\${DEX_SESSION_ID:-\$(dx_session_id)}\" 2)\"" >&2
       printf '%s\n' '```' >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
+    REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
+    if ! dx_review_criteria_valid "$REVIEW_CRITERIA_FILE"; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Phase 2 Gate: approved review criteria missing or invalid ---" >&2
+      printf '%s\n' "Completion signal ignored; Phase 2 did not advance." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Restore the approved Phase 1 requirements at:" >&2
+      printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
+      printf '%s\n' "Use the version 1 schema from dxplan Step 9. If the user approved a plan change during implementation, replace the artifact with that updated approved scope before validating it." >&2
       printf '%s\n' "" >&2
       exit 2
     fi

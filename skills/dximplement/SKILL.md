@@ -7,6 +7,13 @@ description: "Execute the approved implementation plan with TDD discipline and c
 
 Execute the approved plan, working through tasks with TDD discipline.
 
+In terminal `dx` Phase 2, start by validating and reading
+`dx_review_criteria_file "$DEX_SESSION_ID"`. It is the portable copy of the
+approved objectives, acceptance criteria, and verification requirements that
+Phase 3 will receive. Do not delete, weaken, or silently reinterpret it. If the
+user approves a plan change during implementation, atomically replace the
+artifact with the updated approved requirements and validate it again.
+
 ## When to Use
 
 - After the user has approved the plan from `/dxplan`
@@ -217,6 +224,8 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
 - No Phase 2 background processes or long-running commands are still in flight.
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
   recorded for the final current scope.
+- The approved review-criteria artifact is valid and reflects any plan change
+  the user approved during implementation.
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1

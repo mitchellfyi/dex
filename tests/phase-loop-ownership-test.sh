@@ -92,6 +92,10 @@ write_review_context() { # <session-id>
   } > "$(dx_review_context_file "$1")"
 }
 
+write_review_criteria() { # <session-id>
+  printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Exercise the lifecycle handoff."],"acceptance_criteria":["The next phase starts only after its gates pass."],"verification_requirements":["Run tests/phase-loop-ownership-test.sh."]}' > "$(dx_review_criteria_file "$1")"
+}
+
 write_review_evidence() { # <session-id> <result> <fingerprint>
   local session_id="$1" result="$2" fingerprint="$3" checks=pass verifier=pass
   case "$result" in
@@ -279,12 +283,47 @@ assert_rc "zero-finding result is rejected" 2
 assert_out_contains "zero-finding result shows validation message" "result signal missing or invalid"
 rm -f "$DX_LOOP_DIR/$SID".*
 
-# --- case 7: Phase 2 cannot hand off without a current risk selection ---
+# --- case 6b: Phase 1 preserves approved criteria before implementation ---
+SID="repo-test-6b-main"
+touch "$DX_LOOP_DIR/$SID.active" "$DX_LOOP_DIR/$SID.phase-1.ready" "$DX_LOOP_DIR/$SID.complete"
+printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
+printf '%s\n' "1" > "$DX_STATE_DIR/$SID.phase"
+printf '%s\n' "1:PHASE_1_COMPLETE:$ROOT/prompts/phase-audits/1-plan.md:1" > "$DX_LOOP_DIR/$SID.config"
+set +e
+OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-1-criteria"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=1 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "Phase 1 without approved criteria is blocked" 2
+assert_out_contains "missing Phase 1 criteria message shown" "approved review criteria missing or invalid"
+assert_file_eq "missing Phase 1 criteria leaves phase active" "$DX_STATE_DIR/$SID.phase" "1"
+
+write_review_criteria "$SID"
+touch "$DX_LOOP_DIR/$SID.complete"
+set +e
+OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-1-criteria"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=1 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "valid Phase 1 criteria reach handoff" 2
+assert_out_contains "Phase 1 criteria emit Phase 2 handoff" "Phase Handoff: Phase 1 complete"
+assert_file_eq "valid Phase 1 criteria advance to Phase 2" "$DX_STATE_DIR/$SID.phase" "2"
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
+# --- case 7: Phase 2 requires approved criteria and a current risk selection ---
 SID="repo-test-7-main"
 touch "$DX_LOOP_DIR/$SID.active" "$DX_LOOP_DIR/$SID.phase-2.ready" "$DX_LOOP_DIR/$SID.complete"
 printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 printf '%s\n' "2" > "$DX_STATE_DIR/$SID.phase"
 printf '%s\n' "2:PHASE_2_COMPLETE:$ROOT/prompts/phase-audits/2-implement.md:1" > "$DX_LOOP_DIR/$SID.config"
+set +e
+OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "Phase 2 without approved criteria is blocked" 2
+assert_out_contains "missing Phase 2 criteria message shown" "approved review criteria missing or invalid"
+assert_file_eq "missing Phase 2 criteria leaves phase active" "$DX_STATE_DIR/$SID.phase" "2"
+
+write_review_criteria "$SID"
+touch "$DX_LOOP_DIR/$SID.complete"
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?

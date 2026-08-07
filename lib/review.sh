@@ -201,6 +201,7 @@ dx_review_criteria_valid() {
   python3 - "$criteria_file" <<'PY'
 import json
 import os
+import re
 import sys
 
 path = sys.argv[1]
@@ -242,6 +243,10 @@ for key, limit in limits.items():
         if not isinstance(value, str) or not 1 <= len(value) <= 2000:
             raise SystemExit(1)
         if value != value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise SystemExit(1)
+        if value.casefold() in {"n/a", "na", "tbd", "todo", "placeholder"}:
+            raise SystemExit(1)
+        if re.fullmatch(r"<[^<>]+>", value):
             raise SystemExit(1)
 PY
 }

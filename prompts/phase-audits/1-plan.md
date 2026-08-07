@@ -90,6 +90,8 @@ If you find gaps in any of the above, fix them and re-present the plan.
   from authoritative context, explicitly deferred by the user, or labelled
   "fully reversible during implementation"
 - The user has explicitly approved the plan, or a headless run spec with `workflow.requires_plan_approval: false` authorizes it
+- The approved objectives, acceptance criteria, and verification requirements
+  are preserved in a valid `dx_review_criteria_file` artifact for Phase 3
 - Freeform tracker intake is complete, explicitly skipped, or not applicable
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

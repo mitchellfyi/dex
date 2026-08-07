@@ -151,6 +151,8 @@ ALL of these must be true before you stop:
 - UI capture evidence is linked for UI-affecting changes, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
   recorded for the final current scope
+- The Phase 1 review-criteria artifact still validates and includes every
+  approved requirement, including any plan change the user approved in Phase 2
 
 Before writing the completion signal in a terminal `dx` lifecycle, write the
 Phase 2 ready marker. Do this only after every completion criterion above is
