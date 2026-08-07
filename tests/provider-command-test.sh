@@ -86,6 +86,20 @@ doctor_output=$(dx_provider_command doctor 2>&1)
 grep -Fq "direct Codex delegation does not require it" <<<"$doctor_output"
 grep -Fq "Codex is logged in with ChatGPT" <<<"$doctor_output"
 grep -Fq "Dex Codex skills linked" <<<"$doctor_output"
+dx_provider_agent_ready_check
+provider_prompt=$(dx_provider_prompt)
+grep -Fq "already running through Dex's signed-in Codex CLI wrapper" <<<"$provider_prompt"
+if grep -Fq "Claude Code remains the outer lifecycle harness" <<<"$provider_prompt"; then
+  printf 'Codex provider prompt still described a Claude outer harness\n' >&2
+  exit 1
+fi
+
+export DX_PROVIDER_PROFILE="claude-subscription"
+dx_provider_apply
+assert_fails_with "Claude Code CLI not found; the claude-subscription profile cannot launch work." \
+  dx_provider_agent_ready_check
+export DX_PROVIDER_PROFILE="codex-subscription"
+dx_provider_apply
 
 assert_fails_with "Usage: dx provider list" dx_provider_command list unexpected
 assert_fails_with "Usage: dx provider current" dx_provider_command current unexpected

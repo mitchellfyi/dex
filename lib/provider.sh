@@ -1070,7 +1070,7 @@ dx_provider_codex_ignore_user_config_check() {
 
 dx_provider_codex_ready_check() {
   if ! command -v codex >/dev/null 2>&1; then
-    dx_error "Codex CLI not found; codex-subscription cannot delegate work before launching Claude."
+    dx_error "Codex CLI not found; the codex-subscription profile cannot launch work."
     dx_info "Install Codex, sign in with ChatGPT, then run 'dx provider doctor'."
     return 1
   fi
@@ -1090,45 +1090,53 @@ dx_provider_codex_ready_check() {
   return 1
 }
 
+dx_provider_agent_ready_check() {
+  [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
+
+  case "$DX_PROVIDER_ENGINE" in
+    codex-plugin)
+      dx_provider_codex_ready_check
+      ;;
+    claude|anthropic-gateway)
+      if ! command -v claude >/dev/null 2>&1; then
+        dx_error "Claude Code CLI not found; the ${DX_PROVIDER_PROFILE_RESOLVED:-selected} profile cannot launch work."
+        dx_info "Install Claude Code, then run 'dx provider doctor'."
+        return 1
+      fi
+      ;;
+    *)
+      dx_error "Unsupported provider engine: ${DX_PROVIDER_ENGINE:-unset}"
+      return 1
+      ;;
+  esac
+}
+
 dx_provider_prompt() {
   [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
 
   if [[ "$DX_PROVIDER_ENGINE" == "codex-plugin" ]]; then
-    local codex_wrapper="${DEX_DIR}/bin/dxcodex.sh"
     cat <<EOF
 
-## Provider Profile: Codex Subscription Delegation
+## Provider Profile: Codex Subscription
 
 Dex is running in the "${DX_PROVIDER_PROFILE_RESOLVED}" provider profile.
-Claude Code remains the outer lifecycle harness, but substantive coding and
-review work should be delegated to Codex using the local Codex CLI through the
-Dex wrapper. The OpenAI Codex Claude Code plugin is optional for setup/slash
-commands, but not for subscription-safe delegation.
+This session is already running through Dex's signed-in Codex CLI wrapper. Work
+directly on the current task; do not launch Claude or a nested Codex process.
+The OpenAI Codex Claude Code plugin is optional and is not part of this launch.
 
 Subscription-safety rules:
 - Do NOT set or use OpenAI/Anthropic API keys, gateway URLs, or provider routing env vars.
-- Prefer the signed-in Codex CLI subscription session.
-- Use the Dex Codex wrapper shown below. Do NOT run raw "codex exec" or
-  "codex exec review"; also do NOT run raw aliases/forms like "codex e",
-  "codex review", bare "codex <prompt>", direct "dx_provider_codex"
-  delegation, or package-runner forms like "npx codex". The wrapper enforces
+- Use the existing signed-in Codex subscription session.
+- Do NOT run raw or nested Codex commands. Dex already applied
   "--ignore-user-config", "--dangerously-bypass-approvals-and-sandbox",
-  sanitized environment variables, and any explicit Codex model override.
+  sanitized environment variables, and any explicit model override.
 - If Codex is missing or not logged in, stop and report that "dx provider doctor"
   or "/codex:setup" must be run.
 
-Delegation guidance:
-- For implementation, run Codex via Bash with: bash "${codex_wrapper}" exec
-  and pass
-  the current phase task as the prompt. If the prompt can begin with "-", use
-  bash "${codex_wrapper}" exec -- "<prompt>".
-- For review of current working-tree changes, run Codex via Bash with
-  bash "${codex_wrapper}" review and pass the current review instructions as the prompt.
-- For branch-diff reviews, pass "--base <branch>" to the review wrapper.
-- Do NOT use Codex plugin slash commands for subscription-safe delegation; they
-  do not go through the Dex wrapper.
-- After Codex returns, inspect the resulting changes yourself and continue the
-  Dex phase protocol, including skills, audits, verification, commits, and PR flow.
+Execution guidance:
+- Use the tools available in this session to complete the supplied task.
+- Follow the task's receipt, marker, audit, verification, commit, and PR
+  requirements exactly; direct Codex sessions do not run Claude Stop hooks.
 EOF
   elif [[ "$DX_PROVIDER_ENGINE" == "anthropic-gateway" ]]; then
     cat <<EOF
@@ -1146,11 +1154,11 @@ dx_provider_list() {
   dx_provider_validate_config_files || return 1
   printf '%s\n' "Agents:"
   printf '  %s\n' "claude                  Direct Claude Code lifecycle agent"
-  printf '  %s\n' "codex                   Codex CLI delegation with Claude Code lifecycle harness"
+  printf '  %s\n' "codex                   Direct Codex CLI lifecycle agent"
   printf '\n'
   printf '%s\n' "Built-in profiles:"
   printf '  %s\n' "claude-subscription     Claude Code with Claude subscription OAuth"
-  printf '  %s\n' "codex-subscription      Claude Code harness with Codex CLI subscription delegation"
+  printf '  %s\n' "codex-subscription      Codex CLI with ChatGPT subscription authentication"
 
   local repo_config
   repo_config=$(dx_provider_repo_config 2>/dev/null || true)

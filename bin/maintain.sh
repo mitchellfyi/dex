@@ -77,10 +77,18 @@ __dx_maintain_require_value() {
   fi
 }
 
-__dx_maintain_require_number() {
+__dx_maintain_require_positive_number() {
   local flag="$1" value="$2"
-  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+  if [[ ! "$value" =~ ^[1-9][0-9]{0,14}$ ]]; then
     dx_error "$flag requires a positive integer"
+    exit 1
+  fi
+}
+
+__dx_maintain_require_nonnegative_number() {
+  local flag="$1" value="$2"
+  if [[ ! "$value" =~ ^(0|[1-9][0-9]{0,14})$ ]]; then
+    dx_error "$flag requires a non-negative integer"
     exit 1
   fi
 }
@@ -1473,13 +1481,14 @@ __dx_maintain_run_provider() {
   local budget_seconds=0 before_status after_status dirty_detail prompt_payload provider_shell old_pwd
 
   __dx_maintain_write_report_header "$report_file" "$command" "$repo_root" "$run_id" "starting" "$invocation"
-  if ! command -v claude >/dev/null 2>&1; then
-    __dx_maintain_append_report_status "$report_file" "failed" "Claude Code CLI not found."
-    dx_error "Claude Code CLI not found. Run /dxmaintain inside an agent session, or install/configure Claude Code CLI."
-    exit 1
+  if ! dx_provider_apply; then
+    __dx_maintain_append_report_status "$report_file" "failed" "Provider configuration could not be resolved."
+    return 1
   fi
-
-  dx_provider_apply
+  if ! dx_provider_agent_ready_check; then
+    __dx_maintain_append_report_status "$report_file" "failed" "The configured provider CLI is not ready."
+    return 1
+  fi
   local model_flags=()
   if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
     model_flags+=(--model "$DX_CLAUDE_MODEL")
@@ -2001,25 +2010,25 @@ __dx_maintain_run() {
         ;;
       --budget-minutes)
         __dx_maintain_require_value "$1" "$#"
-        __dx_maintain_require_number "$1" "$2"
+        __dx_maintain_require_positive_number "$1" "$2"
         budget_minutes="$2"
         shift 2
         ;;
       --command-timeout-seconds)
         __dx_maintain_require_value "$1" "$#"
-        __dx_maintain_require_number "$1" "$2"
+        __dx_maintain_require_positive_number "$1" "$2"
         command_timeout_seconds="$2"
         shift 2
         ;;
       --max-surfaces)
         __dx_maintain_require_value "$1" "$#"
-        __dx_maintain_require_number "$1" "$2"
+        __dx_maintain_require_positive_number "$1" "$2"
         max_surfaces="$2"
         shift 2
         ;;
       --max-prs)
         __dx_maintain_require_value "$1" "$#"
-        __dx_maintain_require_number "$1" "$2"
+        __dx_maintain_require_nonnegative_number "$1" "$2"
         max_prs="$2"
         shift 2
         ;;
@@ -2112,6 +2121,7 @@ __dx_maintain_run() {
   if [[ -z "$budget_minutes" ]]; then
     budget_minutes="${DEX_MAINTAIN_BUDGET_MINUTES:-60}"
   fi
+  __dx_maintain_require_positive_number "maintenance budget" "$budget_minutes"
   if [[ -z "$since" ]]; then
     since=$(__dx_maintain_last_success_ref)
   fi
@@ -2126,7 +2136,7 @@ __dx_maintain_run() {
       max_prs=$(__dx_maintain_config_value "$repo_root" "max_prs" "1")
     fi
   fi
-  if [[ ! "$max_prs" =~ ^[0-9]+$ ]]; then
+  if [[ ! "$max_prs" =~ ^(0|[1-9][0-9]{0,14})$ ]]; then
     dx_error "Invalid maintenance max_prs value: $max_prs"
     exit 1
   fi

@@ -74,6 +74,10 @@ PHASE=""
 INCLUDE_WORKING_TREE=0
 SYNC_BUDGET_MINUTES="${DEX_SYNC_BUDGET_MINUTES:-60}"
 
+__dx_sync_positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]{0,14}$ ]]
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
@@ -96,7 +100,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --budget-minutes)
       [[ $# -ge 2 ]] || { dx_error "--budget-minutes requires a positive integer"; exit 1; }
-      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+      if ! __dx_sync_positive_integer "$2"; then
         dx_error "--budget-minutes requires a positive integer"
         exit 1
       fi
@@ -129,6 +133,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if ! __dx_sync_positive_integer "$SYNC_BUDGET_MINUTES"; then
+  dx_error "Sync budget must be a positive decimal with at most 15 digits."
+  exit 1
+fi
+
 READ_ONLY=0
 if [[ "$DRY_RUN" -eq 1 || -n "$TRACE_RETRIEVAL" ]]; then
   READ_ONLY=1
@@ -143,6 +152,8 @@ if [[ -z "$repo_root" ]]; then
 fi
 
 repo_name=$(basename "$repo_root")
+DEX_PROJECT_WAS_MISSING=0
+[[ -d "$repo_root/.dex" ]] || DEX_PROJECT_WAS_MISSING=1
 echo "Dex - Sync: $repo_name"
 echo ""
 
@@ -169,7 +180,7 @@ else
 fi
 
 BASELINE_ANALYSIS_RAN=0
-if [[ ! -d "$repo_root/.dex" ]]; then
+if [[ $DEX_PROJECT_WAS_MISSING -eq 1 ]]; then
   if [[ "$READ_ONLY" -eq 1 ]]; then
     dx_info "No .dex/ directory found; read-only sync will report the missing scaffold"
   else
@@ -216,13 +227,9 @@ MEMORYINDEX
   fi
 fi
 
-if ! command -v claude >/dev/null 2>&1; then
-  dx_error "Claude Code CLI not found. Run /dxsync inside an agent session, or install Claude Code CLI."
-  exit 1
-fi
-
 dx_info "Preparing DXSync provider session"
-dx_provider_apply
+dx_provider_apply || exit 1
+dx_provider_agent_ready_check || exit 1
 sync_prompt=$(cat "$DEX_DIR/prompts/sync-memory.md")
 provider_prompt=$(dx_provider_prompt)
 invocation=$(cat <<EOF
