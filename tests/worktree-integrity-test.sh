@@ -6,6 +6,7 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-worktree-integrity-test.XXXXXX")"
 
 cleanup() {
   git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-61" >/dev/null 2>&1 || true
+  git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-62" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -35,6 +36,28 @@ fi
 grep -q "is not a registered Git worktree" "$TMP_DIR/plain.out"
 
 git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dex/worktrees/ticket-61" -b worktree-ticket-61 HEAD
+git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dex/worktrees/ticket-62" -b worktree-ticket-62 HEAD
+
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+cd "$TEST_REPO"
+dxls
+if dxcd ticket; then
+  printf "%s\n" "ambiguous dxcd lookup unexpectedly passed" >&2
+  exit 1
+fi
+dxclean
+' > "$TMP_DIR/list-clean.out" 2>&1
+if grep -Eq '^(wt_name|wt_status|branch|session_id|phase_file|phase_num|name|active_in_place_phase|has_worktree|ticket_name)=' "$TMP_DIR/list-clean.out"; then
+  printf 'zsh leaked internal local variables\n' >&2
+  cat "$TMP_DIR/list-clean.out" >&2
+  exit 1
+fi
+grep -q "Multiple worktrees match 'ticket'" "$TMP_DIR/list-clean.out"
+if grep -q "Deleting orphan branch:" "$TMP_DIR/list-clean.out"; then
+  printf 'dxclean treated a linked-worktree branch as orphaned\n' >&2
+  exit 1
+fi
 
 zsh -fc '
 source "$DEX_DIR/dx.sh"

@@ -3311,18 +3311,18 @@ dxrm() {
     local removal_failed=0
     local renamed_branches=()
     local session_ids=()
+    local wt_dir wt_name actual_branch branch active_in_place_phase
+    local last_session_active_in_place=0 sid
 
     if [[ -d "$worktrees_dir" ]]; then
       for wt_dir in "$worktrees_dir"/*(/N); do
         [[ -d "$wt_dir" ]] || continue
         found=1
-        local wt_name
         wt_name="$(basename "$wt_dir")"
         # The SessionStart hook may rename the worktree branch (e.g. from
         # worktree-ticket-999 to feat/ENG-999-description) to follow project
         # conventions. Track these renamed branches so we can delete them below
         # — they won't match the 'worktree-*' glob pattern.
-        local actual_branch
         actual_branch=$(dx_wt_branch "$wt_dir")
 
         echo "Removing ${wt_name}..."
@@ -3340,11 +3340,9 @@ dxrm() {
       done
     fi
 
-    local branch
     while IFS= read -r branch; do
       [[ -z "$branch" ]] && continue
       found=1
-      local active_in_place_phase
       if active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch"); then
         echo "Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dx_phase_name "$active_in_place_phase"))"
         skipped_active_in_place=1
@@ -3354,7 +3352,7 @@ dxrm() {
       if git branch -D "$branch" 2>/dev/null; then
         __dx_cleanup_lifecycle_state_for_branch "$branch"
       fi
-    done < <(git branch --list 'worktree-ticket-*' 'worktree-task-*' 2>/dev/null | sed 's/^[* ]*//')
+    done < <(git branch --list 'worktree-ticket-*' 'worktree-task-*' 2>/dev/null | sed 's/^[*+ ]*//')
 
     # Delete renamed branches that wouldn't match the worktree-* pattern
     for branch in "${renamed_branches[@]}"; do
@@ -3365,7 +3363,6 @@ dxrm() {
 
     git worktree prune 2>/dev/null
 
-    local last_session_active_in_place=0
     __dx_last_session_active_in_place && last_session_active_in_place=1
 
     # Clean up last-session pointer unless it still points at a resumable in-place session.
@@ -3374,7 +3371,6 @@ dxrm() {
     fi
 
     # Clean up state files for THIS repo's worktrees only (not cross-repo globs)
-    local sid
     for sid in "${session_ids[@]}"; do
       dx_cleanup_session "$sid"
     done
@@ -3501,13 +3497,12 @@ dxls() {
     return 0
   fi
 
-  local count=0
+  local count=0 wt_dir wt_name wt_status branch session_id phase_file phase_num
   for wt_dir in "$worktrees_dir"/*(/N); do
     [[ -d "$wt_dir" ]] || continue
     count=$((count + 1))
-    local wt_name
     wt_name="$(basename "$wt_dir")"
-    local wt_status=""
+    wt_status=""
 
     # Check git state is valid before querying status/branch
     if ! git -C "$wt_dir" rev-parse --git-dir &>/dev/null; then
@@ -3520,16 +3515,12 @@ dxls() {
       wt_status="${wt_status} [changes]"
     fi
 
-    local branch
     branch=$(dx_wt_branch "$wt_dir" "?")
 
     # Show phase status
-    local session_id
     session_id=$(dx_session_id "$wt_name")
-    local phase_file
     phase_file=$(dx_state_file "$session_id")
     if [[ -f "$phase_file" ]]; then
-      local phase_num
       phase_num=$(cat "$phase_file" 2>/dev/null)
       if [[ "$phase_num" =~ ^[0-6]$ ]]; then
         wt_status="${wt_status} [phase ${phase_num}/6: $(__dx_phase_name "$phase_num")]"
@@ -3575,10 +3566,9 @@ dxcd() {
   fi
 
   # Prefix match: "ticket-123" or just "123" matches worktree names containing that string
-  local matches=()
+  local matches=() wt_dir name m
   for wt_dir in "$worktrees_dir"/*(/N); do
     [[ -d "$wt_dir" ]] || continue
-    local name
     name="$(basename "$wt_dir")"
     if [[ "$name" == *"$target"* ]]; then
       matches+=("$wt_dir")
@@ -3612,23 +3602,21 @@ dxclean() {
   # on the correct repository. Note: this intentionally does not restore the original
   # cwd — if the user was inside a removed worktree, returning there would fail.
   cd "$repo_root" || return 1
-  local cleaned=0
-  local cleanup_failed=0
+  local cleaned=0 cleanup_failed=0
+  local wt_dir wt_name session_id phase_file phase_val wt_branch branch
+  local active_in_place_phase has_worktree ticket_name old_files old_phase_files
 
   # 1. Prune stale worktrees (no uncommitted changes)
   local worktrees_dir="${repo_root}/.dex/worktrees"
   if [[ -d "$worktrees_dir" ]]; then
     for wt_dir in "$worktrees_dir"/*(/N); do
       [[ -d "$wt_dir" ]] || continue
-      local wt_name
       wt_name="$(basename "$wt_dir")"
 
       # Skip worktrees with active phase state (still in a lifecycle)
-      local session_id phase_file
       session_id=$(dx_session_id "$wt_name")
       phase_file=$(dx_state_file "$session_id")
       if [[ -f "$phase_file" ]]; then
-        local phase_val
         phase_val=$(cat "$phase_file" 2>/dev/null)
         if [[ "$phase_val" =~ ^[0-6]$ ]]; then
           echo "  Skipping ${wt_name} (active phase ${phase_val}/6: $(__dx_phase_name "$phase_val"))"
@@ -3643,7 +3631,6 @@ dxclean() {
       fi
 
       # Skip worktrees with unpushed commits
-      local wt_branch
       wt_branch=$(dx_wt_branch "$wt_dir")
       if [[ -n "$wt_branch" ]]; then
         if ! git -C "$wt_dir" rev-parse "origin/${wt_branch}" &>/dev/null; then
@@ -3679,24 +3666,21 @@ dxclean() {
   # Only targets worktree-* branches to avoid deleting non-dex feature branches.
   git fetch --prune 2>/dev/null || true
 
-  local branch
   while IFS= read -r branch; do
     [[ -z "$branch" ]] && continue
     # Only clean dex-managed branches (worktree-ticket-* or worktree-task-*)
     if [[ "$branch" != worktree-ticket-* ]] && [[ "$branch" != worktree-task-* ]]; then
       continue
     fi
-    local active_in_place_phase
     if active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch"); then
       echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dx_phase_name "$active_in_place_phase"))"
       continue
     fi
     # Don't delete branches with active worktrees
-    local has_worktree=0
+    has_worktree=0
     if [[ -d "$worktrees_dir" ]]; then
       for wt_dir in "$worktrees_dir"/*(/N); do
         [[ -d "$wt_dir" ]] || continue
-        local wt_branch
         wt_branch=$(dx_wt_branch "$wt_dir")
         if [[ "$wt_branch" == "$branch" ]]; then
           has_worktree=1
@@ -3715,17 +3699,16 @@ dxclean() {
       __dx_cleanup_lifecycle_state_for_branch "$branch"
       cleaned=$((cleaned + 1))
     fi
-  done < <(git branch -vv 2>/dev/null | grep ': gone]' | sed 's/^[* ]*//' | awk '{print $1}')
+  done < <(git branch -vv 2>/dev/null | grep ': gone]' | sed 's/^[*+ ]*//' | awk '{print $1}')
 
   # 3. Prune worktree branches that have no worktree directory
   while IFS= read -r branch; do
     [[ -z "$branch" ]] && continue
-    local active_in_place_phase
     if active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch"); then
       echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dx_phase_name "$active_in_place_phase"))"
       continue
     fi
-    local ticket_name="${branch#worktree-}"
+    ticket_name="${branch#worktree-}"
     if [[ ! -d "$worktrees_dir/$ticket_name" ]]; then
       echo "  Deleting orphan branch: ${branch}"
       if git branch -D "$branch" 2>/dev/null; then
@@ -3733,14 +3716,13 @@ dxclean() {
         cleaned=$((cleaned + 1))
       fi
     fi
-  done < <(git branch --list 'worktree-ticket-*' 'worktree-task-*' 2>/dev/null | sed 's/^[* ]*//')
+  done < <(git branch --list 'worktree-ticket-*' 'worktree-task-*' 2>/dev/null | sed 's/^[*+ ]*//')
 
   git worktree prune 2>/dev/null
 
   # 4. Clean up old loop state files (older than 7 days).
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
-  local old_files
   old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context busy busy-notice started ready watch-pause watch-lock" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
@@ -3748,7 +3730,6 @@ dxclean() {
   fi
 
   # 5. Clean up old phase state files (older than 7 days)
-  local old_phase_files
   old_phase_files=$(dx_cleanup_stale_files "$DX_STATE_DIR" "phase times system-context log branch" 7)
   if [[ "$old_phase_files" -gt 0 ]]; then
     echo "  Cleaned ${old_phase_files} old phase state file(s)"
