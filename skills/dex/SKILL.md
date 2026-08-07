@@ -16,17 +16,22 @@ Orchestrate the full ticket lifecycle from planning through completion.
 
 The terminal `dx` lifecycle runs phases in the same Claude Code session. Each phase has an audit loop that critically reviews the work before allowing completion; when the phase passes, the Stop hook injects the next phase instructions directly into the current session.
 
+Commits, pushes, and pull-request actions remain available in every phase.
+Phase assignments describe their default focus and owner. When a direct human
+instruction or the active workflow calls for one of those actions, record the
+resulting state and continue using the current phase's completion criteria.
+
 ### Phase 0: Setup
 
 1. Runs in NORMAL mode (no plan mode) so the agent can write to git and the tracker before any planning starts.
 2. Follow `prompts/ticket-instructions.md` end to end:
    - Read the ticket from the configured tracker (including all comments).
    - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, **[STOP]** and warn.
-   - Rename the lifecycle branch to the tracker's git branch name and push it with upstream tracking. Do NOT create a draft PR — Phase 5 owns that step.
+   - Rename the lifecycle branch to the tracker's git branch name and push it with upstream tracking. Draft PR creation normally stays with Phase 5 unless the user asks for it earlier.
    - Set ticket status to **In Progress**.
    - If the description is empty or unclear, draft 2-3 sentences plus an acceptance-criteria checklist, present to the user, and update the ticket once confirmed.
    - Update the per-session meta sidecar with `tracker_key` and `current_branch` so future `dx <N>` invocations can find the worktree even after the branch rename.
-3. **SCOPE**: ticket bootstrap only. Do NOT call `EnterPlanMode`, do NOT draft a plan, do NOT write source code, do NOT commit, do NOT open a PR.
+3. **SCOPE**: keep the phase focused on ticket bootstrap. Planning and source work normally begin in later phases; commits and PR work retain their existing phase owners unless the user directs otherwise.
 4. When setup is complete, write the Phase 0 ready marker (`dx_phase_ready_file ... 0`) and stop once so the Stop hook can audit and advance to Phase 1 automatically.
 
 ### Phase 1: Plan
@@ -45,7 +50,7 @@ The terminal `dx` lifecycle runs phases in the same Claude Code session. Each ph
 3. For UI-affecting changes, invoke `/dxuicapture` before UI edits for baseline evidence, then again after implementation. Capture screenshots/traces, record video for interactive flows, and link the `visual-evidence.md` manifest from Dex's artifact directory.
 4. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
 5. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, the manual smoke test passed or explicitly N/A, and UI capture evidence present or explicitly N/A.
-6. **SCOPE**: implementation, testing, and UI capture evidence ONLY. Ticket setup belongs to Phase 0 — only re-run it here if Phase 0 left it incomplete. Do NOT commit or push implementation code (Phase 4 owns that), and do NOT update the PR description (Phase 5 owns that).
+6. **SCOPE**: focus on implementation, testing, and UI capture evidence. Ticket setup belongs to Phase 0, so only re-run it here if Phase 0 left it incomplete. Phase 4 normally owns verification and publishing, while Phase 5 normally owns the PR description; direct human instructions can change that order.
 7. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `small`, `normal`, or `complex`, with a
    deterministic set of reason codes. The choice maps to 3, 6, or 9
@@ -71,7 +76,8 @@ The terminal `dx` lifecycle runs phases in the same Claude Code session. Each ph
    are never passed to a later reviewer.
 6. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid results,
    provider failures, and deterministic fingerprint churn pause the loop.
-7. **SCOPE**: review and fix ONLY. Do NOT commit, push, or create PRs.
+7. **SCOPE**: focus on review and fixes. Phase 4 and Phase 5 remain the default
+   owners of publishing and PR setup, but those actions are available here.
 8. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
    receipt proving the selected consecutive clean gate passed.
 
@@ -85,7 +91,7 @@ The terminal `dx` lifecycle runs phases in the same Claude Code session. Each ph
 ### Phase 5: PR
 
 1. Run `/dxpr` — generate PR description, refresh any UI after-capture handoff, create draft PR, attach `request`-type reviewers from `dex.md § Reviewers`, update tracker if available.
-2. SCOPE: Do NOT mark the PR ready for review or post `@mention` comments — Phase 6 owns those steps so reviewers are notified at exactly the right moment.
+2. Phase 6 normally owns marking the PR ready and posting `@mention` comments so reviewer notifications happen together. If the user directs either action in Phase 5, carry it out and record the updated PR state for Phase 6.
 3. Output `PHASE_5_COMPLETE` when the draft PR is created and reviewers are attached.
 
 ### Phase 6: Complete (autonomous)

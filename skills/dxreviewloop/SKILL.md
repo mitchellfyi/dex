@@ -121,8 +121,7 @@ Every wave must:
 
 Waves run with `DEX_REVIEW_PASS_ACTIVE=1`, a pass-scoped `DEX_SESSION_ID`, and
 an empty `DEX_PHASE_HANDOFF`. They must never receive or write the lifecycle
-completion path. Do not commit, push, create or update PRs, or request external
-reviewers from a review wave.
+completion path.
 
 If fresh review-wave CLI sessions are unavailable, pause with
 `BLOCKED:review-session-unavailable`; do not simulate independent passes in the
@@ -207,5 +206,4 @@ Print:
 ```
 
 On success, include the valid receipt path. On pause, include only the
-normalized reason and the intervention needed. Do not commit, push, create or
-update PRs, or request external reviewers.
+normalized reason and the intervention needed.

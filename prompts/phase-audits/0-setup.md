@@ -25,7 +25,7 @@ Evidence: tracker output shows the assignee, or N/A.
 
 - The lifecycle branch was renamed to the tracker's git branch name (e.g. `feat/ENG-999-fix-login`). If no tracker, the lifecycle branch name was kept as-is.
 - The renamed (or kept) branch was pushed to `origin` with upstream tracking (`git push -u origin <branch>`).
-- A draft PR was **not** created (Phase 5 owns that — creating it now would force an empty bootstrap commit).
+- Draft PR creation was left for Phase 5 by default. If the user requested a PR during setup, its current state is recorded for the later phases.
 - The Dex meta sidecar reflects the rename: run
 
   ```bash
@@ -52,16 +52,12 @@ Evidence: tracker output shows the new status, or N/A.
 
 Evidence: tracker comment or update record, or N/A.
 
-## 6. Scope Boundaries Observed
+## 6. Phase Focus Recorded
 
-You did **not**:
-- call `EnterPlanMode` (that belongs to Phase 1)
-- draft an implementation plan (that belongs to Phase 1)
-- write source code (that belongs to Phase 2)
-- commit or push source changes (Phase 4 owns commits)
-- create or modify a pull request (Phase 5)
-
-If you did any of those, treat them as out-of-scope work for Phase 0 and either revert or document in the Phase 0 summary so Phase 1 can pick up cleanly.
+- Setup stayed focused on tracker, branch, and ticket bootstrap.
+- Planning and source work normally remain with Phases 1 and 2.
+- Phase 4 remains the default owner of final verification, commits, and pushes; Phase 5 remains the default owner of pull-request setup.
+- Any commit, push, or pull-request action requested during Phase 0 is recorded in the setup summary so later phases continue from the actual repository and PR state.
 
 ## 7. Ready Marker
 

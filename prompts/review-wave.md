@@ -17,7 +17,6 @@ consecutive `CLEAN` gate: `small` uses `light` and requires 3, `normal` uses
 - Build the context pack before broad exploration or domain-specific review.
 - Run deterministic checks before semantic review.
 - The review wave runs in one CLI session.
-- Do not commit, push, create branches, create or update PRs, or poll reviewers.
 - Do not create or switch worktrees or branches. A review wave runs in the
   current checkout; only `dx <ticket-or-description>` owns lifecycle setup.
 - Acceptance criteria come only from the current caller; otherwise use `N/A`.

@@ -42,10 +42,9 @@ All of these must be true:
   the loop retained or raised the tier, rebound its selection to the updated
   fingerprint, and reset progress. Any out-of-band scope change invalidated
   selection, progress, and receipts before counting resumed.
-- No commit, push, PR creation, or PR update happened from this audit point
-  forward. If one happened earlier in Phase 3, report it as an ordering warning
-  and continue only after review has a valid current receipt; do not deadlock on
-  an irreversible past action.
+- Phase 3 stays focused on review by default. If a commit, push, or PR action
+  occurs during the phase, record the resulting state. Re-run `/dxreviewloop`
+  after any code change; publishing does not replace the clean-pass requirement.
 
 The outer review loop has no iteration maximum. It continues until the clean
 gate succeeds or a deterministic pause condition occurs.

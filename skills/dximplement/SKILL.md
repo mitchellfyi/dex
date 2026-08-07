@@ -236,12 +236,17 @@ Do not write this marker early. The Stop hook ignores `PHASE_2_COMPLETE` without
 
 ## Scope Boundaries
 
-During implementation (Phase 2), you MUST NOT:
-- Run `git commit` or `git push` (that is Phase 4: Verify & Commit)
-- Create or modify pull requests via `gh pr` (that is Phase 5: PR)
-- Mark tickets as done or in-review (that is Phase 6: Complete)
-- Rename the lifecycle branch or move ticket status — Phase 0 (Setup) already handled that. If you notice it wasn't done, surface that to the user rather than fixing it ad-hoc.
-- Create new branches (the worktree branch was created by `dx`)
+Keep Phase 2 focused on implementation and its evidence. By default, Phase 4
+owns final verification, commits, and pushes; Phase 5 owns pull-request work;
+and Phase 6 owns final ticket state. Commits, pushes, and pull-request actions
+are still permitted in Phase 2 when the user directs them or the active
+workflow requires them. Record what changed so the later phase can continue
+from the current repository and PR state.
+
+During implementation, avoid unrelated lifecycle administration:
+- Leave final ticket-state changes to Phase 6 unless the user directs otherwise.
+- Leave branch renames and routine ticket-status movement with Phase 0. If setup is incomplete, surface it instead of changing it ad hoc.
+- Keep using the worktree branch created by `dx` unless the user requests a different branch.
 
 You SHOULD:
 - Implement all planned tasks with TDD

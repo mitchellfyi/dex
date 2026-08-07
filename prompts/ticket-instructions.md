@@ -7,7 +7,7 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
    - If the tracker supports assignees: check the assignee. If assigned to someone else, STOP and warn. If unassigned, assign to the current user (for Linear: use `save_issue` with `assignee: "me"`).
    - If no tracker is configured: use the branch name `{{BRANCH}}` and the local filesystem for context. Ask the user what they want to work on.
 
-2. Rename and push the branch — **do NOT create the draft PR yet**. The PR is created later by `/dxpr` (Phase 5) once the implementation has been committed. Creating it upfront on an empty branch fails with "No commits between main and …" and forces an empty bootstrap commit; deferring avoids that whole dance.
+2. Rename and push the branch. The default workflow leaves draft PR creation to `/dxpr` in Phase 5, after implementation commits exist. If the user asks for a PR during setup, create or update it as requested and record its state for the later phases. A branch with no changes may not be eligible for a PR; report that state rather than treating an empty bootstrap commit as required.
 
    **If ticket context was found**:
    - Rename to match the ticket's git branch name (returned by the tracker — e.g., Linear's `branchName` field from `get_issue`):

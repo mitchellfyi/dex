@@ -246,9 +246,9 @@ else
   printf 'FAIL (review assessment Bash guard leaked outside assessor mode)\n%s\n' "$GUARD_OUT" >&2
   fail=$((fail + 1))
 fi
-# Push-blocking guards (review-pass-no-push, lifecycle-phase-push) are covered
-# by tests/push-guards-test.sh, kept separate so that file contains no raw
-# Codex payload strings.
+# Lifecycle commit/push/PR permissions are covered by push-guards-test.sh,
+# including a regression that the remaining destructive-command guard stays
+# active.
 
 printf 'guards-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
