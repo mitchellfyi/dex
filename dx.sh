@@ -1532,15 +1532,18 @@ __dx_codex_direct_phase_handoff() {
 
   complete_file=$(dx_complete_file "$session_id")
   ready_file=$(dx_phase_ready_file "$session_id" "$phase")
-  if [[ ! -f "$complete_file" ]]; then
-    case "$phase" in
-      0|1|2)
-        [[ -f "$ready_file" ]] || return 1
-        ;;
-      *)
-        return 1
-        ;;
-    esac
+  case "$phase" in
+    0|1|2)
+      [[ -f "$ready_file" ]] || return 1
+      ;;
+    *)
+      [[ -f "$complete_file" ]] || return 1
+      ;;
+  esac
+
+  if [[ "$phase" == "1" || "$phase" == "2" ]] &&
+     ! dx_review_criteria_valid "$(dx_review_criteria_file "$session_id")"; then
+    return 1
   fi
 
   if [[ "$phase" == "2" ]] && ! dx_review_selection_valid "$session_id" "$wt_dir"; then

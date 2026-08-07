@@ -88,6 +88,17 @@ criteria_hash=$(dx_review_criteria_hash "$criteria_file")
   printf 'criteria hash is not a full lowercase SHA-256 digest\n' >&2
   exit 1
 }
+printf '%s' '{ "verification_requirements" : [ "Run tests/review-policy-test.sh." ], "acceptance_criteria" : [ "The command returns the documented result." ], "objectives" : [ "Preserve the public behavior." ], "source" : "approved-plan", "version" : 1 }' > "$criteria_file"
+assert_eq "$criteria_hash" "$(dx_review_criteria_hash "$criteria_file")" "criteria hash uses canonical JSON"
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Preserve both public behaviors."],"acceptance_criteria":["The command returns the documented result."],"verification_requirements":["Run tests/review-policy-test.sh."]}' > "$criteria_file"
+[[ "$criteria_hash" != "$(dx_review_criteria_hash "$criteria_file")" ]] || {
+  printf 'criteria hash did not change with approved requirements\n' >&2
+  exit 1
+}
+printf '%s\n' '{"version":true,"source":"approved-plan","objectives":["Implement the change."],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"
+assert_rejected "criteria reject boolean versions" dx_review_criteria_valid "$criteria_file"
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":[{"text":"Implement the change."}],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"
+assert_rejected "criteria reject non-string entries" dx_review_criteria_valid "$criteria_file"
 printf '%s\n' '{"version":1,"source":"approved-plan","objectives":[],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"
 assert_rejected "criteria require an objective" dx_review_criteria_valid "$criteria_file"
 printf '%s\n' '{"version":1,"source":"conversation","objectives":["Implement the change."],"acceptance_criteria":["The command works."],"verification_requirements":["Run the test."]}' > "$criteria_file"

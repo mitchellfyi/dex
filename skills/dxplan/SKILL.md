@@ -310,9 +310,9 @@ the independent Phase 3 reviewers. Write a version 1 JSON object to
 {
   "version": 1,
   "source": "approved-plan",
-  "objectives": ["One approved outcome per one-line string."],
-  "acceptance_criteria": ["Every approved criterion, without paraphrasing away constraints."],
-  "verification_requirements": ["Each concrete command or observable verification requirement."]
+  "objectives": ["<one approved outcome per one-line string>"],
+  "acceptance_criteria": ["<every approved criterion, without dropping constraints>"],
+  "verification_requirements": ["<each concrete command or observable verification requirement>"]
 }
 ```
 

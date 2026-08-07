@@ -41,9 +41,32 @@ printf "0\n" > "$state_file"
 printf "0:%s\n" "$(date +%s)" > "$(dx_times_file "$session_id")"
 touch "$(dx_phase_ready_file "$session_id" 0)"
 
-__dx_codex_direct_phase_handoff "$session_id" 0 "$state_file" "$TMP_DIR/repo"
+if ! __dx_codex_direct_phase_handoff "$session_id" 0 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 0 did not advance with a ready marker" >&2
+  exit 1
+fi
 [[ "$(cat "$state_file")" == "1" ]]
 [[ ! -f "$(dx_phase_ready_file "$session_id" 0)" ]]
+
+printf "1\n" > "$state_file"
+printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise the direct handoff.\"],\"acceptance_criteria\":[\"Phase gates must reject missing state.\"],\"verification_requirements\":[\"Run tests/codex-inline-handoff-test.sh.\"]}" > "$(dx_review_criteria_file "$session_id")"
+touch "$(dx_complete_file "$session_id")"
+if __dx_codex_direct_phase_handoff "$session_id" 1 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 1 advanced without its ready marker" >&2
+  exit 1
+fi
+rm -f "$(dx_complete_file "$session_id")" "$(dx_review_criteria_file "$session_id")"
+touch "$(dx_phase_ready_file "$session_id" 1)"
+if __dx_codex_direct_phase_handoff "$session_id" 1 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 1 advanced without approved review criteria" >&2
+  exit 1
+fi
+printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise the direct handoff.\"],\"acceptance_criteria\":[\"Phase gates must reject missing state.\"],\"verification_requirements\":[\"Run tests/codex-inline-handoff-test.sh.\"]}" > "$(dx_review_criteria_file "$session_id")"
+if ! __dx_codex_direct_phase_handoff "$session_id" 1 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 1 did not advance with valid approved review criteria" >&2
+  exit 1
+fi
+[[ "$(cat "$state_file")" == "2" ]]
 
 printf "2\n" > "$state_file"
 touch "$(dx_phase_ready_file "$session_id" 2)"
@@ -51,8 +74,14 @@ if __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
   printf "%s\n" "phase 2 advanced without a review risk selection" >&2
   exit 1
 fi
-dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$TMP_DIR/repo"
-__dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
+if ! dx_review_write_selection "$session_id" complex lifecycle-agent broad-impact "$TMP_DIR/repo"; then
+  printf "%s\n" "could not write the Phase 2 risk selection fixture" >&2
+  exit 1
+fi
+if ! __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 2 did not advance with valid criteria and risk selection" >&2
+  exit 1
+fi
 [[ "$(cat "$state_file")" == "3" ]]
 
 printf "3\n" > "$state_file"
@@ -62,8 +91,18 @@ if __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"
 fi
 
 touch "$(dx_complete_file "$session_id")"
-dx_review_write_receipt "$session_id" normal 6 6 "$TMP_DIR/repo"
-__dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"
+receipt_fingerprint="$(dx_review_scope_fingerprint "$TMP_DIR/repo")"
+for ledger_iteration in {1..9}; do
+  dx_review_ledger_append "$session_id" "$ledger_iteration" "direct-clean-${ledger_iteration}" "$receipt_fingerprint" "$(printf "%016x" "$ledger_iteration")"
+done
+if ! dx_review_write_receipt "$session_id" complex 9 9 "$TMP_DIR/repo"; then
+  printf "%s\n" "could not write the Phase 3 receipt fixture" >&2
+  exit 1
+fi
+if ! __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 3 did not advance with a valid review receipt" >&2
+  exit 1
+fi
 [[ "$(cat "$state_file")" == "4" ]]
 '
 

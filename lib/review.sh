@@ -223,9 +223,9 @@ required_keys = {
 }
 if not isinstance(payload, dict) or set(payload) != required_keys:
     raise SystemExit(1)
-if payload["version"] != 1:
+if isinstance(payload["version"], bool) or payload["version"] != 1:
     raise SystemExit(1)
-if payload["source"] not in {"approved-plan", "headless-run-spec"}:
+if not isinstance(payload["source"], str) or payload["source"] not in {"approved-plan", "headless-run-spec"}:
     raise SystemExit(1)
 
 limits = {
@@ -237,10 +237,12 @@ for key, limit in limits.items():
     values = payload[key]
     if not isinstance(values, list) or not 1 <= len(values) <= limit:
         raise SystemExit(1)
+    if any(not isinstance(value, str) for value in values):
+        raise SystemExit(1)
     if len(values) != len(set(values)):
         raise SystemExit(1)
     for value in values:
-        if not isinstance(value, str) or not 1 <= len(value) <= 2000:
+        if not 1 <= len(value) <= 2000:
             raise SystemExit(1)
         if value != value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise SystemExit(1)
@@ -256,10 +258,13 @@ dx_review_criteria_hash() {
   dx_review_criteria_valid "$criteria_file" || return 1
   python3 - "$criteria_file" <<'PY'
 import hashlib
+import json
 import sys
 
-with open(sys.argv[1], "rb") as handle:
-    print(hashlib.sha256(handle.read()).hexdigest())
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+print(hashlib.sha256(canonical.encode("utf-8")).hexdigest())
 PY
 }
 
