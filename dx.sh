@@ -196,14 +196,14 @@ __dx_cli() {
         return 1
       fi
       if [[ -z "$rev_phase" ]]; then
-        # Find the most recent checkpoint
-        local latest_tag
-        latest_tag=$(git -C "$rev_dir" tag -l 'dx-checkpoint/phase-*' --sort=-version:refname 2>/dev/null | head -1)
-        if [[ -z "$latest_tag" ]]; then
+        # Find the most recent checkpoint owned by this worktree.
+        local latest_phase
+        latest_phase=$(dx_latest_checkpoint_phase "$rev_dir" 2>/dev/null || true)
+        if [[ -z "$latest_phase" ]]; then
           dx_info "No checkpoints found for ${rev_name}."
           return 1
         fi
-        rev_phase="${latest_tag##*-}"
+        rev_phase="$latest_phase"
       fi
       echo "Reverting ${rev_name} to checkpoint for phase ${rev_phase}..."
       dx_revert_to_checkpoint "$rev_phase" "$rev_dir"

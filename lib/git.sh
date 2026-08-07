@@ -80,37 +80,171 @@ dx_default_branch_base_ref() {
   return 1
 }
 
+# __dx_checkpoint_canonical_git_dir <wt_dir> <git-dir|git-common-dir>
+# Resolve Git's administrative directory so linked worktrees can be identified
+# without depending on their branch name.
+__dx_checkpoint_canonical_git_dir() {
+  local wt_dir="$1" mode="$2" root raw_dir
+  root=$(git -C "$wt_dir" rev-parse --show-toplevel 2>/dev/null) || return 1
+  raw_dir=$(git -C "$root" rev-parse "--${mode}" 2>/dev/null) || return 1
+  (cd "$root" && cd "$raw_dir" && pwd -P)
+}
+
+# __dx_checkpoint_workspace_namespace <wt_dir>
+# Return a ref-safe namespace that is stable across linked-worktree branch
+# renames. In-place checkouts include the branch so separate lifecycles do not
+# share checkpoints in the main worktree.
+__dx_checkpoint_workspace_namespace() {
+  local wt_dir="$1" git_dir common_dir identity label branch slug digest
+  git_dir=$(__dx_checkpoint_canonical_git_dir "$wt_dir" git-dir) || return 1
+  common_dir=$(__dx_checkpoint_canonical_git_dir "$wt_dir" git-common-dir) || return 1
+
+  if [[ "$git_dir" != "$common_dir" ]]; then
+    identity="linked:${git_dir#"$common_dir"/}"
+    label="worktree-${git_dir##*/}"
+  else
+    branch=$(git -C "$wt_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    [[ -n "$branch" ]] || branch="detached"
+    identity="in-place:${branch}"
+    label="branch-${branch}"
+  fi
+
+  slug=$(dx_slugify "$label")
+  [[ -n "$slug" ]] || slug="workspace"
+  slug=$(printf '%.48s' "$slug")
+  digest=$(printf '%s' "$identity" | git -C "$wt_dir" hash-object --stdin 2>/dev/null) || return 1
+  [[ -n "$digest" ]] || return 1
+  printf '%s-%s\n' "$slug" "$digest"
+}
+
+# dx_checkpoint_ref <step> <wt_dir>
+# Return the full, workspace-scoped ref for a phase checkpoint.
+dx_checkpoint_ref() {
+  local step="$1" wt_dir="$2" namespace
+  [[ "$step" =~ ^[0-9]+$ ]] || return 1
+  namespace=$(__dx_checkpoint_workspace_namespace "$wt_dir") || return 1
+  printf 'refs/tags/dx-checkpoint/%s/phase-%s\n' "$namespace" "$step"
+}
+
+# __dx_legacy_checkpoint_is_safe <ref> <wt_dir>
+# Legacy refs were shared by every worktree. Accept one only when the target is
+# on this checkout's history and no other registered checkout can own it.
+__dx_legacy_checkpoint_is_safe() {
+  local ref="$1" wt_dir="$2" target current_root worktrees line other_root other_head
+  target=$(git -C "$wt_dir" rev-parse --verify "${ref}^{commit}" 2>/dev/null) || return 1
+  git -C "$wt_dir" merge-base --is-ancestor "$target" HEAD 2>/dev/null || return 1
+
+  current_root=$(git -C "$wt_dir" rev-parse --show-toplevel 2>/dev/null) || return 1
+  current_root=$(cd "$current_root" && pwd -P) || return 1
+  worktrees=$(git -C "$wt_dir" worktree list --porcelain 2>/dev/null) || return 1
+  while IFS= read -r line; do
+    [[ "$line" == worktree\ * ]] || continue
+    other_root="${line#worktree }"
+    other_root=$(cd "$other_root" 2>/dev/null && pwd -P) || return 1
+    [[ "$other_root" != "$current_root" ]] || continue
+    other_head=$(git -C "$other_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || return 1
+    if git -C "$wt_dir" merge-base --is-ancestor "$target" "$other_head" 2>/dev/null; then
+      return 1
+    fi
+  done <<< "$worktrees"
+  return 0
+}
+
+# __dx_checkpoint_ref_for_phase <step> <wt_dir>
+# Prefer the scoped ref, with a guarded fallback for checkpoints made by older
+# Dex versions.
+__dx_checkpoint_ref_for_phase() {
+  local step="$1" wt_dir="$2" ref legacy_ref
+  ref=$(dx_checkpoint_ref "$step" "$wt_dir") || return 1
+  if git -C "$wt_dir" show-ref --verify --quiet "$ref" 2>/dev/null; then
+    printf '%s\n' "$ref"
+    return 0
+  fi
+
+  legacy_ref="refs/tags/dx-checkpoint/phase-${step}"
+  if git -C "$wt_dir" show-ref --verify --quiet "$legacy_ref" 2>/dev/null \
+    && __dx_legacy_checkpoint_is_safe "$legacy_ref" "$wt_dir"; then
+    printf '%s\n' "$legacy_ref"
+    return 0
+  fi
+  return 1
+}
+
 # dx_checkpoint_tag <step> <wt_dir>
-# Create a lightweight local git tag at the current HEAD as a phase checkpoint.
-# Uses --force so re-running a phase overwrites the previous checkpoint.
+# Create or update this workspace's lightweight checkpoint at the current HEAD.
 dx_checkpoint_tag() {
-  local step="$1" wt_dir="$2"
-  git -C "$wt_dir" tag "dx-checkpoint/phase-${step}" --force 2>/dev/null || true
+  local step="$1" wt_dir="$2" ref target
+  ref=$(dx_checkpoint_ref "$step" "$wt_dir") || return 0
+  target=$(git -C "$wt_dir" rev-parse --verify HEAD 2>/dev/null) || return 0
+  git -C "$wt_dir" update-ref "$ref" "$target" >/dev/null 2>&1 || true
+}
+
+# dx_latest_checkpoint_phase <wt_dir>
+# Print the highest checkpoint phase owned by this workspace.
+dx_latest_checkpoint_phase() {
+  local wt_dir="$1" namespace tags tag phase legacy_ref
+  namespace=$(__dx_checkpoint_workspace_namespace "$wt_dir") || return 1
+  tags=$(git -C "$wt_dir" tag -l "dx-checkpoint/${namespace}/phase-*" --sort=-version:refname 2>/dev/null)
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] || continue
+    phase="${tag##*-}"
+    if [[ "$phase" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$phase"
+      return 0
+    fi
+  done <<< "$tags"
+
+  tags=$(git -C "$wt_dir" tag -l 'dx-checkpoint/phase-*' --sort=-version:refname 2>/dev/null)
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] || continue
+    phase="${tag##*-}"
+    [[ "$phase" =~ ^[0-9]+$ ]] || continue
+    legacy_ref="refs/tags/${tag}"
+    if __dx_legacy_checkpoint_is_safe "$legacy_ref" "$wt_dir"; then
+      printf '%s\n' "$phase"
+      return 0
+    fi
+  done <<< "$tags"
+  return 1
 }
 
 # dx_revert_to_checkpoint <step> <wt_dir>
-# Reset the worktree to the checkpoint tag for the given phase.
-# Returns 1 if the checkpoint tag doesn't exist.
+# Reset the worktree to its checkpoint for the given phase.
 dx_revert_to_checkpoint() {
-  local step="$1" wt_dir="$2"
-  local tag="dx-checkpoint/phase-${step}"
-  if ! git -C "$wt_dir" rev-parse --verify "$tag" &>/dev/null; then
-    echo "No checkpoint found for phase ${step}."
+  local step="$1" wt_dir="$2" ref legacy_ref
+  if ! ref=$(__dx_checkpoint_ref_for_phase "$step" "$wt_dir"); then
+    legacy_ref="refs/tags/dx-checkpoint/phase-${step}"
+    if git -C "$wt_dir" show-ref --verify --quiet "$legacy_ref" 2>/dev/null; then
+      printf 'The phase %s checkpoint uses the old shared format and cannot be assigned safely to this worktree.\n' "$step"
+    else
+      printf 'No checkpoint found for phase %s.\n' "$step"
+    fi
     return 1
   fi
-  git -C "$wt_dir" reset --hard "$tag"
+  git -C "$wt_dir" reset --hard "$ref"
   git -C "$wt_dir" clean -fd
 }
 
 # dx_cleanup_checkpoints <wt_dir>
-# Delete all dx-checkpoint tags in the worktree.
+# Delete checkpoints owned by this workspace. Safe legacy refs are cleaned up
+# for compatibility; ambiguous shared refs are left untouched.
 dx_cleanup_checkpoints() {
-  local wt_dir="$1"
-  local tags
-  tags=$(git -C "$wt_dir" tag -l 'dx-checkpoint/*' 2>/dev/null)
-  if [[ -n "$tags" ]]; then
-    echo "$tags" | xargs -I{} git -C "$wt_dir" tag -d {} 2>/dev/null
-  fi
+  local wt_dir="$1" namespace tags tag legacy_ref
+  namespace=$(__dx_checkpoint_workspace_namespace "$wt_dir") || return 0
+  tags=$(git -C "$wt_dir" tag -l "dx-checkpoint/${namespace}/phase-*" 2>/dev/null)
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] || continue
+    git -C "$wt_dir" tag -d "$tag" >/dev/null 2>&1 || true
+  done <<< "$tags"
+
+  tags=$(git -C "$wt_dir" tag -l 'dx-checkpoint/phase-*' 2>/dev/null)
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] || continue
+    legacy_ref="refs/tags/${tag}"
+    if __dx_legacy_checkpoint_is_safe "$legacy_ref" "$wt_dir"; then
+      git -C "$wt_dir" tag -d "$tag" >/dev/null 2>&1 || true
+    fi
+  done <<< "$tags"
 }
 
 # dx_slugify <string>
