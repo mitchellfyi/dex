@@ -60,6 +60,45 @@ esac
 SH
 chmod +x "$TMP_DIR/bin/claude"
 
+mkdir -p "$TMP_DIR/codex-bin"
+cat > "$TMP_DIR/codex-bin/codex" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >> "$DEX_TEST_CODEX_LOG"
+if [[ "${1:-}" == "login" && "${2:-}" == "status" ]]; then
+  printf 'Logged in with ChatGPT\n'
+  exit 0
+fi
+if [[ "${1:-}" == "exec" && "${2:-}" == "--help" ]]; then
+  printf '%s\n' '--ignore-user-config' '--dangerously-bypass-approvals-and-sandbox'
+  exit 0
+fi
+if [[ "${1:-}" == "exec" && "${2:-}" == "review" && "${3:-}" == "--help" ]]; then
+  printf '%s\n' '--ignore-user-config' '--dangerously-bypass-approvals-and-sandbox'
+  exit 0
+fi
+if [[ "${1:-}" == "exec" ]]; then
+  cat >/dev/null
+  cat > .dex/dex.md <<'DEXMD'
+# Dex — Codex Project
+
+## Tech Stack
+Bash
+
+## Quality Gates
+Run the shell tests.
+
+## Project Structure
+Shell scripts and tests.
+DEXMD
+  printf 'Codex analysis complete\n'
+  exit 0
+fi
+exit 2
+SH
+chmod +x "$TMP_DIR/codex-bin/codex"
+
 new_repo() {
   local name="$1" repo
   repo="$TMP_DIR/$name"
@@ -89,6 +128,21 @@ run_init_without_analysis() {
     cd "$repo"
     bash "$ROOT/bin/init.sh" --skip-analysis --skip-config
   ) > "$output_file" 2>&1
+}
+
+run_codex_init() {
+  local repo="$1" output_file="$2" status
+  set +e
+  (
+    cd "$repo"
+    PATH="$TMP_DIR/codex-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+      DX_PROVIDER_PROFILE=codex-subscription \
+      DEX_TEST_CODEX_LOG="$TMP_DIR/codex.log" \
+      bash "$ROOT/bin/init.sh" --skip-config
+  ) > "$output_file" 2>&1
+  status=$?
+  set -e
+  printf '%s\n' "$status"
 }
 
 assert_contains() {
@@ -176,5 +230,17 @@ success_status=$(run_init "$success_repo" success "$TMP_DIR/success.out")
 assert_contains "Init complete for:" "$TMP_DIR/success.out"
 assert_contains "Claude analyzed the codebase and generated project-specific config" "$TMP_DIR/success.out"
 assert_run_status "$TMP_DIR/success.out" "completed"
+
+codex_repo=$(new_repo codex-repo)
+codex_status=$(run_codex_init "$codex_repo" "$TMP_DIR/codex.out")
+[[ "$codex_status" -eq 0 ]] || {
+  printf 'expected Codex analysis to exit 0, got %s\n' "$codex_status" >&2
+  cat "$TMP_DIR/codex.out" >&2
+  exit 1
+}
+assert_contains "Codex analyzed the codebase and generated project-specific config" "$TMP_DIR/codex.out"
+assert_not_contains "Claude Code CLI not found" "$TMP_DIR/codex.out"
+assert_contains "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox" "$TMP_DIR/codex.log"
+assert_run_status "$TMP_DIR/codex.out" "completed"
 
 printf 'init reliability tests passed\n'

@@ -323,27 +323,32 @@ fi
 # ── 4. Codebase analysis via Claude Code CLI ──────────────────────────
 
 ANALYSIS_COMPLETED=0
+ANALYSIS_AGENT_LABEL=""
 
 if [[ $SKIP_ANALYSIS -eq 1 ]]; then
   echo ""
   echo "Skipped codebase analysis (--skip-analysis)."
   echo "To generate project-specific config later, run:"
   echo "  dx init --skip-config"
-elif ! command -v claude &>/dev/null; then
+elif ! dx_provider_apply; then
+  dx_error "Dex could not resolve the active provider for codebase analysis."
+  dx_info "Run 'dx provider doctor', then retry with: dx init --skip-config"
+  exit 1
+elif ! dx_provider_agent_ready_check; then
   echo ""
-  echo "Claude Code CLI not found. Skipping codebase analysis."
-  echo "Install Claude Code CLI, then run:"
+  echo "The active Dex provider is not ready. Skipping codebase analysis."
+  echo "Fix the provider issue above, then run:"
   echo "  dx init --skip-config"
 else
+  ANALYSIS_AGENT_LABEL=$(dx_agent_label "$DX_PROVIDER_AGENT")
   echo ""
   echo "Analyzing codebase with the active Dex provider..."
   echo "This discovers your tech stack, quality gates, and conventions."
   echo ""
   printf '[....]  Starting analysis...'
 
-  # -p runs a one-shot prompt; Claude writes files directly to .dex/
-  # --verbose --output-format stream-json enables real-time progress.
-  dx_provider_apply
+  # The provider wrapper translates this one-shot launch for the active agent.
+  # Stream output keeps progress visible while the agent writes into .dex/.
   model_flags=()
   if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
     model_flags+=(--model "$DX_CLAUDE_MODEL")
@@ -434,7 +439,7 @@ if [[ "$TOOL_BOOTSTRAP_RAN" -eq 1 ]]; then
   echo "  - Claude/Codex tooling installed with Dex links, official MCPs, and safe official plugins"
 fi
 if [[ $ANALYSIS_COMPLETED -eq 1 ]]; then
-  echo "  - Claude analyzed the codebase and generated project-specific config"
+  echo "  - ${ANALYSIS_AGENT_LABEL} analyzed the codebase and generated project-specific config"
 fi
 if [[ $SKIP_CONFIG -eq 0 ]]; then
   echo "  - Integrations configured (ticket tracker, optional MCPs)"
