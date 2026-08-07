@@ -73,8 +73,8 @@ conversation turns, session titles, AGENTS instructions, or unrelated ticket
 context. If the caller did not explicitly supply criteria for this review
 iteration, mark plan-dependent sections `N/A`.
 
-Also append the findings hash described in `prompts/review-wave.md` for stuck
-loop detection.
+Also write the single findings hash described in `prompts/review-wave.md`. The
+outer loop appends validated non-clean hashes to its stuck-loop history.
 
 ## Completion Criteria For This Iteration
 
@@ -88,6 +88,8 @@ All of these must be true before you stop:
 - Findings were verified before any fix was applied.
 - Verified findings were batch-fixed when safe, then rechecked.
 - The review result signal file contains one allowed result value.
+- The context pack is non-empty and the findings file contains exactly one
+  valid hash.
 - No commit, push, branch creation, PR creation/update, or external reviewer
   request happened in this iteration.
 

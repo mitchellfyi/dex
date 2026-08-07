@@ -172,8 +172,13 @@ SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 [[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
 echo "<result>" > "$(dx_review_result_file "$SESSION_ID")"
 FINDINGS_HASH=$(printf '%s\n' "<sorted verified finding descriptions or EMPTY>" | shasum -a 256 | cut -c1-16)
-echo "$FINDINGS_HASH" >> "$(dx_findings_file "$SESSION_ID")"
+echo "$FINDINGS_HASH" > "$(dx_findings_file "$SESSION_ID")"
 ```
+
+The wave is incomplete until the context pack contains substantive text and the
+findings file contains exactly one lowercase 16-character hash. Replace the
+findings file for this pass; the outer loop appends validated hashes to its own
+history when needed.
 
 Final output:
 

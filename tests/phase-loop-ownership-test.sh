@@ -20,7 +20,9 @@ export DEX_DIR="$ROOT"
 # before the cases run; each case sets exactly the vars it needs.
 unset DEX_LOOP_ACTIVE DEX_REVIEW_PASS_ACTIVE DEX_PHASE_HANDOFF DEX_LOOP_PHASE \
   DEX_LOOP_PROMISE DEX_LOOP_PROMPT DEX_LOOP_MIN_AUDITS DEX_LOOP_MAX_ITERATIONS \
-  DEX_SESSION_ID DX_LIFECYCLE_PUSH_FORBIDDEN
+  DEX_LOOP_STALL_TIMEOUT DEX_LOOP_STALL_ESCALATE DEX_COMPLETE_WAIT_MINUTES \
+  DEX_REVIEW_PASS_TIMEOUT DEX_REVIEW_PASS_NOTICE_INTERVAL \
+  DEX_REVIEW_PASS_RECHECK_SECONDS DEX_SESSION_ID DX_LIFECYCLE_PUSH_FORBIDDEN
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-phase-loop-test.XXXXXX")"
 cleanup() { rm -rf "$TMP_DIR"; }
@@ -109,7 +111,8 @@ printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
 printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
 printf '%s\n' "CLEAN" > "$DX_LOOP_DIR/$SID.review-result"
-printf '%s\n' "hash-abc123" > "$DX_LOOP_DIR/$SID.findings"
+printf '%s\n' "reviewed shell hooks and focused regressions" > "$DX_LOOP_DIR/$SID.review-context"
+printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
 touch "$DX_LOOP_DIR/$SID.complete"
 set +e
 OUT="$(printf '{"session_id":"claude-wave"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" 2>&1)"
@@ -121,7 +124,7 @@ assert_out_lacks "review pass did not trigger phase handoff" "Phase Handoff"
 assert_file_eq "phase state not advanced by review pass" "$DX_STATE_DIR/$SID.phase" "3"
 # The launching wrapper harvests the pass findings hash into the parent
 # session stuck-loop history after the wave exits, so the hook must leave it.
-assert_file_eq "findings hash preserved for wrapper harvest" "$DX_LOOP_DIR/$SID.findings" "hash-abc123"
+assert_file_eq "findings hash preserved for wrapper harvest" "$DX_LOOP_DIR/$SID.findings" "0123456789abcdef"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 # --- case 5: review pass with invalid result is held open ---
@@ -136,6 +139,64 @@ RC=$?
 set -e
 assert_rc "invalid result blocks review pass stop" 2
 assert_out_contains "invalid result message shown" "result signal missing or invalid"
+rm -f "$DX_LOOP_DIR/$SID".*
+
+# --- case 6: a review pass cannot complete without a substantive context pack ---
+SID="repo-test-6-main-pass-3-999"
+touch "$DX_LOOP_DIR/$SID.active"
+printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
+printf '%s\n' "CLEAN" > "$DX_LOOP_DIR/$SID.review-result"
+printf '%s\n' "   " > "$DX_LOOP_DIR/$SID.review-context"
+printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
+touch "$DX_LOOP_DIR/$SID.complete"
+set +e
+OUT="$(printf '{"session_id":"claude-wave3"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "empty context pack blocks review pass stop" 2
+assert_out_contains "empty context pack message shown" "context pack missing or empty"
+rm -f "$DX_LOOP_DIR/$SID".*
+
+# --- case 7: a review pass must write exactly one valid findings hash ---
+SID="repo-test-7-main-pass-4-999"
+touch "$DX_LOOP_DIR/$SID.active"
+printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
+printf '%s\n' "CLEAN" > "$DX_LOOP_DIR/$SID.review-result"
+printf '%s\n' "review context" > "$DX_LOOP_DIR/$SID.review-context"
+printf '%s\n%s\n' "0123456789abcdef" "fedcba9876543210" > "$DX_LOOP_DIR/$SID.findings"
+touch "$DX_LOOP_DIR/$SID.complete"
+set +e
+OUT="$(printf '{"session_id":"claude-wave4"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "multiple findings hashes block review pass stop" 2
+assert_out_contains "findings hash message shown" "findings hash missing or invalid"
+rm -f "$DX_LOOP_DIR/$SID".*
+
+# --- case 8: invalid numeric limits block with an actionable error ---
+LIMIT_INDEX=0
+for LIMIT_NAME in DEX_LOOP_MAX_ITERATIONS DEX_LOOP_MIN_AUDITS DEX_LOOP_STALL_TIMEOUT DEX_LOOP_STALL_ESCALATE; do
+  LIMIT_INDEX=$((LIMIT_INDEX + 1))
+  SID="repo-test-8-limit-$LIMIT_INDEX"
+  touch "$DX_LOOP_DIR/$SID.active"
+  set +e
+  OUT="$(printf '{"session_id":"claude-limit"}' | env DEX_SESSION_ID="$SID" "$LIMIT_NAME=abc" bash "$HOOK" 2>&1)"
+  RC=$?
+  set -e
+  assert_rc "$LIMIT_NAME blocks cleanly" 2
+  assert_out_contains "$LIMIT_NAME names the invalid setting" "$LIMIT_NAME='abc'"
+  assert_out_lacks "$LIMIT_NAME avoids shell arithmetic errors" "unbound variable"
+  rm -f "$DX_LOOP_DIR/$SID".*
+done
+
+SID="repo-test-8-limit-overflow"
+touch "$DX_LOOP_DIR/$SID.active"
+set +e
+OUT="$(printf '{"session_id":"claude-limit"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_MAX_ITERATIONS=9999999999999999 bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "oversized loop limit blocks cleanly" 2
+assert_out_contains "oversized loop limit names the invalid setting" "must be a non-negative decimal with at most 15 digits"
 rm -f "$DX_LOOP_DIR/$SID".*
 
 printf 'phase-loop-ownership-test: %d passed, %d failed\n' "$pass" "$fail"

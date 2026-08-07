@@ -91,6 +91,8 @@ zsh -fc '
   __dx_claude() {
     print -r -- "${DEX_LOOP_PROMISE:-<empty>}" >> "$REVIEW_CALL_FILE"
     print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
+    print -r -- "review context for $DEX_SESSION_ID" > "$(dx_review_context_file "$DEX_SESSION_ID")"
+    print -r -- 0123456789abcdef > "$(dx_findings_file "$DEX_SESSION_ID")"
     touch "$(dx_complete_file "$DEX_SESSION_ID")"
   }
 

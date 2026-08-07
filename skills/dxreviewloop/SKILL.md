@@ -94,6 +94,14 @@ printf '%s\n' "3:PHASE_3_COMPLETE:${DEX_DIR:-$HOME/work/dex}/prompts/phase-audit
 #   claude ... "<review-wave prompt>"
 
 RESULT=$(cat "$(dx_review_result_file "$PASS_SESSION_ID")" 2>/dev/null || echo "UNKNOWN")
+if ! dx_review_result_valid "$RESULT" ||
+   ! dx_review_context_valid "$(dx_review_context_file "$PASS_SESSION_ID")" ||
+   ! dx_review_findings_hash_valid "$(dx_findings_file "$PASS_SESSION_ID")"; then
+  dx_cleanup_session "$PASS_SESSION_ID"
+  rm -f "$BUSY_FILE" "$(dx_phase_busy_notice_file "$SESSION_ID" 3)"
+  echo "Review pass returned incomplete or invalid state" >&2
+  exit 1
+fi
 # Preserve the wave's findings hash for the lifecycle Stop hook's semantic
 # stuck-loop detection before the pass-scoped state is removed. Skip CLEAN
 # waves: they hash the literal EMPTY inventory, so consecutive clean passes
@@ -103,6 +111,10 @@ if [[ "$RESULT" != "CLEAN" && -f "$(dx_findings_file "$PASS_SESSION_ID")" ]]; th
 fi
 dx_cleanup_session "$PASS_SESSION_ID"
 rm -f "$BUSY_FILE" "$(dx_phase_busy_notice_file "$SESSION_ID" 3)"
+if [[ "$RESULT" == BLOCKED:* ]]; then
+  echo "dxreviewloop blocked: ${RESULT#BLOCKED:}" >&2
+  exit 1
+fi
 ```
 
 The review-session prompt must include the full-scope commands, review profile,
@@ -125,7 +137,8 @@ context.
 ## Counting
 
 - `CLEAN`: increment clean count.
-- `FINDINGS_FIXED:N`, `FINDINGS:N`, `BLOCKED:reason`: reset clean count and continue unless a real blocker remains.
+- `FINDINGS_FIXED:N`, `FINDINGS:N`: reset clean count and continue.
+- `BLOCKED:reason`: stop the outer loop immediately and report the reason.
 - `ESCALATE_THOROUGH:reason`: reset clean count and continue as thorough.
 - Missing/unknown result: treat as non-clean and stop if unrecoverable.
 

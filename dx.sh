@@ -3152,8 +3152,14 @@ single-pass review-wave contract yourself.
 
 Dex review waves cover the requested review domains inside this CLI pass.
 
-Before your final response, you MUST write exactly one allowed result to:
+Before your final response, you MUST write a non-empty context pack to:
+  ${review_context_file}
+
+Write exactly one allowed result to:
   ${pass_result_file}
+
+Write exactly one lowercase 16-character findings hash to:
+  $(dx_findings_file "$pass_session_id")
 
 Then touch:
   ${pass_complete_file}
@@ -3198,12 +3204,28 @@ ${message}"
     local result="UNKNOWN"
     [[ -f "$pass_result_file" ]] && result=$(cat "$pass_result_file" 2>/dev/null || echo "UNKNOWN")
 
+    # Claude's Stop hook enforces this contract before it releases a wave. The
+    # wrapper repeats the checks because direct Codex sessions do not run that
+    # hook, and a provider can otherwise exit successfully with partial state.
+    local review_contract_error=""
+    if dx_review_result_valid "$result"; then
+      if [[ "$agent_host" == "codex" && ! -f "$pass_complete_file" ]]; then
+        review_contract_error="completion receipt missing"
+      elif [[ "$agent_host" != "codex" && ! -f "$pass_complete_file" && -f "$(dx_active_file "$pass_session_id")" ]]; then
+        review_contract_error="completion receipt missing"
+      elif ! dx_review_context_valid "$review_context_file"; then
+        review_contract_error="context pack missing or empty"
+      elif ! dx_review_findings_hash_valid "$(dx_findings_file "$pass_session_id")"; then
+        review_contract_error="findings hash missing or invalid (expected exactly one lowercase 16-character hash)"
+      fi
+    fi
+
     # Preserve the findings-hash history across passes for stuck-loop
     # diagnostics before the pass-scoped file is cleaned up. Skip CLEAN waves:
     # they hash the literal EMPTY inventory, so consecutive clean passes (the
     # success gate) would read as recurring identical findings to the parent
     # Stop hook's semantic stuck detection.
-    if [[ "$result" != "CLEAN" && -f "$(dx_findings_file "$pass_session_id")" ]]; then
+    if [[ -z "$review_contract_error" && "$result" != "CLEAN" && -f "$(dx_findings_file "$pass_session_id")" ]]; then
       cat "$(dx_findings_file "$pass_session_id")" >> "$(dx_findings_file "$session_id")" 2>/dev/null || true
     fi
     dx_cleanup_session "$pass_session_id"
@@ -3224,10 +3246,25 @@ ${message}"
       return $exit_code
     fi
 
-    if [[ "$result" != "CLEAN" && "$result" != BLOCKED:* && "$result" != ESCALATE_THOROUGH:* ]] && \
-       ! printf '%s\n' "$result" | grep -Eq '^(FINDINGS_FIXED|FINDINGS):[0-9]+$'; then
+    if ! dx_review_result_valid "$result"; then
       echo ""
       dx_info "dxreviewloop received invalid review result from ${agent_host}: ${result}"
+      dx_provider_cleanup_session_state "$session_id"
+      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
+      return 1
+    fi
+
+    if [[ -n "$review_contract_error" ]]; then
+      echo ""
+      dx_info "dxreviewloop rejected the ${agent_host} review pass: ${review_contract_error}."
+      dx_provider_cleanup_session_state "$session_id"
+      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
+      return 1
+    fi
+
+    if [[ "$result" == BLOCKED:* ]]; then
+      echo ""
+      dx_info "dxreviewloop blocked: ${result#BLOCKED:}"
       dx_provider_cleanup_session_state "$session_id"
       rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
       return 1

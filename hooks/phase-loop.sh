@@ -111,6 +111,29 @@ dx_format_duration() {
   printf '%dm %ds\n' "$minutes" "$remainder"
 }
 
+# Normalize an environment-supplied loop limit before bash arithmetic sees it.
+# Fifteen digits leave enough headroom for the minute-to-second conversions
+# and epoch additions below. Stripping leading zeroes avoids octal parsing.
+dx_normalize_numeric_limit() {
+  local value="${1:-}"
+  case "$value" in
+    ""|*[!0-9]*) return 1 ;;
+  esac
+
+  while [[ ${#value} -gt 1 && "$value" == 0* ]]; do
+    value="${value#0}"
+  done
+  [[ ${#value} -le 15 ]] || return 1
+  printf '%s\n' "$value"
+}
+
+dx_report_invalid_numeric_limit() {
+  local name="$1" value="$2"
+  printf '\n%s\n\n' "--- Dex loop blocked: invalid numeric limit ---" >&2
+  printf '%s\n' "${name}='${value}' must be a non-negative decimal with at most 15 digits." >&2
+  printf '%s\n' "Correct or unset ${name}, then stop again." >&2
+}
+
 dx_phase_start_epoch() {
   local phase="$1" times_file
   times_file=$(dx_times_file "$SESSION_ID")
@@ -414,7 +437,16 @@ STATE_FILE=$(dx_loop_file "$SESSION_ID")
 dx_record_session_branch "$SESSION_ID" "$(pwd)" 2>/dev/null || true
 # 30 iterations is tuned for medium-sized features; reduce for simple bugs (10-15).
 # Each iteration = one audit cycle, so 30 is a safety net, not an expected count.
-MAX_ITERATIONS="${DEX_LOOP_MAX_ITERATIONS:-30}"
+MAX_ITERATIONS_RAW="${DEX_LOOP_MAX_ITERATIONS:-30}"
+if ! MAX_ITERATIONS=$(dx_normalize_numeric_limit "$MAX_ITERATIONS_RAW"); then
+  dx_report_invalid_numeric_limit "DEX_LOOP_MAX_ITERATIONS" "$MAX_ITERATIONS_RAW"
+  exit 2
+fi
+MIN_AUDIT_ITERATIONS_RAW="$MIN_AUDIT_ITERATIONS"
+if ! MIN_AUDIT_ITERATIONS=$(dx_normalize_numeric_limit "$MIN_AUDIT_ITERATIONS_RAW"); then
+  dx_report_invalid_numeric_limit "DEX_LOOP_MIN_AUDITS" "$MIN_AUDIT_ITERATIONS_RAW"
+  exit 2
+fi
 COMPLETION_PROMISE="${DEX_LOOP_PROMISE:-DEX_TICKET_COMPLETE}"
 
 # Phase 6 has a wall-clock watch window between outcome checks. The agent writes
@@ -427,8 +459,11 @@ if [[ "${DEX_LOOP_PHASE:-}" == "6" && ! -f "$COMPLETE_FILE" ]]; then
     if [[ "$COMPLETE_STATE_RAW" =~ ^([0-9]+):([0-9]+)$ ]]; then
       COMPLETE_CYCLE="${BASH_REMATCH[1]}"
       COMPLETE_LAST_EPOCH="${BASH_REMATCH[2]}"
-      COMPLETE_WAIT_MINUTES="${DEX_COMPLETE_WAIT_MINUTES:-5}"
-      [[ "$COMPLETE_WAIT_MINUTES" =~ ^[0-9]+$ ]] || COMPLETE_WAIT_MINUTES=5
+      COMPLETE_WAIT_MINUTES_RAW="${DEX_COMPLETE_WAIT_MINUTES:-5}"
+      if ! COMPLETE_WAIT_MINUTES=$(dx_normalize_numeric_limit "$COMPLETE_WAIT_MINUTES_RAW"); then
+        dx_report_invalid_numeric_limit "DEX_COMPLETE_WAIT_MINUTES" "$COMPLETE_WAIT_MINUTES_RAW"
+        exit 2
+      fi
       COMPLETE_WAIT_SECONDS=$((COMPLETE_WAIT_MINUTES * 60))
       if [[ "$COMPLETE_WAIT_SECONDS" -gt 0 ]]; then
         NOW_EPOCH=$(date +%s)
@@ -521,9 +556,13 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
     fi
     [[ "$BUSY_EPOCH" =~ ^[0-9]+$ ]] || BUSY_EPOCH=$(date +%s)
     BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))
-    BUSY_TIMEOUT="${DEX_REVIEW_PASS_TIMEOUT:-900}"
+    BUSY_TIMEOUT_RAW="${DEX_REVIEW_PASS_TIMEOUT:-900}"
+    if ! BUSY_TIMEOUT=$(dx_normalize_numeric_limit "$BUSY_TIMEOUT_RAW"); then
+      dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_TIMEOUT" "$BUSY_TIMEOUT_RAW"
+      exit 2
+    fi
 
-    if [[ "$BUSY_TIMEOUT" =~ ^[0-9]+$ && "$BUSY_TIMEOUT" -gt 0 && "$BUSY_AGE" -gt "$BUSY_TIMEOUT" ]]; then
+    if [[ "$BUSY_TIMEOUT" -gt 0 && "$BUSY_AGE" -gt "$BUSY_TIMEOUT" ]]; then
       rm -f "$ACTIVE_FILE" "$CONFIG_FILE" "$PHASE_BUSY_FILE" "$PHASE_BUSY_NOTICE_FILE"
       dx_record_phase_result "3" "review-pass-timeout" "89"
       dx_event_emit_for_session "$SESSION_ID" "run.blocked" "warn" "Dex lifecycle paused: review pass timeout" "3" "{\"reason\":\"review-pass-timeout\",\"age_s\":${BUSY_AGE},\"timeout_s\":${BUSY_TIMEOUT}}"
@@ -537,8 +576,11 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
 
     rm -f "$STATE_FILE"
 
-    BUSY_NOTICE_INTERVAL="${DEX_REVIEW_PASS_NOTICE_INTERVAL:-120}"
-    [[ "$BUSY_NOTICE_INTERVAL" =~ ^[0-9]+$ ]] || BUSY_NOTICE_INTERVAL=120
+    BUSY_NOTICE_INTERVAL_RAW="${DEX_REVIEW_PASS_NOTICE_INTERVAL:-120}"
+    if ! BUSY_NOTICE_INTERVAL=$(dx_normalize_numeric_limit "$BUSY_NOTICE_INTERVAL_RAW"); then
+      dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_NOTICE_INTERVAL" "$BUSY_NOTICE_INTERVAL_RAW"
+      exit 2
+    fi
     SHOULD_PRINT_BUSY_NOTICE=1
 
     if [[ "$BUSY_NOTICE_INTERVAL" -gt 0 && -f "$PHASE_BUSY_NOTICE_FILE" ]]; then
@@ -558,8 +600,11 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
     fi
 
     if [[ $SHOULD_PRINT_BUSY_NOTICE -eq 0 ]]; then
-      BUSY_RECHECK_SECONDS="${DEX_REVIEW_PASS_RECHECK_SECONDS:-45}"
-      [[ "$BUSY_RECHECK_SECONDS" =~ ^[0-9]+$ ]] || BUSY_RECHECK_SECONDS=45
+      BUSY_RECHECK_SECONDS_RAW="${DEX_REVIEW_PASS_RECHECK_SECONDS:-45}"
+      if ! BUSY_RECHECK_SECONDS=$(dx_normalize_numeric_limit "$BUSY_RECHECK_SECONDS_RAW"); then
+        dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_RECHECK_SECONDS" "$BUSY_RECHECK_SECONDS_RAW"
+        exit 2
+      fi
       if [[ "$BUSY_RECHECK_SECONDS" -gt 0 ]]; then
         BUSY_POLL_DEADLINE=$(( $(date +%s) + BUSY_RECHECK_SECONDS ))
         while [[ -f "$PHASE_BUSY_FILE" ]]; do
@@ -618,8 +663,10 @@ if [[ -f "$COMPLETE_FILE" ]]; then
 
   if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
     REVIEW_RESULT_FILE=$(dx_review_result_file "$SESSION_ID")
+    REVIEW_CONTEXT_FILE=$(dx_review_context_file "$SESSION_ID")
+    REVIEW_FINDINGS_FILE=$(dx_findings_file "$SESSION_ID")
     REVIEW_RESULT=$(cat "$REVIEW_RESULT_FILE" 2>/dev/null || true)
-    if [[ ! "$REVIEW_RESULT" =~ ^(CLEAN|FINDINGS_FIXED:[0-9]+|FINDINGS:[0-9]+|BLOCKED:.+|ESCALATE_THOROUGH:.+)$ ]]; then
+    if ! dx_review_result_valid "$REVIEW_RESULT"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Review Pass Gate: result signal missing or invalid ---" >&2
       printf '%s\n' "Completion signal ignored; this review-wave pass must write an allowed result before it can exit." >&2
@@ -631,6 +678,24 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "printf '%s\n' '<CLEAN|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|ESCALATE_THOROUGH:reason>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
       printf '%s\n' "touch \"\$(dx_complete_file \"\$SESSION_ID\")\"" >&2
       printf '%s\n' '```' >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
+    if ! dx_review_context_valid "$REVIEW_CONTEXT_FILE"; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Review Pass Gate: context pack missing or empty ---" >&2
+      printf '%s\n' "Completion signal ignored; this review-wave pass must write a non-empty context pack before it can exit." >&2
+      printf '%s\n' "Context pack: ${REVIEW_CONTEXT_FILE}" >&2
+      printf '%s\n' "Write the review scope, checks, coverage, and verified findings to that file, then touch the completion file again." >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
+    if ! dx_review_findings_hash_valid "$REVIEW_FINDINGS_FILE"; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Review Pass Gate: findings hash missing or invalid ---" >&2
+      printf '%s\n' "Completion signal ignored; this review-wave pass must write exactly one lowercase 16-character findings hash before it can exit." >&2
+      printf '%s\n' "Findings hash file: ${REVIEW_FINDINGS_FILE}" >&2
+      printf '%s\n' "Replace that file with one SHA-256 prefix for the final verified finding inventory, then touch the completion file again." >&2
       printf '%s\n' "" >&2
       exit 2
     fi
@@ -735,8 +800,16 @@ NOW_EPOCH=$(date +%s)
 # Stall detection — if the time between consecutive iterations exceeds the
 # threshold, the loop may be stuck on a fundamentally broken problem.
 # Inspired by autoresearch's NaN/exploding-loss early termination.
-STALL_TIMEOUT="${DEX_LOOP_STALL_TIMEOUT:-300}"  # default: 5 minutes
-STALL_ESCALATE_AFTER="${DEX_LOOP_STALL_ESCALATE:-3}"  # escalate after N stalls
+STALL_TIMEOUT_RAW="${DEX_LOOP_STALL_TIMEOUT:-300}"  # default: 5 minutes
+if ! STALL_TIMEOUT=$(dx_normalize_numeric_limit "$STALL_TIMEOUT_RAW"); then
+  dx_report_invalid_numeric_limit "DEX_LOOP_STALL_TIMEOUT" "$STALL_TIMEOUT_RAW"
+  exit 2
+fi
+STALL_ESCALATE_AFTER_RAW="${DEX_LOOP_STALL_ESCALATE:-3}"  # escalate after N stalls
+if ! STALL_ESCALATE_AFTER=$(dx_normalize_numeric_limit "$STALL_ESCALATE_AFTER_RAW"); then
+  dx_report_invalid_numeric_limit "DEX_LOOP_STALL_ESCALATE" "$STALL_ESCALATE_AFTER_RAW"
+  exit 2
+fi
 IS_STALLED=0
 if [[ $LAST_EPOCH -gt 0 ]] && [[ $STALL_TIMEOUT -gt 0 ]]; then
   ELAPSED=$((NOW_EPOCH - LAST_EPOCH))

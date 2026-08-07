@@ -458,6 +458,51 @@ dx_review_result_file() { echo "${DX_LOOP_DIR}/${1}.review-result"; }
 # dx_review_context_file <session_id> — compact context pack for review waves
 dx_review_context_file() { echo "${DX_LOOP_DIR}/${1}.review-context"; }
 
+# Return success only when a review result is one complete allowed signal.
+dx_review_result_valid() {
+  local result="${1:-}" count reason
+
+  case "$result" in
+    CLEAN)
+      return 0
+      ;;
+    FINDINGS_FIXED:*|FINDINGS:*)
+      count="${result#*:}"
+      case "$count" in
+        ""|*[!0-9]*) return 1 ;;
+      esac
+      return 0
+      ;;
+    BLOCKED:*|ESCALATE_THOROUGH:*)
+      reason="${result#*:}"
+      case "$reason" in
+        ""|*$'\n'*|*$'\r'*) return 1 ;;
+      esac
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+# A context pack must contain substantive text, not just an empty/whitespace file.
+dx_review_context_valid() {
+  local context_file="$1"
+  [[ -s "$context_file" ]] && LC_ALL=C grep -q '[^[:space:]]' "$context_file" 2>/dev/null
+}
+
+# Each pass owns one 16-character lowercase SHA-256 prefix.
+dx_review_findings_hash_valid() {
+  local findings_file="$1"
+  [[ -f "$findings_file" ]] || return 1
+  LC_ALL=C awk '
+    END {
+      valid = (NR == 1 && length($0) == 16 && $0 !~ /[^0-9a-f]/)
+      exit !valid
+    }
+  ' "$findings_file" 2>/dev/null
+}
+
 # dx_complete_state_file <session_id> — Phase 6 cycle bookkeeping ("cycle_count:last_check_epoch")
 # Survives interrupts so resuming Phase 6 picks up the same cycle counter.
 dx_complete_state_file() { echo "${DX_LOOP_DIR}/${1}.complete-state"; }

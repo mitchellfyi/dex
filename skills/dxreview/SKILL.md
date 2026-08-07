@@ -80,7 +80,7 @@ Only `CLEAN` means the wave found zero verified findings and applied zero fixes.
 Any fix writes `FINDINGS_FIXED:N`. If the current profile is too shallow for the
 observed risk, write `ESCALATE_THOROUGH:reason`.
 
-Also append the findings hash described in `prompts/review-wave.md`.
+Also write the single findings hash described in `prompts/review-wave.md`.
 
 ## Final Report
 
