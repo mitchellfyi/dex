@@ -22,7 +22,7 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (agent-tools, codex, common, events, factory, git, maintenance, output, provider, rtk, run-spec, session, ui-capture, worktree)
+lib/                 Shared shell libraries (agent-tools, codex, common, events, factory, git, maintenance, output, provider, review, rtk, run-spec, session, ui-capture, worktree)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
 scripts/             Node/helpers used by Dex-managed tooling
@@ -67,7 +67,7 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 ```
 
-Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `factory.sh`, `run-spec.sh`, `agent-tools.sh`, `maintenance.sh`, `project-state.sh`, and `attribution.sh`.
+Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `review.sh`, `factory.sh`, `run-spec.sh`, `agent-tools.sh`, `maintenance.sh`, `project-state.sh`, and `attribution.sh`.
 
 ### Output
 
@@ -164,6 +164,7 @@ Stored in `prompts/`. Referenced by skills and CLI harness prompts via
 `@prompts/<file>.md`.
 
 - `guardrails.md` — Implementation discipline (shared across implement/review skills)
+- `review-risk-assessment.md` — Deterministic small/normal/complex review-tier selection before review waves
 - `review.md` — 12-pass review criteria (A-L) with confidence scoring
 - `review-wave.md` — Review-wave contract and domain output schema (used by `/dxreview --single-pass` and Phase 3)
 - `commit-format.md` — Conventional Commits specification
@@ -181,7 +182,7 @@ Dex exposes stable agent names (`claude`, `codex`) through `dx --agent`, while
 agent support behind that provider layer rather than branching on agent names
 throughout `dx.sh`.
 
-Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Codex delegation must go through `bin/dxcodex.sh`, which owns `--ignore-user-config` and `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto` for Dex-managed Codex work. The wrapper works under any provider profile, so a Claude-engine run can hand individual tasks to Codex; only codex-plugin profiles resolve a `codex_model` override, other engines use the Codex session default. `dx --model <model>` targets the selected agent: Claude gets `claude --model`, while Codex gets `codex exec --model` through the wrapper.
+Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Codex delegation must go through `bin/dxcodex.sh`. Normal delegated work uses `--ignore-user-config` with `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto`. Internal read-only launches set `DX_CODEX_READ_ONLY=1` and use `--ignore-user-config --sandbox read-only --ephemeral` without the dangerous bypass flag. The wrapper works under any provider profile, so a Claude-engine run can hand individual tasks to Codex; only codex-plugin profiles resolve a `codex_model` override, other engines use the Codex session default. `dx --model <model>` targets the selected agent: Claude gets `claude --model`, while Codex gets `codex exec --model` through the wrapper.
 
 ### Hook integration
 
@@ -199,7 +200,7 @@ Seven hooks defined in `settings.json`, referenced by paths to Dex scripts:
 
 ### Phase audit loops
 
-When `DEX_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max iterations (default 30) are reached. For `dx` lifecycles, the hook advances phases inside the same Claude session by updating phase state/config and injecting the next phase instructions. Phase 1 is gated by `.phase-1.started` / `.phase-1.ready` markers from `dxplan`; the hook does not count plan audit iterations or reveal the completion signal until the approved-plan marker exists. Phase 3 uses `.phase-3.busy` while `/dxreviewloop` is waiting on a review wave; the hook does not count audit iterations during that wait.
+When `DEX_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max phase-audit iterations (default 30) are reached. For `dx` lifecycles, the hook advances phases inside the same Claude session by updating phase state/config and injecting the next phase instructions. Phase 1 is gated by `.phase-1.started` / `.phase-1.ready` markers from `dxplan`; the hook does not count plan audit iterations or reveal the completion signal until the approved-plan marker exists. Phase 3 uses `.phase-3.busy` while `/dxreviewloop` is waiting on a review wave; the hook does not count audit iterations during that wait. The outer review loop is separate: in the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`, requiring 3, 6, or 9 consecutive independent clean waves. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. The loop has no routine maximum and pauses on residual findings, blockers, churn, invalid results, or provider failure.
 
 ### Session IDs
 
@@ -295,6 +296,7 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `maintenance.sh` | Background maintenance config, workflow install, run IDs, locks, and reviewer normalization | `dx_maintenance_event_mode()`, `dx_maintenance_install_workflow()`, `dx_maintenance_run_id()`, `dx_maintenance_request_reviewer()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `project-state.sh` | Init ownership snapshots and conservative project cleanup | `dx_project_state_begin()`, `dx_project_state_finalize()`, `dx_project_state_remove_managed()` |
+| `review.sh` | Review tier policy, scope-bound selection/state/receipts, result parsing, churn detection, and telemetry JSON | `dx_review_write_selection()`, `dx_review_write_state()`, `dx_review_write_receipt()`, `dx_review_findings_churn_kind()`, `dx_review_event_json()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
 | `run-spec.sh` | Structured headless run spec validation, fetch, normalization, and journal prep | `dx_run_spec_normalize()`, `dx_run_spec_fetch()`, `dx_run_spec_prepare_journal()` |
 | `session.sh` | Session ID derivation, state file paths | `dx_session_id()`, `dx_provider_state_file()`, `dx_cleanup_session()` |
@@ -347,7 +349,11 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `DEX_PHASE_HANDOFF` | Same-session phase handoff marker (`inline` for `dx`) | unset |
 | `DEX_LOOP_PROMISE` | Completion signal string | unset |
 | `DEX_LOOP_MAX_ITERATIONS` | Max loop iterations | 30 |
-| `DEX_REVIEW_PASS_TIMEOUT` | Seconds a Phase 3 review wave may stay in progress before lifecycle pause | 900 (15m 0s) |
+| `DEX_REVIEW_TIER` | Canonical explicit review-risk override (`small`, `normal`, or `complex`); takes precedence over `DEX_REVIEW_PROFILE` | agent-selected |
+| `DEX_REVIEW_PROFILE` | Legacy review-depth alias (`light`, `standard`, or `thorough`) | unset |
+| `DEX_REVIEW_CLEAN_PASSES` | Optional higher clean-wave requirement; cannot lower the selected tier's 3/6/9 floor | tier-based (3/6/9) |
+| `DEX_REVIEW_DISABLE_MCP` | Disable inherited MCP servers in review waves (`0` restores them); read-only assessors always disable them | `1` |
+| `DEX_REVIEW_PASS_TIMEOUT` | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables it | 900 (15m 0s) |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | Minimum seconds between repeated Phase 3 busy-gate notices | 120 (2m 0s) |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (0m 45s) |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation | 120 (2m 0s) |
@@ -356,6 +362,7 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `DEX_COMPLETE_MAX_CYCLES` | Max idle PR watch cycles before Phase 6 pauses for manual follow-up | 3 |
 | `DEX_COMPLETE_WAIT_MINUTES` | Minimum wait window per Phase 6 cycle (minutes) | 5 |
 | `DEX_SESSION_ID` | Unique session ID (set by dxloop for stop hook) | unset |
+| `DEX_REVIEW_ASSESSMENT_ACTIVE` | Internal marker for the read-only preflight risk assessor | unset |
 | `DEX_REVIEW_PASS_ACTIVE` | Marks a session as a single-shot review-wave pass: the Stop hook never runs the inline phase handoff, and the push guard blocks `git push`/`gh pr` mutations | unset |
 | `DX_LIFECYCLE_PUSH_FORBIDDEN` | Resolved by the guard handler: `1` in review passes and active-loop Phases 1-3, blocking `git push`/`gh pr` mutations; overriding requires launching the session with `0` exported (per-command env prefixes never reach the guard hook) | resolved |
 | `CODEX_HOME` | Codex config root used for Dex skill links | `~/.codex` |
@@ -365,6 +372,7 @@ available. Run the relevant `tests/*.sh` scripts for the changed surface.
 | `DX_CLAUDE_MODEL` | Override Claude Code model passed to `--model` | profile model, else session default |
 | `DX_PLAN_MODEL` | Override Phase 1/plan model | `DX_CLAUDE_MODEL`, profile plan model, else session default |
 | `DX_CODEX_MODEL` | Resolved Codex model passed through `bin/dxcodex.sh` | profile codex model, else Codex default |
+| `DX_CODEX_READ_ONLY` | Internal marker that switches Codex delegation to an ephemeral read-only sandbox and forbids dangerous bypass flags | `0` |
 | `DX_CLAUDE_EFFORT` | Override Claude Code `--effort` | profile effort, else session default |
 | `DX_PLAN_EFFORT` | Override Phase 1/plan effort | `DX_CLAUDE_EFFORT`, profile plan effort, else session default |
 | `DX_ALLOW_API_BILLED_AUTH` | Allow `dx provider doctor` to tolerate API/gateway env vars | `0` |

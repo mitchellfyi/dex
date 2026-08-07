@@ -30,6 +30,10 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 mkdir -p "$DX_LOOP_DIR"
 
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+if ! dx_session_id_valid "$SESSION_ID"; then
+  printf '%s\n' "Dex: refusing unsafe session id." >&2
+  exit 1
+fi
 
 dx_phase_name() {
   case "$1" in
@@ -248,7 +252,7 @@ EOF
       ;;
     3)
       cat <<'EOF'
-Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop" to run the adaptive clean-pass review loop. Each pass is a full review wave: context pack, deterministic checks, domain sweeps, verifier pass, batch fixes, and targeted recheck. Only waves that find zero verified findings and apply zero fixes count as CLEAN; waves that fix issues write FINDINGS_FIXED:N and reset the counter. Scope: review and fix only; do not commit, push, create branches, or create PRs. When the review loop is successful, stop so the Stop hook can audit and advance.
+Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Any fix resets the clean streak. Residual findings, blockers, churn, invalid results, or provider failures pause the loop instead of counting as clean. Scope: review and fix only; do not commit, push, create branches, or create PRs. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance.
 EOF
       ;;
     4)
@@ -664,6 +668,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
   if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
     REVIEW_RESULT_FILE=$(dx_review_result_file "$SESSION_ID")
     REVIEW_CONTEXT_FILE=$(dx_review_context_file "$SESSION_ID")
+    REVIEW_EVIDENCE_FILE=$(dx_review_evidence_file "$SESSION_ID")
     REVIEW_FINDINGS_FILE=$(dx_findings_file "$SESSION_ID")
     REVIEW_RESULT=$(cat "$REVIEW_RESULT_FILE" 2>/dev/null || true)
     if ! dx_review_result_valid "$REVIEW_RESULT"; then
@@ -675,7 +680,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' '```bash' >&2
       printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
       printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
-      printf '%s\n' "printf '%s\n' '<CLEAN|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|ESCALATE_THOROUGH:reason>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
+      printf '%s\n' "printf '%s\n' '<CLEAN|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|CHURN:reason|ESCALATE:normal:reason|ESCALATE:complex:reason>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
       printf '%s\n' "touch \"\$(dx_complete_file \"\$SESSION_ID\")\"" >&2
       printf '%s\n' '```' >&2
       printf '%s\n' "" >&2
@@ -690,12 +695,34 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       exit 2
     fi
+    if ! dx_review_evidence_valid "$REVIEW_EVIDENCE_FILE" "$REVIEW_RESULT" "${DEX_REVIEW_PROFILE:-}" "${DEX_REVIEW_SCOPE_FINGERPRINT:-}"; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Review Pass Gate: evidence manifest missing or invalid ---" >&2
+      printf '%s\n' "Completion signal ignored; this pass must write valid versioned evidence for its result, profile, and scope fingerprint." >&2
+      printf '%s\n' "Evidence manifest: ${REVIEW_EVIDENCE_FILE}" >&2
+      printf '%s\n' "Follow prompts/review-wave.md, replace the manifest, then touch the completion file again." >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
     if ! dx_review_findings_hash_valid "$REVIEW_FINDINGS_FILE"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Review Pass Gate: findings hash missing or invalid ---" >&2
       printf '%s\n' "Completion signal ignored; this review-wave pass must write exactly one lowercase 16-character findings hash before it can exit." >&2
       printf '%s\n' "Findings hash file: ${REVIEW_FINDINGS_FILE}" >&2
       printf '%s\n' "Replace that file with one SHA-256 prefix for the final verified finding inventory, then touch the completion file again." >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
+  fi
+
+  if [[ "$CURRENT_PHASE" == "3" && "${DEX_REVIEW_PASS_ACTIVE:-}" != "1" ]]; then
+    if ! dx_review_receipt_valid "$SESSION_ID" "$(pwd)"; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Phase 3 Gate: review receipt missing or stale ---" >&2
+      printf '%s\n' "Completion signal ignored; Phase 3 did not advance." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Run /dxreviewloop on the current checkout until it reaches the required clean-pass gate. The review loop writes the receipt only after that gate succeeds." >&2
+      printf '%s\n' "Do not create or edit the receipt manually. After /dxreviewloop succeeds, follow the normal completion instructions and stop again." >&2
       printf '%s\n' "" >&2
       exit 2
     fi
@@ -720,11 +747,30 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       exit 2
     fi
+    if ! dx_review_selection_valid "$SESSION_ID" "$(pwd)"; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
+      printf '%s\n' "Completion signal ignored; Phase 2 did not advance." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Choose the review risk tier for the implementation you just completed: small, normal, or complex. Use the ordered rubric in prompts/review-risk-assessment.md and persist comma-separated reason codes." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Record the current-scope choice, then stop again:" >&2
+      printf '%s\n' '```bash' >&2
+      printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
+      printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
+      printf '%s\n' "dx_review_write_selection \"\$SESSION_ID\" \"<small|normal|complex>\" \"lifecycle-agent\" \"<comma-separated-reason-codes>\" \"\$PWD\"" >&2
+      printf '%s\n' '```' >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
   fi
 
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" =~ ^[0-9]+$ && "$CURRENT_PHASE" -lt 6 ]]; then
     NEXT_PHASE=$((CURRENT_PHASE + 1))
     dx_record_phase_result "$CURRENT_PHASE" "advance" "0"
+    if [[ "$CURRENT_PHASE" == "3" ]]; then
+      rm -f "$(dx_review_selection_file "$SESSION_ID")" "$(dx_review_receipt_file "$SESSION_ID")" "$(dx_review_state_file "$SESSION_ID")" "$(dx_review_ledger_file "$SESSION_ID")" 2>/dev/null
+    fi
     rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$(dx_findings_file "$SESSION_ID")" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
 
     PHASE_STATE_FILE=$(dx_state_file "$SESSION_ID")
@@ -767,11 +813,16 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     exit 2
   fi
 
-  # Review-wave passes: leave the findings-hash file so the launching wrapper
-  # can fold it into the parent session's stuck-loop history after the wave
-  # exits; the wrapper removes the pass-scoped file via dx_cleanup_session.
-  [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]] || rm -f "$(dx_findings_file "$SESSION_ID")"
-  rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
+  # Accepted review-wave passes leave both evidence files for the launching
+  # wrapper. Invalid result/context/hash paths remove the completion marker
+  # before reaching this branch, so a surviving marker is the durable
+  # cross-provider acceptance receipt. The wrapper validates and removes all
+  # pass-scoped state after the provider exits.
+  if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
+    rm -f "$STATE_FILE" "$CONFIG_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
+  else
+    rm -f "$(dx_findings_file "$SESSION_ID")" "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
+  fi
   rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
   printf '%s\n' '{"continue":false,"stopReason":"Dex loop complete."}'
   exit 0

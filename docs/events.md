@@ -20,8 +20,8 @@ Each run gets a stable ID and a directory under:
     ...
 ```
 
-`dx`, `dx run`, `dx init`, and `dx sync` print the current run ID near startup.
-Main lifecycle runs also show it in the phase header.
+`dx`, `dx run`, `dxreviewloop`, `dx init`, and `dx sync` print the current run ID
+near startup. Main lifecycle runs also show it in the phase header.
 
 Run data is written locally first. When a DexCode connection is active, Dex can
 sync events and captured artifacts after the local write succeeds. Logs stay on
@@ -71,8 +71,51 @@ Current lifecycle event types include:
 - `phase.started`
 - `phase.completed`
 - `phase.failed`
+- `review.tier.selected`
+- `review.pass.started`
+- `review.pass.finished`
+- `review.tier.escalated`
+- `review.completed`
+- `review.paused`
 - `artifact.created`
 - `plan.created` and other event types emitted by future lifecycle helpers
+
+## Review Telemetry
+
+Lifecycle and standalone review loops append structured events to the run
+journal. Lifecycle review uses the lifecycle run ID. A standalone
+`dxreviewloop` prepares its own run before tier resolution and the first wave.
+It emits `run.started`, ends with `run.completed` or `run.blocked`, writes a
+summary, and prints the run ID so a paused review can be diagnosed without
+reading agent transcripts.
+
+| Event | When emitted | Data fields |
+|-------|--------------|-------------|
+| `review.tier.selected` | Before the first review wave | `tier`, `profile`, `required_clean`, `source`, `reason_codes` |
+| `review.pass.started` | Immediately before a fresh wave starts | `tier`, `profile`, `iteration`, `clean_before`, `required_clean` |
+| `review.pass.finished` | After the wave result is validated and counters update | `tier`, `profile`, `iteration`, `result_kind`, `findings`, `duration_seconds`, `clean_before`, `clean_after`, `scope_changed`, `provider_exit`, normalized `terminal_reason`; early failure events emit the applicable subset |
+| `review.tier.escalated` | A verified risk signal raises the tier | `from_tier`, `tier`, `profile`, `required_clean`, `iteration` |
+| `review.completed` | The consecutive clean gate succeeds | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, `reason=clean_gate_reached` |
+| `review.paused` | Review needs intervention | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, normalized `reason` |
+
+Tier selection is `small`/`normal`/`complex`, mapping to `light`/`standard`/
+`thorough` review and 3/6/9 consecutive clean waves. These events make it
+possible to compare pass duration, findings discovered after earlier clean
+waves, clean-counter resets, escalation frequency, and churn without reading
+agent transcripts.
+
+Review telemetry deliberately excludes raw agent rationale, result suffixes,
+findings, findings fingerprints, file paths, branch names, prompts, diffs, and
+context-pack contents. It stores validated reason codes and normalized result or
+exit categories instead. Findings fingerprints stay in transient global Dex
+state and exist only for deterministic repeated/alternating churn detection.
+`operator-override` and `wave-escalation` are wrapper-reserved selection reason
+codes; assessor decisions use the bounded codes from
+`prompts/review-risk-assessment.md`.
+
+Event redaction remains a backstop, not permission to emit arbitrary review
+text. Events may be sent to the configured Factory collector, so review payloads
+must be safe before `dx_event_emit` receives them.
 
 ## Logs
 

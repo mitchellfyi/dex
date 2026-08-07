@@ -60,15 +60,21 @@ DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
   set -e
   unset DX_REVIEW_PROFILE \
-    DX_REVIEW_LIGHT_CLEAN_PASSES DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES \
-    DX_REVIEW_LIGHT_MAX_ITERATIONS DX_REVIEW_STANDARD_MAX_ITERATIONS DX_REVIEW_THOROUGH_MAX_ITERATIONS
+    DX_REVIEW_SMALL_CLEAN_PASSES DX_REVIEW_NORMAL_CLEAN_PASSES DX_REVIEW_COMPLEX_CLEAN_PASSES \
+    DX_REVIEW_LIGHT_CLEAN_PASSES DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES
 
-  [[ "$(__dx_review_profile_clean_passes light)" == "1" ]]
-  [[ "$(__dx_review_profile_clean_passes standard)" == "2" ]]
-  [[ "$(__dx_review_profile_clean_passes thorough)" == "3" ]]
-  [[ "$(__dx_review_profile_max_iterations light)" == "4" ]]
-  [[ "$(__dx_review_profile_max_iterations standard)" == "6" ]]
-  [[ "$(__dx_review_profile_max_iterations thorough)" == "20" ]]
+  [[ "$(dx_review_normalize_tier small)" == "small" ]]
+  [[ "$(dx_review_normalize_tier light)" == "small" ]]
+  [[ "$(dx_review_normalize_tier normal)" == "normal" ]]
+  [[ "$(dx_review_normalize_tier standard)" == "normal" ]]
+  [[ "$(dx_review_normalize_tier complex)" == "complex" ]]
+  [[ "$(dx_review_normalize_tier thorough)" == "complex" ]]
+  [[ "$(__dx_review_profile_clean_passes light)" == "3" ]]
+  [[ "$(__dx_review_profile_clean_passes standard)" == "6" ]]
+  [[ "$(__dx_review_profile_clean_passes thorough)" == "9" ]]
+  [[ "$(dx_review_tier_clean_passes small)" == "3" ]]
+  [[ "$(dx_review_tier_clean_passes normal)" == "6" ]]
+  [[ "$(dx_review_tier_clean_passes complex)" == "9" ]]
   __dx_review_is_positive_integer 08
   unset DX_PHASE_PROMISES
   [[ "$(__dx_review_phase_promise)" == "PHASE_3_COMPLETE" ]]
@@ -94,36 +100,42 @@ zsh -fc '
   claude() { return 0; }
   __dx_claude() {
     print -r -- "${DEX_LOOP_PROMISE:-<empty>}" >> "$REVIEW_CALL_FILE"
+    {
+      print -r -- "## Scope"
+      print -r -- ""
+      print -r -- "Reviewed the complete adaptive-review fixture scope."
+      print -r -- ""
+      print -r -- "## Deterministic Checks"
+      print -r -- ""
+      print -r -- "All applicable fixture checks passed."
+      print -r -- ""
+      print -r -- "## Review Coverage"
+      print -r -- ""
+      print -r -- "Correctness, security, contracts, tests, architecture, frontend, devops, performance, and observability were covered."
+      print -r -- ""
+      print -r -- "## Verification"
+      print -r -- ""
+      print -r -- "The independent fixture verifier passed."
+    } > "$(dx_review_context_file "$DEX_SESSION_ID")"
+    print -r -- "{\"version\":1,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\",\"frontend\",\"devops\",\"performance\",\"observability\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
+    dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
     print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
-    print -r -- "review context for $DEX_SESSION_ID" > "$(dx_review_context_file "$DEX_SESSION_ID")"
-    print -r -- 0123456789abcdef > "$(dx_findings_file "$DEX_SESSION_ID")"
     touch "$(dx_complete_file "$DEX_SESSION_ID")"
   }
 
-  if DEX_REVIEW_MAX_ITERATIONS=0 DEX_REVIEW_CLEAN_PASSES=3 dxreviewloop; then
-    print -u2 -- "expected a zero review iteration limit to fail"
-    return 1
-  fi
-  if DEX_REVIEW_MAX_ITERATIONS=4 DEX_REVIEW_CLEAN_PASSES=0 dxreviewloop; then
+  if DEX_REVIEW_CLEAN_PASSES=0 dxreviewloop; then
     print -u2 -- "expected a zero clean-pass requirement to fail"
-    return 1
-  fi
-  if DEX_REVIEW_MAX_ITERATIONS=9999999999999999999 DEX_REVIEW_CLEAN_PASSES=3 dxreviewloop; then
-    print -u2 -- "expected an overflowing review iteration limit to fail"
     return 1
   fi
   unset DX_REVIEW_PROFILE \
     DX_REVIEW_LIGHT_CLEAN_PASSES DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES \
-    DX_REVIEW_LIGHT_MAX_ITERATIONS DX_REVIEW_STANDARD_MAX_ITERATIONS DX_REVIEW_THOROUGH_MAX_ITERATIONS \
-    DX_PHASE_PROMISES DEX_REVIEW_MAX_ITERATIONS DEX_REVIEW_CLEAN_PASSES
+    DX_PHASE_PROMISES DEX_REVIEW_CLEAN_PASSES
   DEX_REVIEW_PROFILE=thorough dxreviewloop
 ' > "$TMP_DIR/review-profile-validation.out" 2>&1
-assert_contains "Invalid review iteration limit '0'." "$TMP_DIR/review-profile-validation.out"
 assert_contains "Invalid clean-pass requirement '0'." "$TMP_DIR/review-profile-validation.out"
-assert_contains "Invalid review iteration limit '9999999999999999999'." "$TMP_DIR/review-profile-validation.out"
-assert_contains "Review complete: 3 consecutive clean passes." "$TMP_DIR/review-profile-validation.out"
-if [[ "$(wc -l < "$TMP_DIR/review-calls.out" | tr -d ' ')" -ne 3 ]]; then
-  printf 'expected three review-wave calls with missing shell globals\n' >&2
+assert_contains "Review complete: 9 consecutive clean passes." "$TMP_DIR/review-profile-validation.out"
+if [[ "$(wc -l < "$TMP_DIR/review-calls.out" | tr -d ' ')" -ne 9 ]]; then
+  printf 'expected nine review-wave calls with missing shell globals\n' >&2
   exit 1
 fi
 if grep -Fvxq "PHASE_3_COMPLETE" "$TMP_DIR/review-calls.out"; then

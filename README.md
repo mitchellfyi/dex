@@ -38,8 +38,8 @@ repo memory.
   completion; it must satisfy the gate for the current phase.
 - **Cleaner branches:** Work runs in `.dex/worktrees/` by default, keeping your
   main checkout usable while tickets progress independently.
-- **Review before PR:** Phase 3 runs fresh full-scope review waves until the
-  resolved clean-pass gate succeeds.
+- **Review before PR:** Phase 3 runs independent full-scope review waves until
+  the agent-selected risk tier's clean-pass gate succeeds.
 - **Real verification:** Dex discovers and runs the repo's format, lint,
   typecheck, generation, and test commands instead of assuming one toolchain.
 - **UI evidence:** Browser-facing changes can capture before/after screenshots,
@@ -60,10 +60,10 @@ dx 1234
   |     Explore the ticket and codebase, propose an approach, wait for approval.
   |
   |-- Phase 2: Implement
-  |     Build with tests, capture UI evidence when needed, prove criteria are met.
+  |     Build with tests, prove criteria, then select small/normal/complex review risk.
   |
   |-- Phase 3: Review
-  |     Run fresh review-wave CLI sessions until the change is clean.
+  |     Run fresh review-wave CLI sessions to 3/6/9 consecutive clean passes.
   |
   |-- Phase 4: Verify + Commit
   |     Run quality gates, create atomic conventional commits, push the branch.
@@ -79,7 +79,16 @@ The important piece is the audit loop. When Claude tries to stop, Dex's Stop hoo
 checks the phase state and injects the next required audit. Only a passing phase
 can advance. Review waves have their own clean-pass counter: a wave that finds
 and fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
-fresh full-scope review before Phase 4 can start.
+fresh full-scope review before Phase 4 can start. The implementation agent
+selects `small` (3 clean waves), `normal` (6), or `complex` (9) before Phase 3.
+A standalone `dxreviewloop` without an explicit tier/profile override starts
+with a read-only risk assessor. Every counted wave runs in a fresh context
+without prior review conclusions or telemetry.
+
+The review loop has no routine outer iteration limit. It continues until the
+clean gate succeeds. Residual findings, blockers, churn, invalid results, and
+provider failures pause the loop for intervention rather than being treated as
+clean or retried indefinitely.
 
 ## Common Commands
 
@@ -93,7 +102,7 @@ dx "task description"      # Run the full lifecycle for a free-form task
 dx --agent codex --model gpt-5.3-codex "fix flaky import"
 dx --no-worktree 1234      # Run the lifecycle in the current checkout
 dx run --spec run-spec.json # Run from a structured headless run spec
-dxreviewloop               # Review current changes without the full lifecycle
+dxreviewloop               # Resolve risk (or honor an override), then review to its clean gate
 dxcomplete                 # Resume PR completion for the current branch
 dx provider current        # Show active agent/provider/model resolution
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins

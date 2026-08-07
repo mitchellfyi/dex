@@ -163,7 +163,48 @@ A green test suite is not the same as a working feature. Before marking Phase 2 
 - **Clean up after yourself.** Stop every process/server you started, remove any rows, temp data, or fixture files you created, and leave no Phase 2 background process in flight. Smoke-test artifacts follow the same rule as UI capture — do not commit them.
 - **Record the result** in the implementation evidence: what you ran, how you drove it (browser vs Playwright vs API/CLI), what you observed, and the cleanup you performed. If the change genuinely cannot be exercised locally, record `Manual smoke test: N/A — <reason>` instead of silently skipping it; the reason must clear the same bar as any other `N/A` (see the blocker rule above).
 
-### 8. Mark Phase 2 Ready
+### 8. Select Phase 3 Review Risk
+
+After the final in-scope edit and verification run, use
+`prompts/review-risk-assessment.md` as the source of truth. Its first matching
+rule wins:
+
+- Choose `complex` when the scope touches a trust boundary; authentication,
+  authorization, permissions, secrets, payments, or destructive behavior;
+  persistence, schemas, or migrations; public API, CLI, configuration, or
+  compatibility contracts; concurrency or process lifecycle; hooks, guards,
+  CI, deployment, or packaging; broad cross-module behavior; or material
+  uncertainty about impact or verification.
+- Choose `small` only when every change is localized and mechanically direct,
+  impact is narrow, focused verification is available, and no `complex`
+  condition applies.
+- Choose `normal` for everything else.
+
+Record one or more comma-separated lowercase reason codes from this set:
+`localized-change`, `focused-verification`, `bounded-production-change`,
+`cross-module`, `public-contract`, `security-sensitive`, `data-migration`,
+`concurrency`, `shell-hooks-ci`, `deployment-packaging`, `broad-impact`, and
+`uncertain-coverage`. Do not use free-form prose, paths, source excerpts,
+prompts, or secrets.
+
+Follow the tier-specific reason combination rules in the assessment prompt. An
+allowed code paired with a contradictory tier is invalid.
+
+In a terminal `dx` lifecycle, persist the selection against the current scope
+fingerprint:
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+REVIEW_TIER="<small|normal|complex>"
+REVIEW_REASON_CODES="<comma-separated-reason-codes>"
+dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIEW_REASON_CODES" "$PWD"
+```
+
+This selection maps to 3, 6, or 9 consecutive clean Phase 3 waves. It is not a
+review pass. Rewrite it if any later Phase 2 edit changes the scope.
+
+### 9. Mark Phase 2 Ready
 
 When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), write the Phase 2 ready marker only after all of these are true:
 
@@ -174,6 +215,8 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
 - The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
 - Required UI capture evidence is linked, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A.
 - No Phase 2 background processes or long-running commands are still in flight.
+- A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
+  recorded for the final current scope.
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
@@ -197,6 +240,7 @@ You SHOULD:
 - Run the self-review loop (Step 4) and final implementation checks (Step 5)
 - Run `/dxuicapture` for UI-affecting changes before UI edits and after implementation, then link the artifacts
 - Run the manual local smoke test (Step 7) before marking Phase 2 ready, cleaning up anything it starts or seeds
+- Select and persist the Phase 3 review risk after the final in-scope change
 - Update `.dex/` project docs if your changes require it
 
 ## Notes

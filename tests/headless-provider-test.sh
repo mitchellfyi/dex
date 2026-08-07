@@ -86,6 +86,7 @@ make_repo() {
 
 SYNC_REPO="$TMP_DIR/sync-repo"
 make_repo "$SYNC_REPO" 1
+SYNC_REPO_REAL=$(cd "$SYNC_REPO" && pwd -P)
 (
   cd "$SYNC_REPO"
   "$REAL_BASH" "$ROOT/bin/sync.sh" --dry-run --no-pr --budget-minutes 1
@@ -141,7 +142,10 @@ make_repo "$OWNERSHIP_REPO" 1
 
 grep -Fq 'exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox' "$TEST_CODEX_LOG"
 grep -Fq '# DXSync Invocation' "$TEST_CODEX_LOG"
-sync_repo_resolved=$(cd "$SYNC_REPO" && pwd -P)
-grep -Fq "Repo: $sync_repo_resolved" "$TEST_CODEX_LOG"
+if ! grep -Fq "Repo: $SYNC_REPO_REAL" "$TEST_CODEX_LOG"; then
+  printf 'Codex-backed sync lost the repository path in its task prompt\n' >&2
+  cat "$TEST_CODEX_LOG" >&2
+  exit 1
+fi
 
 printf 'headless provider tests passed\n'

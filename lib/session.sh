@@ -96,6 +96,14 @@ dx_unique_session_id() {
   echo "$(dx_session_id)-$$-$(date +%s)-${RANDOM}"
 }
 
+# dx_session_id_valid <session_id> — reject traversal and unsafe state keys
+dx_session_id_valid() {
+  local session_id="${1:-}"
+  [[ -n "$session_id" && ${#session_id} -le 180 ]] || return 1
+  [[ "$session_id" != "." && "$session_id" != ".." ]] || return 1
+  [[ "$session_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
 # dx_state_file <session_id>  — phase state file path
 dx_state_file() { echo "${DX_STATE_DIR}/${1}.phase"; }
 
@@ -410,14 +418,19 @@ dx_kill_process_tree() {
       [[ -n "$child" ]] || continue
       dx_kill_process_tree "$child" "$signal"
     done < <(pgrep -P "$pid" 2>/dev/null || true)
+  else
+    while IFS= read -r child; do
+      [[ -n "$child" ]] || continue
+      dx_kill_process_tree "$child" "$signal"
+    done < <(ps -eo pid=,ppid= 2>/dev/null | awk -v parent="$pid" '$2 == parent { print $1 }')
   fi
 
   kill "-$signal" "$pid" 2>/dev/null || true
 }
 
 # dx_run_with_timeout <seconds> <command> [args...] — portable timeout wrapper
-dx_run_with_timeout() {
-  local timeout="$1" marker cmd_pid watchdog_pid cmd_status
+dx_run_with_timeout() (
+  local timeout="$1" marker="" cmd_pid="" watchdog_pid="" cmd_status
   shift
   [[ $# -gt 0 ]] || return 2
 
@@ -427,6 +440,8 @@ dx_run_with_timeout() {
   fi
 
   marker="${TMPDIR:-/tmp}/dex-timeout-${$}-${RANDOM}"
+  trap 'dx_kill_process_tree "$cmd_pid" TERM; dx_kill_process_tree "$watchdog_pid" TERM; rm -f "$marker" 2>/dev/null || true; exit 130' INT
+  trap 'dx_kill_process_tree "$cmd_pid" TERM; dx_kill_process_tree "$watchdog_pid" TERM; rm -f "$marker" 2>/dev/null || true; exit 143' TERM HUP
   # Explicit subshell preserves full function execution and exit status when the
   # command is a shell function with invocation-scoped environment variables.
   ( "$@" ) &
@@ -445,7 +460,9 @@ dx_run_with_timeout() {
 
   cmd_status=0
   wait "$cmd_pid" 2>/dev/null || cmd_status=$?
-  kill "$watchdog_pid" 2>/dev/null || true
+  # Stop the watchdog and its current sleep child. Killing only the subshell
+  # would orphan one sleep process for every command that finished early.
+  dx_kill_process_tree "$watchdog_pid" TERM
   wait "$watchdog_pid" 2>/dev/null || true
 
   if [[ -f "$marker" ]]; then
@@ -455,48 +472,28 @@ dx_run_with_timeout() {
 
   rm -f "$marker" 2>/dev/null || true
   return "$cmd_status"
-}
+)
 
 # dx_review_state_file <session_id> — review sub-loop clean pass counter (survives interrupts)
-dx_review_state_file() { echo "${DX_LOOP_DIR}/${1}.review-state"; }
+dx_review_state_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-state"; }
 
 # dx_review_result_file <session_id> — per-iteration review result
-dx_review_result_file() { echo "${DX_LOOP_DIR}/${1}.review-result"; }
+dx_review_result_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-result"; }
 
 # dx_review_context_file <session_id> — compact context pack for review waves
-dx_review_context_file() { echo "${DX_LOOP_DIR}/${1}.review-context"; }
+dx_review_context_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-context"; }
 
-# Return success only when a review result is one complete allowed signal.
-dx_review_result_valid() {
-  local result="${1:-}" count reason
-
-  case "$result" in
-    CLEAN)
-      return 0
-      ;;
-    FINDINGS_FIXED:*|FINDINGS:*)
-      count="${result#*:}"
-      case "$count" in
-        ""|*[!0-9]*) return 1 ;;
-      esac
-      return 0
-      ;;
-    BLOCKED:*|ESCALATE_THOROUGH:*)
-      reason="${result#*:}"
-      case "$reason" in
-        ""|*$'\n'*|*$'\r'*) return 1 ;;
-      esac
-      return 0
-      ;;
-  esac
-
-  return 1
-}
-
-# A context pack must contain substantive text, not just an empty/whitespace file.
+# A review context pack must expose the four auditable sections used by the
+# evidence gate. This rejects placeholder sentinels while keeping the body
+# human-readable for later diagnostics.
 dx_review_context_valid() {
   local context_file="$1"
-  [[ -s "$context_file" ]] && LC_ALL=C grep -q '[^[:space:]]' "$context_file" 2>/dev/null
+  [[ -f "$context_file" ]] || return 1
+  [[ $(wc -c < "$context_file" 2>/dev/null | tr -d ' ') -ge 160 ]] || return 1
+  LC_ALL=C grep -q '^## Scope' "$context_file" 2>/dev/null &&
+    LC_ALL=C grep -q '^## Deterministic Checks' "$context_file" 2>/dev/null &&
+    LC_ALL=C grep -q '^## Review Coverage' "$context_file" 2>/dev/null &&
+    LC_ALL=C grep -q '^## Verification' "$context_file" 2>/dev/null
 }
 
 # Each pass owns one 16-character lowercase SHA-256 prefix.
@@ -509,6 +506,164 @@ dx_review_findings_hash_valid() {
       exit !valid
     }
   ' "$findings_file" 2>/dev/null
+}
+
+# dx_review_selection_file <session_id> — persisted risk tier chosen before review
+dx_review_selection_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-selection"; }
+
+# dx_review_evidence_file <session_id> — versioned machine-readable pass evidence
+dx_review_evidence_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-evidence.json"; }
+
+# dx_review_ledger_file <session_id> — accepted consecutive clean-pass records
+dx_review_ledger_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-ledger"; }
+
+# dx_review_receipt_file <session_id> — machine-readable successful review gate
+dx_review_receipt_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-receipt"; }
+
+# dx_review_lock_dir <repo_dir> — checkout-scoped review-loop ownership lock
+dx_review_lock_dir() {
+  local repo_dir="${1:-$PWD}" lock_key
+  lock_key=$(DX_REVIEW_LOCK_REPO_DIR="$repo_dir" python3 - <<'PY'
+import hashlib
+import os
+import subprocess
+from pathlib import Path
+
+requested = Path(os.environ["DX_REVIEW_LOCK_REPO_DIR"]).resolve()
+probe = subprocess.run(
+    ["git", "-C", str(requested), "rev-parse", "--show-toplevel"],
+    check=False,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+)
+if probe.returncode != 0:
+    raise SystemExit(1)
+root = os.path.realpath(os.fsdecode(probe.stdout.rstrip(b"\n")))
+print(hashlib.sha256(os.fsencode(root)).hexdigest()[:24])
+PY
+  ) || return 1
+  [[ "$lock_key" =~ ^[a-f0-9]{24}$ ]] || return 1
+  printf '%s/review-checkout-%s.lock\n' "$DX_LOOP_DIR" "$lock_key"
+}
+
+# __dx_review_path_age_seconds <path> — portable age check for lock recovery
+__dx_review_path_age_seconds() {
+  local target="$1"
+  DX_REVIEW_AGE_TARGET="$target" python3 - <<'PY'
+import os
+import time
+
+try:
+    modified = os.stat(os.environ["DX_REVIEW_AGE_TARGET"], follow_symlinks=False).st_mtime
+except OSError:
+    raise SystemExit(1)
+print(max(0, int(time.time() - modified)))
+PY
+}
+
+# __dx_review_lock_publish_owner <lock_dir> <owner_token> <owner_pid>
+__dx_review_lock_publish_owner() {
+  local lock_dir="$1" owner_token="$2" owner_pid="$3" owner_file tmp_file
+  owner_file="$lock_dir/owner"
+  tmp_file="$lock_dir/.owner.${owner_pid}.${owner_token}"
+  if ! printf '%s\t%s\t%s\n' "$(date +%s)" "$owner_pid" "$owner_token" > "$tmp_file" || \
+     ! command mv -f "$tmp_file" "$owner_file"; then
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
+}
+
+# dx_review_lock_acquire <repo_dir> <owner_token> [owner_pid] — atomically own one checkout
+dx_review_lock_acquire() {
+  local repo_dir="$1" owner_token="$2" caller_pid="${3:-$$}" lock_dir owner_file reaper_dir raw
+  local owner_epoch owner_pid recorded_token extra lock_age reaper_age
+  local stale_grace=30
+  [[ -n "$owner_token" && "$owner_token" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+  [[ "$caller_pid" =~ ^[0-9]+$ ]] && kill -0 "$caller_pid" 2>/dev/null || return 2
+  lock_dir=$(dx_review_lock_dir "$repo_dir") || return 2
+  owner_file="$lock_dir/owner"
+  reaper_dir="${lock_dir}.reap"
+  mkdir -p "$DX_LOOP_DIR" || return 2
+
+  # Every acquisition passes through this short-lived mutex. That closes the
+  # mkdir-to-owner publication window and serializes stale-lock reclamation.
+  if ! command mkdir "$reaper_dir" 2>/dev/null; then
+    reaper_age=$(__dx_review_path_age_seconds "$reaper_dir" 2>/dev/null || true)
+    if [[ "$reaper_age" =~ ^[0-9]+$ && "$reaper_age" -ge "$stale_grace" ]]; then
+      command rmdir "$reaper_dir" 2>/dev/null || return 1
+      command mkdir "$reaper_dir" 2>/dev/null || return 1
+    else
+      return 1
+    fi
+  fi
+
+  if command mkdir "$lock_dir" 2>/dev/null; then
+    if __dx_review_lock_publish_owner "$lock_dir" "$owner_token" "$caller_pid"; then
+      command rmdir "$reaper_dir" 2>/dev/null || true
+      return 0
+    fi
+    command rm -f "$owner_file" 2>/dev/null || true
+    command rmdir "$lock_dir" 2>/dev/null || true
+    command rmdir "$reaper_dir" 2>/dev/null || true
+    return 2
+  fi
+
+  raw=$(cat "$owner_file" 2>/dev/null || true)
+  owner_epoch=""
+  owner_pid=""
+  recorded_token=""
+  extra=""
+  IFS=$'\t' read -r owner_epoch owner_pid recorded_token extra <<EOF
+$raw
+EOF
+  if [[ -z "$extra" && "$owner_epoch" =~ ^[0-9]+$ && "$owner_pid" =~ ^[0-9]+$ && \
+        "$recorded_token" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    if kill -0 "$owner_pid" 2>/dev/null; then
+      command rmdir "$reaper_dir" 2>/dev/null || true
+      return 1
+    fi
+  else
+    lock_age=$(__dx_review_path_age_seconds "$lock_dir" 2>/dev/null || true)
+    if [[ ! "$lock_age" =~ ^[0-9]+$ || "$lock_age" -lt "$stale_grace" ]]; then
+      command rmdir "$reaper_dir" 2>/dev/null || true
+      return 1
+    fi
+  fi
+
+  command rm -f "$owner_file" 2>/dev/null || {
+    command rmdir "$reaper_dir" 2>/dev/null || true
+    return 1
+  }
+  command rmdir "$lock_dir" 2>/dev/null || {
+    command rmdir "$reaper_dir" 2>/dev/null || true
+    return 1
+  }
+
+  command mkdir "$lock_dir" 2>/dev/null || {
+    command rmdir "$reaper_dir" 2>/dev/null || true
+    return 1
+  }
+  if __dx_review_lock_publish_owner "$lock_dir" "$owner_token" "$caller_pid"; then
+    command rmdir "$reaper_dir" 2>/dev/null || true
+    return 0
+  fi
+  command rm -f "$owner_file" 2>/dev/null || true
+  command rmdir "$lock_dir" 2>/dev/null || true
+  command rmdir "$reaper_dir" 2>/dev/null || true
+  return 2
+}
+
+# dx_review_lock_release <repo_dir> <owner_token> — release only our own lock
+dx_review_lock_release() {
+  local repo_dir="$1" owner_token="$2" lock_dir owner_file raw recorded_token
+  [[ -n "$owner_token" ]] || return 0
+  lock_dir=$(dx_review_lock_dir "$repo_dir" 2>/dev/null) || return 0
+  owner_file="$lock_dir/owner"
+  raw=$(cat "$owner_file" 2>/dev/null || true)
+  recorded_token=$(printf '%s\n' "$raw" | awk -F '\t' 'NR == 1 { print $3 }')
+  [[ "$recorded_token" == "$owner_token" ]] || return 1
+  command rm -f "$owner_file" 2>/dev/null || return 1
+  command rmdir "$lock_dir" 2>/dev/null || return 1
 }
 
 # dx_complete_state_file <session_id> — Phase 6 cycle bookkeeping ("cycle_count:last_check_epoch")
@@ -574,8 +729,9 @@ dx_record_session_branch() {
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
 dx_cleanup_session() {
   local sid="$1"
+  dx_session_id_valid "$sid" || return 2
   if [[ -d "$DX_LOOP_DIR" ]]; then
-    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_watch_pause_file "$sid")" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
+    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_watch_pause_file "$sid")" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_ledger_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" \) -exec rm -f {} + 2>/dev/null || true
   fi
   [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" 2>/dev/null

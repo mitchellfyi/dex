@@ -10,6 +10,11 @@ Run in the current checkout. Do not run `dx <ticket-or-description>`, Phase 0
 setup, or any branch/worktree setup from this review skill. Do not create,
 switch, rename, or delete branches or worktrees.
 
+This is an independent pass. Review only the current code and caller-supplied
+scope, criteria, risk tier, and profile. Do not read prior review reports,
+findings, fingerprints, clean-pass counts, telemetry, stale prompts, or previous
+conversation context.
+
 ## Required Workflow
 
 1. Invoke the Skill tool with skill: `dxreview` and `--single-pass`.
@@ -25,10 +30,10 @@ switch, rename, or delete branches or worktrees.
    broad semantic exploration or domain-specific review.
 5. Run deterministic checks first.
 6. Harvest candidate issues according to the current review profile:
-   - `light`: core domain sweep
-   - `standard`: core sweep plus targeted domain sweeps for concrete changed
-     surfaces
-   - `thorough`: all domain sweeps
+   - `light` (`small` risk): core domain sweep
+   - `standard` (`normal` risk): core sweep plus targeted domain sweeps for
+     concrete changed surfaces
+   - `thorough` (`complex` risk): all domain sweeps
 7. Run an explicit verifier pass over candidate findings.
 8. Batch-fix verified findings in severity order.
 9. Re-run deterministic checks and targeted review for changed surfaces.
@@ -41,8 +46,10 @@ Write exactly one of these values to `$(dx_review_result_file "$SESSION_ID")`:
 - `CLEAN`
 - `FINDINGS_FIXED:N`
 - `FINDINGS:N`
-- `BLOCKED:reason`
-- `ESCALATE_THOROUGH:reason`
+- `BLOCKED:reason-code`
+- `CHURN:reason-code`
+- `ESCALATE:normal:reason-code`
+- `ESCALATE:complex:reason-code`
 
 `CLEAN` is allowed only when this wave found zero verified findings and applied
 zero fixes.
@@ -59,14 +66,24 @@ safe to fix in scope, fix them, re-run affected checks/review, and write
 If verified findings remain after a concrete local fix attempt is blocked,
 unsafe, or requires user judgment, write `FINDINGS:N`. If required
 tooling/context is missing and cannot be resolved locally, write
-`BLOCKED:reason`.
+`BLOCKED:reason-code`.
 
-If the current review profile is too shallow for the observed risk, write
-`ESCALATE_THOROUGH:reason` so the outer loop restarts with thorough review.
+If the current risk tier is too low, write `ESCALATE:normal:reason-code` or
+`ESCALATE:complex:reason-code`. Request only a higher tier. The outer loop
+resets clean credit and starts a fresh wave at the higher tier.
 
 If the current session cannot review a required domain with enough confidence,
-write `ESCALATE_THOROUGH:reason` for depth gaps or `BLOCKED:reason` for missing
-local tooling/context.
+request a higher tier for a depth gap or write `BLOCKED:missing-tooling` for
+missing local tooling or context.
+
+If local fix/recheck work repeats or oscillates without reliable progress,
+write `CHURN:fix-cycle`. `FINDINGS:N`, `BLOCKED:reason-code`, and
+`CHURN:reason-code` pause the outer loop; they are not retry signals.
+
+Use short lowercase reason codes. Do not put source text, file paths, prompts,
+credentials, or free-form rationale in result suffixes. The legacy
+`ESCALATE_THOROUGH:reason` form remains accepted but should not be emitted by a
+new wave.
 
 Do not infer acceptance criteria from stale session prompt files, previous
 conversation turns, session titles, AGENTS instructions, or unrelated ticket
@@ -74,7 +91,8 @@ context. If the caller did not explicitly supply criteria for this review
 iteration, mark plan-dependent sections `N/A`.
 
 Also write the single findings hash described in `prompts/review-wave.md`. The
-outer loop appends validated non-clean hashes to its stuck-loop history.
+outer loop appends validated non-clean hashes to its stuck-loop history. Do not
+expose that hash to a later reviewer or telemetry.
 
 ## Completion Criteria For This Iteration
 
@@ -93,5 +111,5 @@ All of these must be true before you stop:
 - No commit, push, branch creation, PR creation/update, or external reviewer
   request happened in this iteration.
 
-When those criteria are met, stop. The outer `/dxreviewloop` owns the three
-consecutive `CLEAN` gate.
+When those criteria are met, stop. The outer `/dxreviewloop` owns the selected
+3, 6, or 9 consecutive `CLEAN` gate.

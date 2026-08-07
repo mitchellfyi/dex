@@ -173,7 +173,7 @@ __dx_cli() {
       echo "Standalone completion (recovery / non-dx PRs):"
       echo "  dxcomplete             Monitor CI/reviews, address comments, close ticket"
       echo ""
-      echo "Standalone review (adaptive clean-pass loop, no full lifecycle needed):"
+      echo "Standalone review (agent-selected 3/6/9 clean-pass gate, no full lifecycle needed):"
       echo "  dxreviewloop           Review current changes, or whole codebase if clean"
       echo ""
       echo "Prompt loop:"
@@ -418,7 +418,7 @@ DX_PHASE_PROMISES=(\
 DX_PHASE_MESSAGES=(\
   "Call EnterPlanMode now, then immediately invoke the dxplan skill. Do not perform exploration or planning by hand outside dxplan unless the skill explicitly instructs you to. Ticket setup (branch rename, status update, assignment, push) was already done in Phase 0; if anything looks incomplete (status still Backlog/Todo, no assignee, branch not renamed/pushed), finish it before calling EnterPlanMode. For freeform task requests with a configured tracker, after the user approves the plan via ExitPlanMode, offer the dxplan tracker intake choices before writing the Phase 1 approval marker. After the gate is complete or explicitly skipped, write the Phase 1 approval marker and stop once so the Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. For UI-affecting changes, Phase 2 must invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. SCOPE BOUNDARIES: implementation, testing, and UI capture evidence ONLY. Do NOT commit, push, create branches, or create PRs during this phase — those are handled by later phases. When done, stop — the audit loop will verify your work." \
-  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\" to run the adaptive clean-pass review loop. Each pass is a full review wave: compact context pack, deterministic checks, domain issue harvest, verifier pass, batch fixes, and targeted recheck. Small low-risk changes may use fewer clean passes; high-risk changes must escalate to thorough review. Only waves that find zero verified findings and apply zero fixes count as CLEAN. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, create branches, or create PRs. When the review loop is successful, stop — the audit loop will verify." \
+  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. SCOPE BOUNDARIES: review and fix ONLY. Do NOT commit, push, create branches, or create PRs. When the loop writes a valid success receipt, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dxcommit\" to commit and push. SCOPE BOUNDARIES: verify and commit ONLY. Do NOT create PRs or modify implementation beyond fixing verify failures. When pushed, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from dex.md § Reviewers. SCOPE BOUNDARIES: PR creation, description, and artifact handoff ONLY. Do NOT mark the PR ready for review (Phase 6 owns that), do NOT post @mention comments, do NOT modify implementation code. When done, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, wait DEX_COMPLETE_WAIT_MINUTES per cycle, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
@@ -496,26 +496,28 @@ DX_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 
 # Review sub-loop configuration.
 # Lifecycle Phase 3 uses the /dxreviewloop skill in the same Claude session.
-# The standalone dxreviewloop shell command also uses these defaults.
-# DX_REVIEW_PROFILE: auto|light|standard|thorough.
-# Auto chooses a starting depth from diff size/risk; review waves may escalate.
-# Override depth: DEX_REVIEW_PROFILE=thorough
-# Override exact loop gates: DEX_REVIEW_CLEAN_PASSES=5 DEX_REVIEW_MAX_ITERATIONS=25
+# A risk assessment resolves small/normal/complex to 3/6/9 consecutive clean
+# passes before the first review wave. Legacy light/standard/thorough profile
+# names remain accepted. There is no outer iteration limit; verified churn,
+# provider failures, timeouts, invalid evidence, and user interrupts pause it.
+# Override risk: DEX_REVIEW_TIER=complex
+# Raise the loop gate: DEX_REVIEW_CLEAN_PASSES=12
 # Review waves launch with MCP servers disabled (waves only use local tools);
 # this avoids each spawned session forking node/Chromium MCP processes. Restore
 # the inherited MCP config with DEX_REVIEW_DISABLE_MCP=0.
 DX_REVIEW_PROFILE=auto
-DX_REVIEW_LIGHT_CLEAN_PASSES=1
-DX_REVIEW_STANDARD_CLEAN_PASSES=2
-DX_REVIEW_THOROUGH_CLEAN_PASSES=3
-DX_REVIEW_LIGHT_MAX_ITERATIONS=4
-DX_REVIEW_STANDARD_MAX_ITERATIONS=6
-DX_REVIEW_THOROUGH_MAX_ITERATIONS=20
-# Backward-compatible fallback for callers that source these constants directly.
+DX_REVIEW_SMALL_CLEAN_PASSES=3
+DX_REVIEW_NORMAL_CLEAN_PASSES=6
+DX_REVIEW_COMPLEX_CLEAN_PASSES=9
+# Backward-compatible profile aliases for callers that source these constants.
+# shellcheck disable=SC2034
+DX_REVIEW_LIGHT_CLEAN_PASSES=$DX_REVIEW_SMALL_CLEAN_PASSES
+# shellcheck disable=SC2034
+DX_REVIEW_STANDARD_CLEAN_PASSES=$DX_REVIEW_NORMAL_CLEAN_PASSES
+# shellcheck disable=SC2034
+DX_REVIEW_THOROUGH_CLEAN_PASSES=$DX_REVIEW_COMPLEX_CLEAN_PASSES
 # shellcheck disable=SC2034
 DX_REVIEW_CLEAN_PASSES=$DX_REVIEW_THOROUGH_CLEAN_PASSES
-# shellcheck disable=SC2034
-DX_REVIEW_MAX_ITERATIONS=$DX_REVIEW_THOROUGH_MAX_ITERATIONS
 
 # Phase 6 (Complete) cycle configuration.
 # DX_COMPLETE_MAX_CYCLES: max review cycles before escalating to user (default 3).
@@ -568,47 +570,21 @@ __dx_phase_timeout() {
 # Print the default consecutive CLEAN waves required for a review profile.
 unalias __dx_review_profile_clean_passes 2>/dev/null; unfunction __dx_review_profile_clean_passes 2>/dev/null
 __dx_review_profile_clean_passes() {
-  case "$1" in
-    light) echo "${DX_REVIEW_LIGHT_CLEAN_PASSES:-1}" ;;
-    standard) echo "${DX_REVIEW_STANDARD_CLEAN_PASSES:-2}" ;;
-    thorough) echo "${DX_REVIEW_THOROUGH_CLEAN_PASSES:-3}" ;;
-    *) echo "${DX_REVIEW_THOROUGH_CLEAN_PASSES:-3}" ;;
-  esac
-}
-
-# __dx_review_profile_max_iterations <profile>
-# Print the default safety-net iteration count for a review profile.
-unalias __dx_review_profile_max_iterations 2>/dev/null; unfunction __dx_review_profile_max_iterations 2>/dev/null
-__dx_review_profile_max_iterations() {
-  case "$1" in
-    light) echo "${DX_REVIEW_LIGHT_MAX_ITERATIONS:-4}" ;;
-    standard) echo "${DX_REVIEW_STANDARD_MAX_ITERATIONS:-6}" ;;
-    thorough) echo "${DX_REVIEW_THOROUGH_MAX_ITERATIONS:-20}" ;;
-    *) echo "${DX_REVIEW_THOROUGH_MAX_ITERATIONS:-20}" ;;
-  esac
+  dx_review_tier_clean_passes "$1"
 }
 
 # __dx_review_is_positive_integer <value>
 # Return 0 only for positive decimals that fit zsh arithmetic safely.
 unalias __dx_review_is_positive_integer 2>/dev/null; unfunction __dx_review_is_positive_integer 2>/dev/null
 __dx_review_is_positive_integer() {
-  local value="${1:-}"
-  case "$value" in
-    ""|*[!0-9]*) return 1 ;;
-  esac
-  [[ "$value" == *[1-9]* ]] || return 1
-  [[ ${#value} -le 18 ]]
+  dx_review_is_positive_integer "${1:-}"
 }
 
-# __dx_review_validate_gates <max_iterations> <required_clean>
+# __dx_review_validate_gates <required_clean>
 # Reject unsafe counters before zsh evaluates them as arithmetic expressions.
 unalias __dx_review_validate_gates 2>/dev/null; unfunction __dx_review_validate_gates 2>/dev/null
 __dx_review_validate_gates() {
-  local max_iter="$1" required_clean="$2"
-  if ! __dx_review_is_positive_integer "$max_iter"; then
-    dx_error "Invalid review iteration limit '${max_iter:-<empty>}'. Use a whole number from 1 to 999999999999999999."
-    return 1
-  fi
+  local required_clean="$1"
   if ! __dx_review_is_positive_integer "$required_clean"; then
     dx_error "Invalid clean-pass requirement '${required_clean:-<empty>}'. Use a whole number from 1 to 999999999999999999."
     return 1
@@ -622,88 +598,6 @@ __dx_review_phase_promise() {
   echo "${DX_PHASE_PROMISES[3]:-PHASE_3_COMPLETE}"
 }
 
-# __dx_review_is_doc_path <path>
-# Return 0 when a changed path is documentation-only for review-depth purposes.
-unalias __dx_review_is_doc_path 2>/dev/null; unfunction __dx_review_is_doc_path 2>/dev/null
-__dx_review_is_doc_path() {
-  case "$1" in
-    README|README.*|CHANGELOG|CHANGELOG.*|LICENSE|LICENSE.*|docs/*|*.md|*.mdx|*.rst|*.txt)
-      return 0 ;;
-    *)
-      return 1 ;;
-  esac
-}
-
-# __dx_review_is_high_risk_path <path>
-# Return 0 when a changed path should start at thorough review.
-unalias __dx_review_is_high_risk_path 2>/dev/null; unfunction __dx_review_is_high_risk_path 2>/dev/null
-__dx_review_is_high_risk_path() {
-  case "$1" in
-    dx.sh|install.sh|bin/*|hooks/*|lib/*|settings.json|.github/workflows/*|Dockerfile|Dockerfile.*|docker-compose.*|compose.*|package-lock.json|pnpm-lock.yaml|yarn.lock|Cargo.lock|go.sum|*.lock)
-      return 0 ;;
-  esac
-
-  case "$1" in
-    *auth*|*Auth*|*security*|*Security*|*permission*|*Permission*|*guard*|*Guard*|*secret*|*Secret*|*payment*|*Payment*|*billing*|*Billing*|*migration*|*Migration*|*schema*|*Schema*)
-      return 0 ;;
-    *)
-      return 1 ;;
-  esac
-}
-
-# __dx_review_auto_profile <committed_ref>
-# Choose a conservative starting review profile from the current diff.
-unalias __dx_review_auto_profile 2>/dev/null; unfunction __dx_review_auto_profile 2>/dev/null
-__dx_review_auto_profile() {
-  local committed_ref="$1"
-  local file_count=0 total_lines=0 docs_only=1 high_risk=0
-  local file add del changed_path line_count
-
-  while IFS= read -r file; do
-    [[ -n "$file" ]] || continue
-    file_count=$((file_count + 1))
-    __dx_review_is_doc_path "$file" || docs_only=0
-    __dx_review_is_high_risk_path "$file" && high_risk=1
-  done < <(
-    {
-      [[ -n "$committed_ref" ]] && git diff "$committed_ref" --name-only 2>/dev/null
-      git diff --cached --name-only 2>/dev/null
-      git diff --name-only 2>/dev/null
-      git ls-files --others --exclude-standard 2>/dev/null
-    } | sort -u
-  )
-
-  while IFS=$'\t' read -r add del changed_path; do
-    [[ -n "$changed_path" ]] || continue
-    [[ "$add" =~ ^[0-9]+$ ]] || add=0
-    [[ "$del" =~ ^[0-9]+$ ]] || del=0
-    total_lines=$((total_lines + add + del))
-  done < <(
-    {
-      [[ -n "$committed_ref" ]] && git diff "$committed_ref" --numstat 2>/dev/null
-      git diff --cached --numstat 2>/dev/null
-      git diff --numstat 2>/dev/null
-      while IFS= read -r file; do
-        [[ -f "$file" ]] || continue
-        line_count=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
-        [[ "$line_count" =~ ^[0-9]+$ ]] || line_count=0
-        printf '%s\t0\t%s\n' "$line_count" "$file"
-      done < <(git ls-files --others --exclude-standard 2>/dev/null)
-    }
-  )
-
-  if [[ "$file_count" -eq 0 ]]; then
-    echo "standard"
-  elif [[ "$docs_only" -eq 1 ]]; then
-    echo "light"
-  elif [[ "$high_risk" -eq 1 || "$file_count" -gt 8 || "$total_lines" -gt 400 ]]; then
-    echo "thorough"
-  elif [[ "$file_count" -le 2 && "$total_lines" -le 80 ]]; then
-    echo "light"
-  else
-    echo "standard"
-  fi
-}
 
 # dx_default_branch is provided by lib/git.sh (sourced via lib/common.sh)
 
@@ -1384,7 +1278,7 @@ Same-session handoff rules:
 - When a phase is complete, stop once for the Stop hook audit.
 - If the Stop hook gives you the next phase, continue immediately without asking
   the user.
-- Phase 3 must use /dxreviewloop for the adaptive clean-pass review loop.
+- Phase 3 must use /dxreviewloop with the selected small/normal/complex 3/6/9 clean-pass gate.
 
 Human input is required only for:
 - Phase 1 plan approval or plan rejection
@@ -1649,7 +1543,18 @@ __dx_codex_direct_phase_handoff() {
     esac
   fi
 
+  if [[ "$phase" == "2" ]] && ! dx_review_selection_valid "$session_id" "$wt_dir"; then
+    return 1
+  fi
+
+  if [[ "$phase" == "3" ]] && ! dx_review_receipt_valid "$session_id" "$wt_dir"; then
+    return 1
+  fi
+
   __dx_record_inline_phase_result "$session_id" "$phase" "advance" "0"
+  if [[ "$phase" == "3" ]]; then
+    rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" "$(dx_review_state_file "$session_id")" "$(dx_review_ledger_file "$session_id")" 2>/dev/null
+  fi
   rm -f \
     "$(dx_loop_file "$session_id")" \
     "$complete_file" \
@@ -1751,7 +1656,7 @@ __dx_run_phases_inline() {
   local message
   message=$(__dx_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")
   if [[ $step -eq 3 ]]; then
-    message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\" to run the adaptive clean-pass review loop. Each pass is a full review wave: compact context pack, deterministic checks, domain issue harvest, verifier pass, batch fixes, and targeted recheck. Small low-risk changes may use fewer clean passes; high-risk changes must escalate to thorough review. Only waves that find zero verified findings and apply zero fixes count as CLEAN. Scope boundaries: review and fix only; do not commit, push, create branches, or create PRs. When the review loop is successful, stop so the Stop hook can audit and advance."
+    message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Scope boundaries: review and fix only; do not commit, push, create branches, or create PRs. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance."
   fi
 
   local session_timeout="${DEX_SESSION_TIMEOUT:-$DX_SESSION_TIMEOUT}"
@@ -3033,7 +2938,7 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
   return $exit_code
 }
 
-# ─── dxreviewloop — standalone adaptive clean-pass review ─────────────────
+# ─── dxreviewloop — standalone risk-gated clean-pass review ───────────────
 #
 # Runs the same adversarial review loop dx Phase 3 uses, without requiring
 # the full lifecycle. Scope is the full current change set when one exists; on
@@ -3043,8 +2948,152 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
 # build/refresh a compact context pack, run deterministic checks, collect
 # read-only review findings, verify/dedupe, batch-fix, re-check, then write a
 # review-result signal. Only a wave with zero verified findings and zero fixes
-# writes CLEAN. Auto depth starts light/standard/thorough based on diff risk;
-# a wave may escalate itself to thorough if the starting depth is unsafe.
+# writes CLEAN. A preflight risk selection resolves small/normal/complex to
+# 3/6/9 required clean waves, and a wave may escalate that tier upward.
+
+unalias __dx_review_emit_event 2>/dev/null; unfunction __dx_review_emit_event 2>/dev/null
+__dx_review_emit_event() {
+  local run_id="$1" event_type="$2" severity="$3" message="$4" phase="$5" data
+  shift 5
+  [[ -n "$run_id" ]] || return 0
+  data=$(dx_review_event_json "$@" 2>/dev/null) || return 0
+  dx_event_emit "$run_id" "$event_type" "$severity" "$message" "$phase" "$data" 2>/dev/null || true
+}
+
+unalias __dx_review_nonce 2>/dev/null; unfunction __dx_review_nonce 2>/dev/null
+__dx_review_nonce() {
+  local nonce
+  nonce=$(dx_run_id 2>/dev/null || true)
+  nonce="${nonce#run_}"
+  [[ -n "$nonce" ]] || nonce="${EPOCHSECONDS:-$(date +%s)}-$$-${RANDOM}"
+  printf '%s\n' "$nonce"
+}
+
+unalias __dx_review_runtime_cleanup 2>/dev/null; unfunction __dx_review_runtime_cleanup 2>/dev/null
+__dx_review_runtime_cleanup() {
+  local repo_root="$1" lock_token="$2" busy_file="$3" busy_notice_file="$4" invocation_dir="$5"
+  command rm -f "$busy_file" "$busy_notice_file" 2>/dev/null || true
+  dx_review_lock_release "$repo_root" "$lock_token" 2>/dev/null || true
+  builtin cd "$invocation_dir" 2>/dev/null || true
+}
+
+unalias __dx_review_finish_standalone_run 2>/dev/null; unfunction __dx_review_finish_standalone_run 2>/dev/null
+__dx_review_finish_standalone_run() {
+  local run_id="$1" telemetry_session_id="$2" run_status="$3" reason="$4" provider_session_id="${5:-}"
+  local event_type severity summary_status
+  [[ -n "$run_id" ]] || return 0
+  case "$run_status" in
+    completed)
+      event_type="run.completed"
+      severity="info"
+      summary_status="completed"
+      ;;
+    blocked)
+      event_type="run.blocked"
+      severity="warn"
+      summary_status="blocked"
+      ;;
+    *)
+      event_type="run.failed"
+      severity="error"
+      summary_status="failed"
+      ;;
+  esac
+  __dx_review_emit_event "$run_id" "$event_type" "$severity" "Standalone review ${run_status}" "" \
+    command=dxreviewloop reason="$reason"
+  dx_run_write_summary_safe "$run_id" "$summary_status" "Standalone review ${run_status}: ${reason}"
+  [[ -n "$provider_session_id" ]] && dx_provider_cleanup_session_state "$provider_session_id" 2>/dev/null || true
+  [[ -n "$telemetry_session_id" ]] && command rm -f "$(dx_run_id_file "$telemetry_session_id")" 2>/dev/null || true
+}
+
+unalias __dx_review_pause_intervention 2>/dev/null; unfunction __dx_review_pause_intervention 2>/dev/null
+__dx_review_pause_intervention() {
+  local reason="$1" detail="${2:-}"
+  case "$reason" in
+    blocked)
+      printf 'Resolve the reported blocker%s, then rerun dxreviewloop.\n' "${detail:+ (${detail})}"
+      ;;
+    unresolved_findings)
+      printf 'Fix or explicitly resolve the %s remaining verified finding(s), then rerun dxreviewloop.\n' "${detail:-reported}"
+      ;;
+    pass_timeout)
+      printf '%s\n' "Fix the hanging review wave or raise DEX_REVIEW_PASS_TIMEOUT, then rerun dxreviewloop."
+      ;;
+    provider_error)
+      printf '%s\n' "Restore the selected provider CLI and authentication, then rerun dxreviewloop."
+      ;;
+    completion_receipt_missing|context_pack_missing|findings_hash_invalid|invalid_result|inconsistent_findings_evidence)
+      printf '%s\n' "Correct the review-wave result contract, then rerun dxreviewloop."
+      ;;
+    repeated_fingerprint|alternating_fingerprints|wave_reported_churn)
+      printf '%s\n' "Inspect the repeating or oscillating fixes, stabilize the implementation, then rerun dxreviewloop."
+      ;;
+    state_write_failed|selection_write_failed|receipt_write_failed)
+      printf '%s\n' "Restore writable Dex state storage, then rerun dxreviewloop."
+      ;;
+    *)
+      printf 'Resolve %s, then rerun dxreviewloop.\n' "$reason"
+      ;;
+  esac
+}
+
+unalias __dx_review_handle_interrupt 2>/dev/null; unfunction __dx_review_handle_interrupt 2>/dev/null
+__dx_review_handle_interrupt() {
+  local run_id="$1" telemetry_session_id="$2" standalone="$3" session_id="$4"
+  local child_session_id="$5" review_phase="$6" reason="$7"
+  if [[ -n "$child_session_id" ]]; then
+    dx_provider_cleanup_session_state "$child_session_id" 2>/dev/null || true
+    dx_cleanup_session "$child_session_id" 2>/dev/null || true
+  fi
+  __dx_review_emit_event "$run_id" "review.paused" "warn" "Review interrupted" "$review_phase" reason="$reason"
+  if [[ "$standalone" == "1" ]]; then
+    __dx_review_finish_standalone_run "$run_id" "$telemetry_session_id" blocked "$reason" "$session_id"
+  else
+    touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+  fi
+}
+
+unalias __dx_review_write_assessment_context 2>/dev/null; unfunction __dx_review_write_assessment_context 2>/dev/null
+__dx_review_write_assessment_context() {
+  local target="$1" scope_mode="$2" committed_ref="$3" scope_name="$4" files_changed="$5"
+  local tmp_file="${target}.tmp.$$" untracked_path
+  mkdir -p "$(dirname "$target")" || return 1
+  {
+    printf '# Dex Review Risk Assessment Context\n\n'
+    printf '%s\n' "Scope: ${scope_name} (${files_changed} files)"
+    printf '%s\n\n' "Repository root: current working directory"
+    printf '## File names\n\n'
+    if [[ "$scope_mode" == "codebase" ]]; then
+      git ls-files | sort
+      printf '\n## Inventory\n\n'
+      git ls-files | awk '{count++} END {printf "tracked files: %d\n", count+0}'
+    else
+      {
+        [[ -n "$committed_ref" ]] && git diff "$committed_ref" --name-only 2>/dev/null
+        git diff --cached --name-only 2>/dev/null
+        git diff --name-only 2>/dev/null
+        git ls-files --others --exclude-standard 2>/dev/null
+      } | sort -u
+      printf '\n## Diff stat\n\n'
+      [[ -n "$committed_ref" ]] && git diff "$committed_ref" --stat 2>/dev/null
+      git diff --cached --stat 2>/dev/null
+      git diff --stat 2>/dev/null
+      git ls-files --others --exclude-standard | sed 's/^/untracked: /'
+      printf '\n## Full change set\n\n'
+      [[ -n "$committed_ref" ]] && git diff "$committed_ref" --binary 2>/dev/null
+      git diff --cached --binary 2>/dev/null
+      git diff --binary 2>/dev/null
+      while IFS= read -r -d '' untracked_path; do
+        [[ -f "$untracked_path" || -L "$untracked_path" ]] || continue
+        git diff --no-index --binary -- /dev/null "$untracked_path" 2>/dev/null || true
+      done < <(git ls-files --others --exclude-standard -z)
+    fi
+  } >| "$tmp_file" || {
+    command rm -f "$tmp_file" 2>/dev/null
+    return 1
+  }
+  command mv -f "$tmp_file" "$target"
+}
 
 unalias dxreviewloop 2>/dev/null; unfunction dxreviewloop 2>/dev/null
 dxreviewloop() {
@@ -3056,6 +3105,7 @@ dxreviewloop() {
     dx_error "dxreviewloop does not accept arguments; configure review gates with DEX_REVIEW_* variables."
     return 1
   fi
+  setopt localoptions localtraps
   __dx_refresh_provider || return 1
 
   local provider_agent
@@ -3067,35 +3117,103 @@ dxreviewloop() {
     return 1
   fi
 
-  # Detect the full current change set instead of prioritizing one category.
+  local invocation_dir="$PWD" repo_root="" standalone_review_prompt=0 standalone_prompt_content=""
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [[ -z "$repo_root" ]]; then
+    dx_error "Could not resolve the repository root."
+    return 1
+  fi
+  [[ "${DEX_LOOP_ACTIVE:-}" != "1" ]] && standalone_review_prompt=1
+
+  local session_id=""
+  if [[ $standalone_review_prompt -eq 0 && -n "${DEX_SESSION_ID:-}" ]]; then
+    session_id="$DEX_SESSION_ID"
+  else
+    session_id=$(dx_session_id)
+  fi
+  if [[ -z "$session_id" ]]; then
+    dx_error "Could not resolve a review session id."
+    return 1
+  fi
+  if ! dx_session_id_valid "$session_id"; then
+    dx_error "Refusing unsafe review session id '${session_id}'."
+    return 1
+  fi
+
+  # Reject malformed operator input before creating locks, run journals, or
+  # agent sessions.
+  local explicit_clean_gate="${DEX_REVIEW_CLEAN_PASSES:-}"
+  local requested_tier="${DEX_REVIEW_TIER:-}" requested_profile="${DEX_REVIEW_PROFILE:-${DX_REVIEW_PROFILE:-auto}}"
+  local pass_timeout="${DEX_REVIEW_PASS_TIMEOUT:-900}"
+  __dx_review_validate_gates "${explicit_clean_gate:-1}" || return 1
+  if ! dx_review_is_nonnegative_integer "$pass_timeout"; then
+    dx_error "Invalid review pass timeout '${pass_timeout:-<empty>}'. Use whole seconds, or 0 to disable it."
+    return 1
+  fi
+  if [[ -n "$requested_tier" ]] && ! dx_review_normalize_tier "$requested_tier" >/dev/null 2>&1; then
+    dx_error "Unknown DEX_REVIEW_TIER '${requested_tier}'. Use small, normal, or complex."
+    return 1
+  fi
+  if [[ -n "$requested_profile" && "$requested_profile" != "auto" ]] && ! dx_review_normalize_tier "$requested_profile" >/dev/null 2>&1; then
+    dx_error "Unknown DEX_REVIEW_PROFILE '${requested_profile}'. Use light, standard, thorough, or auto."
+    return 1
+  fi
+  if [[ -n "$explicit_clean_gate" ]]; then
+    local preflight_tier="small" preflight_floor=""
+    if [[ -n "$requested_tier" ]]; then
+      preflight_tier=$(dx_review_normalize_tier "$requested_tier") || return 1
+    elif [[ -n "$requested_profile" && "$requested_profile" != "auto" ]]; then
+      preflight_tier=$(dx_review_normalize_tier "$requested_profile") || return 1
+    fi
+    preflight_floor=$(dx_review_tier_min_clean_passes "$preflight_tier") || return 1
+    if [[ $((10#$explicit_clean_gate)) -lt $((10#$preflight_floor)) ]]; then
+      dx_error "Review tier '${preflight_tier}' requires at least ${preflight_floor} consecutive clean passes; got ${explicit_clean_gate}."
+      return 1
+    fi
+  fi
+
+  local review_lock_token="" review_lock_status=0 final_busy_file="" final_busy_notice_file=""
+  review_lock_token=$(__dx_review_nonce)
+  dx_review_lock_acquire "$repo_root" "$review_lock_token" "$$" || review_lock_status=$?
+  if [[ $review_lock_status -ne 0 ]]; then
+    if [[ $review_lock_status -eq 1 ]]; then
+      dx_error "Another review loop already owns this checkout."
+      dx_info "Wait for it to finish or interrupt that owner before retrying."
+    else
+      dx_error "Could not acquire the review-loop checkout lock."
+    fi
+    return 1
+  fi
+  final_busy_file=$(dx_phase_busy_file "$session_id" 3)
+  final_busy_notice_file=$(dx_phase_busy_notice_file "$session_id" 3)
+  : "$final_busy_notice_file"
+  # shellcheck disable=SC2064  # zsh localtraps runs after local scope teardown, so capture quoted values now
+  trap "__dx_review_runtime_cleanup ${(q)repo_root} ${(q)review_lock_token} ${(q)final_busy_file} ${(q)final_busy_notice_file} ${(q)invocation_dir}" EXIT
+  if ! builtin cd "$repo_root"; then
+    dx_error "Could not enter the repository root: ${repo_root}"
+    return 1
+  fi
+
   local scope_name="" scope_mode="changes" diff_cmd="" stat_cmd="" name_cmd=""
   local committed_diff_cmd="" committed_stat_cmd="" committed_name_cmd=""
-  local committed_ref=""
+  local committed_ref="" scope_descriptor="" descriptor_mode="" comparison_ref="" comparison_oid="" committed_base=""
   local has_committed=0 has_staged=0 has_unstaged=0 has_untracked=0
-  local untracked_count
-  local branch
+  local untracked_count branch
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
   [[ -n "$branch" ]] || branch="HEAD"
-  local default_branch
-  default_branch=$(dx_default_branch)
-
-  if [[ -n "$default_branch" ]] && \
-       git rev-parse --verify --quiet "origin/${default_branch}" &>/dev/null && \
-       git merge-base "origin/${default_branch}" HEAD &>/dev/null && \
-       ! git diff --quiet "origin/${default_branch}...HEAD" 2>/dev/null; then
+  scope_descriptor=$(dx_review_scope_descriptor "$PWD") || {
+    dx_error "Could not resolve the review comparison scope."
+    return 1
+  }
+  IFS=$'\t' read -r descriptor_mode comparison_ref comparison_oid committed_base <<< "$scope_descriptor"
+  if [[ "$descriptor_mode" == "changes" ]]; then
     has_committed=1
-    committed_ref="origin/${default_branch}...HEAD"
-    committed_diff_cmd="git diff origin/${default_branch}...HEAD"
-    committed_stat_cmd="git diff origin/${default_branch}...HEAD --stat"
-    committed_name_cmd="git diff origin/${default_branch}...HEAD --name-only"
-  elif git rev-parse --abbrev-ref --symbolic-full-name '@{u}' &>/dev/null && \
-       [[ -n "$(git log '@{u}..HEAD' --oneline 2>/dev/null)" ]]; then
-    has_committed=1
-    committed_ref="@{u}...HEAD"
-    committed_diff_cmd="git diff @{u}...HEAD"
-    committed_stat_cmd="git diff @{u}...HEAD --stat"
-    committed_name_cmd="git diff @{u}...HEAD --name-only"
+    committed_ref="${committed_base}..HEAD"
+    committed_diff_cmd="git diff ${committed_base} HEAD --"
+    committed_stat_cmd="git diff ${committed_base} HEAD --stat --"
+    committed_name_cmd="git diff ${committed_base} HEAD --name-only --"
   fi
+  : "$comparison_ref" "$comparison_oid"
 
   git diff --cached --quiet 2>/dev/null || has_staged=1
   git diff --quiet 2>/dev/null || has_unstaged=1
@@ -3107,9 +3225,7 @@ dxreviewloop() {
     diff_cmd="{ ${committed_diff_cmd:-:}; git diff --cached; git diff; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'test -f \"\$1\" && git diff --no-index -- /dev/null \"\$1\" 2>/dev/null || true' sh {}; }"
     stat_cmd="{ ${committed_stat_cmd:-:}; git diff --cached --stat; git diff --stat; git ls-files --others --exclude-standard | sed 's/^/untracked: /'; }"
     name_cmd="{ ${committed_name_cmd:-:}; git diff --cached --name-only; git diff --name-only; git ls-files --others --exclude-standard; } | sort -u"
-  fi
-
-  if [[ -z "$scope_name" ]]; then
+  else
     scope_name="entire codebase"
     scope_mode="codebase"
     diff_cmd="git ls-files | sort"
@@ -3118,24 +3234,6 @@ dxreviewloop() {
     dx_info "No current change set detected; falling back to an entire-codebase review."
   fi
 
-  local requested_profile="${DEX_REVIEW_PROFILE:-${DX_REVIEW_PROFILE:-auto}}"
-  local review_profile="$requested_profile"
-  case "$review_profile" in
-    auto|"") review_profile="$(__dx_review_auto_profile "$committed_ref")" ;;
-    light|standard|thorough) ;;
-    *)
-      dx_warn "Unknown DEX_REVIEW_PROFILE '${review_profile}'; using auto."
-      review_profile="$(__dx_review_auto_profile "$committed_ref")" ;;
-  esac
-
-  local max_iter="${DEX_REVIEW_MAX_ITERATIONS:-$(__dx_review_profile_max_iterations "$review_profile")}"
-  local required_clean="${DEX_REVIEW_CLEAN_PASSES:-$(__dx_review_profile_clean_passes "$review_profile")}"
-
-  __dx_review_validate_gates "$max_iter" "$required_clean" || return 1
-  local review_promise
-  review_promise="$(__dx_review_phase_promise)"
-
-  # File count preview for the review scope without eval.
   local files_changed
   if [[ "$scope_mode" == "codebase" ]]; then
     files_changed=$(git ls-files 2>/dev/null | wc -l | tr -d ' ') || files_changed="?"
@@ -3151,29 +3249,7 @@ dxreviewloop() {
   fi
   [[ -n "$files_changed" ]] || files_changed="?"
 
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  DEX — dxreviewloop (${review_profile}, ${required_clean} clean pass(es))"
-  echo ""
-  echo "  Agent:  $(dx_agent_label "$provider_agent")"
-  echo "  Branch: ${branch}"
-  echo "  Scope:  ${scope_name} (${files_changed} files)"
-  echo "  Depth:  ${review_profile} (${required_clean} clean, max ${max_iter} iterations)"
-  echo "  Input:  ${diff_cmd}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-
-  # Waves are keyed by a per-pass session id derived from the wrapper's
-  # path-based id. Sharing the wrapper's id with waves lets a wave's Stop hook
-  # act on the wrapper's loop state (and, inside a lifecycle, run the inline
-  # phase handoff that instructs commit/push), and collides with any other
-  # Claude session open on the same branch/worktree.
-  local session_id
-  session_id=$(dx_session_id)
-  local standalone_review_prompt=0
-  local standalone_prompt_content=""
-  if [[ "${DEX_LOOP_ACTIVE:-}" != "1" ]]; then
-    standalone_review_prompt=1
+  if [[ $standalone_review_prompt -eq 1 ]]; then
     standalone_prompt_content="Standalone /dxreviewloop invocation for branch ${branch}.
 
 Review scope: ${scope_name} (${files_changed} files).
@@ -3181,30 +3257,300 @@ Review scope: ${scope_name} (${files_changed} files).
 No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan-dependent sections as N/A unless explicit criteria are present in the review-pass prompt."
   fi
 
-  # Review waves only need local tools (Read/Grep/Bash/git); they never call
-  # MCP servers. Left enabled, every spawned wave session loads the full MCP
-  # config, and browser-backed servers (playwright, chrome-devtools) each fork
-  # a Chromium at startup — measured at ~500MB and 5 extra processes per
-  # session, multiplied by every concurrent agent. Launch waves with MCP off by
-  # default. Set DEX_REVIEW_DISABLE_MCP=0 to restore the inherited MCP config.
-  local review_mcp_flags=()
-  if [[ "${DEX_REVIEW_DISABLE_MCP:-1}" != "0" ]]; then
-    local review_empty_mcp="$DX_LOOP_DIR/empty-mcp.json"
-    mkdir -p "$DX_LOOP_DIR"
-    __dx_write_state "$review_empty_mcp" '{"mcpServers":{}}'
-    review_mcp_flags=(--strict-mcp-config --mcp-config "$review_empty_mcp")
+  local review_phase=""
+  [[ "${DEX_LOOP_PHASE:-}" == "3" ]] && review_phase="3"
+
+  local review_run_id="" telemetry_session_id review_started_epoch
+  review_started_epoch=$(date +%s)
+  if [[ $standalone_review_prompt -eq 1 ]]; then
+    telemetry_session_id="${session_id}-review-$(__dx_review_nonce)"
+    review_run_id=$(dx_run_prepare "$telemetry_session_id" "$PWD" "standalone" "review" "" "dxreviewloop" 2>/dev/null || true)
+    if [[ -z "$review_run_id" ]]; then
+      dx_error "Could not prepare the standalone review run journal."
+      return 1
+    fi
+    dx_run_maybe_emit_started "$review_run_id" "Standalone review started" '{"command":"dxreviewloop"}'
+    dx_info "Review run ID: ${review_run_id}"
+  else
+    review_run_id=$(dx_run_read_for_session "$session_id" 2>/dev/null || true)
+    if [[ -z "$review_run_id" ]]; then
+      review_run_id=$(dx_run_prepare "$session_id" "$PWD" "lifecycle" "review" "" "dxreviewloop" 2>/dev/null || true)
+    fi
   fi
 
-  local clean_passes=0
-  local review_iteration=0
+  local current_review_child_session=""
+  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" user_interrupt; return 130' INT
+  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" terminated; return 143' TERM
+  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" hangup; return 129' HUP
 
-  # Standalone review uses the detailed single-pass adversarial audit.
-  local audit_file="$DEX_DIR/prompts/phase-audits/3-review.md"
-  local audit_prompt=""
+  local review_empty_mcp="$DX_LOOP_DIR/empty-mcp.json"
+  local assessment_mcp_flags=() review_mcp_flags=()
+  mkdir -p "$DX_LOOP_DIR"
+  __dx_write_state "$review_empty_mcp" '{"mcpServers":{}}' || {
+    dx_error "Could not prepare isolated review MCP configuration."
+    __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=mcp_config_error
+    [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed mcp_config_error "$session_id"
+    return 1
+  }
+  assessment_mcp_flags=(--strict-mcp-config --mcp-config "$review_empty_mcp")
+  if [[ "${DEX_REVIEW_DISABLE_MCP:-1}" != "0" ]]; then
+    review_mcp_flags=("${assessment_mcp_flags[@]}")
+  fi
+
+  local review_tier="" review_profile="" selection_source="" selection_reasons="" selection_required="" selection_fingerprint=""
+  local selection_record="" prior_selection_record="" prior_tier="" prior_source="" prior_reasons="" prior_required="" prior_fingerprint=""
+  if prior_selection_record=$(dx_review_read_selection "$session_id" "$PWD" 2>/dev/null); then
+    IFS=$'\t' read -r prior_tier prior_source prior_reasons prior_required prior_fingerprint <<< "$prior_selection_record"
+    : "$prior_fingerprint"
+  fi
+
+  if [[ -n "$requested_tier" ]]; then
+    review_tier=$(dx_review_normalize_tier "$requested_tier" 2>/dev/null || true)
+    selection_source="environment"
+    selection_reasons="operator-override"
+    if [[ -n "$prior_tier" && $(dx_review_tier_rank "$prior_tier") -gt $(dx_review_tier_rank "$review_tier") ]]; then
+      review_tier="$prior_tier"
+      selection_source="$prior_source"
+      selection_reasons="$prior_reasons"
+      selection_required="$prior_required"
+    fi
+  elif [[ -n "$requested_profile" && "$requested_profile" != "auto" ]]; then
+    review_tier=$(dx_review_normalize_tier "$requested_profile" 2>/dev/null || true)
+    selection_source="environment"
+    selection_reasons="operator-override"
+    if [[ -n "$prior_tier" && $(dx_review_tier_rank "$prior_tier") -gt $(dx_review_tier_rank "$review_tier") ]]; then
+      review_tier="$prior_tier"
+      selection_source="$prior_source"
+      selection_reasons="$prior_reasons"
+      selection_required="$prior_required"
+    fi
+  elif [[ $standalone_review_prompt -eq 0 && -n "$prior_selection_record" ]]; then
+    selection_record="$prior_selection_record"
+    IFS=$'\t' read -r review_tier selection_source selection_reasons selection_required selection_fingerprint <<< "$selection_record"
+    : "$selection_fingerprint"
+  else
+    rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" 2>/dev/null
+    local assessment_prompt_file="$DEX_DIR/prompts/review-risk-assessment.md" assessment_rubric=""
+    if [[ ! -f "$assessment_prompt_file" ]]; then
+      dx_error "Review risk assessment prompt is missing: ${assessment_prompt_file}"
+      __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=assessment_prompt_missing
+      [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+      [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked assessment_prompt_missing "$session_id"
+      return 1
+    fi
+    assessment_rubric=$(cat "$assessment_prompt_file")
+    local assessment_source="lifecycle-assessor"
+    [[ $standalone_review_prompt -eq 1 ]] && assessment_source="standalone-assessor"
+    local assessment_before="" assessment_after="" assessment_attempt=0 assessment_ok=0 assessment_exit=0 assessment_record=""
+    local assessment_codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
+    assessment_before=$(dx_review_scope_fingerprint "$PWD") || {
+      dx_error "Could not fingerprint the review scope before assessment."
+      __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=scope_fingerprint_error
+      [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+      [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked scope_fingerprint_error "$session_id"
+      return 1
+    }
+    dx_info "Starting a fresh read-only agent to select the review risk tier."
+    for assessment_attempt in 1 2; do
+      local assessment_nonce="" assessment_session_id="" assessment_message="" assessment_session_name=""
+      local assessment_context_file="" assessment_output_file=""
+      assessment_nonce=$(__dx_review_nonce)
+      assessment_session_id="${session_id}-assessment-${assessment_nonce}"
+      current_review_child_session="$assessment_session_id"
+      assessment_session_name="dxreview-assessment-${assessment_nonce}"
+      assessment_context_file=$(dx_review_context_file "$assessment_session_id")
+      assessment_output_file=$(dx_review_result_file "$assessment_session_id")
+      dx_cleanup_session "$assessment_session_id"
+      if ! __dx_review_write_assessment_context "$assessment_context_file" "$scope_mode" "$committed_ref" "$scope_name" "$files_changed"; then
+        assessment_exit=1
+        current_review_child_session=""
+        break
+      fi
+      assessment_message="Select the review risk tier for the current checkout before any review wave starts.
+
+Scope: ${scope_name} (${files_changed} files).
+Read the prepared scope at: \`${assessment_context_file}\`.
+You may use read-only inspection tools to open repository files when the context
+needs clarification. Do not use Bash or any file-editing tool.
+
+${assessment_rubric}
+
+Return exactly one JSON object and no prose or markdown:
+\`{\"tier\":\"<small|normal|complex>\",\"reason_codes\":\"<comma-separated-reason-codes>\"}\`
+
+Do not run a review wave, edit files, change git state, install tooling, commit,
+push, create a PR, or write review state. The wrapper records a valid decision.
+$(__dx_provider_prompt)"
+
+      dx_provider_write_session_state "$assessment_session_id" 2>/dev/null || true
+      assessment_exit=0
+      if [[ "$provider_agent" == "codex" ]]; then
+        DEX_SESSION_ID="$assessment_session_id" \
+        DEX_LOOP_ACTIVE=0 \
+        DEX_REVIEW_ASSESSMENT_ACTIVE=1 \
+        DEX_REVIEW_PASS_ACTIVE=0 \
+        DX_LIFECYCLE_PUSH_FORBIDDEN=1 \
+        DX_CODEX_READ_ONLY=1 \
+        DX_CODEX_OUTPUT_LAST_MESSAGE="$assessment_output_file" \
+        DEX_PHASE_HANDOFF="" \
+        DEX_DIR="$DEX_DIR" \
+        dx_run_with_timeout "$pass_timeout" bash "$assessment_codex_wrapper" exec -- "$assessment_message" || assessment_exit=$?
+      else
+        local assessment_args=() assessment_arg
+        for assessment_arg in "${DX_CLAUDE_FLAGS[@]}"; do
+          [[ "$assessment_arg" == "--chrome" ]] || assessment_args+=("$assessment_arg")
+        done
+        assessment_args+=("${assessment_mcp_flags[@]}" --no-chrome --disallowedTools "Bash,Edit,Write,NotebookEdit" --print --output-format text --no-session-persistence -n "$assessment_session_name")
+        DEX_SESSION_ID="$assessment_session_id" \
+        DEX_LOOP_ACTIVE=0 \
+        DEX_REVIEW_ASSESSMENT_ACTIVE=1 \
+        DEX_REVIEW_PASS_ACTIVE=0 \
+        DX_LIFECYCLE_PUSH_FORBIDDEN=1 \
+        DEX_PHASE_HANDOFF="" \
+        DEX_DIR="$DEX_DIR" \
+        dx_run_with_timeout "$pass_timeout" __dx_claude "${assessment_args[@]}" "$assessment_message" >| "$assessment_output_file" || assessment_exit=$?
+      fi
+      assessment_after=$(dx_review_scope_fingerprint "$PWD" 2>/dev/null || true)
+
+      if [[ -z "$assessment_after" || "$assessment_after" != "$assessment_before" ]]; then
+        dx_provider_cleanup_session_state "$assessment_session_id"
+        dx_cleanup_session "$assessment_session_id"
+        dx_provider_write_session_state "$session_id" 2>/dev/null || true
+        rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" 2>/dev/null
+        dx_error "The review risk assessor changed the checkout; review has been paused."
+        __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=assessment_mutated_scope
+        [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+        [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked assessment_mutated_scope "$session_id"
+        return 1
+      fi
+
+      if [[ $assessment_exit -eq 0 ]] && assessment_record=$(dx_review_parse_assessment_file "$assessment_output_file" 2>/dev/null); then
+        IFS=$'\t' read -r review_tier selection_reasons <<< "$assessment_record"
+        selection_source="$assessment_source"
+        local floor_record="" floor_tier="" floor_reason="" assessed_rank="" floor_rank=""
+        floor_record=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
+        IFS=$'\t' read -r floor_tier floor_reason <<< "$floor_record"
+        assessed_rank=$(dx_review_tier_rank "$review_tier" 2>/dev/null || true)
+        floor_rank=$(dx_review_tier_rank "$floor_tier" 2>/dev/null || true)
+        if [[ "$assessed_rank" =~ ^[0-9]+$ && "$floor_rank" =~ ^[0-9]+$ && "$floor_rank" -gt "$assessed_rank" ]]; then
+          review_tier="$floor_tier"
+          selection_reasons="$floor_reason"
+          selection_source="deterministic-floor"
+        fi
+        if [[ -n "$prior_tier" && $(dx_review_tier_rank "$prior_tier") -gt $(dx_review_tier_rank "$review_tier") ]]; then
+          review_tier="$prior_tier"
+          selection_reasons="$prior_reasons"
+          selection_source="$prior_source"
+          selection_required="$prior_required"
+        fi
+        if dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD"; then
+          assessment_ok=1
+        fi
+      fi
+      dx_provider_cleanup_session_state "$assessment_session_id"
+      dx_cleanup_session "$assessment_session_id"
+      current_review_child_session=""
+      dx_provider_write_session_state "$session_id" 2>/dev/null || true
+      [[ $assessment_ok -eq 1 ]] && break
+      [[ $assessment_attempt -eq 1 ]] && dx_warn "The risk assessor did not return a valid decision; retrying once in a fresh session."
+    done
+
+    if [[ $assessment_ok -ne 1 ]]; then
+      local assessment_failure="assessment_invalid"
+      if [[ $assessment_exit -eq 124 ]]; then
+        assessment_failure="assessment_timeout"
+      elif [[ $assessment_exit -ne 0 ]]; then
+        assessment_failure="assessment_provider_error"
+      fi
+      dx_error "The review risk assessor could not complete after two attempts (${assessment_failure})."
+      __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason="$assessment_failure" provider_exit_int="$assessment_exit"
+      [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+      [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked "$assessment_failure" "$session_id"
+      return 1
+    fi
+  fi
+
+  review_profile=$(dx_review_tier_profile "$review_tier") || {
+    dx_error "Could not resolve the review depth for tier '${review_tier}'."
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
+    return 1
+  }
+  local required_clean="" required_candidate="" tier_min_clean=""
+  required_clean=$(dx_review_tier_clean_passes "$review_tier") || return 1
+  for required_candidate in "$selection_required" "$prior_required" "$explicit_clean_gate"; do
+    [[ -n "$required_candidate" ]] || continue
+    if [[ $((10#$required_candidate)) -gt $((10#$required_clean)) ]]; then
+      required_clean="$required_candidate"
+    fi
+  done
+  __dx_review_validate_gates "$required_clean" || {
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed invalid_gate "$session_id"
+    return 1
+  }
+  required_clean=$((10#$required_clean))
+  tier_min_clean=$(dx_review_tier_min_clean_passes "$review_tier") || {
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
+    return 1
+  }
+  if [[ $required_clean -lt $((10#$tier_min_clean)) ]]; then
+    dx_error "Review tier '${review_tier}' requires at least ${tier_min_clean} consecutive clean passes; got ${required_clean}."
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed gate_below_tier_minimum "$session_id"
+    return 1
+  fi
+  if ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "$required_clean"; then
+    dx_error "Could not persist the review risk selection."
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed selection_write_failed "$session_id"
+    return 1
+  fi
+
+  __dx_review_emit_event "$review_run_id" "review.tier.selected" "info" "Review tier selected" "$review_phase" \
+    tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" source="$selection_source" reason_codes="$selection_reasons"
+
+  local review_promise
+  review_promise="$(__dx_review_phase_promise)"
+  rm -f "$(dx_review_receipt_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
+
+  local clean_passes=0 review_iteration=0 findings_fixed_total=0
+  local state_record="" state_tier="" state_required="" state_iteration="" state_clean="" state_fingerprint=""
+  if state_record=$(dx_review_read_state "$session_id" "$PWD" 2>/dev/null); then
+    IFS=$'\t' read -r state_tier state_required state_iteration state_clean state_fingerprint <<< "$state_record"
+    : "$state_fingerprint"
+    if [[ "$state_tier" == "$review_tier" && "$state_required" == "$required_clean" ]] && \
+       dx_review_ledger_valid "$session_id" "$state_clean" "$state_fingerprint"; then
+      review_iteration=$((10#$state_iteration))
+      clean_passes=$((10#$state_clean))
+      dx_info "Resuming review at ${clean_passes}/${required_clean} consecutive clean passes."
+    else
+      rm -f "$(dx_review_state_file "$session_id")" "$(dx_findings_file "$session_id")" 2>/dev/null
+      dx_review_ledger_reset "$session_id" 2>/dev/null || true
+    fi
+  else
+    rm -f "$(dx_review_state_file "$session_id")" "$(dx_findings_file "$session_id")" 2>/dev/null
+    dx_review_ledger_reset "$session_id" 2>/dev/null || true
+  fi
+
+  if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" "$PWD"; then
+    dx_error "Could not initialize review state."
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed state_write_failed "$session_id"
+    return 1
+  fi
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  DEX — dxreviewloop (${review_tier}, ${required_clean} clean passes)"
+  echo ""
+  echo "  Agent:  $(dx_agent_label "$provider_agent")"
+  echo "  Branch: ${branch}"
+  echo "  Scope:  ${scope_name} (${files_changed} files)"
+  echo "  Depth:  ${review_profile}"
+  echo "  Safety: no outer limit; structured pause gates enabled"
+  echo "  Input:  ${diff_cmd}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  local audit_file="$DEX_DIR/prompts/phase-audits/3-review.md" audit_prompt=""
   [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")
-
-  local session_name
-  session_name="dxreviewloop-$(dx_slugify "$branch")"
 
   local scope_source_detail scope_boundary
   if [[ "$scope_mode" == "codebase" ]]; then
@@ -3225,61 +3571,111 @@ ${scope_source_detail}
 - File names:  \`${name_cmd}\`
 
 Use this review context pack path: \`__REVIEW_CONTEXT_FILE__\`
+Use this machine-readable evidence path: \`__PASS_EVIDENCE_FILE__\`
 Use this per-pass completion path only after the review result signal and findings hash are written: \`__PASS_COMPLETE_FILE__\`
+The immutable scope fingerprint for this pass is: \`__SCOPE_FINGERPRINT__\`
 
 Review depth profile for this pass: \`__REVIEW_PROFILE__\`.
 - \`light\`: deterministic checks, core domain sweep, verifier pass, batch fix, targeted recheck.
 - \`standard\`: core sweep plus targeted domain sweeps for concrete changed surfaces, verifier pass.
 - \`thorough\`: all domain sweeps, verifier pass, batch fix, targeted recheck.
 
-Follow the audit prompt and \`prompts/review-wave.md\`: first materialize a non-empty compact context pack, run deterministic checks, harvest candidate issues according to the depth profile, verify and deduplicate findings, batch-fix verified issues, re-check, and write the review result signal file. Run in the current checkout; do not create or switch branches or worktrees.
+Follow the audit prompt and \`prompts/review-wave.md\`: first materialize a compact context pack with \`## Scope\`, \`## Deterministic Checks\`, \`## Review Coverage\`, and \`## Verification\` sections; run deterministic checks; harvest candidate issues according to the depth profile; verify and deduplicate findings; batch-fix verified issues; re-check; and write the result and evidence files. Run in the current checkout; do not create or switch branches or worktrees.
 
 Result semantics:
 - Write \`CLEAN\` only if this wave found zero verified findings and applied zero fixes.
 - Write \`FINDINGS_FIXED:N\` if this wave found and fixed N verified findings; this intentionally resets the outer clean-pass counter.
 - Do not stop after only reporting verified findings. Fix safe verified findings before writing the result.
-- Write \`FINDINGS:N\` only if verified findings remain after a concrete local fix attempt is blocked, unsafe, or requires user judgment. Write \`BLOCKED:reason\` if the wave cannot complete.
-- Write \`ESCALATE_THOROUGH:reason\` if the profile is too shallow for the observed risk. Examples: auth/security/data-loss risk, public contract changes, broad dependency impact, complex shell/hooks/CI behavior, unclear acceptance coverage, or the review wave cannot rule out serious issues at the current depth.
+- Write \`FINDINGS:N\` only if verified findings remain after a concrete local fix attempt is blocked, unsafe, or requires user judgment. Write \`BLOCKED:reason-code\` if the wave cannot complete.
+- Write \`CHURN:reason-code\` if the wave cannot make reliable progress.
+- Write \`ESCALATE:normal:reason-code\` or \`ESCALATE:complex:reason-code\` if the selected tier is too shallow. Escalation is upward-only. \`ESCALATE_THOROUGH:reason\` remains a legacy alias for complex.
 
-If no approved plan / acceptance criteria are explicitly available in this prompt for this scope, mark plan-dependent sections (acceptance criteria verification, evidence table) as N/A and proceed without them. Do not infer criteria from stale session prompt files, previous conversation turns, session titles, AGENTS instructions, or unrelated ticket context.
+If no approved plan or acceptance criteria are explicitly available in this prompt for this scope, mark plan-dependent sections as N/A and proceed. Do not infer criteria from stale session prompt files, previous conversation turns, session titles, AGENTS instructions, or unrelated ticket context.
 
 ${scope_boundary}
 
-After writing the review result signal and findings hash, touch the per-pass completion path above, output \`${review_promise}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
+This is an independent pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. Judge only the current checkout and the scope supplied above.
+
+After writing the review result signal, evidence JSON, and findings hash, touch the per-pass completion path above, output \`${review_promise}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
 $(__dx_provider_prompt)"
 
-  while [[ $review_iteration -lt $max_iter ]] && [[ $clean_passes -lt $required_clean ]]; do
+  local terminal_reason="" terminal_detail="" terminal_exit=1 parent_findings_file
+  parent_findings_file=$(dx_findings_file "$session_id")
+
+  while [[ $clean_passes -lt $required_clean ]]; do
+    if ! dx_review_selection_valid "$session_id" "$PWD"; then
+      terminal_reason="selection_scope_changed"
+      clean_passes=0
+      break
+    fi
+
     review_iteration=$((review_iteration + 1))
-
     echo ""
-    echo "  Iteration ${review_iteration}/${max_iter} (${clean_passes}/${required_clean} clean passes)"
+    echo "  Starting independent review wave (${clean_passes}/${required_clean} clean passes earned)"
     echo ""
 
-    # Per-pass session id: keeps each wave's Stop-hook state, result, and
-    # completion signal isolated from the wrapper's id (and from any lifecycle
-    # session sharing this branch/worktree).
-    local pass_session_id="${session_id}-pass-${review_iteration}-$$"
-    local review_context_file pass_complete_file pass_result_file
+    local pass_nonce="" pass_session_id="" pass_session_name=""
+    pass_nonce=$(__dx_review_nonce)
+    pass_session_id="${session_id}-pass-${pass_nonce}"
+    current_review_child_session="$pass_session_id"
+    pass_session_name="dxreview-wave-${pass_nonce}"
+    local review_context_file="" pass_evidence_file="" pass_complete_file="" pass_result_file="" pass_findings_file=""
     review_context_file=$(dx_review_context_file "$pass_session_id")
+    pass_evidence_file=$(dx_review_evidence_file "$pass_session_id")
     pass_complete_file=$(dx_complete_file "$pass_session_id")
     pass_result_file=$(dx_review_result_file "$pass_session_id")
+    pass_findings_file=$(dx_findings_file "$pass_session_id")
 
     mkdir -p "$DX_LOOP_DIR"
     dx_cleanup_session "$pass_session_id"
     touch "$(dx_active_file "$pass_session_id")"
     [[ $standalone_review_prompt -eq 1 ]] && __dx_write_state "$(dx_prompt_file "$pass_session_id")" "$standalone_prompt_content"
     dx_provider_write_session_state "$pass_session_id" 2>/dev/null || true
-
-    # Stop hook config: phase 3, MIN_AUDITS=1
     __dx_write_state "$(dx_loop_config_file "$pass_session_id")" "3:${review_promise}:${audit_file}:1"
 
     local message="${message_template//__REVIEW_PROFILE__/$review_profile}"
     message="${message//__REVIEW_CONTEXT_FILE__/$review_context_file}"
+    message="${message//__PASS_EVIDENCE_FILE__/$pass_evidence_file}"
     message="${message//__PASS_COMPLETE_FILE__/$pass_complete_file}"
+
+    local scope_before="" scope_after="" scope_changed="false" working_before="" working_after="" working_changed="false"
+    local descriptor_before="" descriptor_after="" branch_before="" branch_after="" head_before="" head_after=""
+    local pass_started="" pass_finished="" pass_duration="" clean_before="$clean_passes"
+    local pass_tier="$review_tier" pass_profile="$review_profile"
+    scope_before=$(dx_review_scope_fingerprint "$PWD") || {
+      terminal_reason="scope_fingerprint_error"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    }
+    message="${message//__SCOPE_FINGERPRINT__/$scope_before}"
+    working_before=$(dx_review_working_fingerprint "$PWD") || {
+      terminal_reason="scope_fingerprint_error"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    }
+    descriptor_before=$(dx_review_scope_descriptor "$PWD") || {
+      terminal_reason="scope_fingerprint_error"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    }
+    branch_before=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s\n' "DETACHED")
+    head_before=$(git rev-parse --verify HEAD 2>/dev/null || true)
+    pass_started=$(date +%s)
+    __dx_review_emit_event "$review_run_id" "review.pass.started" "info" "Review pass started" "$review_phase" \
+      tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" clean_before_int="$clean_passes" required_clean_int="$required_clean"
+
+    local parent_busy_file=""
+    if [[ $standalone_review_prompt -eq 0 && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
+      parent_busy_file=$(dx_phase_busy_file "$session_id" 3)
+      __dx_write_state "$parent_busy_file" "$(date +%s)"$'\t'"independent review wave"
+    fi
+
     local exit_code=0
     if [[ "$provider_agent" == "codex" ]]; then
-      local codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
-      local codex_message
+      local codex_wrapper="$DEX_DIR/bin/dxcodex.sh" codex_message=""
       codex_message="You are running this Dex review-wave pass inside Codex.
 
 Use Codex directly. Do not launch Claude and do not rely on Claude Stop hooks.
@@ -3298,10 +3694,16 @@ Write exactly one allowed result to:
 Write exactly one lowercase 16-character findings hash to:
   $(dx_findings_file "$pass_session_id")
 
+Write the versioned evidence JSON described in prompts/review-wave.md to:
+  ${pass_evidence_file}
+
+Set its scope_fingerprint field to:
+  ${scope_before}
+
 Then touch:
   ${pass_complete_file}
 
-Allowed results: CLEAN, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, ESCALATE_THOROUGH:reason.
+Allowed results: CLEAN, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, CHURN:reason, ESCALATE:normal:reason, ESCALATE:complex:reason, ESCALATE_THOROUGH:reason.
 
 ${message}"
 
@@ -3312,14 +3714,14 @@ ${message}"
       DEX_LOOP_PROMPT="$audit_prompt" \
       DEX_LOOP_PHASE="3" \
       DEX_REVIEW_PASS_ACTIVE=1 \
+      DEX_REVIEW_TIER="$review_tier" \
       DEX_REVIEW_PROFILE="$review_profile" \
+      DEX_REVIEW_SCOPE_FINGERPRINT="$scope_before" \
+      DX_LIFECYCLE_PUSH_FORBIDDEN=1 \
       DEX_DIR="$DEX_DIR" \
-      bash "$codex_wrapper" exec -- "$codex_message"
-      exit_code=$?
+      dx_run_with_timeout "$pass_timeout" bash "$codex_wrapper" exec -- "$codex_message" || exit_code=$?
     else
-      local pass_session_name="${session_name}-pass-${review_iteration}"
       local claude_args=("${DX_CLAUDE_FLAGS[@]}" "${review_mcp_flags[@]}" -n "$pass_session_name")
-
       DEX_SESSION_ID="$pass_session_id" \
       DEX_LOOP_ACTIVE=1 \
       DEX_PHASE_HANDOFF="" \
@@ -3327,121 +3729,299 @@ ${message}"
       DEX_LOOP_PROMPT="$audit_prompt" \
       DEX_LOOP_PHASE="3" \
       DEX_REVIEW_PASS_ACTIVE=1 \
+      DEX_REVIEW_TIER="$review_tier" \
       DEX_REVIEW_PROFILE="$review_profile" \
+      DEX_REVIEW_SCOPE_FINGERPRINT="$scope_before" \
+      DX_LIFECYCLE_PUSH_FORBIDDEN=1 \
       DEX_DIR="$DEX_DIR" \
-      __dx_claude "${claude_args[@]}" "$message"
-      exit_code=$?
+      dx_run_with_timeout "$pass_timeout" __dx_claude "${claude_args[@]}" "$message" || exit_code=$?
     fi
 
+    [[ -n "$parent_busy_file" ]] && rm -f "$parent_busy_file" "$(dx_phase_busy_notice_file "$session_id" 3)" 2>/dev/null
+    pass_finished=$(date +%s)
+    pass_duration=$((pass_finished - pass_started))
+
     local audit_max_iter=0
-    if [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$pass_session_id")" ]]; then
+    if [[ $exit_code -eq 0 && -f "$(dx_loop_file "$pass_session_id")" ]]; then
       audit_max_iter=1
     fi
 
-    local result="UNKNOWN"
-    [[ -f "$pass_result_file" ]] && result=$(cat "$pass_result_file" 2>/dev/null || echo "UNKNOWN")
-
-    # Claude's Stop hook enforces this contract before it releases a wave. The
-    # wrapper repeats the checks because direct Codex sessions do not run that
-    # hook, and a provider can otherwise exit successfully with partial state.
-    local review_contract_error=""
+    local result="" findings_hash="" evidence_hash="" context_valid=0 evidence_valid=0 completion_valid=0 review_contract_error=""
+    [[ -f "$pass_result_file" ]] && result=$(cat "$pass_result_file" 2>/dev/null || true)
+    findings_hash=$(dx_review_read_findings_hash "$pass_findings_file" 2>/dev/null || true)
+    evidence_hash=$(dx_review_evidence_hash "$pass_evidence_file" 2>/dev/null || true)
+    dx_review_context_valid "$review_context_file" && context_valid=1
+    dx_review_evidence_valid "$pass_evidence_file" "$result" "$pass_profile" "$scope_before" && evidence_valid=1
+    [[ -f "$pass_complete_file" ]] && completion_valid=1
     if dx_review_result_valid "$result"; then
-      if [[ "$provider_agent" == "codex" && ! -f "$pass_complete_file" ]]; then
+      if [[ $completion_valid -ne 1 ]]; then
         review_contract_error="completion receipt missing"
-      elif [[ "$provider_agent" != "codex" && ! -f "$pass_complete_file" && -f "$(dx_active_file "$pass_session_id")" ]]; then
-        review_contract_error="completion receipt missing"
-      elif ! dx_review_context_valid "$review_context_file"; then
+      elif [[ $context_valid -ne 1 ]]; then
         review_contract_error="context pack missing or empty"
-      elif ! dx_review_findings_hash_valid "$(dx_findings_file "$pass_session_id")"; then
+      elif [[ $evidence_valid -ne 1 ]]; then
+        review_contract_error="evidence manifest missing or invalid"
+      elif ! dx_review_findings_hash_valid "$pass_findings_file"; then
         review_contract_error="findings hash missing or invalid (expected exactly one lowercase 16-character hash)"
       fi
     fi
-
-    # Preserve the findings-hash history across passes for stuck-loop
-    # diagnostics before the pass-scoped file is cleaned up. Skip CLEAN waves:
-    # they hash the literal EMPTY inventory, so consecutive clean passes (the
-    # success gate) would read as recurring identical findings to the parent
-    # Stop hook's semantic stuck detection.
-    if [[ -z "$review_contract_error" && "$result" != "CLEAN" && -f "$(dx_findings_file "$pass_session_id")" ]]; then
-      cat "$(dx_findings_file "$pass_session_id")" >> "$(dx_findings_file "$session_id")" 2>/dev/null || true
-    fi
+    dx_provider_cleanup_session_state "$pass_session_id"
     dx_cleanup_session "$pass_session_id"
+    current_review_child_session=""
+    dx_provider_write_session_state "$session_id" 2>/dev/null || true
 
     if [[ $audit_max_iter -eq 1 ]]; then
-      echo ""
-      dx_info "dxreviewloop paused: max audit iterations reached without completion."
-      dx_provider_cleanup_session_state "$session_id"
-      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
-      return 1
+      terminal_reason="pass_audit_limit"
+      clean_passes=0
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
+        tier="$review_tier" iteration_int="$review_iteration" result_kind=pass_audit_limit duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=pass_audit_limit
+      break
     fi
 
     if [[ $exit_code -ne 0 ]]; then
-      echo ""
-      dx_info "dxreviewloop interrupted (exit code: $exit_code)."
-      dx_provider_cleanup_session_state "$session_id"
-      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
-      return $exit_code
+      if [[ $exit_code -eq 124 ]]; then
+        terminal_reason="pass_timeout"
+      else
+        terminal_reason="provider_error"
+      fi
+      terminal_exit=$exit_code
+      clean_passes=0
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
+        tier="$review_tier" iteration_int="$review_iteration" result_kind="$terminal_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason"
+      break
     fi
 
     if ! dx_review_result_valid "$result"; then
-      echo ""
-      dx_info "dxreviewloop received invalid review result from ${provider_agent}: ${result}"
-      dx_provider_cleanup_session_state "$session_id"
-      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
-      return 1
+      terminal_reason="invalid_result"
+      clean_passes=0
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
+        tier="$review_tier" iteration_int="$review_iteration" result_kind=invalid duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=invalid_result
+      break
     fi
 
     if [[ -n "$review_contract_error" ]]; then
-      echo ""
-      dx_info "dxreviewloop rejected the ${provider_agent} review pass: ${review_contract_error}."
-      dx_provider_cleanup_session_state "$session_id"
-      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
-      return 1
-    fi
-
-    if [[ "$result" == BLOCKED:* ]]; then
-      echo ""
-      dx_info "dxreviewloop blocked: ${result#BLOCKED:}"
-      dx_provider_cleanup_session_state "$session_id"
-      rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
-      return 1
-    fi
-
-    if [[ "$result" == "CLEAN" ]]; then
-      clean_passes=$((clean_passes + 1))
-      echo "  Iteration ${review_iteration}: CLEAN (${clean_passes}/${required_clean})"
-    elif [[ "$result" == ESCALATE_THOROUGH* ]]; then
+      case "$review_contract_error" in
+        "completion receipt missing") terminal_reason="completion_receipt_missing" ;;
+        "context pack missing or empty") terminal_reason="context_pack_missing" ;;
+        "evidence manifest missing or invalid") terminal_reason="evidence_manifest_invalid" ;;
+        *) terminal_reason="findings_hash_invalid" ;;
+      esac
+      dx_warn "Review pass returned incomplete state: ${review_contract_error}."
       clean_passes=0
-      if [[ "$review_profile" != "thorough" ]]; then
-        review_profile="thorough"
-        [[ -z "${DEX_REVIEW_CLEAN_PASSES:-}" ]] && required_clean="$(__dx_review_profile_clean_passes thorough)"
-        [[ -z "${DEX_REVIEW_MAX_ITERATIONS:-}" ]] && max_iter="$(__dx_review_profile_max_iterations thorough)"
-        if ! __dx_review_validate_gates "$max_iter" "$required_clean"; then
-          dx_provider_cleanup_session_state "$session_id"
-          rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
-          return 1
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
+        tier="$review_tier" iteration_int="$review_iteration" result_kind=incomplete_evidence duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason"
+      break
+    fi
+
+    scope_after=$(dx_review_scope_fingerprint "$PWD" 2>/dev/null || true)
+    working_after=$(dx_review_working_fingerprint "$PWD" 2>/dev/null || true)
+    descriptor_after=$(dx_review_scope_descriptor "$PWD" 2>/dev/null || true)
+    branch_after=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s\n' "DETACHED")
+    head_after=$(git rev-parse --verify HEAD 2>/dev/null || true)
+    if [[ -z "$scope_after" || -z "$working_after" || -z "$descriptor_after" || -z "$head_after" ]]; then
+      terminal_reason="scope_fingerprint_error"
+      clean_passes=0
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
+        tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=scope_fingerprint_error duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=scope_fingerprint_error
+      break
+    fi
+    [[ "$scope_after" != "$scope_before" ]] && scope_changed="true"
+    [[ "$working_after" != "$working_before" ]] && working_changed="true"
+    if [[ "$branch_after" != "$branch_before" || "$head_after" != "$head_before" ]]; then
+      terminal_reason="review_identity_changed"
+      clean_passes=0
+    elif [[ "$descriptor_after" != "$descriptor_before" ]]; then
+      terminal_reason="scope_boundary_changed"
+      clean_passes=0
+    fi
+
+    local result_kind="" result_count=0 event_severity="info"
+    result_kind=$(dx_review_result_kind "$result")
+    result_count=$(dx_review_result_count "$result")
+
+    local empty_findings_hash=""
+    empty_findings_hash=$(dx_review_empty_findings_hash)
+    if [[ "$result_kind" == "clean" && "$findings_hash" != "$empty_findings_hash" ]] || \
+       { [[ "$result_kind" == "findings" || "$result_kind" == "findings_fixed" ]] && [[ "$findings_hash" == "$empty_findings_hash" ]]; }; then
+      terminal_reason="inconsistent_findings_evidence"
+      clean_passes=0
+    fi
+
+    case "$terminal_reason:$result_kind" in
+      ?*:*) ;;
+      :clean)
+        if [[ "$scope_changed" == "true" ]]; then
+          terminal_reason="clean_mutated_scope"
+          clean_passes=0
+        elif ! dx_review_ledger_append "$session_id" "$review_iteration" "$pass_session_id" "$scope_after" "$evidence_hash"; then
+          terminal_reason="ledger_write_failed"
+          clean_passes=0
+        else
+          clean_passes=$((clean_passes + 1))
+          echo "  Wave result: CLEAN (${clean_passes}/${required_clean})"
         fi
-        echo "  Iteration ${review_iteration}: ${result} — escalating to thorough (${required_clean} clean, max ${max_iter} iterations)"
-      else
-        echo "  Iteration ${review_iteration}: ${result} — already thorough; resetting clean pass counter"
+        ;;
+      :findings_fixed)
+        clean_passes=0
+        dx_review_ledger_reset "$session_id" 2>/dev/null || true
+        if [[ "$working_changed" != "true" ]]; then
+          terminal_reason="claimed_fix_without_change"
+        else
+          findings_fixed_total=$((findings_fixed_total + result_count))
+          printf '%s\n' "$findings_hash" >> "$parent_findings_file"
+          local churn_kind=""
+          churn_kind=$(dx_review_findings_churn_kind "$parent_findings_file" 2>/dev/null || true)
+          if [[ -n "$churn_kind" ]]; then
+            terminal_reason="$churn_kind"
+          else
+            local post_fix_floor="" post_fix_tier="" post_fix_reason="" post_fix_rank="" current_tier_rank="" old_tier=""
+            post_fix_floor=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
+            IFS=$'\t' read -r post_fix_tier post_fix_reason <<< "$post_fix_floor"
+            post_fix_rank=$(dx_review_tier_rank "$post_fix_tier" 2>/dev/null || true)
+            current_tier_rank=$(dx_review_tier_rank "$review_tier" 2>/dev/null || true)
+            if [[ "$post_fix_rank" =~ ^[0-9]+$ && "$current_tier_rank" =~ ^[0-9]+$ && "$post_fix_rank" -gt "$current_tier_rank" ]]; then
+              old_tier="$review_tier"
+              review_tier="$post_fix_tier"
+              review_profile=$(dx_review_tier_profile "$review_tier")
+              tier_min_clean=$(dx_review_tier_min_clean_passes "$review_tier") || terminal_reason="tier_resolution_error"
+              if [[ -z "$terminal_reason" && $required_clean -lt $((10#$tier_min_clean)) ]]; then
+                required_clean=$((10#$tier_min_clean))
+              fi
+              selection_source="deterministic-floor"
+              selection_reasons="$post_fix_reason"
+              __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated after fixes" "$review_phase" \
+                from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration" reason_code="$post_fix_reason"
+            fi
+            if [[ -z "$terminal_reason" ]] && ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "$required_clean"; then
+              terminal_reason="selection_write_failed"
+            elif [[ -z "$terminal_reason" ]]; then
+              echo "  Wave result: ${result} — clean streak reset"
+            fi
+          fi
+        fi
+        ;;
+      :findings)
+        clean_passes=0
+        dx_review_ledger_reset "$session_id" 2>/dev/null || true
+        terminal_reason="unresolved_findings"
+        terminal_detail="${result#FINDINGS:}"
+        ;;
+      :blocked)
+        clean_passes=0
+        dx_review_ledger_reset "$session_id" 2>/dev/null || true
+        terminal_reason="blocked"
+        terminal_detail="${result#BLOCKED:}"
+        ;;
+      :churn)
+        clean_passes=0
+        dx_review_ledger_reset "$session_id" 2>/dev/null || true
+        terminal_reason="wave_reported_churn"
+        terminal_detail="${result#CHURN:}"
+        ;;
+      :escalate)
+        clean_passes=0
+        dx_review_ledger_reset "$session_id" 2>/dev/null || true
+        if [[ "$scope_changed" == "true" ]]; then
+          terminal_reason="escalation_mutated_scope"
+        else
+          local escalation_tier="" current_rank="" escalation_rank="" old_tier=""
+          escalation_tier=$(dx_review_escalation_tier "$result")
+          current_rank=$(dx_review_tier_rank "$review_tier")
+          escalation_rank=$(dx_review_tier_rank "$escalation_tier")
+          if [[ $escalation_rank -le $current_rank ]]; then
+            terminal_reason="invalid_escalation"
+          else
+            old_tier="$review_tier"
+            review_tier="$escalation_tier"
+            review_profile=$(dx_review_tier_profile "$review_tier")
+            tier_min_clean=$(dx_review_tier_min_clean_passes "$review_tier") || terminal_reason="tier_resolution_error"
+            if [[ -z "$terminal_reason" && $required_clean -lt $((10#$tier_min_clean)) ]]; then
+              required_clean=$((10#$tier_min_clean))
+            fi
+            selection_source="wave-escalation"
+            selection_reasons="wave-escalation"
+            if [[ -n "$terminal_reason" ]]; then
+              :
+            elif ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "$required_clean"; then
+              terminal_reason="selection_write_failed"
+            else
+              __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated" "$review_phase" \
+                from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration"
+              echo "  Wave result: escalation to ${review_tier} (${required_clean} clean passes required)"
+            fi
+          fi
+        fi
+        ;;
+    esac
+
+    if [[ -z "$terminal_reason" && $clean_passes -lt $required_clean ]]; then
+      if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" "$PWD"; then
+        terminal_reason="state_write_failed"
+        clean_passes=0
       fi
-    else
-      clean_passes=0
-      echo "  Iteration ${review_iteration}: ${result} — resetting clean pass counter"
     fi
+
+    [[ -n "$terminal_reason" ]] && event_severity="warn"
+    __dx_review_emit_event "$review_run_id" "review.pass.finished" "$event_severity" "Review pass finished" "$review_phase" \
+      tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$result_kind" findings_int="$result_count" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" scope_changed_bool="$scope_changed" working_changed_bool="$working_changed" provider_exit_int="$exit_code" terminal_reason="${terminal_reason:-none}"
+
+    [[ -n "$terminal_reason" ]] && break
   done
 
-  dx_provider_cleanup_session_state "$session_id"
-  rm -f "$(dx_findings_file "$session_id")" 2>/dev/null
+  local final_busy_file
+  current_review_child_session=""
+  trap - INT TERM HUP
+  final_busy_file=$(dx_phase_busy_file "$session_id" 3)
+  rm -f "$final_busy_file" "$(dx_phase_busy_notice_file "$session_id" 3)" 2>/dev/null
 
   echo ""
-  if [[ $clean_passes -ge $required_clean ]]; then
-    dx_done "Review complete: ${clean_passes} consecutive clean passes."
-    return 0
-  else
-    dx_info "Review reached max iterations (${max_iter}) with ${clean_passes}/${required_clean} clean passes."
-    return 1
+  if [[ $clean_passes -ge $required_clean && -z "$terminal_reason" ]]; then
+    if ! dx_review_write_receipt "$session_id" "$review_tier" "$required_clean" "$clean_passes" "$PWD"; then
+      terminal_reason="receipt_write_failed"
+      clean_passes=0
+    else
+      rm -f "$(dx_review_state_file "$session_id")" "$parent_findings_file" "$(dx_paused_file "$session_id")" 2>/dev/null
+      if ! dx_review_receipt_valid "$session_id" "$PWD"; then
+        rm -f "$(dx_review_receipt_file "$session_id")" 2>/dev/null
+        terminal_reason="receipt_validation_failed"
+        clean_passes=0
+      else
+        __dx_review_emit_event "$review_run_id" "review.completed" "info" "Review completed" "$review_phase" \
+          tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason=clean_gate_reached
+        dx_done "Review complete: ${clean_passes} consecutive clean passes."
+        echo "  Risk tier: ${review_tier} (${review_profile})"
+        echo "  Iterations: ${review_iteration}"
+        echo "  Findings fixed: ${findings_fixed_total}"
+        echo "  Receipt: $(dx_review_receipt_file "$session_id")"
+        echo "  Result: SUCCESS"
+        echo "  Exit reason: clean_gate_reached"
+        [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" completed clean_gate_reached "$session_id"
+        return 0
+      fi
+    fi
   fi
+
+  clean_passes=0
+  dx_review_ledger_reset "$session_id" 2>/dev/null || true
+  dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" "$PWD" 2>/dev/null || true
+  if [[ $standalone_review_prompt -eq 0 ]]; then
+    touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+  fi
+  __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" \
+    tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason="${terminal_reason:-unknown}"
+  if [[ "$terminal_reason" == "blocked" && -n "$terminal_detail" ]]; then
+    dx_error "dxreviewloop blocked: ${terminal_detail}"
+  fi
+  dx_info "Review paused: ${terminal_reason:-unknown}."
+  echo "  Risk tier: ${review_tier} (${review_profile})"
+  echo "  Iterations: ${review_iteration}"
+  echo "  Consecutive clean: 0/${required_clean}"
+  echo "  Findings fixed: ${findings_fixed_total}"
+  echo "  Result: PAUSED"
+  echo "  Exit reason: ${terminal_reason:-unknown}"
+  echo "  Intervention: $(__dx_review_pause_intervention "${terminal_reason:-unknown}" "$terminal_detail")"
+  [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked "${terminal_reason:-unknown}" "$session_id"
+  [[ $terminal_exit -eq 0 ]] && terminal_exit=1
+  return $terminal_exit
 }
 
 # ─── dxrm — remove worktrees ──────────────────────────────────────────────
@@ -3976,7 +4556,8 @@ dxclean() {
   # 4. Clean up old loop state files (older than 7 days).
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
-  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context busy busy-notice started ready watch-pause watch-lock" 7)
+  local old_files
+  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context review-selection review-evidence.json review-ledger review-receipt busy busy-notice started ready watch-pause watch-lock" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))

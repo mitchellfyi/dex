@@ -2,12 +2,18 @@
 
 One `/dxreviewloop` iteration reviews the caller-supplied scope. This is usually
 the full current change set; when no change set exists, it is the entire tracked
-codebase. The outer loop sets the required consecutive `CLEAN` waves from the
-resolved profile: `light`, `standard`, or `thorough`.
+codebase. The outer loop maps its selected risk tier to review depth and a
+consecutive `CLEAN` gate: `small` uses `light` and requires 3, `normal` uses
+`standard` and requires 6, and `complex` uses `thorough` and requires 9.
 
 ## Rules
 
 - Review the full caller-supplied scope every wave.
+- Treat this as an independent review. Use only the current code, supplied
+  scope, supplied acceptance criteria, and selected profile.
+- Do not read or infer prior review reports, prior findings, findings
+  fingerprints, clean-pass counts, telemetry, stale session prompts, previous
+  turns, or unrelated ticket context.
 - Build the context pack before broad exploration or domain-specific review.
 - Run deterministic checks before semantic review.
 - The review wave runs in one CLI session.
@@ -33,10 +39,20 @@ verify behavior; quote only the evidence lines in reports.
 - `CLEAN` - no verified findings and no fixes.
 - `FINDINGS_FIXED:N` - N verified findings fixed and rechecked.
 - `FINDINGS:N` - N verified findings remain.
-- `BLOCKED:reason` - required tooling, context, or user judgment is missing.
-- `ESCALATE_THOROUGH:reason` - the current profile is too shallow.
+- `BLOCKED:reason-code` - required tooling, context, authority, or user judgment
+  is missing.
+- `CHURN:reason-code` - the wave cannot make reliable progress without
+  repeating or oscillating.
+- `ESCALATE:normal:reason-code` or `ESCALATE:complex:reason-code` - the current
+  tier is too low for the observed risk.
 
-Only `CLEAN` increments the outer clean counter. Every other result resets it.
+Only `CLEAN` increments the outer clean counter. `FINDINGS_FIXED:N` and a valid
+upward escalation reset the counter and continue in a fresh session.
+`FINDINGS:N`, `BLOCKED:reason-code`, and `CHURN:reason-code` reset the counter
+and pause the outer loop. Use short lowercase reason codes; never put source
+text, file paths, prompts, credentials, or other free-form content in a result
+suffix. `ESCALATE_THOROUGH:reason` is accepted only as a legacy alias for
+`ESCALATE:complex:reason`.
 
 ## 1. Context Pack
 
@@ -51,14 +67,22 @@ mkdir -p "$(dirname "$REVIEW_CONTEXT_FILE")"
 ```
 
 First write a non-empty skeleton with supplied diff/stat/name commands, changed
-files, profile, and acceptance criteria or `N/A`; then verify it:
+files, risk tier, profile, and acceptance criteria or `N/A`; then verify it:
 
 ```bash
 test -s "$REVIEW_CONTEXT_FILE"
 sed -n '1,80p' "$REVIEW_CONTEXT_FILE"
 ```
 
-Add concise sections:
+Use these exact top-level sections so the wrapper can reject placeholder
+context packs:
+
+- `## Scope`
+- `## Deterministic Checks`
+- `## Review Coverage`
+- `## Verification`
+
+Within them, record:
 
 - file groups: production, tests, docs, generated, config, CI/devops, UI, API,
   data/schema, shell/hook, other
@@ -66,13 +90,18 @@ Add concise sections:
 - relevant project context and scoped active memory entries
 - discovered deterministic checks
 - dependency impact: exports, schemas/contracts, direct consumers, recent fixes
-- accepted debt/risk not to re-raise
+- accepted debt/risk supplied by the current caller for this invocation
 
 ## 2. Deterministic Checks
 
 Run available scoped checks first: format/check, lint, typecheck, targeted tests,
 generated-code freshness, shell syntax/`shellcheck`, and CI/config validation
 when relevant. Mechanical fixes make the wave non-`CLEAN`.
+
+`CLEAN` and `FINDINGS_FIXED:N` require all applicable deterministic checks to
+pass. If a required check fails, is only partially run, or cannot be run, use a
+non-clean result that accurately describes the blocker. Never pair `CLEAN`
+with failed, partial, or unavailable checks.
 
 ## 3. Repro Probe Plan
 
@@ -98,11 +127,12 @@ in the context pack.
 
 Collect all candidate issues before fixing anything.
 
-- `light`: core domain sweep across correctness, security, contracts, tests, and
-  architecture.
-- `standard`: core sweep plus targeted domain sweeps for concrete changed
-  surfaces.
-- `thorough`: all domain sweeps across the full caller-supplied scope.
+- `light` (`small`): core domain sweep across correctness, security, contracts,
+  tests, and architecture.
+- `standard` (`normal`): core sweep plus targeted domain sweeps for concrete
+  changed surfaces.
+- `thorough` (`complex`): all domain sweeps across the full caller-supplied
+  scope.
 
 The wave orchestrator covers all requested domains in the current CLI session.
 Construct breaking inputs, trace direct callers, and filter speculation.
@@ -122,10 +152,11 @@ Targeted domain sweeps in `standard`:
 - logs/metrics/traces/health/audit trails -> observability
 
 If the current session cannot review a required domain with enough confidence,
-write `ESCALATE_THOROUGH:reason` for depth gaps or `BLOCKED:reason` for missing
-local tooling/context.
+write `ESCALATE:normal:depth-gap` or `ESCALATE:complex:depth-gap` when a higher
+tier resolves the gap. Write `BLOCKED:missing-tooling` when required local
+tooling or context cannot be obtained. Never request a lower tier.
 
-Candidate output must be `NO_FINDINGS`, `N/A`, `ESCALATE_THOROUGH:reason`, or
+Candidate output must be `NO_FINDINGS`, `N/A`, a valid upward escalation, or
 JSON lines:
 
 ```json
@@ -139,10 +170,11 @@ them.
 ## 5. Verification
 
 Run an explicit verifier pass over the candidate inventory. Deduplicate by root
-cause, re-read cited code, check project context and accepted debt, reject
-weak/stale evidence, confirm change relevance, and normalize severity.
+cause, re-read cited code, check project context and caller-supplied accepted
+debt, reject weak/stale evidence, confirm change relevance, and normalize
+severity.
 
-Only verified findings may drive fixes. If `ESCALATE_THOROUGH` survives
+Only verified findings may drive fixes. If a valid upward escalation survives
 verification, write it instead of fixing.
 
 ## 6. Batch Fix
@@ -164,6 +196,10 @@ allowed only when verified findings remain after a concrete local fix attempt is
 blocked, unsafe, or requires user judgment; include the residual reason in the
 context pack and final report.
 
+If the fix/recheck cycle repeats the same failure or oscillates between two
+states, write `CHURN:fix-cycle` and stop. The outer loop pauses rather than
+counting the wave or retrying indefinitely.
+
 ## 7. Result Signal
 
 ```bash
@@ -171,14 +207,40 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 [[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
 echo "<result>" > "$(dx_review_result_file "$SESSION_ID")"
-FINDINGS_HASH=$(printf '%s\n' "<sorted verified finding descriptions or EMPTY>" | shasum -a 256 | cut -c1-16)
+FINDINGS_HASH=$(printf '%s\n' "<sorted verified finding descriptions or EMPTY>" | dx_review_hash_findings)
 echo "$FINDINGS_HASH" > "$(dx_findings_file "$SESSION_ID")"
 ```
 
+Write a versioned JSON evidence manifest to
+`$(dx_review_evidence_file "$SESSION_ID")` with exactly these fields:
+
+```json
+{
+  "version": 1,
+  "scope_fingerprint": "<64 lowercase hex characters supplied by the wrapper>",
+  "deterministic_checks": "pass",
+  "coverage": ["correctness", "security", "contracts", "tests", "architecture"],
+  "verifier": "pass",
+  "verified_findings": 0,
+  "fixes_applied": 0
+}
+```
+
+Allowed check states are `pass`, `partial`, `fail`, and `unavailable`; allowed
+verifier states are `pass`, `fail`, and `not-run`. Coverage values are
+`correctness`, `security`, `contracts`, `tests`, `architecture`, `frontend`,
+`devops`, `performance`, and `observability`. A thorough clean/fixed pass lists
+all nine domains; light and standard clean/fixed passes list the five core
+domains plus any targeted domains actually reviewed. Counts must agree with
+the result. The wrapper rejects mismatched or incomplete evidence.
+
 The wave is incomplete until the context pack contains substantive text and the
-findings file contains exactly one lowercase 16-character hash. Replace the
-findings file for this pass; the outer loop appends validated hashes to its own
-history when needed.
+required sections, the evidence manifest validates, and the findings file
+contains exactly one lowercase 16-character hash. Replace the findings file for
+this pass; the outer loop appends validated hashes to its own history when
+needed.
+The hash is transient orchestration state. Do not print it, put it in the
+context pack or telemetry, or expose it to a later review-wave agent.
 
 Final output:
 
@@ -186,11 +248,12 @@ Final output:
 ## Review Wave Result
 
 - Scope: full current change set | entire codebase
+- Risk tier: small | normal | complex
 - Profile: light | standard | thorough
 - Context pack: <path>
 - Review coverage: <profiles/domains/verifier pass run>
 - Deterministic checks: PASS | FAIL | PARTIAL
 - Verified findings: N
 - Fixes applied this wave: N
-- Result signal: CLEAN | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason | ESCALATE_THOROUGH:reason
+- Result signal: CLEAN | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason-code | CHURN:reason-code | ESCALATE:normal:reason-code | ESCALATE:complex:reason-code
 ```

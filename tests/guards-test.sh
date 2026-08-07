@@ -214,7 +214,38 @@ assert_secret_clean "Node environment access" \
 # shellcheck disable=SC2016
 assert_secret_clean "shell environment access" \
   'AUTH_TOKEN=${AUTH_TOKEN_FROM_ENV}'
+set +e
+GUARD_OUT="$(mkpayload 'changed content' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=file python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-review-assessment-file-edits'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (expected review assessment file-edit block)\n%s\n' "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
 
+set +e
+GUARD_OUT="$(mkbashpayload 'git status --short' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-review-assessment-bash'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (expected review assessment Bash block)\n%s\n' "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+set +e
+GUARD_OUT="$(mkbashpayload 'git status --short' | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 ]] && ! printf '%s' "$GUARD_OUT" | grep -q 'block-review-assessment-bash'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (review assessment Bash guard leaked outside assessor mode)\n%s\n' "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
 # Push-blocking guards (review-pass-no-push, lifecycle-phase-push) are covered
 # by tests/push-guards-test.sh, kept separate so that file contains no raw
 # Codex payload strings.

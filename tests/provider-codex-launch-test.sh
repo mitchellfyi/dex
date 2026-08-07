@@ -30,6 +30,8 @@ fi
 if [[ "${1:-}" == "exec" && "${2:-}" == "--help" ]]; then
   printf '%s\n' "--ignore-user-config"
   printf '%s\n' "--dangerously-bypass-approvals-and-sandbox"
+  printf '%s\n' "--sandbox <mode>"
+  printf '%s\n' "--ephemeral"
   exit 0
 fi
 if [[ "${1:-}" == "exec" && "${2:-}" == "review" && "${3:-}" == "--help" ]]; then
@@ -123,6 +125,43 @@ grep -q -- "cannot translate Claude launch option" "$TMP_DIR/unknown-option.out"
 
 : > "$DEX_TEST_CODEX_LAST_ARGS"
 : > "$DEX_TEST_CODEX_PROMPT"
+DX_CODEX_READ_ONLY=1 bash "$ROOT/bin/dxcodex.sh" exec -- "Assess the supplied context."
+grep -q -- "exec --ignore-user-config --sandbox read-only --ephemeral --" "$DEX_TEST_CODEX_LAST_ARGS"
+if grep -q -- "--dangerously-bypass-approvals-and-sandbox" "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "read-only Codex exec included dangerous bypass" >&2
+  exit 1
+fi
+if grep -q -- "DX_CODEX_READ_ONLY=" "$DEX_TEST_CODEX_ENV"; then
+  printf '%s\n' "internal read-only marker leaked into Codex environment" >&2
+  exit 1
+fi
+grep -q -- "Assess the supplied context." "$DEX_TEST_CODEX_PROMPT"
+
+set +e
+DX_CODEX_READ_ONLY=1 DX_PROVIDER_CODEX_WRAPPER=1 \
+  dx_provider_codex exec --ignore-user-config --sandbox read-only --ephemeral \
+    --dangerously-bypass-approvals-and-sandbox -- "unsafe" > "$TMP_DIR/read-only-bypass.out" 2>&1
+read_only_bypass_status=$?
+DX_CODEX_READ_ONLY=1 DX_PROVIDER_CODEX_WRAPPER=1 \
+  dx_provider_codex exec --ignore-user-config --sandbox read-only -- \
+    "missing ephemeral" > "$TMP_DIR/read-only-missing-flag.out" 2>&1
+read_only_missing_flag_status=$?
+set -e
+if [[ $read_only_bypass_status -ne 2 || $read_only_missing_flag_status -ne 2 ]]; then
+  printf '%s\n' "provider accepted an invalid read-only Codex launch" >&2
+  exit 1
+fi
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+DX_CODEX_READ_ONLY=1 dx_provider_codex_exec "Assess through the provider helper." "$DEX_TEST_REPO"
+grep -q -- "exec --ignore-user-config --sandbox read-only --ephemeral -C $DEX_TEST_REPO -" "$DEX_TEST_CODEX_LAST_ARGS"
+if grep -q -- "--dangerously-bypass-approvals-and-sandbox" "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "read-only provider helper included dangerous bypass" >&2
+  exit 1
+fi
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+: > "$DEX_TEST_CODEX_PROMPT"
 bash "$ROOT/bin/dxcodex.sh" review --uncommitted "Review the current changes."
 grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
 if grep -q -- "exec review --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"; then
@@ -133,8 +172,26 @@ grep -q -- "Review uncommitted changes in the current checkout." "$DEX_TEST_CODE
 grep -q -- "Review the current changes." "$DEX_TEST_CODEX_PROMPT"
 
 : > "$DEX_TEST_CODEX_LAST_ARGS"
+: > "$DEX_TEST_CODEX_PROMPT"
+DX_CODEX_READ_ONLY=1 bash "$ROOT/bin/dxcodex.sh" review --uncommitted "Assess the current changes."
+grep -q -- "exec --ignore-user-config --sandbox read-only --ephemeral --" "$DEX_TEST_CODEX_LAST_ARGS"
+if grep -q -- "--dangerously-bypass-approvals-and-sandbox" "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "read-only prompted review included dangerous bypass" >&2
+  exit 1
+fi
+grep -q -- "Assess the current changes." "$DEX_TEST_CODEX_PROMPT"
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
 bash "$ROOT/bin/dxcodex.sh" review --uncommitted
 grep -q -- "exec review --ignore-user-config --dangerously-bypass-approvals-and-sandbox --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+DX_CODEX_READ_ONLY=1 bash "$ROOT/bin/dxcodex.sh" review --uncommitted
+grep -q -- "exec --ignore-user-config --sandbox read-only --ephemeral review --uncommitted" "$DEX_TEST_CODEX_LAST_ARGS"
+if grep -q -- "--dangerously-bypass-approvals-and-sandbox" "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "read-only unprompted review included dangerous bypass" >&2
+  exit 1
+fi
 
 : > "$DEX_TEST_CODEX_ARGS"
 : > "$DEX_TEST_CODEX_LAST_ARGS"

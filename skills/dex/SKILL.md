@@ -46,19 +46,34 @@ The terminal `dx` lifecycle runs phases in the same Claude Code session. Each ph
 4. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
 5. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, the manual smoke test passed or explicitly N/A, and UI capture evidence present or explicitly N/A.
 6. **SCOPE**: implementation, testing, and UI capture evidence ONLY. Ticket setup belongs to Phase 0 — only re-run it here if Phase 0 left it incomplete. Do NOT commit or push implementation code (Phase 4 owns that), and do NOT update the PR description (Phase 5 owns that).
-7. Output `PHASE_2_COMPLETE` when all tasks are implemented and the evidence table shows all criteria MET.
+7. After the final in-scope change, select and persist the Phase 3 risk
+   tier for the current scope: `small`, `normal`, or `complex`, with a
+   deterministic set of reason codes. The choice maps to 3, 6, or 9
+   consecutive clean review waves.
+8. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
+   shows all criteria MET, and the review-risk selection matches the final
+   scope fingerprint.
 
 ### Phase 3: Review
 
-1. Invoke `/dxreviewloop` to run the adaptive adversarial review loop.
+1. Invoke `/dxreviewloop` to run the independent adversarial review loop using
+   the risk tier recorded by the Phase 2 implementation agent. A legacy or
+   resumed lifecycle with no valid current-scope selection may use the wrapper's
+   fresh read-only lifecycle assessor as a recovery path before the first wave.
 2. Each `/dxreviewloop` iteration runs one full review wave in a fresh CLI
    session: compact context pack, deterministic checks, issue harvest, verifier
    triage when needed, batch fixes, and targeted recheck.
 3. Waves that find and fix issues write `FINDINGS_FIXED:N`, reset the clean
    counter, and force the next iteration to re-review the full change set.
-4. The loop requires the resolved profile's consecutive `CLEAN` gate to advance.
-5. **SCOPE**: review and fix ONLY. Do NOT commit, push, or create PRs.
-6. Output `PHASE_3_COMPLETE` when review is clean.
+4. The loop requires 3 consecutive clean waves for `small`, 6 for `normal`, or
+   9 for `complex`. It has no routine outer iteration maximum.
+5. Prior review conclusions, findings, fingerprints, clean counts, and telemetry
+   are never passed to a later reviewer.
+6. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid results,
+   provider failures, and deterministic fingerprint churn pause the loop.
+7. **SCOPE**: review and fix ONLY. Do NOT commit, push, or create PRs.
+8. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
+   receipt proving the selected consecutive clean gate passed.
 
 ### Phase 4: Verify & Commit
 
@@ -114,6 +129,7 @@ As a fallback (e.g., when running `/dex` interactively without the wrapper), the
 | 1 | Plan ready | Present plan, wait for approval |
 | 2 | Ambiguous requirement | Present options, ask user to choose |
 | 2 | Scope change needed | Explain impact, ask approval |
+| 3 | Findings, blocker, churn, invalid result, or provider failure | Pause with the normalized reason and required intervention |
 | 2-5 | Normal phase completion | Stop once; the Stop hook injects the next phase automatically |
 | 5 | Draft PR created | Stop; Phase 6 takes over automatically |
 | 6 | CI secrets scan failure | Cancel all loops, alert immediately |
@@ -126,18 +142,27 @@ As a fallback (e.g., when running `/dex` interactively without the wrapper), the
 When the session is started by `dx`, a Stop hook prevents premature exit and injects a phase-specific audit prompt. Activation is signaled via an `.active` file in `~/.claude/.dex-loops/` (and optionally the `DEX_LOOP_ACTIVE=1` env var as a belt-and-suspenders mechanism). Each phase has its own quality criteria — the loop continues until the audit is satisfied. This enables quality-gated autonomous execution:
 
 - If `/dxverify` fails → fix and retry automatically
-- If `/dxreviewloop` finds issues → fix and re-review automatically
+- If a wave fixes safe in-scope issues (`FINDINGS_FIXED:N`) → reset the clean
+  streak and run a fresh full-scope wave
+- If review returns residual `FINDINGS:N`, `BLOCKED:*`, or `CHURN:*` → pause
+  for intervention
 - If CI fails → fix and re-push automatically
 - If reviews have comments → address and re-push automatically
 
-The loop continues until:
+The phase audit loop continues until:
 1. **Completion promise**: Output `DEX_TICKET_COMPLETE` when ALL of these are true:
    - All tasks completed
    - PR approved with all checks green
    - All review comments addressed
    - Ticket updated to Done (if tracker configured)
-2. **Max iterations reached** (default: 30) — safety net to prevent runaway costs
+2. **Max audit iterations reached** (default: 30) — safety net for the phase
+   Stop-hook audit, separate from `/dxreviewloop`'s clean-pass loop
 3. **User interrupts** — the user can always take over
+
+The outer `/dxreviewloop` has no routine maximum. It stops only after its clean
+gate succeeds or it reaches a blocker, residual finding, churn condition,
+provider failure, invalid result, user interruption, or an explicitly configured
+deprecated emergency ceiling.
 
 ### When to output the completion promise
 

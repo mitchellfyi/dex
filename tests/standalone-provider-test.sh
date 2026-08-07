@@ -184,9 +184,7 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route>
   TEST_PROVIDER="$provider" \
   TEST_AMBIENT_HOST="$ambient_host" \
   TEST_REVIEW_ROUTE_FILE="$route_file" \
-  DEX_REVIEW_PROFILE=light \
-  DEX_REVIEW_CLEAN_PASSES=1 \
-  DEX_REVIEW_MAX_ITERATIONS=1 \
+  DEX_REVIEW_TIER=small \
   zsh -fc '
     source "$DEX_DIR/dx.sh"
     cd "$TEST_REPO"
@@ -212,8 +210,25 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route>
 
     emit_contract() {
       print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
-      print -r -- "reviewed selected provider route" > "$(dx_review_context_file "$DEX_SESSION_ID")"
-      print -r -- 0123456789abcdef > "$(dx_findings_file "$DEX_SESSION_ID")"
+      {
+        print -r -- "## Scope"
+        print -r -- ""
+        print -r -- "Reviewed the complete caller-supplied scope for this provider-route pass."
+        print -r -- ""
+        print -r -- "## Deterministic Checks"
+        print -r -- ""
+        print -r -- "All applicable provider-route fixture checks passed."
+        print -r -- ""
+        print -r -- "## Review Coverage"
+        print -r -- ""
+        print -r -- "Correctness, security, contracts, tests, and architecture were covered."
+        print -r -- ""
+        print -r -- "## Verification"
+        print -r -- ""
+        print -r -- "The fixture verifier confirmed the selected provider route."
+      } > "$(dx_review_context_file "$DEX_SESSION_ID")"
+      print -r -- "{\"version\":1,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
+      dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
       touch "$(dx_complete_file "$DEX_SESSION_ID")"
     }
     __dx_claude() {
@@ -232,9 +247,10 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route>
     dxreviewloop
   ' > "$output_file" 2>&1
 
-  if [[ "$(cat "$route_file")" != "$expected_route" ]]; then
-    printf 'review provider %s used route %s, expected %s\n' \
-      "$provider" "$(cat "$route_file")" "$expected_route" >&2
+  if [[ "$(grep -Fxc "$expected_route" "$route_file")" -ne 3 ]] || \
+     grep -Fvxq "$expected_route" "$route_file"; then
+    printf 'review provider %s did not use route %s for all three waves\n' \
+      "$provider" "$expected_route" >&2
     cat "$output_file" >&2
     exit 1
   fi

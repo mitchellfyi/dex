@@ -45,6 +45,16 @@ __dx_codex_direct_phase_handoff "$session_id" 0 "$state_file" "$TMP_DIR/repo"
 [[ "$(cat "$state_file")" == "1" ]]
 [[ ! -f "$(dx_phase_ready_file "$session_id" 0)" ]]
 
+printf "2\n" > "$state_file"
+touch "$(dx_phase_ready_file "$session_id" 2)"
+if __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"; then
+  printf "%s\n" "phase 2 advanced without a review risk selection" >&2
+  exit 1
+fi
+dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$TMP_DIR/repo"
+__dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
+[[ "$(cat "$state_file")" == "3" ]]
+
 printf "3\n" > "$state_file"
 if __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"; then
   printf "%s\n" "phase 3 advanced without completion marker" >&2
@@ -52,6 +62,7 @@ if __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"
 fi
 
 touch "$(dx_complete_file "$session_id")"
+dx_review_write_receipt "$session_id" normal 6 6 "$TMP_DIR/repo"
 __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"
 [[ "$(cat "$state_file")" == "4" ]]
 '

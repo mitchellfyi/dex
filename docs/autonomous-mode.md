@@ -47,21 +47,53 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 |-------|-----------|-----------------|
 | 0. Setup | `0-setup.md` | Ticket read + assigned, branch renamed + pushed, ticket status In Progress, meta sidecar updated |
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
-| 2. Implement | `2-implement.md` | Task completion, TDD verification, UI capture evidence, evidence table |
-| 3. Review | `3-review-loop.md` | `/dxreviewloop` requiring the resolved profile's clean full-scope review waves |
+| 2. Implement | `2-implement.md` | Task completion, TDD verification, UI capture evidence, evidence table, Phase 3 risk selection |
+| 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves reaching the selected 3/6/9 clean gate |
 | 4. Verify & Commit | `4-verify.md` | All checks passing, commit quality, pushed to origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
 | 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor CI/reviews through `/dxwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
 
-The review audit (Phase 3) is adaptive. Phase 3 runs `/dxreviewloop`, which
-starts from `DEX_REVIEW_PROFILE=auto`: light for tiny/docs-only changes,
-standard for normal changes, and thorough for high-risk or broad changes. Each
-wave builds a compact context pack, runs deterministic checks, harvests issues in
-the fresh wave session, runs targeted domain sweeps when the profile requires
-them, verifies findings, batch-fixes verified issues, and
-rechecks affected surfaces. A wave that fixes anything writes `FINDINGS_FIXED:N`,
-which resets the outer clean counter. A wave can write `ESCALATE_THOROUGH:reason`
-when the profile is too shallow.
+The review audit (Phase 3) is risk-selected. After the final Phase 2 in-scope
+change, the implementation agent applies the ordered rubric and records the
+highest matching tier with bounded reason codes. `small` maps to a `light`
+profile and 3 consecutive clean waves, `normal` maps to `standard` and 6, and
+`complex` maps to `thorough` and 9. Trust boundaries; authentication,
+authorization, permissions, secrets, payments, or destructive behavior;
+persistence, schemas, or migrations; public API, CLI, configuration, or
+compatibility contracts; concurrency or process lifecycle; hooks, guards, CI,
+deployment, or packaging; broad cross-module behavior; and material uncertainty
+require `complex` review.
+
+Phase 2 selection is mandatory in the normal lifecycle flow. If a legacy or
+resumed lifecycle has no valid selection for its current scope, `dxreviewloop`
+uses a fresh read-only lifecycle assessor as a recovery path before the first
+wave. It records `lifecycle-assessor` as the selection source; the fallback is
+not a replacement for the Phase 2 requirement.
+
+A standalone `dxreviewloop` invocation without an explicit tier/profile
+override starts with a read-only assessor that chooses and records the tier
+before the first wave. The assessment is not a clean pass. Each review wave then
+runs in a fresh pass-scoped CLI session, builds a new compact context pack, runs
+deterministic checks before semantic review, verifies findings, batch-fixes safe
+findings, and rechecks affected surfaces. Later reviewers receive no prior
+reports, findings, fingerprints, clean counts, telemetry, or stale conversation
+context.
+
+Only a wave with zero verified findings and zero fixes writes `CLEAN`. A wave
+that fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
+fresh review of the updated scope. A valid upward escalation also resets the
+counter. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid
+results, provider failures, and deterministic findings-fingerprint churn pause
+the loop. The outer review loop has no iteration maximum.
+
+Only one review loop may own a checkout at a time. The wrapper acquires an
+atomic checkout-scoped lock before it reads or writes review state and reclaims
+the lock only when its recorded process is no longer running. Each review wave
+is wrapped by `DEX_REVIEW_PASS_TIMEOUT`; a timeout terminates the full provider
+process tree, clears the Phase 3 busy marker, records `pass_timeout`, and pauses
+with a concrete recovery step. State and receipts stay outside the repository
+and are accepted only while their independently hashed HEAD, staged, unstaged,
+and untracked scope still matches.
 
 For browser UI changes, Phase 2 also requires before/after UI capture evidence before handoff to review. `/dxuicapture` stores screenshots, videos, traces, browser logs, and a `visual-evidence.md` upload manifest under `~/.claude/.dex-artifacts/` and links them in the implementation evidence. See [ui-capture.md](ui-capture.md).
 
@@ -95,8 +127,8 @@ Each watcher cycle also has a runtime lock with a default budget of `2m 0s`. If 
 After Phase 1 approval, the Stop hook advances through normal Phase 2-5
 handoffs in the same Claude session without asking whether to continue. A phase pauses only when it hits an
 explicit escalation condition such as missing credentials/tooling, a destructive
-git decision, repeated failed fix attempts, max audit/review iterations, or
-feedback that needs human judgement.
+git decision, repeated failed fix attempts, a max phase-audit count, review
+findings/blockers/churn, or feedback that needs human judgement.
 
 Audit prompts are editable markdown files. Changes take effect on the next loop iteration without reloading shell functions.
 
@@ -130,7 +162,20 @@ The `.active` file is cleaned up automatically when the loop completes (`.comple
 
 **Ownership.** Dex session ids are derived from the repo + worktree/branch path, so two Claude sessions opened in the same checkout resolve the same id. To keep a loop from capturing bystander sessions, the Stop hook records the owning Claude session id (from the hook payload) in an `.owner` file next to `.active`. Env-activated sessions (`DEX_LOOP_ACTIVE=1` with an explicit `DEX_SESSION_ID`) own their loop and (re)claim it on every stop; file-activated sessions claim only when unclaimed and otherwise stay inert. Wrappers clear the claim before each launch so relaunch/`--resume` re-claims cleanly.
 
-**Review-wave passes.** Sessions launched with `DEX_REVIEW_PASS_ACTIVE=1` (dxreviewloop waves) run under a pass-scoped session id (`<session>-pass-<N>-<pid>`) and are hard-isolated in the Stop hook: the inline phase handoff never runs for them, so a completing wave can only take the plain loop-complete exit — it can never advance the lifecycle phase or be instructed to commit/push. A push-blocking guard additionally rejects `git push` and `gh pr` mutations in review passes and in active-loop Phases 1-3 (see `hooks/guards/review-pass-no-push.md` and `hooks/guards/lifecycle-phase-push.md`).
+**Review-wave passes.** Sessions launched with `DEX_REVIEW_PASS_ACTIVE=1`
+(`/dxreviewloop` waves) run under a pass-scoped session id
+(`<session>-pass-<N>-<pid>`) and are hard-isolated in the Stop hook. The inline
+phase handoff never runs for them, so a wave cannot advance the lifecycle or be
+instructed to commit and push. Each pass gets a new context-pack path and no
+prior review conclusions. A push-blocking guard rejects `git push` and `gh pr`
+mutations in review passes and in active-loop Phases 1-3 (see
+`hooks/guards/review-pass-no-push.md` and
+`hooks/guards/lifecycle-phase-push.md`).
+
+Risk assessors are stricter than review waves: they run without Bash or file
+editing, with inherited MCP servers disabled. Codex assessors use
+the read-only ephemeral sandbox. The wrapper also fingerprints the checkout
+before and after assessment and rejects any decision from a mutating assessor.
 
 To run without the audit loop:
 
@@ -205,7 +250,8 @@ Long-running sessions (especially Phase 2) can trigger conversation compaction w
 Phases hand off inside the same Claude session. The Stop hook updates the phase state/config files, injects the next phase instructions, and exits with the hook-blocking status so Claude keeps working without requiring `/exit` or a manual resume.
 
 Phase 3 still gets independent review coverage because `/dxreviewloop` spawns
-fresh full-scope review waves.
+fresh full-scope review waves and keeps prior review history outside each
+reviewer's context.
 
 ## Status Line
 
@@ -229,6 +275,12 @@ files such as run summaries. The existing TSV phase log still lives in
 `~/.claude/.dex-phases/<session_id>.log` for backward compatibility. See
 [events.md](events.md) for the schema and storage layout.
 
+Phase 3 records structured `review.*` events for tier selection, pass starts and
+finishes, escalation, completion, and pause. Payloads contain normalized tiers,
+reason codes, counts, durations, exit reasons, and churn categories. They do not
+contain findings, fingerprints, source paths, prompts, diffs, context packs, or
+free-form rationale.
+
 ## Headless Run Specs
 
 `dx run --spec <file>` and `dx run --spec-url <url>` start the same lifecycle
@@ -244,15 +296,23 @@ startup commands.
 
 ## Safety Controls
 
-### Max Iterations
+### Phase Audit Iterations
 
-Default: 30 iterations per phase. When the limit is reached, the Stop hook pauses the current phase and asks Claude to summarize the blocker. The `.complete` file is NOT written, so `dx --resume` continues from the same phase after intervention.
+The Stop-hook audit defaults to 30 iterations per phase. When that limit is
+reached, the hook pauses the current phase and asks the agent to summarize the
+blocker. The `.complete` file is not written, so `dx --resume` continues from
+the same phase after intervention.
 
 Override with:
 
 ```bash
 DEX_LOOP_MAX_ITERATIONS=50 dx 999
 ```
+
+This limit does not bound `/dxreviewloop`'s outer clean-pass loop. Review has no
+routine outer maximum; it runs until its selected clean gate succeeds or a
+finding, blocker, churn condition, invalid result, provider failure, user
+interrupt, or explicitly configured emergency ceiling pauses it.
 
 ### Escalation
 
@@ -262,7 +322,8 @@ Even in autonomous mode, Claude stops and escalates to the user for:
 - 3+ failed attempts at the same fix (loop is stuck)
 - Scope changes that affect other tickets
 - Missing credentials/tooling or destructive git operations that require explicit approval
-- Max audit/review iterations without a completion signal
+- Max phase-audit iterations without a completion signal
+- Residual review findings, review blockers, or review churn
 
 ### Manual Override
 
@@ -291,10 +352,24 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - `.watch-pause` — marker that scheduled Phase 6 PR watcher should no-op after a direct user prompt
 - `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dxwatchpr` cycle
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dxplan`; the Stop hook does not count plan audit iterations until the approval marker exists
-- `.phase-2.ready` — Phase 2 marker written by `dximplement` only after every acceptance criterion and verification gate is complete; the Stop hook ignores `PHASE_2_COMPLETE` without it
+- `.phase-2.ready` — Phase 2 marker written by `dximplement` only after every
+  acceptance criterion and verification gate is complete and a valid
+  current-scope review-risk selection exists; the Stop hook ignores
+  `PHASE_2_COMPLETE` without it
 - `.phase-3.busy` — Phase 3 marker written by `dxreviewloop` while a review wave is running; the Stop hook does not count audit iterations while waiting
 - `.phase-3.busy-notice` — timestamp used to throttle repeated Phase 3 busy-gate notices while the same review pass is still running
-- `.review-context` — compact context pack shared by one or more Phase 3 review waves
+- `.review-selection` — risk tier, selection source, bounded reason codes, and
+  scope fingerprint recorded before the first wave and rebound after review
+  fixes
+- `.review-state` — selected tier, required clean count, iteration, clean count,
+  and scope fingerprint used to resume an unchanged review
+- `.review-receipt` — successful clean-gate receipt tied to the reviewed scope;
+  Phase 3 does not advance on prose success alone
+- `.review-context` — pass-scoped compact context pack; each fresh reviewer gets
+  a new path and no previous review report
+- `.findings` — transient findings fingerprints used only by the outer wrapper
+  for repeated/alternating churn detection; fingerprints are not passed to
+  reviewers or telemetry
 - The session ID is derived from a stable repo key plus the worktree directory name (stable across branch renames and unique across repos)
 - Loop files are cleaned up on completion, by `dxrm`, and by `dxclean`
 - Old files (7+ days) are pruned by `dxclean`
@@ -334,10 +409,10 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_HEADLESS_RUN_SPEC_FILE` | unset | Normalized run spec path passed into the launched lifecycle |
 | `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | spec value | Whether Phase 1 must wait for interactive plan approval |
 | `DEX_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DEX_PHASE_2_MIN_AUDITS=5`) |
-| `DEX_REVIEW_PROFILE` | `auto` | Starting Phase 3 review depth: `auto`, `light`, `standard`, or `thorough` |
-| `DEX_REVIEW_CLEAN_PASSES` | profile-based | Exact consecutive `CLEAN` review waves required to advance Phase 3 |
-| `DEX_REVIEW_MAX_ITERATIONS` | profile-based | Exact max review iterations before Phase 3 pauses |
-| `DEX_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a Phase 3 review wave may stay in progress before the lifecycle pauses |
+| `DEX_REVIEW_TIER` | agent-selected | Canonical explicit risk-tier override: `small`, `normal`, or `complex`; takes precedence over the legacy profile alias |
+| `DEX_REVIEW_PROFILE` | unset | Legacy alias: `light`, `standard`, or `thorough` map to `small`, `normal`, or `complex` |
+| `DEX_REVIEW_CLEAN_PASSES` | tier-based | Optional higher consecutive `CLEAN` requirement; it cannot lower the selected tier's 3/6/9 floor |
+| `DEX_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables the timeout |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (0m 45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation |
@@ -357,7 +432,10 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 
 ### Loop doesn't stop
 
-The max iterations safety net (default 30) will always allow Claude to stop eventually. If you need to force-stop immediately, press Ctrl+C.
+The phase Stop-hook audit pauses after `DEX_LOOP_MAX_ITERATIONS` attempts. The
+outer review loop intentionally has no routine maximum and continues until its
+clean gate succeeds or a deterministic pause condition occurs. Press Ctrl+C to
+interrupt immediately; unchanged review state can resume later.
 
 ### Phase handoff does not continue
 
@@ -374,4 +452,8 @@ Check that `DEX_LOOP_ACTIVE=1` is set in the environment. The `dx` command sets 
 
 ### High API costs
 
-Reduce `DEX_LOOP_MAX_ITERATIONS` for smaller tickets. The default of 30 is tuned for medium-sized features. For simple bug fixes, 10-15 is sufficient.
+Choose the review tier that matches the actual risk: `small` requires 3 clean
+waves, `normal` 6, and `complex` 9. Do not lower the tier for security,
+contract, migration, concurrency, shell/hook, or broad dependency changes.
+`DEX_LOOP_MAX_ITERATIONS` controls phase-audit retries, not the review clean
+gate.

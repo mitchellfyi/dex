@@ -9,8 +9,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
+run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-waves]
   local name="$1" host="$2" scenario="$3" expected_rc="$4" expected_text="$5"
+  local expected_waves="${6:-1}"
   local output_file="$TMP_DIR/$name.out" call_file="$TMP_DIR/$name.calls" rc
 
   set +e
@@ -47,7 +48,7 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
       print -r -- "$DEX_SESSION_ID" >> "$TEST_REVIEW_CALL_FILE"
       case "$TEST_REVIEW_SCENARIO" in
         blocked)
-          print -r -- "BLOCKED:review tool unavailable" > "$(dx_review_result_file "$DEX_SESSION_ID")"
+          print -r -- "BLOCKED:review-tool-unavailable" > "$(dx_review_result_file "$DEX_SESSION_ID")"
           ;;
         *)
           print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
@@ -55,18 +56,47 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
       esac
 
       if [[ "$TEST_REVIEW_SCENARIO" != "missing-context" ]]; then
-        print -r -- "reviewed the full supplied scope" > "$(dx_review_context_file "$DEX_SESSION_ID")"
+        {
+          print -r -- "## Scope"
+          print -r -- ""
+          print -r -- "Reviewed the complete caller-supplied scope for this independent contract pass."
+          print -r -- ""
+          print -r -- "## Deterministic Checks"
+          print -r -- ""
+          print -r -- "All applicable fixture checks passed."
+          print -r -- ""
+          print -r -- "## Review Coverage"
+          print -r -- ""
+          print -r -- "Correctness, security, contracts, tests, and architecture were covered."
+          print -r -- ""
+          print -r -- "## Verification"
+          print -r -- ""
+          print -r -- "The fixture verifier passed."
+        } > "$(dx_review_context_file "$DEX_SESSION_ID")"
+      fi
+
+      if [[ "$TEST_REVIEW_SCENARIO" != "missing-evidence" ]]; then
+        local checks=pass verifier=pass findings=0
+        if [[ "$TEST_REVIEW_SCENARIO" == "blocked" ]]; then
+          checks=partial
+          verifier=not-run
+          findings=0
+        fi
+        print -r -- "{\"version\":1,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"deterministic_checks\":\"${checks}\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"${verifier}\",\"verified_findings\":${findings},\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
       fi
 
       case "$TEST_REVIEW_SCENARIO" in
         missing-hash)
           ;;
         multiple-hashes)
-          print -r -- 0123456789abcdef > "$(dx_findings_file "$DEX_SESSION_ID")"
+          dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
           print -r -- fedcba9876543210 >> "$(dx_findings_file "$DEX_SESSION_ID")"
           ;;
-        *)
+        blocked)
           print -r -- 0123456789abcdef > "$(dx_findings_file "$DEX_SESSION_ID")"
+          ;;
+        *)
+          dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
           ;;
       esac
 
@@ -75,7 +105,17 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
       fi
     }
 
-    __dx_claude() { emit_review_contract; }
+    __dx_claude() {
+      emit_review_contract
+      if [[ "$TEST_REVIEW_SCENARIO" == "valid-hook" ]]; then
+        print -r -- "{\"session_id\":\"${DEX_SESSION_ID}\"}" | \
+          command env DEX_DIR="$DEX_DIR" DEX_SESSION_ID="$DEX_SESSION_ID" \
+            DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 \
+            DEX_REVIEW_PROFILE="${DEX_REVIEW_PROFILE}" \
+            DEX_REVIEW_SCOPE_FINGERPRINT="${DEX_REVIEW_SCOPE_FINGERPRINT}" \
+            DEX_PHASE_HANDOFF="" bash "$DEX_DIR/hooks/phase-loop.sh" >/dev/null
+      fi
+    }
     bash() {
       if [[ "${1:-}" == "$DEX_DIR/bin/dxcodex.sh" ]]; then
         emit_review_contract
@@ -84,10 +124,7 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
       fi
     }
 
-    DEX_REVIEW_PROFILE=light \
-    DEX_REVIEW_CLEAN_PASSES=1 \
-    DEX_REVIEW_MAX_ITERATIONS=4 \
-    dxreviewloop
+    DEX_REVIEW_TIER=small dxreviewloop
   ' > "$output_file" 2>&1
   rc=$?
   set -e
@@ -102,8 +139,8 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
     cat "$output_file" >&2
     exit 1
   fi
-  if [[ "$(wc -l < "$call_file" | tr -d ' ')" -ne 1 ]]; then
-    printf 'FAIL: %s ran more than one review wave\n' "$name" >&2
+  if [[ "$(wc -l < "$call_file" | tr -d ' ')" -ne "$expected_waves" ]]; then
+    printf 'FAIL: %s ran an unexpected number of review waves\n' "$name" >&2
     cat "$call_file" >&2
     exit 1
   fi
@@ -112,10 +149,12 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text>
 run_case "claude-empty-context" "claude" "missing-context" 1 "context pack missing or empty"
 run_case "claude-multiple-hashes" "claude" "multiple-hashes" 1 "findings hash missing or invalid"
 run_case "claude-missing-completion" "claude" "missing-completion" 1 "completion receipt missing"
-run_case "claude-blocked" "claude" "blocked" 1 "dxreviewloop blocked: review tool unavailable"
+run_case "claude-missing-evidence" "claude" "missing-evidence" 1 "evidence manifest missing or invalid"
+run_case "claude-blocked" "claude" "blocked" 1 "dxreviewloop blocked: review-tool-unavailable"
+run_case "claude-valid-hook" "claude" "valid-hook" 0 "Review complete: 3 consecutive clean passes." 3
 run_case "codex-empty-context" "codex" "missing-context" 1 "context pack missing or empty"
 run_case "codex-missing-hash" "codex" "missing-hash" 1 "findings hash missing or invalid"
 run_case "codex-missing-completion" "codex" "missing-completion" 1 "completion receipt missing"
-run_case "codex-valid" "codex" "valid" 0 "Review complete: 1 consecutive clean passes."
+run_case "codex-valid" "codex" "valid" 0 "Review complete: 3 consecutive clean passes." 3
 
 printf 'review-loop-contract-test passed\n'

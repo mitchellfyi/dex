@@ -16,7 +16,7 @@ export DEX_DIR="$ROOT"
 # environment, so strip everything the handler reads before the cases run.
 unset DEX_REVIEW_PASS_ACTIVE DEX_LOOP_ACTIVE DEX_LOOP_PHASE DEX_LOOP_PROMISE \
   DEX_LOOP_PROMPT DEX_LOOP_MIN_AUDITS DEX_PHASE_HANDOFF DEX_SESSION_ID \
-  DX_LIFECYCLE_PUSH_FORBIDDEN DX_STATE_DIR DX_LOOP_DIR
+  DEX_REVIEW_ASSESSMENT_ACTIVE DX_LIFECYCLE_PUSH_FORBIDDEN DX_STATE_DIR DX_LOOP_DIR
 
 pass=0
 fail=0
@@ -67,6 +67,11 @@ set +e
 GUARD_OUT="$(mkbashpayload 'git status && git diff --stat' | env DEX_REVIEW_PASS_ACTIVE=1 DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"; GUARD_RC=$?
 set -e
 check_push_clean "review pass read-only git"
+
+set +e
+GUARD_OUT="$(mkbashpayload 'git push origin main' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DX_LIFECYCLE_PUSH_FORBIDDEN=1 DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"; GUARD_RC=$?
+set -e
+check_push_blocked "review risk assessor git push"
 
 set +e
 GUARD_OUT="$(mkbashpayload 'git push' | env DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_SESSION_ID=guards-test-nonexistent DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"; GUARD_RC=$?

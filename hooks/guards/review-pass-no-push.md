@@ -10,4 +10,4 @@ env_value: "1"
 
 BLOCKED: This session is a Dex review-wave pass. Review waves review and fix only — they never commit, push, or create/modify PRs.
 
-Write your review result signal (`CLEAN`, `FINDINGS_FIXED:N`, `FINDINGS:N`, `BLOCKED:reason`, or `ESCALATE_THOROUGH:reason`) and stop. Pushing and PR operations belong to Phase 4+ of the lifecycle that launched this wave.
+Write your review result signal (`CLEAN`, `FINDINGS_FIXED:N`, `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, `ESCALATE:normal:reason-code`, or `ESCALATE:complex:reason-code`) and stop. `ESCALATE_THOROUGH:reason-code` remains a compatibility alias. Pushing and PR operations belong to Phase 4+ of the lifecycle that launched this wave.

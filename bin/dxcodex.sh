@@ -40,11 +40,19 @@ esac
 unset DX_CODEX_MODEL
 dx_provider_apply
 
+dx_provider_codex_read_only_mode_valid || exit 2
 dx_provider_codex_ready_check
+
+codex_policy_args=(--ignore-user-config)
+if dx_provider_codex_read_only_enabled; then
+  codex_policy_args+=(--sandbox read-only --ephemeral)
+else
+  codex_policy_args+=(--dangerously-bypass-approvals-and-sandbox)
+fi
 
 case "$subcmd" in
   exec)
-    codex_args=(exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
+    codex_args=(exec "${codex_policy_args[@]}")
     case "${DX_CODEX_JSON:-0}" in
       1) codex_args+=(--json) ;;
       0|"") ;;
@@ -131,7 +139,7 @@ case "$subcmd" in
     fi
 
     if [[ -n "$prompt" ]]; then
-      codex_args=(exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
+      codex_args=(exec "${codex_policy_args[@]}")
       if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
         codex_args+=(-m "$DX_CODEX_MODEL")
       fi
@@ -149,7 +157,12 @@ ${review_scope}
 
 ${prompt}")
     else
-      codex_args=(exec review --ignore-user-config --dangerously-bypass-approvals-and-sandbox)
+      if dx_provider_codex_read_only_enabled; then
+        # --sandbox belongs to `codex exec`, not its `review` subcommand.
+        codex_args=(exec "${codex_policy_args[@]}" review)
+      else
+        codex_args=(exec review "${codex_policy_args[@]}")
+      fi
       if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
         codex_args+=(-m "$DX_CODEX_MODEL")
       fi

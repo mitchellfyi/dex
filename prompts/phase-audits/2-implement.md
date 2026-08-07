@@ -96,6 +96,48 @@ If the implementation does not affect browser UI, include:
 UI capture: N/A — no UI-affecting files changed
 ```
 
+## Step 7: Select Phase 3 Review Risk
+
+After the final in-scope change and verification run, use
+`prompts/review-risk-assessment.md` as the source of truth. Its first matching
+rule wins:
+
+- Choose `complex` when the scope touches a trust boundary; authentication,
+  authorization, permissions, secrets, payments, or destructive behavior;
+  persistence, schemas, or migrations; public API, CLI, configuration, or
+  compatibility contracts; concurrency or process lifecycle; hooks, guards,
+  CI, deployment, or packaging; broad cross-module behavior; or material
+  uncertainty about impact or verification.
+- Choose `small` only when every change is localized and mechanically direct,
+  impact is narrow, focused verification is available, and no `complex`
+  condition applies.
+- Choose `normal` for everything else.
+
+Use one or more comma-separated lowercase reason codes from this set:
+`localized-change`, `focused-verification`, `bounded-production-change`,
+`cross-module`, `public-contract`, `security-sensitive`, `data-migration`,
+`concurrency`, `shell-hooks-ci`, `deployment-packaging`, `broad-impact`, or
+`uncertain-coverage`. Do not persist free-form rationale, paths, source text,
+prompts, or secrets.
+
+Follow the tier-specific reason combination rules in the assessment prompt. An
+allowed code paired with a contradictory tier is invalid.
+
+In a terminal `dx` lifecycle, record the selection for the current scope:
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+REVIEW_TIER="<small|normal|complex>"
+REVIEW_REASON_CODES="<comma-separated-reason-codes>"
+dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIEW_REASON_CODES" "$PWD"
+```
+
+The selection maps to 3, 6, or 9 consecutive clean waves in Phase 3. It is not
+a review pass and does not count toward the clean gate. Because the selection is
+tied to the current scope fingerprint, rewrite it after any later Phase 2
+in-scope change.
+
 ## Completion Criteria
 
 ALL of these must be true before you stop:
@@ -107,8 +149,12 @@ ALL of these must be true before you stop:
 - No background processes or long-running verification commands started during Phase 2 are still in flight
 - Any needed `.dex/` updates are staged
 - UI capture evidence is linked for UI-affecting changes, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A
+- A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
+  recorded for the final current scope
 
-Before writing the completion signal in a terminal `dx` lifecycle, write the Phase 2 ready marker. Do this only after every completion criterion above is true:
+Before writing the completion signal in a terminal `dx` lifecycle, write the
+Phase 2 ready marker. Do this only after every completion criterion above is
+true, including the current-scope review-risk selection:
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1

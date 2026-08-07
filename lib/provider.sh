@@ -577,6 +577,20 @@ dx_agent_host_label() {
   esac
 }
 
+dx_provider_codex_read_only_mode_valid() {
+  case "${DX_CODEX_READ_ONLY:-0}" in
+    0|1) return 0 ;;
+    *)
+      dx_error "DX_CODEX_READ_ONLY must be 0 or 1."
+      return 1
+      ;;
+  esac
+}
+
+dx_provider_codex_read_only_enabled() {
+  [[ "${DX_CODEX_READ_ONLY:-0}" == "1" ]]
+}
+
 dx_provider_codex_exec() {
   local prompt="$1" cwd="${2:-}"
   local codex_args
@@ -584,7 +598,13 @@ dx_provider_codex_exec() {
   [[ -n "$cwd" ]] || cwd=$(pwd)
   dx_provider_codex_ready_check || return 1
 
-  codex_args=(exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox -C "$cwd")
+  codex_args=(exec --ignore-user-config)
+  if dx_provider_codex_read_only_enabled; then
+    codex_args+=(--sandbox read-only --ephemeral)
+  else
+    codex_args+=(--dangerously-bypass-approvals-and-sandbox)
+  fi
+  codex_args+=(-C "$cwd")
   if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
     codex_args+=(-m "$DX_CODEX_MODEL")
   fi
@@ -946,7 +966,7 @@ dx_provider_codex() {
   while IFS= read -r _env_name; do
     [[ -n "$_env_name" ]] && env_args+=(-u "$_env_name")
   done < <(__dx_provider_env_unset_args)
-  env_args+=(-u DX_PROVIDER_CODEX_WRAPPER)
+  env_args+=(-u DX_PROVIDER_CODEX_WRAPPER -u DX_CODEX_READ_ONLY)
   env "${env_args[@]}" codex "$@"
 }
 
@@ -1017,6 +1037,7 @@ dx_provider_codex_diagnostic_args() {
 
 dx_provider_codex_wrapper_args() {
   local subcmd="${1:-}"
+  dx_provider_codex_read_only_mode_valid || return 1
   [[ "$subcmd" == "exec" ]] || {
     dx_error "Dex Codex wrapper may only delegate through 'codex exec'."
     return 1
@@ -1024,18 +1045,60 @@ dx_provider_codex_wrapper_args() {
 
   local saw_ignore_user_config=0
   local saw_dangerous_bypass=0
+  local saw_ephemeral=0
+  local saw_read_only_sandbox=0
+  local saw_other_sandbox=0
+  local sandbox_value=""
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --)
+        break
+        ;;
       --ignore-user-config)
         saw_ignore_user_config=1
         ;;
       --dangerously-bypass-approvals-and-sandbox|--yolo)
         saw_dangerous_bypass=1
         ;;
+      --ephemeral)
+        saw_ephemeral=1
+        ;;
+      --sandbox|-s)
+        shift
+        if [[ $# -eq 0 ]]; then
+          saw_other_sandbox=1
+          break
+        fi
+        sandbox_value="$1"
+        if [[ "$sandbox_value" == "read-only" ]]; then
+          saw_read_only_sandbox=1
+        else
+          saw_other_sandbox=1
+        fi
+        ;;
+      --sandbox=*)
+        sandbox_value="${1#--sandbox=}"
+        if [[ "$sandbox_value" == "read-only" ]]; then
+          saw_read_only_sandbox=1
+        else
+          saw_other_sandbox=1
+        fi
+        ;;
+      --full-auto)
+        saw_other_sandbox=1
+        ;;
     esac
     shift
   done
+
+  if dx_provider_codex_read_only_enabled; then
+    if [[ $saw_ignore_user_config -ne 1 || $saw_read_only_sandbox -ne 1 || $saw_other_sandbox -eq 1 || $saw_ephemeral -ne 1 || $saw_dangerous_bypass -eq 1 ]]; then
+      dx_error "Read-only Dex Codex delegation requires --ignore-user-config, --sandbox read-only, and --ephemeral without dangerous bypass flags."
+      return 1
+    fi
+    return 0
+  fi
 
   if [[ $saw_ignore_user_config -ne 1 || $saw_dangerous_bypass -ne 1 ]]; then
     dx_error "Dex Codex delegation requires --ignore-user-config and --dangerously-bypass-approvals-and-sandbox."
@@ -1074,9 +1137,27 @@ dx_provider_claude_required_flags_check() {
 
 dx_provider_codex_required_flags_check() {
   local codex_exec_help codex_review_help
+  dx_provider_codex_read_only_mode_valid || return 1
   codex_exec_help=$(dx_provider_codex exec --help 2>&1 || true)
-  codex_review_help=$(dx_provider_codex exec review --help 2>&1 || true)
   local failed=0
+
+  if dx_provider_codex_read_only_enabled; then
+    if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--ignore-user-config"; then
+      dx_error "Codex CLI does not support --ignore-user-config; upgrade Codex before using read-only delegation."
+      failed=1
+    fi
+    if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--sandbox"; then
+      dx_error "Codex CLI does not support --sandbox; upgrade Codex before using read-only delegation."
+      failed=1
+    fi
+    if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--ephemeral"; then
+      dx_error "Codex CLI does not support --ephemeral; upgrade Codex before using read-only delegation."
+      failed=1
+    fi
+    return $failed
+  fi
+
+  codex_review_help=$(dx_provider_codex exec review --help 2>&1 || true)
   if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--ignore-user-config" || ! printf '%s\n' "$codex_review_help" | grep -q -- "--ignore-user-config"; then
     dx_error "Codex CLI does not support --ignore-user-config; upgrade Codex before using codex-subscription."
     failed=1
@@ -1093,6 +1174,7 @@ dx_provider_codex_ignore_user_config_check() {
 }
 
 dx_provider_codex_ready_check() {
+  dx_provider_codex_read_only_mode_valid || return 1
   if ! command -v codex >/dev/null 2>&1; then
     dx_error "Codex CLI not found; the codex-subscription profile cannot launch work."
     dx_info "Install Codex, sign in with ChatGPT, then run 'dx provider doctor'."

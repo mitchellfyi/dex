@@ -44,22 +44,25 @@ Future agent behavior:
 
 Domain: review-quality
 Status: active
-Scope: prompts/review-wave.md, prompts/phase-audits/3-review-loop.md, prompts/phase-audits/3-review.md, skills/dxreviewloop/SKILL.md, skills/dxreview/SKILL.md, agents/review-*.md, agents/review-verifier.md
+Scope: lib/review.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review-loop.md, prompts/phase-audits/3-review.md, skills/dximplement/SKILL.md, skills/dxreviewloop/SKILL.md, skills/dxreview/SKILL.md, agents/review-*.md, agents/review-verifier.md
 Applies to phases: review (Phase 3), prompt-loop
-Applies to paths: prompts/review-wave.md, prompts/phase-audits/3-review*.md, skills/dxreview*/SKILL.md, agents/review-*.md, agents/review-verifier.md
-Last verified: 2026-05-20
-Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the adaptive dxreviewloop gate/profile logic changes
+Applies to paths: lib/review.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review*.md, skills/dximplement/SKILL.md, skills/dxreview*/SKILL.md, agents/review-*.md, agents/review-verifier.md
+Last verified: 2026-08-07
+Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the dxreviewloop tier/gate/churn policy changes
 
 Lesson:
-Dex review waves preserve four interlocking rules. First, the wave's first
-substantive action builds or refreshes a compact context pack in Dex global
-state via `dx_review_context_file`, never inside the repo. Second,
-deterministic checks run before semantic review. Third, acceptance criteria come
-only from the current caller's plan or ticket; stale prompts, previous
-conversation turns, AGENTS instructions, and unrelated tickets are not sources
-of acceptance criteria. Fourth, only a wave that found zero verified findings
-and applied zero fixes writes `CLEAN`; any fix forces `FINDINGS_FIXED:N`, which
-resets the outer clean-pass counter.
+Dex review waves preserve six interlocking rules. First, each wave gets a fresh
+agent session and a new compact context pack in global Dex state via
+`dx_review_context_file`, never inside the repo. Second, deterministic checks
+run before semantic review. Third, acceptance criteria come only from the
+current caller's plan or ticket; stale prompts, previous conversation turns,
+AGENTS instructions, and unrelated tickets are not sources of acceptance
+criteria. Fourth, later reviewers never receive prior reports, findings,
+fingerprints, clean counts, or telemetry. Fifth, only a wave that found zero
+verified findings and applied zero fixes writes `CLEAN`; any fix forces
+`FINDINGS_FIXED:N` and resets the outer clean-pass counter. Sixth, the Phase 2
+implementation agent selects `small`, `normal`, or `complex` review risk for the
+final scope, requiring 3, 6, or 9 consecutive clean waves.
 
 Evidence:
 - Commit `4742c3f feat(review): add specialist review wave loop` body lists
@@ -68,12 +71,18 @@ Evidence:
 - `prompts/review-wave.md` Step 1 requires context pack first; Step 2 requires
   deterministic checks before semantic review; Step 7 defines `CLEAN` result
   semantics.
-- `prompts/phase-audits/3-review-loop.md` requires the resolved profile's
-  consecutive `CLEAN` reports and excludes `FINDINGS_FIXED:N`, `FINDINGS:N`,
-  `BLOCKED:reason`, and `ESCALATE_THOROUGH:reason` from incrementing the
-  counter.
+- `lib/review.sh` owns tier normalization, 3/6/9 gates, scope-bound selection,
+  resumable state, success receipts, result validation, deterministic churn
+  detection, and typed telemetry payload construction.
+- `prompts/review-risk-assessment.md` owns the ordered deterministic tier rubric;
+  `prompts/phase-audits/2-implement.md` requires the implementation agent to
+  apply it and persist a selection after the final in-scope change.
+- `prompts/phase-audits/3-review-loop.md` requires the selected consecutive
+  `CLEAN` gate and a current-scope receipt. It pauses on `FINDINGS:N`,
+  `BLOCKED:reason-code`, `CHURN:reason-code`, invalid results, provider failure,
+  or repeated/alternating findings fingerprints.
 - `.dex/review-rules.md` § `prompts/phase-audits/` records that the outer
-  review loop owns the adaptive clean-pass gate.
+  review loop owns the selected clean-pass gate.
 - Commit `b577f92 fix(dxreviewloop): review full current change set` confirms
   the review wave must cover the full diff, not a subset.
 - Commit `d868c38 fix: pause phase three while reviews run` confirms review
@@ -86,9 +95,29 @@ Future agent behavior:
   `CLEAN` vs `FINDINGS_FIXED:N` distinction.
 - When editing review specialist prompts, do not infer acceptance criteria from
   session state.
+- Never pass prior review conclusions, reports, findings, fingerprints, clean
+  counts, or telemetry into a fresh wave.
 - When a wave applies any fix, write `FINDINGS_FIXED:N`; never write `CLEAN`
   after applying a fix.
+- Select the highest matching risk tier after the final Phase 2 in-scope change:
+  `small` requires 3 clean waves, `normal` 6, and `complex` 9. Risk may escalate
+  but never downgrade.
+- Keep Phase 2 selection mandatory in the normal lifecycle. A legacy or resumed
+  lifecycle with no valid current-scope selection may recover through a fresh
+  read-only lifecycle assessor before the first wave.
+- When a review wave changes the scope, retain or raise the tier, bind the
+  selection to the updated fingerprint, reset clean progress, and review the
+  full updated scope in a fresh session.
+- Keep review state checkout-scoped and single-owner. A second loop must stop
+  before it can change selection, progress, receipts, or Phase 3 busy markers.
+- Enforce pass timeouts around the provider process tree, then clear busy state
+  and record a normalized pause. A timeout setting that is only displayed or
+  polled by the Stop hook is not enough.
+- Do not add a routine outer review maximum. Residual findings, blockers, churn,
+  invalid results, and provider failures pause the loop. The deprecated
+  `DEX_REVIEW_MAX_ITERATIONS` is only an explicit emergency ceiling.
 - When invoking review outside the lifecycle, still build the context pack
-  before broad semantic exploration.
+  before broad semantic exploration. Without an explicit tier/profile override,
+  run the read-only risk assessor before the first wave.
 - Treat `FINDINGS_FIXED:N` as a valid single-wave completion result; the outer
-  `/dxreviewloop` owns the adaptive clean-pass gate.
+  `/dxreviewloop` owns the selected clean-pass gate and current-scope receipt.
