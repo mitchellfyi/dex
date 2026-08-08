@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .claude/scheduled_tasks.lock
+research/review-loop/results/
 
 # Vendor skills installed via Claude plugins should never be committed.
 # Dex only ships its own dx*/dex skills. See AGENTS.md § Vendor skills.

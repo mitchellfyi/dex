@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "normal-control",
+  "tier": "normal",
+  "expected_tier": "normal",
+  "expected_floor": "small",
+  "control": true,
+  "description": "A correct two-module contract refactor with unchanged public behavior.",
+  "visible_test_command": ["node", "--test", "tests/visible.test.js"],
+  "hidden_oracle_command": ["python3", "{scenario_dir}/hidden/oracle.py", "{workspace}"],
+  "candidate_overlay": "candidate",
+  "expected_candidate_oracle": "pass"
+}

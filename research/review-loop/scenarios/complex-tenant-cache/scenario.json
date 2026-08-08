@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "complex-tenant-cache",
+  "tier": "complex",
+  "expected_tier": "complex",
+  "expected_floor": "complex",
+  "control": false,
+  "description": "An authorization cache omits tenant and user identity from its key.",
+  "visible_test_command": ["node", "--test", "tests/visible.test.js"],
+  "hidden_oracle_command": ["python3", "{scenario_dir}/hidden/oracle.py", "{workspace}"],
+  "candidate_overlay": "candidate",
+  "canonical_fix_overlay": "canonical_fix",
+  "expected_candidate_oracle": "fail"
+}

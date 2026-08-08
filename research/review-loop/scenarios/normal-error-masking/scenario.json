@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "normal-error-masking",
+  "tier": "normal",
+  "expected_tier": "normal",
+  "expected_floor": "small",
+  "control": false,
+  "description": "A service catches and masks a dependency failure introduced by a client refactor.",
+  "visible_test_command": ["node", "--test", "tests/visible.test.js"],
+  "hidden_oracle_command": ["python3", "{scenario_dir}/hidden/oracle.py", "{workspace}"],
+  "candidate_overlay": "candidate",
+  "canonical_fix_overlay": "canonical_fix",
+  "expected_candidate_oracle": "fail"
+}

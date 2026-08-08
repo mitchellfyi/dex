@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "small-control",
+  "tier": "small",
+  "expected_tier": "small",
+  "expected_floor": "small",
+  "control": true,
+  "description": "A localized Unicode normalization change with no seeded defect.",
+  "visible_test_command": ["node", "--test", "tests/visible.test.js"],
+  "hidden_oracle_command": ["python3", "{scenario_dir}/hidden/oracle.py", "{workspace}"],
+  "candidate_overlay": "candidate",
+  "expected_candidate_oracle": "pass"
+}
