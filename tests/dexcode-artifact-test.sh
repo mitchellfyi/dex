@@ -81,6 +81,8 @@ root = Path(sys.argv[1])
 requests_file = root / "requests.jsonl"
 mode_file = root / "mode"
 counter_file = root / "counter"
+registrations = {}
+completed_artifacts = set()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -97,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             "path": self.path,
             "authorization": self.headers.get("Authorization", ""),
             "content_type": self.headers.get("Content-Type", ""),
+            "idempotency_key": self.headers.get("Idempotency-Key", ""),
             "body": body,
         }
         with requests_file.open("a", encoding="utf-8") as fh:
@@ -118,23 +121,46 @@ class Handler(BaseHTTPRequestHandler):
             if mode == "registration-failure":
                 self._json(503, {"error": "unavailable"})
                 return
-            count = int(counter_file.read_text(encoding="utf-8").strip()) + 1
-            counter_file.write_text(str(count), encoding="utf-8")
-            artifact_id = ".." if mode == "invalid-artifact-id" else f"remote-art-{count}"
+            body = json.loads(raw.decode("utf-8"))
+            idempotency_key = self.headers.get("Idempotency-Key", "")
+            registration = registrations.get(idempotency_key) if idempotency_key else None
+            if registration is not None and registration["body"] != body:
+                self._json(409, {"error": "idempotency_key_reused"})
+                return
+            if registration is None:
+                count = int(counter_file.read_text(encoding="utf-8").strip()) + 1
+                counter_file.write_text(str(count), encoding="utf-8")
+                artifact_id = ".." if mode == "invalid-artifact-id" else f"remote-art-{count}"
+                if idempotency_key:
+                    registrations[idempotency_key] = {"body": body, "id": artifact_id}
+            else:
+                artifact_id = registration["id"]
             if mode == "missing-upload-url":
                 self._json(201, {"id": artifact_id, "upload": {}})
+                return
+            if idempotency_key and artifact_id in completed_artifacts:
+                self._json(201, {"id": artifact_id, "state": "completed", "upload": None})
                 return
             upload_url = (
                 "ftp://storage.example.invalid/upload"
                 if mode == "unsafe-upload-url"
                 else f"http://127.0.0.1:{self.server.server_port}/uploads/{artifact_id}"
             )
-            self._json(201, {"id": artifact_id, "upload": {"url": upload_url}})
+            response = {"id": artifact_id, "upload": {"url": upload_url}}
+            if idempotency_key:
+                response["state"] = "pending"
+            self._json(201, response)
             return
         if "/artifacts/" in self.path:
+            artifact_id = self.path.rsplit("/", 1)[-1]
+            if mode == "confirmation-response-lost":
+                completed_artifacts.add(artifact_id)
+                self._json(503, {"error": "response_lost"})
+                return
             if mode == "confirmation-failure":
                 self._json(503, {"error": "unavailable"})
                 return
+            completed_artifacts.add(artifact_id)
             self.send_response(204)
             self.end_headers()
             return
@@ -217,10 +243,13 @@ register, upload, confirm = records
 assert register["method"] == "POST", register
 assert register["path"] == f"/api/v1/runs/{run_id}/artifacts", register
 assert register["authorization"] == "Bearer dc_live_artifact_token", register
+assert register["idempotency_key"].startswith("dex-artifact-v1-"), register
 assert register["body"] == {
+    "byte_size": len(artifact),
     "content_type": "text/plain",
     "filename": "result.txt",
     "kind": "test_output",
+    "sha256": hashlib.sha256(artifact).hexdigest(),
     "title": "Test output",
 }, register
 
@@ -335,6 +364,7 @@ from pathlib import Path
 records = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
 register, upload, confirm = records[-3:]
 assert register["authorization"] == "Bearer dc_run_scoped_artifact_token", register
+assert register["idempotency_key"] == "", register
 assert upload["authorization"] == "", upload
 assert confirm["authorization"] == "Bearer dc_run_scoped_artifact_token", confirm
 PY
@@ -406,5 +436,104 @@ assert base64.b64decode(upload["body"]["base64"]) == expected, upload
 assert confirm["body"]["byte_size"] == len(expected), confirm
 assert confirm["body"]["sha256"] == hashlib.sha256(expected).hexdigest(), confirm
 PY
+
+# A failed PUT leaves a pending registration. Retrying the same local artifact
+# reuses its key and remote id, then completes the original registration.
+pending_file="$(dx_run_artifact_file "$run_id" "reports/pending-replay.txt")"
+printf 'pending replay bytes\n' > "$pending_file"
+printf 'upload-failure\n' > "$TMP_DIR/server/mode"
+before_pending_requests="$(request_count)"
+dx_run_register_artifact "$run_id" "test_output" \
+  "reports/pending-replay.txt" "Pending replay"
+assert_eq "$((before_pending_requests + 2))" "$(request_count)" "pending first-attempt request count"
+
+printf 'ok\n' > "$TMP_DIR/server/mode"
+dx_run_register_artifact "$run_id" "test_output" \
+  "reports/pending-replay.txt" "Pending replay"
+assert_eq "$((before_pending_requests + 5))" "$(request_count)" "pending replay request count"
+
+python3 - "$TMP_DIR/server/requests.jsonl" "$manifest_file" "$run_id" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+records = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+run_id = sys.argv[3]
+first_register, first_upload, replay_register, replay_upload, replay_confirm = records[-5:]
+artifact = next(item for item in manifest["artifacts"] if item["path"] == "reports/pending-replay.txt")
+fingerprint_source = json.dumps({
+    "path": artifact["path"],
+    "sha256": artifact["sha256"],
+    "title": artifact["title"],
+    "type": artifact["type"],
+}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+fingerprint = hashlib.sha256(fingerprint_source).hexdigest()
+key_source = json.dumps({
+    "artifact_id": artifact["id"],
+    "fingerprint": fingerprint,
+    "run_id": run_id,
+}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+expected_key = "dex-artifact-v1-" + hashlib.sha256(key_source).hexdigest()
+
+assert first_register["idempotency_key"] == expected_key, first_register
+assert replay_register["idempotency_key"] == expected_key, replay_register
+assert first_register["body"] == replay_register["body"], (first_register, replay_register)
+assert first_upload["path"] == replay_upload["path"], (first_upload, replay_upload)
+remote_id = replay_upload["path"].rsplit("/", 1)[-1]
+assert replay_confirm["path"].endswith(f"/artifacts/{remote_id}"), replay_confirm
+assert artifact["dexcode_artifact_id"] == remote_id, artifact
+assert artifact["dexcode_artifact_sha256"] == artifact["sha256"], artifact
+assert artifact["dexcode_artifact_fingerprint"] == fingerprint, artifact
+PY
+
+# If confirmation succeeded but its response was lost, the next registration
+# returns the completed artifact. The CLI must persist it without another PUT.
+completed_file="$(dx_run_artifact_file "$run_id" "reports/completed-replay.txt")"
+printf 'completed replay bytes\n' > "$completed_file"
+printf 'confirmation-response-lost\n' > "$TMP_DIR/server/mode"
+before_completed_requests="$(request_count)"
+dx_run_register_artifact "$run_id" "test_output" \
+  "reports/completed-replay.txt" "Completed replay"
+assert_eq "$((before_completed_requests + 3))" "$(request_count)" "completed first-attempt request count"
+
+printf 'ok\n' > "$TMP_DIR/server/mode"
+dx_run_register_artifact "$run_id" "test_output" \
+  "reports/completed-replay.txt" "Completed replay"
+assert_eq "$((before_completed_requests + 4))" "$(request_count)" "completed replay skips upload"
+
+python3 - "$TMP_DIR/server/requests.jsonl" "$manifest_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+records = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+first_register, first_upload, first_confirm, replay_register = records[-4:]
+artifact = next(item for item in manifest["artifacts"] if item["path"] == "reports/completed-replay.txt")
+
+assert first_register["idempotency_key"], first_register
+assert replay_register["idempotency_key"] == first_register["idempotency_key"], replay_register
+remote_id = first_upload["path"].rsplit("/", 1)[-1]
+assert first_confirm["path"].endswith(f"/artifacts/{remote_id}"), first_confirm
+assert replay_register["path"].endswith("/artifacts"), replay_register
+assert artifact["dexcode_artifact_id"] == remote_id, artifact
+assert artifact["dexcode_artifact_sha256"] == artifact["sha256"], artifact
+assert artifact["dexcode_artifact_fingerprint"], artifact
+PY
+
+conflict_fingerprint="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+conflict_artifact_id=$(dx_dexcode_upload_artifact \
+  "$run_id" "$artifact_file" "test_output" "Conflict original" \
+  "result.txt" "art_conflict" "$conflict_fingerprint")
+[[ -n "$conflict_artifact_id" ]] || {
+  printf 'initial conflict fixture upload did not complete\n' >&2
+  exit 1
+}
+dx_dexcode_upload_artifact "$run_id" "$artifact_file" "test_output" \
+  "Conflict changed" "result.txt" "art_conflict" "$conflict_fingerprint" \
+  > "$TMP_DIR/idempotency-conflict.out" 2>&1
+assert_contains "artifact registration failed (HTTP 409)" "$TMP_DIR/idempotency-conflict.out"
 
 printf 'dexcode-artifact-test passed\n'

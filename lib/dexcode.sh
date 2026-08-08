@@ -481,6 +481,28 @@ print(hashlib.sha256(os.environ["DX_DEXCODE_HOSTNAME"].encode("utf-8")).hexdiges
 PY
 }
 
+__dx_dexcode_artifact_idempotency_key() {
+  local run_id="$1" local_artifact_id="$2" fingerprint="$3"
+  dx_run_validate_id "$run_id" 2>/dev/null || return 1
+  dx_dexcode_path_segment_valid "$local_artifact_id" || return 1
+  [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
+
+  DX_DEXCODE_RUN_ID="$run_id" \
+  DX_DEXCODE_LOCAL_ARTIFACT_ID="$local_artifact_id" \
+  DX_DEXCODE_ARTIFACT_FINGERPRINT="$fingerprint" python3 - <<'PY'
+import hashlib
+import json
+import os
+
+source = json.dumps({
+    "artifact_id": os.environ["DX_DEXCODE_LOCAL_ARTIFACT_ID"],
+    "fingerprint": os.environ["DX_DEXCODE_ARTIFACT_FINGERPRINT"],
+    "run_id": os.environ["DX_DEXCODE_RUN_ID"],
+}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+print("dex-artifact-v1-" + hashlib.sha256(source).hexdigest())
+PY
+}
+
 dx_dexcode_version() {
   git -C "$DEX_DIR" describe --tags --always --dirty 2>/dev/null || printf 'local\n'
 }
@@ -2196,10 +2218,12 @@ dx_dexcode_prepare_run_sync() {
 #
 # Prints the DexCode artifact id on success. Never fails a run: no token, sync
 # disabled, or an unreachable server all leave the local artifact untouched.
+# A manifest artifact id and sync fingerprint enable retry-safe registration.
 dx_dexcode_upload_artifact() {
   local run_id="$1" file_path="$2" kind="$3" title="$4"
-  local connection token api_url factory_url tmp_dir response_file http_status artifact_id upload_url
+  local connection token api_url factory_url tmp_dir response_file http_status artifact_id upload_url artifact_state
   local filename="${5:-}" content_type size sha file_stats timeout_seconds snapshot_file source_root source_name
+  local local_artifact_id="${6:-}" sync_fingerprint="${7:-}" idempotency_key=""
 
   dx_dexcode_value_disabled "${DEXCODE_SYNC:-1}" && return 0
   dx_run_validate_id "$run_id" 2>/dev/null || return 0
@@ -2232,32 +2256,53 @@ dx_dexcode_upload_artifact() {
   size="${file_stats%% *}"
   sha="${file_stats#* }"
   response_file="$tmp_dir/artifact.json"
+  if [[ -n "$local_artifact_id" && -n "$sync_fingerprint" ]]; then
+    idempotency_key=$(__dx_dexcode_artifact_idempotency_key \
+      "$run_id" "$local_artifact_id" "$sync_fingerprint" 2>/dev/null || true)
+  fi
 
   local payload
   payload=$(DX_ARTIFACT_KIND="$kind" DX_ARTIFACT_TITLE="$title" \
     DX_ARTIFACT_FILENAME="$filename" DX_ARTIFACT_CONTENT_TYPE="$content_type" \
+    DX_ARTIFACT_SIZE="$size" DX_ARTIFACT_SHA="$sha" \
     python3 - <<'PY'
 import json
 import os
 
 print(json.dumps({
+    "byte_size": int(os.environ["DX_ARTIFACT_SIZE"]),
     "kind": os.environ["DX_ARTIFACT_KIND"],
     "title": os.environ["DX_ARTIFACT_TITLE"],
     "filename": os.environ["DX_ARTIFACT_FILENAME"],
     "content_type": os.environ["DX_ARTIFACT_CONTENT_TYPE"],
+    "sha256": os.environ["DX_ARTIFACT_SHA"],
 }, sort_keys=True, separators=(",", ":")))
 PY
   ) || { command rm -rf "$tmp_dir"; return 0; }
 
-  if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
-    --max-time "$timeout_seconds" \
-    --proto '=http,https' \
-    -H "Authorization: Bearer ${token}" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json" \
-    -d "$payload" \
-    "${api_url}/api/v1/runs/${run_id}/artifacts" 2>/dev/null); then
-    http_status="000"
+  if [[ -n "$idempotency_key" ]]; then
+    if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
+      --max-time "$timeout_seconds" \
+      --proto '=http,https' \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      -H "Idempotency-Key: ${idempotency_key}" \
+      -d "$payload" \
+      "${api_url}/api/v1/runs/${run_id}/artifacts" 2>/dev/null); then
+      http_status="000"
+    fi
+  else
+    if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
+      --max-time "$timeout_seconds" \
+      --proto '=http,https' \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      -d "$payload" \
+      "${api_url}/api/v1/runs/${run_id}/artifacts" 2>/dev/null); then
+      http_status="000"
+    fi
   fi
   if ! dx_dexcode_http_success "$http_status"; then
     dx_warn "DexCode artifact registration failed (HTTP ${http_status}); keeping it locally."
@@ -2266,8 +2311,20 @@ PY
   fi
 
   artifact_id=$(dx_dexcode_json_field "$response_file" "id" 2>/dev/null || true)
+  artifact_state=$(dx_dexcode_json_field "$response_file" "state" 2>/dev/null || true)
   upload_url=$(dx_dexcode_json_field "$response_file" "upload.url" 2>/dev/null || true)
-  if ! dx_dexcode_path_segment_valid "$artifact_id" || ! dx_dexcode_http_url_valid "$upload_url"; then
+  if ! dx_dexcode_path_segment_valid "$artifact_id"; then
+    dx_warn "DexCode artifact registration did not include an artifact id and HTTP upload URL; keeping it locally."
+    command rm -rf "$tmp_dir"
+    return 0
+  fi
+  if [[ "$artifact_state" == "completed" ]]; then
+    command rm -rf "$tmp_dir"
+    printf '%s\n' "$artifact_id"
+    return 0
+  fi
+  if [[ -n "$artifact_state" && "$artifact_state" != "pending" ]] \
+    || ! dx_dexcode_http_url_valid "$upload_url"; then
     dx_warn "DexCode artifact registration did not include an artifact id and HTTP upload URL; keeping it locally."
     command rm -rf "$tmp_dir"
     return 0
