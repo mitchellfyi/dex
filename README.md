@@ -63,7 +63,7 @@ dx 1234
   |     Build with tests, prove criteria, then select small/normal/complex review risk.
   |
   |-- Phase 3: Review
-  |     Run fresh review-wave CLI sessions to 3/6/9 consecutive clean passes.
+  |     Run fresh review-wave CLI sessions to the selected tier's trusted clean gate.
   |
   |-- Phase 4: Verify + Commit
   |     Run quality gates, create atomic conventional commits, push the branch.
@@ -79,16 +79,21 @@ The important piece is the audit loop. When Claude tries to stop, Dex's Stop hoo
 checks the phase state and injects the next required audit. Only a passing phase
 can advance. Review waves have their own clean-pass counter: a wave that finds
 and fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
-fresh full-scope review before Phase 4 can start. The implementation agent
-selects `small` (3 clean waves), `normal` (6), or `complex` (9) before Phase 3.
-A standalone `dxreviewloop` without an explicit tier/profile override starts
-with a read-only risk assessor. Every counted wave runs in a fresh context
-without prior review conclusions or telemetry.
+fresh full-scope review before Phase 4 can start. Before Phase 3, the
+implementation agent selects `small`, `normal`, or `complex`. The default
+policy requires 3, 6, or 9 clean waves, respectively. A standalone
+`dxreviewloop` without an explicit tier/profile override starts with a read-only
+risk assessor. Every counted wave runs in a fresh context without prior review
+conclusions or telemetry.
 
 The review loop has no routine outer iteration limit. It continues until the
 clean gate succeeds. Residual findings, blockers, churn, invalid results, and
 provider failures pause the loop for intervention rather than being treated as
-clean or retried indefinitely.
+clean or retried indefinitely. Repositories can change the three gates in the
+default branch's `## Review Policy` table in `.dex/dex.md`. Values must be
+between 1 and 30 and satisfy `small <= normal <= complex`. Dex ignores policy
+edits made only on the candidate branch. `DEX_REVIEW_CLEAN_PASSES` can raise the
+resolved gate for one run but cannot lower it.
 
 ## Common Commands
 

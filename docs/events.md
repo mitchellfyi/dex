@@ -71,6 +71,7 @@ Current lifecycle event types include:
 - `phase.started`
 - `phase.completed`
 - `phase.failed`
+- `review.tier.assessed`
 - `review.tier.selected`
 - `review.pass.started`
 - `review.pass.finished`
@@ -91,7 +92,8 @@ reading agent transcripts.
 
 | Event | When emitted | Data fields |
 |-------|--------------|-------------|
-| `review.tier.selected` | Before the first review wave | `tier`, `profile`, `required_clean`, `source`, `reason_codes` |
+| `review.tier.assessed` | After a fresh read-only assessor returns a valid risk decision | `tier`, `source`, `reason_codes` |
+| `review.tier.selected` | Before the first review wave | `tier`, `profile`, `required_clean`, `source`, `reason_codes`, `policy_small`, `policy_normal`, `policy_complex` |
 | `review.pass.started` | Immediately before a fresh wave starts | `pass_id`, `tier`, `profile`, `iteration`, `clean_before`, `required_clean`, `scope_fingerprint` |
 | `review.pass.finished` | After the wave result is validated and counters update | `pass_id`, `tier`, `profile`, `iteration`, `result_kind`, `result_reason`, `findings`, `duration_seconds`, `clean_before`, `clean_after`, `scope_changed`, `working_changed`, `provider_exit`, `terminal_reason`, `evidence_hash`, `deterministic_checks`, `verifier`, `coverage`, `evidence_valid`; validated results also include the evidence finding and fix counts |
 | `review.tier.escalated` | A verified risk signal raises the tier | `from_tier`, `tier`, `profile`, `required_clean`, `iteration` |
@@ -99,12 +101,27 @@ reading agent transcripts.
 | `review.paused` | Review needs intervention | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, normalized `reason` |
 
 Tier selection is `small`/`normal`/`complex`, mapping to `light`/`standard`/
-`thorough` review and 3/6/9 consecutive clean waves. These events make it
-possible to compare pass duration, findings discovered after earlier clean
-waves, clean-counter resets, escalation frequency, coverage, and churn without
-reading agent transcripts. Evidence is recorded as bounded aggregate fields and
-an opaque hash; finding text stays out of telemetry so later waves remain
-independent.
+`thorough` review. The default consecutive clean-wave requirements are 3 for
+`small`, 6 for `normal`, and 9 for `complex`. Repositories can configure these
+requirements in the `## Review Policy` table in `.dex/dex.md` on the committed
+default branch. Values must be monotonic integers from 1 through 30. Dex binds
+the resolved trusted policy to the selection, review state, pass evidence,
+clean ledger, and final receipt. An edit on the candidate branch cannot lower
+the active gate.
+
+Evidence version 3 records the ordered hash, outcome, and substantive
+context-pack references for every lifecycle criterion. It also binds the
+manifest to the current policy and pass. Before granting clean credit, Dex
+attests the manifest, context pack, result, profile, and findings fingerprint
+together. It retains private, read-only copies of the manifest and context pack
+for each clean row, then revalidates those copies and recomputes every
+attestation before accepting the final receipt. Telemetry keeps only bounded
+aggregate fields and an opaque evidence hash; finding text and per-criterion
+evidence stay out of events so later waves remain independent.
+
+These events make it possible to compare pass duration, findings discovered
+after earlier clean waves, clean-counter resets, escalation frequency,
+coverage, and churn without reading agent transcripts.
 
 Review telemetry deliberately excludes raw agent rationale, result suffixes,
 findings, findings fingerprints, file paths, branch names, prompts, diffs, and
