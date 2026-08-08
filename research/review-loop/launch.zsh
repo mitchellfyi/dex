@@ -150,7 +150,8 @@ if [[ "$controller_test_stub" == "1" ]]; then
   __dx_claude() {
     local stub_context stub_result stub_evidence stub_findings stub_complete stub_hash
     local stub_branch stub_child_pid stub_remote stub_generic_branch=false
-    local stub_generic_layout=false stub_prior_capture=false
+    local stub_generic_layout=false stub_prior_capture=false stub_assessment_active=false
+    local stub_policy_binding_valid=false stub_pass_binding_valid=false stub_evidence_version=0
     stub_branch=$(git branch --show-current 2>/dev/null || true)
     stub_remote=$(git remote get-url origin 2>/dev/null || true)
     [[ "$stub_branch" == "review-eval/candidate" ]] && stub_generic_branch=true
@@ -162,7 +163,21 @@ if [[ "$controller_test_stub" == "1" ]]; then
           -e "$controller_result/snapshots" ]]; then
       stub_prior_capture=true
     fi
-    print -r -- "{\"generic_branch\":${stub_generic_branch},\"generic_layout\":${stub_generic_layout},\"prior_capture_visible\":${stub_prior_capture}}" \
+    if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
+      stub_assessment_active=true
+    else
+      stub_evidence_version=3
+      if dx_review_policy_binding_valid "${DEX_REVIEW_POLICY_BINDING:-}"; then
+        stub_policy_binding_valid=true
+      fi
+      if [[ -n "${DEX_REVIEW_PASS_ID:-}" && -n "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" ]] &&
+         [[ "$(dx_review_pass_binding "$DEX_REVIEW_PASS_ID" "$DEX_REVIEW_SCOPE_FINGERPRINT" \
+              "${DEX_REVIEW_CRITERIA_BINDING:-}" "${DEX_REVIEW_POLICY_BINDING:-}" 2>/dev/null || true)" == \
+            "${DEX_REVIEW_PASS_BINDING:-}" ]]; then
+        stub_pass_binding_valid=true
+      fi
+    fi
+    print -r -- "{\"assessment_active\":${stub_assessment_active},\"evidence_version\":${stub_evidence_version},\"generic_branch\":${stub_generic_branch},\"generic_layout\":${stub_generic_layout},\"pass_binding_valid\":${stub_pass_binding_valid},\"policy_binding_valid\":${stub_policy_binding_valid},\"prior_capture_visible\":${stub_prior_capture}}" \
       >> "$controller_capture/provider-observations.jsonl"
     if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
       case "$controller_test_stub_mode" in
@@ -201,7 +216,7 @@ if [[ "$controller_test_stub" == "1" ]]; then
     __dx_write_state "$stub_context" $'# Stub review context\n\n## Scope\nThe current candidate diff was inspected in full.\n\n## Acceptance Criteria\nCriteria binding: standalone\nNo external criteria were supplied.\n\n## Deterministic Checks\nThe fixture check passed.\n\n## Review Coverage\nCorrectness, security, contracts, tests, and architecture were covered.\n\n## Verification\nThe candidate remained unchanged and verification passed.'
     __dx_write_state "$stub_result" "CLEAN"
     __dx_write_state "$stub_findings" "$stub_hash"
-    __dx_write_state "$stub_evidence" "{\"version\":2,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\",\"frontend\",\"devops\",\"performance\",\"observability\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0,\"criteria_binding\":\"standalone\",\"criteria_coverage\":{\"objectives\":[],\"acceptance_criteria\":[],\"verification_requirements\":[]}}"
+    __dx_write_state "$stub_evidence" "{\"version\":3,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT}\",\"criteria_binding\":\"standalone\",\"policy_binding\":\"${DEX_REVIEW_POLICY_BINDING}\",\"pass_binding\":\"${DEX_REVIEW_PASS_BINDING}\",\"criteria_evidence\":{\"objectives\":[],\"acceptance_criteria\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\",\"frontend\",\"devops\",\"performance\",\"observability\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}"
     touch "$stub_complete"
     print -r -- "${DEX_LOOP_PROMISE:-PHASE_3_COMPLETE}"
   }

@@ -13,7 +13,28 @@ cleanup() {
       *) kill -KILL "$detached_test_pid" 2>/dev/null || true ;;
     esac
   fi
-  rm -rf "$TMP_DIR"
+  if [[ -d "$TMP_DIR" && ! -L "$TMP_DIR" ]]; then
+    REVIEW_EVAL_TEST_CLEANUP_ROOT="$TMP_DIR" python3 - <<'PY'
+import os
+import shutil
+import stat
+from pathlib import Path
+
+root = Path(os.environ["REVIEW_EVAL_TEST_CLEANUP_ROOT"])
+metadata = root.lstat()
+if (
+    not root.name.startswith("dex-review-evaluation-test.")
+    or not stat.S_ISDIR(metadata.st_mode)
+    or not shutil.rmtree.avoids_symlink_attacks
+):
+    raise SystemExit(1)
+for _, _, _, directory_fd in os.fwalk(root, topdown=False, follow_symlinks=False):
+    if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+        raise SystemExit(1)
+    os.fchmod(directory_fd, 0o700)
+shutil.rmtree(root)
+PY
+  fi
 }
 trap cleanup EXIT
 
@@ -29,6 +50,31 @@ assert_eq() {
 
 # shellcheck source=research/review-loop/lib.sh
 source "$ROOT/research/review-loop/lib.sh"
+
+external_python_state="$TMP_DIR/external-python-state.json"
+external_python_path=$(python3 - "$external_python_state" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+source = Path(os.path.realpath(sys.executable))
+metadata = source.stat()
+if not stat.S_ISREG(metadata.st_mode):
+    raise SystemExit("test Python is not a regular file")
+payload = {
+    "device": metadata.st_dev,
+    "inode": metadata.st_ino,
+    "links": metadata.st_nlink,
+    "mode": stat.S_IMODE(metadata.st_mode),
+    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+}
+Path(sys.argv[1]).write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+print(source)
+PY
+)
 
 review_eval_validate_catalog
 scenarios=()
@@ -133,10 +179,22 @@ git clone -q "$ROOT" "$runtime_source"
 mkdir -p "$runtime_source/research/review-loop"
 cp "$ROOT/research/review-loop/launch.zsh" "$runtime_source/research/review-loop/launch.zsh"
 cp "$ROOT/research/review-loop/agent-observer.sh" "$runtime_source/research/review-loop/agent-observer.sh"
-git -C "$runtime_source" add research/review-loop/launch.zsh research/review-loop/agent-observer.sh
+runtime_contract_files=(
+  dx.sh
+  lib/common.sh
+  lib/review.sh
+  lib/review-controller.sh
+  lib/review-policy.sh
+)
+for runtime_contract_file in "${runtime_contract_files[@]}"; do
+  cp "$ROOT/$runtime_contract_file" "$runtime_source/$runtime_contract_file"
+done
+git -C "$runtime_source" add \
+  research/review-loop/launch.zsh research/review-loop/agent-observer.sh \
+  "${runtime_contract_files[@]}"
 git -C "$runtime_source" \
   -c user.name='Dex Review Evaluation' -c user.email='review-eval@dex.local' \
-  commit -qm 'test: pin evaluation launcher'
+  commit --allow-empty -qm 'test: pin evaluation launcher'
 runtime_source_sha=$(git -C "$runtime_source" rev-parse HEAD)
 runtime_dir="$TMP_DIR/runtime"
 runtime_sha=$(review_eval_prepare_runtime "$runtime_source" HEAD "$runtime_dir")
@@ -158,12 +216,186 @@ for scenario in "${scenarios[@]}"; do
   fi
 done
 
+cleanup_probe_root="$TMP_DIR/dex-review-trial.cleanup-hardlink"
+cleanup_probe_external="$TMP_DIR/cleanup-external-python"
+mkdir -p "$cleanup_probe_root/runtime/subdir"
+printf '%s\n' 'external executable sentinel' > "$cleanup_probe_external"
+chmod 775 "$cleanup_probe_external"
+ln "$cleanup_probe_external" \
+  "$cleanup_probe_root/runtime/subdir/external-hardlink"
+printf '%s\n' 'ordinary runtime file' > "$cleanup_probe_root/runtime/ordinary"
+if review_eval_runtime_make_read_only "$cleanup_probe_root/runtime" 2>/dev/null; then
+  fail "runtime hardening accepted a hard-linked file"
+fi
+chmod 555 "$cleanup_probe_root/runtime" "$cleanup_probe_root/runtime/subdir"
+__review_eval_remove_execution_root "$cleanup_probe_root" "$TMP_DIR"
+python3 - "$cleanup_probe_external" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+metadata = source.stat()
+assert stat.S_IMODE(metadata.st_mode) == 0o775, oct(metadata.st_mode)
+assert metadata.st_nlink == 1, metadata.st_nlink
+assert source.read_text(encoding="utf-8") == "external executable sentinel\n"
+PY
+
+runtime_symlink_root="$TMP_DIR/runtime-symlink-probe"
+runtime_symlink_external="$TMP_DIR/runtime-symlink-external"
+mkdir -p "$runtime_symlink_root"
+printf '%s\n' 'external symlink sentinel' > "$runtime_symlink_external"
+chmod 775 "$runtime_symlink_external"
+ln -s "$runtime_symlink_external" "$runtime_symlink_root/external-link"
+if review_eval_runtime_make_read_only "$runtime_symlink_root" 2>/dev/null; then
+  fail "runtime hardening accepted a symlink"
+fi
+if review_eval_runtime_tree_hash "$runtime_symlink_root" >/dev/null 2>&1; then
+  fail "runtime hashing accepted a symlink"
+fi
+python3 - "$runtime_symlink_external" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+metadata = source.stat()
+assert stat.S_IMODE(metadata.st_mode) == 0o775, oct(metadata.st_mode)
+assert metadata.st_nlink == 1, metadata.st_nlink
+assert source.read_text(encoding="utf-8") == "external symlink sentinel\n"
+PY
+
 smoke_trial="$TMP_DIR/smoke-trial"
 smoke_workspace=$(review_eval_prepare_workspace small-control "$smoke_trial")
 smoke_result="$TMP_DIR/smoke-result"
 smoke_home="$TMP_DIR/smoke-home"
 smoke_observer_token="0123456789abcdef0123456789abcdef"
-review_eval_prepare_trial_home "$runtime_dir" "$smoke_home" claude
+
+fake_claude_home="$TMP_DIR/fake-claude-home"
+darwin_execution_root="$TMP_DIR/dex-review-trial.auth-darwin"
+darwin_auth_state="$TMP_DIR/darwin-auth-state.json"
+mkdir -p "$fake_claude_home/Library/Keychains"
+printf '%s\n' 'fake-keychain-data' > "$fake_claude_home/Library/Keychains/login.keychain-db"
+chmod 750 "$fake_claude_home/Library/Keychains"
+chmod 640 "$fake_claude_home/Library/Keychains/login.keychain-db"
+python3 - "$fake_claude_home/Library/Keychains" "$darwin_auth_state" <<'PY'
+import hashlib
+import json
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+keychain = source / "login.keychain-db"
+Path(sys.argv[2]).write_text(json.dumps({
+    "directory_mode": stat.S_IMODE(source.stat().st_mode),
+    "file_mode": stat.S_IMODE(keychain.stat().st_mode),
+    "sha256": hashlib.sha256(keychain.read_bytes()).hexdigest(),
+}), encoding="utf-8")
+PY
+review_eval_prepare_trial_home "$runtime_dir" "$darwin_execution_root/home" \
+  claude "$TMP_DIR/no-codex-home" "$fake_claude_home" Darwin
+python3 - "$fake_claude_home/Library/Keychains" \
+  "$darwin_execution_root/home/Library/Keychains" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+bridge = Path(sys.argv[2])
+metadata = bridge.lstat()
+assert stat.S_ISLNK(metadata.st_mode), oct(metadata.st_mode)
+assert Path(os.readlink(bridge)) == source, os.readlink(bridge)
+PY
+__review_eval_remove_execution_root "$darwin_execution_root" "$TMP_DIR"
+darwin_controller_token="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+darwin_controller_root="$TMP_DIR/dex-review-trial.${darwin_controller_token}.auth"
+review_eval_prepare_trial_home "$runtime_dir" "$darwin_controller_root/home" \
+  claude "$TMP_DIR/no-codex-home" "$fake_claude_home" Darwin
+__review_eval_cleanup_controller_token "$TMP_DIR" "$darwin_controller_token"
+[[ ! -e "$darwin_controller_root" && ! -L "$darwin_controller_root" ]] || \
+  fail "controller cleanup left the Claude keychain bridge behind"
+python3 - "$fake_claude_home/Library/Keychains" "$darwin_auth_state" <<'PY'
+import hashlib
+import json
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+keychain = source / "login.keychain-db"
+before = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+assert stat.S_IMODE(source.stat().st_mode) == before["directory_mode"], before
+assert stat.S_IMODE(keychain.stat().st_mode) == before["file_mode"], before
+assert hashlib.sha256(keychain.read_bytes()).hexdigest() == before["sha256"], before
+PY
+
+linux_claude_home="$TMP_DIR/linux-claude-home"
+linux_execution_root="$TMP_DIR/dex-review-trial.auth-linux"
+linux_auth_state="$TMP_DIR/linux-auth-state.json"
+mkdir -p "$linux_claude_home/.claude"
+printf '%s\n' '{"fake":"claude-credential"}' > "$linux_claude_home/.claude/.credentials.json"
+chmod 640 "$linux_claude_home/.claude/.credentials.json"
+python3 - "$linux_claude_home/.claude/.credentials.json" "$linux_auth_state" <<'PY'
+import hashlib
+import json
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+metadata = source.stat()
+Path(sys.argv[2]).write_text(json.dumps({
+    "mode": stat.S_IMODE(metadata.st_mode),
+    "links": metadata.st_nlink,
+    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+}), encoding="utf-8")
+PY
+review_eval_prepare_trial_home "$runtime_dir" "$linux_execution_root/home" \
+  claude "$TMP_DIR/no-codex-home" "$linux_claude_home" Linux
+python3 - "$linux_claude_home/.claude/.credentials.json" \
+  "$linux_execution_root/home/.claude/.credentials.json" <<'PY'
+import os
+import stat
+import sys
+
+source = os.stat(sys.argv[1])
+bridge = os.stat(sys.argv[2])
+assert stat.S_ISREG(bridge.st_mode), oct(bridge.st_mode)
+assert stat.S_IMODE(bridge.st_mode) == 0o600, oct(bridge.st_mode)
+assert (source.st_dev, source.st_ino) != (bridge.st_dev, bridge.st_ino)
+PY
+printf '%s\n' '{"trial":"mutation"}' > \
+  "$linux_execution_root/home/.claude/.credentials.json"
+__review_eval_remove_execution_root "$linux_execution_root" "$TMP_DIR"
+python3 - "$linux_claude_home/.claude/.credentials.json" "$linux_auth_state" <<'PY'
+import hashlib
+import json
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+before = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+after = source.stat()
+assert stat.S_IMODE(after.st_mode) == before["mode"], before
+assert after.st_nlink == before["links"], before
+assert hashlib.sha256(source.read_bytes()).hexdigest() == before["sha256"], before
+PY
+
+symlink_claude_home="$TMP_DIR/symlink-claude-home"
+symlink_trial_home="$TMP_DIR/symlink-trial-home"
+mkdir -p "$symlink_claude_home/.claude"
+ln -s "$linux_claude_home/.claude/.credentials.json" \
+  "$symlink_claude_home/.claude/.credentials.json"
+review_eval_prepare_trial_home "$runtime_dir" "$symlink_trial_home" \
+  claude "$TMP_DIR/no-codex-home" "$symlink_claude_home" Linux
+[[ ! -e "$symlink_trial_home/.claude/.credentials.json" ]] || \
+  fail "Claude auth bridge followed a credentials symlink"
+
+review_eval_prepare_trial_home "$runtime_dir" "$smoke_home" claude \
+  "$TMP_DIR/no-codex-home" "$TMP_DIR/no-claude-home" Linux
 mkdir -p "$smoke_result"
 if find "$smoke_home/.codex" -mindepth 1 -maxdepth 1 ! -name auth.json \
     -print -quit | grep -q .; then
@@ -235,11 +467,24 @@ assert len(waves) == 3, waves
 assert all("oracle_status" not in row for row in waves), waves
 observations = [json.loads(line) for line in open(sys.argv[2], encoding="utf-8")]
 assert len(observations) == 4, observations
-assert all(row == {
+assert observations[0] == {
+    "assessment_active": True,
+    "evidence_version": 0,
     "generic_branch": True,
     "generic_layout": False,
+    "pass_binding_valid": False,
+    "policy_binding_valid": False,
     "prior_capture_visible": False,
-} for row in observations), observations
+}, observations
+assert all(row == {
+    "assessment_active": False,
+    "evidence_version": 3,
+    "generic_branch": True,
+    "generic_layout": False,
+    "pass_binding_valid": True,
+    "policy_binding_valid": True,
+    "prior_capture_visible": False,
+} for row in observations[1:]), observations
 PY
 if rg -l 'review-eval-secret-sentinel' "$smoke_result" >/dev/null 2>&1; then
   fail "provider credentials were persisted in smoke artifacts"
@@ -282,6 +527,71 @@ controller_inputs=$(review_eval_archive_controller_inputs "$managed_run")
 [[ -f "$controller_inputs/source.json" ]] || fail "controller archive is missing source metadata"
 [[ -f "$controller_inputs/scenarios/small-control/scenario.json" ]] || \
   fail "controller archive is missing the fixture catalog"
+
+archive_race_root="$TMP_DIR/archive-race"
+archive_race_controller="$archive_race_root/controller"
+archive_race_scenarios="$archive_race_root/scenarios"
+archive_race_hooks="$archive_race_root/python-hooks"
+archive_race_sentinel="$archive_race_root/external-sentinel"
+mkdir -p "$archive_race_controller" "$archive_race_hooks" "$archive_race_root/run"
+cp "$ROOT/research/review-loop/README.md" \
+  "$ROOT/research/review-loop/agent-observer.sh" \
+  "$ROOT/research/review-loop/lib.sh" \
+  "$ROOT/research/review-loop/run.sh" \
+  "$archive_race_controller/"
+cp -R "$ROOT/research/review-loop/scenarios" "$archive_race_scenarios"
+printf '%s\n' 'archive race sentinel' > "$archive_race_sentinel"
+chmod 775 "$archive_race_sentinel"
+python3 - "$archive_race_hooks/sitecustomize.py" <<'PY'
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(
+    """import os
+from pathlib import Path
+
+_real_open = os.open
+_target = os.path.realpath(os.environ["REVIEW_EVAL_RACE_SOURCE"])
+_backup = Path(os.environ["REVIEW_EVAL_RACE_BACKUP"])
+_sentinel = Path(os.environ["REVIEW_EVAL_RACE_SENTINEL"])
+_triggered = False
+
+def _raced_open(path, flags, *args, **kwargs):
+    global _triggered
+    if not _triggered and os.path.realpath(os.fspath(path)) == _target:
+        _triggered = True
+        Path(path).rename(_backup)
+        Path(path).symlink_to(_sentinel)
+    return _real_open(path, flags, *args, **kwargs)
+
+os.open = _raced_open
+""",
+    encoding="utf-8",
+)
+PY
+if (
+  export PYTHONPATH="$archive_race_hooks"
+  export REVIEW_EVAL_RACE_SOURCE="$archive_race_controller/README.md"
+  export REVIEW_EVAL_RACE_BACKUP="$archive_race_controller/README.original"
+  export REVIEW_EVAL_RACE_SENTINEL="$archive_race_sentinel"
+  REVIEW_EVAL_DIR="$archive_race_controller"
+  REVIEW_EVAL_SCENARIOS_DIR="$archive_race_scenarios"
+  REVIEW_EVAL_REPO_ROOT="$ROOT"
+  review_eval_archive_controller_inputs "$archive_race_root/run" >/dev/null 2>&1
+); then
+  fail "controller archive accepted a source swapped to a symlink"
+fi
+python3 - "$archive_race_sentinel" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+metadata = source.stat()
+assert stat.S_IMODE(metadata.st_mode) == 0o775, oct(metadata.st_mode)
+assert metadata.st_nlink == 1, metadata.st_nlink
+assert source.read_text(encoding="utf-8") == "archive race sentinel\n"
+PY
 REVIEW_EVAL_METADATA_SOURCE_REPO="$runtime_source" \
 REVIEW_EVAL_METADATA_CONTROLLER="$controller_inputs/controller" \
 REVIEW_EVAL_METADATA_SCENARIOS="$controller_inputs/scenarios" \
@@ -651,7 +961,7 @@ deadline_delay_marker="$TMP_DIR/deadline-delay.marker"
 DETACHED_TEST_PID_FILE="$TMP_DIR/deadline-detached.pid"
 detached_test_parent_file="$TMP_DIR/deadline-detached-parent.pid"
 deadline_real_git=$(command -v git)
-deadline_real_python=$(command -v python3)
+deadline_real_python="$external_python_path"
 mkdir -p "$deadline_fake_bin"
 # shellcheck disable=SC2016  # these variables belong to the generated wrapper
 printf '%s\n' \
@@ -849,5 +1159,25 @@ if REVIEW_EVAL_TEST_STUB=1 bash "$ROOT/research/review-loop/run.sh" \
     --runner claude --dry-run >/dev/null 2>&1; then
   fail "run.sh accepted the test provider stub"
 fi
+
+python3 - "$external_python_path" "$external_python_state" <<'PY'
+import hashlib
+import json
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+before = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+metadata = source.stat()
+after = {
+    "device": metadata.st_dev,
+    "inode": metadata.st_ino,
+    "links": metadata.st_nlink,
+    "mode": stat.S_IMODE(metadata.st_mode),
+    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+}
+assert after == before, (before, after)
+PY
 
 printf 'review-evaluation-harness-test passed\n'

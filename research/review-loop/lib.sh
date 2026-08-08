@@ -508,9 +508,10 @@ review_eval_prepare_runtime() {
   }
   chmod +x "$runtime_dir/research/review-loop/launch.zsh"
   [[ ! -e "$runtime_dir/.git" ]] || return 1
-  if find "$runtime_dir" \( -path '*/hidden/*' -o -path '*/canonical_fix/*' -o -iname '*oracle*' \) \
+  if find "$runtime_dir" \( -type l -o -path '*/hidden/*' -o \
+      -path '*/canonical_fix/*' -o -iname '*oracle*' \) \
       -print -quit | grep -q .; then
-    review_eval_error "sanitized runtime still contains evaluation truth"
+    review_eval_error "sanitized runtime contains a link or evaluation truth"
     return 1
   fi
   printf '%s\n' "$resolved_sha"
@@ -538,10 +539,7 @@ for current, directories, files in os.walk(root, followlinks=False):
         mode = path.lstat().st_mode
         digest.update(len(relative).to_bytes(8, "big"))
         digest.update(relative)
-        if stat.S_ISLNK(mode):
-            digest.update(b"L")
-            digest.update(os.fsencode(os.readlink(path)))
-        elif stat.S_ISDIR(mode):
+        if stat.S_ISDIR(mode):
             digest.update(b"D")
         elif stat.S_ISREG(mode):
             digest.update(b"F")
@@ -564,21 +562,56 @@ import stat
 import sys
 from pathlib import Path
 
-root = Path(sys.argv[1]).resolve()
-for current, directories, files in os.walk(root, topdown=False, followlinks=False):
-    current_path = Path(current)
+root = Path(os.path.abspath(sys.argv[1]))
+if any(
+    not hasattr(os, name)
+    for name in ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW", "fwalk")
+):
+    raise SystemExit("platform lacks safe runtime permission primitives")
+
+
+def chmod_regular(name, directory_fd, expected, mode):
+    flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | os.O_NOFOLLOW
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    descriptor = os.open(name, flags, dir_fd=directory_fd)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or (metadata.st_dev, metadata.st_ino) != expected
+        ):
+            raise OSError("runtime file is not an isolated regular file")
+        os.fchmod(descriptor, mode)
+    finally:
+        os.close(descriptor)
+
+
+for _, directories, files, directory_fd in os.fwalk(
+    root, topdown=False, follow_symlinks=False
+):
     for name in files:
-        path = current_path / name
-        mode = path.lstat().st_mode
-        if stat.S_ISREG(mode):
-            path.chmod(0o555 if mode & 0o111 else 0o444)
-        elif not stat.S_ISLNK(mode):
+        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISREG(metadata.st_mode):
+            chmod_regular(
+                name,
+                directory_fd,
+                (metadata.st_dev, metadata.st_ino),
+                0o555 if metadata.st_mode & 0o111 else 0o444,
+            )
+        else:
             raise SystemExit("unsupported runtime file type")
     for name in directories:
-        path = current_path / name
-        if not path.is_symlink():
-            path.chmod(0o555)
-root.chmod(0o555)
+        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise SystemExit("unsupported runtime directory type")
+    if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+        raise SystemExit("runtime directory changed type")
+    os.fchmod(directory_fd, 0o555)
 PY
 }
 
@@ -871,18 +904,13 @@ else:
 PY
 }
 
-review_eval_prepare_trial_home() {
-  local runtime_dir="$1" trial_home="$2"
-  local runner="${3:-claude}" external_codex_home="${4:-${CODEX_HOME:-$HOME/.codex}}"
-  [[ -f "$runtime_dir/settings.json" && -d "$runtime_dir/skills" ]] || return 1
-  [[ ! -e "$trial_home" ]] || return 1
-  mkdir -p "$trial_home/.claude" "$trial_home/.codex"
-  chmod 700 "$trial_home" "$trial_home/.claude" "$trial_home/.codex"
-  cp "$runtime_dir/settings.json" "$trial_home/.claude/settings.json"
-  ln -s "$runtime_dir/skills" "$trial_home/.claude/skills"
-  if [[ "$runner" == "codex" && -f "$external_codex_home/auth.json" && \
-        ! -L "$external_codex_home/auth.json" ]]; then
-    if ! python3 - "$external_codex_home/auth.json" "$trial_home/.codex/auth.json" <<'PY'
+__review_eval_copy_private_auth() {
+  [[ $# -eq 2 ]] || return 1
+  local source_file="$1" target_file="$2"
+  [[ -f "$source_file" && ! -L "$source_file" ]] || return 1
+  [[ -d "$(dirname "$target_file")" && ! -L "$(dirname "$target_file")" ]] || return 1
+  [[ ! -e "$target_file" && ! -L "$target_file" ]] || return 1
+  python3 - "$source_file" "$target_file" <<'PY'
 import os
 import stat
 import sys
@@ -891,40 +919,46 @@ from pathlib import Path
 source_path = Path(sys.argv[1])
 target_path = Path(sys.argv[2])
 temporary_path = target_path.with_name(f".{target_path.name}.tmp.{os.getpid()}")
-no_follow = getattr(os, "O_NOFOLLOW", 0)
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_CLOEXEC"):
+    raise SystemExit("platform lacks safe auth-copy primitives")
+no_follow = os.O_NOFOLLOW
 source_fd = None
 target_fd = None
 try:
     try:
         before = source_path.lstat()
         if not stat.S_ISREG(before.st_mode):
-            raise OSError("Codex auth source is not a regular file")
+            raise OSError("auth source is not a regular file")
         source_fd = os.open(source_path, os.O_RDONLY | os.O_CLOEXEC | no_follow)
         opened = os.fstat(source_fd)
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-            raise OSError("Codex auth source changed while opening")
+            raise OSError("auth source changed while opening")
         target_fd = os.open(
             temporary_path,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | no_follow,
             0o600,
         )
+        total = 0
         while True:
             chunk = os.read(source_fd, 1024 * 1024)
             if not chunk:
                 break
+            total += len(chunk)
             view = memoryview(chunk)
             while view:
                 written = os.write(target_fd, view)
+                if written <= 0:
+                    raise OSError("auth copy stopped early")
                 view = view[written:]
         os.fchmod(target_fd, 0o600)
         os.fsync(target_fd)
         after = os.fstat(source_fd)
         if (
-            (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
-            or after.st_size != opened.st_size
-            or after.st_mtime_ns != opened.st_mtime_ns
+            total != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
         ):
-            raise OSError("Codex auth source changed while copying")
+            raise OSError("auth source changed while copying")
     finally:
         if target_fd is not None:
             os.close(target_fd)
@@ -935,7 +969,76 @@ except BaseException:
     temporary_path.unlink(missing_ok=True)
     raise
 PY
-    then
+}
+
+__review_eval_link_claude_keychains() {
+  [[ $# -eq 2 ]] || return 1
+  local external_home="$1" trial_home="$2"
+  local source_dir="$external_home/Library/Keychains"
+  [[ -d "$source_dir" && ! -L "$source_dir" ]] || return 0
+  python3 - "$source_dir" "$trial_home/Library/Keychains" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+source = Path(os.path.abspath(sys.argv[1]))
+target = Path(sys.argv[2])
+before = source.lstat()
+if not stat.S_ISDIR(before.st_mode):
+    raise SystemExit("Claude keychain source is not a directory")
+target.parent.mkdir(mode=0o700)
+parent = target.parent.lstat()
+if not stat.S_ISDIR(parent.st_mode) or target.parent.is_symlink():
+    raise SystemExit("Claude keychain target parent is unsafe")
+target.parent.chmod(0o700)
+os.symlink(source, target, target_is_directory=True)
+after = source.lstat()
+if (
+    not stat.S_ISDIR(after.st_mode)
+    or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+):
+    target.unlink(missing_ok=True)
+    raise SystemExit("Claude keychain source changed while linking")
+PY
+}
+
+review_eval_prepare_trial_home() {
+  local runtime_dir="$1" trial_home="$2"
+  local runner="${3:-claude}" external_codex_home="${4:-${CODEX_HOME:-$HOME/.codex}}"
+  local external_claude_home="${5:-$HOME}" platform="${6:-}"
+  [[ -f "$runtime_dir/settings.json" && -d "$runtime_dir/skills" ]] || return 1
+  [[ ! -e "$trial_home" && ! -L "$trial_home" ]] || return 1
+  case "$runner" in
+    claude|codex) ;;
+    *) return 1 ;;
+  esac
+  if [[ -z "$platform" ]]; then
+    platform=$(uname -s 2>/dev/null || true)
+  fi
+  mkdir -p "$trial_home/.claude" "$trial_home/.codex"
+  chmod 700 "$trial_home" "$trial_home/.claude" "$trial_home/.codex"
+  cp "$runtime_dir/settings.json" "$trial_home/.claude/settings.json"
+  ln -s "$runtime_dir/skills" "$trial_home/.claude/skills"
+
+  if [[ "$runner" == "claude" && "$platform" == "Darwin" ]]; then
+    if ! __review_eval_link_claude_keychains "$external_claude_home" "$trial_home"; then
+      review_eval_error "could not create the isolated Claude keychain bridge"
+      return 1
+    fi
+  elif [[ "$runner" == "claude" && \
+          -f "$external_claude_home/.claude/.credentials.json" && \
+          ! -L "$external_claude_home/.claude/.credentials.json" ]]; then
+    if ! __review_eval_copy_private_auth \
+      "$external_claude_home/.claude/.credentials.json" \
+      "$trial_home/.claude/.credentials.json"; then
+      review_eval_error "could not create the isolated Claude auth copy"
+      return 1
+    fi
+  elif [[ "$runner" == "codex" && -f "$external_codex_home/auth.json" && \
+          ! -L "$external_codex_home/auth.json" ]]; then
+    if ! __review_eval_copy_private_auth \
+      "$external_codex_home/auth.json" "$trial_home/.codex/auth.json"; then
       review_eval_error "could not create the isolated Codex auth copy"
       return 1
     fi
@@ -991,12 +1094,66 @@ if controller_source in target_location.parents or scenario_source in target_loc
 
 
 def copy_regular(source, destination):
-    metadata = source.lstat()
-    if not stat.S_ISREG(metadata.st_mode):
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_CLOEXEC"):
+        raise OSError("platform lacks safe controller copy primitives")
+    before = source.lstat()
+    if not stat.S_ISREG(before.st_mode):
         raise OSError(f"controller input is not a regular file: {source.name}")
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    shutil.copyfile(source, destination, follow_symlinks=False)
-    destination.chmod(0o600)
+    source_descriptor = None
+    destination_descriptor = None
+    failed = False
+    try:
+        source_descriptor = os.open(
+            source,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        opened = os.fstat(source_descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise OSError("controller input changed while opening")
+        destination_descriptor = os.open(
+            destination,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_CLOEXEC
+            | os.O_NOFOLLOW,
+            0o600,
+        )
+        total = 0
+        while True:
+            chunk = os.read(source_descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(destination_descriptor, view)
+                if written <= 0:
+                    raise OSError("controller input copy stopped early")
+                view = view[written:]
+        os.fchmod(destination_descriptor, 0o600)
+        os.fsync(destination_descriptor)
+        after = os.fstat(source_descriptor)
+        if (
+            total != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        ):
+            raise OSError("controller input changed while copying")
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        if destination_descriptor is not None:
+            os.close(destination_descriptor)
+        if source_descriptor is not None:
+            os.close(source_descriptor)
+        if failed:
+            destination.unlink(missing_ok=True)
 
 
 def copy_tree(source, destination):
@@ -1591,17 +1748,18 @@ import stat
 from pathlib import Path
 
 root = Path(os.environ["REVIEW_EVAL_REMOVE_ROOT"])
-for current, directories, files in os.walk(root, topdown=False, followlinks=False):
-    current_path = Path(current)
-    for name in files:
-        path = current_path / name
-        if not path.is_symlink() and path.stat().st_nlink == 1:
-            path.chmod(0o700 if path.lstat().st_mode & stat.S_IXUSR else 0o600)
-    for name in directories:
-        path = current_path / name
-        if not path.is_symlink():
-            path.chmod(0o700)
-    current_path.chmod(0o700)
+if any(
+    not hasattr(os, name)
+    for name in ("O_DIRECTORY", "O_NOFOLLOW", "fwalk")
+):
+    raise SystemExit("platform lacks safe cleanup primitives")
+metadata = root.lstat()
+if not stat.S_ISDIR(metadata.st_mode) or not shutil.rmtree.avoids_symlink_attacks:
+    raise SystemExit("execution root is not a directory")
+for _, _, _, directory_fd in os.fwalk(root, topdown=False, follow_symlinks=False):
+    if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+        raise SystemExit("cleanup path changed type")
+    os.fchmod(directory_fd, 0o700)
 shutil.rmtree(root)
 PY
 }
@@ -1640,6 +1798,11 @@ from pathlib import Path
 
 parent = Path(os.environ["REVIEW_EVAL_CLEANUP_PARENT"]).resolve()
 token = os.environ["REVIEW_EVAL_CLEANUP_TOKEN"]
+if any(
+    not hasattr(os, name)
+    for name in ("O_DIRECTORY", "O_NOFOLLOW", "fwalk")
+):
+    raise SystemExit("platform lacks safe cleanup primitives")
 patterns = (
     re.compile(rf"dex-review-trial\.{re.escape(token)}\.[A-Za-z0-9]+"),
     re.compile(rf"dex-review-observer-{re.escape(token)}\.[A-Za-z0-9]+(?:\.ready)?"),
@@ -1650,18 +1813,14 @@ def remove_owned(path):
     if path.is_symlink() or not path.is_dir():
         path.unlink()
         return
-    for current, directories, files in os.walk(path, topdown=False, followlinks=False):
-        current_path = Path(current)
-        for name in files:
-            item = current_path / name
-            metadata = item.lstat()
-            if not stat.S_ISLNK(metadata.st_mode) and metadata.st_nlink == 1:
-                item.chmod(0o700 if metadata.st_mode & stat.S_IXUSR else 0o600)
-        for name in directories:
-            item = current_path / name
-            if not item.is_symlink():
-                item.chmod(0o700)
-        current_path.chmod(0o700)
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise OSError("platform does not provide symlink-safe tree removal")
+    for _, _, _, directory_fd in os.fwalk(
+        path, topdown=False, follow_symlinks=False
+    ):
+        if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+            raise OSError("cleanup path changed type")
+        os.fchmod(directory_fd, 0o700)
     shutil.rmtree(path)
 
 
@@ -1713,7 +1872,7 @@ __review_eval_run_trial_worker() {
   local manifest="$trial_dir/manifest.json" started_epoch started_at finished_epoch finished_at
   local execution_parent execution_root="" agent_result="" workspace="" runtime_dir="" trial_home=""
   local candidate_head="" expected_oracle expected_tier expected_floor control
-  local external_codex_home prepared_sha
+  local external_codex_home external_claude_home prepared_sha
   local controller_token="${REVIEW_EVAL_CONTROLLER_TOKEN:-}" observer_token=""
   local runtime_hash_before="" runtime_hash_after="" provider_timeout
   local product_exit="" status="harness_error" harness_reason=""
@@ -1791,9 +1950,14 @@ __review_eval_run_trial_worker() {
       harness_reason="runtime_sha_mismatch"
     else
       external_codex_home="${CODEX_HOME:-${HOME}/.codex}"
+      external_claude_home="$HOME"
+      if [[ "${REVIEW_EVAL_TEST_STUB:-0}" == "1" ]]; then
+        external_claude_home="$execution_root/no-claude-auth"
+      fi
     fi
     if [[ -z "$harness_reason" ]] && \
-       ! review_eval_prepare_trial_home "$runtime_dir" "$trial_home" "$runner" "$external_codex_home"; then
+       ! review_eval_prepare_trial_home "$runtime_dir" "$trial_home" "$runner" \
+         "$external_codex_home" "$external_claude_home"; then
       harness_reason="trial_home_prepare_failed"
     elif [[ -z "$harness_reason" ]] && ! review_eval_runtime_make_read_only "$runtime_dir"; then
       harness_reason="runtime_permissions_failed"
