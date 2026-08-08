@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dx-script-test.XXXXXX")"
+export HOME="$TMP_DIR/home"
+export DX_RUN_ROOT="$TMP_DIR/review-runs"
+mkdir -p "$HOME" "$DX_RUN_ROOT"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -82,10 +85,12 @@ DEX_DIR="$ROOT" zsh -fc '
 
 DEX_DIR="$ROOT" \
 DX_LOOP_DIR="$TMP_DIR/review-loop" \
+TEST_EXPECTED_RUN_ROOT="$TMP_DIR/review-runs" \
 REVIEW_CALL_FILE="$TMP_DIR/review-calls.out" \
 zsh -fc '
   source "$DEX_DIR/dx.sh"
   cd "$DEX_DIR"
+  [[ "$(dx_run_root)" == "$TEST_EXPECTED_RUN_ROOT" ]] || return 97
   __dx_refresh_provider() {
     DX_PROVIDER_ENGINE=claude
     DX_PROVIDER_AGENT=claude

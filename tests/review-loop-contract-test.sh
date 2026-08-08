@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-loop-contract-test.XXXXXX")"
+export HOME="$TMP_DIR/home"
+export DX_RUN_ROOT="$TMP_DIR/runs"
+mkdir -p "$HOME" "$DX_RUN_ROOT"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -16,14 +19,18 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
 
   set +e
   DEX_DIR="$ROOT" \
+  HOME="$TMP_DIR/$name-home" \
   DX_LOOP_DIR="$TMP_DIR/$name-loops" \
+  DX_RUN_ROOT="$TMP_DIR/$name-runs" \
   DX_STATE_DIR="$TMP_DIR/$name-phases" \
+  TEST_EXPECTED_RUN_ROOT="$TMP_DIR/$name-runs" \
   TEST_AGENT_HOST="$host" \
   TEST_REVIEW_SCENARIO="$scenario" \
   TEST_REVIEW_CALL_FILE="$call_file" \
   zsh -fc '
     source "$DEX_DIR/dx.sh"
     cd "$DEX_DIR"
+    [[ "$(dx_run_root)" == "$TEST_EXPECTED_RUN_ROOT" ]] || return 97
 
     __dx_refresh_provider() {
       if [[ "$TEST_AGENT_HOST" == "codex" ]]; then
