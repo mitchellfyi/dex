@@ -176,19 +176,32 @@ if grep -Fxq "codex" "$TEST_ROUTE_FILE"; then
   exit 1
 fi
 
-run_review_route_case() { # <provider> <ambient-host> <expected-route>
+run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-assessor]
   local provider="$1" ambient_host="$2" expected_route="$3"
+  local use_assessor="${4:-0}"
   local route_file="$TMP_DIR/review-${provider}.route"
   local output_file="$TMP_DIR/review-${provider}.out"
+  local assessment_prompt_file="$TMP_DIR/review-${provider}-assessment.prompt"
+  if [[ "$use_assessor" == "1" ]] && git -C "$TEST_REPO" diff --quiet; then
+    printf '%s\n' "localized candidate change" >> "$TEST_REPO/README.md"
+  fi
   : > "$route_file"
+  : > "$assessment_prompt_file"
 
-  TEST_PROVIDER="$provider" \
+  if ! TEST_PROVIDER="$provider" \
   TEST_AMBIENT_HOST="$ambient_host" \
   TEST_REVIEW_ROUTE_FILE="$route_file" \
-  DEX_REVIEW_TIER=small \
+  TEST_REVIEW_ASSESSMENT_PROMPT_FILE="$assessment_prompt_file" \
+  TEST_USE_ASSESSOR="$use_assessor" \
   zsh -fc '
     source "$DEX_DIR/dx.sh"
     cd "$TEST_REPO"
+
+    if [[ "$TEST_USE_ASSESSOR" == "1" ]]; then
+      unset DEX_REVIEW_TIER
+    else
+      export DEX_REVIEW_TIER=small
+    fi
 
     __dx_refresh_provider() {
       if [[ "$TEST_PROVIDER" == "codex" ]]; then
@@ -237,11 +250,22 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route>
       touch "$(dx_complete_file "$DEX_SESSION_ID")"
     }
     __dx_claude() {
+      if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
+        print -r -- "$*" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
+        print -r -- "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\"}"
+        return 0
+      fi
       print -r -- claude >> "$TEST_REVIEW_ROUTE_FILE"
       emit_contract
     }
     bash() {
       if [[ "${1:-}" == "$DEX_DIR/bin/dxcodex.sh" ]]; then
+        if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
+          print -r -- "${*: -1}" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
+          print -r -- "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\"}" \
+            > "$DX_CODEX_OUTPUT_LAST_MESSAGE"
+          return 0
+        fi
         print -r -- codex >> "$TEST_REVIEW_ROUTE_FILE"
         emit_contract
       else
@@ -250,7 +274,11 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route>
     }
 
     dxreviewloop
-  ' > "$output_file" 2>&1
+  ' > "$output_file" 2>&1; then
+    printf 'review provider %s failed before completing its route\n' "$provider" >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
 
   if [[ "$(grep -Fxc "$expected_route" "$route_file")" -ne 3 ]] || \
      grep -Fvxq "$expected_route" "$route_file"; then
@@ -260,10 +288,30 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route>
     exit 1
   fi
   grep -Fq "Agent:  $(tr '[:lower:]' '[:upper:]' <<< "${expected_route:0:1}")${expected_route:1}" "$output_file"
+
+  if [[ "$use_assessor" == "1" ]]; then
+    grep -Fq "focused verification sources" "$assessment_prompt_file"
+    if [[ "$provider" == "codex" ]]; then
+      grep -Fq "read-only shell commands" "$assessment_prompt_file"
+      grep -Fq ".review-context" "$assessment_prompt_file"
+      if grep -Fq "Do not use Bash" "$assessment_prompt_file"; then
+        printf '%s\n' "Codex assessor was told not to use its read-only shell" >&2
+        exit 1
+      fi
+    else
+      grep -Fq "non-shell read-only inspection tools" "$assessment_prompt_file"
+      if grep -Fq "read-only shell commands" "$assessment_prompt_file"; then
+        printf '%s\n' "Claude assessor received Codex-specific shell guidance" >&2
+        exit 1
+      fi
+    fi
+  fi
 }
 
 # Ambient host signals are deliberately opposite to the selected profile.
 run_review_route_case codex claude codex
 run_review_route_case claude codex claude
+run_review_route_case codex claude codex 1
+run_review_route_case claude codex claude 1
 
 printf 'standalone provider tests passed\n'

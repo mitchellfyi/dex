@@ -268,4 +268,17 @@ DEX_DIR="$ROOT" DX_STATE_DIR="$SIGNAL_STATE_DIR" DX_LOOP_DIR="$SIGNAL_LOOP_DIR" 
   [[ ! -f "$(dx_phase_busy_file signal-review-parent 3)" ]]
 '
 
+# Codex assessments need their read-only shell to inspect unchanged tests and
+# other verification sources. Claude keeps using its non-shell read tools.
+DEX_DIR="$ROOT" zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  codex_guidance=$(__dx_review_assessment_inspection_guidance codex)
+  claude_guidance=$(__dx_review_assessment_inspection_guidance claude)
+  [[ "$codex_guidance" == *"read-only shell commands"* ]]
+  [[ "$codex_guidance" == *"focused verification sources"* ]]
+  [[ "$codex_guidance" != *"Do not use Bash"* ]]
+  [[ "$claude_guidance" == *"non-shell read-only inspection tools"* ]]
+  ! __dx_review_assessment_inspection_guidance unsupported >/dev/null 2>&1
+'
+
 printf 'review-loop-contract-test passed\n'

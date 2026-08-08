@@ -3355,6 +3355,25 @@ __dx_review_handle_interrupt() {
   fi
 }
 
+unalias __dx_review_assessment_inspection_guidance 2>/dev/null; unfunction __dx_review_assessment_inspection_guidance 2>/dev/null
+__dx_review_assessment_inspection_guidance() {
+  case "${1:-}" in
+    codex)
+      printf '%s\n' \
+        "You may use read-only shell commands to inspect repository files and" \
+        "focused verification sources. The assessment runs in a read-only sandbox." \
+        "Do not run tests or commands that create artifacts, install tools, or" \
+        "otherwise mutate the checkout."
+      ;;
+    claude)
+      printf '%s\n' \
+        "You may use non-shell read-only inspection tools to open repository files" \
+        "and focused verification sources. Bash and file-editing tools are unavailable."
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 unalias __dx_review_write_assessment_context 2>/dev/null; unfunction __dx_review_write_assessment_context 2>/dev/null
 __dx_review_write_assessment_context() {
   local target="$1" scope_mode="$2" committed_ref="$3" scope_name="$4" files_changed="$5"
@@ -3866,8 +3885,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
 Scope: ${scope_name} (${files_changed} files).
 Read the prepared scope at: \`${assessment_context_file}\`.
 ${assessment_criteria_block}
-You may use read-only inspection tools to open repository files when the context
-needs clarification. Do not use Bash or any file-editing tool.
+$(__dx_review_assessment_inspection_guidance "$provider_agent")
 
 Trusted clean-pass policy for this decision:
 - small: ${review_policy_small} consecutive CLEAN waves
