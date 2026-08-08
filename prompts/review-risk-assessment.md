@@ -11,7 +11,8 @@ Apply this ordered rubric. The first matching rule wins:
    persistence, schemas, or migrations; public API, CLI, configuration, or
    compatibility contracts; concurrency or process lifecycle; hooks, guards,
    CI, deployment, or packaging; broad cross-module behavior; or when material
-   uncertainty remains about impact or verification.
+   uncertainty prevents the supplied scope or its verification from being
+   bounded.
 2. Choose `small` only when every change is localized and mechanically direct,
    impact is narrow, focused verification is available, and none of the
    `complex` conditions applies.
@@ -32,8 +33,16 @@ least one matching complex-risk code: `cross-module`, `public-contract`,
 only non-complex codes and must not claim the exact `small` pair;
 `bounded-production-change` is the usual normal-tier reason.
 
+Use `uncertain-coverage` only when a concrete gap in the supplied scope or
+available verification leaves material behavior unbounded. Do not use it just
+because the repository is small, unfamiliar, lacks a package manifest, or
+because a higher tier feels safer. If the complete diff is enumerable and its
+behavior has focused verification, apply the other rules without adding an
+uncertainty penalty.
+
 Return the decision in the exact structured format requested by the caller.
 The caller owns persistence; a read-only assessor must not write review state.
 Do not put free-form prose, paths, source excerpts, or secrets in the reason-code
 field. The tier maps deterministically to the required consecutive clean waves:
-`small=3`, `normal=6`, and `complex=9`.
+the caller resolves the exact requirement from the trusted review policy before
+the first wave.

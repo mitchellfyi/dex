@@ -1133,7 +1133,8 @@ dx_cleanup_session() {
   local sid="$1"
   dx_session_id_valid "$sid" || return 2
   if [[ -d "$DX_LOOP_DIR" ]]; then
-    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_ledger_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
+    dx_review_ledger_reset "$sid" 2>/dev/null || true
+    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
     rm -f "${DX_LOOP_DIR}/${sid}.control-lock/owner" 2>/dev/null || true
     rmdir "${DX_LOOP_DIR}/${sid}.control-lock" 2>/dev/null || true
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" -o -name "${sid}.phase-*.busy-cancel" -o -name "${sid}.phase-*.busy-quiesced" \) -exec rm -f {} + 2>/dev/null || true
@@ -1141,12 +1142,78 @@ dx_cleanup_session() {
   [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null
 }
 
+__dx_review_credit_session_from_path() {
+  [[ $# -eq 1 ]] || return 1
+  local name="${1##*/}" session_id
+  case "$name" in
+    *.review-ledger) session_id="${name%.review-ledger}" ;;
+    *.review-proofs) session_id="${name%.review-proofs}" ;;
+    *) return 1 ;;
+  esac
+  dx_session_id_valid "$session_id" || return 1
+  printf '%s\n' "$session_id"
+}
+
+# dx_cleanup_stale_review_credit <max-age-days>
+# Remove stale ledgers and their retained proof bundles as one unit.
+dx_cleanup_stale_review_credit() {
+  [[ $# -eq 1 ]] || return 1
+  local max_age_days="$1" credit_path session_id cleanup_count=0 cleanup_status=0
+  case "$max_age_days" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [[ -d "$DX_LOOP_DIR" ]] || {
+    printf '%s\n' "0"
+    return 0
+  }
+
+  while IFS= read -r -d '' credit_path; do
+    session_id=$(__dx_review_credit_session_from_path "$credit_path") || {
+      cleanup_status=1
+      continue
+    }
+    if dx_review_ledger_reset "$session_id"; then
+      cleanup_count=$((cleanup_count + 1))
+    else
+      cleanup_status=1
+    fi
+  done < <(find "$DX_LOOP_DIR" -maxdepth 1 \( -type f -o -type l \) \
+    -name '*.review-ledger' -mtime +"$max_age_days" -print0 2>/dev/null)
+
+  while IFS= read -r -d '' credit_path; do
+    session_id=$(__dx_review_credit_session_from_path "$credit_path") || {
+      cleanup_status=1
+      continue
+    }
+    if dx_review_ledger_reset "$session_id"; then
+      cleanup_count=$((cleanup_count + 1))
+    else
+      cleanup_status=1
+    fi
+  done < <(find "$DX_LOOP_DIR" -maxdepth 1 \( -type d -o -type l \) \
+    -name '*.review-proofs' -mtime +"$max_age_days" -print0 2>/dev/null)
+
+  printf '%s\n' "$cleanup_count"
+  return "$cleanup_status"
+}
+
 # Remove every phase and loop artifact scoped to the current repository. This
 # also covers in-place sessions and worktrees that no longer exist on disk.
 dx_cleanup_repo_sessions() {
   local repo_key last_session_file last_info last_path repo_root remainder state_dir prefix
+  local credit_path credit_session
 
   repo_key=$(dx_session_repo_key) || return 1
+  if [[ -d "$DX_LOOP_DIR" ]]; then
+    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+      while IFS= read -r -d '' credit_path; do
+        credit_session=$(__dx_review_credit_session_from_path "$credit_path") || return 1
+        dx_review_ledger_reset "$credit_session" || return 1
+      done < <(find "$DX_LOOP_DIR" -maxdepth 1 \
+        \( -name "${prefix}${repo_key}-*.review-ledger" -o \
+           -name "${prefix}${repo_key}-*.review-proofs" \) -print0)
+    done
+  fi
   for state_dir in "$DX_LOOP_DIR" "$DX_STATE_DIR"; do
     [[ -d "$state_dir" ]] || continue
     for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do

@@ -53,10 +53,12 @@ objective, acceptance criterion, and verification requirement. When the
 binding is `standalone`, no criteria file should exist and plan-dependent
 evidence is `N/A`.
 
-Before writing evidence version 2, derive `criteria_coverage` with
+Before writing evidence version 3, derive the ordered item hashes with
 `dx_review_criteria_coverage_json` only after accounting for every supplied
-item. The wrapper recomputes the ordered item hashes and rejects partial or
-stale coverage.
+item. Record an outcome and substantive context-pack evidence reference for
+each item, then copy the wrapper-supplied policy and pass bindings exactly. The
+wrapper recomputes all bindings and hashes and rejects partial, stale, or
+marker-only evidence.
 
 Collect all candidate issues before fixing anything. This fresh review-wave CLI
 session is the independent reviewer. The point is one aggressive inventory

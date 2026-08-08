@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-codex-inline-handoff-test.XXXXXX")"
 
 cleanup() {
+  chmod -R u+w "$TMP_DIR" 2>/dev/null || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -30,6 +31,7 @@ TEST_DEFAULT_BRANCH=$(git -C "$TMP_DIR/repo" branch --show-current)
 
 zsh -fc '
 source "$DEX_DIR/dx.sh"
+source "$DEX_DIR/tests/review-proof-fixture.sh"
 set -e
 
 session_id="codex-inline-handoff"
@@ -104,19 +106,33 @@ fi
 
 touch "$(dx_complete_file "$session_id")"
 receipt_fingerprint="$(dx_review_scope_fingerprint "$TMP_DIR/repo")"
+policy_record="$(dx_review_policy_resolve "$TMP_DIR/repo")"
+receipt_policy_binding="$(printf "%s\n" "$policy_record" | cut -f4)"
 for ledger_iteration in {1..9}; do
-  dx_review_ledger_append "$session_id" "$ledger_iteration" "direct-clean-${ledger_iteration}" "$receipt_fingerprint" "$(printf "%016x" "$ledger_iteration")"
+  pass_id="direct-clean-${ledger_iteration}"
+  evidence_file="$TMP_DIR/direct-clean-${ledger_iteration}.evidence.json"
+  context_file="$TMP_DIR/direct-clean-${ledger_iteration}.context.md"
+  dx_test_write_clean_review_proof "$session_id" "$pass_id" thorough \
+    "$receipt_fingerprint" "$approved_criteria_hash" "$receipt_policy_binding" \
+    "$evidence_file" "$context_file"
+  dx_review_ledger_append "$session_id" "$ledger_iteration" "$pass_id" thorough \
+    "$receipt_fingerprint" "$approved_criteria_hash" "$receipt_policy_binding" \
+    "$evidence_file" "$context_file"
 done
-if ! dx_review_write_receipt "$session_id" complex 9 9 "$TMP_DIR/repo"; then
+if ! dx_review_write_receipt "$session_id" complex 9 9 "$TMP_DIR/repo" \
+  "$approved_criteria_hash" "$receipt_policy_binding"; then
   printf "%s\n" "could not write the Phase 3 receipt fixture" >&2
   exit 1
 fi
+review_proof_dir=$(dx_review_proof_dir "$session_id")
+[[ -d "$review_proof_dir" ]]
 if ! __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"; then
   printf "%s\n" "phase 3 did not advance with a valid review receipt" >&2
   exit 1
 fi
 [[ "$(cat "$state_file")" == "4" ]]
 [[ "$(dx_phase_outcome_latest "$session_id" 3)" == "completed" ]]
+[[ ! -e "$review_proof_dir" && ! -L "$review_proof_dir" ]]
 
 printf "2\n" > "$state_file"
 dx_write_lifecycle_control "$session_id" jump 4 terminal "" 2 ""

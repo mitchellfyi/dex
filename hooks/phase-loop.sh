@@ -924,6 +924,9 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     REVIEW_CONTEXT_FILE=$(dx_review_context_file "$SESSION_ID")
     REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
     REVIEW_CRITERIA_BINDING="${DEX_REVIEW_CRITERIA_BINDING:-standalone}"
+    REVIEW_POLICY_BINDING="${DEX_REVIEW_POLICY_BINDING:-}"
+    REVIEW_PASS_ID="${DEX_REVIEW_PASS_ID:-}"
+    REVIEW_PASS_BINDING="${DEX_REVIEW_PASS_BINDING:-}"
     REVIEW_EVIDENCE_FILE=$(dx_review_evidence_file "$SESSION_ID")
     REVIEW_FINDINGS_FILE=$(dx_findings_file "$SESSION_ID")
     REVIEW_RESULT=$(cat "$REVIEW_RESULT_FILE" 2>/dev/null || true)
@@ -961,6 +964,18 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       exit 2
     fi
+    REVIEW_POLICY_RECORD=$(dx_review_policy_resolve "$(pwd)" 2>/dev/null || true)
+    IFS=$'\t' read -r _ _ _ CURRENT_REVIEW_POLICY_BINDING _ <<< "$REVIEW_POLICY_RECORD"
+    EXPECTED_REVIEW_PASS_BINDING=$(dx_review_pass_binding "$REVIEW_PASS_ID" \
+      "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING" 2>/dev/null || true)
+    if [[ -z "$CURRENT_REVIEW_POLICY_BINDING" || "$REVIEW_POLICY_BINDING" != "$CURRENT_REVIEW_POLICY_BINDING" || \
+          -z "$EXPECTED_REVIEW_PASS_BINDING" || "$REVIEW_PASS_BINDING" != "$EXPECTED_REVIEW_PASS_BINDING" ]]; then
+      rm -f "$COMPLETE_FILE"
+      printf '\n%s\n\n' "--- Dex Review Pass Gate: policy or pass binding missing or stale ---" >&2
+      printf '%s\n' "Completion signal ignored; return control to dxreviewloop so it can restart this pass with current trusted bindings." >&2
+      printf '%s\n' "" >&2
+      exit 2
+    fi
     if ! dx_review_context_valid "$REVIEW_CONTEXT_FILE" "$REVIEW_CRITERIA_BINDING"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Review Pass Gate: context pack missing or empty ---" >&2
@@ -970,7 +985,9 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       exit 2
     fi
-    if ! dx_review_evidence_valid "$REVIEW_EVIDENCE_FILE" "$REVIEW_RESULT" "${DEX_REVIEW_PROFILE:-}" "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "$REVIEW_CRITERIA_BINDING" "$REVIEW_CRITERIA_FILE"; then
+    if ! dx_review_evidence_valid "$REVIEW_EVIDENCE_FILE" "$REVIEW_RESULT" "${DEX_REVIEW_PROFILE:-}" \
+      "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "$REVIEW_CRITERIA_BINDING" "$REVIEW_CRITERIA_FILE" \
+      "$REVIEW_PASS_ID" "$REVIEW_POLICY_BINDING" "$REVIEW_CONTEXT_FILE"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Review Pass Gate: evidence manifest missing or invalid ---" >&2
       printf '%s\n' "Completion signal ignored; this pass must write valid versioned evidence for its result, profile, and scope fingerprint." >&2
@@ -993,8 +1010,11 @@ if [[ -f "$COMPLETE_FILE" ]]; then
   if [[ "$CURRENT_PHASE" == "3" && "${DEX_REVIEW_PASS_ACTIVE:-}" != "1" ]]; then
     REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
     REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
+    REVIEW_POLICY_RECORD=$(dx_review_policy_resolve "$(pwd)" 2>/dev/null || true)
+    IFS=$'\t' read -r _ _ _ REVIEW_POLICY_BINDING _ <<< "$REVIEW_POLICY_RECORD"
     if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
-       ! dx_review_receipt_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING"; then
+       ! dx_review_policy_binding_valid "$REVIEW_POLICY_BINDING" ||
+       ! dx_review_receipt_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Phase 3 Gate: review receipt missing or stale ---" >&2
       printf '%s\n' "Completion signal ignored; Phase 3 did not advance." >&2
@@ -1038,8 +1058,11 @@ if [[ -f "$COMPLETE_FILE" ]]; then
       printf '%s\n' "" >&2
       exit 2
     fi
+    REVIEW_POLICY_RECORD=$(dx_review_policy_resolve "$(pwd)" 2>/dev/null || true)
+    IFS=$'\t' read -r _ _ _ REVIEW_POLICY_BINDING _ <<< "$REVIEW_POLICY_RECORD"
     if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
-       ! dx_review_selection_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING"; then
+       ! dx_review_policy_binding_valid "$REVIEW_POLICY_BINDING" ||
+       ! dx_review_selection_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING"; then
       rm -f "$COMPLETE_FILE"
       printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
       printf '%s\n' "Completion signal ignored; Phase 2 did not advance." >&2
@@ -1109,7 +1132,9 @@ if [[ -f "$COMPLETE_FILE" ]]; then
 
     dx_record_phase_result "$CURRENT_PHASE" "advance" "0"
     if [[ "$CURRENT_PHASE" == "3" ]]; then
-      rm -f "$(dx_review_selection_file "$SESSION_ID")" "$(dx_review_receipt_file "$SESSION_ID")" "$(dx_review_state_file "$SESSION_ID")" "$(dx_review_ledger_file "$SESSION_ID")" 2>/dev/null
+      rm -f "$(dx_review_selection_file "$SESSION_ID")" "$(dx_review_receipt_file "$SESSION_ID")" \
+        "$(dx_review_state_file "$SESSION_ID")" 2>/dev/null
+      dx_review_ledger_reset "$SESSION_ID" 2>/dev/null || true
       if dx_phase_busy_quiesced "$SESSION_ID" 3; then
         PHASE_3_BUSY_TOKEN=$(dx_phase_busy_token "$SESSION_ID" 3)
         dx_phase_busy_finish "$SESSION_ID" 3 "$PHASE_3_BUSY_TOKEN" 2>/dev/null || true

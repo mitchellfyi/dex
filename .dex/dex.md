@@ -21,20 +21,28 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 | Generate | N/A | No code generation |
 | All | N/A | No unified check command |
 
+## Review Policy
+
+| Setting | Value |
+|---------|-------|
+| small_clean_passes | 3 |
+| normal_clean_passes | 6 |
+| complex_clean_passes | 9 |
+
 ## Project Structure
 ```
-dx.sh                Main shell functions (zsh only, ~2800 lines)
+dx.sh                Main shell functions (zsh only, ~5200 lines)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
-agents/              Sub-agents (symlinked to ~/.claude/agents/)
 bin/                 CLI scripts: install, uninstall, init, uninit, config, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
 docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
 hooks/               Claude Code hooks + guard handler
-  guards/            Built-in guard rules (5 rules)
-lib/                 Shared shell libraries (14 modules: agent-tools, codex, common, events, factory, git, maintenance, output, provider, rtk, run-spec, session, ui-capture, worktree)
+  guards/            Built-in guard rules (8 rules)
+lib/                 Shared shell libraries (21 modules, including review policy,
+                     evidence, and controller modules)
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
-research/            DX evaluation harness (scenarios, scoring, improvement loop)
+research/            DX research and the isolated review-loop evaluation harness
 skills/              Lifecycle skills (18 total, linked into ~/.claude/skills/)
 .dex/                Per-project config (this directory)
   providers.json     Repo-local default agent/provider profile

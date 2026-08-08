@@ -19,14 +19,27 @@ All of these must be true:
 - `/dxreviewloop` reviewed the full caller-supplied scope: the current change
   set, or the entire tracked codebase when no change set exists.
 - The `/dxreviewloop` result is `SUCCESS`.
-- The loop reached the selected consecutive clean gate: 3 for `small`, 6 for
-  `normal`, or 9 for `complex`. An explicit `DEX_REVIEW_CLEAN_PASSES` override
-  may raise that count but cannot lower the tier's canonical floor.
+- The loop reached the selected tier's trusted consecutive clean gate. The
+  default requirements are 3 for `small`, 6 for `normal`, and 9 for `complex`.
+  The committed default branch may configure monotonic requirements from 1
+  through 30 in `.dex/dex.md` `## Review Policy`.
+  `DEX_REVIEW_CLEAN_PASSES` may raise the resolved requirement but cannot lower
+  it. Candidate-branch policy edits do not change the active gate.
 - Every counted clean result came from a fresh pass-scoped agent session that
   saw the current code and scope but no prior review reports, findings,
   fingerprints, clean-pass counts, telemetry, or stale conversation context.
 - Every counted wave wrote `CLEAN` after finding zero verified findings and
   applying zero fixes.
+- Every counted wave supplied valid evidence version 3. For every approved
+  objective, acceptance criterion, and verification requirement, the manifest
+  recorded the exact ordered item hash, a `met` outcome, and substantive
+  references to that pass's context pack. Its policy and pass bindings matched
+  the wrapper's immutable inputs.
+- Before granting clean credit, the wrapper attested the evidence manifest,
+  context pack, result, profile, and findings fingerprint together. Each clean
+  ledger row contains the unique pass identity, its bindings, and that
+  attestation. Private, read-only proof copies remain available so receipt
+  validation can revalidate each pass and recompute every attestation.
 - Any `FINDINGS_FIXED:N` result reset the clean counter, and review restarted
   against the updated full scope in another fresh session.
 - Any escalation raised the tier, reset the clean counter, and restarted review
@@ -36,12 +49,14 @@ All of these must be true:
   alternating-fingerprint churn remains. Each of these pauses rather than
   completing the loop.
 - The loop wrote a valid machine-readable review receipt tied to the current
-  scope fingerprint. A prose `SUCCESS` claim without that receipt does not
-  satisfy Phase 3.
+  scope fingerprint, approved criteria, trusted policy, and attested clean
+  ledger. A prose `SUCCESS` claim without that receipt does not satisfy Phase 3.
 - Review ran again after the most recent in-scope change. After review fixes,
   the loop retained or raised the tier, rebound its selection to the updated
   fingerprint, and reset progress. Any out-of-band scope change invalidated
   selection, progress, and receipts before counting resumed.
+- Any criteria or trusted-policy binding change invalidated prior selection,
+  progress, clean credit, and receipts before review resumed.
 - Phase 3 stays focused on review by default. If a commit, push, or PR action
   occurs during the phase, record the resulting state. Re-run `/dxreviewloop`
   after any code change; publishing does not replace the clean-pass requirement.

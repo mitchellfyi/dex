@@ -21,8 +21,8 @@ context for the same checkout, not a fresh git workspace.
 
 ## Risk Selection
 
-Resolve one risk tier before the first review wave. The tier controls both the
-review depth and the number of consecutive clean waves required:
+Resolve one risk tier before the first review wave. The tier controls review
+depth and selects the trusted clean-wave policy. The default policy is:
 
 | Risk tier | Review profile | Required consecutive `CLEAN` waves |
 |-----------|----------------|-------------------------------------|
@@ -37,8 +37,9 @@ matching rule wins:
   authorization, permissions, secrets, payments, or destructive behavior;
   persistence, schemas, or migrations; public API, CLI, configuration, or
   compatibility contracts; concurrency or process lifecycle; hooks, guards,
-  CI, deployment, or packaging; broad cross-module behavior; or material
-  uncertainty about impact or verification.
+  CI, deployment, or packaging; broad cross-module behavior; or a concrete gap
+  in the supplied scope or verification that leaves material behavior
+  unbounded.
 - Choose `small` only when every change is localized and mechanically direct,
   impact is narrow, focused verification is available, and no `complex`
   condition applies.
@@ -76,9 +77,12 @@ not edit the checkout.
 
 `DEX_REVIEW_TIER=small|normal|complex` is the canonical explicit override and
 takes precedence. `DEX_REVIEW_PROFILE=light|standard|thorough` remains a legacy
-alias. A `DEX_REVIEW_CLEAN_PASSES` override may raise the gate but cannot
-lower the selected tier's canonical floor. Review may escalate to a higher tier,
-but it never downgrades.
+alias. A `DEX_REVIEW_CLEAN_PASSES` override may raise the gate but cannot lower
+the selected tier's resolved policy requirement. The wrapper reads policy
+values from the trusted default branch, requires values from 1 through 30 in
+monotonic order, and binds the resolved policy to selection, progress, pass
+evidence, and the final receipt. Candidate-branch edits cannot lower the active
+gate. Review may escalate to a higher tier, but it never downgrades.
 
 There is no outer iteration limit. The loop continues until the clean-pass gate
 succeeds or a deterministic pause condition requires intervention.
@@ -137,10 +141,15 @@ If fresh review-wave CLI sessions are unavailable, pause with
 orchestrator's existing context.
 
 The wrapper accepts a wave only when both criteria copies retain the expected
-binding, evidence version 2 contains the exact ordered hash for every supplied
-criteria item, its result is valid, its context pack records that binding, its
-findings hash is valid, and its completion marker exists. It harvests validated
-non-clean hashes for churn detection before deleting all pass-scoped state.
+binding, evidence version 3 contains the exact ordered hash, outcome, and
+substantive context reference for every supplied criteria item, its policy and
+pass bindings match the current immutable inputs, its result is valid, its
+findings hash is valid, and its completion marker exists. It attests the
+manifest, context, result, profile, and findings fingerprint together before
+crediting the pass. Counted clean evidence and context are retained as private,
+read-only proof copies so ledger and receipt validation can reopen each pass and
+recompute its attestation. It harvests validated non-clean hashes for churn
+detection before deleting the remaining pass-scoped state.
 
 ## Result Signals
 
@@ -172,10 +181,11 @@ telemetry.
 ## Persistence and Receipt
 
 The wrapper persists the selected tier, required clean count, iteration, clean
-count, and current-scope fingerprint outside the repository. Resume that state
-only while the scope fingerprint still matches. An out-of-band scope change
-invalidates selection, progress, and success receipts; resolve the tier again
-before counting another wave.
+count, current-scope fingerprint, criteria binding, and trusted policy binding
+outside the repository. Resume that state only while all bindings still match.
+An out-of-band scope, criteria, or policy change invalidates selection,
+progress, and success receipts; resolve the tier and policy again before
+counting another wave.
 
 After the gate succeeds, write a machine-readable review receipt tied to the
 current scope fingerprint. Lifecycle Phase 3 advances only when that receipt is

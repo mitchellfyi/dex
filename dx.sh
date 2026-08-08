@@ -176,7 +176,7 @@ __dx_cli() {
       echo "Standalone completion (recovery / non-dx PRs):"
       echo "  dxcomplete             Monitor CI/reviews, address comments, close ticket"
       echo ""
-      echo "Standalone review (agent-selected 3/6/9 clean-pass gate, no full lifecycle needed):"
+      echo "Standalone review (agent-selected risk tier with a trusted clean-pass gate):"
       echo "  dxreviewloop           Review current changes, or whole codebase if clean"
       echo ""
       echo "Prompt loop:"
@@ -499,10 +499,11 @@ DX_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 
 # Review sub-loop configuration.
 # Lifecycle Phase 3 uses the /dxreviewloop skill in the same Claude session.
-# A risk assessment resolves small/normal/complex to 3/6/9 consecutive clean
-# passes before the first review wave. Legacy light/standard/thorough profile
-# names remain accepted. There is no outer iteration limit; verified churn,
-# provider failures, timeouts, invalid evidence, and user interrupts pause it.
+# A risk assessment selects small/normal/complex before the first review wave.
+# The trusted default-branch policy maps that tier to a clean-pass gate, using
+# 3/6/9 by default. Legacy light/standard/thorough profile names remain
+# accepted. There is no outer iteration limit; verified churn, provider
+# failures, timeouts, invalid evidence, and user interrupts pause it.
 # Override risk: DEX_REVIEW_TIER=complex
 # Raise the loop gate: DEX_REVIEW_CLEAN_PASSES=12
 # Review waves launch with MCP servers disabled (waves only use local tools);
@@ -1280,7 +1281,7 @@ Same-session handoff rules:
 - When a phase is complete, stop once for the Stop hook audit.
 - If the Stop hook gives you the next phase, continue immediately without asking
   the user.
-- Phase 3 must use /dxreviewloop with the selected small/normal/complex 3/6/9 clean-pass gate.
+- Phase 3 must use /dxreviewloop with the selected tier's trusted clean-pass gate.
 
 Human input is required only for:
 - Phase 1 plan approval or plan rejection
@@ -1290,7 +1291,7 @@ Human input is required only for:
 - Missing credentials/tooling the agent cannot configure safely
 - Repeated CI failures, architectural review disputes, or unclear reviewer
   feedback that cannot be resolved within the approved plan
-- Max audit/review iterations or repeated loop stalls without completion
+- Max phase-audit iterations or repeated loop stalls without completion
 - Phase 6 waiting for CI and successfully requested reviewer approval
 
 If none of those applies, keep working autonomously.
@@ -1601,6 +1602,7 @@ unalias __dx_codex_direct_phase_handoff 2>/dev/null; unfunction __dx_codex_direc
 __dx_codex_direct_phase_handoff() {
   local session_id="$1" phase="$2" state_file="$3" wt_dir="$4"
   local provider_state provider_engine="" line complete_file ready_file next_phase criteria_binding=""
+  local policy_record="" policy_binding="" policy_small="" policy_normal="" policy_complex="" policy_ref="" policy_oid=""
   local control_action control_target control_expected control_phase control_snapshot control_source
   local control_generation control_from control_recovery control_busy_token
   local config_file control_config
@@ -1748,12 +1750,19 @@ __dx_codex_direct_phase_handoff() {
     criteria_binding=$(dx_review_read_criteria_approval "$session_id" 2>/dev/null || true)
     [[ "$criteria_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
   fi
+  if [[ "$phase" == "2" || "$phase" == "3" ]]; then
+    policy_record=$(dx_review_policy_resolve "$wt_dir") || return 1
+    IFS=$'\t' read -r policy_small policy_normal policy_complex policy_binding policy_ref policy_oid <<< "$policy_record"
+    : "$policy_small" "$policy_normal" "$policy_complex"
+    dx_review_policy_binding_valid "$policy_binding" || return 1
+    dx_review_policy_provenance_valid "$policy_ref" "$policy_oid" || return 1
+  fi
 
-  if [[ "$phase" == "2" ]] && ! dx_review_selection_valid "$session_id" "$wt_dir" "$criteria_binding"; then
+  if [[ "$phase" == "2" ]] && ! dx_review_selection_valid "$session_id" "$wt_dir" "$criteria_binding" "$policy_binding"; then
     return 1
   fi
 
-  if [[ "$phase" == "3" ]] && ! dx_review_receipt_valid "$session_id" "$wt_dir" "$criteria_binding"; then
+  if [[ "$phase" == "3" ]] && ! dx_review_receipt_valid "$session_id" "$wt_dir" "$criteria_binding" "$policy_binding"; then
     return 1
   fi
 
@@ -1785,7 +1794,9 @@ __dx_codex_direct_phase_handoff() {
     fi
     __dx_record_inline_phase_result "$session_id" "$phase" "advance" "0"
     if [[ "$phase" == "3" ]]; then
-      rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" "$(dx_review_state_file "$session_id")" "$(dx_review_ledger_file "$session_id")" 2>/dev/null
+      rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" \
+        "$(dx_review_state_file "$session_id")" 2>/dev/null
+      dx_review_ledger_reset "$session_id" 2>/dev/null || true
       if dx_phase_busy_quiesced "$session_id" 3; then
         control_busy_token=$(dx_phase_busy_token "$session_id" 3)
         dx_phase_busy_finish "$session_id" 3 "$control_busy_token" 2>/dev/null || true
@@ -3224,7 +3235,7 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
 # read-only review findings, verify/dedupe, batch-fix, re-check, then write a
 # review-result signal. Only a wave with zero verified findings and zero fixes
 # writes CLEAN. A preflight risk selection resolves small/normal/complex to
-# 3/6/9 required clean waves, and a wave may escalate that tier upward.
+# the trusted policy's required clean waves, and a wave may escalate that tier upward.
 
 unalias __dx_review_emit_event 2>/dev/null; unfunction __dx_review_emit_event 2>/dev/null
 __dx_review_emit_event() {
@@ -3508,6 +3519,10 @@ Use this machine-readable evidence path: \`__PASS_EVIDENCE_FILE__\`
 Use this per-pass completion path only after the review result signal and findings hash are written: \`__PASS_COMPLETE_FILE__\`
 The immutable scope fingerprint for this pass is: \`__SCOPE_FINGERPRINT__\`
 
+Independent pass ID: __REVIEW_PASS_ID__
+Trusted review-policy binding: __REVIEW_POLICY_BINDING__
+Scope, criteria, policy, and pass binding: __REVIEW_PASS_BINDING__
+
 __REVIEW_CRITERIA_BLOCK__
 
 Review depth profile for this pass: \`__REVIEW_PROFILE__\`.
@@ -3624,6 +3639,18 @@ dxreviewloop() {
     fi
   fi
 
+  local review_policy_record="" review_policy_small="" review_policy_normal=""
+  local review_policy_complex="" review_policy_binding="" review_policy_ref="" review_policy_oid=""
+  review_policy_record=$(dx_review_policy_resolve "$repo_root" 2>/dev/null || true)
+  IFS=$'\t' read -r review_policy_small review_policy_normal review_policy_complex \
+    review_policy_binding review_policy_ref review_policy_oid <<< "$review_policy_record"
+  if ! dx_review_policy_provenance_valid "$review_policy_ref" "$review_policy_oid" || \
+     ! dx_review_policy_binding_valid "$review_policy_binding"; then
+    dx_error "The default branch has an invalid review policy. Fix the Review Policy table in .dex/dex.md."
+    [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+    return 1
+  fi
+
   # Reject malformed operator input before creating locks, run journals, or
   # agent sessions.
   local explicit_clean_gate="${DEX_REVIEW_CLEAN_PASSES:-}"
@@ -3649,7 +3676,8 @@ dxreviewloop() {
     elif [[ -n "$requested_profile" && "$requested_profile" != "auto" ]]; then
       preflight_tier=$(dx_review_normalize_tier "$requested_profile") || return 1
     fi
-    preflight_floor=$(dx_review_tier_min_clean_passes "$preflight_tier") || return 1
+    preflight_floor=$(dx_review_policy_tier_clean_passes "$preflight_tier" \
+      "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || return 1
     if [[ $((10#$explicit_clean_gate)) -lt $((10#$preflight_floor)) ]]; then
       dx_error "Review tier '${preflight_tier}' requires at least ${preflight_floor} consecutive clean passes; got ${explicit_clean_gate}."
       return 1
@@ -3745,11 +3773,11 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     review_mcp_flags=("${assessment_mcp_flags[@]}")
   fi
 
-  local review_tier="" review_profile="" selection_source="" selection_reasons="" selection_required="" selection_fingerprint="" selection_binding=""
-  local selection_record="" prior_selection_record="" prior_tier="" prior_source="" prior_reasons="" prior_required="" prior_fingerprint="" prior_binding=""
-  if prior_selection_record=$(dx_review_read_selection "$session_id" "$PWD" "$review_criteria_binding" 2>/dev/null); then
-    IFS=$'\t' read -r prior_tier prior_source prior_reasons prior_required prior_fingerprint prior_binding <<< "$prior_selection_record"
-    : "$prior_fingerprint" "$prior_binding"
+  local review_tier="" review_profile="" selection_source="" selection_reasons="" selection_required="" selection_fingerprint="" selection_binding="" selection_policy_binding=""
+  local selection_record="" prior_selection_record="" prior_tier="" prior_source="" prior_reasons="" prior_required="" prior_fingerprint="" prior_binding="" prior_policy_binding=""
+  if prior_selection_record=$(dx_review_read_selection "$session_id" "$PWD" "$review_criteria_binding" "$review_policy_binding" 2>/dev/null); then
+    IFS=$'\t' read -r prior_tier prior_source prior_reasons prior_required prior_fingerprint prior_binding prior_policy_binding <<< "$prior_selection_record"
+    : "$prior_fingerprint" "$prior_binding" "$prior_policy_binding"
   else
     rm -f "$(dx_review_state_file "$session_id")" "$(dx_review_receipt_file "$session_id")" "$(dx_findings_file "$session_id")" 2>/dev/null
     dx_review_ledger_reset "$session_id" 2>/dev/null || true
@@ -3777,8 +3805,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     fi
   elif [[ $standalone_review_prompt -eq 0 && -n "$prior_selection_record" ]]; then
     selection_record="$prior_selection_record"
-    IFS=$'\t' read -r review_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding <<< "$selection_record"
-    : "$selection_fingerprint" "$selection_binding"
+    IFS=$'\t' read -r review_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding selection_policy_binding <<< "$selection_record"
+    : "$selection_fingerprint" "$selection_binding" "$selection_policy_binding"
   else
     rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" 2>/dev/null
     local assessment_prompt_file="$DEX_DIR/prompts/review-risk-assessment.md" assessment_rubric=""
@@ -3840,6 +3868,13 @@ Read the prepared scope at: \`${assessment_context_file}\`.
 ${assessment_criteria_block}
 You may use read-only inspection tools to open repository files when the context
 needs clarification. Do not use Bash or any file-editing tool.
+
+Trusted clean-pass policy for this decision:
+- small: ${review_policy_small} consecutive CLEAN waves
+- normal: ${review_policy_normal} consecutive CLEAN waves
+- complex: ${review_policy_complex} consecutive CLEAN waves
+Policy binding: ${review_policy_binding}
+Choose the tier up front; its mapped streak is the deterministic requirement.
 
 ${assessment_rubric}
 
@@ -3910,6 +3945,7 @@ $(__dx_provider_prompt)"
       if [[ $assessment_exit -eq 0 ]] && assessment_record=$(dx_review_parse_assessment_file "$assessment_output_file" 2>/dev/null); then
         IFS=$'\t' read -r review_tier selection_reasons <<< "$assessment_record"
         selection_source="$assessment_source"
+        local proposed_tier="$review_tier" proposed_reasons="$selection_reasons"
         local floor_record="" floor_tier="" floor_reason="" assessed_rank="" floor_rank=""
         floor_record=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
         IFS=$'\t' read -r floor_tier floor_reason <<< "$floor_record"
@@ -3926,8 +3962,11 @@ $(__dx_provider_prompt)"
           selection_source="$prior_source"
           selection_required="$prior_required"
         fi
-        if dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "" "$review_criteria_binding"; then
+        if dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" \
+          "$PWD" "" "$review_criteria_binding" "$review_policy_binding"; then
           assessment_ok=1
+          __dx_review_emit_event "$review_run_id" "review.tier.assessed" "info" "Review tier assessed" "$review_phase" \
+            tier="$proposed_tier" source="$assessment_source" reason_codes="$proposed_reasons"
         fi
       fi
       dx_provider_cleanup_session_state "$assessment_session_id"
@@ -3959,7 +3998,8 @@ $(__dx_provider_prompt)"
     return 1
   }
   local required_clean="" required_candidate="" tier_min_clean=""
-  required_clean=$(dx_review_tier_clean_passes "$review_tier") || return 1
+  required_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
+    "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || return 1
   for required_candidate in "$selection_required" "$prior_required" "$explicit_clean_gate"; do
     [[ -n "$required_candidate" ]] || continue
     if [[ $((10#$required_candidate)) -gt $((10#$required_clean)) ]]; then
@@ -3971,7 +4011,8 @@ $(__dx_provider_prompt)"
     return 1
   }
   required_clean=$((10#$required_clean))
-  tier_min_clean=$(dx_review_tier_min_clean_passes "$review_tier") || {
+  tier_min_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
+    "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || {
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
     return 1
   }
@@ -3980,26 +4021,29 @@ $(__dx_provider_prompt)"
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed gate_below_tier_minimum "$session_id"
     return 1
   fi
-  if ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "$required_clean" "$review_criteria_binding"; then
+  if ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" \
+    "$PWD" "$required_clean" "$review_criteria_binding" "$review_policy_binding"; then
     dx_error "Could not persist the review risk selection."
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed selection_write_failed "$session_id"
     return 1
   fi
 
   __dx_review_emit_event "$review_run_id" "review.tier.selected" "info" "Review tier selected" "$review_phase" \
-    tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" source="$selection_source" reason_codes="$selection_reasons"
+    tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" source="$selection_source" reason_codes="$selection_reasons" \
+    policy_small_int="$review_policy_small" policy_normal_int="$review_policy_normal" policy_complex_int="$review_policy_complex"
 
   local review_promise
   review_promise="$(__dx_review_phase_promise)"
   rm -f "$(dx_review_receipt_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
 
   local clean_passes=0 review_iteration=0 findings_fixed_total=0
-  local state_record="" state_tier="" state_required="" state_iteration="" state_clean="" state_fingerprint="" state_binding=""
-  if state_record=$(dx_review_read_state "$session_id" "$PWD" "$review_criteria_binding" 2>/dev/null); then
-    IFS=$'\t' read -r state_tier state_required state_iteration state_clean state_fingerprint state_binding <<< "$state_record"
+  local state_record="" state_tier="" state_required="" state_iteration="" state_clean="" state_fingerprint="" state_binding="" state_policy_binding=""
+  if state_record=$(dx_review_read_state "$session_id" "$PWD" "$review_criteria_binding" "$review_policy_binding" 2>/dev/null); then
+    IFS=$'\t' read -r state_tier state_required state_iteration state_clean state_fingerprint state_binding state_policy_binding <<< "$state_record"
     if [[ "$state_tier" == "$review_tier" && "$state_required" == "$required_clean" ]] && \
-       [[ "$state_binding" == "$review_criteria_binding" ]] && \
-       dx_review_ledger_valid "$session_id" "$state_clean" "$state_fingerprint" "$review_criteria_binding"; then
+       [[ "$state_binding" == "$review_criteria_binding" && "$state_policy_binding" == "$review_policy_binding" ]] && \
+       dx_review_ledger_valid "$session_id" "$state_clean" "$state_fingerprint" \
+         "$review_criteria_binding" "$review_policy_binding" "$review_profile"; then
       review_iteration=$((10#$state_iteration))
       clean_passes=$((10#$state_clean))
       dx_info "Resuming review at ${clean_passes}/${required_clean} consecutive clean passes."
@@ -4012,7 +4056,8 @@ $(__dx_provider_prompt)"
     dx_review_ledger_reset "$session_id" 2>/dev/null || true
   fi
 
-  if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" "$PWD" "$review_criteria_binding"; then
+  if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" \
+    "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
     dx_error "Could not initialize review state."
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed state_write_failed "$session_id"
     return 1
@@ -4035,6 +4080,7 @@ $(__dx_provider_prompt)"
   [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")
 
   local terminal_reason="" terminal_detail="" terminal_exit=1 parent_findings_file message_template=""
+  local terminal_selection_op="keep" terminal_state_op="write" terminal_preserve_credit=0
   parent_findings_file=$(dx_findings_file "$session_id")
 
   while [[ $clean_passes -lt $required_clean ]]; do
@@ -4043,7 +4089,7 @@ $(__dx_provider_prompt)"
       clean_passes=0
       break
     fi
-    if ! dx_review_selection_valid "$session_id" "$PWD" "$review_criteria_binding"; then
+    if ! dx_review_selection_valid "$session_id" "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
       terminal_reason="selection_scope_changed"
       clean_passes=0
       break
@@ -4120,7 +4166,7 @@ $(__dx_provider_prompt)"
     local scope_before="" scope_after="" scope_changed="false" working_before="" working_after="" working_changed="false"
     local descriptor_before="" descriptor_after="" branch_before="" branch_after="" head_before="" head_after=""
     local pass_started="" pass_finished="" pass_duration="" clean_before="$clean_passes"
-    local pass_tier="$review_tier" pass_profile="$review_profile"
+    local pass_tier="$review_tier" pass_profile="$review_profile" pass_binding=""
     scope_before=$(dx_review_scope_fingerprint "$PWD") || {
       terminal_reason="scope_fingerprint_error"
       dx_cleanup_session "$pass_session_id"
@@ -4128,6 +4174,16 @@ $(__dx_provider_prompt)"
       break
     }
     message="${message//__SCOPE_FINGERPRINT__/$scope_before}"
+    pass_binding=$(dx_review_pass_binding "$pass_nonce" "$scope_before" \
+      "$review_criteria_binding" "$review_policy_binding") || {
+      terminal_reason="pass_binding_error"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    }
+    message="${message//__REVIEW_PASS_ID__/$pass_nonce}"
+    message="${message//__REVIEW_POLICY_BINDING__/$review_policy_binding}"
+    message="${message//__REVIEW_PASS_BINDING__/$pass_binding}"
     working_before=$(dx_review_working_fingerprint "$PWD") || {
       terminal_reason="scope_fingerprint_error"
       dx_cleanup_session "$pass_session_id"
@@ -4151,7 +4207,7 @@ $(__dx_provider_prompt)"
       local review_control_snapshot="" review_control_action="" review_parent_phase="" busy_write_status=0
       if ! dx_lifecycle_control_lock_acquire "$session_id"; then
         terminal_reason="control_transition_busy"
-        clean_passes=0
+        terminal_preserve_credit=1
         dx_cleanup_session "$pass_session_id"
         current_review_child_session=""
         break
@@ -4164,7 +4220,7 @@ $(__dx_provider_prompt)"
         || "$review_parent_phase" != "3" ]]; then
         dx_lifecycle_control_lock_release "$session_id" || true
         terminal_reason="human_intervention"
-        clean_passes=0
+        terminal_preserve_credit=1
         dx_cleanup_session "$pass_session_id"
         current_review_child_session=""
         break
@@ -4173,6 +4229,7 @@ $(__dx_provider_prompt)"
       dx_lifecycle_control_lock_release "$session_id" || true
       if [[ "$busy_write_status" -ne 0 || -z "$parent_busy_token" ]]; then
         terminal_reason="busy_marker_write_failed"
+        terminal_preserve_credit=1
         dx_cleanup_session "$pass_session_id"
         current_review_child_session=""
         break
@@ -4206,6 +4263,12 @@ Write the versioned evidence JSON described in prompts/review-wave.md to:
 Set its scope_fingerprint field to:
   ${scope_before}
 
+Set its policy_binding field to:
+  ${review_policy_binding}
+
+Set its pass_binding field to:
+  ${pass_binding}
+
 Then touch:
   ${pass_complete_file}
 
@@ -4225,6 +4288,9 @@ ${message}"
       DEX_REVIEW_SCOPE_FINGERPRINT="$scope_before" \
       DEX_REVIEW_CRITERIA_BINDING="$review_criteria_binding" \
       DEX_REVIEW_CRITERIA_FILE="$pass_criteria_file" \
+      DEX_REVIEW_POLICY_BINDING="$review_policy_binding" \
+      DEX_REVIEW_PASS_ID="$pass_nonce" \
+      DEX_REVIEW_PASS_BINDING="$pass_binding" \
       DEX_DIR="$DEX_DIR" \
       dx_run_with_timeout "$pass_timeout" bash "$codex_wrapper" exec -- "$codex_message" || exit_code=$?
     else
@@ -4241,6 +4307,9 @@ ${message}"
       DEX_REVIEW_SCOPE_FINGERPRINT="$scope_before" \
       DEX_REVIEW_CRITERIA_BINDING="$review_criteria_binding" \
       DEX_REVIEW_CRITERIA_FILE="$pass_criteria_file" \
+      DEX_REVIEW_POLICY_BINDING="$review_policy_binding" \
+      DEX_REVIEW_PASS_ID="$pass_nonce" \
+      DEX_REVIEW_PASS_BINDING="$pass_binding" \
       DEX_DIR="$DEX_DIR" \
       dx_run_with_timeout "$pass_timeout" __dx_claude "${claude_args[@]}" "$message" || exit_code=$?
     fi
@@ -4269,9 +4338,9 @@ ${message}"
       dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       current_review_child_session=""
       terminal_reason="human_intervention"
-      clean_passes=0
+      terminal_preserve_credit=1
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass stopped by human intervention" "$review_phase" \
-        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=human_intervention
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" provider_exit_int="$exit_code" terminal_reason=human_intervention
       break
     fi
 
@@ -4287,7 +4356,8 @@ ${message}"
     findings_hash=$(dx_review_read_findings_hash "$pass_findings_file" 2>/dev/null || true)
     evidence_hash=$(dx_review_evidence_hash "$pass_evidence_file" 2>/dev/null || true)
     dx_review_context_valid "$review_context_file" "$review_criteria_binding" && context_valid=1
-    if dx_review_evidence_valid "$pass_evidence_file" "$result" "$pass_profile" "$scope_before" "$review_criteria_binding" "$pass_criteria_file"; then
+    if dx_review_evidence_valid "$pass_evidence_file" "$result" "$pass_profile" "$scope_before" \
+      "$review_criteria_binding" "$pass_criteria_file" "$pass_nonce" "$review_policy_binding" "$review_context_file"; then
       evidence_valid=1
       evidence_summary=$(dx_review_evidence_summary "$pass_evidence_file" 2>/dev/null || true)
       if [[ -n "$evidence_summary" ]]; then
@@ -4309,11 +4379,13 @@ ${message}"
         review_contract_error="evidence manifest missing or invalid"
       elif ! dx_review_findings_hash_valid "$pass_findings_file"; then
         review_contract_error="findings hash missing or invalid (expected exactly one lowercase 16-character hash)"
+      elif ! dx_review_pass_attestation "$pass_evidence_file" "$review_context_file" \
+        "$result" "$pass_profile" "$findings_hash" "$pass_binding" >/dev/null; then
+        review_contract_error="pass attestation missing or invalid"
       fi
     fi
     __dx_review_criteria_intact "$session_id" "$pass_session_id" "$review_criteria_binding" || criteria_intact=0
     dx_provider_cleanup_session_state "$pass_session_id"
-    dx_cleanup_session "$pass_session_id"
     current_review_child_session=""
     dx_provider_write_session_state "$session_id" 2>/dev/null || true
 
@@ -4322,6 +4394,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=review_criteria_changed result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=review_criteria_changed evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       break
     fi
 
@@ -4330,6 +4403,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=pass_audit_limit result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=pass_audit_limit evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       break
     fi
 
@@ -4340,9 +4414,10 @@ ${message}"
         terminal_reason="provider_error"
       fi
       terminal_exit=$exit_code
-      clean_passes=0
+      terminal_preserve_credit=1
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
-        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$terminal_reason" result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$terminal_reason" result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" provider_exit_int="$exit_code" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       break
     fi
 
@@ -4351,6 +4426,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=invalid result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=invalid_result evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool=false
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       break
     fi
 
@@ -4365,6 +4441,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=incomplete_evidence result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       break
     fi
 
@@ -4378,21 +4455,29 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=scope_fingerprint_error result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=scope_fingerprint_error evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool=true
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       break
     fi
     [[ "$scope_after" != "$scope_before" ]] && scope_changed="true"
     [[ "$working_after" != "$working_before" ]] && working_changed="true"
-    if [[ "$branch_after" != "$branch_before" || "$head_after" != "$head_before" ]]; then
-      terminal_reason="review_identity_changed"
-      clean_passes=0
-    elif [[ "$descriptor_after" != "$descriptor_before" ]]; then
-      terminal_reason="scope_boundary_changed"
-      clean_passes=0
-    fi
 
     local result_kind="" result_count=0 event_severity="info"
     result_kind=$(dx_review_result_kind "$result")
     result_count=$(dx_review_result_count "$result")
+
+    if [[ "$branch_after" != "$branch_before" ]]; then
+      terminal_reason="review_identity_changed"
+      clean_passes=0
+    elif [[ "$head_after" != "$head_before" ]]; then
+      if [[ "$result_kind" != "findings_fixed" || "$scope_changed" != "true" ]]; then
+        terminal_reason="review_identity_changed"
+        clean_passes=0
+      fi
+    fi
+    if [[ -z "$terminal_reason" && "$descriptor_after" != "$descriptor_before" ]]; then
+      terminal_reason="scope_boundary_changed"
+      clean_passes=0
+    fi
 
     local empty_findings_hash=""
     empty_findings_hash=$(dx_review_empty_findings_hash)
@@ -4402,127 +4487,172 @@ ${message}"
       clean_passes=0
     fi
 
-    case "$terminal_reason:$result_kind" in
-      ?*:*) ;;
-      :clean)
-        if [[ "$scope_changed" == "true" ]]; then
-          terminal_reason="clean_mutated_scope"
-          clean_passes=0
-        elif ! dx_review_ledger_append "$session_id" "$review_iteration" "$pass_session_id" "$scope_after" "$evidence_hash" "$review_criteria_binding"; then
-          terminal_reason="ledger_write_failed"
-          clean_passes=0
-        else
-          clean_passes=$((clean_passes + 1))
-          echo "  Wave result: CLEAN (${clean_passes}/${required_clean})"
-        fi
-        ;;
-      :findings_fixed)
-        clean_passes=0
-        dx_review_ledger_reset "$session_id" 2>/dev/null || true
-        if [[ "$working_changed" != "true" ]]; then
-          terminal_reason="claimed_fix_without_change"
-        else
-          findings_fixed_total=$((findings_fixed_total + result_count))
-          printf '%s\n' "$findings_hash" >> "$parent_findings_file"
-          local churn_kind=""
-          churn_kind=$(dx_review_findings_churn_kind "$parent_findings_file" 2>/dev/null || true)
-          if [[ -n "$churn_kind" ]]; then
-            terminal_reason="$churn_kind"
-          else
-            local post_fix_floor="" post_fix_tier="" post_fix_reason="" post_fix_rank="" current_tier_rank="" old_tier="" post_fix_escalated=0
-            post_fix_floor=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
-            IFS=$'\t' read -r post_fix_tier post_fix_reason <<< "$post_fix_floor"
-            post_fix_rank=$(dx_review_tier_rank "$post_fix_tier" 2>/dev/null || true)
-            current_tier_rank=$(dx_review_tier_rank "$review_tier" 2>/dev/null || true)
-            if [[ "$post_fix_rank" =~ ^[0-9]+$ && "$current_tier_rank" =~ ^[0-9]+$ && "$post_fix_rank" -gt "$current_tier_rank" ]]; then
-              old_tier="$review_tier"
-              review_tier="$post_fix_tier"
-              review_profile=$(dx_review_tier_profile "$review_tier")
-              tier_min_clean=$(dx_review_tier_min_clean_passes "$review_tier") || terminal_reason="tier_resolution_error"
-              if [[ -z "$terminal_reason" && $required_clean -lt $((10#$tier_min_clean)) ]]; then
-                required_clean=$((10#$tier_min_clean))
+    if [[ -z "$terminal_reason" ]]; then
+      local transition_event_reason="none" transition_churn_kind="none"
+      local transition_candidate_tier="-" transition_candidate_required=0
+      local transition_candidate_source="-" transition_candidate_reasons="-"
+      local transition_record="" transition_version="" transition_action=""
+      local transition_tier="" transition_required="" transition_clean=""
+      local transition_terminal="" transition_detail="" transition_ledger_op=""
+      local transition_findings_op="" transition_selection_op="" transition_state_op=""
+      local transition_receipt_op="" transition_extra="" old_tier="$review_tier"
+      local transition_findings_appended=0 transition_schema_valid=1
+
+      case "$result_kind" in
+        findings_fixed)
+          if [[ "$scope_changed" == "true" || "$working_changed" == "true" ]]; then
+            findings_fixed_total=$((findings_fixed_total + result_count))
+            if ! dx_review_findings_history_append "$parent_findings_file" "$findings_hash"; then
+              terminal_reason="findings_history_write_failed"
+            else
+              transition_findings_appended=1
+              transition_churn_kind=$(dx_review_findings_churn_kind "$parent_findings_file" 2>/dev/null || printf '%s\n' "none")
+              local post_fix_floor="" post_fix_tier="" post_fix_reason="" post_fix_required=""
+              post_fix_floor=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
+              IFS=$'\t' read -r post_fix_tier post_fix_reason <<< "$post_fix_floor"
+              post_fix_required=$(dx_review_policy_tier_clean_passes "$post_fix_tier" \
+                "$review_policy_small" "$review_policy_normal" "$review_policy_complex" 2>/dev/null || true)
+              if [[ -n "$post_fix_required" ]] &&
+                 dx_review_selection_reason_codes_valid "$post_fix_tier" "deterministic-floor" "$post_fix_reason"; then
+                transition_candidate_tier="$post_fix_tier"
+                transition_candidate_required="$post_fix_required"
+                transition_candidate_source="deterministic-floor"
+                transition_candidate_reasons="$post_fix_reason"
               fi
-              selection_source="deterministic-floor"
-              selection_reasons="$post_fix_reason"
-              post_fix_escalated=1
-            fi
-            if [[ -z "$terminal_reason" ]] && ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "$required_clean" "$review_criteria_binding"; then
-              terminal_reason="selection_write_failed"
-            elif [[ -z "$terminal_reason" ]]; then
-              if [[ $post_fix_escalated -eq 1 ]]; then
-                __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated after fixes" "$review_phase" \
-                  from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration" reason_code="$post_fix_reason"
-              fi
-              echo "  Wave result: ${result} — clean streak reset"
             fi
           fi
+          ;;
+        blocked|churn)
+          transition_event_reason="$result_reason"
+          ;;
+        escalate)
+          transition_event_reason="$result_reason"
+          transition_candidate_tier=$(dx_review_escalation_tier "$result")
+          transition_candidate_required=$(dx_review_policy_tier_clean_passes "$transition_candidate_tier" \
+            "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || terminal_reason="tier_resolution_error"
+          transition_candidate_source="wave-escalation"
+          transition_candidate_reasons="wave-escalation"
+          ;;
+      esac
+
+      if [[ -z "$terminal_reason" ]]; then
+        transition_record=$(dx_review_transition \
+          "$review_tier" "$required_clean" "$clean_passes" \
+          "$result_kind" "$result_count" "$transition_event_reason" \
+          "$scope_changed" "$working_changed" \
+          "$transition_candidate_tier" "$transition_candidate_required" \
+          "$transition_candidate_source" "$transition_candidate_reasons" \
+          "$transition_churn_kind" false 2>/dev/null || true)
+        IFS=$'\t' read -r transition_version transition_action transition_tier \
+          transition_required transition_clean transition_terminal transition_detail \
+          transition_ledger_op transition_findings_op transition_selection_op \
+          transition_state_op transition_receipt_op transition_extra <<< "$transition_record"
+        case "$transition_action" in count|complete|reset_continue|escalate_continue|pause) ;; *) transition_schema_valid=0 ;; esac
+        case "$transition_ledger_op" in append|reset) ;; *) transition_schema_valid=0 ;; esac
+        case "$transition_findings_op" in append|keep) ;; *) transition_schema_valid=0 ;; esac
+        case "$transition_selection_op" in keep|refresh|invalidate) ;; *) transition_schema_valid=0 ;; esac
+        case "$transition_state_op" in keep|write|invalidate) ;; *) transition_schema_valid=0 ;; esac
+        case "$transition_receipt_op" in keep|finalize|invalidate) ;; *) transition_schema_valid=0 ;; esac
+        if [[ "$transition_findings_op" == "append" && $transition_findings_appended -ne 1 ]] ||
+           [[ "$transition_findings_op" == "keep" && $transition_findings_appended -ne 0 ]]; then
+          transition_schema_valid=0
         fi
-        ;;
-      :findings)
-        clean_passes=0
-        dx_review_ledger_reset "$session_id" 2>/dev/null || true
-        terminal_reason="unresolved_findings"
-        terminal_detail="${result#FINDINGS:}"
-        ;;
-      :blocked)
-        clean_passes=0
-        dx_review_ledger_reset "$session_id" 2>/dev/null || true
-        terminal_reason="blocked"
-        terminal_detail="${result#BLOCKED:}"
-        ;;
-      :churn)
-        clean_passes=0
-        dx_review_ledger_reset "$session_id" 2>/dev/null || true
-        terminal_reason="wave_reported_churn"
-        terminal_detail="${result#CHURN:}"
-        ;;
-      :escalate)
-        clean_passes=0
-        dx_review_ledger_reset "$session_id" 2>/dev/null || true
-        if [[ "$scope_changed" == "true" ]]; then
-          terminal_reason="escalation_mutated_scope"
-        else
-          local escalation_tier="" current_rank="" escalation_rank="" old_tier=""
-          escalation_tier=$(dx_review_escalation_tier "$result")
-          current_rank=$(dx_review_tier_rank "$review_tier")
-          escalation_rank=$(dx_review_tier_rank "$escalation_tier")
-          if [[ $escalation_rank -le $current_rank ]]; then
-            terminal_reason="invalid_escalation"
-          else
-            old_tier="$review_tier"
-            review_tier="$escalation_tier"
-            review_profile=$(dx_review_tier_profile "$review_tier")
-            tier_min_clean=$(dx_review_tier_min_clean_passes "$review_tier") || terminal_reason="tier_resolution_error"
-            if [[ -z "$terminal_reason" && $required_clean -lt $((10#$tier_min_clean)) ]]; then
-              required_clean=$((10#$tier_min_clean))
-            fi
-            selection_source="wave-escalation"
-            selection_reasons="wave-escalation"
-            if [[ -n "$terminal_reason" ]]; then
-              :
-            elif ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" "$PWD" "$required_clean" "$review_criteria_binding"; then
-              terminal_reason="selection_write_failed"
+        if [[ "$transition_version" != "1" || -n "$transition_extra" || $transition_schema_valid -ne 1 ]]; then
+          terminal_reason="controller_transition_invalid"
+          clean_passes=0
+        fi
+      fi
+
+      if [[ -z "$terminal_reason" ]]; then
+        if [[ "$transition_ledger_op" == "reset" ]]; then
+          dx_review_ledger_reset "$session_id" 2>/dev/null || true
+        elif [[ "$transition_ledger_op" == "append" ]] &&
+             ! dx_review_ledger_append "$session_id" "$review_iteration" "$pass_nonce" "$pass_profile" \
+               "$scope_after" "$review_criteria_binding" "$review_policy_binding" \
+               "$pass_evidence_file" "$review_context_file"; then
+          terminal_reason="ledger_write_failed"
+          clean_passes=0
+        fi
+      fi
+
+      if [[ -z "$terminal_reason" ]]; then
+        review_tier="$transition_tier"
+        required_clean=$((10#$transition_required))
+        clean_passes=$((10#$transition_clean))
+        review_profile=$(dx_review_tier_profile "$review_tier")
+
+        if [[ "$transition_selection_op" == "refresh" ]]; then
+          if [[ "$review_tier" != "$old_tier" ]]; then
+            selection_source="$transition_candidate_source"
+            selection_reasons="$transition_candidate_reasons"
+          fi
+          if ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" \
+            "$PWD" "$required_clean" "$review_criteria_binding" "$review_policy_binding"; then
+            terminal_reason="selection_write_failed"
+            clean_passes=0
+          fi
+        elif [[ "$transition_selection_op" == "invalidate" ]]; then
+          rm -f "$(dx_review_selection_file "$session_id")" 2>/dev/null || true
+        fi
+        if [[ "$transition_receipt_op" == "invalidate" ]]; then
+          rm -f "$(dx_review_receipt_file "$session_id")" 2>/dev/null || true
+        fi
+      fi
+
+      if [[ -z "$terminal_reason" ]]; then
+        case "$transition_action" in
+          count|complete)
+            echo "  Wave result: CLEAN (${clean_passes}/${required_clean})"
+            ;;
+          reset_continue)
+            echo "  Wave result: ${result} — clean streak reset"
+            ;;
+          escalate_continue)
+            if [[ "$result_kind" == "findings_fixed" ]]; then
+              __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated after fixes" "$review_phase" \
+                from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration" reason_code="$transition_candidate_reasons"
+              echo "  Wave result: ${result} — clean streak reset"
             else
               __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated" "$review_phase" \
                 from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration"
               echo "  Wave result: escalation to ${review_tier} (${required_clean} clean passes required)"
             fi
-          fi
-        fi
-        ;;
-    esac
+            ;;
+          pause)
+            terminal_reason="$transition_terminal"
+            terminal_selection_op="$transition_selection_op"
+            terminal_state_op="$transition_state_op"
+            [[ "$transition_detail" != "-" ]] && terminal_detail="$transition_detail"
+            ;;
+          *)
+            terminal_reason="controller_action_invalid"
+            clean_passes=0
+            ;;
+        esac
+      fi
+
+    fi
 
     if [[ -z "$terminal_reason" && $clean_passes -lt $required_clean ]]; then
-      if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" "$PWD" "$review_criteria_binding"; then
-        terminal_reason="state_write_failed"
-        clean_passes=0
-      fi
+      case "$transition_state_op" in
+        write)
+          if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" \
+            "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
+            terminal_reason="state_write_failed"
+            clean_passes=0
+          fi
+          ;;
+        invalidate)
+          rm -f "$(dx_review_state_file "$session_id")" 2>/dev/null || true
+          ;;
+      esac
     fi
 
     [[ -n "$terminal_reason" ]] && event_severity="warn"
     __dx_review_emit_event "$review_run_id" "review.pass.finished" "$event_severity" "Review pass finished" "$review_phase" \
       pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$result_kind" result_reason="$result_reason" findings_int="$result_count" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" scope_changed_bool="$scope_changed" working_changed_bool="$working_changed" provider_exit_int="$exit_code" terminal_reason="${terminal_reason:-none}" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_findings_int="$evidence_findings" evidence_fixes_int="$evidence_fixes" evidence_valid_bool=true
 
+    dx_cleanup_session "$pass_session_id" 2>/dev/null || true
     [[ -n "$terminal_reason" ]] && break
   done
 
@@ -4539,12 +4669,13 @@ ${message}"
     if ! __dx_review_criteria_intact "$session_id" "" "$review_criteria_binding"; then
       terminal_reason="review_criteria_changed"
       clean_passes=0
-    elif ! dx_review_write_receipt "$session_id" "$review_tier" "$required_clean" "$clean_passes" "$PWD" "$review_criteria_binding"; then
+    elif ! dx_review_write_receipt "$session_id" "$review_tier" "$required_clean" "$clean_passes" \
+      "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
       terminal_reason="receipt_write_failed"
       clean_passes=0
     else
       rm -f "$(dx_review_state_file "$session_id")" "$parent_findings_file" "$(dx_paused_file "$session_id")" 2>/dev/null
-      if ! dx_review_receipt_valid "$session_id" "$PWD" "$review_criteria_binding"; then
+      if ! dx_review_receipt_valid "$session_id" "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
         rm -f "$(dx_review_receipt_file "$session_id")" 2>/dev/null
         terminal_reason="receipt_validation_failed"
         clean_passes=0
@@ -4564,9 +4695,31 @@ ${message}"
     fi
   fi
 
-  clean_passes=0
-  dx_review_ledger_reset "$session_id" 2>/dev/null || true
-  dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" "$PWD" "$review_criteria_binding" 2>/dev/null || true
+  if [[ $terminal_preserve_credit -eq 1 ]]; then
+    local resumable_fingerprint=""
+    resumable_fingerprint=$(dx_review_scope_fingerprint "$PWD" 2>/dev/null || true)
+    if [[ -z "$resumable_fingerprint" ]] || \
+       ! dx_review_ledger_valid "$session_id" "$clean_passes" "$resumable_fingerprint" \
+         "$review_criteria_binding" "$review_policy_binding" "$review_profile"; then
+      terminal_preserve_credit=0
+    fi
+  fi
+  if [[ $terminal_preserve_credit -ne 1 ]]; then
+    clean_passes=0
+    dx_review_ledger_reset "$session_id" 2>/dev/null || true
+  fi
+  case "$terminal_selection_op" in
+    invalidate) rm -f "$(dx_review_selection_file "$session_id")" 2>/dev/null || true ;;
+  esac
+  case "$terminal_state_op" in
+    write)
+      dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" \
+        "$PWD" "$review_criteria_binding" "$review_policy_binding" 2>/dev/null || true
+      ;;
+    invalidate)
+      rm -f "$(dx_review_state_file "$session_id")" 2>/dev/null || true
+      ;;
+  esac
   if [[ $standalone_review_prompt -eq 0 ]]; then
     touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
   fi
@@ -4578,7 +4731,7 @@ ${message}"
   dx_info "Review paused: ${terminal_reason:-unknown}."
   echo "  Risk tier: ${review_tier} (${review_profile})"
   echo "  Iterations: ${review_iteration}"
-  echo "  Consecutive clean: 0/${required_clean}"
+  echo "  Consecutive clean: ${clean_passes}/${required_clean}"
   echo "  Findings fixed: ${findings_fixed_total}"
   echo "  Result: PAUSED"
   echo "  Exit reason: ${terminal_reason:-unknown}"
@@ -5120,8 +5273,13 @@ dxclean() {
   # 4. Clean up old loop state files (older than 7 days).
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
-  local old_files
-  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context review-criteria.json review-criteria-approval review-selection review-evidence.json review-ledger review-receipt busy busy-notice started ready watch-pause watch-lock" 7)
+  local old_files old_review_credit=0
+  old_review_credit=$(dx_cleanup_stale_review_credit 7) || cleanup_failed=1
+  if [[ "$old_review_credit" -gt 0 ]]; then
+    echo "  Cleaned ${old_review_credit} old review credit bundle(s)"
+    cleaned=$((cleaned + old_review_credit))
+  fi
+  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context review-criteria.json review-criteria-approval review-selection review-evidence.json review-receipt busy busy-notice started ready watch-pause watch-lock" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))

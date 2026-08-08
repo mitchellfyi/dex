@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-policy-test.XXXXXX")"
 
 cleanup() {
+  chmod -R u+w "$TMP_DIR" 2>/dev/null || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -20,6 +21,8 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
+# shellcheck disable=SC1091
+source "$ROOT/tests/review-proof-fixture.sh"
 
 assert_eq() {
   local expected="$1" actual="$2" label="$3"
@@ -36,6 +39,22 @@ assert_rejected() {
     printf '%s: expected command to fail\n' "$label" >&2
     exit 1
   fi
+}
+
+append_clean_ledger() {
+  local session_id="$1" count="$2" fingerprint="$3" criteria_binding="$4"
+  local policy_binding="$5" pass_prefix="$6" profile="$7" iteration pass_id
+  local evidence_file context_file
+  for ((iteration = 1; iteration <= count; iteration++)); do
+    pass_id="${pass_prefix}-${iteration}"
+    evidence_file="$TMP_DIR/${session_id}-${iteration}.evidence.json"
+    context_file="$TMP_DIR/${session_id}-${iteration}.context.md"
+    dx_test_write_clean_review_proof "$session_id" "$pass_id" "$profile" \
+      "$fingerprint" "$criteria_binding" "$policy_binding" "$evidence_file" "$context_file"
+    dx_review_ledger_append "$session_id" "$iteration" "$pass_id" "$profile" \
+      "$fingerprint" "$criteria_binding" "$policy_binding" "$evidence_file" "$context_file"
+    rm -f "$evidence_file" "$context_file"
+  done
 }
 
 assert_eq "small" "$(dx_review_normalize_tier light)" "light alias"
@@ -199,25 +218,108 @@ git -C "$REPO" add app.txt
 git -C "$REPO" commit -qm "test: initialize review fixture"
 
 base_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
+IFS=$'\t' read -r policy_small policy_normal policy_complex policy_binding \
+  policy_ref policy_oid < <(dx_review_policy_resolve "$REPO")
+assert_eq "3" "$policy_small" "trusted small policy"
+assert_eq "6" "$policy_normal" "trusted normal policy"
+assert_eq "9" "$policy_complex" "trusted complex policy"
+[[ "$policy_binding" =~ ^[a-f0-9]{64}$ ]] || {
+  printf 'trusted policy binding is not a full lowercase SHA-256 digest\n' >&2
+  exit 1
+}
+[[ -n "$policy_ref" && "$policy_oid" =~ ^[a-f0-9]{40,64}$ ]] || {
+  printf 'trusted policy provenance is incomplete\n' >&2
+  exit 1
+}
 evidence_file="$TMP_DIR/review-evidence.json"
 printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint"
+dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint"
 printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"partial\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-assert_rejected "clean evidence requires passing checks" dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint"
+assert_rejected "legacy clean evidence requires passing checks" \
+  dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint"
 printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":1,\"fixes_applied\":1}" > "$evidence_file"
-dx_review_evidence_valid "$evidence_file" FINDINGS_FIXED:1 light "$base_fingerprint"
-assert_rejected "evidence is bound to scope" dx_review_evidence_valid "$evidence_file" FINDINGS_FIXED:1 light "$(printf '0%.0s' {1..64})"
+dx_review_evidence_legacy_valid "$evidence_file" FINDINGS_FIXED:1 light "$base_fingerprint"
+assert_rejected "legacy evidence is bound to scope" \
+  dx_review_evidence_legacy_valid "$evidence_file" FINDINGS_FIXED:1 light "$(printf '0%.0s' {1..64})"
 
 evidence_criteria_file="$TMP_DIR/evidence-criteria.json"
 printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Review every approved requirement."],"acceptance_criteria":["Evidence accounts for each criteria item."],"verification_requirements":["Run the focused policy test."]}' > "$evidence_criteria_file"
 evidence_criteria_hash=$(dx_review_criteria_hash "$evidence_criteria_file")
 evidence_criteria_coverage=$(dx_review_criteria_coverage_json "$evidence_criteria_hash" "$evidence_criteria_file")
 printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"${evidence_criteria_hash}\",\"criteria_coverage\":${evidence_criteria_coverage},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint" "$evidence_criteria_hash" "$evidence_criteria_file"
+dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint" \
+  "$evidence_criteria_hash" "$evidence_criteria_file"
 printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"${evidence_criteria_hash}\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-assert_rejected "lifecycle evidence rejects omitted criteria" dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint" "$evidence_criteria_hash" "$evidence_criteria_file"
+assert_rejected "legacy lifecycle evidence rejects omitted criteria" \
+  dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint" \
+  "$evidence_criteria_hash" "$evidence_criteria_file"
 printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"standalone\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint" standalone "$TMP_DIR/no-criteria.json"
+dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint" \
+  standalone "$TMP_DIR/no-criteria.json"
+
+evidence_pass_id="review-policy-evidence-1"
+evidence_pass_binding=$(dx_review_pass_binding \
+  "$evidence_pass_id" "$base_fingerprint" "$evidence_criteria_hash" "$policy_binding")
+evidence_context_file="$TMP_DIR/evidence-context"
+{
+  printf '%s\n\n' '## Scope' 'Review the complete policy fixture scope.'
+  printf '%s\n\n' '## Acceptance Criteria' "Criteria binding: ${evidence_criteria_hash}"
+  printf '%s\n\n' '## Deterministic Checks' 'The focused review policy test passed.'
+  printf '%s\n' 'Evidence-Ref: criteria:objectives:1:policy-scope | analysis | The current policy behavior was checked against the approved objective.'
+  printf '%s\n' 'Evidence-Ref: criteria:acceptance_criteria:1:evidence-contract | file | The evidence manifest contains one bound record for the acceptance criterion.'
+  printf '%s\n' 'Evidence-Ref: criteria:verification_requirements:1:focused-test | test | tests/review-policy-test.sh completed successfully.'
+  printf '\n%s\n\n' '## Review Coverage' 'Correctness, contracts, tests, security, and architecture were inspected.'
+  printf '%s\n' '## Verification' 'The verifier checked the evidence against the current pass inputs.'
+} > "$evidence_context_file"
+EVIDENCE_COVERAGE="$evidence_criteria_coverage" \
+EVIDENCE_FILE="$evidence_file" \
+SCOPE_FINGERPRINT="$base_fingerprint" \
+CRITERIA_BINDING="$evidence_criteria_hash" \
+POLICY_BINDING="$policy_binding" \
+PASS_BINDING="$evidence_pass_binding" \
+python3 - <<'PY'
+import json
+import os
+
+coverage = json.loads(os.environ["EVIDENCE_COVERAGE"])
+markers = {
+    "objectives": "criteria:objectives:1:policy-scope",
+    "acceptance_criteria": "criteria:acceptance_criteria:1:evidence-contract",
+    "verification_requirements": "criteria:verification_requirements:1:focused-test",
+}
+criteria_evidence = {
+    section: [
+        {"item_hash": item_hash, "outcome": "met", "evidence_refs": [markers[section]]}
+        for item_hash in item_hashes
+    ]
+    for section, item_hashes in coverage.items()
+}
+payload = {
+    "version": 3,
+    "scope_fingerprint": os.environ["SCOPE_FINGERPRINT"],
+    "criteria_binding": os.environ["CRITERIA_BINDING"],
+    "policy_binding": os.environ["POLICY_BINDING"],
+    "pass_binding": os.environ["PASS_BINDING"],
+    "criteria_evidence": criteria_evidence,
+    "deterministic_checks": "pass",
+    "coverage": ["correctness", "security", "contracts", "tests", "architecture"],
+    "verifier": "pass",
+    "verified_findings": 0,
+    "fixes_applied": 0,
+}
+with open(os.environ["EVIDENCE_FILE"], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+PY
+dx_review_evidence_valid "$evidence_file" CLEAN light "$base_fingerprint" \
+  "$evidence_criteria_hash" "$evidence_criteria_file" "$evidence_pass_id" \
+  "$policy_binding" "$evidence_context_file"
+legacy_v2_file="$TMP_DIR/review-evidence-v2.json"
+printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"${evidence_criteria_hash}\",\"criteria_coverage\":${evidence_criteria_coverage},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$legacy_v2_file"
+assert_rejected "legacy evidence cannot grant current clean credit" \
+  dx_review_evidence_valid "$legacy_v2_file" CLEAN light "$base_fingerprint" \
+  "$evidence_criteria_hash" "$evidence_criteria_file" "$evidence_pass_id" \
+  "$policy_binding" "$evidence_context_file"
 
 printf 'changed\n' >> "$REPO/app.txt"
 changed_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
@@ -231,31 +333,38 @@ git -C "$REPO" switch -qc fingerprint-feature
 printf 'publishable\n' >> "$REPO/app.txt"
 unstaged_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
 publish_receipt_session="publish-receipt-stability"
-dx_review_write_selection "$publish_receipt_session" small environment operator-override "$REPO"
-for ledger_iteration in 1 2 3; do
-  dx_review_ledger_append "$publish_receipt_session" "$ledger_iteration" \
-    "publish-clean-${ledger_iteration}" "$unstaged_fingerprint" "$(printf '%016x' "$ledger_iteration")"
-done
-dx_review_write_receipt "$publish_receipt_session" small 3 3 "$REPO"
-dx_review_receipt_valid "$publish_receipt_session" "$REPO"
+dx_review_write_selection "$publish_receipt_session" small environment operator-override \
+  "$REPO" "$policy_small" standalone "$policy_binding"
+append_clean_ledger "$publish_receipt_session" "$policy_small" "$unstaged_fingerprint" \
+  standalone "$policy_binding" publish-clean light
+dx_review_write_receipt "$publish_receipt_session" small "$policy_small" \
+  "$policy_small" "$REPO" standalone "$policy_binding"
+dx_review_receipt_valid "$publish_receipt_session" "$REPO" standalone "$policy_binding"
 git -C "$REPO" add app.txt
 assert_eq "$unstaged_fingerprint" "$(dx_review_scope_fingerprint "$REPO")" \
   "staging identical content preserves scope fingerprint"
-dx_review_receipt_valid "$publish_receipt_session" "$REPO"
+dx_review_receipt_valid "$publish_receipt_session" "$REPO" standalone "$policy_binding"
 publish_state_session="publish-state-stability"
-dx_review_write_selection "$publish_state_session" small environment operator-override "$REPO"
-dx_review_write_state "$publish_state_session" small 3 2 1 "$REPO"
+dx_review_write_selection "$publish_state_session" small environment operator-override \
+  "$REPO" "$policy_small" standalone "$policy_binding"
+dx_review_write_state "$publish_state_session" small "$policy_small" 2 1 \
+  "$REPO" standalone "$policy_binding"
 git -C "$REPO" commit -qm "test: publish identical review content"
 assert_eq "$unstaged_fingerprint" "$(dx_review_scope_fingerprint "$REPO")" \
   "committing identical content preserves scope fingerprint"
-dx_review_receipt_valid "$publish_receipt_session" "$REPO"
+dx_review_receipt_valid "$publish_receipt_session" "$REPO" standalone "$policy_binding"
 IFS=$'\t' read -r publish_state_tier publish_state_required publish_state_iteration \
-  publish_state_clean _ < <(dx_review_read_state "$publish_state_session" "$REPO")
+  publish_state_clean _ _ publish_state_policy < <(dx_review_read_state \
+    "$publish_state_session" "$REPO" standalone "$policy_binding")
 assert_eq "small" "$publish_state_tier" "commit preserves review state tier"
-assert_eq "3" "$publish_state_required" "commit preserves review state gate"
+assert_eq "$policy_small" "$publish_state_required" "commit preserves review state gate"
 assert_eq "2" "$publish_state_iteration" "commit preserves review state iteration"
 assert_eq "1" "$publish_state_clean" "commit preserves review clean credit"
+assert_eq "$policy_binding" "$publish_state_policy" "commit preserves review policy binding"
+publish_proof_dir=$(dx_review_proof_dir "$publish_receipt_session")
+[[ -d "$publish_proof_dir" ]]
 dx_cleanup_session "$publish_receipt_session"
+[[ ! -e "$publish_proof_dir" && ! -L "$publish_proof_dir" ]]
 dx_cleanup_session "$publish_state_session"
 
 published_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
@@ -376,12 +485,13 @@ moving_advanced_oid=$(git -C "$MOVING_REF_REPO" rev-parse HEAD)
 git -C "$MOVING_REF_REPO" switch -q feature
 git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_base_oid"
 moving_before=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
-dx_review_write_selection moving-ref small environment operator-override "$MOVING_REF_REPO"
+dx_review_write_selection moving-ref small environment operator-override \
+  "$MOVING_REF_REPO" "$policy_small" standalone "$policy_binding"
 git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_advanced_oid"
 moving_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
 assert_eq "$moving_before" "$moving_after" \
   "comparison movement with unchanged merge base preserves scope fingerprint"
-dx_review_selection_valid moving-ref "$MOVING_REF_REPO"
+dx_review_selection_valid moving-ref "$MOVING_REF_REPO" standalone "$policy_binding"
 moving_feature_oid=$(git -C "$MOVING_REF_REPO" rev-parse HEAD)
 git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_feature_oid"
 moving_material_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
@@ -389,7 +499,8 @@ moving_material_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
   printf 'material comparison-base change did not alter the scope fingerprint\n' >&2
   exit 1
 }
-assert_rejected "material comparison-base change invalidates selection" dx_review_selection_valid moving-ref "$MOVING_REF_REPO"
+assert_rejected "material comparison-base change invalidates selection" \
+  dx_review_selection_valid moving-ref "$MOVING_REF_REPO" standalone "$policy_binding"
 
 UNBORN_REPO="$TMP_DIR/unborn-repo"
 git init -q -b main "$UNBORN_REPO"
@@ -419,96 +530,178 @@ session_criteria_json='{"version":1,"source":"approved-plan","objectives":["Keep
 printf '%s\n' "$session_criteria_json" > "$session_criteria_file"
 session_criteria_hash=$(dx_review_criteria_hash "$session_criteria_file")
 dx_review_approve_criteria "$session_id" initial "$session_criteria_hash" >/dev/null
-dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$REPO"
-[[ "$(cut -f1 "$(dx_review_selection_file "$session_id")")" == "3" ]] || {
+dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change \
+  "$REPO" "$policy_normal" "$session_criteria_hash" "$policy_binding"
+[[ "$(cut -f1 "$(dx_review_selection_file "$session_id")")" == "4" ]] || {
   printf 'selection was not written with the criteria-bound schema\n' >&2
   exit 1
 }
-IFS=$'\t' read -r tier source reason selection_required fingerprint selection_binding < <(dx_review_read_selection "$session_id" "$REPO" "$session_criteria_hash")
+IFS=$'\t' read -r tier source reason selection_required fingerprint selection_binding \
+  selection_policy < <(dx_review_read_selection "$session_id" "$REPO" \
+    "$session_criteria_hash" "$policy_binding")
 assert_eq "normal" "$tier" "selection tier"
 assert_eq "lifecycle-agent" "$source" "selection source"
 assert_eq "bounded-production-change" "$reason" "selection reason"
-assert_eq "6" "$selection_required" "selection requirement"
+assert_eq "$policy_normal" "$selection_required" "selection requirement"
 assert_eq "$base_fingerprint" "$fingerprint" "selection fingerprint"
 assert_eq "$session_criteria_hash" "$selection_binding" "selection criteria binding"
-assert_rejected "invented selection reason" dx_review_write_selection "$session_id" normal lifecycle-agent invented-agent-rationale "$REPO"
-assert_rejected "reserved reason with assessor source" dx_review_write_selection "$session_id" normal lifecycle-agent operator-override "$REPO"
-assert_rejected "selection tier contradicts reason" dx_review_write_selection "$session_id" normal lifecycle-agent cross-module "$REPO"
+assert_eq "$policy_binding" "$selection_policy" "selection policy binding"
+assert_rejected "invented selection reason" dx_review_write_selection \
+  "$session_id" normal lifecycle-agent invented-agent-rationale "$REPO" \
+  "$policy_normal" "$session_criteria_hash" "$policy_binding"
+assert_rejected "reserved reason with assessor source" dx_review_write_selection \
+  "$session_id" normal lifecycle-agent operator-override "$REPO" \
+  "$policy_normal" "$session_criteria_hash" "$policy_binding"
+assert_rejected "selection tier contradicts reason" dx_review_write_selection \
+  "$session_id" normal lifecycle-agent cross-module "$REPO" \
+  "$policy_normal" "$session_criteria_hash" "$policy_binding"
 
 standalone_session_id="review-policy-standalone"
-dx_review_write_selection "$standalone_session_id" normal environment operator-override "$REPO"
-IFS=$'\t' read -r _ _ _ _ _ standalone_binding < <(dx_review_read_selection "$standalone_session_id" "$REPO" standalone)
+dx_review_write_selection "$standalone_session_id" normal environment operator-override \
+  "$REPO" "$policy_normal" standalone "$policy_binding"
+IFS=$'\t' read -r _ _ _ _ _ standalone_binding standalone_policy < <(dx_review_read_selection \
+  "$standalone_session_id" "$REPO" standalone "$policy_binding")
 assert_eq "standalone" "$standalone_binding" "standalone selection binding"
+assert_eq "$policy_binding" "$standalone_policy" "standalone selection policy"
 printf '2\tnormal\tenvironment\toperator-override\t6\t%s\n' "$base_fingerprint" > "$(dx_review_selection_file "$standalone_session_id")"
-dx_review_selection_valid "$standalone_session_id" "$REPO" standalone
+assert_rejected "legacy unbound selection cannot grant current review credit" \
+  dx_review_selection_valid "$standalone_session_id" "$REPO" standalone "$policy_binding"
+printf '3\tnormal\tenvironment\toperator-override\t6\t%s\tstandalone\n' \
+  "$base_fingerprint" > "$(dx_review_selection_file "$standalone_session_id")"
+assert_rejected "legacy criteria-bound selection cannot grant current review credit" \
+  dx_review_selection_valid "$standalone_session_id" "$REPO" standalone "$policy_binding"
+dx_review_write_selection "$standalone_session_id" normal environment operator-override \
+  "$REPO" "$policy_normal" standalone "$policy_binding"
 printf '%s\n' "$session_criteria_json" > "$(dx_review_criteria_file "$standalone_session_id")"
-assert_rejected "standalone selection rejects criteria state" dx_review_selection_valid "$standalone_session_id" "$REPO" standalone
+assert_rejected "standalone selection rejects criteria state" \
+  dx_review_selection_valid "$standalone_session_id" "$REPO" standalone "$policy_binding"
 rm -f "$(dx_review_criteria_file "$standalone_session_id")"
-printf '3\tnormal\tenvironment\toperator-override\t6\t%s\tSHORT\n' "$base_fingerprint" > "$(dx_review_selection_file "$standalone_session_id")"
-assert_rejected "selection rejects malformed criteria binding" dx_review_selection_valid "$standalone_session_id" "$REPO"
+printf '4\tnormal\tenvironment\toperator-override\t6\t%s\tstandalone\tSHORT\n' \
+  "$base_fingerprint" > "$(dx_review_selection_file "$standalone_session_id")"
+assert_rejected "selection rejects malformed policy binding" \
+  dx_review_selection_valid "$standalone_session_id" "$REPO" standalone "$policy_binding"
 dx_cleanup_session "$standalone_session_id"
 
-dx_review_write_state "$session_id" normal 6 4 2 "$REPO"
-IFS=$'\t' read -r state_tier required iteration clean_count state_fingerprint state_binding < <(dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash")
+dx_review_write_state "$session_id" normal "$policy_normal" 4 2 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+[[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "3" ]] || {
+  printf 'state was not written with the current policy-bound schema\n' >&2
+  exit 1
+}
+IFS=$'\t' read -r state_tier required iteration clean_count state_fingerprint state_binding \
+  state_policy < <(dx_review_read_state "$session_id" "$REPO" \
+    "$session_criteria_hash" "$policy_binding")
 assert_eq "normal" "$state_tier" "state tier"
-assert_eq "6" "$required" "state requirement"
+assert_eq "$policy_normal" "$required" "state requirement"
 assert_eq "4" "$iteration" "state iteration"
 assert_eq "2" "$clean_count" "state clean count"
 assert_eq "$base_fingerprint" "$state_fingerprint" "state fingerprint"
 assert_eq "$session_criteria_hash" "$state_binding" "state criteria binding"
-assert_rejected "state below tier gate" dx_review_write_state "$session_id" normal 5 1 0 "$REPO"
-assert_rejected "state clean exceeds iteration" dx_review_write_state "$session_id" normal 6 1 2 "$REPO"
-assert_rejected "completed state is not resumable" dx_review_write_state "$session_id" normal 6 6 6 "$REPO"
+assert_eq "$policy_binding" "$state_policy" "state policy binding"
+printf '2\tnormal\t6\t4\t2\t%s\t%s\n' \
+  "$base_fingerprint" "$session_criteria_hash" > "$(dx_review_state_file "$session_id")"
+assert_rejected "legacy state cannot retain clean review credit" \
+  dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+dx_review_write_state "$session_id" normal "$policy_normal" 4 2 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+assert_rejected "state below tier gate" dx_review_write_state \
+  "$session_id" normal "$((policy_normal - 1))" 1 0 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+assert_rejected "state clean exceeds iteration" dx_review_write_state \
+  "$session_id" normal "$policy_normal" 1 2 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+assert_rejected "completed state is not resumable" dx_review_write_state \
+  "$session_id" normal "$policy_normal" "$policy_normal" "$policy_normal" "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
 
-assert_rejected "small receipt below canonical gate" dx_review_write_receipt "$session_id" small 2 2 "$REPO"
-assert_rejected "normal receipt below canonical gate" dx_review_write_receipt "$session_id" normal 5 5 "$REPO"
-assert_rejected "complex receipt below canonical gate" dx_review_write_receipt "$session_id" complex 8 8 "$REPO"
-assert_rejected "incomplete receipt" dx_review_write_receipt "$session_id" normal 6 5 "$REPO"
-for ledger_iteration in 1 2 3 4 5 6; do
-  dx_review_ledger_append "$session_id" "$ledger_iteration" "clean-${ledger_iteration}" "$base_fingerprint" "$(printf '%016x' "$ledger_iteration")"
-done
-dx_review_write_receipt "$session_id" normal 6 6 "$REPO"
-assert_rejected "active state blocks receipt" dx_review_receipt_valid "$session_id" "$REPO"
+assert_rejected "small receipt below trusted policy gate" dx_review_write_receipt \
+  "$session_id" small "$((policy_small - 1))" "$((policy_small - 1))" \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "normal receipt below trusted policy gate" dx_review_write_receipt \
+  "$session_id" normal "$((policy_normal - 1))" "$((policy_normal - 1))" \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "complex receipt below trusted policy gate" dx_review_write_receipt \
+  "$session_id" complex "$((policy_complex - 1))" "$((policy_complex - 1))" \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "incomplete receipt" dx_review_write_receipt \
+  "$session_id" normal "$policy_normal" "$((policy_normal - 1))" \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
+append_clean_ledger "$session_id" "$policy_normal" "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" clean standard
+dx_review_ledger_valid "$session_id" "$policy_normal" "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" standard
+cp "$(dx_review_ledger_file "$session_id")" "$TMP_DIR/current-ledger"
+printf '2\t1\tlegacy-clean\t%s\t0123456789abcdef\t%s\n' \
+  "$base_fingerprint" "$session_criteria_hash" > "$(dx_review_ledger_file "$session_id")"
+assert_rejected "legacy ledger cannot retain clean review credit" \
+  dx_review_ledger_valid "$session_id" 1 "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" standard
+mv "$TMP_DIR/current-ledger" "$(dx_review_ledger_file "$session_id")"
+dx_review_write_receipt "$session_id" normal "$policy_normal" "$policy_normal" \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "active state blocks receipt" dx_review_receipt_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 rm "$(dx_review_state_file "$session_id")"
-dx_review_receipt_valid "$session_id" "$REPO"
+dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 
 dx_review_ledger_reset "$session_id"
-for ledger_iteration in 1 2 3 4 5 6 7 8; do
-  dx_review_ledger_append "$session_id" "$ledger_iteration" "higher-clean-${ledger_iteration}" "$base_fingerprint" "$(printf '%016x' "$ledger_iteration")"
-done
-dx_review_write_receipt "$session_id" normal 8 8 "$REPO"
-IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding < <(dx_review_read_receipt "$session_id" "$REPO" "$session_criteria_hash")
+higher_gate=$((policy_normal + 2))
+append_clean_ledger "$session_id" "$higher_gate" "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" higher-clean standard
+dx_review_write_receipt "$session_id" normal "$higher_gate" "$higher_gate" \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
+IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint \
+  receipt_ledger_hash receipt_binding receipt_policy < <(dx_review_read_receipt \
+    "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding")
 assert_eq "normal" "$receipt_tier" "higher-gate receipt tier"
-assert_eq "8" "$receipt_required" "higher-gate receipt requirement"
-assert_eq "8" "$receipt_clean" "higher-gate receipt clean count"
+assert_eq "$higher_gate" "$receipt_required" "higher-gate receipt requirement"
+assert_eq "$higher_gate" "$receipt_clean" "higher-gate receipt clean count"
 assert_eq "$base_fingerprint" "$receipt_fingerprint" "higher-gate receipt fingerprint"
 [[ "$receipt_ledger_hash" =~ ^[a-f0-9]{64}$ ]]
 assert_eq "$session_criteria_hash" "$receipt_binding" "receipt criteria binding"
-assert_rejected "receipt gate must match selection" dx_review_receipt_valid "$session_id" "$REPO"
-dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$REPO" 8
-dx_review_receipt_valid "$session_id" "$REPO"
+assert_eq "$policy_binding" "$receipt_policy" "receipt policy binding"
+assert_rejected "receipt gate must match selection" dx_review_receipt_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change \
+  "$REPO" "$higher_gate" "$session_criteria_hash" "$policy_binding"
+dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 
+printf '3\tnormal\t%s\t%s\t%s\t%s\t%s\n' \
+  "$higher_gate" "$higher_gate" "$base_fingerprint" "$receipt_ledger_hash" \
+  "$session_criteria_hash" > "$(dx_review_receipt_file "$session_id")"
+assert_rejected "legacy receipt cannot retain clean review credit" dx_review_read_receipt \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "legacy receipt cannot satisfy the clean-pass gate" dx_review_receipt_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 printf '1\tnormal\t1\t1\t%s\n' "$base_fingerprint" > "$(dx_review_receipt_file "$session_id")"
-assert_rejected "receipt reader rejects below canonical gate" dx_review_read_receipt "$session_id" "$REPO"
-assert_rejected "receipt validator rejects below canonical gate" dx_review_receipt_valid "$session_id" "$REPO"
-dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change "$REPO" 6
+assert_rejected "receipt reader rejects below trusted policy gate" dx_review_read_receipt \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "receipt validator rejects below trusted policy gate" dx_review_receipt_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change \
+  "$REPO" "$policy_normal" "$session_criteria_hash" "$policy_binding"
 dx_review_ledger_reset "$session_id"
-for ledger_iteration in 1 2 3 4 5 6; do
-  dx_review_ledger_append "$session_id" "$ledger_iteration" "final-clean-${ledger_iteration}" "$base_fingerprint" "$(printf '%016x' "$ledger_iteration")"
-done
-dx_review_write_receipt "$session_id" normal 6 6 "$REPO"
+append_clean_ledger "$session_id" "$policy_normal" "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" final-clean standard
+dx_review_write_receipt "$session_id" normal "$policy_normal" "$policy_normal" \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
 
 printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Keep review state bound to changed requirements."],"acceptance_criteria":["Changed criteria invalidate review authorization."],"verification_requirements":["Run tests/review-policy-test.sh."]}' > "$session_criteria_file"
-assert_rejected "criteria changes invalidate selection" dx_review_selection_valid "$session_id" "$REPO"
-assert_rejected "criteria changes invalidate receipt" dx_review_receipt_valid "$session_id" "$REPO"
+assert_rejected "criteria changes invalidate selection" dx_review_selection_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "criteria changes invalidate receipt" dx_review_receipt_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 printf '%s\n' "$session_criteria_json" > "$session_criteria_file"
-dx_review_selection_valid "$session_id" "$REPO"
-dx_review_receipt_valid "$session_id" "$REPO"
+dx_review_selection_valid "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 
 printf 'external change\n' >> "$REPO/app.txt"
-assert_rejected "stale selection" dx_review_selection_valid "$session_id" "$REPO"
-assert_rejected "stale state" dx_review_read_state "$session_id" "$REPO"
-assert_rejected "stale receipt" dx_review_receipt_valid "$session_id" "$REPO"
+assert_rejected "stale selection" dx_review_selection_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "stale state" dx_review_read_state \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_rejected "stale receipt" dx_review_receipt_valid \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 git -C "$REPO" restore app.txt
 
 findings_file="$DX_LOOP_DIR/findings"
@@ -546,6 +739,17 @@ if kill -0 "$watchdog_sleep_pid" 2>/dev/null; then
   kill "$watchdog_sleep_pid" 2>/dev/null || true
   exit 1
 fi
+
+stale_credit_session="stale-review-credit"
+stale_ledger=$(dx_review_ledger_file "$stale_credit_session")
+stale_proof_dir=$(dx_review_proof_dir "$stale_credit_session")
+mkdir -p "$stale_proof_dir/1"
+printf '%s\n' "stale ledger fixture" > "$stale_ledger"
+printf '%s\n' "stale proof fixture" > "$stale_proof_dir/1/evidence.json"
+touch -t 202001010000 "$stale_ledger" "$stale_proof_dir"
+assert_eq "1" "$(dx_cleanup_stale_review_credit 7)" "stale review credit cleanup count"
+[[ ! -e "$stale_ledger" && ! -L "$stale_ledger" ]]
+[[ ! -e "$stale_proof_dir" && ! -L "$stale_proof_dir" ]]
 
 dx_cleanup_session "$session_id"
 [[ ! -e "$(dx_review_selection_file "$session_id")" ]]

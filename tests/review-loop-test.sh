@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-loop-test.XXXXXX")"
 
 cleanup() {
+  chmod -R u+w "$TMP_DIR" 2>/dev/null || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -68,7 +69,8 @@ assert_no_receipt() {
 assert_receipt() {
   local expected_tier="$1" expected_required="$2" label="$3"
   local receipt="$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-receipt"
-  local version tier required clean_count fingerprint ledger_hash criteria_binding extra expected_binding="standalone"
+  local version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding extra
+  local expected_binding="standalone" expected_policy_binding expected_profile
 
   if [[ ! -f "$receipt" ]]; then
     printf '%s: missing review receipt at %s\n' "$label" "$receipt" >&2
@@ -76,9 +78,15 @@ assert_receipt() {
     exit 1
   fi
 
-  IFS=$'\t' read -r version tier required clean_count fingerprint ledger_hash criteria_binding extra < "$receipt"
-  assert_eq "3" "$version" "$label receipt version"
+  IFS=$'\t' read -r version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding extra < "$receipt"
+  case "$expected_tier" in
+    small) expected_profile="light" ;;
+    normal) expected_profile="standard" ;;
+    complex) expected_profile="thorough" ;;
+  esac
+  assert_eq "5" "$version" "$label receipt version"
   assert_eq "$expected_tier" "$tier" "$label receipt tier"
+  assert_eq "$expected_profile" "$profile" "$label receipt profile"
   assert_eq "$expected_required" "$required" "$label receipt requirement"
   assert_eq "$expected_required" "$clean_count" "$label receipt clean count"
   assert_eq "" "${extra:-}" "$label receipt fields"
@@ -94,6 +102,8 @@ assert_receipt() {
     expected_binding=$(DEX_DIR="$ROOT" DX_LOOP_DIR="$CASE_LOOP_DIR" bash -c 'source "$DEX_DIR/lib/common.sh"; dx_review_criteria_hash "$1"' _ "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-criteria.json")
   fi
   assert_eq "$expected_binding" "$criteria_binding" "$label receipt criteria binding"
+  expected_policy_binding=$(DEX_DIR="$ROOT" bash -c 'source "$DEX_DIR/lib/common.sh"; dx_review_policy_resolve "$1" | cut -f4' _ "$CASE_REPO")
+  assert_eq "$expected_policy_binding" "$policy_binding" "$label receipt policy binding"
 
   if ! DEX_DIR="$ROOT" \
     HOME="$CASE_HOME" \
@@ -102,9 +112,26 @@ assert_receipt() {
     DX_ARTIFACT_DIR="$CASE_DIR/artifacts" \
     DX_TOOL_DIR="$CASE_DIR/tools" \
     DX_RUN_ROOT="$CASE_DIR/runs" \
-      bash -c 'source "$DEX_DIR/lib/common.sh"; dx_review_receipt_valid "$1" "$2" "$3"' \
-        _ "$CASE_SESSION_ID" "$CASE_REPO" "$expected_binding"; then
+      bash -c 'source "$DEX_DIR/lib/common.sh"; dx_review_receipt_valid "$1" "$2" "$3" "$4"' \
+        _ "$CASE_SESSION_ID" "$CASE_REPO" "$expected_binding" "$expected_policy_binding"; then
     printf '%s: receipt helper rejected the successful review\n' "$label" >&2
+    show_case_output
+    exit 1
+  fi
+}
+
+assert_retained_credit() {
+  local expected_clean="$1" label="$2"
+  local state_file="$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-state"
+  local proof_dir="$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-proofs"
+  if [[ ! -f "$state_file" ]]; then
+    printf '%s: missing resumable review state\n' "$label" >&2
+    show_case_output
+    exit 1
+  fi
+  assert_eq "$expected_clean" "$(cut -f5 "$state_file")" "$label retained clean count"
+  if [[ ! -f "$proof_dir/1/evidence.json" || ! -f "$proof_dir/1/context.md" ]]; then
+    printf '%s: retained proof bundle is incomplete\n' "$label" >&2
     show_case_output
     exit 1
   fi
@@ -154,12 +181,12 @@ for event in finished:
     assert required_fields.issubset(data), data
     assert isinstance(data["evidence_valid"], bool), data
     if data["evidence_valid"]:
-        assert re.fullmatch(r"[a-f0-9]{16}", data["evidence_hash"]), data
+        assert re.fullmatch(r"[a-f0-9]{64}", data["evidence_hash"]), data
         assert data["deterministic_checks"] in {"pass", "partial", "fail", "unavailable"}, data
         assert data["verifier"] in {"pass", "fail", "not-run"}, data
         assert data["coverage"] != "none", data
     else:
-        assert data["evidence_hash"] in {"none"} or re.fullmatch(r"[a-f0-9]{16}", data["evidence_hash"]), data
+        assert data["evidence_hash"] in {"none"} or re.fullmatch(r"[a-f0-9]{64}", data["evidence_hash"]), data
 terminal_type = "run.completed" if expected_status == "completed" else "run.blocked"
 assert event_types.count(terminal_type) == 1, event_types
 summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
@@ -242,9 +269,25 @@ run_case() {
   git init -q -b main "$CASE_REPO"
   git -C "$CASE_REPO" config user.name "Dex Test"
   git -C "$CASE_REPO" config user.email "dex-test@example.com"
+  if [[ "$setup_mode" == "one-pass-policy" ]]; then
+    mkdir -p "$CASE_REPO/.dex"
+    {
+      printf '%s\n' '## Review Policy'
+      printf '%s\n' '| Setting | Value |'
+      printf '%s\n' '|---------|-------|'
+      printf '%s\n' '| small_clean_passes | 1 |'
+      printf '%s\n' '| normal_clean_passes | 2 |'
+      printf '%s\n' '| complex_clean_passes | 3 |'
+    } > "$CASE_REPO/.dex/dex.md"
+  fi
   printf 'base\n' > "$CASE_REPO/app.txt"
-  git -C "$CASE_REPO" add app.txt
-  git -C "$CASE_REPO" commit -qm "test: initialize review fixture"
+  if [[ "$setup_mode" != "unborn" ]]; then
+    git -C "$CASE_REPO" add app.txt
+    if [[ "$setup_mode" == "one-pass-policy" ]]; then
+      git -C "$CASE_REPO" add .dex/dex.md
+    fi
+    git -C "$CASE_REPO" commit -qm "test: initialize review fixture"
+  fi
   printf 'candidate change\n' >> "$CASE_REPO/app.txt"
   printf '%s\n' "$results" > "$CASE_RESULTS"
   : > "$CASE_CALLS"
@@ -260,6 +303,7 @@ run_case() {
   DX_TOOL_DIR="$CASE_DIR/tools" \
   DX_RUN_ROOT="$CASE_DIR/runs" \
   CASE_REPO="$CASE_REPO" \
+  CASE_PROOF_DIR="$CASE_DIR" \
   CASE_SESSION_ID="$CASE_SESSION_ID" \
   CASE_DERIVED_SESSION_ID="$CASE_DERIVED_SESSION_ID" \
   CASE_RESULTS="$CASE_RESULTS" \
@@ -278,6 +322,7 @@ run_case() {
   DEX_FACTORY_SYNC=0 \
     zsh -fc '
       source "$DEX_DIR/dx.sh"
+      source "$DEX_DIR/tests/review-proof-fixture.sh"
       cd "$CASE_REPO"
 
       unset DEX_LOOP_ACTIVE DEX_PHASE_HANDOFF DEX_LOOP_PHASE DEX_LOOP_PROMISE \
@@ -345,12 +390,62 @@ run_case() {
         fi
       fi
 
+      __test_review_criteria_evidence() {
+        local binding="$1" criteria_path="$2" result="$3" context_path="$4" omit_evidence="$5"
+        local criteria_hashes objective_hash acceptance_hash verification_hash
+        local objective_outcome=met acceptance_outcome=met verification_outcome=met
+        local objective_ref="criteria:objectives:1:fixture-objective"
+        local acceptance_ref="criteria:acceptance_criteria:1:fixture-acceptance"
+        local verification_ref="criteria:verification_requirements:1:fixture-verification"
+
+        if [[ "$binding" == "standalone" ]]; then
+          printf "%s\n" "{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]}"
+          return 0
+        fi
+
+        criteria_hashes=$(dx_review_criteria_coverage_json "$binding" "$criteria_path") || return 1
+        objective_hash=$(printf "%s\n" "$criteria_hashes" | sed -E "s/.*\"objectives\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+        acceptance_hash=$(printf "%s\n" "$criteria_hashes" | sed -E "s/.*\"acceptance_criteria\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+        verification_hash=$(printf "%s\n" "$criteria_hashes" | sed -E "s/.*\"verification_requirements\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+        [[ "$objective_hash" =~ ^[a-f0-9]{64}$ && "$acceptance_hash" =~ ^[a-f0-9]{64}$ && \
+          "$verification_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+
+        if [[ "$omit_evidence" == "1" ]]; then
+          printf "%s\n" "{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]}"
+          return 0
+        fi
+
+        case "$result" in
+          FINDINGS:*) acceptance_outcome=not_met ;;
+          BLOCKED:*) verification_outcome=blocked ;;
+        esac
+        {
+          printf "Evidence-Ref: %s | analysis | Reviewed the lifecycle objective against the complete supplied scope.\n" "$objective_ref"
+          printf "Evidence-Ref: %s | test | Exercised the selected clean-pass gate in this focused fixture.\n" "$acceptance_ref"
+          printf "Evidence-Ref: %s | command | Ran the review-loop fixture verification required by this criterion.\n" "$verification_ref"
+        } >> "$context_path"
+        printf "{\"acceptance_criteria\":[{\"item_hash\":\"%s\",\"outcome\":\"%s\",\"evidence_refs\":[\"%s\"]}],\"objectives\":[{\"item_hash\":\"%s\",\"outcome\":\"%s\",\"evidence_refs\":[\"%s\"]}],\"verification_requirements\":[{\"item_hash\":\"%s\",\"outcome\":\"%s\",\"evidence_refs\":[\"%s\"]}]}\n" \
+          "$acceptance_hash" "$acceptance_outcome" "$acceptance_ref" \
+          "$objective_hash" "$objective_outcome" "$objective_ref" \
+          "$verification_hash" "$verification_outcome" "$verification_ref"
+      }
+
       __dx_claude() {
         local invocation_args="$*"
         if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-}" == "1" ]]; then
-          local assessment_index assessment_criteria_path assessment_binding
+          local assessment_index assessment_criteria_path assessment_binding assessment_policy_record
+          local assessment_small assessment_normal assessment_complex assessment_policy_binding
           assessment_index=$(awk -F "\t" '\''$1 == "assessor" { count++ } END { print count + 1 }'\'' "$CASE_CALLS")
           printf "assessor\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
+          assessment_policy_record=$(dx_review_policy_resolve "$CASE_REPO") || return 96
+          IFS=$'\''\t'\'' read -r assessment_small assessment_normal assessment_complex \
+            assessment_policy_binding _ _ <<< "$assessment_policy_record"
+          if [[ "$invocation_args" != *"small: ${assessment_small} consecutive CLEAN waves"* || \
+                "$invocation_args" != *"normal: ${assessment_normal} consecutive CLEAN waves"* || \
+                "$invocation_args" != *"complex: ${assessment_complex} consecutive CLEAN waves"* || \
+                "$invocation_args" != *"Policy binding: ${assessment_policy_binding}"* ]]; then
+            return 96
+          fi
           assessment_criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
           if [[ -e "$assessment_criteria_path" ]]; then
             assessment_binding=$(dx_review_criteria_hash "$assessment_criteria_path" 2>/dev/null || true)
@@ -384,10 +479,20 @@ run_case() {
           return 98
         fi
 
-        local pass_index result context_path criteria_path criteria_coverage evidence_path sentinel contamination=0 context_supplied=0 criteria_ok=0 hash apply_fix=0
+        local pass_index result context_path criteria_path criteria_evidence evidence_path sentinel contamination=0 context_supplied=0 criteria_ok=0 hash apply_fix=0 should_timeout=0
+        local expected_pass_binding omit_criteria_evidence=0
         local evidence_checks=pass evidence_verifier=pass evidence_findings=0 evidence_fixes=0 coverage
-        if [[ "$CASE_PASS_MODE" == "timeout" ]]; then
+        case "$CASE_PASS_MODE" in
+          timeout) should_timeout=1 ;;
+          timeout-once)
+            grep -q "^timeout-once[[:space:]]" "$CASE_CALLS" || should_timeout=1
+            ;;
+        esac
+        if [[ $should_timeout -eq 1 ]]; then
           printf "pass-start\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
+          if [[ "$CASE_PASS_MODE" == "timeout-once" ]]; then
+            printf "timeout-once\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
+          fi
           sleep 10
           return 97
         fi
@@ -399,6 +504,17 @@ run_case() {
             "$(dx_review_context_file "${DEX_SESSION_ID:-missing}")" \
             "${DEX_REVIEW_TIER:-}" "${DEX_REVIEW_PROFILE:-}" >> "$CASE_CALLS"
           return 97
+        fi
+        expected_pass_binding=$(dx_review_pass_binding "${DEX_REVIEW_PASS_ID:-}" \
+          "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "${DEX_REVIEW_CRITERIA_BINDING:-}" \
+          "${DEX_REVIEW_POLICY_BINDING:-}" 2>/dev/null || true)
+        if ! dx_review_policy_binding_valid "${DEX_REVIEW_POLICY_BINDING:-}" || \
+           ! dx_review_pass_id_valid "${DEX_REVIEW_PASS_ID:-}" || \
+           [[ -z "$expected_pass_binding" || "$expected_pass_binding" != "${DEX_REVIEW_PASS_BINDING:-}" ]] || \
+           [[ "$invocation_args" != *"${DEX_REVIEW_PASS_ID}"* || \
+              "$invocation_args" != *"${DEX_REVIEW_POLICY_BINDING}"* || \
+              "$invocation_args" != *"${DEX_REVIEW_PASS_BINDING}"* ]]; then
+          return 96
         fi
 
         if [[ "$CASE_PASS_MODE" == "expect-codebase" && "$pass_index" -ge 2 ]]; then
@@ -428,9 +544,8 @@ run_case() {
                 "$invocation_args" != *"$(dx_review_criteria_file "$CASE_SESSION_ID")"* ]]; then
           criteria_ok=1
         fi
-        criteria_coverage=$(dx_review_criteria_coverage_json "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" "$criteria_path") || return 96
         if [[ "$CASE_PASS_MODE" == "omit-criteria-coverage" ]]; then
-          criteria_coverage="{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]}"
+          omit_criteria_evidence=1
         fi
         while IFS= read -r sentinel; do
           [[ -n "$sentinel" && "$invocation_args" == *"$sentinel"* ]] && contamination=1
@@ -459,6 +574,28 @@ run_case() {
             ;;
           FINDINGS_FIXED_ADD_UNTRACKED:*)
             printf "added-by-review\n" > "$CASE_REPO/review-added.txt"
+            result="FINDINGS_FIXED:${result##*:}"
+            ;;
+          FINDINGS_FIXED_COMMIT:*)
+            printf "committed-fix-%s\n" "$pass_index" >> "$CASE_REPO/app.txt"
+            git -C "$CASE_REPO" add app.txt
+            git -C "$CASE_REPO" commit -qm "test: commit review fix"
+            result="FINDINGS_FIXED:${result##*:}"
+            ;;
+          FINDINGS_FIXED_COMMIT_BOUNDARY:*)
+            printf "committed-boundary-fix-%s\n" "$pass_index" >> "$CASE_REPO/app.txt"
+            git -C "$CASE_REPO" add app.txt
+            git -C "$CASE_REPO" commit -qm "test: commit review fix and move boundary"
+            git -C "$CASE_REPO" update-ref refs/remotes/origin/main HEAD^
+            result="FINDINGS_FIXED:${result##*:}"
+            ;;
+          FINDINGS_FIXED_EMPTY_COMMIT:*)
+            git -C "$CASE_REPO" commit -qm --allow-empty "test: empty review commit"
+            result="FINDINGS_FIXED:${result##*:}"
+            ;;
+          FINDINGS_FIXED_SWITCH_BRANCH:*)
+            git -C "$CASE_REPO" switch -qc review-switched-branch
+            printf "branch-fix-%s\n" "$pass_index" >> "$CASE_REPO/app.txt"
             result="FINDINGS_FIXED:${result##*:}"
             ;;
           FINDINGS_FIXED_SAME:*)
@@ -496,9 +633,14 @@ run_case() {
         else
           coverage="[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"]"
         fi
+        criteria_evidence=$(__test_review_criteria_evidence \
+          "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" "$criteria_path" "$result" "$context_path" \
+          "$omit_criteria_evidence") || return 96
         evidence_path=$(dx_review_evidence_file "$DEX_SESSION_ID")
-        printf "{\"version\":2,\"scope_fingerprint\":\"%s\",\"criteria_binding\":\"%s\",\"criteria_coverage\":%s,\"deterministic_checks\":\"%s\",\"coverage\":%s,\"verifier\":\"%s\",\"verified_findings\":%s,\"fixes_applied\":%s}\n" \
-          "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" "$criteria_coverage" "$evidence_checks" "$coverage" "$evidence_verifier" "$evidence_findings" "$evidence_fixes" >| "$evidence_path"
+        printf "{\"version\":3,\"scope_fingerprint\":\"%s\",\"criteria_binding\":\"%s\",\"policy_binding\":\"%s\",\"pass_binding\":\"%s\",\"criteria_evidence\":%s,\"deterministic_checks\":\"%s\",\"coverage\":%s,\"verifier\":\"%s\",\"verified_findings\":%s,\"fixes_applied\":%s}\n" \
+          "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" \
+          "${DEX_REVIEW_POLICY_BINDING:-}" "${DEX_REVIEW_PASS_BINDING:-}" "$criteria_evidence" \
+          "$evidence_checks" "$coverage" "$evidence_verifier" "$evidence_findings" "$evidence_fixes" >| "$evidence_path"
 
         printf "%s\n" "$result" >| "$(dx_review_result_file "$DEX_SESSION_ID")"
         touch "$(dx_complete_file "$DEX_SESSION_ID")"
@@ -517,25 +659,46 @@ run_case() {
       }
 
       case "$CASE_SETUP_MODE" in
+        committed-change)
+          git -C "$CASE_REPO" update-ref refs/remotes/origin/main HEAD
+          git -C "$CASE_REPO" add app.txt
+          git -C "$CASE_REPO" commit -qm "test: commit candidate change"
+          ;;
         clean-codebase)
           git -C "$CASE_REPO" restore --source=HEAD --staged --worktree -- app.txt
           ;;
         corrupt-state)
           fingerprint=$(dx_review_scope_fingerprint "$CASE_REPO")
-          dx_review_write_selection "$CASE_SESSION_ID" small environment operator-override "$CASE_REPO"
-          printf "1\tsmall\t3\t0\t3\t%s\n" "$fingerprint" >| "$(dx_review_state_file "$CASE_SESSION_ID")"
+          criteria_binding=$(dx_review_resolve_criteria_binding "$CASE_SESSION_ID")
+          policy_record=$(dx_review_policy_resolve "$CASE_REPO")
+          policy_binding=$(printf "%s\n" "$policy_record" | cut -f4)
+          dx_review_write_selection "$CASE_SESSION_ID" small environment operator-override \
+            "$CASE_REPO" "" "$criteria_binding" "$policy_binding"
+          printf "3\tsmall\t3\t0\t3\t%s\t%s\t%s\n" \
+            "$fingerprint" "$criteria_binding" "$policy_binding" >| "$(dx_review_state_file "$CASE_SESSION_ID")"
           ;;
         resume-state|resume-criteria-change)
-          dx_review_write_selection "$CASE_SESSION_ID" small environment operator-override "$CASE_REPO"
           fingerprint=$(dx_review_scope_fingerprint "$CASE_REPO")
-          dx_review_ledger_append "$CASE_SESSION_ID" 1 prior-clean-pass "$fingerprint" 0123456789abcdef
-          dx_review_write_state "$CASE_SESSION_ID" small 3 1 1 "$CASE_REPO"
+          criteria_binding=$(dx_review_resolve_criteria_binding "$CASE_SESSION_ID")
+          policy_record=$(dx_review_policy_resolve "$CASE_REPO")
+          policy_binding=$(printf "%s\n" "$policy_record" | cut -f4)
+          dx_review_write_selection "$CASE_SESSION_ID" small environment operator-override \
+            "$CASE_REPO" "" "$criteria_binding" "$policy_binding"
+          prior_evidence="$CASE_PROOF_DIR/prior-clean.evidence.json"
+          prior_context="$CASE_PROOF_DIR/prior-clean.context.md"
+          dx_test_write_clean_review_proof "$CASE_SESSION_ID" prior-clean-pass light \
+            "$fingerprint" "$criteria_binding" "$policy_binding" "$prior_evidence" "$prior_context"
+          dx_review_ledger_append "$CASE_SESSION_ID" 1 prior-clean-pass light "$fingerprint" \
+            "$criteria_binding" "$policy_binding" "$prior_evidence" "$prior_context"
+          dx_review_write_state "$CASE_SESSION_ID" small 3 1 1 "$CASE_REPO" \
+            "$criteria_binding" "$policy_binding"
           if [[ "$CASE_SETUP_MODE" == "resume-criteria-change" ]]; then
             previous_criteria_hash=$(dx_review_read_criteria_approval "$CASE_SESSION_ID")
             printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Use the changed approved requirements.\"],\"acceptance_criteria\":[\"Old clean credit is discarded.\"],\"verification_requirements\":[\"Run three fresh waves.\"]}" >| "$(dx_review_criteria_file "$CASE_SESSION_ID")"
             changed_criteria_hash=$(dx_review_criteria_hash "$(dx_review_criteria_file "$CASE_SESSION_ID")")
             dx_review_approve_criteria "$CASE_SESSION_ID" reapproved "$previous_criteria_hash" "$changed_criteria_hash" >/dev/null
-            dx_review_write_selection "$CASE_SESSION_ID" small environment operator-override "$CASE_REPO"
+            dx_review_write_selection "$CASE_SESSION_ID" small environment operator-override \
+              "$CASE_REPO" "" "$changed_criteria_hash" "$policy_binding"
           fi
           ;;
       esac
@@ -637,13 +800,32 @@ run_concurrent_case() {
 
         printf "3\n" >| "$(dx_state_file "$CASE_SESSION_ID")"
 
+        __test_concurrent_criteria_evidence() {
+          local criteria_path="$1" context_path="$2" criteria_hashes
+          local objective_hash acceptance_hash verification_hash
+          criteria_hashes=$(dx_review_criteria_coverage_json \
+            "$DEX_REVIEW_CRITERIA_BINDING" "$criteria_path") || return 1
+          objective_hash=$(printf "%s\n" "$criteria_hashes" | sed -E "s/.*\"objectives\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+          acceptance_hash=$(printf "%s\n" "$criteria_hashes" | sed -E "s/.*\"acceptance_criteria\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+          verification_hash=$(printf "%s\n" "$criteria_hashes" | sed -E "s/.*\"verification_requirements\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+          [[ "$objective_hash" =~ ^[a-f0-9]{64}$ && "$acceptance_hash" =~ ^[a-f0-9]{64}$ && \
+            "$verification_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+          {
+            printf "Evidence-Ref: criteria:objectives:1:fixture-objective | analysis | Reviewed the lifecycle objective against the complete supplied scope.\n"
+            printf "Evidence-Ref: criteria:acceptance_criteria:1:fixture-acceptance | test | Exercised exclusive review-loop ownership in the concurrent fixture.\n"
+            printf "Evidence-Ref: criteria:verification_requirements:1:fixture-verification | command | Ran the concurrent review-loop fixture required by this criterion.\n"
+          } >> "$context_path"
+          printf "{\"acceptance_criteria\":[{\"item_hash\":\"%s\",\"outcome\":\"met\",\"evidence_refs\":[\"criteria:acceptance_criteria:1:fixture-acceptance\"]}],\"objectives\":[{\"item_hash\":\"%s\",\"outcome\":\"met\",\"evidence_refs\":[\"criteria:objectives:1:fixture-objective\"]}],\"verification_requirements\":[{\"item_hash\":\"%s\",\"outcome\":\"met\",\"evidence_refs\":[\"criteria:verification_requirements:1:fixture-verification\"]}]}\n" \
+            "$acceptance_hash" "$objective_hash" "$verification_hash"
+        }
+
         __dx_claude() {
           if [[ "$CASE_ROLE" == "contender" ]]; then
             printf "contender-pass\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
             return 97
           fi
 
-          local pass_index context_path criteria_coverage evidence_path
+          local pass_index context_path criteria_path criteria_evidence evidence_path expected_pass_binding
           pass_index=$(awk -F "\t" '\''$1 == "owner-pass" { count++ } END { print count + 1 }'\'' "$CASE_CALLS")
           if [[ "$pass_index" -eq 1 ]]; then
             touch "$CASE_OWNER_READY"
@@ -654,6 +836,15 @@ run_concurrent_case() {
             [[ -f "$CASE_OWNER_RELEASE" ]] || return 96
           fi
 
+          expected_pass_binding=$(dx_review_pass_binding "${DEX_REVIEW_PASS_ID:-}" \
+            "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "${DEX_REVIEW_CRITERIA_BINDING:-}" \
+            "${DEX_REVIEW_POLICY_BINDING:-}" 2>/dev/null || true)
+          if ! dx_review_policy_binding_valid "${DEX_REVIEW_POLICY_BINDING:-}" || \
+             ! dx_review_pass_id_valid "${DEX_REVIEW_PASS_ID:-}" || \
+             [[ -z "$expected_pass_binding" || "$expected_pass_binding" != "${DEX_REVIEW_PASS_BINDING:-}" ]]; then
+            return 96
+          fi
+
           context_path=$(dx_review_context_file "$DEX_SESSION_ID")
           {
             printf "## Scope\n\nConcurrent fixture pass %s reviewed the supplied scope.\n\n" "$pass_index"
@@ -662,10 +853,12 @@ run_concurrent_case() {
             printf "## Review Coverage\n\nCorrectness, security, contracts, tests, and architecture.\n\n"
             printf "## Verification\n\nThe independent fixture verifier passed.\n"
           } >| "$context_path"
+          criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
+          criteria_evidence=$(__test_concurrent_criteria_evidence "$criteria_path" "$context_path") || return 96
           evidence_path=$(dx_review_evidence_file "$DEX_SESSION_ID")
-          criteria_coverage=$(dx_review_criteria_coverage_json "$DEX_REVIEW_CRITERIA_BINDING" "$(dx_review_criteria_file "$DEX_SESSION_ID")")
-          printf "{\"version\":2,\"scope_fingerprint\":\"%s\",\"criteria_binding\":\"%s\",\"criteria_coverage\":%s,\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}\n" \
-            "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "$DEX_REVIEW_CRITERIA_BINDING" "$criteria_coverage" >| "$evidence_path"
+          printf "{\"version\":3,\"scope_fingerprint\":\"%s\",\"criteria_binding\":\"%s\",\"policy_binding\":\"%s\",\"pass_binding\":\"%s\",\"criteria_evidence\":%s,\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}\n" \
+            "${DEX_REVIEW_SCOPE_FINGERPRINT:-}" "$DEX_REVIEW_CRITERIA_BINDING" \
+            "$DEX_REVIEW_POLICY_BINDING" "$DEX_REVIEW_PASS_BINDING" "$criteria_evidence" >| "$evidence_path"
           dx_review_empty_findings_hash >| "$(dx_findings_file "$DEX_SESSION_ID")"
           printf "CLEAN\n" >| "$(dx_review_result_file "$DEX_SESSION_ID")"
           touch "$(dx_complete_file "$DEX_SESSION_ID")"
@@ -732,6 +925,20 @@ assert_no_assessor "small gate explicit tier"
 assert_fresh_passes "3" "small gate"
 assert_receipt "small" "3" "small gate"
 assert_standalone_telemetry "completed" "3" "small gate"
+
+run_case "trusted-one-pass-policy" "small" "CLEAN" "" \
+  "standalone" "one-pass-policy"
+assert_success "trusted one-pass policy"
+assert_eq "1" "$(call_count pass)" "trusted one-pass policy pass count"
+assert_no_assessor "trusted one-pass policy explicit tier"
+assert_receipt "small" "1" "trusted one-pass policy"
+
+run_case "unborn-default-policy" "small" $'CLEAN\nCLEAN\nCLEAN' "" \
+  "standalone" "unborn"
+assert_success "unborn default policy"
+assert_eq "3" "$(call_count pass)" "unborn default policy pass count"
+assert_no_assessor "unborn default policy explicit tier"
+assert_receipt "small" "3" "unborn default policy"
 
 run_case "standalone-assessor" "" $'CLEAN\nCLEAN\nCLEAN' "small"
 assert_success "standalone assessor"
@@ -853,6 +1060,25 @@ assert_eq "3" "$(call_count pass)" "changed criteria fresh pass count"
 assert_no_assessor "changed criteria explicit tier"
 assert_receipt "small" "3" "changed criteria reset resumable credit"
 
+run_case "resume-pass-timeout" "small" "" "" \
+  "lifecycle" "resume-state" "" "timeout" "single" "derived" "1"
+assert_failure "resumable review pass timeout"
+assert_eq "1" "$(call_count pass-start)" "resumable review pass timeout launch count"
+assert_no_receipt "resumable review pass timeout"
+assert_retained_credit "1" "resumable review pass timeout"
+
+run_case "resume-after-pass-timeout" "small" $'CLEAN\nCLEAN' "" \
+  "lifecycle" "resume-state" "" "timeout-once" "twice" "derived" "1"
+assert_success "resume after review pass timeout"
+assert_eq "1" "$(call_count pass-start)" "resume after timeout launch count"
+assert_eq "2" "$(call_count pass)" "resume after timeout clean pass count"
+if ! grep -q $'^invocation\tfirst\t124$' "$CASE_CALLS"; then
+  printf 'resume after review pass timeout: first invocation did not time out\n' >&2
+  show_case_output
+  exit 1
+fi
+assert_receipt "small" "3" "resume after review pass timeout"
+
 run_case "mutating-clean" "small" "CLEAN_MUTATED"
 assert_failure "mutating clean"
 assert_eq "1" "$(call_count pass)" "mutating clean pass count"
@@ -862,6 +1088,28 @@ run_case "false-fix" "small" "FINDINGS_FIXED_NO_CHANGE:1"
 assert_failure "false fix"
 assert_eq "1" "$(call_count pass)" "false fix pass count"
 assert_no_receipt "false fix"
+
+run_case "committed-fix" "small" $'FINDINGS_FIXED_COMMIT:1\nCLEAN\nCLEAN\nCLEAN' "" \
+  "standalone" "committed-change"
+assert_success "committed fix"
+assert_eq "4" "$(call_count pass)" "committed fix pass count"
+assert_receipt "small" "3" "committed fix"
+
+run_case "committed-fix-changed-boundary" "small" "FINDINGS_FIXED_COMMIT_BOUNDARY:1" "" \
+  "standalone" "committed-change"
+assert_failure "committed fix with changed boundary"
+assert_eq "1" "$(call_count pass)" "committed fix with changed boundary pass count"
+assert_no_receipt "committed fix with changed boundary"
+
+run_case "empty-commit-fix" "small" "FINDINGS_FIXED_EMPTY_COMMIT:1"
+assert_failure "empty commit fix"
+assert_eq "1" "$(call_count pass)" "empty commit fix pass count"
+assert_no_receipt "empty commit fix"
+
+run_case "branch-switch-fix" "small" "FINDINGS_FIXED_SWITCH_BRANCH:1"
+assert_failure "branch switch fix"
+assert_eq "1" "$(call_count pass)" "branch switch fix pass count"
+assert_no_receipt "branch switch fix"
 
 run_case "repeated-findings" "small" $'FINDINGS_FIXED_SAME:1\nFINDINGS_FIXED_SAME:1\nFINDINGS_FIXED_SAME:1\nCLEAN\nCLEAN\nCLEAN'
 assert_failure "repeated findings churn"

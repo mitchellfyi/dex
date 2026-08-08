@@ -108,6 +108,9 @@ All of these must be true before you stop:
 - The context pack was created or refreshed.
 - The context pack records the exact criteria binding and covers every supplied
   approved requirement, or explicitly records standalone `N/A`.
+- The evidence version 3 manifest records the exact ordered hash and outcome for
+  every supplied criterion, cites substantive references in this pass's context
+  pack, and copies the wrapper-supplied policy and pass bindings exactly.
 - Deterministic checks were run or explicitly marked unavailable.
 - Candidate issues were harvested for the current profile, with non-applicable
   domains marked `N/A`.
@@ -120,4 +123,4 @@ All of these must be true before you stop:
   pack. Re-run the review after an action that changed the review scope.
 
 When those criteria are met, stop. The outer `/dxreviewloop` owns the selected
-3, 6, or 9 consecutive `CLEAN` gate.
+tier's trusted consecutive `CLEAN` gate, which defaults to 3, 6, or 9 waves.

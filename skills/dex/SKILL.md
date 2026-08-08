@@ -53,11 +53,12 @@ resulting state and continue using the current phase's completion criteria.
 6. **SCOPE**: focus on implementation, testing, and UI capture evidence. Ticket setup belongs to Phase 0, so only re-run it here if Phase 0 left it incomplete. Phase 4 normally owns verification and publishing, while Phase 5 normally owns the PR description; direct human instructions can change that order.
 7. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `small`, `normal`, or `complex`, with a
-   deterministic set of reason codes. The choice maps to 3, 6, or 9
-   consecutive clean review waves.
+   deterministic set of reason codes. The tier selects the trusted clean-wave
+   policy from the committed default branch. Its defaults are 3, 6, and 9;
+   `.dex/dex.md` may configure monotonic values from 1 through 30.
 8. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
    shows all criteria MET, and the review-risk selection matches the final
-   scope fingerprint.
+   scope fingerprint and trusted policy.
 
 ### Phase 3: Review
 
@@ -70,16 +71,24 @@ resulting state and continue using the current phase's completion criteria.
    triage when needed, batch fixes, and targeted recheck.
 3. Waves that find and fix issues write `FINDINGS_FIXED:N`, reset the clean
    counter, and force the next iteration to re-review the full change set.
-4. The loop requires 3 consecutive clean waves for `small`, 6 for `normal`, or
-   9 for `complex`. It has no routine outer iteration maximum.
+4. The loop uses the selected tier's trusted clean-wave requirement. The
+   defaults are 3 for `small`, 6 for `normal`, and 9 for `complex`. A candidate
+   branch cannot lower the active gate, and the loop has no outer iteration
+   maximum.
 5. Prior review conclusions, findings, fingerprints, clean counts, and telemetry
    are never passed to a later reviewer.
-6. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid results,
+6. Each accepted wave supplies evidence version 3 with exact ordered criterion
+   hashes, outcomes, substantive context references, and policy and pass
+   bindings. Dex attests the evidence, context, result, profile, and findings
+   fingerprint before granting clean credit, retains private proof copies, and
+   recomputes every attestation when it validates the receipt.
+7. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid results,
    provider failures, and deterministic fingerprint churn pause the loop.
-7. **SCOPE**: focus on review and fixes. Phase 4 and Phase 5 remain the default
+8. **SCOPE**: focus on review and fixes. Phase 4 and Phase 5 remain the default
    owners of publishing and PR setup, but those actions are available here.
-8. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
-   receipt proving the selected consecutive clean gate passed.
+9. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
+   receipt binding the approved criteria, trusted policy, and attested clean
+   ledger and proving the selected consecutive clean gate passed.
 
 ### Phase 4: Verify & Commit
 
@@ -171,10 +180,9 @@ The phase audit loop continues until:
    Stop-hook audit, separate from `/dxreviewloop`'s clean-pass loop
 3. **User interrupts** — the user can always take over
 
-The outer `/dxreviewloop` has no routine maximum. It stops only after its clean
-gate succeeds or it reaches a blocker, residual finding, churn condition,
-provider failure, invalid result, user interruption, or an explicitly configured
-deprecated emergency ceiling.
+The outer `/dxreviewloop` has no iteration maximum. It stops only after its
+clean gate succeeds or it reaches a blocker, residual finding, churn condition,
+provider failure, invalid result, user interruption, or direct intervention.
 
 ### When to output the completion promise
 

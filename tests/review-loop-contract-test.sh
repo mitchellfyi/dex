@@ -8,6 +8,7 @@ export DX_RUN_ROOT="$TMP_DIR/runs"
 mkdir -p "$HOME" "$DX_RUN_ROOT"
 
 cleanup() {
+  chmod -R u+w "$TMP_DIR" 2>/dev/null || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -51,18 +52,51 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
     claude() { return 0; }
     codex() { return 0; }
 
+    __test_contract_criteria_evidence() {
+      local result="$1" context_path="$2" criteria_path criteria_hashes
+      local objective_hash acceptance_hash verification_hash
+      local objective_outcome=met acceptance_outcome=met verification_outcome=met
+      criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
+      if [[ "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" == "standalone" ]]; then
+        print -r -- "{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]}"
+        return 0
+      fi
+
+      criteria_hashes=$(dx_review_criteria_coverage_json "$DEX_REVIEW_CRITERIA_BINDING" "$criteria_path") || return 1
+      objective_hash=$(print -r -- "$criteria_hashes" | sed -E "s/.*\"objectives\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+      acceptance_hash=$(print -r -- "$criteria_hashes" | sed -E "s/.*\"acceptance_criteria\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+      verification_hash=$(print -r -- "$criteria_hashes" | sed -E "s/.*\"verification_requirements\":\\[\"([a-f0-9]{64})\"\\].*/\\1/")
+      [[ "$objective_hash" =~ ^[a-f0-9]{64}$ && "$acceptance_hash" =~ ^[a-f0-9]{64}$ && \
+        "$verification_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+      case "$result" in
+        FINDINGS:*) acceptance_outcome=not_met ;;
+        BLOCKED:*) verification_outcome=blocked ;;
+      esac
+      {
+        print -r -- "Evidence-Ref: criteria:objectives:1:fixture-objective | analysis | Reviewed the lifecycle objective against the complete supplied scope."
+        print -r -- "Evidence-Ref: criteria:acceptance_criteria:1:fixture-acceptance | test | Exercised the lifecycle control behavior in this contract fixture."
+        print -r -- "Evidence-Ref: criteria:verification_requirements:1:fixture-verification | command | Ran the focused review-loop contract fixture required by this criterion."
+      } >> "$context_path"
+      printf "{\"acceptance_criteria\":[{\"item_hash\":\"%s\",\"outcome\":\"%s\",\"evidence_refs\":[\"criteria:acceptance_criteria:1:fixture-acceptance\"]}],\"objectives\":[{\"item_hash\":\"%s\",\"outcome\":\"%s\",\"evidence_refs\":[\"criteria:objectives:1:fixture-objective\"]}],\"verification_requirements\":[{\"item_hash\":\"%s\",\"outcome\":\"%s\",\"evidence_refs\":[\"criteria:verification_requirements:1:fixture-verification\"]}]}\n" \
+        "$acceptance_hash" "$acceptance_outcome" "$objective_hash" "$objective_outcome" \
+        "$verification_hash" "$verification_outcome"
+    }
+
     emit_review_contract() {
+      local result context_path criteria_evidence checks=pass verifier=pass findings=0
       print -r -- "$DEX_SESSION_ID" >> "$TEST_REVIEW_CALL_FILE"
       case "$TEST_REVIEW_SCENARIO" in
         blocked)
-          print -r -- "BLOCKED:review-tool-unavailable" > "$(dx_review_result_file "$DEX_SESSION_ID")"
+          result="BLOCKED:review-tool-unavailable"
           ;;
         *)
-          print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
+          result=CLEAN
           ;;
       esac
+      print -r -- "$result" > "$(dx_review_result_file "$DEX_SESSION_ID")"
 
       if [[ "$TEST_REVIEW_SCENARIO" != "missing-context" ]]; then
+        context_path=$(dx_review_context_file "$DEX_SESSION_ID")
         {
           print -r -- "## Scope"
           print -r -- ""
@@ -83,17 +117,18 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
           print -r -- "## Verification"
           print -r -- ""
           print -r -- "The fixture verifier passed."
-        } > "$(dx_review_context_file "$DEX_SESSION_ID")"
+        } > "$context_path"
       fi
 
       if [[ "$TEST_REVIEW_SCENARIO" != "missing-evidence" ]]; then
-        local checks=pass verifier=pass findings=0
         if [[ "$TEST_REVIEW_SCENARIO" == "blocked" ]]; then
           checks=partial
           verifier=not-run
           findings=0
         fi
-        print -r -- "{\"version\":2,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"criteria_binding\":\"standalone\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"${checks}\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"${verifier}\",\"verified_findings\":${findings},\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
+        context_path=$(dx_review_context_file "$DEX_SESSION_ID")
+        criteria_evidence=$(__test_contract_criteria_evidence "$result" "$context_path") || return 96
+        print -r -- "{\"version\":3,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"criteria_binding\":\"${DEX_REVIEW_CRITERIA_BINDING:-standalone}\",\"policy_binding\":\"${DEX_REVIEW_POLICY_BINDING:-}\",\"pass_binding\":\"${DEX_REVIEW_PASS_BINDING:-}\",\"criteria_evidence\":${criteria_evidence},\"deterministic_checks\":\"${checks}\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"${verifier}\",\"verified_findings\":${findings},\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
       fi
 
       case "$TEST_REVIEW_SCENARIO" in
@@ -124,7 +159,16 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
     }
 
     assert_review_criteria_prompt() {
-      local invocation="$*" criteria_path criteria_binding
+      local invocation="$*" criteria_path criteria_binding expected_pass_binding
+      dx_review_policy_binding_valid "${DEX_REVIEW_POLICY_BINDING:-}" || return 1
+      dx_review_pass_id_valid "${DEX_REVIEW_PASS_ID:-}" || return 1
+      expected_pass_binding=$(dx_review_pass_binding "$DEX_REVIEW_PASS_ID" \
+        "$DEX_REVIEW_SCOPE_FINGERPRINT" "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" \
+        "$DEX_REVIEW_POLICY_BINDING") || return 1
+      [[ "${DEX_REVIEW_PASS_BINDING:-}" == "$expected_pass_binding" ]] || return 1
+      [[ "$invocation" == *"$DEX_REVIEW_PASS_ID"* ]] || return 1
+      [[ "$invocation" == *"$DEX_REVIEW_POLICY_BINDING"* ]] || return 1
+      [[ "$invocation" == *"$DEX_REVIEW_PASS_BINDING"* ]] || return 1
       criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
       if [[ -e "$criteria_path" ]]; then
         criteria_binding=$(dx_review_criteria_hash "$criteria_path") || return 1
@@ -150,6 +194,9 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
             DEX_REVIEW_SCOPE_FINGERPRINT="${DEX_REVIEW_SCOPE_FINGERPRINT}" \
             DEX_REVIEW_CRITERIA_BINDING="${DEX_REVIEW_CRITERIA_BINDING}" \
             DEX_REVIEW_CRITERIA_FILE="${DEX_REVIEW_CRITERIA_FILE}" \
+            DEX_REVIEW_POLICY_BINDING="${DEX_REVIEW_POLICY_BINDING}" \
+            DEX_REVIEW_PASS_ID="${DEX_REVIEW_PASS_ID}" \
+            DEX_REVIEW_PASS_BINDING="${DEX_REVIEW_PASS_BINDING}" \
             DEX_PHASE_HANDOFF="" bash "$DEX_DIR/hooks/phase-loop.sh" >/dev/null
       fi
     }

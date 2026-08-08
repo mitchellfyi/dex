@@ -273,9 +273,9 @@ __dx_review_invalidate_criteria_authorization() {
   command rm -f \
     "$(dx_review_selection_file "$session_id")" \
     "$(dx_review_state_file "$session_id")" \
-    "$(dx_review_ledger_file "$session_id")" \
     "$(dx_review_receipt_file "$session_id")" \
     "$(dx_findings_file "$session_id")" 2>/dev/null || return 1
+  dx_review_ledger_reset "$session_id" || return 1
   if [[ "$approval_mode" == "reapproved" ]]; then
     command rm -f \
       "$(dx_complete_file "$session_id")" \
@@ -369,6 +369,44 @@ EOF
 dx_review_criteria_binding_valid() {
   local binding="${1:-}"
   [[ "$binding" == "standalone" || "$binding" =~ ^[a-f0-9]{64}$ ]]
+}
+
+dx_review_policy_binding_valid() {
+  local binding="${1:-}"
+  [[ "$binding" =~ ^[a-f0-9]{64}$ ]]
+}
+
+dx_review_pass_id_valid() {
+  local pass_id="${1:-}"
+  [[ "$pass_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$ ]]
+}
+
+dx_review_pass_binding() {
+  local pass_id="${1:-}" fingerprint="${2:-}" criteria_binding="${3:-}" policy_binding="${4:-}"
+  [[ $# -eq 4 ]] || return 1
+  dx_review_pass_id_valid "$pass_id" || return 1
+  [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
+  dx_review_criteria_binding_valid "$criteria_binding" || return 1
+  dx_review_policy_binding_valid "$policy_binding" || return 1
+  DX_REVIEW_PASS_ID="$pass_id" \
+  DX_REVIEW_PASS_FINGERPRINT="$fingerprint" \
+  DX_REVIEW_PASS_CRITERIA_BINDING="$criteria_binding" \
+  DX_REVIEW_PASS_POLICY_BINDING="$policy_binding" \
+  python3 - <<'PY'
+import hashlib
+import json
+import os
+
+payload = [
+    "dex-review-pass-v1",
+    os.environ["DX_REVIEW_PASS_ID"],
+    os.environ["DX_REVIEW_PASS_FINGERPRINT"],
+    os.environ["DX_REVIEW_PASS_CRITERIA_BINDING"],
+    os.environ["DX_REVIEW_PASS_POLICY_BINDING"],
+]
+canonical = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+print(hashlib.sha256(canonical.encode("ascii")).hexdigest())
+PY
 }
 
 # Resolve an explicit criteria binding, or infer one for compatibility callers.
@@ -492,7 +530,42 @@ dx_review_escalation_tier() {
   esac
 }
 
-dx_review_evidence_valid() {
+__dx_review_regular_files_bounded() {
+  local maximum="$1"
+  shift
+  python3 - "$maximum" "$@" <<'PY'
+import os
+import stat
+import sys
+
+maximum = int(sys.argv[1])
+try:
+    for path in sys.argv[2:]:
+        before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= maximum:
+            raise ValueError
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            ):
+                raise ValueError
+        finally:
+            os.close(descriptor)
+except (OSError, ValueError):
+    raise SystemExit(1)
+PY
+}
+
+dx_review_evidence_legacy_valid() {
+  [[ $# -eq 4 || $# -eq 6 ]] || return 1
   local evidence_file="$1" result="$2" profile="$3" expected_fingerprint="$4"
   local expected_binding="${5:-}" criteria_file="${6:-}" strict_criteria=0
   dx_review_result_valid "$result" || return 1
@@ -636,15 +709,415 @@ elif result.startswith("ESCALATE:") or result.startswith("ESCALATE_THOROUGH:"):
 PY
 }
 
-dx_review_evidence_hash() {
-  local evidence_file="$1"
-  [[ -f "$evidence_file" ]] || return 1
+dx_review_evidence_valid() {
+  [[ $# -eq 9 ]] || return 1
+  local evidence_file="$1" result="$2" profile="$3" expected_fingerprint="$4"
+  local expected_binding="$5" criteria_file="$6" pass_id="$7" policy_binding="$8" context_file="$9"
+  local expected_pass_binding
+  dx_review_result_valid "$result" || return 1
+  [[ "$profile" == "light" || "$profile" == "standard" || "$profile" == "thorough" ]] || return 1
+  [[ "$expected_fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
+  dx_review_criteria_binding_valid "$expected_binding" || return 1
+  dx_review_policy_binding_valid "$policy_binding" || return 1
+  dx_review_pass_id_valid "$pass_id" || return 1
+  __dx_review_regular_files_bounded 262144 "$evidence_file" "$context_file" || return 1
+  if [[ "$expected_binding" == "standalone" ]]; then
+    [[ -z "$criteria_file" || ! -e "$criteria_file" ]] || return 1
+  else
+    [[ -n "$criteria_file" ]] || return 1
+    [[ "$(dx_review_criteria_hash "$criteria_file" 2>/dev/null)" == "$expected_binding" ]] || return 1
+  fi
+  dx_review_context_valid "$context_file" "$expected_binding" || return 1
+  expected_pass_binding=$(dx_review_pass_binding "$pass_id" "$expected_fingerprint" "$expected_binding" "$policy_binding") || return 1
+  DX_REVIEW_EVIDENCE_RESULT="$result" \
+  DX_REVIEW_EVIDENCE_PROFILE="$profile" \
+  DX_REVIEW_EVIDENCE_FINGERPRINT="$expected_fingerprint" \
+  DX_REVIEW_EVIDENCE_CRITERIA_BINDING="$expected_binding" \
+  DX_REVIEW_EVIDENCE_CRITERIA_FILE="$criteria_file" \
+  DX_REVIEW_EVIDENCE_POLICY_BINDING="$policy_binding" \
+  DX_REVIEW_EVIDENCE_PASS_BINDING="$expected_pass_binding" \
+  DX_REVIEW_EVIDENCE_CONTEXT_FILE="$context_file" \
   python3 - "$evidence_file" <<'PY'
 import hashlib
+import json
+import os
+import re
+import stat
 import sys
 
-with open(sys.argv[1], "rb") as handle:
-    print(hashlib.sha256(handle.read()).hexdigest()[:16])
+
+def read_regular(raw_path, maximum):
+    before = os.lstat(raw_path)
+    if not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= maximum:
+        raise ValueError
+    descriptor = os.open(
+        raw_path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise ValueError
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise ValueError
+        after = os.fstat(descriptor)
+        if (
+            (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            or total != opened.st_size
+        ):
+            raise ValueError
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+try:
+    payload = json.loads(read_regular(sys.argv[1], 262144).decode("utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+    raise SystemExit(1)
+
+required_keys = {
+    "version",
+    "scope_fingerprint",
+    "criteria_binding",
+    "policy_binding",
+    "pass_binding",
+    "criteria_evidence",
+    "deterministic_checks",
+    "coverage",
+    "verifier",
+    "verified_findings",
+    "fixes_applied",
+}
+if not isinstance(payload, dict) or set(payload) != required_keys:
+    raise SystemExit(1)
+if isinstance(payload["version"], bool) or payload["version"] != 3:
+    raise SystemExit(1)
+if payload["scope_fingerprint"] != os.environ["DX_REVIEW_EVIDENCE_FINGERPRINT"]:
+    raise SystemExit(1)
+if payload["criteria_binding"] != os.environ["DX_REVIEW_EVIDENCE_CRITERIA_BINDING"]:
+    raise SystemExit(1)
+if payload["policy_binding"] != os.environ["DX_REVIEW_EVIDENCE_POLICY_BINDING"]:
+    raise SystemExit(1)
+if payload["pass_binding"] != os.environ["DX_REVIEW_EVIDENCE_PASS_BINDING"]:
+    raise SystemExit(1)
+
+sections = ("objectives", "acceptance_criteria", "verification_requirements")
+binding = os.environ["DX_REVIEW_EVIDENCE_CRITERIA_BINDING"]
+if binding == "standalone":
+    expected_hashes = {section: [] for section in sections}
+else:
+    try:
+        with open(os.environ["DX_REVIEW_EVIDENCE_CRITERIA_FILE"], "r", encoding="utf-8") as handle:
+            criteria = json.load(handle)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise SystemExit(1)
+    expected_hashes = {}
+    for section in sections:
+        expected_hashes[section] = [
+            hashlib.sha256(
+                json.dumps(
+                    [section, index, value],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            for index, value in enumerate(criteria[section])
+        ]
+
+criteria_evidence = payload["criteria_evidence"]
+if not isinstance(criteria_evidence, dict) or set(criteria_evidence) != set(sections):
+    raise SystemExit(1)
+
+marker_pattern = re.compile(
+    r"criteria:(objectives|acceptance_criteria|verification_requirements):"
+    r"([1-9][0-9]{0,2}):([a-z0-9][a-z0-9._-]{0,63})"
+)
+try:
+    context_lines = read_regular(
+        os.environ["DX_REVIEW_EVIDENCE_CONTEXT_FILE"], 262144
+    ).decode("utf-8").splitlines()
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(1)
+
+context_markers = {}
+for line in context_lines:
+    if not line.startswith("Evidence-Ref:"):
+        continue
+    parts = line.split(" | ", 2)
+    if len(parts) != 3 or not parts[0].startswith("Evidence-Ref: "):
+        raise SystemExit(1)
+    marker = parts[0][len("Evidence-Ref: "):]
+    kind = parts[1]
+    detail = parts[2]
+    if (
+        line != f"Evidence-Ref: {marker} | {kind} | {detail}"
+        or not marker_pattern.fullmatch(marker)
+        or marker in context_markers
+        or kind not in {"analysis", "command", "file", "test"}
+        or not 12 <= len(detail) <= 500
+        or detail != detail.strip()
+        or "|" in detail
+        or any(ord(char) < 32 or ord(char) == 127 for char in detail)
+        or detail.casefold() in {"n/a", "none", "placeholder", "tbd", "todo"}
+    ):
+        raise SystemExit(1)
+    context_markers[marker] = (kind, detail)
+
+allowed_outcomes = {"met", "not_met", "blocked", "not_applicable"}
+referenced_markers = set()
+outcomes = []
+for section in sections:
+    entries = criteria_evidence[section]
+    hashes = expected_hashes[section]
+    if not isinstance(entries, list) or len(entries) != len(hashes):
+        raise SystemExit(1)
+    for index, (entry, expected_hash) in enumerate(zip(entries, hashes), start=1):
+        if not isinstance(entry, dict) or set(entry) != {"item_hash", "outcome", "evidence_refs"}:
+            raise SystemExit(1)
+        if entry["item_hash"] != expected_hash:
+            raise SystemExit(1)
+        outcome = entry["outcome"]
+        if not isinstance(outcome, str) or outcome not in allowed_outcomes:
+            raise SystemExit(1)
+        refs = entry["evidence_refs"]
+        if not isinstance(refs, list) or not 1 <= len(refs) <= 8:
+            raise SystemExit(1)
+        if len(refs) != len(set(refs)):
+            raise SystemExit(1)
+        for ref in refs:
+            if not isinstance(ref, str):
+                raise SystemExit(1)
+            match = marker_pattern.fullmatch(ref)
+            if not match or match.group(1) != section or int(match.group(2)) != index:
+                raise SystemExit(1)
+            if ref not in context_markers:
+                raise SystemExit(1)
+            referenced_markers.add(ref)
+        outcomes.append(outcome)
+
+if set(context_markers) != referenced_markers:
+    raise SystemExit(1)
+if binding == "standalone" and context_markers:
+    raise SystemExit(1)
+
+if payload["deterministic_checks"] not in {"pass", "partial", "fail", "unavailable"}:
+    raise SystemExit(1)
+if payload["verifier"] not in {"pass", "fail", "not-run"}:
+    raise SystemExit(1)
+if not isinstance(payload["coverage"], list) or not payload["coverage"]:
+    raise SystemExit(1)
+allowed_domains = {
+    "correctness",
+    "security",
+    "contracts",
+    "tests",
+    "architecture",
+    "frontend",
+    "devops",
+    "performance",
+    "observability",
+}
+coverage = payload["coverage"]
+if any(not isinstance(item, str) or item not in allowed_domains for item in coverage):
+    raise SystemExit(1)
+if len(coverage) != len(set(coverage)):
+    raise SystemExit(1)
+for key in ("verified_findings", "fixes_applied"):
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 999999999999999999:
+        raise SystemExit(1)
+
+result = os.environ["DX_REVIEW_EVIDENCE_RESULT"]
+profile = os.environ["DX_REVIEW_EVIDENCE_PROFILE"]
+core = {"correctness", "security", "contracts", "tests", "architecture"}
+all_domains = core | {"frontend", "devops", "performance", "observability"}
+
+if result == "CLEAN":
+    if payload["deterministic_checks"] != "pass" or payload["verifier"] != "pass":
+        raise SystemExit(1)
+    if payload["verified_findings"] != 0 or payload["fixes_applied"] != 0:
+        raise SystemExit(1)
+    if any(outcome != "met" for outcome in outcomes):
+        raise SystemExit(1)
+    required_coverage = all_domains if profile == "thorough" else core
+    if not required_coverage.issubset(set(coverage)):
+        raise SystemExit(1)
+elif result.startswith("FINDINGS_FIXED:"):
+    count = int(result.split(":", 1)[1])
+    if payload["deterministic_checks"] != "pass" or payload["verifier"] != "pass":
+        raise SystemExit(1)
+    if payload["verified_findings"] != count or payload["fixes_applied"] != count:
+        raise SystemExit(1)
+    if any(outcome != "met" for outcome in outcomes):
+        raise SystemExit(1)
+    required_coverage = all_domains if profile == "thorough" else core
+    if not required_coverage.issubset(set(coverage)):
+        raise SystemExit(1)
+elif result.startswith("FINDINGS:"):
+    count = int(result.split(":", 1)[1])
+    if payload["verified_findings"] != count or payload["fixes_applied"] > count:
+        raise SystemExit(1)
+    if binding != "standalone" and not any(outcome in {"not_met", "blocked"} for outcome in outcomes):
+        raise SystemExit(1)
+elif result.startswith("BLOCKED:"):
+    if binding != "standalone" and "blocked" not in outcomes:
+        raise SystemExit(1)
+elif result.startswith("ESCALATE:") or result.startswith("ESCALATE_THOROUGH:"):
+    if payload["verifier"] != "pass" or payload["fixes_applied"] != 0:
+        raise SystemExit(1)
+PY
+}
+
+dx_review_evidence_hash() {
+  [[ $# -eq 1 ]] || return 1
+  local evidence_file="$1"
+  python3 - "$evidence_file" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+maximum = 262144
+descriptor = None
+try:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    close_exec = getattr(os, "O_CLOEXEC", None)
+    if no_follow is None or close_exec is None:
+        raise ValueError
+    before = os.lstat(sys.argv[1])
+    if not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= maximum:
+        raise ValueError
+    descriptor = os.open(
+        sys.argv[1],
+        os.O_RDONLY | no_follow | close_exec | getattr(os, "O_NONBLOCK", 0),
+    )
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        or not 1 <= opened.st_size <= maximum
+    ):
+        raise ValueError
+
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+        if not chunk:
+            break
+        digest.update(chunk)
+        total += len(chunk)
+        if total > maximum:
+            raise ValueError
+
+    after = os.fstat(descriptor)
+    if (
+        (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        or total != opened.st_size
+    ):
+        raise ValueError
+except (OSError, ValueError):
+    raise SystemExit(1)
+finally:
+    if descriptor is not None:
+        os.close(descriptor)
+
+print(digest.hexdigest())
+PY
+}
+
+dx_review_pass_attestation() {
+  [[ $# -eq 6 ]] || return 1
+  local evidence_file="$1" context_file="$2" result="$3" profile="$4"
+  local findings_hash="$5" pass_binding="$6"
+  [[ -f "$evidence_file" && ! -L "$evidence_file" ]] || return 1
+  [[ -f "$context_file" && ! -L "$context_file" ]] || return 1
+  dx_review_result_valid "$result" || return 1
+  [[ "$profile" == "light" || "$profile" == "standard" || "$profile" == "thorough" ]] || return 1
+  [[ "$findings_hash" =~ ^[a-f0-9]{16}$ ]] || return 1
+  [[ "$pass_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
+  DX_REVIEW_ATTESTATION_RESULT="$result" \
+  DX_REVIEW_ATTESTATION_PROFILE="$profile" \
+  DX_REVIEW_ATTESTATION_FINDINGS="$findings_hash" \
+  DX_REVIEW_ATTESTATION_PASS_BINDING="$pass_binding" \
+    python3 - "$evidence_file" "$context_file" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+
+def content_hash(raw_path, maximum):
+    path = Path(raw_path)
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= maximum:
+        raise ValueError
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise ValueError
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            digest.update(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise ValueError
+        after = os.fstat(descriptor)
+        if (
+            (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            or total != opened.st_size
+        ):
+            raise ValueError
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+try:
+    evidence_hash = content_hash(sys.argv[1], 262144)
+    context_hash = content_hash(sys.argv[2], 262144)
+except (OSError, ValueError):
+    raise SystemExit(1)
+
+payload = [
+    "dex-review-attestation-v1",
+    os.environ["DX_REVIEW_ATTESTATION_PASS_BINDING"],
+    os.environ["DX_REVIEW_ATTESTATION_RESULT"],
+    os.environ["DX_REVIEW_ATTESTATION_PROFILE"],
+    os.environ["DX_REVIEW_ATTESTATION_FINDINGS"],
+    evidence_hash,
+    context_hash,
+]
+canonical = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+print(hashlib.sha256(canonical.encode("ascii")).hexdigest())
 PY
 }
 
@@ -657,7 +1130,7 @@ import os
 import sys
 
 try:
-    if os.path.getsize(sys.argv[1]) > 65536:
+    if os.path.getsize(sys.argv[1]) > 262144:
         raise ValueError
     with open(sys.argv[1], "r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -1045,8 +1518,9 @@ dx_review_working_fingerprint() {
 dx_review_write_atomic() {
   local target="$1" content="$2" tmp_file
   mkdir -p "$(dirname "$target")" || return 1
-  tmp_file="${target}.tmp.$$"
-  if ! printf '%s\n' "$content" > "$tmp_file" || ! command mv -f "$tmp_file" "$target"; then
+  tmp_file=$(mktemp "${target}.tmp.XXXXXX") || return 1
+  if ! chmod 600 "$tmp_file" || ! printf '%s\n' "$content" > "$tmp_file" ||
+     ! command mv -f "$tmp_file" "$target"; then
     command rm -f "$tmp_file" 2>/dev/null || true
     return 1
   fi
@@ -1055,7 +1529,7 @@ dx_review_write_atomic() {
 dx_review_write_selection() {
   local session_id="$1" requested_tier="$2" source="$3" reason_codes="$4" repo_dir="${5:-$PWD}"
   local required_clean="${6:-}" tier tier_min fingerprint selection_file floor_record floor_tier floor_reason tier_rank floor_rank
-  local expected_binding="${7:-}" criteria_binding
+  local expected_binding="${7:-}" expected_policy_binding="${8:-}" criteria_binding policy_record policy_binding
   [[ -n "$session_id" && "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_selection_reason_codes_valid "$tier" "$source" "$reason_codes" || return 1
@@ -1069,7 +1543,10 @@ EOF
     floor_rank=$(dx_review_tier_rank "$floor_tier") || return 1
     [[ "$tier_rank" -ge "$floor_rank" ]] || return 1
   fi
-  tier_min=$(dx_review_tier_min_clean_passes "$tier") || return 1
+  policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
+  IFS=$'\t' read -r tier_min policy_binding _ <<EOF
+$policy_record
+EOF
   [[ -n "$required_clean" ]] || required_clean="$tier_min"
   dx_review_is_positive_integer "$required_clean" || return 1
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
@@ -1084,30 +1561,22 @@ EOF
       [[ "$criteria_binding" == "standalone" ]] || return 1
       ;;
   esac
-  dx_review_write_atomic "$selection_file" "3"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"
+  dx_review_write_atomic "$selection_file" "4"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"
 }
 
 dx_review_read_selection() {
-  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" selection_file raw
-  local version tier source reason_codes required_clean fingerprint criteria_binding extra current_fingerprint tier_min
+  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" expected_policy_binding="${4:-}" selection_file raw
+  local version tier source reason_codes required_clean fingerprint criteria_binding policy_binding extra current_fingerprint tier_min
   local floor_record floor_tier floor_reason tier_rank floor_rank
-  local current_binding
+  local current_binding policy_record current_policy_binding
   selection_file=$(dx_review_selection_file "$session_id") || return 1
   [[ -f "$selection_file" ]] || return 1
   raw=$(cat "$selection_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier source reason_codes required_clean fingerprint criteria_binding extra <<EOF
+  IFS=$'\t' read -r version tier source reason_codes required_clean fingerprint criteria_binding policy_binding extra <<EOF
 $raw
 EOF
-  if [[ "$version" == "1" ]]; then
-    fingerprint="$required_clean"
-    required_clean=""
-    criteria_binding="standalone"
-  elif [[ "$version" == "2" ]]; then
-    criteria_binding="standalone"
-  elif [[ "$version" != "3" ]]; then
-    return 1
-  fi
+  [[ "$version" == "4" ]] || return 1
   [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   [[ "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
@@ -1122,8 +1591,12 @@ EOF
     floor_rank=$(dx_review_tier_rank "$floor_tier") || return 1
     [[ "$tier_rank" -ge "$floor_rank" ]] || return 1
   fi
-  tier_min=$(dx_review_tier_min_clean_passes "$tier") || return 1
-  [[ -n "$required_clean" ]] || required_clean="$tier_min"
+  policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
+  IFS=$'\t' read -r tier_min current_policy_binding _ <<EOF
+$policy_record
+EOF
+  dx_review_policy_binding_valid "$policy_binding" || return 1
+  [[ "$policy_binding" == "$current_policy_binding" ]] || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
@@ -1140,7 +1613,8 @@ EOF
       [[ "$criteria_binding" == "standalone" ]] || return 1
       ;;
   esac
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$source" "$reason_codes" "$required_clean" "$fingerprint" "$criteria_binding"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$tier" "$source" "$reason_codes" "$required_clean" "$fingerprint" "$criteria_binding" "$policy_binding"
 }
 
 dx_review_selection_valid() {
@@ -1149,42 +1623,48 @@ dx_review_selection_valid() {
 
 dx_review_write_state() {
   local session_id="$1" requested_tier="$2" required_clean="$3" iteration="$4" clean_count="$5" repo_dir="${6:-$PWD}"
-  local expected_binding="${7:-}" tier tier_min fingerprint state_file criteria_binding
+  local expected_binding="${7:-}" expected_policy_binding="${8:-}" tier tier_min fingerprint state_file criteria_binding
+  local policy_record policy_binding
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
   dx_review_is_nonnegative_integer "$clean_count" || return 1
-  tier_min=$(dx_review_tier_min_clean_passes "$tier") || return 1
+  policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
+  IFS=$'\t' read -r tier_min policy_binding _ <<EOF
+$policy_record
+EOF
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   [[ $((10#$clean_count)) -lt $((10#$required_clean)) ]] || return 1
   [[ $((10#$clean_count)) -le $((10#$iteration)) ]] || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   state_file=$(dx_review_state_file "$session_id") || return 1
-  dx_review_write_atomic "$state_file" "2"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"
+  dx_review_write_atomic "$state_file" "3"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"
 }
 
 dx_review_read_state() {
-  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" state_file raw
-  local version tier tier_min required_clean iteration clean_count fingerprint criteria_binding extra current_fingerprint current_binding
+  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" expected_policy_binding="${4:-}" state_file raw
+  local version tier tier_min required_clean iteration clean_count fingerprint criteria_binding policy_binding extra current_fingerprint current_binding
+  local policy_record current_policy_binding
   state_file=$(dx_review_state_file "$session_id") || return 1
   [[ -f "$state_file" ]] || return 1
   raw=$(cat "$state_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding extra <<EOF
+  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding policy_binding extra <<EOF
 $raw
 EOF
-  if [[ "$version" == "1" ]]; then
-    criteria_binding="standalone"
-  elif [[ "$version" != "2" ]]; then
-    return 1
-  fi
+  [[ "$version" == "3" ]] || return 1
   [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
   dx_review_is_nonnegative_integer "$clean_count" || return 1
-  tier_min=$(dx_review_tier_min_clean_passes "$tier") || return 1
+  policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
+  IFS=$'\t' read -r tier_min current_policy_binding _ <<EOF
+$policy_record
+EOF
+  dx_review_policy_binding_valid "$policy_binding" || return 1
+  [[ "$policy_binding" == "$current_policy_binding" ]] || return 1
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   [[ $((10#$clean_count)) -lt $((10#$required_clean)) ]] || return 1
   [[ $((10#$clean_count)) -le $((10#$iteration)) ]] || return 1
@@ -1194,197 +1674,780 @@ EOF
   dx_review_criteria_binding_valid "$criteria_binding" || return 1
   current_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   [[ "$current_binding" == "$criteria_binding" ]] || return 1
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$iteration" "$clean_count" "$fingerprint" "$criteria_binding"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$tier" "$required_clean" "$iteration" "$clean_count" "$fingerprint" "$criteria_binding" "$policy_binding"
+}
+
+# Private retained evidence for every clean row in the parent session ledger.
+dx_review_proof_dir() {
+  local session_id="$1"
+  dx_session_id_valid "$session_id" || return 1
+  printf '%s/%s.review-proofs\n' "$DX_LOOP_DIR" "$session_id"
+}
+
+__dx_review_remove_proof_path() {
+  local target="$1"
+  DX_REVIEW_PROOF_REMOVE_TARGET="$target" python3 - <<'PY'
+import os
+import shutil
+import stat
+from pathlib import Path
+
+target = Path(os.environ["DX_REVIEW_PROOF_REMOVE_TARGET"])
+try:
+    metadata = target.lstat()
+except FileNotFoundError:
+    raise SystemExit(0)
+except OSError:
+    raise SystemExit(1)
+
+try:
+    if stat.S_ISDIR(metadata.st_mode):
+        for root, directories, _ in os.walk(target, topdown=True, followlinks=False):
+            os.chmod(root, 0o700, follow_symlinks=False)
+            for name in directories:
+                candidate = Path(root) / name
+                if candidate.is_symlink():
+                    candidate.unlink()
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
+__dx_review_retain_proof() {
+  local session_id="$1" iteration="$2" evidence_file="$3" context_file="$4" proof_dir
+  proof_dir=$(dx_review_proof_dir "$session_id") || return 1
+  mkdir -p "$DX_LOOP_DIR" || return 1
+  DX_REVIEW_PROOF_ROOT="$proof_dir" \
+  DX_REVIEW_PROOF_ITERATION="$iteration" \
+  DX_REVIEW_PROOF_EVIDENCE_SOURCE="$evidence_file" \
+  DX_REVIEW_PROOF_CONTEXT_SOURCE="$context_file" \
+    python3 - <<'PY'
+import os
+import stat
+from pathlib import Path
+
+maximum = 262144
+root = Path(os.environ["DX_REVIEW_PROOF_ROOT"])
+iteration = os.environ["DX_REVIEW_PROOF_ITERATION"]
+sources = {
+    "evidence.json": Path(os.environ["DX_REVIEW_PROOF_EVIDENCE_SOURCE"]),
+    "context.md": Path(os.environ["DX_REVIEW_PROOF_CONTEXT_SOURCE"]),
+}
+
+
+def remove_partial(path):
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISDIR(metadata.st_mode):
+        path.unlink()
+        return
+    os.chmod(path, 0o700, follow_symlinks=False)
+    for child in path.iterdir():
+        child.unlink()
+    path.rmdir()
+
+
+def read_source(path):
+    before = path.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or not 1 <= before.st_size <= maximum
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) & 0o022
+    ):
+        raise ValueError
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise ValueError
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise ValueError
+        after = os.fstat(descriptor)
+        if (
+            (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            or total != opened.st_size
+        ):
+            raise ValueError
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+try:
+    parent_metadata = root.parent.lstat()
+    if (
+        not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+    ):
+        raise ValueError
+    try:
+        root_metadata = root.lstat()
+    except FileNotFoundError:
+        root.mkdir(mode=0o700)
+        root_metadata = root.lstat()
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or root_metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(root_metadata.st_mode) != 0o700
+    ):
+        raise ValueError
+
+    target = root / iteration
+    target.mkdir(mode=0o700)
+    try:
+        for name, source in sources.items():
+            content = read_source(source)
+            destination = target / name
+            descriptor = os.open(
+                destination,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                view = memoryview(content)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:
+                        raise OSError
+                    view = view[written:]
+                os.fsync(descriptor)
+                os.fchmod(descriptor, 0o400)
+            finally:
+                os.close(descriptor)
+        os.chmod(target, 0o500, follow_symlinks=False)
+        root_descriptor = os.open(
+            root,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            os.fsync(root_descriptor)
+        finally:
+            os.close(root_descriptor)
+    except Exception:
+        remove_partial(target)
+        raise
+except (OSError, ValueError):
+    raise SystemExit(1)
+PY
+}
+
+__dx_review_remove_proof_pass() {
+  local session_id="$1" iteration="$2" proof_dir
+  proof_dir=$(dx_review_proof_dir "$session_id") || return 1
+  __dx_review_remove_proof_path "$proof_dir/$iteration" || return 1
+  command rmdir "$proof_dir" 2>/dev/null || true
+}
+
+__dx_review_ledger_append_atomic() {
+  local ledger_file="$1"
+  shift
+  python3 - "$ledger_file" "$@" <<'PY'
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+ledger = Path(sys.argv[1])
+fields = sys.argv[2:]
+if len(fields) != 8 or any("\t" in value or "\n" in value or "\r" in value for value in fields):
+    raise SystemExit(1)
+row = ("4\t" + "\t".join(fields) + "\n").encode("ascii")
+
+
+def read_existing():
+    try:
+        before = ledger.lstat()
+    except FileNotFoundError:
+        return b""
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or not 1 <= before.st_size <= 1048576
+    ):
+        raise ValueError
+    descriptor = os.open(ledger, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, 1048577 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 1048576:
+                raise ValueError
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            total != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        ):
+            raise ValueError
+        return content
+    finally:
+        os.close(descriptor)
+
+
+temporary = None
+try:
+    parent = ledger.parent
+    parent_metadata = parent.lstat()
+    if (
+        not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+    ):
+        raise ValueError
+    existing = read_existing()
+    lines = existing.decode("ascii").splitlines()
+    if lines:
+        parsed = [line.split("\t") for line in lines]
+        if any(len(entry) != 9 or entry[0] != "4" for entry in parsed):
+            raise ValueError
+        if int(fields[0]) <= int(parsed[-1][1]):
+            raise ValueError
+        if any(entry[2] == fields[1] or entry[7] == fields[6] or entry[8] == fields[7] for entry in parsed):
+            raise ValueError
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{ledger.name}.tmp-", dir=parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        content = existing + row
+        view = memoryview(content)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, ledger)
+    temporary = None
+    parent_descriptor = os.open(
+        parent,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        os.fsync(parent_descriptor)
+    finally:
+        os.close(parent_descriptor)
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(1)
+finally:
+    if temporary is not None:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+PY
 }
 
 dx_review_ledger_reset() {
-  local session_id="$1" ledger_file
+  local session_id="$1" ledger_file proof_dir
   ledger_file=$(dx_review_ledger_file "$session_id") || return 1
-  command rm -f "$ledger_file" 2>/dev/null || return 1
+  proof_dir=$(dx_review_proof_dir "$session_id") || return 1
+  if [[ -e "$ledger_file" || -L "$ledger_file" ]]; then
+    [[ ! -d "$ledger_file" || -L "$ledger_file" ]] || return 1
+    command rm -f "$ledger_file" 2>/dev/null || return 1
+  fi
+  __dx_review_remove_proof_path "$proof_dir"
 }
 
+# Append clean credit only after retaining and revalidating its source artifacts.
 dx_review_ledger_append() {
-  local session_id="$1" iteration="$2" pass_id="$3" fingerprint="$4" evidence_hash="$5"
-  local expected_binding="${6:-}" criteria_binding ledger_file tmp_file last_iteration=0 last_pass_id=""
-  local last_fingerprint="" last_hash="" last_binding="" version="" extra=""
+  [[ $# -eq 9 ]] || return 1
+  local session_id="$1" iteration="$2" pass_id="$3" profile="$4" fingerprint="$5"
+  local expected_binding="$6" policy_binding="$7" evidence_file="$8" context_file="$9"
+  local criteria_binding criteria_file="" ledger_file proof_dir proof_pass_dir pass_binding attestation
+  local ledger_record="" line_count=0 expected_count empty_findings
   dx_review_is_positive_integer "$iteration" || return 1
-  [[ "$pass_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$ ]] || return 1
-  [[ "$fingerprint" =~ ^[a-f0-9]{64}$ && "$evidence_hash" =~ ^[a-f0-9]{16}$ ]] || return 1
+  dx_review_pass_id_valid "$pass_id" || return 1
+  [[ "$profile" == "light" || "$profile" == "standard" || "$profile" == "thorough" ]] || return 1
+  [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
+  dx_review_policy_binding_valid "$policy_binding" || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
-  ledger_file=$(dx_review_ledger_file "$session_id") || return 1
-  mkdir -p "$(dirname "$ledger_file")" || return 1
-  if [[ -f "$ledger_file" && -s "$ledger_file" ]]; then
-    IFS=$'\t' read -r version last_iteration last_pass_id last_fingerprint last_hash last_binding extra <<EOF
-$(tail -n 1 "$ledger_file" 2>/dev/null)
-EOF
-    if [[ "$version" == "1" ]]; then
-      last_binding="standalone"
-    elif [[ "$version" != "2" ]]; then
-      return 1
-    fi
-    [[ -z "$extra" ]] || return 1
-    dx_review_is_positive_integer "$last_iteration" || return 1
-    [[ $((10#$iteration)) -eq $((10#$last_iteration + 1)) ]] || return 1
-    [[ "$last_pass_id" != "$pass_id" && "$last_fingerprint" == "$fingerprint" && "$last_hash" =~ ^[a-f0-9]{16}$ ]] || return 1
-    [[ "$last_binding" == "$criteria_binding" ]] || return 1
+  if [[ "$criteria_binding" != "standalone" ]]; then
+    criteria_file=$(dx_review_criteria_file "$session_id") || return 1
   fi
-  tmp_file="${ledger_file}.tmp.$$"
-  if [[ -f "$ledger_file" ]] && ! command cp "$ledger_file" "$tmp_file"; then
-    command rm -f "$tmp_file" 2>/dev/null || true
+  pass_binding=$(dx_review_pass_binding "$pass_id" "$fingerprint" "$criteria_binding" "$policy_binding") || return 1
+  dx_review_evidence_valid "$evidence_file" CLEAN "$profile" "$fingerprint" \
+    "$criteria_binding" "$criteria_file" "$pass_id" "$policy_binding" "$context_file" || return 1
+
+  ledger_file=$(dx_review_ledger_file "$session_id") || return 1
+  proof_dir=$(dx_review_proof_dir "$session_id") || return 1
+  proof_pass_dir="${proof_dir}/${iteration}"
+  mkdir -p "$(dirname "$ledger_file")" || return 1
+  if [[ -e "$ledger_file" || -L "$ledger_file" ]]; then
+    [[ -f "$ledger_file" && -s "$ledger_file" && ! -L "$ledger_file" ]] || return 1
+    ledger_record=$(__dx_review_read_private_record "$ledger_file" 1048576) || return 1
+    line_count=$(printf '%s\n' "$ledger_record" | LC_ALL=C awk 'END { print NR }') || return 1
+    dx_review_is_positive_integer "$line_count" || return 1
+    dx_review_ledger_valid "$session_id" "$line_count" "$fingerprint" \
+      "$criteria_binding" "$policy_binding" "$profile" || return 1
+  else
+    [[ ! -e "$proof_dir" && ! -L "$proof_dir" ]] || return 1
+  fi
+
+  if ! __dx_review_retain_proof "$session_id" "$iteration" "$evidence_file" "$context_file"; then
+    command rmdir "$proof_dir" 2>/dev/null || true
     return 1
   fi
-  if ! printf '2\t%s\t%s\t%s\t%s\t%s\n' "$iteration" "$pass_id" "$fingerprint" "$evidence_hash" "$criteria_binding" >> "$tmp_file" || \
-     ! command mv -f "$tmp_file" "$ledger_file"; then
-    command rm -f "$tmp_file" 2>/dev/null || true
+  if ! dx_review_evidence_valid "$proof_pass_dir/evidence.json" CLEAN "$profile" "$fingerprint" \
+      "$criteria_binding" "$criteria_file" "$pass_id" "$policy_binding" "$proof_pass_dir/context.md"; then
+    __dx_review_remove_proof_pass "$session_id" "$iteration" 2>/dev/null || true
+    return 1
+  fi
+  empty_findings=$(dx_review_empty_findings_hash) || {
+    __dx_review_remove_proof_pass "$session_id" "$iteration" 2>/dev/null || true
+    return 1
+  }
+  attestation=$(dx_review_pass_attestation "$proof_pass_dir/evidence.json" \
+    "$proof_pass_dir/context.md" CLEAN "$profile" "$empty_findings" "$pass_binding") || {
+    __dx_review_remove_proof_pass "$session_id" "$iteration" 2>/dev/null || true
+    return 1
+  }
+  if ! __dx_review_ledger_append_atomic "$ledger_file" "$iteration" "$pass_id" "$profile" \
+      "$fingerprint" "$criteria_binding" "$policy_binding" "$pass_binding" "$attestation"; then
+    dx_review_ledger_reset "$session_id" 2>/dev/null || true
+    return 1
+  fi
+  expected_count=$((10#$line_count + 1))
+  if ! dx_review_ledger_valid "$session_id" "$expected_count" "$fingerprint" \
+      "$criteria_binding" "$policy_binding" "$profile"; then
+    dx_review_ledger_reset "$session_id" 2>/dev/null || true
     return 1
   fi
 }
 
+# Validate the ledger and exact proof set, then recompute every row attestation.
 dx_review_ledger_valid() {
-  local session_id="$1" expected_count="$2" expected_fingerprint="$3" expected_binding="${4:-}" ledger_file criteria_binding
+  [[ $# -eq 6 ]] || return 1
+  local session_id="$1" expected_count="$2" expected_fingerprint="$3" expected_binding="$4"
+  local policy_binding="$5" expected_profile="$6" ledger_file proof_dir criteria_binding criteria_file=""
+  local records version iteration pass_id profile fingerprint binding recorded_policy pass_binding attestation
+  local computed_attestation empty_findings
   dx_review_is_nonnegative_integer "$expected_count" || return 1
   [[ "$expected_fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
+  dx_review_policy_binding_valid "$policy_binding" || return 1
+  [[ "$expected_profile" == "light" || "$expected_profile" == "standard" || "$expected_profile" == "thorough" ]] || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
+  if [[ "$criteria_binding" != "standalone" ]]; then
+    criteria_file=$(dx_review_criteria_file "$session_id") || return 1
+  fi
   ledger_file=$(dx_review_ledger_file "$session_id") || return 1
+  proof_dir=$(dx_review_proof_dir "$session_id") || return 1
   if [[ "$expected_count" == "0" ]]; then
-    [[ ! -s "$ledger_file" ]]
+    [[ ! -e "$ledger_file" && ! -L "$ledger_file" && ! -e "$proof_dir" && ! -L "$proof_dir" ]]
     return
   fi
-  [[ -f "$ledger_file" ]] || return 1
-  DX_REVIEW_LEDGER_REQUIRED="$expected_count" \
-  DX_REVIEW_LEDGER_FINGERPRINT="$expected_fingerprint" \
-  DX_REVIEW_LEDGER_CRITERIA_BINDING="$criteria_binding" \
-  python3 - "$ledger_file" <<'PY'
+
+  records=$(DX_REVIEW_LEDGER_REQUIRED="$expected_count" \
+    DX_REVIEW_LEDGER_FINGERPRINT="$expected_fingerprint" \
+    DX_REVIEW_LEDGER_CRITERIA_BINDING="$criteria_binding" \
+    DX_REVIEW_LEDGER_POLICY_BINDING="$policy_binding" \
+    DX_REVIEW_LEDGER_PROFILE="$expected_profile" \
+    DX_REVIEW_PROOF_ROOT="$proof_dir" \
+    python3 - "$ledger_file" <<'PY'
+import hashlib
+import json
 import os
 import re
+import stat
 import sys
+from pathlib import Path
 
 required = int(os.environ["DX_REVIEW_LEDGER_REQUIRED"])
 fingerprint = os.environ["DX_REVIEW_LEDGER_FINGERPRINT"]
 criteria_binding = os.environ["DX_REVIEW_LEDGER_CRITERIA_BINDING"]
+policy_binding = os.environ["DX_REVIEW_LEDGER_POLICY_BINDING"]
+profile = os.environ["DX_REVIEW_LEDGER_PROFILE"]
+ledger = Path(sys.argv[1])
+proof_root = Path(os.environ["DX_REVIEW_PROOF_ROOT"])
+
+
+def read_private(path, maximum, mode):
+    before = path.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) != mode
+        or not 1 <= before.st_size <= maximum
+    ):
+        raise ValueError
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise ValueError
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            total != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        ):
+            raise ValueError
+        return content
+    finally:
+        os.close(descriptor)
+
+
 try:
-    with open(sys.argv[1], "r", encoding="ascii") as handle:
-        lines = [line.rstrip("\n") for line in handle]
-except (OSError, UnicodeError):
+    raw_ledger = read_private(ledger, 1048576, 0o600)
+    if not raw_ledger.endswith(b"\n") or b"\r" in raw_ledger:
+        raise ValueError
+    lines = raw_ledger.decode("ascii").splitlines()
+    root_metadata = proof_root.lstat()
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or root_metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(root_metadata.st_mode) != 0o700
+    ):
+        raise ValueError
+except (OSError, UnicodeError, ValueError):
     raise SystemExit(1)
 if len(lines) != required:
     raise SystemExit(1)
 
 previous_iteration = None
 pass_ids = set()
+pass_bindings = set()
+attestations = set()
+expected_directories = set()
 for line in lines:
     fields = line.split("\t")
-    if len(fields) == 5 and fields[0] == "1":
-        fields = ["2", *fields[1:], "standalone"]
-    elif len(fields) != 6 or fields[0] != "2":
+    if len(fields) != 9 or fields[0] != "4":
         raise SystemExit(1)
-    iteration_raw, pass_id, recorded_fingerprint, evidence_hash, recorded_binding = fields[1:]
+    (
+        iteration_raw,
+        pass_id,
+        recorded_profile,
+        recorded_fingerprint,
+        recorded_binding,
+        recorded_policy_binding,
+        recorded_pass_binding,
+        attestation,
+    ) = fields[1:]
     if not re.fullmatch(r"[1-9][0-9]{0,17}", iteration_raw):
         raise SystemExit(1)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,179}", pass_id):
         raise SystemExit(1)
-    if recorded_fingerprint != fingerprint or not re.fullmatch(r"[a-f0-9]{16}", evidence_hash):
+    if recorded_profile != profile:
         raise SystemExit(1)
-    if recorded_binding != criteria_binding:
+    if recorded_fingerprint != fingerprint or recorded_binding != criteria_binding:
+        raise SystemExit(1)
+    if recorded_policy_binding != policy_binding:
+        raise SystemExit(1)
+    if not re.fullmatch(r"[a-f0-9]{64}", attestation):
+        raise SystemExit(1)
+    canonical = json.dumps(
+        [
+            "dex-review-pass-v1",
+            pass_id,
+            recorded_fingerprint,
+            recorded_binding,
+            recorded_policy_binding,
+        ],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    expected_pass_binding = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+    if recorded_pass_binding != expected_pass_binding:
         raise SystemExit(1)
     iteration = int(iteration_raw)
-    if previous_iteration is not None and iteration != previous_iteration + 1:
+    if previous_iteration is not None and iteration <= previous_iteration:
         raise SystemExit(1)
-    if pass_id in pass_ids:
+    if pass_id in pass_ids or recorded_pass_binding in pass_bindings or attestation in attestations:
         raise SystemExit(1)
+
+    pass_directory = proof_root / iteration_raw
+    try:
+        directory_metadata = pass_directory.lstat()
+        if (
+            not stat.S_ISDIR(directory_metadata.st_mode)
+            or directory_metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(directory_metadata.st_mode) != 0o500
+            or {entry.name for entry in pass_directory.iterdir()} != {"evidence.json", "context.md"}
+        ):
+            raise ValueError
+        for name in ("evidence.json", "context.md"):
+            read_private(pass_directory / name, 262144, 0o400)
+    except (OSError, ValueError):
+        raise SystemExit(1)
+
     previous_iteration = iteration
     pass_ids.add(pass_id)
+    pass_bindings.add(recorded_pass_binding)
+    attestations.add(attestation)
+    expected_directories.add(iteration_raw)
+
+try:
+    if {entry.name for entry in proof_root.iterdir()} != expected_directories:
+        raise ValueError
+except (OSError, ValueError):
+    raise SystemExit(1)
+print("\n".join(lines))
 PY
+  ) || return 1
+
+  empty_findings=$(dx_review_empty_findings_hash) || return 1
+  while IFS=$'\t' read -r version iteration pass_id profile fingerprint binding \
+      recorded_policy pass_binding attestation; do
+    [[ "$version" == "4" && -n "$attestation" ]] || return 1
+    dx_review_evidence_valid "$proof_dir/$iteration/evidence.json" CLEAN "$profile" \
+      "$fingerprint" "$binding" "$criteria_file" "$pass_id" "$recorded_policy" \
+      "$proof_dir/$iteration/context.md" || return 1
+    computed_attestation=$(dx_review_pass_attestation "$proof_dir/$iteration/evidence.json" \
+      "$proof_dir/$iteration/context.md" CLEAN "$profile" "$empty_findings" "$pass_binding") || return 1
+    [[ "$computed_attestation" == "$attestation" ]] || return 1
+  done <<EOF
+$records
+EOF
 }
 
 dx_review_ledger_hash() {
   local session_id="$1" ledger_file
   ledger_file=$(dx_review_ledger_file "$session_id") || return 1
-  [[ -f "$ledger_file" ]] || return 1
   python3 - "$ledger_file" <<'PY'
 import hashlib
+import os
+import stat
 import sys
+from pathlib import Path
 
-with open(sys.argv[1], "rb") as handle:
-    print(hashlib.sha256(handle.read()).hexdigest())
+path = Path(sys.argv[1])
+try:
+    before = path.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or not 1 <= before.st_size <= 1048576
+    ):
+        raise ValueError
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, 1048577 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 1048576:
+                raise ValueError
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            total != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        ):
+            raise ValueError
+    finally:
+        os.close(descriptor)
+except (OSError, ValueError):
+    raise SystemExit(1)
+print(hashlib.sha256(content).hexdigest())
+PY
+}
+
+__dx_review_read_private_record() {
+  local record_file="$1" maximum="$2"
+  python3 - "$record_file" "$maximum" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+maximum = int(sys.argv[2])
+try:
+    before = path.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or not 1 <= before.st_size <= maximum
+    ):
+        raise ValueError
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise ValueError
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            total != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            or not content.endswith(b"\n")
+            or b"\r" in content
+        ):
+            raise ValueError
+    finally:
+        os.close(descriptor)
+except (OSError, ValueError):
+    raise SystemExit(1)
+sys.stdout.buffer.write(content)
 PY
 }
 
 dx_review_write_receipt() {
-  local session_id="$1" requested_tier="$2" required_clean="$3" clean_count="$4" repo_dir="${5:-$PWD}" expected_binding="${6:-}"
-  local tier tier_min fingerprint receipt_file ledger_hash criteria_binding
+  [[ $# -eq 7 ]] || return 1
+  local session_id="$1" requested_tier="$2" required_clean="$3" clean_count="$4" repo_dir="$5" expected_binding="$6"
+  local policy_binding="$7" tier profile tier_min fingerprint receipt_file ledger_hash criteria_binding policy_record current_policy_binding
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
+  profile=$(dx_review_tier_profile "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_positive_integer "$clean_count" || return 1
-  tier_min=$(dx_review_tier_min_clean_passes "$tier") || return 1
+  policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$policy_binding") || return 1
+  IFS=$'\t' read -r tier_min current_policy_binding _ <<EOF
+$policy_record
+EOF
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   [[ $((10#$clean_count)) -eq $((10#$required_clean)) ]] || return 1
+  dx_review_policy_binding_valid "$policy_binding" || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
-  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$criteria_binding" || return 1
+  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$criteria_binding" \
+    "$policy_binding" "$profile" || return 1
   ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
   receipt_file=$(dx_review_receipt_file "$session_id") || return 1
-  dx_review_write_atomic "$receipt_file" "3"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${ledger_hash}"$'\t'"${criteria_binding}"
+  dx_review_write_atomic "$receipt_file" "5"$'\t'"${tier}"$'\t'"${profile}"$'\t'"${required_clean}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${ledger_hash}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"
 }
 
 dx_review_read_receipt() {
-  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" receipt_file raw
-  local version tier tier_min required_clean clean_count fingerprint ledger_hash criteria_binding extra current_fingerprint current_ledger_hash current_binding
+  [[ $# -eq 4 ]] || return 1
+  local session_id="$1" repo_dir="$2" expected_binding="$3" expected_policy_binding="$4" receipt_file raw
+  local version tier profile expected_profile tier_min required_clean clean_count fingerprint ledger_hash criteria_binding policy_binding extra
+  local current_fingerprint current_ledger_hash current_binding policy_record current_policy_binding
   receipt_file=$(dx_review_receipt_file "$session_id") || return 1
-  [[ -f "$receipt_file" ]] || return 1
-  raw=$(cat "$receipt_file" 2>/dev/null) || return 1
+  raw=$(__dx_review_read_private_record "$receipt_file" 4096) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier required_clean clean_count fingerprint ledger_hash criteria_binding extra <<EOF
+  IFS=$'\t' read -r version tier profile required_clean clean_count fingerprint ledger_hash criteria_binding policy_binding extra <<EOF
 $raw
 EOF
-  if [[ "$version" == "2" ]]; then
-    criteria_binding="standalone"
-  elif [[ "$version" != "3" ]]; then
-    return 1
-  fi
+  [[ "$version" == "5" ]] || return 1
   [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
+  expected_profile=$(dx_review_tier_profile "$tier") || return 1
+  [[ "$profile" == "$expected_profile" ]] || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_positive_integer "$clean_count" || return 1
-  tier_min=$(dx_review_tier_min_clean_passes "$tier") || return 1
+  policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
+  IFS=$'\t' read -r tier_min current_policy_binding _ <<EOF
+$policy_record
+EOF
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   [[ $((10#$clean_count)) -eq $((10#$required_clean)) ]] || return 1
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+  dx_review_policy_binding_valid "$policy_binding" || return 1
+  dx_review_policy_binding_valid "$expected_policy_binding" || return 1
+  [[ "$policy_binding" == "$expected_policy_binding" && "$policy_binding" == "$current_policy_binding" ]] || return 1
   current_fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   [[ "$current_fingerprint" == "$fingerprint" ]] || return 1
   dx_review_criteria_binding_valid "$criteria_binding" || return 1
   current_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   [[ "$current_binding" == "$criteria_binding" ]] || return 1
-  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$current_binding" || return 1
+  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$current_binding" \
+    "$policy_binding" "$profile" || return 1
   current_ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$current_ledger_hash" == "$ledger_hash" ]] || return 1
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$clean_count" "$fingerprint" "$ledger_hash" "$criteria_binding"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$tier" "$required_clean" "$clean_count" "$fingerprint" "$ledger_hash" "$criteria_binding" "$policy_binding"
 }
 
 dx_review_receipt_valid() {
-  local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" receipt selection
+  [[ $# -eq 4 ]] || return 1
+  local session_id="$1" repo_dir="$2" expected_binding="$3" expected_policy_binding="$4" receipt selection
   local receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding receipt_tier_min
-  local selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding
+  local receipt_policy_binding
+  local selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding selection_policy_binding
   [[ ! -f "$(dx_paused_file "$session_id")" ]] || return 1
   [[ ! -f "$(dx_review_state_file "$session_id")" ]] || return 1
-  receipt=$(dx_review_read_receipt "$session_id" "$repo_dir" "$expected_binding") || return 1
-  selection=$(dx_review_read_selection "$session_id" "$repo_dir" "$expected_binding") || return 1
-  IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding <<EOF
+  receipt=$(dx_review_read_receipt "$session_id" "$repo_dir" "$expected_binding" "$expected_policy_binding") || return 1
+  selection=$(dx_review_read_selection "$session_id" "$repo_dir" "$expected_binding" "$expected_policy_binding") || return 1
+  IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding receipt_policy_binding <<EOF
 $receipt
 EOF
-  IFS=$'\t' read -r selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding <<EOF
+  IFS=$'\t' read -r selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding selection_policy_binding <<EOF
 $selection
 EOF
-  receipt_tier_min=$(dx_review_tier_min_clean_passes "$receipt_tier") || return 1
+  receipt_tier_min=$(dx_review_policy_for_tier "$repo_dir" "$receipt_tier" "$expected_policy_binding" | cut -f1) || return 1
   [[ $((10#$receipt_required)) -ge $((10#$receipt_tier_min)) ]] || return 1
   [[ $((10#$receipt_clean)) -eq $((10#$receipt_required)) ]] || return 1
+  [[ "$selection_policy_binding" == "$expected_policy_binding" ]] || return 1
   : "$selection_source" "$selection_reasons" "$receipt_ledger_hash"
   [[ "$receipt_tier" == "$selection_tier" && \
      "$receipt_required" == "$selection_required" && \
      "$receipt_fingerprint" == "$selection_fingerprint" && \
-     "$receipt_binding" == "$selection_binding" ]]
+     "$receipt_binding" == "$selection_binding" && \
+     "$receipt_policy_binding" == "$expected_policy_binding" ]]
 }
 
 dx_review_read_findings_hash() {

@@ -3,8 +3,9 @@
 One `/dxreviewloop` iteration reviews the caller-supplied scope. This is usually
 the full current change set; when no change set exists, it is the entire tracked
 codebase. The outer loop maps its selected risk tier to review depth and a
-consecutive `CLEAN` gate: `small` uses `light` and requires 3, `normal` uses
-`standard` and requires 6, and `complex` uses `thorough` and requires 9.
+consecutive `CLEAN` gate. The default policy is 3 waves for `small`, 6 for
+`normal`, and 9 for `complex`; the wrapper supplies the resolved trusted policy
+for the current run.
 
 ## Rules
 
@@ -216,29 +217,67 @@ FINDINGS_HASH=$(printf '%s\n' "<sorted verified finding descriptions or EMPTY>" 
 echo "$FINDINGS_HASH" > "$(dx_findings_file "$SESSION_ID")"
 ```
 
-After reviewing every supplied requirement, derive the exact bounded coverage
-object from the pass-scoped artifact:
+After reviewing every supplied requirement, derive the exact ordered item
+hashes from the pass-scoped artifact:
 
 ```bash
-CRITERIA_COVERAGE="$(dx_review_criteria_coverage_json "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" "${DEX_REVIEW_CRITERIA_FILE:-}")" || exit 1
+CRITERIA_HASHES="$(dx_review_criteria_coverage_json "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" "${DEX_REVIEW_CRITERIA_FILE:-}")" || exit 1
 ```
 
 Each hash represents one objective, acceptance criterion, or verification
 requirement at its original position. Do not remove, reorder, or invent entries.
 For standalone review, all three arrays are empty.
 
+For every supplied item, add one to eight evidence references to the context
+pack. Each reference must be a separate line in this exact form:
+
+```text
+Evidence-Ref: criteria:<section>:<1-based-index>:<slug> | <kind> | <substantive detail>
+```
+
+`section` is `objectives`, `acceptance_criteria`, or
+`verification_requirements`. `slug` is a unique lowercase identifier of up to
+64 characters using letters, digits, `.`, `_`, or `-`. `kind` is `analysis`,
+`command`, `file`, or `test`. The detail must state the concrete observation,
+path and behavior, or command result that supports the outcome; placeholders
+such as `N/A`, `none`, `TBD`, or `TODO` are invalid. Put the marker portion,
+starting with `criteria:`, in that item's `evidence_refs` array. Every
+`Evidence-Ref` line must be referenced once, and every manifest reference must
+have one matching context line. Standalone review has no criteria evidence
+references.
+
 Write a versioned JSON evidence manifest to
 `$(dx_review_evidence_file "$SESSION_ID")` with exactly these fields:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "scope_fingerprint": "<64 lowercase hex characters supplied by the wrapper>",
   "criteria_binding": "<supplied SHA-256 binding or standalone>",
-  "criteria_coverage": {
-    "objectives": ["<one 64-character item hash per objective>"],
-    "acceptance_criteria": ["<one 64-character item hash per criterion>"],
-    "verification_requirements": ["<one 64-character item hash per requirement>"]
+  "policy_binding": "<DEX_REVIEW_POLICY_BINDING supplied by the wrapper>",
+  "pass_binding": "<DEX_REVIEW_PASS_BINDING supplied by the wrapper>",
+  "criteria_evidence": {
+    "objectives": [
+      {
+        "item_hash": "<the objective hash at this position>",
+        "outcome": "met",
+        "evidence_refs": ["criteria:objectives:1:scope-analysis"]
+      }
+    ],
+    "acceptance_criteria": [
+      {
+        "item_hash": "<the acceptance-criterion hash at this position>",
+        "outcome": "met",
+        "evidence_refs": ["criteria:acceptance_criteria:1:contract-test"]
+      }
+    ],
+    "verification_requirements": [
+      {
+        "item_hash": "<the verification-requirement hash at this position>",
+        "outcome": "met",
+        "evidence_refs": ["criteria:verification_requirements:1:focused-check"]
+      }
+    ]
   },
   "deterministic_checks": "pass",
   "coverage": ["correctness", "security", "contracts", "tests", "architecture"],
@@ -248,14 +287,23 @@ Write a versioned JSON evidence manifest to
 }
 ```
 
-Allowed check states are `pass`, `partial`, `fail`, and `unavailable`; allowed
-verifier states are `pass`, `fail`, and `not-run`. Coverage values are
+Allowed item outcomes are `met`, `not_met`, `blocked`, and `not_applicable`.
+`CLEAN` and `FINDINGS_FIXED:N` require every supplied item to be `met`.
+`FINDINGS:N` requires at least one `not_met` or `blocked` item when lifecycle
+criteria are supplied, and `BLOCKED:reason-code` requires at least one
+`blocked` item. Allowed check states are `pass`, `partial`, `fail`, and
+`unavailable`; allowed verifier states are `pass`, `fail`, and `not-run`.
+Coverage values are
 `correctness`, `security`, `contracts`, `tests`, `architecture`, `frontend`,
 `devops`, `performance`, and `observability`. A thorough clean/fixed pass lists
 all nine domains; light and standard clean/fixed passes list the five core
 domains plus any targeted domains actually reviewed. Counts must agree with
-the result. The wrapper recomputes criteria coverage from the immutable copy and
-rejects an omitted, added, reordered, stale, or incorrectly bound item.
+the result. Copy `DEX_REVIEW_POLICY_BINDING` and `DEX_REVIEW_PASS_BINDING`
+exactly. The wrapper recomputes the pass binding and every item hash from the
+immutable inputs, validates each evidence reference against the context pack,
+and attests the manifest, context, result, profile, and findings fingerprint
+together. It rejects omitted, added, reordered, stale, or incorrectly bound
+evidence.
 
 The wave is incomplete until the context pack contains substantive text and the
 required sections, the evidence manifest validates, and the findings file

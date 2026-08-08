@@ -25,7 +25,10 @@ unset DEX_LOOP_ACTIVE DEX_REVIEW_PASS_ACTIVE DEX_PHASE_HANDOFF DEX_LOOP_PHASE \
   DEX_REVIEW_PASS_RECHECK_SECONDS DEX_SESSION_ID
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-phase-loop-test.XXXXXX")"
-cleanup() { rm -rf "$TMP_DIR"; }
+cleanup() {
+  chmod -R u+w "$TMP_DIR" 2>/dev/null || true
+  rm -rf "$TMP_DIR"
+}
 trap cleanup EXIT
 
 export DX_LOOP_DIR="$TMP_DIR/loops"
@@ -35,6 +38,8 @@ mkdir -p "$DX_LOOP_DIR" "$DX_STATE_DIR"
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
+# shellcheck disable=SC1091
+source "$ROOT/tests/review-proof-fixture.sh"
 
 REVIEW_REPO="$TMP_DIR/review-repo"
 git init -q "$REVIEW_REPO"
@@ -98,17 +103,24 @@ write_review_criteria() { # <session-id>
   printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Exercise the lifecycle handoff."],"acceptance_criteria":["The next phase starts only after its gates pass."],"verification_requirements":["Run tests/phase-loop-ownership-test.sh."]}' > "$(dx_review_criteria_file "$1")"
 }
 
+prepare_review_pass_bindings() { # <session-id> <fingerprint>
+  REVIEW_PASS_ID="$1"
+  REVIEW_PASS_BINDING=$(dx_review_pass_binding "$REVIEW_PASS_ID" "$2" standalone "$REVIEW_POLICY_BINDING")
+}
+
 write_review_evidence() { # <session-id> <result> <fingerprint>
   local session_id="$1" result="$2" fingerprint="$3" checks=pass verifier=pass
   case "$result" in
     BLOCKED:*|CHURN:*) checks=partial; verifier=not-run ;;
     ESCALATE:*|ESCALATE_THOROUGH:*) checks=partial; verifier=pass ;;
   esac
-  printf '{"version":2,"scope_fingerprint":"%s","criteria_binding":"standalone","criteria_coverage":{"acceptance_criteria":[],"objectives":[],"verification_requirements":[]},"deterministic_checks":"%s","coverage":["correctness","security","contracts","tests","architecture"],"verifier":"%s","verified_findings":0,"fixes_applied":0}\n' \
-    "$fingerprint" "$checks" "$verifier" > "$(dx_review_evidence_file "$session_id")"
+  prepare_review_pass_bindings "$session_id" "$fingerprint"
+  printf '{"version":3,"scope_fingerprint":"%s","criteria_binding":"standalone","policy_binding":"%s","pass_binding":"%s","criteria_evidence":{"acceptance_criteria":[],"objectives":[],"verification_requirements":[]},"deterministic_checks":"%s","coverage":["correctness","security","contracts","tests","architecture"],"verifier":"%s","verified_findings":0,"fixes_applied":0}\n' \
+    "$fingerprint" "$REVIEW_POLICY_BINDING" "$REVIEW_PASS_BINDING" "$checks" "$verifier" > "$(dx_review_evidence_file "$session_id")"
 }
 
 REVIEW_SCOPE_FINGERPRINT=$(dx_review_scope_fingerprint "$ROOT")
+REVIEW_POLICY_BINDING=$(dx_review_policy_resolve "$ROOT" | cut -f4)
 
 # --- case 1: bystander session with a claimed loop stays inert ---
 SID="repo-test-1-main"
@@ -158,7 +170,7 @@ write_review_evidence "$SID" CLEAN "$REVIEW_SCOPE_FINGERPRINT"
 printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
 touch "$DX_LOOP_DIR/$SID.complete"
 set +e
-OUT="$(printf '{"session_id":"claude-wave"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" bash "$HOOK" 2>&1)"
+OUT="$(printf '{"session_id":"claude-wave"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "review pass allowed to stop" 0
@@ -193,8 +205,9 @@ printf '%s\n' "CLEAN" > "$DX_LOOP_DIR/$SID.review-result"
 printf '%s\n' "   " > "$DX_LOOP_DIR/$SID.review-context"
 printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
 touch "$DX_LOOP_DIR/$SID.complete"
+prepare_review_pass_bindings "$SID" "$REVIEW_SCOPE_FINGERPRINT"
 set +e
-OUT="$(printf '{"session_id":"claude-wave3"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" 2>&1)"
+OUT="$(printf '{"session_id":"claude-wave3"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "empty context pack blocks review pass stop" 2
@@ -211,7 +224,7 @@ write_review_evidence "$SID" CLEAN "$REVIEW_SCOPE_FINGERPRINT"
 printf '%s\n%s\n' "0123456789abcdef" "fedcba9876543210" > "$DX_LOOP_DIR/$SID.findings"
 touch "$DX_LOOP_DIR/$SID.complete"
 set +e
-OUT="$(printf '{"session_id":"claude-wave4"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" bash "$HOOK" 2>&1)"
+OUT="$(printf '{"session_id":"claude-wave4"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "multiple findings hashes block review pass stop" 2
@@ -263,7 +276,7 @@ for review_result in "${VALID_REVIEW_RESULTS[@]}"; do
   printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
   touch "$DX_LOOP_DIR/$SID.complete"
   set +e
-  OUT="$(printf '{\"session_id\":\"claude-wave-alias-%s\"}' "$case_number" | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" bash "$HOOK" 2>&1)"
+  OUT="$(printf '{\"session_id\":\"claude-wave-alias-%s\"}' "$case_number" | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
   RC=$?
   set -e
   assert_rc "review result '$review_result' is accepted" 0
@@ -394,15 +407,27 @@ write_review_criteria "$SID"
 dx_review_approve_criteria "$SID" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$SID")")" >/dev/null
 dx_review_write_selection "$SID" normal lifecycle-agent bounded-production-change "$REVIEW_REPO"
 RECEIPT_FINGERPRINT=$(dx_review_scope_fingerprint "$REVIEW_REPO")
-if dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO"; then
+RECEIPT_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SID")
+RECEIPT_POLICY_BINDING=$(dx_review_policy_resolve "$REVIEW_REPO" | cut -f4)
+if dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO" \
+  "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"; then
   report "receipt cannot be minted without clean-pass ledger" 1
 else
   report "receipt cannot be minted without clean-pass ledger" 0
 fi
 for ledger_iteration in 1 2 3 4 5 6; do
-  dx_review_ledger_append "$SID" "$ledger_iteration" "phase-clean-${ledger_iteration}" "$RECEIPT_FINGERPRINT" "$(printf '%016x' "$ledger_iteration")"
+  receipt_pass_id="phase-clean-${ledger_iteration}"
+  receipt_evidence="$TMP_DIR/phase-clean-${ledger_iteration}.evidence.json"
+  receipt_context="$TMP_DIR/phase-clean-${ledger_iteration}.context.md"
+  dx_test_write_clean_review_proof "$SID" "$receipt_pass_id" standard \
+    "$RECEIPT_FINGERPRINT" "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING" \
+    "$receipt_evidence" "$receipt_context"
+  dx_review_ledger_append "$SID" "$ledger_iteration" "$receipt_pass_id" standard \
+    "$RECEIPT_FINGERPRINT" "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING" \
+    "$receipt_evidence" "$receipt_context"
 done
-dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO"
+dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO" \
+  "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"
 touch "$DX_LOOP_DIR/$SID.complete"
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{\"session_id\":\"claude-phase-3-receipt\"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
@@ -411,6 +436,11 @@ set -e
 assert_rc "valid Phase 3 receipt reaches the handoff" 2
 assert_out_contains "valid receipt emits Phase 4 handoff" "Phase Handoff: Phase 3 complete"
 assert_file_eq "valid receipt advances to Phase 4" "$DX_STATE_DIR/$SID.phase" "4"
+if [[ ! -e "$(dx_review_proof_dir "$SID")" && ! -L "$(dx_review_proof_dir "$SID")" ]]; then
+  report "Phase 3 handoff removes retained proof bundles" 0
+else
+  report "Phase 3 handoff removes retained proof bundles" 1
+fi
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 printf 'phase-loop-ownership-test: %d passed, %d failed\n' "$pass" "$fail"

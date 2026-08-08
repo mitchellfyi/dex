@@ -106,8 +106,9 @@ rule wins:
   authorization, permissions, secrets, payments, or destructive behavior;
   persistence, schemas, or migrations; public API, CLI, configuration, or
   compatibility contracts; concurrency or process lifecycle; hooks, guards,
-  CI, deployment, or packaging; broad cross-module behavior; or material
-  uncertainty about impact or verification.
+  CI, deployment, or packaging; broad cross-module behavior; or a concrete gap
+  in the supplied scope or verification that leaves material behavior
+  unbounded.
 - Choose `small` only when every change is localized and mechanically direct,
   impact is narrow, focused verification is available, and no `complex`
   condition applies.
@@ -133,10 +134,16 @@ REVIEW_REASON_CODES="<comma-separated-reason-codes>"
 dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIEW_REASON_CODES" "$PWD"
 ```
 
-The selection maps to 3, 6, or 9 consecutive clean waves in Phase 3. It is not
-a review pass and does not count toward the clean gate. Because the selection is
-tied to the current scope fingerprint, rewrite it after any later Phase 2
-in-scope change.
+The tier selects the trusted clean-wave policy from the committed default
+branch. The defaults are 3 for `small`, 6 for `normal`, and 9 for `complex`;
+repositories may configure monotonic values from 1 through 30 in `.dex/dex.md`
+`## Review Policy`. The persisted selection is bound to that resolved policy.
+Candidate-branch edits cannot lower the active gate, and
+`DEX_REVIEW_CLEAN_PASSES` can only raise it.
+
+The selection is not a review pass and does not count toward the clean gate.
+Because it is tied to the current scope fingerprint, rewrite it after any later
+Phase 2 in-scope change.
 
 ## Completion Criteria
 
@@ -150,7 +157,8 @@ ALL of these must be true before you stop:
 - Any needed `.dex/` updates are staged
 - UI capture evidence is linked for UI-affecting changes, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
-  recorded for the final current scope
+  recorded for the final current scope and bound to the trusted clean-wave
+  policy
 - The Phase 1 review-criteria artifact still validates and includes every
   approved requirement, including any plan change the user approved in Phase 2
 
