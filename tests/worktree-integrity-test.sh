@@ -87,4 +87,36 @@ grep -q "Some worktrees could not be removed" "$TEST_TMP_DIR/remove-all.out"
 [[ -f "$DX_STATE_DIR/last-session" ]]
 '
 
+# dxclean's orphan-branch pass must not delete branches that were never
+# pushed or that still hold unpushed commits (in-place lifecycles leave
+# worktree-* branches with no worktree directory).
+git -C "$TEST_REPO" branch worktree-task-unpushed HEAD
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+cd "$TEST_REPO"
+dxclean
+' > "$TMP_DIR/clean-unpushed.out" 2>&1
+grep -q "Skipping branch worktree-task-unpushed (not pushed to remote)" "$TMP_DIR/clean-unpushed.out"
+git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/worktree-task-unpushed
+
+git -C "$TMP_DIR" init -q --bare origin.git
+git -C "$TEST_REPO" remote add origin "$TMP_DIR/origin.git"
+git -C "$TEST_REPO" push -q origin worktree-task-unpushed
+git -C "$TEST_REPO" commit -q --allow-empty -m ahead
+git -C "$TEST_REPO" branch -f worktree-task-unpushed HEAD
+git -C "$TEST_REPO" branch worktree-task-pushed HEAD~0
+git -C "$TEST_REPO" push -q origin worktree-task-pushed
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+cd "$TEST_REPO"
+dxclean
+' > "$TMP_DIR/clean-pushed.out" 2>&1
+grep -q "Skipping branch worktree-task-unpushed (has unpushed commits)" "$TMP_DIR/clean-pushed.out"
+git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/worktree-task-unpushed
+grep -q "Deleting orphan branch: worktree-task-pushed" "$TMP_DIR/clean-pushed.out"
+if git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/worktree-task-pushed; then
+  printf 'dxclean left a fully pushed orphan branch behind\n' >&2
+  exit 1
+fi
+
 printf 'worktree integrity tests passed\n'

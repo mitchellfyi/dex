@@ -5278,6 +5278,17 @@ dxclean() {
     fi
     ticket_name="${branch#worktree-}"
     if [[ ! -d "$worktrees_dir/$ticket_name" ]]; then
+      # In-place lifecycles and manually removed worktrees leave these
+      # branches behind while still holding unpushed work; mirror the
+      # push-safety guards from the stale-worktree pass above.
+      if ! git rev-parse "origin/${branch}" &>/dev/null; then
+        echo "  Skipping branch ${branch} (not pushed to remote)"
+        continue
+      fi
+      if git log --oneline "origin/${branch}..${branch}" 2>/dev/null | head -1 | grep -q .; then
+        echo "  Skipping branch ${branch} (has unpushed commits)"
+        continue
+      fi
       echo "  Deleting orphan branch: ${branch}"
       if git branch -D "$branch" 2>/dev/null; then
         __dx_cleanup_lifecycle_state_for_branch "$branch"
