@@ -819,7 +819,9 @@ dx_provider_claude() {
         return 1
       fi
       if [[ -n "$token" ]]; then
-        [[ -n "${DX_PROVIDER_AUTH_ENV:-}" ]] && env_args+=(-u "$DX_PROVIDER_AUTH_ENV")
+        # BSD env stops option parsing at the first NAME=VALUE operand, so -u
+        # flags must precede the assignments already queued in env_args.
+        [[ -n "${DX_PROVIDER_AUTH_ENV:-}" ]] && env_args=(-u "$DX_PROVIDER_AUTH_ENV" "${env_args[@]}")
         env_args+=(
           ANTHROPIC_BASE_URL="$DX_PROVIDER_BASE_URL"
           ANTHROPIC_AUTH_TOKEN="$token"

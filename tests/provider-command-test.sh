@@ -129,4 +129,47 @@ cd "$TMP_DIR/repo"
 assert_fails_with "Reason: profile 'broken' has unknown key 'unknown_field'" \
   dx_provider_command list
 
+# Gateway profiles with api-token auth must launch through BSD env, where
+# options must precede NAME=VALUE operands (regression: a -u flag appended
+# after the assignments made every gateway launch exit 127 on macOS).
+rm -f "$TMP_DIR/repo/.dex/providers.json"
+mkdir -p "$HOME/.dex"
+cat > "$HOME/.dex/providers.json" <<'JSON'
+{
+  "profiles": {
+    "test-gateway": {
+      "engine": "anthropic-gateway",
+      "auth": "api-token",
+      "model": "claude-test-model",
+      "base_url": "https://gateway.example.test",
+      "auth_env": "DEX_TEST_GATEWAY_TOKEN"
+    }
+  }
+}
+JSON
+cat > "$TMP_DIR/bin/claude" <<'SH'
+#!/usr/bin/env bash
+printf 'claude-stub token=%s base=%s leaked=%s\n' \
+  "${ANTHROPIC_AUTH_TOKEN:-}" "${ANTHROPIC_BASE_URL:-}" "${DEX_TEST_GATEWAY_TOKEN:-absent}"
+SH
+chmod +x "$TMP_DIR/bin/claude"
+export DX_PROVIDER_PROFILE="test-gateway"
+export DEX_TEST_GATEWAY_TOKEN="gateway-secret"
+dx_provider_apply
+set +e
+gateway_output=$(dx_provider_claude 2>&1)
+gateway_status=$?
+set -e
+if [[ $gateway_status -ne 0 ]]; then
+  printf 'gateway launch failed (%s):\n%s\n' "$gateway_status" "$gateway_output" >&2
+  exit 1
+fi
+grep -Fq "token=gateway-secret" <<<"$gateway_output"
+grep -Fq "base=https://gateway.example.test" <<<"$gateway_output"
+grep -Fq "leaked=absent" <<<"$gateway_output"
+unset DEX_TEST_GATEWAY_TOKEN
+rm -f "$HOME/.dex/providers.json" "$TMP_DIR/bin/claude"
+export DX_PROVIDER_PROFILE="codex-subscription"
+dx_provider_apply
+
 printf 'provider command tests passed\n'
