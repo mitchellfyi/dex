@@ -1878,7 +1878,7 @@ __dx_maintain_respond() {
   done
 
   [[ -n "$pr_num" ]] || { dx_error "respond requires --pr <number>"; exit 1; }
-  __dx_maintain_require_number "--pr" "$pr_num"
+  __dx_maintain_require_positive_number "--pr" "$pr_num"
   __dx_maintain_reject_control_chars "--event" "$event_kind"
   __dx_maintain_reject_control_chars "--defer-publish" "$defer_publish_file"
   __dx_maintain_reject_control_chars "--context-dir" "$context_dir"
@@ -2112,7 +2112,7 @@ __dx_maintain_run() {
         ;;
       --issue)
         __dx_maintain_require_value "$1" "$#"
-        __dx_maintain_require_number "$1" "$2"
+        __dx_maintain_require_positive_number "$1" "$2"
         issue_number="$2"
         shift 2
         ;;

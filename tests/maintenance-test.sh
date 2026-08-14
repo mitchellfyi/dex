@@ -189,4 +189,41 @@ fi
 assert_contains "linked maintenance workflow file" "$TMP_DIR/linked-file-workflow.out"
 assert_contains "user workflow" "$TMP_DIR/user-workflow.yml"
 
+# CLI argument validation must fail cleanly, not crash on a missing helper
+# (regression: respond/--issue once called an undefined __dx_maintain_require_number).
+set +e
+bash "$ROOT/bin/maintain.sh" respond --pr notanumber > "$TMP_DIR/respond-bad-pr.out" 2>&1
+respond_status=$?
+set -e
+assert_eq "1" "$respond_status" "respond --pr notanumber exit status"
+assert_contains "requires a positive integer" "$TMP_DIR/respond-bad-pr.out"
+
+set +e
+bash "$ROOT/bin/maintain.sh" --issue notanumber > "$TMP_DIR/run-bad-issue.out" 2>&1
+issue_status=$?
+set -e
+assert_eq "1" "$issue_status" "--issue notanumber exit status"
+assert_contains "requires a positive integer" "$TMP_DIR/run-bad-issue.out"
+
+# Every __dx_maintain_* helper invoked in maintain.sh must be defined there.
+undefined_helpers=$(awk '
+  match($0, /__dx_maintain_[a-z_]+\(\)/) {
+    name = substr($0, RSTART, RLENGTH - 2); defined[name] = 1
+  }
+  {
+    line = $0
+    while (match(line, /__dx_maintain_[a-z_]+/)) {
+      name = substr(line, RSTART, RLENGTH)
+      rest = substr(line, RSTART + RLENGTH)
+      if (rest !~ /^\(\)/) used[name] = 1
+      line = rest
+    }
+  }
+  END { for (name in used) if (!(name in defined)) print name }
+' "$ROOT/bin/maintain.sh")
+if [[ -n "$undefined_helpers" ]]; then
+  printf 'undefined __dx_maintain_ helpers referenced in bin/maintain.sh:\n%s\n' "$undefined_helpers" >&2
+  exit 1
+fi
+
 printf 'maintenance tests passed\n'
