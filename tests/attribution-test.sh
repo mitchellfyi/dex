@@ -384,4 +384,35 @@ dx_uninstall_repo_attribution "$relocate_uninit_new" > "$TMP_DIR/relocate-direct
 [[ ! -e "$relocate_uninit_new_proxy" ]]
 [[ ! -e "$relocate_uninit_state" ]]
 
+# Attribution is best-effort: the commit-msg proxy runs for every commit in an
+# initialized repo, so a moved or deleted Dex checkout must degrade to an
+# unattributed commit rather than block committing entirely.
+degrade_repo="$TMP_DIR/degrade-repo"
+mkdir -p "$degrade_repo"
+git -C "$degrade_repo" init -q
+git -C "$degrade_repo" config user.email "dex@example.test"
+git -C "$degrade_repo" config user.name "Dex Test"
+dx_install_repo_attribution "$degrade_repo" > "$TMP_DIR/degrade-install.out"
+degrade_hook="$(dx_attribution_hook_dir "$degrade_repo")/commit-msg"
+assert_file "$degrade_hook"
+bash -n "$degrade_hook" || {
+  printf 'generated commit-msg hook is not valid bash\n' >&2
+  exit 1
+}
+
+sed 's#^DEX_DIR=.*#DEX_DIR=/nonexistent/dex/checkout#' "$degrade_hook" > "$degrade_hook.new"
+mv "$degrade_hook.new" "$degrade_hook"
+chmod 755 "$degrade_hook"
+
+printf 'degrade\n' > "$degrade_repo/degrade.txt"
+git -C "$degrade_repo" add degrade.txt
+if ! git -C "$degrade_repo" commit -q -m "feat: commit without dex" 2> "$TMP_DIR/degrade-commit.err"; then
+  printf 'commit was blocked when the Dex checkout was missing\n' >&2
+  cat "$TMP_DIR/degrade-commit.err" >&2
+  exit 1
+fi
+assert_contains "commit attribution skipped" "$TMP_DIR/degrade-commit.err"
+git -C "$degrade_repo" log -1 --pretty=%B > "$TMP_DIR/degrade-message.txt"
+assert_contains "feat: commit without dex" "$TMP_DIR/degrade-message.txt"
+
 printf 'attribution tests passed\n'

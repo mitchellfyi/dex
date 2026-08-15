@@ -504,14 +504,24 @@ def attribution_generate(
                 ]
             )
         if name == "commit-msg":
+            # Attribution is best-effort: this hook runs for every commit in
+            # the repo, so a moved/deleted Dex checkout or a missing python3
+            # must degrade to an unattributed commit, never block committing.
             lines.extend(
                 [
                     "",
                     f"DEX_DIR={shlex.quote(dex_dir)}",
                     "export DEX_DIR",
                     "# shellcheck disable=SC1091",
-                    'source "$DEX_DIR/lib/common.sh"',
-                    'dx_commit_attribution_message "$1"',
+                    'if [[ -r "$DEX_DIR/lib/common.sh" ]] && source "$DEX_DIR/lib/common.sh" 2>/dev/null; then',
+                    '  dx_commit_attribution_message "$1" ||',
+                    "    printf 'dex: commit attribution skipped\\n' >&2",
+                    "else",
+                    "  printf 'dex: commit attribution skipped (Dex not found at %s)\\n' \\",
+                    '    "$DEX_DIR" >&2',
+                    "fi",
+                    "",
+                    "exit 0",
                 ]
             )
         else:
