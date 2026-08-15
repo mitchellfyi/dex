@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Pure review-loop transitions and controller-local state helpers.
-# Source this file after lib/review.sh.
+# Source this file after lib/lock.sh and lib/review.sh.
 
 # dx_review_transition <current-tier> <current-required> <current-clean>
 #   <event-kind> <event-count> <event-reason> <scope-changed> <working-changed>
@@ -176,27 +176,18 @@ dx_review_transition() {
 # Append a validated hash atomically and retain only the four newest entries.
 dx_review_findings_history_append() {
   [[ $# -eq 2 ]] || return 1
-  local history_file="$1" findings_hash="$2" tmp_file="" lock_dir owner_file owner="" append_status=1
+  local history_file="$1" findings_hash="$2" tmp_file="" lock_dir owner="" append_status=1
   [[ -n "$history_file" && ${#findings_hash} -eq 16 && "$findings_hash" != *[!0-9a-f]* ]] || return 1
   [[ ! -e "$history_file" || -f "$history_file" ]] || return 1
 
   mkdir -p "$(dirname "$history_file")" || return 1
   lock_dir="${history_file}.lock"
-  owner_file="${lock_dir}/owner"
-  if ! command mkdir "$lock_dir" 2>/dev/null; then
-    owner=$(cat "$owner_file" 2>/dev/null || true)
-    if [[ "$owner" =~ ^[1-9][0-9]*$ ]] && ! kill -0 "$owner" 2>/dev/null; then
-      command rm -f "$owner_file" 2>/dev/null || return 1
-      command rmdir "$lock_dir" 2>/dev/null || return 1
-      command mkdir "$lock_dir" 2>/dev/null || return 1
-    else
-      return 1
-    fi
-  fi
-  if ! printf '%s\n' "$$" > "$owner_file"; then
-    command rmdir "$lock_dir" 2>/dev/null || true
-    return 1
-  fi
+  # Stale-lock takeover used to be an unserialized rm-then-recreate: two
+  # waiters could both see a dead owner, and the second would remove the
+  # first's fresh lock, letting both append and then reporting a successful
+  # append as a failure. dx_lock_acquire serializes reclamation.
+  owner="review-history-$$"
+  dx_lock_acquire "$lock_dir" "$owner" || return 1
 
   if [[ ! -e "$history_file" || -f "$history_file" ]] && \
      { [[ ! -f "$history_file" ]] || LC_ALL=C awk '
@@ -230,7 +221,6 @@ dx_review_findings_history_append() {
     append_status=0
   fi
   [[ -z "$tmp_file" ]] || command rm -f "$tmp_file" 2>/dev/null || true
-  command rm -f "$owner_file" 2>/dev/null || append_status=1
-  command rmdir "$lock_dir" 2>/dev/null || append_status=1
+  dx_lock_release "$lock_dir" "$owner" || append_status=1
   return "$append_status"
 }

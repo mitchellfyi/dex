@@ -225,7 +225,7 @@ __dx_lifecycle_path_mtime() {
 
 __dx_lifecycle_control_lock_try() {
   local session_id="$1" lock_dir owner_file owner_raw owner_pid owner_epoch owner_token
-  local now_epoch lock_epoch stale_after token current_raw tmp_owner
+  local now_epoch lock_epoch stale_after token current_raw tmp_owner doomed_dir
   dx_lifecycle_session_id_valid "$session_id" || return 1
   lock_dir=$(dx_lifecycle_control_lock_dir "$session_id")
   owner_file="$lock_dir/owner"
@@ -256,7 +256,12 @@ __dx_lifecycle_control_lock_try() {
     now_epoch=$(date +%s)
     [[ "$lock_epoch" =~ ^[0-9]+$ ]] || return 1
     [[ $((now_epoch - lock_epoch)) -ge "$stale_after" ]] || return 1
-    rmdir "$lock_dir" 2>/dev/null || return 1
+    # Same rename-to-claim rule as below: an abandoned lock whose owner file
+    # never appeared must be removed by exactly one cleaner.
+    doomed_dir="${lock_dir}.doomed.$$"
+    if command mv "$lock_dir" "$doomed_dir" 2>/dev/null; then
+      command rm -rf "$doomed_dir" 2>/dev/null || true
+    fi
     return 1
   fi
   [[ -f "$owner_file" && ! -L "$owner_file" ]] || return 1
@@ -270,8 +275,14 @@ __dx_lifecycle_control_lock_try() {
     || ! kill -0 "$owner_pid" 2>/dev/null; then
     current_raw=$(cat "$owner_file" 2>/dev/null || true)
     [[ "$current_raw" == "${owner_pid}"$'\t'"${owner_epoch}"$'\t'"${owner_token}" ]] || return 1
-    rm -f "$owner_file" 2>/dev/null || true
-    rmdir "$lock_dir" 2>/dev/null || true
+    # Claim the removal by renaming: whoever wins the rename owns the cleanup.
+    # Deleting the owner file and directory in place leaves a window in which
+    # another cleaner can remove the lock and a new holder can recreate it,
+    # after which this process would delete a lock it no longer owns.
+    doomed_dir="${lock_dir}.doomed.$$"
+    if command mv "$lock_dir" "$doomed_dir" 2>/dev/null; then
+      command rm -rf "$doomed_dir" 2>/dev/null || true
+    fi
   fi
   return 1
 }

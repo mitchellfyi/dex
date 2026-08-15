@@ -161,44 +161,41 @@ dx_maintenance_event_mode() {
   esac
 }
 
+# Maintenance runs publish PRs, so two concurrent runs are worse than a
+# delayed one. TTL-based takeover used to be `rm -f` followed by a recreate,
+# which let two contenders both reclaim an expired lock — the second removing
+# the first's fresh one. dx_lock_acquire serializes reclamation through a
+# reaper mutex and honors the same TTL as its stale-grace window.
+__dx_maintenance_lock_dir() {
+  printf '%s.d\n' "$(dx_maintenance_lock_file "$1")"
+}
+
+__dx_maintenance_lock_token() {
+  local owner="$1"
+  # Lock tokens are restricted to a safe charset; fall back to the pid when
+  # the caller's owner string cannot be represented.
+  if [[ "$owner" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    printf '%s\n' "$owner"
+  else
+    printf 'maintenance-%s\n' "$$"
+  fi
+}
+
 dx_maintenance_lock_acquire() {
-  local session_id="$1" owner="${2:-$$}" lock_file raw epoch now age ttl
+  local session_id="$1" owner="${2:-$$}" ttl
   [[ -n "$session_id" ]] || return 1
   mkdir -p "$DX_MAINTENANCE_DIR"
-  lock_file=$(dx_maintenance_lock_file "$session_id")
-
-  if ( set -C; printf '%s\t%s\t%s\n' "$(date +%s)" "$$" "$owner" > "$lock_file" ) 2>/dev/null; then
-    return 0
-  fi
-
-  now=$(date +%s)
   ttl=$(dx_maintenance_lock_ttl_seconds)
-
-  if [[ -f "$lock_file" ]]; then
-    raw=$(cat "$lock_file" 2>/dev/null || echo "")
-    epoch="${raw%%$'\t'*}"
-    if [[ "$epoch" =~ ^[0-9]+$ ]]; then
-      age=$((now - epoch))
-      if [[ "$age" -lt "$ttl" ]]; then
-        return 1
-      fi
-    fi
-  fi
-
-  rm -f "$lock_file" 2>/dev/null || true
-  ( set -C; printf '%s\t%s\t%s\n' "$(date +%s)" "$$" "$owner" > "$lock_file" ) 2>/dev/null
+  dx_lock_acquire "$(__dx_maintenance_lock_dir "$session_id")" \
+    "$(__dx_maintenance_lock_token "$owner")" "$$" "$ttl"
 }
 
 dx_maintenance_lock_release() {
-  local session_id="$1" owner="${2:-}" lock_file raw current_owner
+  local session_id="$1" owner="${2:-}"
   [[ -n "$session_id" ]] || return 0
-  lock_file=$(dx_maintenance_lock_file "$session_id")
-  if [[ -n "$owner" && -f "$lock_file" ]]; then
-    raw=$(cat "$lock_file" 2>/dev/null || echo "")
-    current_owner="${raw##*$'\t'}"
-    [[ "$current_owner" == "$owner" ]] || return 0
-  fi
-  rm -f "$lock_file" 2>/dev/null || true
+  [[ -n "$owner" ]] || return 0
+  dx_lock_release "$(__dx_maintenance_lock_dir "$session_id")" \
+    "$(__dx_maintenance_lock_token "$owner")" || true
 }
 
 dx_maintenance_write_last_success() {

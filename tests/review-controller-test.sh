@@ -16,6 +16,7 @@ run_shell_suite() {
   # shellcheck disable=SC2016
   DEX_DIR="$ROOT" TEST_TMP_DIR="$TMP_DIR/$shell_name" TEST_SHELL_NAME="$shell_name" "$shell_name" -c '
     set -eu
+    source "$DEX_DIR/lib/lock.sh"
     source "$DEX_DIR/lib/review.sh"
     source "$DEX_DIR/lib/review-controller.sh"
     mkdir -p "$TEST_TMP_DIR"
