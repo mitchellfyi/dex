@@ -172,6 +172,15 @@ echo ""
 SYNC_RUN_SESSION_ID="sync-$(dx_unique_session_id)"
 if SYNC_RUN_ID=$(dx_run_prepare "$SYNC_RUN_SESSION_ID" "$repo_root" "current-checkout" "$repo_name" "dx sync $*" "dx sync"); then
   export DEX_RUN_ID="$SYNC_RUN_ID"
+  # Register with DexCode so the run.started/completed events below reach it.
+  # Every other command does this; init and sync emitted their events into a
+  # local journal only, so setting a repository up was invisible in the app.
+  #
+  # No `|| true`: the helper already returns 0 when DexCode is unreachable, and
+  # returns non-zero only under DEXCODE_SYNC_REQUIRED, where aborting is the
+  # point.
+  dx_dexcode_prepare_run_sync "$SYNC_RUN_ID" "$repo_root" "current-checkout" \
+    "$repo_name" "dx sync $*" "dx sync"
   dx_run_maybe_emit_started "$SYNC_RUN_ID" "Dex sync started" "{\"command\":\"dx sync\"}"
   dx_run_log_append_safe "$SYNC_RUN_ID" "info" "sync" "Dex sync started for ${repo_name}"
   dx_info "Run id: $SYNC_RUN_ID"

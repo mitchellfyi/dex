@@ -147,6 +147,15 @@ INIT_PROJECT_STATE_ACTIVE=1
 INIT_RUN_SESSION_ID="init-$(dx_unique_session_id)"
 if INIT_RUN_ID=$(dx_run_prepare "$INIT_RUN_SESSION_ID" "$repo_root" "current-checkout" "$repo_name" "dx init $*" "dx init"); then
   export DEX_RUN_ID="$INIT_RUN_ID"
+  # Register with DexCode so the run.started/completed events below reach it.
+  # Every other command does this; init and sync emitted their events into a
+  # local journal only, so setting a repository up was invisible in the app.
+  #
+  # No `|| true`: the helper already returns 0 when DexCode is unreachable, and
+  # returns non-zero only under DEXCODE_SYNC_REQUIRED, where aborting is the
+  # point.
+  dx_dexcode_prepare_run_sync "$INIT_RUN_ID" "$repo_root" "current-checkout" \
+    "$repo_name" "dx init $*" "dx init"
   dx_run_maybe_emit_started "$INIT_RUN_ID" "Dex init started" "{\"command\":\"dx init\"}"
   dx_run_log_append_safe "$INIT_RUN_ID" "info" "init" "Dex init started for ${repo_name}"
   dx_info "Run id: $INIT_RUN_ID"
