@@ -204,7 +204,9 @@ assert_eq "$runtime_source_sha" "$runtime_sha" "runtime commit"
 [[ -f "$runtime_dir/research/review-loop/agent-observer.sh" ]] || fail "sanitized observer is missing"
 [[ ! -e "$runtime_dir/research/review-loop/scenarios" ]] || fail "runtime contains scenario truth"
 actual_runtime_roots=$(find "$runtime_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort | tr '\n' ' ')
-assert_eq "bin dx.sh hooks lib prompts research settings.json skills " \
+# scripts/ is in the runtime because lib/ imports helpers from it. Widening
+# this list is deliberate: it is what the pinned agent runtime may contain.
+assert_eq "bin dx.sh hooks lib prompts research scripts settings.json skills " \
   "$actual_runtime_roots" "runtime allowlist"
 if find "$runtime_dir" \( -path '*/hidden/*' -o -path '*/canonical_fix/*' -o -iname '*oracle*' \) \
     -print -quit | grep -q .; then

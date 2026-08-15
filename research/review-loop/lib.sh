@@ -493,8 +493,11 @@ review_eval_prepare_runtime() {
   [[ ! -e "$runtime_dir" ]] || return 1
   resolved_sha=$(git -C "$source_repo" rev-parse --verify "${requested_ref}^{commit}") || return 1
   mkdir -p "$runtime_dir"
+  # scripts/ is part of the runtime surface: lib/ imports helpers from it
+  # (dex_redact.py, run-log-tee.py), so omitting it leaves a pinned runtime
+  # whose event emission fails at import time.
   if ! git -C "$source_repo" archive "$resolved_sha" \
-      dx.sh settings.json bin hooks lib prompts skills \
+      dx.sh settings.json bin hooks lib prompts scripts skills \
       research/review-loop/launch.zsh research/review-loop/agent-observer.sh | \
       tar -xf - -C "$runtime_dir"; then
     review_eval_error "could not extract the pinned agent runtime"

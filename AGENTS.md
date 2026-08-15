@@ -25,7 +25,7 @@ hooks/               Claude Code hooks + guard handler
 lib/                 Shared shell libraries (21 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
-scripts/             Node/helpers used by Dex-managed tooling
+scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
 dx.sh                Main shell functions (zsh only, ~5300 lines)
 settings.json        Hook definitions template
@@ -80,6 +80,19 @@ Use `lib/output.sh` helpers (`dx_done`, `dx_ok`, `dx_warn`, `dx_skip`, `dx_info`
 ### Re-sourcing safety
 
 In `dx.sh`, every function definition is preceded by `unalias <name> 2>/dev/null; unfunction <name> 2>/dev/null` so the file can be re-sourced without errors.
+
+### The runtime surface
+
+`lib/` imports helpers from `scripts/` (for example `dex_redact.py` and
+`run-log-tee.py`, invoked with `PYTHONPATH="$DEX_DIR/scripts"`). Anything that
+vendors a *subset* of the repo has to carry `scripts/` too, or those imports
+fail at run time and the calling function degrades silently. The pinned agent
+runtime in `research/review-loop/lib.sh` is one such consumer, and its contents
+are asserted by an allowlist in `tests/review-evaluation-harness-test.sh` —
+widening that list is a deliberate act, not a formality.
+
+Before adding a new cross-directory dependency from `lib/`, check who copies
+parts of the repo rather than all of it.
 
 ### Atomic file operations
 
