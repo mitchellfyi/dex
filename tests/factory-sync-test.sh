@@ -431,4 +431,59 @@ assert status["status"] == "configuration_error"
 assert "TOKEN" in status["message"]
 PY
 
+# A corrupt journal line must not wedge sync for the rest of the run: the bad
+# line is skipped and later events still reach the collector.
+printf '200\n' > "$SERVER_DIR/status"
+printf 'json\n' > "$SERVER_DIR/body-mode"
+# Earlier cases deliberately clear the credentials; restore them.
+export DEX_FACTORY_URL="$SERVER_URL"
+export DEX_FACTORY_TOKEN="test-token"
+export DEX_FACTORY_SYNC=false
+torn_run="$(dx_run_prepare "torn-journal" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+dx_event_emit "$torn_run" "run.started" "info" "before the tear" "" '{}'
+printf '{"sequence": 2, "type": "run.tr\n' >> "$(dx_run_events_file "$torn_run")"
+dx_event_emit "$torn_run" "run.completed" "info" "after the tear" "" '{}'
+export DEX_FACTORY_SYNC=true
+dx_factory_sync_pending_events "$torn_run"
+
+if [[ -f "$(dx_factory_sync_status_file "$torn_run")" ]]; then
+  printf 'a torn journal line wedged factory sync\n' >&2
+  cat "$(dx_factory_sync_status_file "$torn_run")" >&2
+  exit 1
+fi
+python3 - "$(dx_factory_sync_cursor_file "$torn_run")" <<'PY'
+import sys
+from pathlib import Path
+
+cursor = int(Path(sys.argv[1]).read_text(encoding="utf-8").strip())
+assert cursor >= 2, f"sync stopped at the torn line: cursor={cursor}"
+PY
+
+# The offset hint lets a later flush resume mid-journal instead of rescanning,
+# and must never be trusted when it does not match the current cursor.
+offset_file="$(dx_factory_sync_offset_file "$torn_run")"
+test -f "$offset_file"
+python3 - "$offset_file" "$(dx_run_events_file "$torn_run")" <<'PY'
+import sys
+from pathlib import Path
+
+recorded_cursor, offset = (int(part) for part in Path(sys.argv[1]).read_text().split())
+size = Path(sys.argv[2]).stat().st_size
+assert recorded_cursor >= 2, recorded_cursor
+assert 0 < offset <= size, (offset, size)
+PY
+
+# A hint recorded against a different cursor is ignored, so a reset cursor
+# still resends from the beginning rather than skipping events.
+printf '99 5\n' > "$offset_file"
+printf '0\n' > "$(dx_factory_sync_cursor_file "$torn_run")"
+dx_factory_sync_pending_events "$torn_run"
+python3 - "$(dx_factory_sync_cursor_file "$torn_run")" <<'PY'
+import sys
+from pathlib import Path
+
+cursor = int(Path(sys.argv[1]).read_text(encoding="utf-8").strip())
+assert cursor >= 2, f"stale offset hint was trusted: cursor={cursor}"
+PY
+
 printf 'factory sync tests passed\n'

@@ -245,6 +245,33 @@ __dx_factory_sync_read_cursor() {
   __dx_factory_nonnegative_int "$cursor" 0 999999999
 }
 
+# The offset hint records "<cursor> <byte offset>": the position in the journal
+# at which everything before it has already been synced under that cursor. It
+# is written only after a batch is accepted, so a failed post cannot skip
+# events, and it is re-validated on read.
+dx_factory_sync_offset_file() { printf '%s/offset\n' "$(dx_factory_sync_dir "$1")"; }
+
+__dx_factory_sync_read_offset_hint() {
+  local run_id="$1" offset_file
+  offset_file=$(dx_factory_sync_offset_file "$run_id") || return 0
+  [[ -f "$offset_file" ]] || return 0
+  cat "$offset_file" 2>/dev/null || true
+}
+
+__dx_factory_sync_write_offset_hint() {
+  local run_id="$1" cursor="$2" offset="$3" offset_file tmp_file
+  __dx_factory_nonnegative_int "$cursor" 0 999999999 >/dev/null || return 0
+  __dx_factory_nonnegative_int "$offset" 0 9999999999999 >/dev/null || return 0
+  offset_file=$(dx_factory_sync_offset_file "$run_id") || return 0
+  mkdir -p "$(dirname "$offset_file")"
+  tmp_file="${offset_file}.tmp.$$"
+  if ! printf '%s %s\n' "$cursor" "$offset" > "$tmp_file" \
+    || ! command mv -f "$tmp_file" "$offset_file"; then
+    command rm -f "$tmp_file" 2>/dev/null || true
+    return 0
+  fi
+}
+
 __dx_factory_sync_write_cursor() {
   local run_id="$1" sequence="$2" cursor_file tmp_file
   [[ "$(__dx_factory_nonnegative_int "$sequence" invalid 999999999)" != "invalid" ]] || return 1
@@ -438,6 +465,7 @@ __dx_factory_sync_build_payload() {
   DX_FACTORY_PAYLOAD_FILE="$payload_file" \
   DX_FACTORY_CURSOR="$cursor" \
   DX_FACTORY_BATCH_SIZE="$batch_size" \
+  DX_FACTORY_OFFSET_HINT="$(__dx_factory_sync_read_offset_hint "$run_id")" \
   python3 - <<'PY'
 import json
 import os
@@ -456,23 +484,52 @@ except ValueError:
 if batch_size <= 0:
     batch_size = 50
 
+# Start byte for the scan. This is a hint only: it is accepted solely when it
+# was recorded against this exact cursor and still fits inside the journal, and
+# a bad hint costs a full rescan rather than a wrong result. Without it, every
+# emission re-parsed the whole journal, which is quadratic across a run.
+start_offset = 0
+try:
+    hint_cursor, hint_offset = (
+        int(part) for part in os.environ.get("DX_FACTORY_OFFSET_HINT", "").split()[:2]
+    )
+    if hint_cursor == cursor and 0 <= hint_offset <= events_path.stat().st_size:
+        start_offset = hint_offset
+except (ValueError, OSError):
+    start_offset = 0
+
 selected = []
 max_sequence = cursor
+skipped = 0
 with events_path.open("r", encoding="utf-8") as fh:
+    fh.seek(start_offset)
+    consumed_offset = start_offset
+    position = start_offset
     for line in fh:
-        line = line.strip()
-        if not line:
+        position += len(line.encode("utf-8"))
+        stripped = line.strip()
+        if not stripped:
+            consumed_offset = position
             continue
-        event = json.loads(line)
-        sequence = event.get("sequence", 0)
-        if isinstance(sequence, bool) or not isinstance(sequence, int):
-            raise ValueError("event sequence must be an integer")
-        if sequence < 1 or sequence > 999999999:
-            raise ValueError("event sequence is outside the supported range")
+        try:
+            event = json.loads(stripped)
+            sequence = event.get("sequence", 0)
+            if isinstance(sequence, bool) or not isinstance(sequence, int):
+                raise ValueError("event sequence must be an integer")
+            if sequence < 1 or sequence > 999999999:
+                raise ValueError("event sequence is outside the supported range")
+        except (ValueError, TypeError, AttributeError):
+            # One torn or corrupt line must not wedge sync for the whole run.
+            # It is skipped, and the scan continues past it.
+            skipped += 1
+            consumed_offset = position
+            continue
         if sequence <= cursor:
+            consumed_offset = position
             continue
         selected.append(event)
         max_sequence = max(max_sequence, sequence)
+        consumed_offset = position
         if len(selected) >= batch_size:
             break
 
@@ -481,14 +538,14 @@ if not selected:
         payload_path.unlink()
     except OSError:
         pass
-    print("0 0")
+    print(f"0 0 {consumed_offset} {skipped}")
     raise SystemExit(0)
 
 payload_path.parent.mkdir(parents=True, exist_ok=True)
 with payload_path.open("w", encoding="utf-8") as fh:
     json.dump({"events": selected}, fh, sort_keys=True, separators=(",", ":"))
     fh.write("\n")
-print(f"{len(selected)} {max_sequence}")
+print(f"{len(selected)} {max_sequence} {consumed_offset} {skipped}")
 PY
 }
 
@@ -623,6 +680,7 @@ __dx_factory_sync_record_config_issue() {
 __dx_factory_sync_pending_events_locked() {
   local run_id="$1" sync_dir="$2" endpoint token cursor payload_file build_result
   local count max_sequence post_error first_sequence endpoint_label batch_count max_batches
+  local end_offset _skipped
 
   if ! endpoint=$(dx_factory_events_endpoint "$run_id" 2>/dev/null); then
     __dx_factory_sync_record_config_issue "$run_id" "Factory sync is enabled but DEX_FACTORY_URL or DEX_FACTORY_EVENTS_ENDPOINT is unset."
@@ -650,9 +708,14 @@ __dx_factory_sync_pending_events_locked() {
       command rm -f "$payload_file" 2>/dev/null || true
       return 0
     fi
-    count="${build_result%% *}"
-    max_sequence="${build_result##* }"
+    # "<count> <max_sequence> <end_offset> <skipped>"
+    read -r count max_sequence end_offset _skipped <<EOF
+$build_result
+EOF
     if [[ "$count" == "0" ]]; then
+      # Nothing new, but record how far the journal was scanned so the next
+      # flush resumes from here instead of re-reading it.
+      __dx_factory_sync_write_offset_hint "$run_id" "$cursor" "${end_offset:-0}"
       command rm -f "$payload_file" 2>/dev/null || true
       return 0
     fi
@@ -665,6 +728,8 @@ __dx_factory_sync_pending_events_locked() {
       }
       __dx_factory_sync_clear_status "$run_id"
       cursor="$max_sequence"
+      # Only now is everything before end_offset known to be synced.
+      __dx_factory_sync_write_offset_hint "$run_id" "$cursor" "${end_offset:-0}"
       batch_count=$((batch_count + 1))
     else
       [[ -n "$post_error" ]] || post_error="remote collector rejected the event batch"
