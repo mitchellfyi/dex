@@ -2691,8 +2691,14 @@ def has_git_commit(text, cwd, depth=0):
     return None
 
 
-target = has_git_commit(os.environ.get('DX_HOOK_COMMAND', ''), os.getcwd())
-if not target:
-    sys.exit(1)
-print(target)
-sys.exit(0)
+def main():
+    target = has_git_commit(os.environ.get('DX_HOOK_COMMAND', ''), os.getcwd())
+    if not target:
+        return 1
+    print(target)
+    return 0
+
+
+# Guarded so the parser can be imported by tests without running or exiting.
+if __name__ == '__main__':
+    sys.exit(main())
