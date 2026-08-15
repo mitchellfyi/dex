@@ -90,7 +90,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b'{"ok":true}\n')
         elif body_mode == "text":
             active_token = (self.headers.get("Authorization", "").removeprefix("Bearer "))
-            self.wfile.write(f"collector echoed {active_token} in neutral text\n".encode("utf-8"))
+            # The foreign token is not this run's token and is not attached to
+            # any key, header, or assignment, so only the raw-token patterns
+            # can catch it.
+            self.wfile.write(
+                f"collector echoed {active_token} in neutral text "
+                f"alongside ghp_forgedcollectortoken1234567890\n".encode("utf-8")
+            )
         else:
             active_token = (self.headers.get("Authorization", "").removeprefix("Bearer "))
             self.wfile.write(json.dumps({
@@ -292,6 +298,8 @@ from pathlib import Path
 status = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert "collector echoed [redacted] in neutral text" in status["message"], status
 assert "test-token" not in status["message"], status
+# A credential the collector leaked that is not this run's token must also go.
+assert "ghp_forgedcollectortoken1234567890" not in status["message"], status
 PY
 printf '200\n' > "$SERVER_DIR/status"
 printf 'json\n' > "$SERVER_DIR/body-mode"

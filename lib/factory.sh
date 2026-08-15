@@ -500,6 +500,7 @@ __dx_factory_sync_post_payload() {
   DX_FACTORY_TOKEN_VALUE="$token" \
   DX_FACTORY_PAYLOAD_FILE="$payload_file" \
   DX_FACTORY_TIMEOUT_SECONDS="$timeout_seconds" \
+  PYTHONPATH="$DEX_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" \
   python3 - <<'PY'
 import os
 import re
@@ -508,6 +509,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from dex_redact import redact_raw_tokens
 
 endpoint = os.environ["DX_FACTORY_ENDPOINT"]
 token = os.environ["DX_FACTORY_TOKEN_VALUE"]
@@ -533,6 +536,11 @@ def redact(text):
     text = BEARER_RE.sub("Bearer [redacted]", text)
     text = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
     text = URL_CREDENTIAL_RE.sub(r"\1[redacted]@", text)
+    # The rules above only catch credentials that something else identifies —
+    # a known token value, a JSON key, a header, an assignment. A collector
+    # echoing a bare ghp_/github_pat_/sk-/xox token in free text matched none
+    # of them, so those classes come from the shared pattern set.
+    text = redact_raw_tokens(text, "[redacted]")
     return text
 
 
