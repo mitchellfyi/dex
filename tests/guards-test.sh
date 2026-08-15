@@ -282,6 +282,61 @@ assert_raw_codex_blocks "noexec after -- is not an option" "bash -- -n $NOEXEC_T
 assert_raw_codex_blocks "unrelated long option is not noexec" "bash --norc $NOEXEC_TMP/payload.sh"
 rm -rf "$NOEXEC_TMP"
 
+# Running an interpreter on a script FILE must judge the file by what it
+# actually launches, not by every string it happens to contain. Otherwise any
+# script storing command-like strings — a guard's pattern table, a fixture —
+# blocks, which made `python3 hooks/guard-handler.py` block on its own source.
+FILE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-file.XXXXXX")"
+cat > "$FILE_TMP/inert.py" <<'INERT'
+import subprocess
+
+DOCUMENTED_PATTERNS = ["rm -rf /", "rm -rf ~", "codex exec build"]
+
+
+def describe():
+    return "blocks: " + ", ".join(DOCUMENTED_PATTERNS)
+
+
+def run_safe():
+    subprocess.run(["git", "status", "--short"], check=False)
+INERT
+cat > "$FILE_TMP/hostile.py" <<'HOSTILE'
+import subprocess
+
+subprocess.run(["rm", "-rf", "/"], check=False)
+HOSTILE
+cat > "$FILE_TMP/hostile-codex.py" <<'HOSTILECODEX'
+import subprocess
+
+subprocess.run("codex exec 'do the work'", shell=True, check=False)
+HOSTILECODEX
+
+set +e
+GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/inert.py" | env DEX_GUARD_EVENT=bash DX_PROVIDER_ENGINE=codex-plugin python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (script with inert command-like literals should be allowed; rc=%s)\n%s\n' \
+    "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+set +e
+GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/hostile.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (script launching rm -rf / should block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+assert_raw_codex_blocks "script launching codex via subprocess" "python3 $FILE_TMP/hostile-codex.py"
+rm -rf "$FILE_TMP"
+
 # Guard evaluation must fail closed. A blocking guard that cannot finish
 # checking a command has to deny it; letting the call through would silently
 # disable the guard exactly when the input is hostile.

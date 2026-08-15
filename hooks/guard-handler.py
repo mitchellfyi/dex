@@ -1230,7 +1230,30 @@ def ruby_perl_exec_fragments(text):
     return fragments
 
 
-def code_execution_fragments(code):
+def execution_call_regions(code):
+    """Return the argument text of each process-launch call in `code`."""
+    regions = []
+    for match in CODE_EXECUTION_RE.finditer(code):
+        opening = code.find('(', max(match.end() - 1, 0), match.end() + 200)
+        if opening == -1:
+            continue
+        depth = 0
+        index = opening
+        limit = min(len(code), opening + 20000)
+        while index < limit:
+            char = code[index]
+            if char == '(':
+                depth += 1
+            elif char == ')':
+                depth -= 1
+                if depth == 0:
+                    regions.append(code[opening + 1:index])
+                    break
+            index += 1
+    return regions
+
+
+def code_execution_fragments(code, whole_file=False):
     code_without_strings = code_without_string_literals(code)
     exec_operator_fragments = ruby_perl_exec_fragments(code)
     if (
@@ -1239,12 +1262,23 @@ def code_execution_fragments(code):
         and not exec_operator_fragments
     ):
         return []
+    if whole_file:
+        # For a whole script file, only literals passed to a process-launch
+        # call are candidate commands. Treating every literal in the file as
+        # one blocks any script that merely stores command-like strings — a
+        # guard's own pattern table, a test fixture, a help message.
+        literal_sources = execution_call_regions(code)
+    else:
+        # Inline code (-c/-e) is itself the payload, so scan all of it.
+        literal_sources = [code]
     fragments = [
         fragment for fragment in (
-            quoted_string_fragments(code)
-            + joined_string_fragments(code)
-            + adjacent_string_fragments(code)
-            + word_array_fragments(code)
+            [f for source in literal_sources for f in (
+                quoted_string_fragments(source)
+                + joined_string_fragments(source)
+                + adjacent_string_fragments(source)
+                + word_array_fragments(source)
+            )]
             + exec_operator_fragments
         )
         if fragment.strip()
@@ -1260,20 +1294,20 @@ def code_execution_fragments(code):
     return executable_fragments
 
 
-def code_has_raw_codex_delegation(code, kind, depth=0, cwd=None):
+def code_has_raw_codex_delegation(code, kind, depth=0, cwd=None, whole_file=False):
     if code is UNKNOWN_SHELL_STDIN:
         return True
     if depth > 24:
         return True
     if not code or not code.strip():
         return False
-    for fragment in code_execution_fragments(code):
+    for fragment in code_execution_fragments(code, whole_file=whole_file):
         if has_raw_codex_delegation(fragment, depth + 1, cwd):
             return True
     return False
 
 
-def code_has_destructive_command(code, depth=0):
+def code_has_destructive_command(code, depth=0, whole_file=False):
     """Inspect literal commands passed to process-launch APIs in inline code."""
     if code is UNKNOWN_SHELL_STDIN or depth > 12:
         return False
@@ -1281,7 +1315,7 @@ def code_has_destructive_command(code, depth=0):
         return False
     return any(
         has_destructive_command(fragment, depth + 1)
-        for fragment in code_execution_fragments(code)
+        for fragment in code_execution_fragments(code, whole_file=whole_file)
     )
 
 
@@ -1293,7 +1327,9 @@ def executable_script_has_raw_codex(script_body, depth=0, cwd=None, kind=''):
     if has_raw_codex_delegation(script_body, depth + 1, cwd):
         return True
     script_kind = kind or shebang_interpreter_kind(script_body)
-    if script_kind and code_has_raw_codex_delegation(script_body, script_kind, depth + 1, cwd):
+    if script_kind and code_has_raw_codex_delegation(
+        script_body, script_kind, depth + 1, cwd, whole_file=True
+    ):
         return True
     return False
 
@@ -2936,13 +2972,13 @@ def interpreter_code_payloads(tokens, command_index, command_start, generated_sc
             continue
         payload, next_index = interpreter_inline_payload(kind, token, tokens, index, command_end, variables, cwd)
         if payload is not None:
-            payloads.append((kind, payload))
+            payloads.append((kind, payload, False))
             return payloads
         if token == '-':
             if '<<' in tokens[command_index:command_end]:
                 return payloads
             stdin_script = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
-            payloads.append((kind, stdin_script if stdin_script else UNKNOWN_SHELL_STDIN))
+            payloads.append((kind, stdin_script if stdin_script else UNKNOWN_SHELL_STDIN, False))
             return payloads
         if kind == 'python' and token == '-m':
             return payloads
@@ -2952,14 +2988,14 @@ def interpreter_code_payloads(tokens, command_index, command_start, generated_sc
             if needs_value and index < command_end:
                 index += 1
             continue
-        payloads.append((kind, interpreter_script_body(token, generated_scripts, variables, cwd)))
+        payloads.append((kind, interpreter_script_body(token, generated_scripts, variables, cwd), True))
         return payloads
 
     stdin_script = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
     if stdin_script:
-        payloads.append((kind, stdin_script))
+        payloads.append((kind, stdin_script, False))
     elif stdin_script is UNKNOWN_SHELL_STDIN:
-        payloads.append((kind, UNKNOWN_SHELL_STDIN))
+        payloads.append((kind, UNKNOWN_SHELL_STDIN, False))
     return payloads
 
 
@@ -3569,10 +3605,10 @@ def has_destructive_command(text, depth=0):
                 return True
             if find_exec_destructive_command_is_blocked(tokens, command_index, shell_vars, None, depth):
                 return True
-            for _kind, script in interpreter_code_payloads(
+            for _kind, script, from_file in interpreter_code_payloads(
                 tokens, command_index, index, generated_scripts, shell_vars, os.getcwd()
             ):
-                if code_has_destructive_command(script, depth + 1):
+                if code_has_destructive_command(script, depth + 1, whole_file=from_file):
                     return True
             while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
                 index += 1
@@ -3842,10 +3878,10 @@ def has_raw_codex_delegation(text, depth=0, cwd=None):
             if env_payload and has_raw_codex_delegation(env_payload, depth + 1, cwd):
                 return True
 
-            for kind, script in interpreter_code_payloads(tokens, command_index, index, generated_scripts, shell_vars, cwd):
+            for kind, script, from_file in interpreter_code_payloads(tokens, command_index, index, generated_scripts, shell_vars, cwd):
                 if script is UNKNOWN_SHELL_STDIN:
                     return True
-                if code_has_raw_codex_delegation(script, kind, depth + 1, cwd):
+                if code_has_raw_codex_delegation(script, kind, depth + 1, cwd, whole_file=from_file):
                     return True
 
             if xargs_command_is_blocked(tokens, command_index, index, shell_vars, cwd, depth):
