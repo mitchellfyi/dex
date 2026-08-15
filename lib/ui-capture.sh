@@ -30,8 +30,10 @@ dx_ui_capture_manifest_file() {
 dx_ui_capture_run_dir() {
   local session_id="$1" run_name="${2:-capture}"
   local timestamp
+  # Whole-second timestamps alone collide when two captures start in the same
+  # second, silently merging their artifacts into one directory.
   timestamp=$(date +%Y%m%d-%H%M%S)
-  printf '%s\n' "$(dx_ui_capture_session_dir "$session_id")/${timestamp}-${run_name}"
+  printf '%s\n' "$(dx_ui_capture_session_dir "$session_id")/${timestamp}-$$-${run_name}"
 }
 
 dx_ui_capture_playwright_ready() {

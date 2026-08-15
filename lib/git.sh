@@ -194,7 +194,10 @@ dx_checkpoint_tag() {
   local step="$1" wt_dir="$2" ref target
   ref=$(dx_checkpoint_ref "$step" "$wt_dir") || return 0
   target=$(git -C "$wt_dir" rev-parse --verify HEAD 2>/dev/null) || return 0
-  git -C "$wt_dir" update-ref "$ref" "$target" >/dev/null 2>&1 || true
+  # A failed checkpoint used to be silent, surfacing much later as
+  # "No checkpoint found for phase N" when someone tried to revert.
+  git -C "$wt_dir" update-ref "$ref" "$target" >/dev/null 2>&1 ||
+    dx_warn "Could not record the phase ${step} checkpoint; revert will not be available for it"
 }
 
 # dx_latest_checkpoint_phase <wt_dir>

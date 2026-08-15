@@ -207,7 +207,13 @@ dx_check_claude_settings() {
 dx_claude_plugin_marketplace_configured() {
   local name="$1"
   command -v claude >/dev/null 2>&1 || return 1
-  claude plugin marketplace list 2>/dev/null | grep -F "$name" >/dev/null 2>&1
+  # Match the marketplace name as a whole field. A substring match reports an
+  # unrelated entry that merely contains the name (a fork, say) as configured,
+  # and the add step is then skipped so the later plugin install fails with a
+  # confusing error.
+  claude plugin marketplace list 2>/dev/null |
+    awk -v want="$name" '{ for (i = 1; i <= NF; i++) if ($i == want) found = 1 }
+                         END { exit found ? 0 : 1 }'
 }
 
 dx_ensure_official_claude_marketplace() {

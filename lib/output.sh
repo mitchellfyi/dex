@@ -50,7 +50,6 @@ dx_progress_filter() {
 import json, sys
 
 repo_root = sys.argv[1] if len(sys.argv) > 1 else ''
-first = True
 showing_thinking = False
 seen_tool_ids = set()
 
@@ -90,7 +89,6 @@ for line in sys.stdin:
             name = block.get('name', '')
             # \\r\\033[K clears any ephemeral 'Thinking...' line
             prefix = '\r\033[K'
-            first = False
             if name in ('Write', 'Edit') and '.dex/' in (inp.get('file_path') or ''):
                 print(f'{prefix}[done]  Writing {detail}')
             elif name == 'Read':
@@ -116,8 +114,13 @@ for line in sys.stdin:
             for b in content
         )
         if has_text:
-            first = False
             print('\r\033[K[....]  Thinking...', end='', flush=True)
             showing_thinking = True
+
+# The thinking indicator is written without a newline so the next line can
+# overwrite it. If the stream ends while it is showing, clear it so it does not
+# stay on screen as the final output.
+if showing_thinking:
+    print('\r\033[K', end='', flush=True)
 " "$repo_root"
 }
