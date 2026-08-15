@@ -50,7 +50,7 @@ Path-specific review focus for Dex review waves.
 - Completion criteria must match the state/result files read by `dx.sh` and
   `hooks/phase-loop.sh`.
 
-## `agents/*.md`
+## Review waves (`prompts/review*.md`, `skills/dxreview*/`)
 
 - Review agents are read-only and must not edit files.
 - Review agents should not enable project memory; review waves must

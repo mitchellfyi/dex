@@ -70,6 +70,8 @@ For `env_var: DX_PROVIDER_ENGINE`, `guard-handler.py` treats the current Dex ses
 | `warn-sensitive-files` | commit | warn | `.env`, credentials, keys, certs in commits |
 | `warn-hardcoded-secrets` | file | warn | `API_KEY = "..."`, `ACCESS_KEY`, `JWT_SECRET`, and other credential patterns in code |
 | `warn-await-in-loop` | file | warn | `await` directly inside a loop body, which can serialize independent I/O. Uses the `await-in-loop` detector: handles common brace- and colon-delimited loop bodies, skips async iteration forms and awaits inside nested closures or methods |
+| `block-review-assessment-bash` | bash | block | Any Bash command while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor is read-only |
+| `block-review-assessment-file-edits` | file | block | Any file edit while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor must not modify the tree |
 
 ### Built-in detectors
 

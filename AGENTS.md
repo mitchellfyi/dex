@@ -22,12 +22,12 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (agent-tools, codex, common, events, factory, git, maintenance, output, provider, review, rtk, run-spec, session, ui-capture, worktree)
+lib/                 Shared shell libraries (20 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
 scripts/             Node/helpers used by Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
-dx.sh                Main shell functions (zsh only, ~2800 lines)
+dx.sh                Main shell functions (zsh only, ~5300 lines)
 settings.json        Hook definitions template
 install.sh           Quick-start installer (delegates to bin/install.sh)
 ```
@@ -67,7 +67,11 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 ```
 
-Sourcing `common.sh` also sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `review.sh`, `factory.sh`, `run-spec.sh`, `agent-tools.sh`, `maintenance.sh`, `project-state.sh`, `lifecycle-control.sh`, and `attribution.sh`.
+Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`,
+`attribution.sh`, `codex.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
+`lifecycle-control.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
+`provider.sh`, `review.sh`, `review-controller.sh`, `review-policy.sh`, `rtk.sh`,
+`run-spec.sh`, `session.sh`, `ui-capture.sh`, and `worktree.sh`.
 
 ### Output
 
@@ -91,7 +95,7 @@ Each skill lives in `skills/<name>/SKILL.md` with YAML frontmatter containing `n
 
 - Directory naming: lowercase, `dx`-prefixed (`dxplan`, `dximplement`, etc.)
 - Exceptions: the orchestrator is `dex`; the writing pass is `humanizer`
-- Skills reference prompts via `@prompts/<file>.md` import syntax
+- Skills reference prompts by plain repo-relative path (`prompts/<file>.md`)
 - Skills are codebase-agnostic — they discover toolchains at runtime
 - Claude gets skills via a single `~/.claude/skills -> $DEX_DIR/skills` symlink when possible; if `~/.claude/skills` is already a directory, `dx install` preserves unrelated skills and installs Dex skill symlinks inside it
 - Codex gets skills via individual symlinks in `$CODEX_HOME/skills/<name>` (`CODEX_HOME` defaults to `~/.codex`) so Dex does not replace Codex system/plugin skills
@@ -156,12 +160,17 @@ env_value: optional-exact-value
 - `env_var: DX_PROVIDER_ENGINE` has a session-state/config fallback so provider-scoped guards do not depend only on hook environment inheritance
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it).
 - Frontmatter parser is regex-based — flat `key: value` only, no nested objects or arrays
-- Built-in guards: `claude-attribution`, `destructive-commands`, `raw-codex-delegation`, `sensitive-files`, `hardcoded-secrets` — don't duplicate these
+- Built-in guards (in `hooks/guards/`, listed by their `name:` value — don't duplicate these):
+  `block-claude-attribution`, `block-destructive-commands`, `block-raw-codex-delegation`,
+  `block-review-assessment-bash`, `block-review-assessment-file-edits`,
+  `warn-await-in-loop`, `warn-hardcoded-secrets`, `warn-sensitive-files`
+- Guards fail closed: a `block` guard that times out, crashes, or cannot be loaded denies the
+  tool call. See docs/guards.md § Failure Behavior.
 
 ## Prompt Conventions
 
-Stored in `prompts/`. Referenced by skills and CLI harness prompts via
-`@prompts/<file>.md`.
+Stored in `prompts/`. Skills reference them by plain repo-relative path, e.g.
+"read the implementation guardrails from `prompts/guardrails.md`".
 
 - `guardrails.md` — Implementation discipline (shared across implement/review skills)
 - `review-risk-assessment.md` — Deterministic small/normal/complex review-tier selection before review waves
@@ -186,14 +195,16 @@ Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` 
 
 ### Hook integration
 
-Seven hooks defined in `settings.json`, referenced by paths to Dex scripts:
+Hooks defined in `settings.json`, referenced by paths to Dex scripts:
 
-| Hook | Event | Script | Purpose |
-|------|-------|--------|---------|
-| SessionStart | Startup | `load-ticket-context.sh` | Load ticket context, detect focus areas |
-| UserPromptSubmit | User prompt | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
-| PreToolUse | Before Bash/Edit/Write | `guard-handler.py` | Block/warn on dangerous patterns |
-| PostToolUse | After `git commit` | `post-commit-guard.sh` | Validate commit format via guards |
+| Hook | Matcher | Script | Purpose |
+|------|---------|--------|---------|
+| SessionStart | `startup` | `load-ticket-context.sh` | Load ticket context, detect focus areas |
+| UserPromptSubmit | (all) | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
+| PreToolUse | `Bash` | `guard-handler.py` (`DEX_GUARD_EVENT=bash`) | Block/warn on dangerous commands |
+| PreToolUse | `Bash` | `rtk-claude-hook.sh` | Optional RTK output-filtering rewrite; runs after the guard and fails open |
+| PreToolUse | `Edit\|Write\|MultiEdit\|NotebookEdit` | `guard-handler.py` (`DEX_GUARD_EVENT=file`) | Block/warn on dangerous file edits |
+| PostToolUse | `Bash` | `post-commit-guard.sh` | Validate commit format via guards |
 | Stop | Claude tries to stop | `phase-loop.sh`, `stop-sound.sh` | Phase audit loop (when active) plus best-effort macOS sound notification |
 | PreCompact | Before compaction | `pre-compact.sh` | Preserve Dex context across compaction |
 | SessionEnd | Session ends | `session-end.sh` | Record session end metadata |
@@ -248,7 +259,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 1. Create `skills/<dxname>/SKILL.md` (`skills/<name>/SKILL.md` only for approved non-`dx` exceptions such as `humanizer`)
 2. Add YAML frontmatter with `name` and `description`
 3. Write the skill prompt as markdown
-4. Reference shared prompts via `@prompts/<file>.md`
+4. Reference shared prompts by plain repo-relative path (`prompts/<file>.md`)
 5. The symlink from `dx install` makes it available as `/<dxname>`
 
 ### Adding a new guard
@@ -279,7 +290,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 
 ### Modularizing large scripts
 
-`dx.sh` is the largest file (~2800 lines). When adding shared or self-contained logic, prefer extracting it into `lib/` modules. The pattern:
+`dx.sh` is the largest file (~5300 lines). When adding shared or self-contained logic, prefer extracting it into `lib/` modules. The pattern:
 
 **When to extract:**
 - Same logic appears in 2+ functions → extract to `lib/`
@@ -318,20 +329,22 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 | `ui-capture.sh` | Playwright/UI capture tooling, artifact paths, MCP bootstrap | `dx_install_ui_capture_tooling()`, `dx_ui_capture_run_dir()`, `dx_ui_capture_playwright_ready()` |
 | `worktree.sh` | Worktree management utilities | `dx_wt_branch()`, `dx_wt_remove()`, `dx_cleanup_last_session()`, `dx_cleanup_stale_files()` |
 
-**dx.sh internal structure** (sections in order, approximate):
+**dx.sh internal structure** (sections in file order). Locate any of these with
+`grep -n '^<name>()' dx.sh` — line numbers are deliberately omitted here because
+they go stale on every edit:
 
-| Lines | Section | Functions |
-|-------|---------|-----------|
-| 35-156 | CLI dispatcher | `__dx_cli()`, `dex()`, `dexter()` |
-| 157-373 | Provider and phase config | `__dx_refresh_provider()`, `__dx_claude()`, phase arrays |
-| 374-1449 | Internal helpers, phase execution, display helpers | `__dx_is_ticket()`, `__dx_setup_worktree()`, `__dx_run_phases()` |
-| 1450-1665 | Phased lifecycle and aliases | `dx()`, `dex()`, `dexter()` |
-| 1666-1925 | Prompt loop and refinement | `dxloop()`, `dxrefine()` |
-| 1926-2361 | Completion and review loops | `dxcomplete()`, `dxreviewloop()` |
-| 2362-2567 | Worktree removal | `dxrm()` |
-| 2568-2626 | Worktree listing | `dxls()` |
-| 2627-2680 | Worktree navigation | `dxcd()` |
-| 2681-end | Stale cleanup | `dxclean()` |
+| Section | Functions |
+|---------|-----------|
+| CLI dispatcher | `__dx_cli()`, `dex()`, `dexter()` |
+| Provider and phase config | `__dx_refresh_provider()`, `__dx_claude()`, phase arrays |
+| Internal helpers, phase execution, display helpers | `__dx_is_ticket()`, `__dx_setup_worktree()`, `__dx_run_phases_inline()` |
+| Phased lifecycle and aliases | `dx()` |
+| Prompt loop and refinement | `dxloop()`, `dxrefine()` |
+| Completion and review loops | `dxcomplete()`, `dxreviewloop()` |
+| Worktree removal | `dxrm()` |
+| Worktree listing | `dxls()` |
+| Worktree navigation | `dxcd()` |
+| Stale cleanup | `dxclean()` |
 
 **Extraction candidates:**
 - Shared provider/model launch logic → `lib/provider.sh`

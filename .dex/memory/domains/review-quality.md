@@ -20,13 +20,13 @@ NotebookEdit. They must not enable project memory; review waves must not leave
 `.claude/agent-memory/` artifacts as a side effect of running.
 
 Evidence:
-- All specialist agent files (`agents/review-architecture.md`,
-  `review-contracts.md`, `review-correctness.md`, `review-devops.md`,
-  `review-frontend.md`, `review-observability.md`, `review-performance.md`,
-  `review-security.md`, `review-tests.md`, `review-verifier.md`) declare
-  `tools: Read, Glob, Grep, Bash` and explicitly state they are read-only.
-- `.dex/review-rules.md` codifies the rule for both `agents/*.md` and
-  review-wave skill files.
+- The standalone `agents/*.md` specialist files this entry originally cited no
+  longer exist; review specialists now live in `prompts/review-wave.md` and the
+  `skills/dxreview*/` skills. The read-only rule survived the move.
+- `hooks/guards/review-assessment-no-bash.md` and
+  `hooks/guards/review-assessment-no-file-edits.md` enforce it for the risk
+  assessor, blocking Bash and file edits while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`.
+- `.dex/review-rules.md` codifies the rule for review-wave prompts and skills.
 - Commit `4742c3f feat(review): add specialist review wave loop` body lists a
   smoke-test fix for "read-only specialist memory behavior", confirming this
   rule was already violated once and required a guardrail.

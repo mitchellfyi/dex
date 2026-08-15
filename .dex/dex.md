@@ -30,7 +30,7 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 
 ## Project Structure
 ```
-dx.sh                Main shell functions (zsh only, ~5200 lines)
+dx.sh                Main shell functions (zsh only, ~5300 lines)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
 bin/                 CLI scripts: install, uninstall, init, uninit, config, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line

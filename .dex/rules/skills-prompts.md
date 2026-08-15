@@ -6,7 +6,7 @@ Each skill lives in `skills/<name>/SKILL.md` with markdown content.
 
 - Directory naming: lowercase, `dx`-prefixed (`dxplan`, `dximplement`, etc.)
 - Exceptions: the orchestrator is `dex`; the writing pass is `humanizer`
-- Reference shared prompts via `@prompts/<file>.md` import syntax
+- Reference shared prompts by plain repo-relative path (`prompts/<file>.md`)
 - Skills are codebase-agnostic — they discover toolchains at runtime
 - Skills auto-discovered after symlink via `dx install`
 
@@ -15,21 +15,6 @@ ticket bodies, PR descriptions, GitHub/tracker comments, review replies,
 user-facing messages, code comments, or doc comments. Preserve technical
 identifiers, commands, paths, markdown structure, and required attribution while
 removing AI-sounding filler.
-
-## Agents
-
-Agents live in `agents/*.md` with YAML frontmatter:
-```yaml
----
-name: agent-name
-description: what it does
-tools: Read, Glob, Grep, Bash
-model: opus
-skills:
-  - dxreview
-memory: project
----
-```
 
 ## Guards
 
@@ -53,7 +38,8 @@ case_sensitive: false
 
 ## Prompts
 
-Stored in `prompts/`. Referenced by skills/agents via `@prompts/<file>.md`.
+Stored in `prompts/`. Referenced by skills by plain repo-relative path
+(`prompts/<file>.md`).
 
 - `guardrails.md` — Implementation discipline
 - `review.md` — 12-pass review criteria (A-L) with confidence scoring

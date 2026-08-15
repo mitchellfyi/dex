@@ -13,7 +13,7 @@ directory until promoted via a reviewable diff.
 
 | Domain | File | Loads For | Status |
 |--------|------|-----------|--------|
-| review-quality | domains/review-quality.md | Phase 3 review waves; editing `agents/review-*.md`, `agents/self-reviewer.md`, `agents/review-verifier.md`, `prompts/review-wave.md`, `prompts/review.md`, `prompts/phase-audits/3-review*.md`, or `skills/dxreview*/` | active |
+| review-quality | domains/review-quality.md | Phase 3 review waves; editing `prompts/review-wave.md`, `prompts/review.md`, `prompts/review-risk-assessment.md`, `prompts/phase-audits/3-review*.md`, `lib/review*.sh`, or `skills/dxreview*/` | active |
 | workflow-operations | domains/workflow-operations.md | Lifecycle phase ownership, in-place vs worktree mode, and shared global config; editing `dx.sh` phase routing, `skills/dx*/SKILL.md`, `prompts/phase-audits/`, `hooks/phase-loop.sh`, `bin/install-settings.sh`, `bin/uninstall.sh`, `bin/uninit.sh`, `bin/config.sh`, or session/branch state code | active |
 | security-guards | domains/security-guards.md | Editing `hooks/guard-handler.py`, `hooks/guards/*.md`, or `.dex/guards/*.md`; adding any new dangerous-command detector | active |
 | architecture-decisions | domains/architecture-decisions.md | Adding or editing any skill, prompt, agent, or research harness; adding/reordering Claude Code hooks or editing `settings.json` hook arrays; reviewing portability across repositories | active |

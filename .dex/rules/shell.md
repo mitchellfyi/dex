@@ -27,7 +27,12 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 source "$DEX_DIR/lib/common.sh"
 ```
 
-Sourcing `common.sh` automatically sources `git.sh`, `session.sh`, `output.sh`, `worktree.sh`, `provider.sh`, `codex.sh`, `ui-capture.sh`, `rtk.sh`, `events.sh`, `factory.sh`, `run-spec.sh`, `agent-tools.sh`, and `maintenance.sh`.
+Sourcing `common.sh` automatically sources every other module in `lib/`:
+`agent-tools.sh`, `attribution.sh`, `codex.sh`, `dexcode.sh`, `events.sh`,
+`factory.sh`, `git.sh`, `lifecycle-control.sh`, `maintenance.sh`, `output.sh`,
+`project-state.sh`, `provider.sh`, `review.sh`, `review-controller.sh`,
+`review-policy.sh`, `rtk.sh`, `run-spec.sh`, `session.sh`, `ui-capture.sh`, and
+`worktree.sh`.
 
 ## Output
 

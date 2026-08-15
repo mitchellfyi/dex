@@ -7,7 +7,7 @@ prompts, hooks, and the research harness.
 
 Domain: architecture-decisions
 Status: active
-Scope: skills/*/SKILL.md, prompts/*.md, prompts/phase-audits/*.md, prompts/init-analysis.md, research harness, agents/*.md
+Scope: skills/*/SKILL.md, prompts/*.md, prompts/phase-audits/*.md, prompts/init-analysis.md, research harness
 Applies to phases: plan, implement, review, verify, complete (any phase that loads skills or prompts)
 Applies to paths: skills/, prompts/, agents/
 Last verified: 2026-05-15
