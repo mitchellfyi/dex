@@ -149,12 +149,18 @@ cat > "$HOME/.dex/providers.json" <<'JSON'
 JSON
 cat > "$TMP_DIR/bin/claude" <<'SH'
 #!/usr/bin/env bash
-printf 'claude-stub token=%s base=%s leaked=%s\n' \
-  "${ANTHROPIC_AUTH_TOKEN:-}" "${ANTHROPIC_BASE_URL:-}" "${DEX_TEST_GATEWAY_TOKEN:-absent}"
+printf 'claude-stub token=%s base=%s leaked=%s sync=%s factory_url=%s\n' \
+  "${ANTHROPIC_AUTH_TOKEN:-}" "${ANTHROPIC_BASE_URL:-}" "${DEX_TEST_GATEWAY_TOKEN:-absent}" \
+  "${DEX_FACTORY_SYNC:-absent}" "${DEX_FACTORY_URL:-absent}"
 SH
 chmod +x "$TMP_DIR/bin/claude"
 export DX_PROVIDER_PROFILE="test-gateway"
 export DEX_TEST_GATEWAY_TOKEN="gateway-secret"
+# Factory sync coordinates must not leak into the launched session: its
+# tokens are stripped, so an inherited sync flag only produces per-event
+# configuration errors.
+export DEX_FACTORY_SYNC="true"
+export DEX_FACTORY_URL="https://factory.example.test"
 dx_provider_apply
 set +e
 gateway_output=$(dx_provider_claude 2>&1)
@@ -167,7 +173,9 @@ fi
 grep -Fq "token=gateway-secret" <<<"$gateway_output"
 grep -Fq "base=https://gateway.example.test" <<<"$gateway_output"
 grep -Fq "leaked=absent" <<<"$gateway_output"
-unset DEX_TEST_GATEWAY_TOKEN
+grep -Fq "sync=absent" <<<"$gateway_output"
+grep -Fq "factory_url=absent" <<<"$gateway_output"
+unset DEX_TEST_GATEWAY_TOKEN DEX_FACTORY_SYNC DEX_FACTORY_URL
 rm -f "$HOME/.dex/providers.json" "$TMP_DIR/bin/claude"
 export DX_PROVIDER_PROFILE="codex-subscription"
 dx_provider_apply

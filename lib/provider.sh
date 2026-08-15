@@ -773,10 +773,17 @@ __dx_provider_env_unset_args() {
   dx_provider_external_env_names
   dx_provider_config_auth_env_unsets
   dx_provider_claude_override_env_names
+  # Factory sync coordinates stay with the outer dx process: the tokens are
+  # always stripped below, so a launched session that inherited the sync
+  # flag/URL could never sync anyway — it would only log configuration
+  # errors on every event emission.
   cat <<'EOF'
 DEX_FACTORY_TOKEN
 DEX_FACTORY_RUN_TOKEN
 DEX_RUN_TOKEN
+DEX_FACTORY_SYNC
+DEX_FACTORY_URL
+DEX_FACTORY_EVENTS_ENDPOINT
 EOF
 }
 
