@@ -67,6 +67,17 @@ dx_dexcode_path_segment_valid() {
   [[ "$value" != *[!A-Za-z0-9._-]* ]]
 }
 
+# Emit a curl config carrying the Authorization header. Passing the bearer
+# token through curl's stdin keeps it out of argv, where any local process can
+# read it from ps for the life of the request; lib/factory.sh already avoids
+# argv for the same reason. Returns non-zero for an invalid token, which fails
+# the pipeline rather than sending an unauthenticated request.
+__dx_dexcode_auth_config() {
+  local token="${1:-}"
+  dx_dexcode_bearer_token_valid "$token" || return 1
+  printf 'header = "Authorization: Bearer %s"\n' "$token"
+}
+
 dx_dexcode_bearer_token_valid() {
   local token="${1:-}"
   [[ -n "$token" && ${#token} -le 8192 ]] || return 1
@@ -789,10 +800,9 @@ dx_dexcode_fetch_profile() {
     return 1
   }
   timeout_seconds=$(dx_dexcode_http_timeout)
-  if ! http_status=$(command curl -q -sS -o "$out_file" -w "%{http_code}" \
+  if ! http_status=$(__dx_dexcode_auth_config "$token" | command curl -q -sS --config - -o "$out_file" -w "%{http_code}" \
     --max-time "$timeout_seconds" \
     --proto '=http,https' \
-    -H "Authorization: Bearer ${token}" \
     -H "Accept: application/json" \
     "${api_url}/api/v1/profile" 2>/dev/null); then
     http_status="000"
@@ -1261,10 +1271,9 @@ PY
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-project.XXXXXX") || return 1
   response_file="$tmp_dir/project.json"
 
-  if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
+  if ! http_status=$(__dx_dexcode_auth_config "$token" | command curl -q -sS --config - -o "$response_file" -w "%{http_code}" \
     --max-time "$timeout_seconds" \
     --proto '=http,https' \
-    -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     -d "$payload" \
@@ -2167,10 +2176,9 @@ dx_dexcode_prepare_run_sync() {
     return 0
   fi
 
-  if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
+  if ! http_status=$(__dx_dexcode_auth_config "$token" | command curl -q -sS --config - -o "$response_file" -w "%{http_code}" \
     --max-time "$timeout_seconds" \
     --proto '=http,https' \
-    -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     --data-binary @"$payload_file" \
@@ -2281,11 +2289,10 @@ PY
   ) || { command rm -rf "$tmp_dir"; return 0; }
 
   if [[ -n "$idempotency_key" ]]; then
-    if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
+    if ! http_status=$(__dx_dexcode_auth_config "$token" | command curl -q -sS --config - -o "$response_file" -w "%{http_code}" \
       --max-time "$timeout_seconds" \
       --proto '=http,https' \
-      -H "Authorization: Bearer ${token}" \
-      -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" \
       -H "Accept: application/json" \
       -H "Idempotency-Key: ${idempotency_key}" \
       -d "$payload" \
@@ -2293,11 +2300,10 @@ PY
       http_status="000"
     fi
   else
-    if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
+    if ! http_status=$(__dx_dexcode_auth_config "$token" | command curl -q -sS --config - -o "$response_file" -w "%{http_code}" \
       --max-time "$timeout_seconds" \
       --proto '=http,https' \
-      -H "Authorization: Bearer ${token}" \
-      -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" \
       -H "Accept: application/json" \
       -d "$payload" \
       "${api_url}/api/v1/runs/${run_id}/artifacts" 2>/dev/null); then
@@ -2364,10 +2370,9 @@ print(json.dumps(body, sort_keys=True, separators=(",", ":")))
 PY
   ) || { command rm -rf "$tmp_dir"; return 0; }
 
-  if ! http_status=$(command curl -q -sS -o /dev/null -w "%{http_code}" \
+  if ! http_status=$(__dx_dexcode_auth_config "$token" | command curl -q -sS --config - -o /dev/null -w "%{http_code}" \
     --max-time "$timeout_seconds" \
     --proto '=http,https' \
-    -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     -d "$complete_payload" \
@@ -2468,10 +2473,9 @@ dx_dexcode_sync_project_context() {
     return 0
   fi
 
-  if ! http_status=$(command curl -q -sS -o "$response_file" -w "%{http_code}" \
+  if ! http_status=$(__dx_dexcode_auth_config "$token" | command curl -q -sS --config - -o "$response_file" -w "%{http_code}" \
     --max-time "$timeout_seconds" \
     --proto '=http,https' \
-    -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     --data-binary @"$payload_file" \

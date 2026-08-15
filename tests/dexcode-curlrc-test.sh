@@ -177,4 +177,38 @@ assert upload["authorization"] == "", upload
 assert base64.b64decode(upload["body"]) == b"artifact bytes must stay on the signed origin\n", upload
 PY
 
+# The bearer token must never reach curl's argv, where any local process can
+# read it from ps for the life of the request. It travels in a --config read
+# from stdin instead.
+stub_dir="$TMP_DIR/stub-bin"
+mkdir -p "$stub_dir"
+cat > "$stub_dir/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$CURL_ARGV_LOG"
+cat > "$CURL_STDIN_LOG"
+printf '200'
+STUB
+chmod +x "$stub_dir/curl"
+
+export CURL_ARGV_LOG="$TMP_DIR/curl-argv.txt"
+export CURL_STDIN_LOG="$TMP_DIR/curl-stdin.txt"
+PATH="$stub_dir:$PATH" dx_dexcode_fetch_profile \
+  "http://127.0.0.1:1/api" "argv-leak-canary-token" "$TMP_DIR/profile.json" >/dev/null 2>&1 || true
+
+if grep -Fq "argv-leak-canary-token" "$CURL_ARGV_LOG"; then
+  printf 'bearer token leaked into curl argv:\n' >&2
+  cat "$CURL_ARGV_LOG" >&2
+  exit 1
+fi
+grep -Fq -- '--config -' "$CURL_ARGV_LOG" || {
+  printf 'curl was not given a stdin config for authentication:\n' >&2
+  cat "$CURL_ARGV_LOG" >&2
+  exit 1
+}
+grep -Fq "header = \"Authorization: Bearer argv-leak-canary-token\"" "$CURL_STDIN_LOG" || {
+  printf 'authorization header was not delivered on stdin:\n' >&2
+  cat "$CURL_STDIN_LOG" >&2
+  exit 1
+}
+
 printf 'dexcode-curlrc-test passed\n'
