@@ -123,4 +123,35 @@ assert data["exit_code"] == 42, data
 assert data["resume_command"] == "dx --no-worktree fail setup", data
 PY
 
+# An interrupted run must be distinguishable from a crashed provider in the
+# journal: both exit non-zero, but only one of them is a failure to diagnose.
+zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  run_id=$(dx_run_prepare "interrupt-session" "$DEX_DIR" "in-place" "interrupt-test" "ctrl c" "dx")
+  terminal_data=$(__dx_terminal_event_data "failed" "interrupted" "2" "Implement" "130" "dx --resume")
+  dx_event_emit "$run_id" "run.failed" "error" "Dex lifecycle was interrupted at Phase 2: Implement" "2" "$terminal_data"
+'
+
+python3 - "$TMP_DIR/requests.jsonl" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+events = []
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    for event in json.loads(line)["body"]["events"]:
+        events.append(event)
+
+interrupted = [
+    event for event in events
+    if event.get("type") == "run.failed" and event.get("data", {}).get("reason") == "interrupted"
+]
+assert interrupted, [event.get("data", {}).get("reason") for event in events]
+data = interrupted[-1]["data"]
+assert data["exit_code"] == 130, data
+assert "interrupted" in interrupted[-1]["message"], interrupted[-1]
+PY
+
 printf 'lifecycle terminal event test passed\n'

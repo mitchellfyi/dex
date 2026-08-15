@@ -1929,7 +1929,12 @@ __dx_run_phases_inline() {
 
   local session_timeout="${DEX_SESSION_TIMEOUT:-$DX_SESSION_TIMEOUT}"
   local _dx_watchdog_pid="" _dx_pidfile=""
-  _dx_pidfile=$(mktemp "${TMPDIR:-/tmp}/dx-inline.XXXXXX")
+  # An unchecked mktemp leaves the path empty, and the watchdog below then
+  # polls a file that can never appear, spinning for the whole session.
+  if ! _dx_pidfile=$(mktemp "${TMPDIR:-/tmp}/dx-inline.XXXXXX"); then
+    dx_error "Could not create the phase handoff temp file"
+    return 1
+  fi
 
   if [[ "$session_timeout" -gt 0 ]]; then
     (
@@ -2029,11 +2034,22 @@ __dx_run_phases_inline() {
 	  fi
 
   if [[ $exit_code -ne 0 ]]; then
-    local terminal_data
-    terminal_data=$(__dx_terminal_event_data "failed" "provider-exit" "$final_step" "$(__dx_phase_name "$final_step")" "$exit_code" "$resume_hint")
-    dx_event_emit_for_session "$session_id" "run.failed" "error" "Dex lifecycle exited at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
-    dx_run_log_append_for_session "$session_id" "error" "dx" "Lifecycle exited at Phase ${final_step} with code ${exit_code}"
-    dx_run_write_summary_for_session "$session_id" "failed" "Exited at Phase ${final_step} with code ${exit_code}"
+    local terminal_data terminal_reason="provider-exit" terminal_detail="exited"
+    # 130 is Ctrl-C and 143 is SIGTERM. Recording those as a provider crash
+    # makes an ordinary interruption indistinguishable from a real failure in
+    # the run journal.
+    if [[ $exit_code -eq 130 || $exit_code -eq 143 ]]; then
+      terminal_reason="interrupted"
+      terminal_detail="was interrupted"
+    fi
+    terminal_data=$(__dx_terminal_event_data "failed" "$terminal_reason" "$final_step" "$(__dx_phase_name "$final_step")" "$exit_code" "$resume_hint")
+    dx_event_emit_for_session "$session_id" "run.failed" "error" "Dex lifecycle ${terminal_detail} at Phase ${final_step}: $(__dx_phase_name "$final_step")" "$final_step" "$terminal_data"
+    dx_run_log_append_for_session "$session_id" "error" "dx" "Lifecycle ${terminal_detail} at Phase ${final_step} with code ${exit_code}"
+    dx_run_write_summary_for_session "$session_id" "failed" "Lifecycle ${terminal_detail} at Phase ${final_step} with code ${exit_code}"
+    # The loop is no longer running, so drop its ownership claim. Phase and
+    # timing state stay put: that is what --resume reads.
+    rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+      "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" 2>/dev/null
     __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
     echo ""
     echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (exit ${exit_code})"
