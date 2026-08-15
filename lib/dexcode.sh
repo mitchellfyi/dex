@@ -717,6 +717,27 @@ else:
     default_project = None
 selected = existing.get("default_project") if isinstance(existing.get("default_project"), dict) else {}
 selected_slug = selected.get("slug") if valid_segment(selected.get("slug")) else ""
+# Organisations this account can actually reach, as the server just reported
+# them. An older server that does not send them yields an empty set, and then
+# nothing below is dropped.
+reachable_slugs = {
+    item.get("slug")
+    for item in (profile.get("organisations") or [])
+    if isinstance(item, dict) and valid_segment(item.get("slug"))
+}
+selected_org = selected.get("organisation_slug")
+if (
+    selected_slug
+    and reachable_slugs
+    and valid_segment(selected_org)
+    and selected_org not in reachable_slugs
+):
+    # The remembered project belongs to an organisation this account can no
+    # longer reach, so the token stored against it is dead. Preserving it would
+    # leave the flat fields pointing at that connection, and every command
+    # after this would report "This machine is no longer connected. Run
+    # 'dx login'" — immediately after a successful dx login.
+    selected_slug = ""
 if selected_slug:
     # Keep the user's choice even when this login was for a different
     # organisation; re-authenticating one connection should not silently move

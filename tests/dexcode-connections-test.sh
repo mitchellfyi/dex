@@ -101,6 +101,14 @@ PY
 # Stands in for a login: the token response and profile the server returns.
 write_login() {
   local token="$1" org_slug="$2" org_name="$3" project_slug="$4" api_url="$5" factory_url="$6"
+  # The organisations the server says this account can reach. Defaults to both
+  # test organisations; pass a narrower list to stand in for one that has gone
+  # away.
+  local orgs_json="${7:-$(cat <<'ORGS'
+    {"slug": "alpha", "name": "Alpha", "personal": true, "default": false},
+    {"slug": "beta", "name": "Beta", "personal": false, "default": false}
+ORGS
+)}"
   local token_file="$TMP_DIR/token.json" profile_file="$TMP_DIR/profile.json"
   cat > "$token_file" <<JSON
 {"access_token": "$token", "token_type": "Bearer", "scopes": ["runs:write"]}
@@ -110,8 +118,7 @@ JSON
   "user": {"id": "u1", "email": "person@example.com", "name": "Person"},
   "account": {"slug": "$org_slug", "name": "$org_name", "personal": false},
   "organisations": [
-    {"slug": "alpha", "name": "Alpha", "personal": true, "default": false},
-    {"slug": "beta", "name": "Beta", "personal": false, "default": false}
+$orgs_json
   ],
   "projects": [
     {"slug": "$project_slug", "name": "$project_slug", "default_branch": "main",
@@ -302,5 +309,27 @@ assert_eq "https://dexcode.example" "$(config_value "data['connections']['legacy
 assert_eq "legacy-project" "$(config_value "data['default_project']['slug']")" "legacy selection kept"
 assert_eq "https://dexcode.example" "$(dx_dexcode_api_url)" "legacy API origin remains active"
 assert_eq "https://dexcode.example" "$(dx_dexcode_factory_url)" "legacy Factory origin remains active"
+
+# --- an organisation the account can no longer reach -------------------------
+# Preserving the previous selection is right until the organisation behind it
+# has gone away. Then the flat fields keep describing a connection whose token
+# is dead, and every command after a *successful* login reports "This machine
+# is no longer connected. Run 'dx login' to reconnect" — which is exactly what
+# the person just did. Start from a clean config so the selection carries an
+# organisation: the legacy case above deliberately has none, and is untouched.
+
+rm -f "$DEXCODE_CONFIG_FILE"
+write_login "dc_live_alpha_token" "alpha" "Alpha" "alpha-project" "$ORIGIN_A" "$ORIGIN_A/factory"
+assert_eq "alpha" "$(config_value "data['default_project']['organisation_slug']")" "selection names its organisation"
+
+write_login "dc_live_gamma_token" "gamma" "Gamma" "gamma-project" \
+  "$ORIGIN_B" "$ORIGIN_B/factory" \
+  '    {"slug": "gamma", "name": "Gamma", "personal": true, "default": true}'
+assert_eq "gamma-project" "$(config_value "data['default_project']['slug']")" \
+  "selection leaves an organisation the login cannot reach"
+assert_eq "dc_live_gamma_token" "$(dx_dexcode_token)" \
+  "token follows the organisation the login could reach"
+assert_eq "$ORIGIN_B" "$(dx_dexcode_api_url)" \
+  "API origin follows the reachable organisation"
 
 printf 'dexcode-connections-test passed\n'
