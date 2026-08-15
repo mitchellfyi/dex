@@ -81,6 +81,8 @@ rotate_file = root / "issued-tokens"
 WORKER_ID = "11111111-1111-4111-8111-111111111111"
 LAUNCH_ID = "22222222-2222-4222-8222-222222222222"
 RUN_ID = "run_20260815_0001_worker"
+RUN_ID_TWO = "run_20260815_0002_worker"
+concurrency_file = root / "concurrency"
 
 FIRST_WORKER_TOKEN = "dc_worker_" + "a" * 43
 SECOND_WORKER_TOKEN = "dc_worker_" + "b" * 43
@@ -160,8 +162,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"error": "unauthorized"})
                 return
 
+            try:
+                concurrency = int(concurrency_file.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                concurrency = 1
+
             assigned = []
-            if mode in ("", "queued"):
+            if mode in ("", "queued", "two"):
                 assigned = [
                     {
                         "launch_request_id": LAUNCH_ID,
@@ -171,6 +178,16 @@ class Handler(BaseHTTPRequestHandler):
                         "lease_expires_at": None,
                     }
                 ]
+            if mode == "two":
+                assigned.append(
+                    {
+                        "launch_request_id": LAUNCH_ID,
+                        "run_id": RUN_ID_TWO,
+                        "status": "queued",
+                        "requested_at": "2026-08-15T00:00:01+00:00",
+                        "lease_expires_at": None,
+                    }
+                )
             self._json(
                 200,
                 {
@@ -178,18 +195,22 @@ class Handler(BaseHTTPRequestHandler):
                     "name": "test-worker",
                     "status": "online",
                     "current_run_id": None,
+                    "max_concurrency": concurrency,
                     "poll_interval": 1,
                     "assigned_runs": assigned,
                 },
             )
             return
 
-        if self.path == f"/api/v1/runs/{RUN_ID}/spec":
+        if self.path in (
+            f"/api/v1/runs/{RUN_ID}/spec",
+            f"/api/v1/runs/{RUN_ID_TWO}/spec",
+        ):
             # The child fetches this with its run token, never the worker one.
             self._json(
                 200,
                 {
-                    "run_id": RUN_ID,
+                    "run_id": self.path.split("/api/v1/runs/")[1].split("/spec")[0],
                     "repository": {
                         "working_directory": str(root / "repo"),
                         "default_branch": "main",
@@ -238,23 +259,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(401, {"error": "unauthorized"})
             return
 
-        if self.path == f"/api/v1/workers/{WORKER_ID}/runs/{RUN_ID}/start":
+        if self.path.startswith(f"/api/v1/workers/{WORKER_ID}/runs/") and self.path.endswith("/start"):
+            started = self.path.split("/runs/")[1].split("/start")[0]
             self._json(
                 200,
                 {
                     "worker": {"id": WORKER_ID},
-                    "run_id": RUN_ID,
+                    "run_id": started,
                     "launch_request_id": LAUNCH_ID,
                     "lease_expires_at": "2026-08-15T01:00:00+00:00",
                     "attempt": 1,
                     "run_token": RUN_TOKEN,
                     "spec_url": f"http://127.0.0.1:{self.server.server_port}"
-                    f"/api/v1/runs/{RUN_ID}/spec",
+                    f"/api/v1/runs/{started}/spec",
                 },
             )
             return
 
-        if self.path == f"/api/v1/workers/{WORKER_ID}/runs/{RUN_ID}/lease":
+        if self.path.startswith(f"/api/v1/workers/{WORKER_ID}/runs/") and self.path.endswith("/lease"):
             self._json(
                 200,
                 {
@@ -266,7 +288,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == f"/api/v1/workers/{WORKER_ID}/runs/{RUN_ID}/settle":
+        if self.path.startswith(f"/api/v1/workers/{WORKER_ID}/runs/") and self.path.endswith("/settle"):
             self._json(
                 200,
                 {
@@ -481,6 +503,52 @@ if [[ -n "$settle_outcome" ]]; then
 else
   fail "a failed child should still settle its attempt; daemon said: ${broken_output}"
 fi
+
+# --- concurrency -------------------------------------------------------------
+
+# The server decides how many runs a worker may hold. A daemon that only ever
+# ran one at a time never asked for the second, so a worker registered for two
+# did the work of one.
+: > "$TMP_DIR/requests.jsonl"
+printf 'two' > "$TMP_DIR/poll-mode"
+printf '2' > "$TMP_DIR/concurrency"
+
+run_daemon --once --dry-run --working-directory "$TMP_DIR/repo" > "$TMP_DIR/two.log" 2>&1
+cp "$TMP_DIR/two.log" /private/tmp/claude-501/-Users-m12n-Dropbox-work-m12n-org-dexcode-ai/1501453b-3325-4f8f-bd4f-746fbbb158d4/scratchpad/two.log
+
+started_runs="$(requests_for "/start" | grep -c '"method": "POST"' || true)"
+assert_eq "2" "$started_runs" "both queued runs are claimed when two are allowed"
+
+settled_runs="$(requests_for "/settle" | grep -c '"method": "POST"' || true)"
+assert_eq "2" "$settled_runs" "both claimed runs are settled"
+
+# And it must not exceed what the server allows.
+: > "$TMP_DIR/requests.jsonl"
+printf '1' > "$TMP_DIR/concurrency"
+
+run_daemon --once --dry-run --working-directory "$TMP_DIR/repo" >/dev/null
+
+started_one="$(requests_for "/start" | grep -c '"method": "POST"' || true)"
+assert_eq "1" "$started_one" "only one run is claimed when one is allowed"
+
+printf 'queued' > "$TMP_DIR/poll-mode"
+printf '1' > "$TMP_DIR/concurrency"
+
+# --- service definition ------------------------------------------------------
+
+# It prints rather than installs: loading a unit changes how the machine boots.
+service_output="$(zsh -fc "source \"\$DEX_DIR/dx.sh\"; dx worker service --working-directory '$TMP_DIR/repo'" 2>/dev/null)"
+case "$(uname -s)" in
+  Darwin)
+    assert_contains "$service_output" "ai.dexcode.worker" "launchd label"
+    assert_contains "$service_output" "/bin/zsh" "launchd runs the shell dx.sh needs"
+    ;;
+  *)
+    assert_contains "$service_output" "dexcode-worker" "systemd description"
+    assert_contains "$service_output" "TimeoutStopSec" "systemd waits for in-flight runs"
+    ;;
+esac
+assert_contains "$service_output" "$TMP_DIR/repo" "the working directory is carried through"
 
 if [[ $failures -eq 0 ]]; then
   printf 'dexcode-worker-test passed\n'

@@ -129,9 +129,11 @@ dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and pl
 that syncs run events and artifacts; see [docs/events.md](docs/events.md).
 
 `dx worker register` enrolls this machine so DexCode can dispatch runs to it,
-and `dx worker run` polls for them, executes each one, and reports the result.
-The worker pulls: DexCode never connects to this machine. Use
-`dx worker run --once --dry-run` to prove the wiring without doing any work.
+and `dx worker run` polls for them, executes each one, and reports the result,
+up to the concurrency the worker is registered for. The worker pulls: DexCode
+never connects to this machine. Use `dx worker run --once --dry-run` to prove
+the wiring without doing any work, and `dx worker service` to print a launchd
+agent or systemd unit that keeps it running.
 
 `dex` and `dexter` are aliases for `dx`.
 

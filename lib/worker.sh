@@ -179,7 +179,7 @@ __dx_worker_request() {
 # the only place a worker token can be issued.
 dx_worker_register() {
   local worker_name="" worker_host="" rotate="false" max_concurrency=""
-  local working_directory="" arg
+  local working_directory="" worker_status="" arg
 
   while [[ $# -gt 0 ]]; do
     arg="$1"
@@ -188,6 +188,7 @@ dx_worker_register() {
       --host) worker_host="${2:-}"; shift 2 || return 1 ;;
       --max-concurrency) max_concurrency="${2:-}"; shift 2 || return 1 ;;
       --working-directory) working_directory="${2:-}"; shift 2 || return 1 ;;
+      --status) worker_status="${2:-}"; shift 2 || return 1 ;;
       --rotate) rotate="true"; shift ;;
       -h|--help)
         cat <<'USAGE'
@@ -228,6 +229,7 @@ USAGE
   DX_WORKER_NAME="$worker_name" \
   DX_WORKER_HOST="$worker_host" \
   DX_WORKER_ROTATE="$rotate" \
+  DX_WORKER_STATUS="$worker_status" \
   DX_WORKER_MAX_CONCURRENCY="$max_concurrency" \
   DX_WORKER_WORKING_DIRECTORY="$working_directory" \
   DX_WORKER_PAYLOAD_FILE="$payload_file" \
@@ -249,6 +251,11 @@ if concurrency:
 working_directory = os.environ.get("DX_WORKER_WORKING_DIRECTORY") or ""
 if working_directory:
     worker["working_directory"] = working_directory[:512]
+status = os.environ.get("DX_WORKER_STATUS") or ""
+if status:
+    if status not in {"offline", "online", "busy", "disabled", "error"}:
+        raise SystemExit(1)
+    worker["status"] = status
 
 payload = {"worker": worker}
 if os.environ.get("DX_WORKER_ROTATE") == "true":
@@ -519,9 +526,57 @@ __dx_worker_execute() {
   return 0
 }
 
+# Live children, one per claimed run. A worker may hold as many as its
+# `max_concurrency` allows; the server refuses a claim beyond it anyway, but a
+# daemon that only ever ran one at a time never asked for the second.
+#
+# An array, not a space-separated string: zsh does not word-split an unquoted
+# parameter, so `for pid in $PIDS` yields one word containing every pid and
+# `wait` refuses it. That failed only once there were two children to wait for,
+# which is exactly the case this exists for.
+DX_WORKER_CHILD_PIDS=()
+
+__dx_worker_reap_children() {
+  local pid
+  local -a remaining=()
+  for pid in ${DX_WORKER_CHILD_PIDS[@]+"${DX_WORKER_CHILD_PIDS[@]}"}; do
+    if kill -0 "$pid" 2>/dev/null; then
+      remaining+=("$pid")
+    else
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+  DX_WORKER_CHILD_PIDS=(${remaining[@]+"${remaining[@]}"})
+}
+
+__dx_worker_child_count() {
+  printf '%s\n' "${#DX_WORKER_CHILD_PIDS[@]}"
+}
+
+__dx_worker_wait_for_children() {
+  local pid
+  for pid in ${DX_WORKER_CHILD_PIDS[@]+"${DX_WORKER_CHILD_PIDS[@]}"}; do
+    wait "$pid" 2>/dev/null || true
+  done
+  DX_WORKER_CHILD_PIDS=()
+}
+
+# Best effort, and deliberately not required. The daemon holds only its worker
+# credential, which cannot change the worker's status; re-registering needs the
+# administrator token, which a headless worker may not have. When it is absent
+# the app still shows the machine as not responding, because it stops checking
+# in — so this is a courtesy, not the mechanism.
+__dx_worker_mark_offline() {
+  local worker_name
+  worker_name="$(dx_worker_config_value 'worker_name' 2>/dev/null || printf '')"
+  [[ -n "$worker_name" ]] || return 0
+  dx_dexcode_token >/dev/null 2>&1 || return 0
+  dx_worker_register --name "$worker_name" --status offline >/dev/null 2>&1 || true
+}
+
 # dx_worker_daemon [--once] [--interval <seconds>] [--working-directory <path>]
 dx_worker_daemon() {
-  local once=0 interval="" work_dir="$PWD" dry_run=0 arg
+  local once=0 interval="" work_dir="$PWD" dry_run=0 concurrency="" arg
 
   while [[ $# -gt 0 ]]; do
     arg="$1"
@@ -529,17 +584,23 @@ dx_worker_daemon() {
       --once) once=1; shift ;;
       --dry-run) dry_run=1; shift ;;
       --interval) interval="${2:-}"; shift 2 || return 1 ;;
+      --concurrency) concurrency="${2:-}"; shift 2 || return 1 ;;
       --working-directory) work_dir="${2:-}"; shift 2 || return 1 ;;
       -h|--help)
         cat <<'USAGE'
 Usage:
   dx worker run [--once] [--dry-run] [--interval <seconds>]
-                [--working-directory <path>]
+                [--concurrency <n>] [--working-directory <path>]
 
 Polls DexCode for runs assigned to this worker, claims them, and runs each one
-to completion. --once polls a single time and exits. --dry-run claims and
-validates a run, then stops the child before the lifecycle launches — use it
-to prove a worker is wired up without doing the work.
+to completion, up to the worker's registered concurrency. --once polls a single
+time and exits. --concurrency asks for fewer than the server allows, never
+more. --dry-run claims and validates a run, then stops the child before the
+lifecycle launches — use it to prove a worker is wired up without doing the
+work.
+
+INT or TERM stops it taking new work and waits for the runs it already holds,
+so those are settled rather than left for their leases to expire.
 USAGE
         return 0
         ;;
@@ -559,7 +620,19 @@ USAGE
   start_file="$tmp_dir/start.json"
 
   local rc=0
+  # A signal stops the daemon taking new work; children already running are
+  # left to finish so their runs are settled rather than abandoned mid-flight
+  # for the lease to expire.
+  DX_WORKER_STOPPING=0
+  trap 'DX_WORKER_STOPPING=1; dx_info "Finishing in-flight runs before exit."' INT TERM
+
   while true; do
+    __dx_worker_reap_children
+
+    if [[ "${DX_WORKER_STOPPING:-0}" -eq 1 ]]; then
+      break
+    fi
+
     local poll_code
     poll_code="$(dx_worker_poll "$poll_file")"
 
@@ -586,24 +659,45 @@ USAGE
       continue
     fi
 
-    local queued run_id start_code
+    # The server is the authority on how many runs this worker may hold; a
+    # local --concurrency can only ask for fewer.
+    local allowed running slots
+    allowed="$(__dx_worker_json_field "$poll_file" "max_concurrency" 2>/dev/null || printf '1')"
+    case "$allowed" in ''|*[!0-9]*) allowed=1 ;; esac
+    [[ "$allowed" -ge 1 ]] || allowed=1
+    if [[ -n "$concurrency" && "$concurrency" -lt "$allowed" ]]; then
+      allowed="$concurrency"
+    fi
+    running="$(__dx_worker_child_count)"
+    slots=$((allowed - running))
+
+    local queued run_id start_code claim_file
     queued="$(__dx_worker_queued_runs "$poll_file")"
-    if [[ -n "$queued" ]]; then
+    if [[ -n "$queued" && $slots -gt 0 ]]; then
       while IFS= read -r run_id; do
         [[ -n "$run_id" ]] || continue
+        [[ $slots -gt 0 ]] || break
         start_code="$(dx_worker_start "$run_id" "$start_file")"
         if ! dx_dexcode_http_success "$start_code"; then
           # 409 is ordinary: another worker took it first.
           dx_info "Could not claim ${run_id} (HTTP ${start_code})."
           continue
         fi
-        __dx_worker_execute "$run_id" "$work_dir" "$tmp_dir" "$start_file" "$dry_run" || rc=1
+        # Each run gets its own copy of the claim, because the next iteration
+        # overwrites the shared start file while this child is still reading it.
+        claim_file="${tmp_dir}/start-$(__dx_worker_child_count)-$$.json"
+        command cp "$start_file" "$claim_file" 2>/dev/null || continue
+        __dx_worker_execute "$run_id" "$work_dir" "$tmp_dir" "$claim_file" "$dry_run" &
+        DX_WORKER_CHILD_PIDS+=("$!")
+        slots=$((slots - 1))
       done <<EOF
 $queued
 EOF
     fi
 
-    [[ $once -eq 1 ]] && break
+    if [[ $once -eq 1 ]]; then
+      break
+    fi
 
     local wait_seconds
     wait_seconds="$(__dx_worker_json_field "$poll_file" "poll_interval" 2>/dev/null || printf '')"
@@ -611,8 +705,108 @@ EOF
     sleep "$(__dx_worker_bounded_interval "$wait_seconds")"
   done
 
+  # Whether this was --once or a signal, the runs already claimed have to be
+  # settled before the process goes away.
+  __dx_worker_wait_for_children
+  trap - INT TERM
+  __dx_worker_mark_offline
+
   command rm -rf "$tmp_dir"
   return $rc
+}
+
+# dx_worker_service [--working-directory <path>]
+#
+# Prints the service definition for this platform. It prints rather than
+# installs: putting a unit into launchd or systemd changes how the machine
+# boots, which is the operator's decision and not something a CLI should do
+# behind their back. The output is ready to redirect into place.
+dx_worker_service() {
+  local work_dir="$PWD" arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      --working-directory) work_dir="${2:-}"; shift 2 || return 1 ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage:
+  dx worker service [--working-directory <path>]
+
+Prints a launchd agent (macOS) or systemd unit (Linux) that keeps
+`dx worker run` alive. Redirect it into place and load it yourself.
+USAGE
+        return 0
+        ;;
+      *) dx_error "Unknown dx worker service option: $arg"; return 1 ;;
+    esac
+  done
+
+  if ! dx_worker_id >/dev/null 2>&1; then
+    dx_error "This machine is not registered as a worker. Run 'dx worker register' first."
+    return 1
+  fi
+
+  local dex_dir log_dir worker_name
+  dex_dir="${DEX_DIR:-$HOME/work/dex}"
+  log_dir="${HOME}/.dex/logs"
+  worker_name="$(dx_worker_config_value 'worker_name' 2>/dev/null || printf 'dex-worker')"
+
+  case "$(uname -s 2>/dev/null || printf 'Linux')" in
+    Darwin)
+      cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.dexcode.worker</string>
+  <!-- dx.sh is zsh-only, and -l so the login profile sets DEX_DIR. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>source "${dex_dir}/dx.sh"; cd "${work_dir}"; exec dx worker run</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>WorkingDirectory</key><string>${work_dir}</string>
+  <key>StandardOutPath</key><string>${log_dir}/worker.log</string>
+  <key>StandardErrorPath</key><string>${log_dir}/worker.log</string>
+</dict>
+</plist>
+PLIST
+      dx_info "Save as ~/Library/LaunchAgents/ai.dexcode.worker.plist, then:" >&2
+      dx_info "  mkdir -p ${log_dir}" >&2
+      dx_info "  launchctl load ~/Library/LaunchAgents/ai.dexcode.worker.plist" >&2
+      ;;
+    *)
+      cat <<UNIT
+[Unit]
+Description=DexCode worker (${worker_name})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# dx.sh is zsh-only, and -l so the login profile sets DEX_DIR.
+ExecStart=/bin/zsh -lc 'source "${dex_dir}/dx.sh"; cd "${work_dir}"; exec dx worker run'
+WorkingDirectory=${work_dir}
+Restart=always
+RestartSec=10
+# The daemon finishes the runs it holds before exiting, so give it room rather
+# than killing it mid-run and leaving the leases to expire.
+KillSignal=SIGTERM
+TimeoutStopSec=900
+
+[Install]
+WantedBy=default.target
+UNIT
+      dx_info "Save as ~/.config/systemd/user/dexcode-worker.service, then:" >&2
+      dx_info "  systemctl --user daemon-reload" >&2
+      dx_info "  systemctl --user enable --now dexcode-worker" >&2
+      ;;
+  esac
+  return 0
 }
 
 dx_worker_status() {
@@ -644,20 +838,22 @@ dx_worker_command() {
     register) dx_worker_register "$@" ;;
     run|daemon) dx_worker_daemon "$@" ;;
     status) dx_worker_status "$@" ;;
+    service) dx_worker_service "$@" ;;
     help|-h|--help)
       cat <<'USAGE'
 Usage:
-  dx worker <register|run|status>
+  dx worker <register|run|status|service>
 
 Commands:
   register  Register this machine as a DexCode worker and store its credential
   run       Poll for assigned runs and execute them
   status    Show the stored worker registration
+  service   Print a launchd agent or systemd unit that keeps the worker running
 USAGE
       ;;
     *)
       dx_error "Unknown worker command: ${cmd}"
-      dx_info "Usage: dx worker <register|run|status>"
+      dx_info "Usage: dx worker <register|run|status|service>"
       return 1
       ;;
   esac
