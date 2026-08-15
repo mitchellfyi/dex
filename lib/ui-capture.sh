@@ -59,18 +59,24 @@ dx_install_ui_capture_playwright() {
     dx_ok "Playwright UI capture tooling already installed"
   else
     dx_info "Installing Playwright UI capture tooling into $(dx_ui_capture_tools_dir)"
-    (
+    if ! (
       cd "$tools_dir" || exit 1
       npm install --no-audit --no-fund --save-exact playwright@latest @playwright/test@latest
-    )
+    ); then
+      dx_warn "Playwright install failed; UI capture will be unavailable"
+      return 1
+    fi
     dx_done "Installed Playwright UI capture tooling"
   fi
 
   dx_info "Ensuring Playwright Chromium browser is installed"
-  (
+  if ! (
     cd "$tools_dir" || exit 1
     npx playwright install chromium
-  )
+  ); then
+    dx_warn "Playwright Chromium download failed; UI capture will be unavailable"
+    return 1
+  fi
   dx_done "Playwright Chromium browser ready"
 }
 

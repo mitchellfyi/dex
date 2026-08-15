@@ -53,7 +53,10 @@ dx_lifecycle_control_snapshot_unlocked() {
   dx_lifecycle_session_id_valid "$session_id" || return 0
   control_file=$(dx_lifecycle_control_file "$session_id")
   [[ -f "$control_file" && ! -L "$control_file" ]] || return 0
-  size=$(wc -c < "$control_file" 2>/dev/null | tr -d '[:space:]' || printf '4097')
+  # tr always succeeds, so the fallback has to come from the read itself:
+  # an unreadable control file must look oversized, not empty.
+  size=$(wc -c < "$control_file" 2>/dev/null || printf '4097')
+  size=$(printf '%s' "$size" | tr -d '[:space:]')
   [[ "$size" =~ ^[0-9]+$ && "$size" -le 4096 ]] || return 0
   cat "$control_file" 2>/dev/null || true
 }

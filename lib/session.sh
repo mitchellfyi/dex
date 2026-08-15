@@ -1272,9 +1272,11 @@ dx_cleanup_current_checkout_sessions() {
       "worktree "*)
         worktree_path=${line#worktree }
         sibling_root=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' \
-          "$worktree_path" 2>/dev/null) || return 1
+          "$worktree_path" 2>/dev/null) || continue
         [[ "$sibling_root" != "$current_root" ]] || continue
-        sibling_session=$(cd "$worktree_path" 2>/dev/null && dx_session_id) || return 1
+        # A pruned or manually deleted worktree still appears in the porcelain
+        # listing; skip it rather than abandoning the whole cleanup.
+        sibling_session=$(cd "$worktree_path" 2>/dev/null && dx_session_id) || continue
         protected_sessions="${protected_sessions}${sibling_session}
 "
         ;;

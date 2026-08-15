@@ -268,7 +268,10 @@ dx_install_rtk_binary() {
   fi
 
   install_dir=$(dx_rtk_install_dir)
-  temp_dir=$(mktemp -d)
+  if ! temp_dir=$(mktemp -d); then
+    dx_warn "Could not create a temporary directory for the RTK download"
+    return 1
+  fi
   archive_name="rtk-${target}.tar.gz"
   archive="$temp_dir/$archive_name"
   checksums_file="$temp_dir/checksums.txt"

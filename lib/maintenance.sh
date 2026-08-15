@@ -262,7 +262,9 @@ dx_maintenance_source_ref_fetchable() {
   esac
   remote_url="https://github.com/${source_repo}.git"
   if [[ "$ref" =~ ^[0-9A-Fa-f]{40,64}$ ]]; then
-    git ls-remote "$remote_url" 2>/dev/null | awk -v want="$ref" '$1 == want { found = 1 } END { exit found ? 0 : 1 }'
+    # ls-remote prints lowercase hex; the accepted ref may be uppercase.
+    git ls-remote "$remote_url" 2>/dev/null |
+      awk -v want="$ref" 'BEGIN { want = tolower(want) } tolower($1) == want { found = 1 } END { exit found ? 0 : 1 }'
     return $?
   fi
   git ls-remote --exit-code "$remote_url" "$ref" >/dev/null 2>&1 ||
