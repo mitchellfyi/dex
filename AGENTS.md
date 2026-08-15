@@ -216,12 +216,21 @@ Exception: `dx --no-worktree <ticket-or-description>` runs the same phased lifec
 
 ## Quality Gates
 
-This project has focused shell test scripts under `tests/`, but no formatter or
-unified check command. Linting is via `shellcheck` (if installed) on `dx.sh`,
-`bin/*.sh`, `hooks/*.sh`, `lib/*.sh`, and `tests/*.sh`.
+This project has focused shell test scripts under `tests/`. There is no
+formatter; verification is static checks plus the test suite.
 
-When modifying shell scripts, ensure they pass `shellcheck` if you have it
-available. Run the relevant `tests/*.sh` scripts for the changed surface.
+| Check | Command | Notes |
+|-------|---------|-------|
+| Static | `bash tests/check.sh` | `zsh -n` on `dx.sh`, `bash -n` on `lib/`, `hooks/`, `bin/`, `tests/`, `shellcheck -S warning` on all of them, `py_compile`, `node --check`. Optional tools are skipped with a notice. |
+| Tests | `bash tests/run-all.sh` | Runs every `tests/*-test.sh` in parallel with a per-test timeout. Filter with `bash tests/run-all.sh review worktree`. |
+| One test | `bash tests/<name>-test.sh` | For iterating on a single surface. |
+
+Both commands run in CI (`.github/workflows/ci.yml`) on Linux and macOS for
+every push to `main` and every pull request.
+
+Run `bash tests/check.sh` before committing, and at minimum the tests covering
+the surface you changed. The review-loop suites are slow (10+ minutes each);
+`tests/run-all.sh` parallelizes them, so prefer it over serial runs.
 
 ## Security Considerations
 

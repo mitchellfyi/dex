@@ -12,7 +12,8 @@ loops, evidence for UI changes, clean commits, and PR follow-through.
 ## Quick Start
 
 ```bash
-# One-time install
+# One-time install (clone anywhere; ~/work/dex is the default DEX_DIR)
+git clone https://github.com/mitchellfyi/dex.git ~/work/dex
 bash ~/work/dex/install.sh
 source ~/.zshrc
 dx status
@@ -107,11 +108,18 @@ dx "task description"      # Run the full lifecycle for a free-form task
 dx --agent codex --model gpt-5.3-codex "fix flaky import"
 dx --no-worktree 1234      # Run the lifecycle in the current checkout
 dx run --spec run-spec.json # Run from a structured headless run spec
+dx --resume                # Resume the lifecycle for the current workspace
+dx --from-pr 42            # Start a lifecycle from an existing pull request
 dxreviewloop               # Resolve risk (or honor an override), then review to its clean gate
 dxcomplete                 # Resume PR completion for the current branch
 dx provider current        # Show active agent/provider/model resolution
+dx control pause           # Pause, stop, or hand control back to a running lifecycle
+dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
 ```
+
+`dx login`, `dx logout`, and `dx whoami` manage the optional DexCode connection
+that syncs run events and artifacts; see [docs/events.md](docs/events.md).
 
 `dex` and `dexter` are aliases for `dx`.
 
@@ -122,9 +130,14 @@ and choose the first issue to implement.
 
 ## Requirements
 
+- **zsh as your interactive shell.** `dx.sh` uses zsh-only syntax and is sourced
+  from `~/.zshrc`; the installer refuses to proceed without it.
 - Claude Code CLI installed and signed in.
 - A git repository.
 - Python 3 (standard library only).
+- GitHub CLI (`gh`), signed in — required for PR creation, reviewer routing, CI
+  watching, and GitHub Issues ticket tracking.
+- Optional: Node.js and npm, used for Playwright UI-capture tooling.
 - Optional: Codex CLI if you want the `codex-subscription` provider profile.
 - Optional: `shellcheck`, language toolchains, and test tools used by your repo.
 
@@ -211,6 +224,18 @@ reviews pass.
 - [Guards](docs/guards.md) covers hook-based safety rules.
 - [UI capture](docs/ui-capture.md) covers screenshots, traces, videos, and PR
   visual evidence.
+- [Events](docs/events.md) documents run IDs, local run directories, event
+  journals, and the optional DexCode sync.
+- [RTK token reduction](docs/rtk-token-reduction.md) covers the optional
+  output-filtering CLI and how to disable it.
+
+## Contributing
+
+Verify changes with `bash tests/check.sh` (shellcheck plus syntax checks) and
+`bash tests/run-all.sh` (the full test suite). Both run in CI on Linux and
+macOS. `dx.sh` is zsh-only; `lib/`, `hooks/`, and `bin/` must stay
+bash-compatible down to bash 3.2, which is what macOS ships. See
+[AGENTS.md](AGENTS.md) for conventions.
 
 ## Status
 

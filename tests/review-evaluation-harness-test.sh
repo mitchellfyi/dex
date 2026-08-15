@@ -574,8 +574,13 @@ if (
   export REVIEW_EVAL_RACE_SOURCE="$archive_race_controller/README.md"
   export REVIEW_EVAL_RACE_BACKUP="$archive_race_controller/README.original"
   export REVIEW_EVAL_RACE_SENTINEL="$archive_race_sentinel"
+  # Read by review_eval_archive_controller_inputs below as shell variables,
+  # which shellcheck cannot see across the function boundary.
+  # shellcheck disable=SC2034
   REVIEW_EVAL_DIR="$archive_race_controller"
+  # shellcheck disable=SC2034
   REVIEW_EVAL_SCENARIOS_DIR="$archive_race_scenarios"
+  # shellcheck disable=SC2034
   REVIEW_EVAL_REPO_ROOT="$ROOT"
   review_eval_archive_controller_inputs "$archive_race_root/run" >/dev/null 2>&1
 ); then
@@ -871,7 +876,7 @@ TMPDIR="$censored_tmp" \
 REVIEW_EVAL_TEST_STUB=1 \
 REVIEW_EVAL_TEST_STUB_MODE=hang \
   review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
-    small-control 1 claude "test-claude" "high" 10 "$censored_trial" || \
+    small-control 1 claude "test-claude" "high" 30 "$censored_trial" || \
       censored_status=$?
 assert_eq "124" "$censored_status" "censored trial exit"
 python3 - "$censored_trial/manifest.json" <<'PY'
@@ -885,6 +890,11 @@ manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 assert manifest["status"] == "censored", manifest
 assert manifest["product_exit_code"] == 124, manifest
 pid_path = os.path.join(os.path.dirname(sys.argv[1]), "stub-grandchild.pid")
+if not os.path.exists(pid_path):
+    raise AssertionError(
+        "stub provider never recorded a grandchild pid; the trial timeout "
+        "fired before the stub started, so reaping was never exercised"
+    )
 pid = int(open(pid_path, encoding="utf-8").read())
 for _ in range(30):
     state = subprocess.run(

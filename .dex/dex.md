@@ -12,14 +12,13 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 ## Quality Gates
 | Check | Command | Scope |
 |-------|---------|-------|
-| Lint | `shellcheck dx.sh bin/*.sh hooks/*.sh lib/*.sh tests/*.sh` | Core runtime and shell tests |
-| Syntax (bash) | `bash -n lib/<file>.sh` | Library modules, hooks, bin scripts |
-| Syntax (zsh) | `zsh -n dx.sh` | dx.sh only |
-| Test | `bash tests/<name>.sh` | Focused shell integration tests |
+| Lint + syntax | `bash tests/check.sh` | shellcheck, `zsh -n dx.sh`, `bash -n` for lib/hooks/bin/tests, `py_compile`, `node --check` |
+| Test | `bash tests/run-all.sh` | Whole suite, parallel, per-test timeout |
+| Test (focused) | `bash tests/<name>-test.sh` | Single surface |
 | Format | N/A | No formatter configured |
 | Typecheck | N/A | Not applicable (shell/Python) |
 | Generate | N/A | No code generation |
-| All | N/A | No unified check command |
+| All | `bash tests/check.sh && bash tests/run-all.sh` | What CI runs |
 
 ## Review Policy
 
