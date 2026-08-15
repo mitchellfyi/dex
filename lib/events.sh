@@ -45,6 +45,7 @@ dx_run_events_file() { printf '%s/events.jsonl\n' "$(dx_run_dir "$1")"; }
 dx_run_logs_file() { printf '%s/logs.txt\n' "$(dx_run_dir "$1")"; }
 dx_run_summary_file() { printf '%s/summary.json\n' "$(dx_run_dir "$1")"; }
 dx_run_artifacts_dir() { printf '%s/artifacts\n' "$(dx_run_dir "$1")"; }
+dx_run_artifact_manifest_lock_dir() { printf '%s/.manifest.lock\n' "$(dx_run_artifacts_dir "$1")"; }
 dx_run_artifact_manifest_file() { printf '%s/manifest.json\n' "$(dx_run_artifacts_dir "$1")"; }
 dx_run_sequence_file() { printf '%s/.sequence\n' "$(dx_run_dir "$1")"; }
 dx_run_started_marker_file() { printf '%s/.run-started-emitted\n' "$(dx_run_dir "$1")"; }
@@ -328,6 +329,13 @@ dx_run_register_artifact() {
   artifact_size="${snapshot_stats%% *}"
   artifact_sha="${snapshot_stats#* }"
 
+  # manifest.json is read, modified, and renamed into place. Without a lock two
+  # concurrent registrations both read the old copy and the later rename wins,
+  # silently dropping an artifact.
+  if ! __dx_event_acquire_lock "$(dx_run_artifact_manifest_lock_dir "$run_id")"; then
+    command rm -rf "$snapshot_dir"
+    return 1
+  fi
   event_data=$(DX_RUN_ARTIFACT_MANIFEST_FILE="$manifest_file" \
     DX_RUN_ARTIFACT_TYPE="$artifact_type" \
     DX_RUN_ARTIFACT_PATH="$rel_path" \
@@ -422,9 +430,11 @@ print(json.dumps({
 }, sort_keys=True, separators=(",", ":")))
 PY
   ) || {
+    __dx_event_release_lock "$(dx_run_artifact_manifest_lock_dir "$run_id")"
     command rm -rf "$snapshot_dir"
     return 1
   }
+  __dx_event_release_lock "$(dx_run_artifact_manifest_lock_dir "$run_id")"
 
   dx_event_emit_safe "$run_id" "artifact.created" "info" "Artifact captured: ${title}" "" "$event_data"
   dx_run_sync_artifact "$run_id" "$manifest_file" "$artifact_root" "$artifact_type" "$rel_path" "$title" "$snapshot_file"
@@ -503,6 +513,9 @@ PY
     "$local_artifact_id" "$current_fingerprint" 2>/dev/null || true)
   [[ -n "$remote_id" ]] || return 0
 
+  # Same read-modify-write as registration: without the lock this update can
+  # be discarded by a concurrent registration, causing a redundant re-upload.
+  __dx_event_acquire_lock "$(dx_run_artifact_manifest_lock_dir "$run_id")" || return 0
   DX_SYNC_MANIFEST="$manifest_file" DX_SYNC_TYPE="$artifact_type" \
     DX_SYNC_PATH="$rel_path" DX_SYNC_REMOTE_ID="$remote_id" \
     DX_SYNC_REMOTE_SHA="$current_sha" \
@@ -542,6 +555,7 @@ except Exception:
         pass
     raise
 PY
+  __dx_event_release_lock "$(dx_run_artifact_manifest_lock_dir "$run_id")"
   return 0
 }
 
@@ -627,13 +641,30 @@ dx_run_log_tee() {
   done
 }
 
+# Journal and manifest writers share one token per process. dx_lock_acquire
+# reclaims a lock whose owner died, so a killed run no longer wedges every
+# later event for that run behind an orphaned lock directory.
+__dx_event_lock_token() {
+  printf 'events-%s\n' "$$"
+}
+
 __dx_event_acquire_lock() {
-  local lock_dir="$1" attempts=0
-  while ! mkdir "$lock_dir" 2>/dev/null; do
+  # `status` is a read-only special parameter in zsh, and lib/ is sourced by
+  # both shells, so lock results use an explicit name.
+  local lock_dir="$1" attempts=0 lock_status
+  while true; do
+    dx_lock_acquire "$lock_dir" "$(__dx_event_lock_token)"
+    lock_status=$?
+    [[ "$lock_status" -eq 0 ]] && return 0
+    [[ "$lock_status" -eq 2 ]] && return 1
     attempts=$((attempts + 1))
     [[ "$attempts" -lt 100 ]] || return 1
     sleep 0.05
   done
+}
+
+__dx_event_release_lock() {
+  dx_lock_release "$1" "$(__dx_event_lock_token)" || true
 }
 
 dx_event_emit() {
@@ -783,7 +814,7 @@ PY
   else
     event_status=$?
   fi
-  command rmdir "$lock_dir" 2>/dev/null || command rm -rf "$lock_dir" 2>/dev/null || true
+  __dx_event_release_lock "$lock_dir"
   if [[ "$event_status" -eq 0 ]] && command -v dx_factory_sync_pending_events_safe >/dev/null 2>&1; then
     dx_factory_sync_pending_events_safe "$run_id" || true
   fi

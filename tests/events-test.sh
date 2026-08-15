@@ -211,4 +211,43 @@ assert len(events) == 1
 assert events[0]["data"] == {"phase_name": 'Plan "quoted"', "source": r"source\path"}
 PY
 
+# Concurrent artifact registrations must all survive. manifest.json is a
+# read-modify-write, so without a lock the later rename discards the earlier
+# entry and the artifact is silently lost.
+concurrent_run="$(dx_run_prepare "concurrent-session" "$ROOT" "test" "concurrent" "issue-1" "dx test")"
+concurrent_artifacts="$(dx_run_artifacts_dir "$concurrent_run")"
+mkdir -p "$concurrent_artifacts"
+cat > "$TMP_DIR/register.sh" <<'REGISTER'
+#!/usr/bin/env bash
+set -uo pipefail
+# shellcheck disable=SC1091
+source "$DEX_DIR/lib/common.sh"
+run_id="$1"
+index="$2"
+root="$(dx_run_artifacts_dir "$run_id")"
+printf 'artifact %s\n' "$index" > "${root}/file-${index}.txt"
+dx_run_register_artifact "$run_id" "test_output" "file-${index}.txt" "Artifact ${index}"
+REGISTER
+chmod +x "$TMP_DIR/register.sh"
+
+register_pids=""
+for i in $(seq 1 8); do
+  bash "$TMP_DIR/register.sh" "$concurrent_run" "$i" >/dev/null 2>&1 &
+  register_pids="$register_pids $!"
+done
+for pid in $register_pids; do
+  wait "$pid" || true
+done
+
+python3 - "$(dx_run_artifact_manifest_file "$concurrent_run")" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+paths = sorted(entry["path"] for entry in manifest["artifacts"])
+expected = sorted(f"file-{index}.txt" for index in range(1, 9))
+assert paths == expected, f"lost concurrent artifact registrations: {paths}"
+PY
+
 printf 'events tests passed\n'

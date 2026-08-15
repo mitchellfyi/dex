@@ -156,7 +156,8 @@ dx_lock_release() {
 dx_lock_with() {
   local lock_dir="$1" owner_token="$2" timeout="$3"
   shift 3
-  local waited=0 status
+  # `status` is read-only in zsh; lib/ must work in both shells.
+  local waited=0 command_status
   while ! dx_lock_acquire "$lock_dir" "$owner_token"; do
     [[ $? -eq 2 ]] && return 2
     if [[ "$waited" -ge "$timeout" ]]; then
@@ -166,7 +167,7 @@ dx_lock_with() {
     waited=$((waited + 1))
   done
   "$@"
-  status=$?
+  command_status=$?
   dx_lock_release "$lock_dir" "$owner_token" || true
-  return "$status"
+  return "$command_status"
 }
