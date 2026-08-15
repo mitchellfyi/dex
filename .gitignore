@@ -4,6 +4,13 @@ __pycache__/
 .claude/scheduled_tasks.lock
 research/review-loop/results/
 
+# Dex is a shell project: Node packages belong to Dex-managed tooling under
+# ~/.claude/.dex-tools/, never to this repo.
+node_modules/
+
+# Browser MCP scratch output from local UI work.
+.playwright-mcp/
+
 # Vendor skills installed via Claude plugins should never be committed.
 # Dex only ships its own dx*/dex skills. See AGENTS.md § Vendor skills.
 skills/figma-*/
