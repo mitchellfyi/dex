@@ -7,7 +7,7 @@
 # Provides: DEX_DIR, DX_STATE_DIR, DX_LOOP_DIR, DX_ARTIFACT_DIR, DX_TOOL_DIR, DX_RUN_ROOT, dx_repo_root()
 # Also sources: lib/lock.sh, lib/git.sh, lib/session.sh, lib/output.sh, lib/worktree.sh,
 # lib/provider.sh, lib/codex.sh, lib/dexcode.sh, lib/ui-capture.sh, lib/rtk.sh,
-# lib/events.sh, lib/review.sh, lib/review-policy.sh, lib/review-controller.sh, lib/factory.sh,
+# lib/events.sh, lib/review.sh, lib/review-policy.sh, lib/review-controller.sh, lib/review-loop.sh, lib/factory.sh,
 # lib/run-spec.sh, lib/agent-tools.sh, lib/maintenance.sh, lib/project-state.sh,
 # lib/lifecycle-control.sh, lib/attribution.sh, and lib/worker.sh
 
@@ -89,6 +89,7 @@ __dx_require_lib events.sh
 __dx_require_lib review.sh
 __dx_require_lib review-policy.sh
 __dx_require_lib review-controller.sh
+__dx_require_lib review-loop.sh
 __dx_require_lib factory.sh
 __dx_require_lib run-spec.sh
 __dx_require_lib agent-tools.sh

@@ -22,7 +22,7 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (21 modules sourced by common.sh; see the module table below)
+lib/                 Shared shell libraries (22 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
@@ -84,7 +84,8 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`,
 `attribution.sh`, `codex.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
 `lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
-`provider.sh`, `review.sh`, `review-controller.sh`, `review-policy.sh`, `rtk.sh`,
+`provider.sh`, `review.sh`, `review-controller.sh`, `review-loop.sh`,
+`review-policy.sh`, `rtk.sh`,
 `run-spec.sh`, `session.sh`, `ui-capture.sh`, and `worktree.sh`.
 
 ### Output
@@ -352,6 +353,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `project-state.sh` | Init ownership snapshots and conservative project cleanup | `dx_project_state_begin()`, `dx_project_state_finalize()`, `dx_project_state_remove_managed()` |
 | `review.sh` | Scope-bound review selection/state, evidence, retained proofs, ledgers, receipts, result parsing, churn detection, and telemetry JSON | `dx_review_evidence_valid()`, `dx_review_ledger_valid()`, `dx_review_write_receipt()`, `dx_review_findings_churn_kind()`, `dx_review_event_json()` |
+| `review-loop.sh` | Review-loop helpers used by `dxreviewloop`: run telemetry, standalone session ids, pause and interrupt handling, scope snapshots, criteria prompts | `__dx_review_emit_event()`, `__dx_review_scope_snapshot()`, `__dx_review_pause_intervention()` |
 | `review-controller.sh` | Pure review-loop state transitions and atomic findings history | `dx_review_transition()`, `dx_review_findings_history_append()` |
 | `review-policy.sh` | Trusted default-branch clean-pass policy resolution and binding | `dx_review_policy_resolve()`, `dx_review_policy_for_tier()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
