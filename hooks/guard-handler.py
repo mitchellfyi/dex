@@ -4186,13 +4186,16 @@ def guard_detector_matches(guard, text):
     return False
 
 
-def check_guards(guards, text):
+def check_guards(guards, full_text, path_text=''):
     """Check text against all guards. Returns (warnings, blocks).
 
     Each guard's regex pattern is matched against the full text. Matching is
     case-insensitive by default; set case_sensitive: true in frontmatter for
     exact-case matching. If allow_pattern is present, it is checked against each
     individual match so one allowed command does not hide a separate blocked one.
+
+    A guard with `match: path` is checked against `path_text` — the file paths
+    of a file event — rather than the paths plus the file's contents.
     """
     warnings = []
     blocks = []
@@ -4205,6 +4208,14 @@ def check_guards(guards, text):
             continue
 
         action = guard.get('action', 'warn')
+
+        scope = str(guard.get('match', 'all')).strip().lower()
+        if scope == 'path':
+            if not path_text:
+                continue
+            text = path_text
+        else:
+            text = full_text
 
         # Detectors parse the whole command, which can be slow on pathological
         # input and can raise on deeply nested constructs. Bound and contain
@@ -4331,6 +4342,32 @@ def check_guards(guards, text):
     return warnings, blocks
 
 
+def extract_hook_path_text(raw_input, event_type):
+    """Return only the file paths from a file-event payload.
+
+    Guards that scope to a location (`match: path`) check this instead of the
+    path concatenated with the file's contents, so a rule about `lib/*.sh` does
+    not fire on every file that merely mentions that path.
+    """
+    if event_type != 'file' or not raw_input.strip():
+        return ''
+    try:
+        payload = json.loads(raw_input)
+    except json.JSONDecodeError:
+        return ''
+    if not isinstance(payload, dict):
+        return ''
+    tool_input = payload.get('tool_input', {})
+    if not isinstance(tool_input, dict):
+        return ''
+    parts = []
+    for key in ('file_path', 'notebook_path'):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    return '\n'.join(parts)
+
+
 def extract_hook_text(raw_input, event_type):
     """Extract guard-checkable text from Claude hook JSON.
 
@@ -4438,7 +4475,7 @@ def main():
         except Exception:
             pass
 
-    warnings, blocks = check_guards(guards, text)
+    warnings, blocks = check_guards(guards, text, extract_hook_path_text(tool_input, event_type))
 
     # Print blocks
     for b in blocks:

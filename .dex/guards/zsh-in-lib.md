@@ -2,7 +2,8 @@
 name: zsh-in-lib
 enabled: true
 event: file
-pattern: (?:lib/|hooks/|bin/).*\.sh
+match: path
+pattern: (?:lib/|hooks/|bin/)[^/]*\.sh$
 action: warn
 ---
 

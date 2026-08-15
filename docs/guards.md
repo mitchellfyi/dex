@@ -42,12 +42,20 @@ Supports **markdown** formatting.
 | `pattern` | yes unless `detector` is set | Python regex | Pattern to match against tool input |
 | `detector` | no | built-in detector id | Use a built-in parser instead of a regex for syntax-sensitive checks |
 | `action` | yes | warn, block | Warn returns hook context; block prevents the action |
+| `match` | no | all, path | `path` checks the file path only, for `event: file` guards about a location (default: all) |
 | `case_sensitive` | no | true/false/yes/no | If true, pattern matching is case-sensitive (default: false) |
 | `allow_pattern` | no | Python regex | If this pattern matches, suppress this guard even when `pattern` matches |
 | `env_var` | no | string | Only evaluate this guard when the named environment variable is set |
 | `env_value` | no | string | With `env_var`, require this exact environment variable value |
 
 When using `env_value` values that look like booleans (`true`, `false`, `yes`, `no`), quote them so the simple frontmatter parser keeps them as strings.
+
+A `file` event's text is the file path plus the content being written and the
+old/new strings of each edit, all concatenated. That is what you want for a
+guard about *what* is being written, but a guard about *where* — "this
+directory must stay bash-compatible" — would then fire on any file that merely
+mentions the path in prose. Set `match: path` for those, and anchor the pattern
+with `$` so it matches the path rather than a substring of one.
 
 For `env_var: DX_PROVIDER_ENGINE`, `guard-handler.py` treats the current Dex session provider state as authoritative when `DEX_SESSION_ID` is present, then falls back to the hook environment and provider config defaults. Without an explicit session id, a hook-provided `DX_PROVIDER_ENGINE` value wins over any launch-scoped fallback state so stale state files cannot silently expand provider-scoped guards.
 

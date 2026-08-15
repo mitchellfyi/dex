@@ -146,6 +146,7 @@ event: bash|file|commit|all
 pattern: python-regex
 detector: optional-built-in-detector
 action: warn|block
+match: all|path
 case_sensitive: false
 allow_pattern: optional-python-regex
 env_var: OPTIONAL_ENV_NAME
@@ -156,6 +157,7 @@ env_value: optional-exact-value
 - Patterns are Python regexes evaluated by `guard-handler.py`
 - `detector` is optional; use only for built-in syntax-aware guard detectors
 - `allow_pattern` is optional; use it only for narrow safe exceptions to a broader `pattern`
+- `match: path` scopes a `file` guard to the edited path; without it the pattern also sees the file's contents, so a location rule fires on prose that mentions the location
 - `env_var`/`env_value` are optional; use them to scope a guard to a runtime mode
 - `env_var: DX_PROVIDER_ENGINE` has a session-state/config fallback so provider-scoped guards do not depend only on hook environment inheritance
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it).

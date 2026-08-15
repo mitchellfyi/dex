@@ -2,7 +2,8 @@
 name: state-in-repo
 enabled: true
 event: file
-pattern: \.dex/(?!worktrees/|guards/|rules/|dex\.md|CLAUDE\.md|\.gitignore).*\.(state|phase|times|complete|active|prompt)
+match: path
+pattern: \.dex/(?!worktrees/|guards/|rules/|dex\.md|CLAUDE\.md|\.gitignore).*\.(state|phase|times|complete|active|prompt)$
 action: warn
 ---
 

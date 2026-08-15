@@ -250,6 +250,60 @@ fi
 # including a regression that the remaining destructive-command guard stays
 # active.
 
+# A guard scoped with `match: path` checks the file path only. Without it, a
+# location rule fires on any file whose contents merely mention that location.
+SCOPE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-scope.XXXXXX")"
+mkdir -p "$SCOPE_TMP/repo/.dex/guards"
+git -C "$SCOPE_TMP/repo" init -q
+cat > "$SCOPE_TMP/repo/.dex/guards/path-scoped.md" <<'GUARD'
+---
+name: test-path-scoped
+enabled: true
+event: file
+match: path
+pattern: (?:lib/)[^/]*\.sh$
+action: warn
+---
+
+Test guard: fires only for edits to lib shell scripts.
+GUARD
+
+run_scoped_guard() {
+  set +e
+  GUARD_OUT="$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "$2" \
+    | (cd "$SCOPE_TMP/repo" && env DEX_GUARD_EVENT=file python3 "$HANDLER") 2>&1)"
+  set -e
+}
+
+run_scoped_guard "/tmp/notes.md" "this doc talks about lib/common.sh at length"
+if printf '%s' "$GUARD_OUT" | grep -q 'test-path-scoped'; then
+  printf 'FAIL (path-scoped guard fired on a content mention)\n%s\n' "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+else
+  pass=$((pass + 1))
+fi
+
+run_scoped_guard "lib/common.sh" "printf 'hello\n'"
+if printf '%s' "$GUARD_OUT" | grep -q 'test-path-scoped'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (path-scoped guard missed a real lib edit)\n%s\n' "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+# An unscoped guard keeps the previous behavior of matching path plus content.
+sed 's/^match: path$//; s/test-path-scoped/test-unscoped/' \
+  "$SCOPE_TMP/repo/.dex/guards/path-scoped.md" > "$SCOPE_TMP/repo/.dex/guards/unscoped.md"
+rm -f "$SCOPE_TMP/repo/.dex/guards/path-scoped.md"
+run_scoped_guard "/tmp/notes.md" "this doc talks about lib/common.sh"
+if printf '%s' "$GUARD_OUT" | grep -q 'test-unscoped'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (unscoped guard should still match content)\n%s\n' "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+rm -rf "$SCOPE_TMP"
+
 # Shell syntax checks (noexec) must be allowed: `bash -n` / `zsh -n` parse
 # their input and exit without running any of it, and they are this project's
 # documented quality gate. Executing forms of the same script stay blocked.
