@@ -1636,3 +1636,62 @@ dx_provider_command() {
       ;;
   esac
 }
+
+# Provider resolution helpers, moved out of dx.sh so the review loop and the
+# phase runner share one definition rather than reaching back into dx.sh.
+
+# Default Claude flags for all dx-launched sessions:
+#   --chrome           Enable browser automation tools (MCP)
+#   --dangerously-skip-permissions       No interactive permission prompts.
+#   --permission-mode bypassPermissions  Keep Claude's permission mode explicit.
+#
+# Model and effort come from the user's Claude session defaults. Dex only
+# passes --model/--effort when an explicit override is set (dx --model,
+# DX_CLAUDE_MODEL/DX_CLAUDE_EFFORT, or a provider profile that pins them).
+__dx_refresh_provider() {
+  dx_provider_apply || return 1
+  DX_CLAUDE_FLAGS=(--chrome --dangerously-skip-permissions --permission-mode bypassPermissions)
+  if [[ -n "$DX_CLAUDE_MODEL" ]]; then
+    DX_CLAUDE_FLAGS+=(--model "$DX_CLAUDE_MODEL")
+  fi
+  if [[ -n "$DX_CLAUDE_EFFORT" ]]; then
+    DX_CLAUDE_FLAGS+=(--effort "$DX_CLAUDE_EFFORT")
+  fi
+  DX_PLAN_FLAGS=(--chrome --dangerously-skip-permissions --permission-mode bypassPermissions)
+  if [[ -n "$DX_PLAN_MODEL" ]]; then
+    DX_PLAN_FLAGS+=(--model "$DX_PLAN_MODEL")
+  fi
+  if [[ -n "$DX_PLAN_EFFORT" ]]; then
+    DX_PLAN_FLAGS+=(--effort "$DX_PLAN_EFFORT")
+  fi
+}
+
+__dx_resolved_provider_agent() {
+  local provider_agent
+  provider_agent=$(dx_agent_for_engine "${DX_PROVIDER_ENGINE:-}" 2>/dev/null || true)
+  if [[ -z "$provider_agent" ]]; then
+    dx_error "Dex could not resolve the selected provider engine."
+    return 1
+  fi
+  printf '%s\n' "$provider_agent"
+}
+
+__dx_require_resolved_provider_cli() {
+  local provider_agent
+  provider_agent=$(__dx_resolved_provider_agent) || return 1
+
+  if [[ "$provider_agent" == "codex" ]]; then
+    if ! command -v codex &>/dev/null; then
+      dx_error "Codex CLI not found in PATH."
+      dx_info "Install Codex and sign in with ChatGPT, then try again."
+      return 1
+    fi
+    return 0
+  fi
+
+  if ! command -v claude &>/dev/null; then
+    dx_error "Claude Code CLI not found in PATH."
+    dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
+    return 1
+  fi
+}

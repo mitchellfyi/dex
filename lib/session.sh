@@ -1350,3 +1350,19 @@ EOF
     rm -f "$last_session_file"
   fi
 }
+
+# Atomic state-file writer, moved out of dx.sh: it is a generic helper with
+# no lifecycle knowledge and several callers.
+
+# __dx_write_state <file> <content>
+# Atomic file write via temp+mv — crash-safe (same pattern as phase-loop.sh).
+# On crash mid-write, the temp file is lost and the original is untouched.
+__dx_write_state() {
+  local file="$1" content="$2"
+  mkdir -p "$(dirname "$file")"
+  local tmp="${file}.tmp.$$"
+  if ! printf '%s\n' "$content" >| "$tmp" || ! command mv -f "$tmp" "$file"; then
+    command rm -f "$tmp" 2>/dev/null
+    return 1
+  fi
+}
