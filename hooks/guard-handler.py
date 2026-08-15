@@ -1806,6 +1806,38 @@ def xargs_stdin_tokens(stdin_text, null_delimited=False):
         return stdin_text.split()
 
 
+def xargs_substitution_can_launch(command_tokens, replacement):
+    """Whether substituting unknown xargs values could produce a new command.
+
+    `xargs -I{} du -k {}` can only ever pass values as arguments to `du`, so
+    unreadable stdin is no reason to deny it. `xargs -I{} {}` or
+    `xargs -I{} bash -c {}` do turn a value into a command, so those stay
+    fail-closed when the values cannot be read.
+    """
+    if not command_tokens:
+        return True
+    base_index = skip_wrapper_prefix(command_tokens, 0)
+    if base_index >= len(command_tokens):
+        return True
+    if replacement:
+        # The tokenizer splits `{}` into two punctuation tokens.
+        if replacement == '{}' and command_tokens[base_index:base_index + 2] == ['{', '}']:
+            return True
+        if replacement in command_tokens[base_index]:
+            return True
+    base = token_basename(command_tokens[base_index])
+    if base in SHELLS or base in EVAL_COMMANDS or base in SOURCE_COMMANDS:
+        return True
+    if interpreter_kind(base):
+        return True
+    return (
+        base == 'codex'
+        or base in CODEX_HELPER_COMMANDS
+        or base in DIRECT_CODEX_RUNNERS
+        or base in PACKAGE_MANAGER_RUNNERS
+    )
+
+
 def xargs_command_is_blocked(tokens, command_index, command_start, variables=None, cwd=None, depth=0):
     if token_basename(tokens[command_index]) != 'xargs':
         return False
@@ -1821,7 +1853,10 @@ def xargs_command_is_blocked(tokens, command_index, command_start, variables=Non
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
         if stdin_text is UNKNOWN_SHELL_STDIN:
-            return True
+            if xargs_substitution_can_launch(command_tokens, replacement):
+                return True
+            # Values can only land in argument position, so judge the template.
+            return has_raw_codex_delegation(shell_quote_tokens(command_tokens), depth + 1, cwd)
         for value in xargs_stdin_tokens(stdin_text, xargs_uses_null_delimiter(tokens, command_index)):
             replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
             if replaced_tokens is UNKNOWN_SHELL_STDIN:
@@ -3406,7 +3441,15 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
         if stdin_text is UNKNOWN_SHELL_STDIN:
-            return True
+            # Mirror the no-replacement branch below: unreadable values are only
+            # dangerous if they can become a command, or if the fixed command is
+            # itself destructive with the values as its targets.
+            if xargs_substitution_can_launch(command_tokens, replacement):
+                return True
+            command_base = token_basename(command_tokens[0]) if command_tokens else ''
+            if command_base == 'rm':
+                return any(rm_option_is_recursive(token) for token in command_tokens[1:]) and any(rm_option_is_force(token) for token in command_tokens[1:])
+            return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
         for value in xargs_stdin_tokens(stdin_text, null_delimited):
             replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
             if replaced_tokens is UNKNOWN_SHELL_STDIN:

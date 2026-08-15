@@ -250,6 +250,45 @@ fi
 # including a regression that the remaining destructive-command guard stays
 # active.
 
+# Piping into `xargs -I{}` hides the values from the guard. Denying every such
+# command is too blunt: values can only become a command when the template
+# puts them in command position or hands them to a shell/interpreter.
+assert_bash_allowed_codex() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'BLOCKED'; then
+    printf 'FAIL (expected allowed): %s\n%s\n' "$1" "$GUARD_OUT" >&2
+    fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
+  fi
+}
+
+assert_bash_allowed_codex "xargs into a fixed non-launching command" \
+  "git ls-files | xargs -I{} du -k {}"
+assert_bash_allowed_codex "xargs into git with a placeholder argument" \
+  "cat list.txt | xargs -I{} git add {}"
+
+assert_bash_blocks() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'BLOCKED'; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (expected blocked): %s\n%s\n' "$1" "$GUARD_OUT" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_bash_blocks "xargs substituting into command position" \
+  "cat list.txt | xargs -I{} {}"
+assert_bash_blocks "xargs handing values to a shell" \
+  "cat list.txt | xargs -I{} bash -c {}"
+assert_raw_codex_blocks "xargs into a package runner" \
+  "cat list.txt | xargs -I{} npx {}"
+assert_raw_codex_blocks "xargs template naming codex outright" \
+  "cat list.txt | xargs -I{} codex exec {}"
+assert_bash_blocks "xargs into rm -rf with hidden targets" \
+  "cat list.txt | xargs -I{} rm -rf {}"
+
 # A guard scoped with `match: path` checks the file path only. Without it, a
 # location rule fires on any file whose contents merely mention that location.
 SCOPE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-scope.XXXXXX")"
