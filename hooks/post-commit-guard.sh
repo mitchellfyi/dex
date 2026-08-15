@@ -1039,6 +1039,41 @@ def skip_prefix(parts, index):
     return index
 
 
+def shell_invocation_is_noexec(parts, shell_index):
+    """Whether a shell is invoked in no-execute (syntax-check) mode.
+
+    `bash -n -c '...'` parses and exits without running anything, so it cannot
+    have created a commit. Mirrors shell_invocation_is_noexec in
+    hooks/guard-handler.py; later flags win, so `-n +n` is executing.
+    """
+    noexec = False
+    index = shell_index + 1
+    while index < len(parts) and parts[index] not in SEPARATORS:
+        token = parts[index]
+        if token == '--':
+            break
+        if token in {'-o', '+o'}:
+            if index + 1 < len(parts) and parts[index + 1] == 'noexec':
+                noexec = token == '-o'
+                index += 2
+                continue
+            index += 2
+            continue
+        if len(token) > 1 and token[0] in '-+' and token[1] != '-':
+            flags = token[1:]
+            if 'n' in flags:
+                noexec = token[0] == '-'
+            if 'c' in flags:
+                break
+            index += 1
+            continue
+        if token.startswith('--'):
+            index += 1
+            continue
+        break
+    return noexec
+
+
 def shell_script_arg(parts, shell_index):
     index = shell_index + 1
     while index < len(parts) and parts[index] not in SEPARATORS:
@@ -1078,7 +1113,11 @@ def shell_c_scripts(text, variables=None):
             continue
         if command_position:
             command_index = skip_prefix(parts, index)
-            if command_index < len(parts) and base(parts[command_index]) in SHELLS:
+            if (
+                command_index < len(parts)
+                and base(parts[command_index]) in SHELLS
+                and not shell_invocation_is_noexec(parts, command_index)
+            ):
                 script = shell_script_arg(parts, command_index)
                 if script:
                     scripts.append(expand_executable_script(script, variables))
@@ -2559,6 +2598,11 @@ def has_git_commit(text, cwd, depth=0):
                     target = has_git_commit(shell_quote_parts(functions[command_name] + parts[command_index + 1:]), cwd, depth + 1)
                     if target:
                         return target
+                if command_name in SHELLS and shell_invocation_is_noexec(parts, command_index):
+                    # Syntax check only: nothing ran, so nothing was committed.
+                    command_position = False
+                    index = command_segment_end(parts, command_index + 1)
+                    continue
                 if command_name in SHELLS:
                     script = shell_script_arg(parts, command_index)
                     if script:
