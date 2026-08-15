@@ -153,3 +153,25 @@ echo "Exit: $?"
 `CLAUDE_TOOL_USE_INPUT` is also supported as a plain-text fallback for manual tests and post-commit integration.
 
 Exit code 0 = no block, exit code 2 = blocked.
+
+## Failure Behavior
+
+Guards fail closed. Because exit code 1 means "allow", any error that is not
+handled deliberately would silently disable every safety rule, so the handler
+converts these into a block (exit 2):
+
+| Situation | Result |
+|-----------|--------|
+| A `block` guard's detector or regex exceeds its 2s evaluation budget | Blocks that tool call |
+| A `block` guard's detector raises while parsing the input | Blocks that tool call |
+| The same failures on a `warn` guard | Skipped with a stderr notice; the call proceeds |
+| No built-in guards could be read at all | Blocks, and reports that `DEX_DIR`/`hooks/guards/` needs fixing |
+| An unexpected exception anywhere in the handler | Blocks, and prints the exception |
+
+The evaluation budget is per guard, per tool call. A blocked-on-timeout command
+is not permanently rejected: simplifying or splitting it usually lets the guard
+finish. Static authoring problems — a missing `pattern`, an invalid regex, an
+unknown `detector` — are reported on stderr and that one guard is skipped, since
+failing closed there would block every command until the file is fixed.
+
+To disable a guard that keeps failing, set `enabled: false` in its `.md` file.

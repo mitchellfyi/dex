@@ -106,20 +106,30 @@ def parse_guard(filepath):
 
 
 def load_guards(event_type):
-    """Load all enabled guards for a given event type."""
+    """Load all enabled guards for a given event type.
+
+    Returns (guards, builtins_healthy). ``builtins_healthy`` is False when the
+    built-in guard set could not be read at all, which means the safety rules
+    are absent rather than simply not matching this event.
+    """
     guards = []
     dex_dir = os.environ.get('DEX_DIR') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     # Built-in guards
     builtin_dir = os.path.join(dex_dir, 'hooks', 'guards')
+    builtin_files = []
     if os.path.isdir(builtin_dir):
-        for f in sorted(glob.glob(os.path.join(builtin_dir, '*.md'))):
-            g = parse_guard(f)
-            if g:
-                if not g.get('event'):
-                    print(f"[guard] Warning: guard {f} missing 'event' field, skipping", file=sys.stderr)
-                elif g['event'] in (event_type, 'all'):
-                    guards.append(g)
+        builtin_files = sorted(glob.glob(os.path.join(builtin_dir, '*.md')))
+    builtin_loaded = 0
+    for f in builtin_files:
+        g = parse_guard(f)
+        if g:
+            builtin_loaded += 1
+            if not g.get('event'):
+                print(f"[guard] Warning: guard {f} missing 'event' field, skipping", file=sys.stderr)
+            elif g['event'] in (event_type, 'all'):
+                guards.append(g)
+    builtins_healthy = builtin_loaded > 0
 
     # Project-specific guards — resolve project root via git toplevel so guards
     # are found regardless of which subdirectory the tool runs from.
@@ -140,13 +150,21 @@ def load_guards(event_type):
                 elif g['event'] in (event_type, 'all'):
                     guards.append(g)
 
-    return guards
+    return guards, builtins_healthy
 
 
 def _timeout_handler(signum, frame):
     """SIGALRM handler for ReDoS protection. Defined at module level to avoid
     creating a new function object per guard iteration."""
     raise TimeoutError()
+
+
+# Wall-clock budget for evaluating a single guard against one tool call, for
+# both regex patterns and the syntax-aware detectors. Guard patterns can come
+# from any repo's .dex/guards/, and detector parsing is super-linear on some
+# inputs, so neither may hang the hook. A blocking guard that exceeds this
+# denies the command; see check_guards.
+GUARD_EVAL_TIMEOUT_SECONDS = 2
 
 
 PROVIDER_BUILTIN_ENGINES = {
@@ -4100,14 +4118,53 @@ def check_guards(guards, text):
         if not guard_environment_matches(guard):
             continue
 
-        detector_match = guard_detector_matches(guard, text)
+        action = guard.get('action', 'warn')
+
+        # Detectors parse the whole command, which can be slow on pathological
+        # input and can raise on deeply nested constructs. Bound and contain
+        # both: for a blocking guard, an evaluation failure on this specific
+        # input must deny the command rather than let it through unchecked.
+        # Only this one tool call is affected, so the user can rephrase it.
+        _prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(GUARD_EVAL_TIMEOUT_SECONDS)
+        try:
+            detector_match = guard_detector_matches(guard, text)
+            detector_error = ''
+        except TimeoutError:
+            detector_match = None
+            detector_error = f'evaluation exceeded {GUARD_EVAL_TIMEOUT_SECONDS}s'
+        except RecursionError:
+            detector_match = None
+            detector_error = 'input nesting exceeded the parser limit'
+        except Exception as e:  # noqa: BLE001 - fail closed on any parse failure
+            detector_match = None
+            detector_error = f'{type(e).__name__}: {e}'
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, _prev_handler)
+
+        if detector_error:
+            if action == 'block':
+                blocks.append({
+                    'name': name,
+                    'message': (
+                        f'BLOCKED: this guard could not finish checking the command '
+                        f'({detector_error}).\n\nDex denies commands it cannot verify. '
+                        f'Simplify or split the command and try again.'
+                    ),
+                    'action': 'block',
+                })
+            else:
+                print(f"[guard:{name}] skipped — {detector_error}", file=sys.stderr)
+            continue
+
         if detector_match is not None:
             if not detector_match:
                 continue
             entry = {
                 'name': name,
                 'message': guard.get('message', 'Guard triggered.'),
-                'action': guard.get('action', 'warn'),
+                'action': action,
             }
             if entry['action'] == 'block':
                 blocks.append(entry)
@@ -4145,7 +4202,7 @@ def check_guards(guards, text):
         # signal.alarm is Unix-only; Dex targets macOS/Linux exclusively.
         # See: https://docs.python.org/3/library/signal.html#signal.alarm
         _prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(2)
+        signal.alarm(GUARD_EVAL_TIMEOUT_SECONDS)
         try:
             matched = None
             for candidate in compiled.finditer(text):
@@ -4154,7 +4211,18 @@ def check_guards(guards, text):
                 matched = candidate
                 break
         except TimeoutError:
-            print(f"[guard:{name}] skipped — regex timed out (possible ReDoS)", file=sys.stderr)
+            if action == 'block':
+                blocks.append({
+                    'name': name,
+                    'message': (
+                        'BLOCKED: this guard timed out while checking the command '
+                        '(possible ReDoS).\n\nDex denies commands it cannot verify. '
+                        'Simplify or split the command and try again.'
+                    ),
+                    'action': 'block',
+                })
+            else:
+                print(f"[guard:{name}] skipped — regex timed out (possible ReDoS)", file=sys.stderr)
             continue
         finally:
             signal.alarm(0)
@@ -4252,7 +4320,16 @@ def main():
     # Determine event type from environment
     event_type = os.environ.get('DEX_GUARD_EVENT', 'bash')
 
-    guards = load_guards(event_type)
+    guards, builtins_healthy = load_guards(event_type)
+    if not builtins_healthy:
+        # The built-in rules are the security baseline. If none could be read,
+        # the install is broken and nothing is being checked — deny rather than
+        # run every tool call unguarded.
+        print("\n[guard] BLOCKED — no built-in guards could be loaded.", file=sys.stderr)
+        print("Dex cannot verify this tool call. Check that DEX_DIR points at the Dex "
+              "checkout and that hooks/guards/ is readable, then run 'dx tools bootstrap'.",
+              file=sys.stderr)
+        sys.exit(2)
     if not guards:
         sys.exit(0)
 
@@ -4301,4 +4378,17 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as e:  # noqa: BLE001 - a crashed guard must not allow the call
+        # Exit 1 would let the tool call through with no guard evaluation at
+        # all, silently disabling every safety rule. Deny instead: a parser
+        # bug then costs one blocked command rather than an unguarded one.
+        print(f"\n[guard] BLOCKED — guard evaluation failed: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        print("Dex denies tool calls it cannot check. Rephrase the command, or set "
+              "'enabled: false' in the offending guard's .md file if this persists.",
+              file=sys.stderr)
+        sys.exit(2)

@@ -250,5 +250,112 @@ fi
 # including a regression that the remaining destructive-command guard stays
 # active.
 
+# Guard evaluation must fail closed. A blocking guard that cannot finish
+# checking a command has to deny it; letting the call through would silently
+# disable the guard exactly when the input is hostile.
+GUARD_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-failclosed.XXXXXX")"
+trap 'rm -rf "$GUARD_TMP"' EXIT
+mkdir -p "$GUARD_TMP/repo/.dex/guards"
+git -C "$GUARD_TMP/repo" init -q
+
+# A catastrophically backtracking pattern cannot resolve within the budget.
+cat > "$GUARD_TMP/repo/.dex/guards/slow-block.md" <<'GUARD'
+---
+name: test-slow-block
+enabled: true
+event: bash
+pattern: ^(a+)+$
+action: block
+---
+
+Test guard: intentionally pathological pattern.
+GUARD
+
+redos_input="$(python3 -c 'print("a" * 4000 + "!")')"
+set +e
+GUARD_OUT="$(mkbashpayload "$redos_input" | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'test-slow-block'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (blocking guard that timed out did not deny the command; rc=%s)\n%s\n' \
+    "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+# The same timeout on a warn-only guard must not block.
+sed 's/action: block/action: warn/; s/test-slow-block/test-slow-warn/' \
+  "$GUARD_TMP/repo/.dex/guards/slow-block.md" > "$GUARD_TMP/repo/.dex/guards/slow-warn.md"
+rm -f "$GUARD_TMP/repo/.dex/guards/slow-block.md"
+set +e
+GUARD_OUT="$(mkbashpayload "$redos_input" | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (warn guard timeout should not block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+# A benign command in a repo with project guards must still be allowed, so the
+# fail-closed paths above cannot be passing for the wrong reason.
+set +e
+GUARD_OUT="$(mkbashpayload 'git status --short' | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (benign command should be allowed; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+# If the built-in guard set cannot be read at all, the safety baseline is
+# absent — deny instead of running every tool call unguarded.
+set +e
+GUARD_OUT="$(mkbashpayload 'echo hello' | env DEX_GUARD_EVENT=bash DEX_DIR="$GUARD_TMP/empty-dex" \
+  python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'no built-in guards'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (missing built-in guards should block, got rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+# An unexpected crash anywhere in the handler must deny rather than allow:
+# exit 1 would let the call through with no guard evaluation at all.
+mkdir -p "$GUARD_TMP/shim"
+cat > "$GUARD_TMP/shim/sitecustomize.py" <<'SHIM'
+import sys
+
+
+class _FailingStdin:
+    def isatty(self):
+        return False
+
+    def read(self, *args):
+        raise RuntimeError("simulated stdin failure")
+
+
+sys.stdin = _FailingStdin()
+SHIM
+set +e
+GUARD_OUT="$(env DEX_GUARD_EVENT=bash PYTHONPATH="$GUARD_TMP/shim" python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'guard evaluation failed'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (handler crash should block, got rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
 printf 'guards-test: %d passed, %d failed\n' "$pass" "$fail"
-[[ "$fail" -eq 0 ]]
+if [[ "$fail" -ne 0 ]]; then
+  exit 1
+fi
+exit 0
