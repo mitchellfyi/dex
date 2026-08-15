@@ -2067,7 +2067,8 @@ project_slug = read("project_slug")
 if not re.fullmatch(r"(?!\.{1,2}$)[A-Za-z0-9._-]{1,255}", project_slug):
     project_slug = "personal"
 payload = {
-    "external_id": clipped(read("run_id"), 200),
+    # agent_runs.external_id is constrained to 128 characters server-side.
+    "external_id": clipped(read("run_id"), 128),
     "task_title": clipped(task_title or workspace_name, 240),
     "task_body": task_body,
     "provider": clipped(read("provider"), 64),

@@ -372,7 +372,10 @@ if not isinstance(data, dict):
 reject_secret_keys(data)
 
 run_id = string_at(data, "run_id", "run_spec")
-validate_text(run_id, "run_id", 200)
+# DexCode stores this in agent_runs.external_id, constrained to 128
+# characters. Accepting 200 here meant an over-long id passed validation and
+# was refused by the server with a 400, which is fatal rather than retried.
+validate_text(run_id, "run_id", 128)
 if not RUN_ID_RE.match(run_id) or ".." in run_id or "/" in run_id:
     fail("run_id must match run_[A-Za-z0-9._-]+ and must not contain path segments")
 
