@@ -199,6 +199,37 @@ running automatic worktree cleanup.
 
 Audit prompts are editable markdown files. Changes take effect on the next loop iteration without reloading shell functions.
 
+### What The Integrity Chain Does And Does Not Cover
+
+The sealed criteria hash, clean ledger, retained proofs, attestations, and
+receipt exist to stop a review loop from *drifting* into a false pass: a wave
+that reviewed the wrong scope, resumed against changed criteria, reused a stale
+result, counted an assessment as a clean pass, or lost a finding between
+sessions. Every one of those ends in a pause with no clean credit, and the
+recorded failure names which binding did not match. That is the property Dex
+relies on, and it holds.
+
+It is not a defense against a review wave that is actively trying to defeat it.
+The chain is keyless SHA-256 over values the wave can see, computed by library
+code the wave can read, writing to state files the wave can write, all under one
+UID. A wave that chose to could recompute the whole chain rather than earn it.
+Closing that gap needs something the wave does not have — a per-run secret held
+only by the orchestrator, or a ledger written by a process the wave cannot
+reach — and neither exists today.
+
+So: the review loop raises the cost of an accidental or lazy pass to the point
+where earning it is easier than faking it, and it makes every counted pass
+auditable after the fact. Treat it as protection against a confused agent, not
+a hostile one, and keep the human review gate on the resulting PR.
+
+Two lower-cost gaps are worth knowing about specifically. A selection file that
+records `source=environment` is trusted without re-applying the deterministic
+tier floor, so a resumed loop can adopt a cheaper tier than the assessor would
+have chosen. And the trusted policy is read through `origin/<default-branch>`,
+a local ref that can be moved offline; in a repository with no remote,
+`dx_default_branch` falls back to the current branch, which makes the agent's
+own commits the policy authority.
+
 ## Activation
 
 Two activation mechanisms, depending on context:

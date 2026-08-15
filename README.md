@@ -96,6 +96,13 @@ between 1 and 30 and satisfy `small <= normal <= complex`. Dex ignores policy
 edits made only on the candidate branch. `DEX_REVIEW_CLEAN_PASSES` can raise the
 resolved gate for one run but cannot lower it.
 
+The clean-pass bookkeeping is designed to stop a review loop drifting into a
+false pass — wrong scope, changed criteria, a reused result, a lost finding —
+and every such case pauses without credit. It is not a defense against an agent
+deliberately forging its own receipts: the whole chain runs under one UID with
+no secret the reviewer lacks. Keep the human review gate on the PR. See
+[Autonomous mode](docs/autonomous-mode.md#what-the-integrity-chain-does-and-does-not-cover).
+
 ## Common Commands
 
 ```bash

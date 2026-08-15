@@ -253,6 +253,8 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 - Never store secrets in state files or `settings.json`
 - Session IDs are not cryptographically random — don't use them for authentication
 - Keep guard patterns efficient — they run on every tool invocation
+- The review-loop attestation chain (sealed criteria, ledger, receipts) detects drift, not forgery: it is keyless and runs under the same UID as the review waves it constrains. Don't describe it as tamper-proof. See docs/autonomous-mode.md § What The Integrity Chain Does And Does Not Cover
+- Pass credentials to `curl` via `--config` on stdin, never `-H` in argv, which is world-readable in `ps`
 
 ## Common Tasks
 
