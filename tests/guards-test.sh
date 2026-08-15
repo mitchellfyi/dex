@@ -250,6 +250,38 @@ fi
 # including a regression that the remaining destructive-command guard stays
 # active.
 
+# Shell syntax checks (noexec) must be allowed: `bash -n` / `zsh -n` parse
+# their input and exit without running any of it, and they are this project's
+# documented quality gate. Executing forms of the same script stay blocked.
+NOEXEC_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-noexec.XXXXXX")"
+cat > "$NOEXEC_TMP/payload.sh" <<'PAYLOAD'
+#!/usr/bin/env bash
+codex exec "do the work"
+PAYLOAD
+chmod +x "$NOEXEC_TMP/payload.sh"
+
+assert_bash_allowed() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if printf '%s' "$GUARD_OUT" | grep -q 'BLOCKED'; then
+    printf 'FAIL (expected allowed): %s\n%s\n' "$1" "$GUARD_OUT" >&2
+    fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
+  fi
+}
+
+assert_bash_allowed "bash -n on a codex-calling script" "bash -n $NOEXEC_TMP/payload.sh"
+assert_bash_allowed "zsh -n on a codex-calling script" "zsh -n $NOEXEC_TMP/payload.sh"
+assert_bash_allowed "noexec with clustered flags" "bash -en $NOEXEC_TMP/payload.sh"
+assert_bash_allowed "noexec via -o noexec" "bash -o noexec $NOEXEC_TMP/payload.sh"
+assert_bash_allowed "noexec with an inline payload" "bash -n -c 'codex exec build'"
+
+assert_raw_codex_blocks "executing the same script" "bash $NOEXEC_TMP/payload.sh"
+assert_raw_codex_blocks "noexec cancelled by a later +n" "bash -n +n $NOEXEC_TMP/payload.sh"
+assert_raw_codex_blocks "noexec after -- is not an option" "bash -- -n $NOEXEC_TMP/payload.sh"
+assert_raw_codex_blocks "unrelated long option is not noexec" "bash --norc $NOEXEC_TMP/payload.sh"
+rm -rf "$NOEXEC_TMP"
+
 # Guard evaluation must fail closed. A blocking guard that cannot finish
 # checking a command has to deny it; letting the call through would silently
 # disable the guard exactly when the input is hostile.

@@ -2099,7 +2099,11 @@ def shell_c_scripts(text, variables=None):
             continue
         if command_position:
             command_index = skip_wrapper_prefix(tokens, index)
-            if command_index < len(tokens) and token_basename(tokens[command_index]) in SHELLS:
+            if (
+                command_index < len(tokens)
+                and token_basename(tokens[command_index]) in SHELLS
+                and not shell_invocation_is_noexec(tokens, command_index)
+            ):
                 script = shell_script_arg(tokens, command_index)
                 if script:
                     script_vars = shell_wrapper_variables(tokens, index, command_index, variables)
@@ -2111,6 +2115,46 @@ def shell_c_scripts(text, variables=None):
         command_position = False
         index += 1
     return scripts
+
+
+def shell_invocation_is_noexec(tokens, shell_index):
+    """Return True when a shell is invoked in no-execute (syntax-check) mode.
+
+    `bash -n file.sh` and `zsh -n dx.sh` read their input and exit without
+    running any of it, so neither the script body nor a -c payload can launch
+    anything. Without this, syntax checks are blocked purely for mentioning a
+    pattern the detectors look for.
+
+    Later flags win, so `bash -n +n script.sh` is executing and stays guarded.
+    Anything unrecognized ends the scan and leaves the invocation guarded.
+    """
+    noexec = False
+    index = shell_index + 1
+    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+        token = tokens[index]
+        if token == '--':
+            break
+        if token in {'-o', '+o'}:
+            if index + 1 < len(tokens) and tokens[index + 1] == 'noexec':
+                noexec = token == '-o'
+                index += 2
+                continue
+            index += 2
+            continue
+        if len(token) > 1 and token[0] in '-+' and token[1] != '-':
+            flags = token[1:]
+            if 'n' in flags:
+                noexec = token[0] == '-'
+            if 'c' in flags:
+                # -c consumes the command string; option parsing ends here.
+                break
+            index += 1
+            continue
+        if token.startswith('--'):
+            index += 1
+            continue
+        break
+    return noexec
 
 
 def shell_script_file_arg(tokens, shell_index):
@@ -3698,6 +3742,12 @@ def has_raw_codex_delegation(text, depth=0, cwd=None):
 
             if command_base in CODEX_HELPER_COMMANDS and codex_invocation_is_blocked(['codex'] + tokens[command_index + 1:], 0):
                 return True
+
+            if command_base in SHELLS and shell_invocation_is_noexec(tokens, command_index):
+                # Syntax-check only: nothing in the script or -c payload runs.
+                command_position = False
+                index = command_segment_end(tokens, command_index + 1)
+                continue
 
             if command_base in SHELLS:
                 script = shell_script_arg(tokens, command_index)
