@@ -51,6 +51,20 @@ Per-project (created by `dx init`):
 
 Never introduce zsh-only syntax in `lib/` or `hooks/`. Only `dx.sh` may use zsh features.
 
+The reverse also holds, and is easier to miss: `lib/` is *sourced by* `dx.sh`,
+so it runs under zsh even though it is written for bash. Names zsh treats
+specially cannot be used as ordinary variables there:
+
+```bash
+local status=0    # zsh: read-only; the declaration fails
+local path="$1"   # zsh: tied to PATH, so the next command is not found
+```
+
+Both of those shipped. `tests/zsh-reserved-names.py` (run by `tests/check.sh`)
+rejects the whole set. shellcheck cannot see it — the names are ordinary in
+bash — and neither can the test suite, which runs under bash. `hooks/` and
+`bin/` have bash shebangs and are not affected.
+
 ### Error handling
 
 All scripts use `set -euo pipefail`. Use early returns, not deep nesting.

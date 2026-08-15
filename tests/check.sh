@@ -39,8 +39,13 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m py_compile "$ROOT/hooks/guard-handler.py" "$ROOT"/scripts/*.py \
     || fail "python3 -m py_compile"
+  # zsh sources dx.sh and lib/, where names like `status` and `path` are
+  # special. shellcheck cannot see this and the suite runs under bash, so
+  # nothing else catches it.
+  python3 "$ROOT/tests/zsh-reserved-names.py" || fail "zsh reserved names"
 else
   printf 'SKIP python compile (python3 not installed)\n'
+  printf 'SKIP zsh reserved names (python3 not installed)\n'
 fi
 
 if command -v node >/dev/null 2>&1; then
