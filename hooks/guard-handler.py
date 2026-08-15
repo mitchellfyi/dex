@@ -183,14 +183,24 @@ def read_provider_config(path):
     return data if isinstance(data, dict) else {}
 
 
+# These run on every tool call and are asked for several times per run — by
+# guard loading, by provider resolution, and again by each env-gated guard.
+# The answers cannot change within a single invocation, so resolve once.
+_GUARD_PROCESS_CACHE = {}
+
+
 def git_toplevel():
+    if 'git_toplevel' in _GUARD_PROCESS_CACHE:
+        return _GUARD_PROCESS_CACHE['git_toplevel']
     try:
-        return subprocess.check_output(
+        value = subprocess.check_output(
             ['git', 'rev-parse', '--show-toplevel'],
             text=True, stderr=subprocess.DEVNULL
         ).strip()
     except Exception:
-        return ''
+        value = ''
+    _GUARD_PROCESS_CACHE['git_toplevel'] = value
+    return value
 
 
 def provider_repo_root():
@@ -215,6 +225,14 @@ def provider_global_config_path():
 
 
 def provider_repo_session_key():
+    if 'repo_session_key' in _GUARD_PROCESS_CACHE:
+        return _GUARD_PROCESS_CACHE['repo_session_key']
+    key = __provider_repo_session_key_uncached()
+    _GUARD_PROCESS_CACHE['repo_session_key'] = key
+    return key
+
+
+def __provider_repo_session_key_uncached():
     root = provider_repo_root() or os.getcwd()
     name = os.path.basename(root.rstrip(os.sep)) or 'repo'
     slug = re.sub(r'[^a-z0-9._-]+', '-', name.lower()).strip('-') or 'repo'
@@ -271,6 +289,8 @@ def provider_session_id():
     session_id = os.environ.get('DEX_SESSION_ID', '')
     if session_id:
         return session_id
+    if 'provider_session_id' in _GUARD_PROCESS_CACHE:
+        return _GUARD_PROCESS_CACHE['provider_session_id']
     root = git_toplevel()
     if root:
         marker = os.sep + '.dex' + os.sep + 'worktrees' + os.sep
@@ -283,7 +303,9 @@ def provider_session_id():
         ).strip()
     except Exception:
         branch = ''
-    return provider_scoped_session_id(branch.replace('/', '-')) if branch else ''
+    resolved = provider_scoped_session_id(branch.replace('/', '-')) if branch else ''
+    _GUARD_PROCESS_CACHE['provider_session_id'] = resolved
+    return resolved
 
 
 def provider_session_engine():
@@ -319,6 +341,14 @@ def provider_session_engine():
 
 
 def resolved_provider_engine():
+    if 'resolved_provider_engine' in _GUARD_PROCESS_CACHE:
+        return _GUARD_PROCESS_CACHE['resolved_provider_engine']
+    engine = __resolve_provider_engine_uncached()
+    _GUARD_PROCESS_CACHE['resolved_provider_engine'] = engine
+    return engine
+
+
+def __resolve_provider_engine_uncached():
     session_engine = provider_session_engine()
     if session_engine:
         return session_engine

@@ -2709,6 +2709,16 @@ fi
 # Only run after actual git commit commands.
 # Uses word-boundary matching to avoid false positives on git commit-tree,
 # comments containing "git commit", etc.
+# Cheap prefilter before any interpreter starts. This hook runs after every
+# Bash tool call, and the parse below costs two python3 launches plus a full
+# shell parse — about 50ms on each `ls`. Everything the detector can match
+# ends in a literal `commit` token (see git_commit_creates_commit), so a
+# payload without that substring cannot be a commit this hook would validate.
+case "$HOOK_INPUT" in
+  *commit*) ;;
+  *) exit 0 ;;
+esac
+
 TOOL_INPUT="$HOOK_INPUT"
 if [[ -n "$HOOK_INPUT" ]]; then
   TOOL_INPUT=$(__dx_post_commit_hook_field "$HOOK_INPUT" "command" 2>/dev/null || printf '%s' "$HOOK_INPUT")
