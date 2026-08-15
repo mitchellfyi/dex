@@ -14,12 +14,16 @@ for shell_name in bash zsh; do
   '
 done
 
-# The child zsh inspects the function loaded from this checkout.
+# The child zsh inspects the functions loaded from this checkout. dxreviewloop
+# is a thin wrapper in dx.sh; the loop itself is dx_review_loop_run in
+# lib/review-loop.sh, and that is what has to reach the controller.
 # shellcheck disable=SC2016
 DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
-  function_body=$(functions dxreviewloop)
-  [[ "$function_body" == *"dx_review_transition"* ]]
+  wrapper_body=$(functions dxreviewloop)
+  [[ "$wrapper_body" == *"dx_review_loop_run"* ]]
+  loop_body=$(functions dx_review_loop_run)
+  [[ "$loop_body" == *"dx_review_transition"* ]]
 '
 
 printf 'review-controller-integration-test passed\n'

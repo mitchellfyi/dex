@@ -353,7 +353,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `project-state.sh` | Init ownership snapshots and conservative project cleanup | `dx_project_state_begin()`, `dx_project_state_finalize()`, `dx_project_state_remove_managed()` |
 | `review.sh` | Scope-bound review selection/state, evidence, retained proofs, ledgers, receipts, result parsing, churn detection, and telemetry JSON | `dx_review_evidence_valid()`, `dx_review_ledger_valid()`, `dx_review_write_receipt()`, `dx_review_findings_churn_kind()`, `dx_review_event_json()` |
-| `review-loop.sh` | Review-loop helpers used by `dxreviewloop`: run telemetry, standalone session ids, pause and interrupt handling, scope snapshots, criteria prompts | `__dx_review_emit_event()`, `__dx_review_scope_snapshot()`, `__dx_review_pause_intervention()` |
+| `review-loop.sh` | The review loop itself plus its helpers: wave orchestration, tier assessment, run telemetry, pause and interrupt handling, scope snapshots. `dxreviewloop` in dx.sh is a thin wrapper over it | `dx_review_loop_run()`, `__dx_review_emit_event()`, `__dx_review_scope_snapshot()` |
 | `review-controller.sh` | Pure review-loop state transitions and atomic findings history | `dx_review_transition()`, `dx_review_findings_history_append()` |
 | `review-policy.sh` | Trusted default-branch clean-pass policy resolution and binding | `dx_review_policy_resolve()`, `dx_review_policy_for_tier()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
@@ -374,7 +374,7 @@ they go stale on every edit:
 | Internal helpers, phase execution, display helpers | `__dx_is_ticket()`, `__dx_setup_worktree()`, `__dx_run_phases_inline()` |
 | Phased lifecycle and aliases | `dx()` |
 | Prompt loop and refinement | `dxloop()`, `dxrefine()` |
-| Completion and review loops | `dxcomplete()`, `dxreviewloop()` |
+| Completion and review loops | `dxcomplete()`; `dxreviewloop()` delegates to `dx_review_loop_run()` in lib/review-loop.sh |
 | Worktree removal | `dxrm()` |
 | Worktree listing | `dxls()` |
 | Worktree navigation | `dxcd()` |
@@ -384,6 +384,11 @@ they go stale on every edit:
 - Shared provider/model launch logic → `lib/provider.sh`
 - Codex skill-link logic → `lib/codex.sh`
 - `__dx_show_header()` + `__dx_format_elapsed()` → `lib/display.sh`
+
+The provider seam is why `__dx_claude` and `__dx_provider_prompt` still exist as one-line
+passthroughs: three test files redefine `__dx_claude` to stand in for the provider CLI, so
+callers must reach the provider by that name rather than calling `lib/provider.sh` directly.
+They live in `lib/review-loop.sh` beside the loop that uses them.
 
 **What stays in dx.sh:** Functions that use zsh-specific syntax (`${(j: :)@}`, zsh arrays) or need `unalias/unfunction` re-sourcing guards. The public commands (`dx`, `dxloop`, `dxrm`, `dxls`, `dxclean`, `dxcomplete`, `dxreviewloop`, `dex`, `dexter`) must stay because they are shell functions loaded into the user's zsh session.
 
