@@ -6,19 +6,19 @@ DX_ATTRIBUTION_COAUTHOR_EMAIL="${DX_ATTRIBUTION_COAUTHOR_EMAIL:-noreply@dexcode.
 DX_ATTRIBUTION_TRAILER="Co-Authored-By: ${DX_ATTRIBUTION_COAUTHOR_NAME} <${DX_ATTRIBUTION_COAUTHOR_EMAIL}>"
 
 __dx_attribution_effective_scope() {
-  local repo_root="$1" result status
+  local repo_root="$1" result rc
 
   if result=$(git -C "$repo_root" config --show-scope --get core.hooksPath 2>/dev/null); then
     printf '%s\n' "$result" | awk 'NR == 1 { print $1 }'
     return 0
   else
-    status=$?
+    rc=$?
   fi
-  if [[ "$status" == "1" ]]; then
+  if [[ "$rc" == "1" ]]; then
     printf '\n'
     return 0
   fi
-  return "$status"
+  return "$rc"
 }
 
 dx_attribution_hook_dir() {

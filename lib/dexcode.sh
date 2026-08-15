@@ -1477,7 +1477,7 @@ PY
 }
 
 dx_dexcode_repo_json() {
-  local repo_dir="$1" output_file="${2:-}" remote_url tmp_dir status=0 owned_output=0
+  local repo_dir="$1" output_file="${2:-}" remote_url tmp_dir rc=0 owned_output=0
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-repo-payload.XXXXXX") || return 1
   chmod 700 "$tmp_dir" 2>/dev/null || {
     command rm -rf "$tmp_dir"
@@ -1535,18 +1535,18 @@ PY
   then
     :
   else
-    status=$?
+    rc=$?
   fi
-  if [[ "$status" -eq 0 && "$owned_output" -eq 1 ]]; then
-    command cat "$output_file" || status=$?
+  if [[ "$rc" -eq 0 && "$owned_output" -eq 1 ]]; then
+    command cat "$output_file" || rc=$?
   fi
   command rm -rf "$tmp_dir"
-  return "$status"
+  return "$rc"
 }
 
 dx_dexcode_context_payload() {
   local repo_dir="$1" output_file="${2:-}" owned_tmp_dir=""
-  local entry_max_bytes total_max_bytes max_entries status=0
+  local entry_max_bytes total_max_bytes max_entries rc=0
   if [[ -z "$output_file" ]]; then
     owned_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-context-payload.XXXXXX") || return 1
     chmod 700 "$owned_tmp_dir" 2>/dev/null || {
@@ -1940,21 +1940,21 @@ PY
   then
     :
   else
-    status=$?
+    rc=$?
   fi
-  if [[ "$status" -eq 0 && -n "$owned_tmp_dir" ]]; then
-    command cat "$output_file" || status=$?
+  if [[ "$rc" -eq 0 && -n "$owned_tmp_dir" ]]; then
+    command cat "$output_file" || rc=$?
   fi
   if [[ -n "$owned_tmp_dir" ]]; then
     command rm -rf "$owned_tmp_dir"
   fi
-  return "$status"
+  return "$rc"
 }
 
 dx_dexcode_create_run_payload() {
   local run_id="$1" repo_dir="$2" workspace_mode="$3" workspace_name="$4" raw_input="$5" command_name="$6"
   local output_file="${7:-}" project_slug project_name default_branch provider branch
-  local tmp_dir input_dir repo_file spec_file status=0 owned_output=0
+  local tmp_dir input_dir repo_file spec_file rc=0 owned_output=0
   project_slug=$(dx_dexcode_config_value "default_project.slug" 2>/dev/null || printf 'personal')
   project_name=$(dx_dexcode_config_value "default_project.name" 2>/dev/null || printf 'Personal')
   dx_dexcode_path_segment_valid "$project_slug" || project_slug="personal"
@@ -2098,13 +2098,13 @@ PY
   then
     :
   else
-    status=$?
+    rc=$?
   fi
-  if [[ "$status" -eq 0 && "$owned_output" -eq 1 ]]; then
-    command cat "$output_file" || status=$?
+  if [[ "$rc" -eq 0 && "$owned_output" -eq 1 ]]; then
+    command cat "$output_file" || rc=$?
   fi
   command rm -rf "$tmp_dir"
-  return "$status"
+  return "$rc"
 }
 
 dx_dexcode_prepare_run_sync() {

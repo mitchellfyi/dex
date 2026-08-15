@@ -20,9 +20,9 @@
 
 # dx_lock_path_age_seconds <path> — portable age in seconds, or empty
 dx_lock_path_age_seconds() {
-  local path="$1"
-  [[ -e "$path" ]] || return 1
-  python3 - "$path" <<'PY' 2>/dev/null
+  local target="$1"
+  [[ -e "$target" ]] || return 1
+  python3 - "$target" <<'PY' 2>/dev/null
 import os
 import sys
 import time

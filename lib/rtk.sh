@@ -365,9 +365,9 @@ EOF
 }
 
 dx_rtk_markers_valid() {
-  local path="$1"
+  local target="$1"
 
-  [[ -f "$path" ]] || return 1
+  [[ -f "$target" ]] || return 1
   awk -v start="$DX_RTK_MARKER_START" -v finish="$DX_RTK_MARKER_END" '
     $0 == start {
       starts++
@@ -383,18 +383,18 @@ dx_rtk_markers_valid() {
     END {
       if (starts != 1 || finishes != 1 || open || invalid) exit 1
     }
-  ' "$path"
+  ' "$target"
 }
 
 dx_write_rtk_codex_markdown() {
-  local path="$1" rtk_cmd="$2" tmp block_tmp
+  local target="$1" rtk_cmd="$2" tmp block_tmp
 
-  tmp="${path}.tmp.$$"
-  block_tmp="${path}.block.$$"
+  tmp="${target}.tmp.$$"
+  block_tmp="${target}.block.$$"
   dx_rtk_codex_markdown_block "$rtk_cmd" > "$block_tmp"
 
-  if [[ -f "$path" ]]; then
-    if ! dx_rtk_markers_valid "$path"; then
+  if [[ -f "$target" ]]; then
+    if ! dx_rtk_markers_valid "$target"; then
       rm -f "$tmp" "$block_tmp" 2>/dev/null || true
       return 1
     fi
@@ -411,7 +411,7 @@ dx_write_rtk_codex_markdown() {
       }
       skipping && $0 == finish { skipping = 0; next }
       !skipping { print }
-    ' "$path" > "$tmp"; then
+    ' "$target" > "$tmp"; then
       rm -f "$tmp" "$block_tmp" 2>/dev/null || true
       return 1
     fi
@@ -423,7 +423,7 @@ dx_write_rtk_codex_markdown() {
     block_tmp=""
   fi
 
-  if mv "$tmp" "$path"; then
+  if mv "$tmp" "$target"; then
     [[ -z "$block_tmp" ]] || rm -f "$block_tmp" 2>/dev/null || true
     return 0
   fi
