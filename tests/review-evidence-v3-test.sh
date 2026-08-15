@@ -241,8 +241,6 @@ assert_rejected "gating evidence does not infer omitted bindings" \
 LEGACY_EVIDENCE_FILE="$TMP_DIR/review-evidence-v2.json"
 write_evidence version-2
 cp "$EVIDENCE_FILE" "$LEGACY_EVIDENCE_FILE"
-dx_review_evidence_legacy_valid "$LEGACY_EVIDENCE_FILE" CLEAN light "$SCOPE_FINGERPRINT" \
-  "$CRITERIA_BINDING" "$CRITERIA_FILE"
 assert_rejected "legacy evidence cannot pass the gating validator" \
   dx_review_evidence_valid "$LEGACY_EVIDENCE_FILE" CLEAN light "$SCOPE_FINGERPRINT" \
   "$CRITERIA_BINDING" "$CRITERIA_FILE" "$PASS_ID" "$POLICY_BINDING" "$CONTEXT_FILE"

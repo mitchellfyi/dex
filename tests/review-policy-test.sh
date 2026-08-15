@@ -233,29 +233,16 @@ assert_eq "9" "$policy_complex" "trusted complex policy"
 }
 evidence_file="$TMP_DIR/review-evidence.json"
 printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint"
 printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"partial\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-assert_rejected "legacy clean evidence requires passing checks" \
-  dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint"
 printf '%s\n' "{\"version\":1,\"scope_fingerprint\":\"${base_fingerprint}\",\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":1,\"fixes_applied\":1}" > "$evidence_file"
-dx_review_evidence_legacy_valid "$evidence_file" FINDINGS_FIXED:1 light "$base_fingerprint"
-assert_rejected "legacy evidence is bound to scope" \
-  dx_review_evidence_legacy_valid "$evidence_file" FINDINGS_FIXED:1 light "$(printf '0%.0s' {1..64})"
 
 evidence_criteria_file="$TMP_DIR/evidence-criteria.json"
 printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Review every approved requirement."],"acceptance_criteria":["Evidence accounts for each criteria item."],"verification_requirements":["Run the focused policy test."]}' > "$evidence_criteria_file"
 evidence_criteria_hash=$(dx_review_criteria_hash "$evidence_criteria_file")
 evidence_criteria_coverage=$(dx_review_criteria_coverage_json "$evidence_criteria_hash" "$evidence_criteria_file")
 printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"${evidence_criteria_hash}\",\"criteria_coverage\":${evidence_criteria_coverage},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint" \
-  "$evidence_criteria_hash" "$evidence_criteria_file"
 printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"${evidence_criteria_hash}\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-assert_rejected "legacy lifecycle evidence rejects omitted criteria" \
-  dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint" \
-  "$evidence_criteria_hash" "$evidence_criteria_file"
 printf '%s\n' "{\"version\":2,\"scope_fingerprint\":\"${base_fingerprint}\",\"criteria_binding\":\"standalone\",\"criteria_coverage\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$evidence_file"
-dx_review_evidence_legacy_valid "$evidence_file" CLEAN light "$base_fingerprint" \
-  standalone "$TMP_DIR/no-criteria.json"
 
 evidence_pass_id="review-policy-evidence-1"
 evidence_pass_binding=$(dx_review_pass_binding \

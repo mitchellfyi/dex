@@ -30,16 +30,6 @@ dx_review_tier_clean_passes() {
   esac
 }
 
-dx_review_tier_min_clean_passes() {
-  local tier
-  tier=$(dx_review_normalize_tier "${1:-}") || return 1
-  case "$tier" in
-    small) printf '%s\n' "3" ;;
-    normal) printf '%s\n' "6" ;;
-    complex) printf '%s\n' "9" ;;
-  esac
-}
-
 dx_review_tier_rank() {
   local tier
   tier=$(dx_review_normalize_tier "${1:-}") || return 1
@@ -561,151 +551,6 @@ try:
             os.close(descriptor)
 except (OSError, ValueError):
     raise SystemExit(1)
-PY
-}
-
-dx_review_evidence_legacy_valid() {
-  [[ $# -eq 4 || $# -eq 6 ]] || return 1
-  local evidence_file="$1" result="$2" profile="$3" expected_fingerprint="$4"
-  local expected_binding="${5:-}" criteria_file="${6:-}" strict_criteria=0
-  dx_review_result_valid "$result" || return 1
-  [[ "$profile" == "light" || "$profile" == "standard" || "$profile" == "thorough" ]] || return 1
-  [[ "$expected_fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
-  [[ -f "$evidence_file" ]] || return 1
-  if [[ $# -ge 5 ]]; then
-    strict_criteria=1
-    dx_review_criteria_binding_valid "$expected_binding" || return 1
-    if [[ "$expected_binding" == "standalone" ]]; then
-      [[ -z "$criteria_file" || ! -e "$criteria_file" ]] || return 1
-    else
-      [[ -n "$criteria_file" ]] || return 1
-      [[ "$(dx_review_criteria_hash "$criteria_file" 2>/dev/null)" == "$expected_binding" ]] || return 1
-    fi
-  fi
-  DX_REVIEW_EVIDENCE_RESULT="$result" \
-  DX_REVIEW_EVIDENCE_PROFILE="$profile" \
-  DX_REVIEW_EVIDENCE_FINGERPRINT="$expected_fingerprint" \
-  DX_REVIEW_EVIDENCE_STRICT_CRITERIA="$strict_criteria" \
-  DX_REVIEW_EVIDENCE_CRITERIA_BINDING="$expected_binding" \
-  DX_REVIEW_EVIDENCE_CRITERIA_FILE="$criteria_file" \
-  python3 - "$evidence_file" <<'PY'
-import hashlib
-import json
-import os
-import re
-import sys
-
-try:
-    if os.path.getsize(sys.argv[1]) > 65536:
-        raise ValueError
-    with open(sys.argv[1], "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
-    raise SystemExit(1)
-
-base_keys = {
-    "version",
-    "scope_fingerprint",
-    "deterministic_checks",
-    "coverage",
-    "verifier",
-    "verified_findings",
-    "fixes_applied",
-}
-strict_criteria = os.environ["DX_REVIEW_EVIDENCE_STRICT_CRITERIA"] == "1"
-required_keys = base_keys | ({"criteria_binding", "criteria_coverage"} if strict_criteria else set())
-if not isinstance(payload, dict) or set(payload) != required_keys:
-    raise SystemExit(1)
-expected_version = 2 if strict_criteria else 1
-if isinstance(payload["version"], bool) or payload["version"] != expected_version:
-    raise SystemExit(1)
-if payload["scope_fingerprint"] != os.environ["DX_REVIEW_EVIDENCE_FINGERPRINT"]:
-    raise SystemExit(1)
-
-if strict_criteria:
-    binding = os.environ["DX_REVIEW_EVIDENCE_CRITERIA_BINDING"]
-    if payload["criteria_binding"] != binding:
-        raise SystemExit(1)
-    sections = ("objectives", "acceptance_criteria", "verification_requirements")
-    if binding == "standalone":
-        expected_criteria_coverage = {section: [] for section in sections}
-    else:
-        try:
-            with open(os.environ["DX_REVIEW_EVIDENCE_CRITERIA_FILE"], "r", encoding="utf-8") as handle:
-                criteria = json.load(handle)
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            raise SystemExit(1)
-        expected_criteria_coverage = {}
-        for section in sections:
-            expected_criteria_coverage[section] = [
-                hashlib.sha256(
-                    json.dumps(
-                        [section, index, value],
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
-                for index, value in enumerate(criteria[section])
-            ]
-    if payload["criteria_coverage"] != expected_criteria_coverage:
-        raise SystemExit(1)
-
-if payload["deterministic_checks"] not in {"pass", "partial", "fail", "unavailable"}:
-    raise SystemExit(1)
-if payload["verifier"] not in {"pass", "fail", "not-run"}:
-    raise SystemExit(1)
-if not isinstance(payload["coverage"], list) or not payload["coverage"]:
-    raise SystemExit(1)
-allowed_domains = {
-    "correctness",
-    "security",
-    "contracts",
-    "tests",
-    "architecture",
-    "frontend",
-    "devops",
-    "performance",
-    "observability",
-}
-coverage = payload["coverage"]
-if any(not isinstance(item, str) or item not in allowed_domains for item in coverage):
-    raise SystemExit(1)
-if len(coverage) != len(set(coverage)):
-    raise SystemExit(1)
-for key in ("verified_findings", "fixes_applied"):
-    value = payload[key]
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 999999999999999999:
-        raise SystemExit(1)
-
-result = os.environ["DX_REVIEW_EVIDENCE_RESULT"]
-profile = os.environ["DX_REVIEW_EVIDENCE_PROFILE"]
-core = {"correctness", "security", "contracts", "tests", "architecture"}
-all_domains = core | {"frontend", "devops", "performance", "observability"}
-
-if result == "CLEAN":
-    if payload["deterministic_checks"] != "pass" or payload["verifier"] != "pass":
-        raise SystemExit(1)
-    if payload["verified_findings"] != 0 or payload["fixes_applied"] != 0:
-        raise SystemExit(1)
-    required_coverage = all_domains if profile == "thorough" else core
-    if not required_coverage.issubset(set(coverage)):
-        raise SystemExit(1)
-elif result.startswith("FINDINGS_FIXED:"):
-    count = int(result.split(":", 1)[1])
-    if payload["deterministic_checks"] != "pass" or payload["verifier"] != "pass":
-        raise SystemExit(1)
-    if payload["verified_findings"] != count or payload["fixes_applied"] != count:
-        raise SystemExit(1)
-    required_coverage = all_domains if profile == "thorough" else core
-    if not required_coverage.issubset(set(coverage)):
-        raise SystemExit(1)
-elif result.startswith("FINDINGS:"):
-    count = int(result.split(":", 1)[1])
-    if payload["verified_findings"] != count or payload["fixes_applied"] > count:
-        raise SystemExit(1)
-elif result.startswith("ESCALATE:") or result.startswith("ESCALATE_THOROUGH:"):
-    if payload["verifier"] != "pass" or payload["fixes_applied"] != 0:
-        raise SystemExit(1)
 PY
 }
 
@@ -1815,12 +1660,22 @@ try:
     ):
         raise ValueError
 
+    # Publish the proof atomically. Receipt validation requires each pass
+    # directory to be mode 0500 and to contain exactly evidence.json and
+    # context.md, and it also requires the proof root to contain exactly the
+    # expected iterations. Building in place exposes a window in which a
+    # concurrent validator — the Stop hook runs while the loop waits — sees a
+    # 0700 directory or a half-written file set and rejects the receipt.
+    # Staging outside the root and renaming in means a validator sees either
+    # nothing or the finished directory.
     target = root / iteration
-    target.mkdir(mode=0o700)
+    staging = root.parent / ".{}.{}.staging.{}".format(root.name, iteration, os.getpid())
+    remove_partial(staging)
+    staging.mkdir(mode=0o700)
     try:
         for name, source in sources.items():
             content = read_source(source)
-            destination = target / name
+            destination = staging / name
             descriptor = os.open(
                 destination,
                 os.O_WRONLY
@@ -1840,6 +1695,11 @@ try:
                 os.fchmod(descriptor, 0o400)
             finally:
                 os.close(descriptor)
+        # Publish first, then seal. Renaming a directory needs write access
+        # on the directory itself, so the 0500 chmod has to come after the
+        # rename. The exposure left is two adjacent syscalls rather than the
+        # whole write, and a validator that catches it sees complete contents.
+        os.rename(staging, target)
         os.chmod(target, 0o500, follow_symlinks=False)
         root_descriptor = os.open(
             root,
@@ -1852,7 +1712,7 @@ try:
         finally:
             os.close(root_descriptor)
     except Exception:
-        remove_partial(target)
+        remove_partial(staging)
         raise
 except (OSError, ValueError):
     raise SystemExit(1)
