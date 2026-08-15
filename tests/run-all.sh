@@ -61,12 +61,14 @@ printf 'running %s test(s), %s at a time, %ss timeout\n' "$total" "$JOBS" "$TIME
 run_one() {
   local name="$1" start end rc
   start=$(date +%s)
+  # </dev/null matters: a test that reads stdin would otherwise consume the
+  # runner's own test list and silently drop every remaining test.
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$TIMEOUT" bash "$ROOT/tests/$name" >"$LOG_DIR/$name.log" 2>&1
+    timeout "$TIMEOUT" bash "$ROOT/tests/$name" >"$LOG_DIR/$name.log" 2>&1 </dev/null
     rc=$?
   else
     perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" bash "$ROOT/tests/$name" \
-      >"$LOG_DIR/$name.log" 2>&1
+      >"$LOG_DIR/$name.log" 2>&1 </dev/null
     rc=$?
   fi
   end=$(date +%s)
@@ -78,15 +80,14 @@ run_one() {
   printf '%s\n' "$rc" > "$LOG_DIR/$name.rc"
 }
 
-running=0
+# Throttle with `jobs -pr` rather than `wait -n`, which bash 3.2 (the macOS
+# system bash) does not support.
 while IFS= read -r name; do
   [[ -n "$name" ]] || continue
-  run_one "$name" &
-  running=$((running + 1))
-  if [[ $running -ge $JOBS ]]; then
-    wait -n 2>/dev/null || wait
-    running=$((running - 1))
-  fi
+  while [[ "$(jobs -pr | wc -l | tr -d ' ')" -ge "$JOBS" ]]; do
+    sleep 0.2
+  done
+  run_one "$name" </dev/null &
 done <<EOF
 $tests
 EOF
@@ -96,7 +97,12 @@ passed=0
 failed=""
 while IFS= read -r name; do
   [[ -n "$name" ]] || continue
-  rc="$(cat "$LOG_DIR/$name.rc" 2>/dev/null || echo 1)"
+  if [[ ! -f "$LOG_DIR/$name.rc" ]]; then
+    printf 'DID NOT RUN %s\n' "$name" >&2
+    failed="${failed} ${name}"
+    continue
+  fi
+  rc="$(cat "$LOG_DIR/$name.rc")"
   if [[ "$rc" == "0" ]]; then
     passed=$((passed + 1))
   else
