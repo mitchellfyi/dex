@@ -128,6 +128,11 @@ dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and pl
 `dx login`, `dx logout`, and `dx whoami` manage the optional DexCode connection
 that syncs run events and artifacts; see [docs/events.md](docs/events.md).
 
+`dx worker register` enrolls this machine so DexCode can dispatch runs to it,
+and `dx worker run` polls for them, executes each one, and reports the result.
+The worker pulls: DexCode never connects to this machine. Use
+`dx worker run --once --dry-run` to prove the wiring without doing any work.
+
 `dex` and `dexter` are aliases for `dx`.
 
 For `dx "task description"`, Phase 1 first produces an implementation plan.

@@ -76,6 +76,7 @@ __dx_cli() {
     logout)    dx_dexcode_logout "$@" ;;
     whoami)    dx_dexcode_whoami "$@" ;;
     dexcode)   dx_dexcode_command "$@" ;;
+    worker)    dx_worker_command "$@" ;;
     maintain)  bash "$DEX_DIR/bin/maintain.sh" "$@" ;;
     tools)     bash "$DEX_DIR/bin/tools.sh" "$@" ;;
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
@@ -2645,7 +2646,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|login|logout|whoami|dexcode|maintain|tools|config|provider|run|control|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|config|provider|run|control|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
