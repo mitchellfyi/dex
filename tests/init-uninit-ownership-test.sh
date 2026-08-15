@@ -3,6 +3,8 @@ set -euo pipefail
 umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-init-uninit-ownership.XXXXXX")"
 
 cleanup() {
@@ -79,12 +81,6 @@ run_uninit() {
   ) > "$output" 2>&1
 }
 
-assert_file() {
-  [[ -f "$1" ]] || {
-    printf 'missing file: %s\n' "$1" >&2
-    exit 1
-  }
-}
 
 assert_absent() {
   [[ ! -e "$1" ]] || {
@@ -93,13 +89,6 @@ assert_absent() {
   }
 }
 
-assert_contains() {
-  local expected="$1" file="$2"
-  grep -Fq "$expected" "$file" || {
-    printf 'expected %s to contain %s\n' "$file" "$expected" >&2
-    exit 1
-  }
-}
 
 file_mode() {
   if stat -f '%Lp' "$1" >/dev/null 2>&1; then

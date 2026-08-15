@@ -4,6 +4,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dexcode-revoked-test.XXXXXX")"
 
 cleanup() {
@@ -23,14 +25,6 @@ mkdir -p "$HOME"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
-assert_contains() {
-  local needle="$1" file="$2"
-  grep -qF -- "$needle" "$file" || {
-    printf 'expected output to contain: %s\ngot:\n' "$needle" >&2
-    cat "$file" >&2
-    exit 1
-  }
-}
 
 # A server that answers the profile with whatever status the test asks for.
 cat > "$TMP_DIR/server.py" <<'PYEOF'

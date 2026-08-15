@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-policy-test.XXXXXX")"
 
 cleanup() {
@@ -24,13 +26,6 @@ source "$ROOT/lib/common.sh"
 # shellcheck disable=SC1091
 source "$ROOT/tests/review-proof-fixture.sh"
 
-assert_eq() {
-  local expected="$1" actual="$2" label="$3"
-  if [[ "$expected" != "$actual" ]]; then
-    printf '%s: expected %s, got %s\n' "$label" "$expected" "$actual" >&2
-    exit 1
-  fi
-}
 
 assert_rejected() {
   local label="$1"

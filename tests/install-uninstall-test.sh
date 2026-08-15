@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-install-uninstall-test.XXXXXX")"
 
 cleanup() {
@@ -9,19 +11,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-assert_file() {
-  [[ -f "$1" ]] || {
-    printf 'missing file: %s\n' "$1" >&2
-    exit 1
-  }
-}
-
-assert_no_file() {
-  [[ ! -e "$1" ]] || {
-    printf 'unexpected file: %s\n' "$1" >&2
-    exit 1
-  }
-}
 
 NO_JQ_BIN="$TMP_DIR/no-jq-bin"
 mkdir -p "$NO_JQ_BIN"

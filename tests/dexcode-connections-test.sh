@@ -5,6 +5,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dexcode-connections-test.XXXXXX")"
 
 cleanup() {
@@ -79,13 +81,6 @@ done
 ORIGIN_A="http://127.0.0.1:$(cat "$SERVER_A_PORT_FILE")"
 ORIGIN_B="http://127.0.0.1:$(cat "$SERVER_B_PORT_FILE")"
 
-assert_eq() {
-  local expected="$1" actual="$2" label="$3"
-  if [[ "$expected" != "$actual" ]]; then
-    printf '%s: expected %s, got %s\n' "$label" "$expected" "$actual" >&2
-    exit 1
-  fi
-}
 
 config_value() {
   DX_TEST_CONFIG="$DEXCODE_CONFIG_FILE" DX_TEST_EXPR="$1" python3 - <<'PY'

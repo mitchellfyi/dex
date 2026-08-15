@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-factory-sync-test.XXXXXX")"
 SERVER_PID=""
 
@@ -25,27 +27,6 @@ export DX_RUN_ROOT="$TMP_DIR/runs"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
-assert_file() {
-  [[ -f "$1" ]] || {
-    printf 'missing file: %s\n' "$1" >&2
-    exit 1
-  }
-}
-
-assert_no_file() {
-  [[ ! -f "$1" ]] || {
-    printf 'unexpected file: %s\n' "$1" >&2
-    exit 1
-  }
-}
-
-assert_eq() {
-  local expected="$1" actual="$2" label="$3"
-  [[ "$expected" == "$actual" ]] || {
-    printf '%s: expected %s, got %s\n' "$label" "$expected" "$actual" >&2
-    exit 1
-  }
-}
 
 start_server() {
   local server_dir="$TMP_DIR/server"

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-research-orchestrate-test.XXXXXX")"
 HARNESS_DIR="$TMP_DIR/research"
 STUB_BIN="$TMP_DIR/bin"
@@ -11,20 +13,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-fail() {
-  printf '%s\n' "$*" >&2
-  exit 1
-}
-
-assert_contains() {
-  local needle="$1" file="$2"
-  grep -Fq -- "$needle" "$file" || {
-    printf 'missing expected text: %s\n' "$needle" >&2
-    printf 'output was:\n' >&2
-    cat "$file" >&2
-    exit 1
-  }
-}
 
 mkdir -p "$HARNESS_DIR/lib" "$HARNESS_DIR/results" "$STUB_BIN" "$TMP_DIR/repo"
 cp "$ROOT/research/orchestrate.sh" "$HARNESS_DIR/orchestrate.sh"

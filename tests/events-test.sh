@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-events-test.XXXXXX")"
 
 cleanup() {
@@ -20,19 +22,6 @@ export DX_RUN_ROOT="$TMP_DIR/runs"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
-assert_file() {
-  [[ -f "$1" ]] || {
-    printf 'missing file: %s\n' "$1" >&2
-    exit 1
-  }
-}
-
-assert_dir() {
-  [[ -d "$1" ]] || {
-    printf 'missing dir: %s\n' "$1" >&2
-    exit 1
-  }
-}
 
 run_a="$(dx_run_id)"
 run_b="$(dx_run_id)"

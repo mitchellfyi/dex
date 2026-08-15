@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-init-reliability-test.XXXXXX")"
 
 cleanup() {
@@ -145,21 +147,6 @@ run_codex_init() {
   printf '%s\n' "$status"
 }
 
-assert_contains() {
-  local expected="$1" file="$2"
-  if ! grep -Fq "$expected" "$file"; then
-    printf 'expected %s to contain %s\n' "$file" "$expected" >&2
-    exit 1
-  fi
-}
-
-assert_not_contains() {
-  local unexpected="$1" file="$2"
-  if grep -Fq "$unexpected" "$file"; then
-    printf 'expected %s not to contain %s\n' "$file" "$unexpected" >&2
-    exit 1
-  fi
-}
 
 assert_run_status() {
   local output_file="$1" expected_status="$2"

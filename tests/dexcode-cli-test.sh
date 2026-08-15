@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dexcode-cli-test.XXXXXX")"
 SERVER_PID=""
 
@@ -62,30 +64,6 @@ grep -Fq -- "requires a connected project" "$TMP_DIR/required-context.out" || {
   exit 1
 }
 
-assert_file() {
-  [[ -f "$1" ]] || {
-    printf 'missing file: %s\n' "$1" >&2
-    exit 1
-  }
-}
-
-assert_eq() {
-  local expected="$1" actual="$2" label="$3"
-  [[ "$expected" == "$actual" ]] || {
-    printf '%s: expected %s, got %s\n' "$label" "$expected" "$actual" >&2
-    exit 1
-  }
-}
-
-assert_contains() {
-  local needle="$1" file="$2"
-  grep -Fq -- "$needle" "$file" || {
-    printf 'missing expected text: %s\n' "$needle" >&2
-    printf 'output was:\n' >&2
-    cat "$file" >&2
-    exit 1
-  }
-}
 
 json_value() {
   local file="$1" key="$2"

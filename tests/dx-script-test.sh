@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dx-script-test.XXXXXX")"
 export HOME="$TMP_DIR/home"
 export DX_RUN_ROOT="$TMP_DIR/review-runs"
@@ -13,25 +15,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-assert_contains() {
-  local needle="$1" file="$2"
-  grep -Fq "$needle" "$file" || {
-    printf 'missing expected text: %s\n' "$needle" >&2
-    printf 'output was:\n' >&2
-    cat "$file" >&2
-    exit 1
-  }
-}
-
-assert_not_contains() {
-  local needle="$1" file="$2"
-  if grep -Fq "$needle" "$file"; then
-    printf 'unexpected text: %s\n' "$needle" >&2
-    printf 'output was:\n' >&2
-    cat "$file" >&2
-    exit 1
-  fi
-}
 
 zsh "$ROOT/dx.sh" --help > "$TMP_DIR/zsh-help.out"
 assert_contains "Dex" "$TMP_DIR/zsh-help.out"

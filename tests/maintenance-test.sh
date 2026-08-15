@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-maintenance-test.XXXXXX")"
 
 cleanup() {
@@ -40,23 +42,6 @@ cat > "$repo/.dex/dex.md" <<'EOF'
 | auto_merge_method | squash |
 EOF
 
-assert_eq() {
-  local expected="$1" actual="$2" label="$3"
-  if [[ "$expected" != "$actual" ]]; then
-    printf 'assertion failed for %s: expected %s, got %s\n' "$label" "$expected" "$actual" >&2
-    exit 1
-  fi
-}
-
-assert_contains() {
-  local needle="$1" file="$2"
-  if ! grep -Fq "$needle" "$file"; then
-    printf 'missing expected text: %s\n' "$needle" >&2
-    printf 'output was:\n' >&2
-    cat "$file" >&2
-    exit 1
-  fi
-}
 
 assert_eq "fix-scoped" "$(dx_maintenance_event_mode "$repo" issues "")" "issue event mode"
 assert_eq "report" "$(dx_maintenance_event_mode "$repo" schedule "")" "schedule event mode"

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-policy-config-test.XXXXXX")"
 
 cleanup() {
@@ -16,10 +18,6 @@ source "$ROOT/lib/review.sh"
 # shellcheck source=lib/review-policy.sh
 source "$ROOT/lib/review-policy.sh"
 
-fail() {
-  printf '%s\n' "$*" >&2
-  exit 1
-}
 
 assert_eq() {
   local expected="$1" actual="$2" label="$3"

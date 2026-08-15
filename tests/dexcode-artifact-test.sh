@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dexcode-artifact-test.XXXXXX")"
 SERVER_PID=""
 
@@ -27,22 +29,6 @@ export DEXCODE_CONTEXT_SYNC=0
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
-assert_eq() {
-  local expected="$1" actual="$2" label="$3"
-  [[ "$expected" == "$actual" ]] || {
-    printf '%s: expected %s, got %s\n' "$label" "$expected" "$actual" >&2
-    exit 1
-  }
-}
-
-assert_contains() {
-  local needle="$1" file="$2"
-  grep -Fq -- "$needle" "$file" || {
-    printf 'missing expected text: %s\n' "$needle" >&2
-    cat "$file" >&2
-    exit 1
-  }
-}
 
 json_value() {
   local file="$1" expression="$2"

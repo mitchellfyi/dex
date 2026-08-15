@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TOOL="$ROOT/scripts/maintenance-state.py"
 TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-maintenance-state-test.XXXXXX")"
 
@@ -19,14 +21,6 @@ mkdir -p "$(dirname "$PUBLISH_REPORT")" "$(dirname "$RESPONSE_REPORT")"
 printf '# Publish report\n' > "$PUBLISH_REPORT"
 printf '# Response report\n' > "$RESPONSE_REPORT"
 
-assert_contains() {
-  local needle="$1" file="$2"
-  if ! grep -Fq "$needle" "$file"; then
-    printf 'missing expected text: %s\n' "$needle" >&2
-    cat "$file" >&2
-    exit 1
-  fi
-}
 
 hash_file() {
   python3 - "$1" <<'PY'

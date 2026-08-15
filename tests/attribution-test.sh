@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-attribution-test.XXXXXX")"
 
 cleanup() {
@@ -20,28 +22,6 @@ export DX_RUN_ROOT="$TMP_DIR/runs"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
-assert_file() {
-  [[ -f "$1" ]] || {
-    printf 'missing file: %s\n' "$1" >&2
-    exit 1
-  }
-}
-
-assert_contains() {
-  local needle="$1" file="$2"
-  grep -qF "$needle" "$file" || {
-    printf 'expected %s to contain %s\n' "$file" "$needle" >&2
-    exit 1
-  }
-}
-
-assert_not_contains() {
-  local needle="$1" file="$2"
-  if grep -qF "$needle" "$file"; then
-    printf 'expected %s not to contain %s\n' "$file" "$needle" >&2
-    exit 1
-  fi
-}
 
 run_command_bounded() {
   python3 - "$@" <<'PY'
