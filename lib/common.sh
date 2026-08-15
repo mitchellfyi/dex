@@ -61,6 +61,20 @@ __dx_require_lib() {
   # shellcheck disable=SC1090
   source "$lib"
 }
+# Fast paths that only read state can name the modules they need in
+# DX_COMMON_MODULES (space-separated, without the .sh suffix, in load order).
+# The status line runs on every TUI render, and loading all of lib/ — including
+# the ~90KB review and dexcode modules — dominated its budget. The variable is
+# deliberately not exported: a child process gets the full set unless it opts
+# out for itself.
+if [[ -n "${DX_COMMON_MODULES:-}" ]]; then
+  for _dx_module in ${DX_COMMON_MODULES}; do
+    __dx_require_lib "${_dx_module}.sh"
+  done
+  unset _dx_module
+  return 0 2>/dev/null || true
+fi
+
 __dx_require_lib lock.sh
 __dx_require_lib git.sh
 __dx_require_lib session.sh

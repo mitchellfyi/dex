@@ -4,7 +4,12 @@
 # Must be fast (<50ms) since it runs on every TUI render cycle.
 set -euo pipefail
 
+# Only session and lifecycle-control helpers are used below, and none of them
+# run at source time, so the rest of lib/ is not loaded. See lib/common.sh.
+# shellcheck disable=SC2034 # read by lib/common.sh when it is sourced below
+DX_COMMON_MODULES="output session lifecycle-control"
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+unset DX_COMMON_MODULES
 
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 
