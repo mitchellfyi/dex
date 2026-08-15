@@ -22,7 +22,7 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (20 modules sourced by common.sh; see the module table below)
+lib/                 Shared shell libraries (21 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
 scripts/             Node/helpers used by Dex-managed tooling
@@ -69,7 +69,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`,
 `attribution.sh`, `codex.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
-`lifecycle-control.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
+`lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
 `provider.sh`, `review.sh`, `review-controller.sh`, `review-policy.sh`, `rtk.sh`,
 `run-spec.sh`, `session.sh`, `ui-capture.sh`, and `worktree.sh`.
 
@@ -313,6 +313,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 | Module | Purpose | Key functions |
 |--------|---------|---------------|
 | `common.sh` | Bootstrap, constants, sources all others | `dx_repo_root()` |
+| `lock.sh` | Advisory directory locks with owner records and serialized stale recovery | `dx_lock_acquire()`, `dx_lock_release()`, `dx_lock_with()` |
 | `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap | `dx_bootstrap_agent_tooling()`, `dx_install_safe_official_claude_plugins()`, `dx_install_openai_docs_mcp_servers()` |
 | `attribution.sh` | Commit/PR attribution installation, hook chaining, and restoration | `dx_install_repo_attribution()`, `dx_uninstall_repo_attribution()`, `dx_commit_attribution_message()` |
 | `codex.sh` | Codex CLI skill installation helpers | `dx_install_codex_skills()`, `dx_count_dex_skills()`, `dx_codex_dex_skills_complete()`, `dx_uninstall_codex_skills()` |

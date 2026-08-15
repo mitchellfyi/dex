@@ -37,7 +37,7 @@ bin/                 CLI scripts: install, uninstall, init, uninit, config, stat
 docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (8 rules)
-lib/                 Shared shell libraries (21 modules, including review policy,
+lib/                 Shared shell libraries (22 modules, including the shared lock,
                      evidence, and controller modules)
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
