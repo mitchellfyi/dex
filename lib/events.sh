@@ -573,47 +573,21 @@ dx_run_log_append() {
   DX_RUN_LOG_LEVEL="$level" \
   DX_RUN_LOG_SOURCE="$source" \
   DX_RUN_LOG_MESSAGE="$message" \
+  PYTHONPATH="$DEX_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" \
   python3 - <<'PY'
 import os
-import re
-from datetime import datetime, timezone
 from pathlib import Path
 
-
-SECRET_PATTERNS = [
-    re.compile(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+"),
-    re.compile(r"(?i)(\b(?!authorization\b)[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)([\"']?)[^\"'\s]+"),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
-]
-SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
-
-
-def utc_now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def redact(text):
-    text = SECRET_URL_RE.sub(r"\1[REDACTED]@", text)
-    text = SECRET_PATTERNS[0].sub(r"\1[REDACTED]", text)
-    text = SECRET_PATTERNS[1].sub(r"\1\2[REDACTED]", text)
-    for pattern in SECRET_PATTERNS[2:]:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
+from dex_redact import log_line
 
 log_path = Path(os.environ["DX_RUN_LOG_FILE"])
 log_path.parent.mkdir(parents=True, exist_ok=True)
-line = "[{ts}] [{level}] [{source}] {message}\n".format(
-    ts=utc_now(),
-    level=os.environ.get("DX_RUN_LOG_LEVEL", "info"),
-    source=os.environ.get("DX_RUN_LOG_SOURCE", "dex"),
-    message=redact(os.environ.get("DX_RUN_LOG_MESSAGE", "")),
-)
 with log_path.open("a", encoding="utf-8") as fh:
-    fh.write(line)
+    fh.write(log_line(
+        os.environ.get("DX_RUN_LOG_LEVEL", "info"),
+        os.environ.get("DX_RUN_LOG_SOURCE", "dex"),
+        os.environ.get("DX_RUN_LOG_MESSAGE", ""),
+    ))
 PY
 }
 
@@ -630,15 +604,22 @@ dx_run_log_append_for_session() {
 }
 
 dx_run_log_tee() {
-  local run_id="$1" source="${2:-harness}" line
+  local run_id="$1" source="${2:-harness}" log_file
   if ! dx_run_validate_id "$run_id"; then
     cat
     return 0
   fi
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    printf '%s\n' "$line"
-    dx_run_log_append_safe "$run_id" "info" "$source" "$line"
-  done
+  if ! log_file=$(dx_run_logs_file "$run_id"); then
+    cat
+    return 0
+  fi
+  # One interpreter for the whole stream. Appending per line used to fork a
+  # python3 for every line of provider output, which on a verbose run costs
+  # more than the work being logged. Output is still forwarded line by line so
+  # streaming behavior is unchanged.
+  DX_RUN_LOG_FILE="$log_file" \
+  DX_RUN_LOG_SOURCE="$source" \
+    python3 "$DEX_DIR/scripts/run-log-tee.py"
 }
 
 # Journal and manifest writers share one token per process. dx_lock_acquire
