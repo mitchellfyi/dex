@@ -392,6 +392,22 @@ dx_maintenance_normalize_reviewer() {
   esac
 }
 
+# Reviewer handles come from .dex/dex.md or DX_MAINTAIN_REVIEWERS and are
+# passed to gh as arguments, so a value like "--repo owner/evil" would be
+# parsed as a flag rather than a name. Accept only GitHub login/slug shapes
+# plus the CLI's special @copilot reviewer.
+dx_maintenance_reviewer_handle_valid() {
+  local handle="$1" segment
+  [[ "$handle" == "@copilot" ]] && return 0
+  [[ -n "$handle" && ${#handle} -le 100 ]] || return 1
+  [[ "$handle" != -* ]] || return 1
+  [[ "$handle" != */*/* ]] || return 1
+  while IFS= read -r segment; do
+    [[ -n "$segment" && ${#segment} -le 100 ]] || return 1
+    [[ "$segment" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+  done < <(printf '%s\n' "$handle" | tr '/' '\n')
+}
+
 dx_maintenance_review_request_is_unavailable() {
   local output="$1"
   case "$output" in
@@ -483,6 +499,10 @@ dx_maintenance_request_reviewer() {
   esac
 
   reviewer=$(dx_maintenance_normalize_reviewer "$handle")
+  if ! dx_maintenance_reviewer_handle_valid "$reviewer"; then
+    dx_warn "Skipping invalid reviewer handle: ${handle}"
+    return 0
+  fi
   gh_args=(pr edit "$pr_num")
   if [[ -n "$repo" ]]; then
     gh_args+=(--repo "$repo")

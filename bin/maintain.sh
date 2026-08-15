@@ -914,6 +914,12 @@ __dx_maintain_request_reviewers() {
   } | while IFS= read -r reviewer; do
     [[ -n "$reviewer" ]] || continue
     reviewer=$(dx_maintenance_normalize_reviewer "$reviewer")
+    # Handles reach gh as arguments; reject anything that could be read as a flag.
+    if ! dx_maintenance_reviewer_handle_valid "$reviewer"; then
+      __dx_maintain_append_report_status "$report_file" "warning" \
+        "Skipped invalid reviewer handle from repo config: ${reviewer}"
+      continue
+    fi
     printf '%s\n' "$reviewer"
   done | awk 'NF && !seen[$0]++' | while IFS= read -r reviewer; do
     if [[ -n "$repo" ]]; then

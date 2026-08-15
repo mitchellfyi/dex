@@ -142,6 +142,30 @@ assert_contains "does not allow requesting the PR author" "$TMP_DIR/reviewer-aut
 GH_FAKE_PR_CASE=copilot dx_maintenance_request_reviewer 7 Copilot example/repo > "$TMP_DIR/reviewer-copilot.out" 2>&1
 assert_contains "pr edit 7 --repo example/repo --add-reviewer @copilot" "$GH_FAKE_CALLS"
 
+# Reviewer handles reach gh as arguments, so flag-shaped values from repo
+# config must never be forwarded.
+for bad_handle in "--repo" "-x" "--repo=owner/evil" "owner/team/extra" "not a name" "name;rm"; do
+  if dx_maintenance_reviewer_handle_valid "$bad_handle"; then
+    printf 'invalid reviewer handle accepted: %s\n' "$bad_handle" >&2
+    exit 1
+  fi
+done
+for good_handle in "mitchellfyi" "@copilot" "org/team" "a" "user-name-1"; do
+  if ! dx_maintenance_reviewer_handle_valid "$good_handle"; then
+    printf 'valid reviewer handle rejected: %s\n' "$good_handle" >&2
+    exit 1
+  fi
+done
+
+: > "$GH_FAKE_CALLS"
+dx_maintenance_request_reviewer 7 "--repo=evil/repo" example/repo > "$TMP_DIR/reviewer-injection.out" 2>&1
+assert_contains "Skipping invalid reviewer handle" "$TMP_DIR/reviewer-injection.out"
+if grep -Fq "evil/repo" "$GH_FAKE_CALLS"; then
+  printf 'flag-shaped reviewer handle reached gh\n' >&2
+  cat "$GH_FAKE_CALLS" >&2
+  exit 1
+fi
+
 last_success_target=$(dx_maintenance_last_success_file "maintenance-test")
 mkdir -p "$(dirname "$last_success_target")"
 printf 'user-owned temp file\n' > "${last_success_target}.tmp.$$"
