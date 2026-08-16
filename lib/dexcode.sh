@@ -70,8 +70,10 @@ dx_dexcode_path_segment_valid() {
 # Emit a curl config carrying the Authorization header. Passing the bearer
 # token through curl's stdin keeps it out of argv, where any local process can
 # read it from ps for the life of the request; lib/factory.sh already avoids
-# argv for the same reason. Returns non-zero for an invalid token, which fails
-# the pipeline rather than sending an unauthenticated request.
+# argv for the same reason. Returns non-zero for an invalid token — but in a
+# `auth_config | curl` pipeline curl still runs against an empty config and
+# sends the request unauthenticated, so callers must validate the token
+# before building the pipeline.
 __dx_dexcode_auth_config() {
   local token="${1:-}"
   dx_dexcode_bearer_token_valid "$token" || return 1

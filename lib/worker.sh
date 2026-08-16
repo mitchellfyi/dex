@@ -305,6 +305,13 @@ USAGE
     dx_error "No DexCode connection for ${organisation}. Run 'dx login' and pick it."
     return 1
   fi
+  # Validate before the curl pipeline: an invalid token makes the auth-config
+  # producer fail, but the curl side of the pipe would still send the request,
+  # unauthenticated.
+  if ! dx_dexcode_bearer_token_valid "$cli_token"; then
+    dx_error "The stored DexCode token for ${organisation} is not usable. Run 'dx login' again."
+    return 1
+  fi
   api_url="$(dx_dexcode_api_url_for "$organisation" 2>/dev/null)" \
     || api_url="$(dx_dexcode_api_url)" || return 1
 
@@ -550,12 +557,18 @@ __dx_worker_execute() {
   attempt="$(__dx_worker_json_field "$start_file" "attempt")" || return 1
   run_token="$(__dx_worker_json_field "$start_file" "run_token")" || return 1
   spec_url="$(__dx_worker_json_field "$start_file" "spec_url")" || return 1
+  # The claim has been read; the daemon never looks at it again.
+  command rm -f "$start_file" 2>/dev/null || true
 
   # Request and response scratch belongs to the daemon, never to the working
   # directory: that is the user's repository, and it may not even exist — in
   # which case settlement itself would fail and the run would stay leased to
-  # this worker until the lease expired.
-  response_file="$scratch_dir/lease.json"
+  # this worker until the lease expired. Each child gets its own subdirectory:
+  # concurrent runs sharing one set of lease/settle files overwrote each
+  # other's payloads, renewing or settling one attempt with another's identity.
+  local run_scratch
+  run_scratch="$(mktemp -d "$scratch_dir/run.XXXXXX")" || return 1
+  response_file="$run_scratch/lease.json"
 
   dx_info "Claimed ${run_id} for ${slug} (attempt ${attempt})."
 
@@ -607,7 +620,8 @@ __dx_worker_execute() {
 
   local settle_code
   settle_code="$(dx_worker_settle "$slug" "$run_id" "$launch_request_id" "$attempt" \
-    "$outcome" "$error_class" "$scratch_dir/settle.json")"
+    "$outcome" "$error_class" "$run_scratch/settle.json")"
+  command rm -rf "$run_scratch" 2>/dev/null || true
   if ! dx_dexcode_http_success "$settle_code"; then
     dx_error "Could not settle ${run_id} as ${outcome} (HTTP ${settle_code})."
     return 1
@@ -626,6 +640,11 @@ __dx_worker_execute() {
 # `wait` refuses it. That failed only once there were two children to wait for,
 # which is exactly the case this exists for.
 DX_WORKER_CHILD_PIDS=()
+
+# Monotonic claim counter. Claim files were once keyed by the live child
+# count, which reuses an index as soon as a child is reaped — overwriting a
+# claim a just-started sibling was still reading.
+DX_WORKER_CLAIM_SEQ=0
 
 __dx_worker_reap_children() {
   local pid
@@ -788,7 +807,8 @@ USAGE
         fi
         # Each run gets its own copy of the claim, because the next iteration
         # overwrites the shared start file while this child is still reading it.
-        claim_file="${tmp_dir}/start-$(__dx_worker_child_count)-$$.json"
+        DX_WORKER_CLAIM_SEQ=$((DX_WORKER_CLAIM_SEQ + 1))
+        claim_file="${tmp_dir}/start-${DX_WORKER_CLAIM_SEQ}-$$.json"
         command cp "$start_file" "$claim_file" 2>/dev/null || continue
         __dx_worker_execute "$slug" "$run_id" "$work_dir" "$tmp_dir" \
           "$claim_file" "$dry_run" &

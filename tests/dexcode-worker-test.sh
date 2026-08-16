@@ -527,7 +527,6 @@ printf 'two' > "$TMP_DIR/poll-mode"
 printf '2' > "$TMP_DIR/concurrency"
 
 run_daemon --once --dry-run --working-directory "$TMP_DIR/repo" > "$TMP_DIR/two.log" 2>&1
-cp "$TMP_DIR/two.log" /private/tmp/claude-501/-Users-m12n-Dropbox-work-m12n-org-dexcode-ai/1501453b-3325-4f8f-bd4f-746fbbb158d4/scratchpad/two.log
 
 started_runs="$(requests_for "/start" | grep -c '"method": "POST"' || true)"
 assert_eq "2" "$started_runs" "both queued runs are claimed when two are allowed"
