@@ -332,8 +332,11 @@ jobs:
             echo "::error::Write-capable DX maintain modes require the DX_MAINTAIN_TOKEN secret."
             exit 1
           fi
-          mkdir -p "$RUNNER_TEMP/dx-maintain-artifacts"
-          gh run download "$GITHUB_RUN_ID" --repo "$GH_REPO" --name "dx-maintain-${GITHUB_RUN_ID}" --dir "$RUNNER_TEMP/dx-maintain-artifacts"
+          # Extract into the artifact root the publish step validates report
+          # paths against ($DX_ARTIFACT_DIR/maintenance); a different tree makes
+          # every report append fail with "report escapes the artifact root".
+          mkdir -p "$RUNNER_TEMP/dex-artifacts/maintenance"
+          gh run download "$GITHUB_RUN_ID" --repo "$GH_REPO" --name "dx-maintain-${GITHUB_RUN_ID}" --dir "$RUNNER_TEMP/dex-artifacts/maintenance"
 
       - name: Publish deferred maintenance PR
         shell: bash
@@ -359,15 +362,15 @@ jobs:
             fi
             printf '%s\n' "${value:-$default_value}"
           }
-          state_count=$(find "$RUNNER_TEMP/dx-maintain-artifacts" -name publish-state.tsv -type f | wc -l | tr -d ' ')
-          state_file="$RUNNER_TEMP/dx-maintain-artifacts/publish-state.tsv"
+          state_count=$(find "$RUNNER_TEMP/dex-artifacts/maintenance" -name publish-state.tsv -type f | wc -l | tr -d ' ')
+          state_file="$RUNNER_TEMP/dex-artifacts/maintenance/publish-state.tsv"
           if [[ "$state_count" == "0" ]]; then
             echo "::notice::No deferred maintenance PR publication state was produced."
             exit 0
           fi
           if [[ "$state_count" != "1" || ! -f "$state_file" ]]; then
             echo "::error::Unexpected deferred maintenance PR state artifact layout."
-            find "$RUNNER_TEMP/dx-maintain-artifacts" -name publish-state.tsv -type f -print
+            find "$RUNNER_TEMP/dex-artifacts/maintenance" -name publish-state.tsv -type f -print
             exit 1
           fi
           export DX_MAINTAIN_LABEL
@@ -824,8 +827,9 @@ jobs:
             echo "::error::DX_MAINTAIN_TOKEN is required for write-capable response publication."
             exit 1
           fi
-          mkdir -p "$RUNNER_TEMP/dx-maintain-response-artifacts"
-          gh run download "$GITHUB_RUN_ID" --repo "$GH_REPO" --name "dx-maintain-response-${GITHUB_RUN_ID}" --dir "$RUNNER_TEMP/dx-maintain-response-artifacts"
+          # Same artifact-root requirement as the deferred publish job above.
+          mkdir -p "$RUNNER_TEMP/dex-artifacts/maintenance"
+          gh run download "$GITHUB_RUN_ID" --repo "$GH_REPO" --name "dx-maintain-response-${GITHUB_RUN_ID}" --dir "$RUNNER_TEMP/dex-artifacts/maintenance"
 
       - name: Publish maintenance PR response
         shell: bash
@@ -844,15 +848,15 @@ jobs:
           DX_MAINTAIN_EXPECTED_HEAD_SHA: ${{ needs.respond.outputs.head_sha }}
         run: |
           set -euo pipefail
-          state_count=$(find "$RUNNER_TEMP/dx-maintain-response-artifacts" -name response-state.tsv -type f | wc -l | tr -d ' ')
-          state_file="$RUNNER_TEMP/dx-maintain-response-artifacts/response-state.tsv"
+          state_count=$(find "$RUNNER_TEMP/dex-artifacts/maintenance" -name response-state.tsv -type f | wc -l | tr -d ' ')
+          state_file="$RUNNER_TEMP/dex-artifacts/maintenance/response-state.tsv"
           if [[ "$state_count" == "0" ]]; then
             echo "::notice::No deferred maintenance response publication state was produced."
             exit 0
           fi
           if [[ "$state_count" != "1" || ! -f "$state_file" ]]; then
             echo "::error::Unexpected deferred maintenance response state artifact layout."
-            find "$RUNNER_TEMP/dx-maintain-response-artifacts" -name response-state.tsv -type f -print
+            find "$RUNNER_TEMP/dex-artifacts/maintenance" -name response-state.tsv -type f -print
             exit 1
           fi
           git checkout -B "$HEAD_REF" "$HEAD_SHA"

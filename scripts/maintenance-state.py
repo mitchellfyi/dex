@@ -235,7 +235,13 @@ def report_io(args: argparse.Namespace) -> None:
     try:
         relative = report_path.relative_to(artifact_root)
     except ValueError:
-        fail("maintenance report escapes the artifact root")
+        # verify emits a resolved report path; accept a root whose parent
+        # components are symlinked (macOS /var -> /private/var) without
+        # letting the root itself be a link (rejected above).
+        try:
+            relative = report_path.relative_to(artifact_root.resolve(strict=True))
+        except (OSError, ValueError):
+            fail("maintenance report escapes the artifact root")
     if len(relative.parts) != 2 or relative.name != "report.md":
         fail("maintenance report must use <run-id>/report.md inside the artifact root")
     run_id = relative.parts[0]
