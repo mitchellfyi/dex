@@ -1283,9 +1283,31 @@ def execution_call_regions(code):
     return regions
 
 
+# Suffix joins model a payload whose command starts mid-argument-vector
+# (["helper", "rm", "-rf", "/"]). Uncapped, a call with many string arguments
+# expanded into quadratic re-parsed content, which let an ordinary
+# `python3 <file>` run past the evaluation budget and be denied.
+CODE_FRAGMENT_SUFFIX_JOINS = 16
+
+
+def fragment_region_candidates(fragments):
+    """Candidate command strings for one process-launch call's fragments."""
+    candidates = [
+        fragment for fragment in fragments
+        if len(fragments) == 1 or re.search(r'[\s;&|()]', fragment)
+    ]
+    if len(fragments) > 1:
+        candidates.append(' '.join(shlex.quote(fragment) for fragment in fragments))
+        for start in range(1, min(len(fragments), CODE_FRAGMENT_SUFFIX_JOINS + 1)):
+            candidates.append(' '.join(shlex.quote(fragment) for fragment in fragments[start:]))
+    return candidates
+
+
 def code_execution_fragments(code, whole_file=False):
     code_without_strings = code_without_string_literals(code)
-    exec_operator_fragments = ruby_perl_exec_fragments(code)
+    exec_operator_fragments = [
+        fragment for fragment in ruby_perl_exec_fragments(code) if fragment.strip()
+    ]
     if (
         not CODE_EXECUTION_RE.search(code_without_strings)
         and not re.search(r'\b(?:system|exec)\s*(?:["\']|%w|\bqw\b)', code)
@@ -1301,26 +1323,22 @@ def code_execution_fragments(code, whole_file=False):
     else:
         # Inline code (-c/-e) is itself the payload, so scan all of it.
         literal_sources = [code]
-    fragments = [
-        fragment for fragment in (
-            [f for source in literal_sources for f in (
+    # Joining fragments per launch call, not across the whole file, keeps the
+    # candidate set proportional to the code: cross-call joins never modeled a
+    # runnable command, and they made this scan quadratic.
+    executable_fragments = []
+    for source in literal_sources:
+        fragments = [
+            fragment for fragment in (
                 quoted_string_fragments(source)
                 + joined_string_fragments(source)
                 + adjacent_string_fragments(source)
                 + word_array_fragments(source)
-            )]
-            + exec_operator_fragments
-        )
-        if fragment.strip()
-    ]
-    executable_fragments = [
-        fragment for fragment in fragments
-        if len(fragments) == 1 or re.search(r'[\s;&|()]', fragment)
-    ]
-    if len(fragments) > 1:
-        executable_fragments.append(' '.join(shlex.quote(fragment) for fragment in fragments))
-        for start in range(1, len(fragments)):
-            executable_fragments.append(' '.join(shlex.quote(fragment) for fragment in fragments[start:]))
+            )
+            if fragment.strip()
+        ]
+        executable_fragments.extend(fragment_region_candidates(fragments))
+    executable_fragments.extend(fragment_region_candidates(exec_operator_fragments))
     return executable_fragments
 
 

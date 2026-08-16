@@ -339,9 +339,31 @@ def ruby_perl_exec_fragments(text):
     return fragments
 
 
+# Suffix joins model a payload whose command starts mid-argument-vector
+# (["helper", "git", "commit"]). Uncapped, a script with many string arguments
+# expanded into quadratic re-parsed content; the guard parser bounds the same
+# scan the same way.
+CODE_FRAGMENT_SUFFIX_JOINS = 16
+
+
+def fragment_region_candidates(fragments):
+    """Candidate command strings for one process-launch call's fragments."""
+    candidates = [
+        fragment for fragment in fragments
+        if len(fragments) == 1 or re.search(r'[\s;&|()]', fragment)
+    ]
+    if len(fragments) > 1:
+        candidates.append(' '.join(shlex.quote(fragment) for fragment in fragments))
+        for start in range(1, min(len(fragments), CODE_FRAGMENT_SUFFIX_JOINS + 1)):
+            candidates.append(' '.join(shlex.quote(fragment) for fragment in fragments[start:]))
+    return candidates
+
+
 def code_execution_fragments(code):
     code_without_strings = code_without_string_literals(code)
-    exec_operator_fragments = ruby_perl_exec_fragments(code)
+    exec_operator_fragments = [
+        fragment for fragment in ruby_perl_exec_fragments(code) if fragment.strip()
+    ]
     if (
         not CODE_EXECUTION_RE.search(code_without_strings)
         and not re.search(r'\b(?:system|exec)\s*(?:["\']|%w|\bqw\b)', code)
@@ -354,18 +376,11 @@ def code_execution_fragments(code):
             + joined_string_fragments(code)
             + adjacent_string_fragments(code)
             + word_array_fragments(code)
-            + exec_operator_fragments
         )
         if fragment.strip()
     ]
-    executable_fragments = [
-        fragment for fragment in fragments
-        if len(fragments) == 1 or re.search(r'[\s;&|()]', fragment)
-    ]
-    if len(fragments) > 1:
-        executable_fragments.append(' '.join(shlex.quote(fragment) for fragment in fragments))
-        for start in range(1, len(fragments)):
-            executable_fragments.append(' '.join(shlex.quote(fragment) for fragment in fragments[start:]))
+    executable_fragments = fragment_region_candidates(fragments)
+    executable_fragments.extend(fragment_region_candidates(exec_operator_fragments))
     return executable_fragments
 
 

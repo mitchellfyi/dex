@@ -428,6 +428,53 @@ else
 fi
 
 assert_raw_codex_blocks "script launching codex via subprocess" "python3 $FILE_TMP/hostile-codex.py"
+
+# The file scan must stay within the evaluation budget on a large, ordinary
+# script. Fragment joins used to grow quadratically with the number of
+# process-launch calls, so a benign ~20KB tooling script tripped the 2s
+# timeout and — because block guards fail closed — was denied.
+python3 - "$FILE_TMP/many-calls.py" <<'MANY'
+import sys
+
+lines = ["import subprocess", ""]
+for i in range(160):
+    lines.append(
+        'subprocess.run(["tool%d", "run --check %d", "build --target %d", '
+        '"lint --fix src/%d", "test -k case%d"], check=False)' % (i, i, i, i, i)
+    )
+with open(sys.argv[1], "w") as fh:
+    fh.write("\n".join(lines) + "\n")
+MANY
+set +e
+GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/many-calls.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (large benign script must be allowed within the evaluation budget; rc=%s)\n%s\n' \
+    "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
+# A destructive payload that starts mid-argument-vector is still joined and
+# caught after the suffix-join cap was introduced.
+python3 - "$FILE_TMP/midvec.py" <<'MIDVEC'
+import sys
+
+with open(sys.argv[1], "w") as fh:
+    fh.write('import subprocess\nsubprocess.run(["helper", "rm", "-rf", "~' + '/"])\n')
+MIDVEC
+set +e
+GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/midvec.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (mid-argument-vector rm payload should block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
 rm -rf "$FILE_TMP"
 
 # Guard evaluation must fail closed. A blocking guard that cannot finish
