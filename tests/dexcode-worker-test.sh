@@ -624,6 +624,31 @@ if dx_worker_token "never-registered" >/dev/null 2>&1; then
   fail "an unregistered organisation must not resolve a credential"
 fi
 
+# Registration pops the pre-map fields on every write, so a config holding both
+# a `workers` map and top-level credentials only arises from a hand edit or a
+# merge. The map still wins: an unknown slug is refused, not answered with the
+# stale top-level credential.
+mixed_config="$TMP_DIR/worker-mixed.json"
+python3 - "$DEXCODE_WORKER_CONFIG_FILE" "$mixed_config" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+data["worker_id"] = "99999999-9999-4999-8999-999999999999"
+data["worker_name"] = "stale-legacy"
+data["api_url"] = "http://legacy.invalid"
+data["worker_token"] = "dc_worker_" + "z" * 43
+Path(sys.argv[2]).write_text(json.dumps(data, indent=2), encoding="utf-8")
+PY
+
+if DEXCODE_WORKER_CONFIG_FILE="$mixed_config" dx_worker_token "never-registered" >/dev/null 2>&1; then
+  fail "a workers map must suppress the pre-map fallback for unknown slugs"
+fi
+mixed_first="$(DEXCODE_WORKER_CONFIG_FILE="$mixed_config" dx_worker_token test-org)" \
+  || fail "registered slugs must still resolve alongside stale legacy keys"
+assert_eq "$first_token" "$mixed_first" "the map answers for registered slugs, not the legacy keys"
+
 if [[ $failures -eq 0 ]]; then
   printf 'dexcode-worker-test passed\n'
   exit 0

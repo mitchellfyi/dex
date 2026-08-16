@@ -26,11 +26,14 @@ dx_worker_config_file() {
   printf '%s\n' "${DEXCODE_WORKER_CONFIG_FILE:-$(dx_dexcode_config_dir)/worker.json}"
 }
 
-# __dx_worker_json_field <file> <dotted.key> — prints the value, or nothing.
+# __dx_worker_json_field <file> <dotted.key> [exists] — prints the value, or
+# nothing. `exists` asks only whether the key resolves: a dict or null value
+# succeeds there but never has a printable value.
 __dx_worker_json_field() {
-  local file="$1" key="$2"
+  local file="$1" key="$2" mode="${3:-value}"
   [[ -f "$file" ]] || return 1
-  DX_WORKER_JSON_FILE="$file" DX_WORKER_JSON_KEY="$key" python3 - <<'PY' 2>/dev/null
+  DX_WORKER_JSON_FILE="$file" DX_WORKER_JSON_KEY="$key" \
+  DX_WORKER_JSON_MODE="$mode" python3 - <<'PY' 2>/dev/null
 import json
 import os
 from pathlib import Path
@@ -45,6 +48,9 @@ for part in os.environ["DX_WORKER_JSON_KEY"].split("."):
         raise SystemExit(1)
     data = data[part]
 
+if os.environ["DX_WORKER_JSON_MODE"] == "exists":
+    raise SystemExit(0)
+
 if data is None or isinstance(data, (dict, list)):
     raise SystemExit(1)
 if isinstance(data, bool):
@@ -55,7 +61,7 @@ PY
 }
 
 dx_worker_config_value() {
-  __dx_worker_json_field "$(dx_worker_config_file)" "$1"
+  __dx_worker_json_field "$(dx_worker_config_file)" "$@"
 }
 
 # One machine can serve several organisations. It cannot do so with one
@@ -74,8 +80,9 @@ __dx_worker_entry_field() {
   if [[ -z "$value" ]]; then
     # A registration made before the map existed. It described the only
     # organisation this machine served, so it answers for any slug until the
-    # next registration replaces it.
-    dx_worker_config_value "workers" >/dev/null 2>&1 && return 1
+    # next registration replaces it — and never once a `workers` map is
+    # present, or a stale top-level credential would answer for unknown slugs.
+    dx_worker_config_value "workers" exists >/dev/null 2>&1 && return 1
     value="$(dx_worker_config_value "$key" 2>/dev/null)" || return 1
   fi
   [[ -n "$value" ]] || return 1
