@@ -382,10 +382,12 @@ they go stale on every edit:
 | Worktree navigation | `dxcd()` |
 | Stale cleanup | `dxclean()` |
 
-**Extraction candidates:**
-- Shared provider/model launch logic → `lib/provider.sh`
-- Codex skill-link logic → `lib/codex.sh`
-- `__dx_show_header()` + `__dx_format_elapsed()` → `lib/display.sh`
+**Extraction candidates:** provider/model launch logic and Codex skill-link
+logic have both moved out, to `lib/provider.sh` and `lib/codex.sh`. What is
+left is `__dx_show_header()` and `__dx_format_elapsed()`, which belong beside
+`dx_format_duration()` in `lib/output.sh` — note the two formatters disagree
+under a minute (`45s` against `0m 45s`), so moving them is a user-visible
+change, not a pure refactor.
 
 The provider seam is why `__dx_claude` and `__dx_provider_prompt` still exist as one-line
 passthroughs: three test files redefine `__dx_claude` to stand in for the provider CLI, so
