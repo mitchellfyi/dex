@@ -344,10 +344,18 @@ CODE_FRAGMENT_SUFFIX_JOINS = 16
 
 
 def fragment_region_candidates(fragments):
-    """Candidate command strings for one process-launch call's fragments."""
+    """Candidate command strings for one process-launch call's fragments.
+
+    A fragment that opens with a shell separator cannot execute — bash rejects
+    a leading |, ; or & as a syntax error — so scanning it can only produce
+    false positives. Markdown table rows inside string literals were reaching
+    the command-position scanner this way and failing closed on their inline
+    backtick spans.
+    """
     candidates = [
         fragment for fragment in fragments
-        if len(fragments) == 1 or re.search(r'[\s;&|()]', fragment)
+        if (len(fragments) == 1 or re.search(r'[\s;&|()]', fragment))
+        and not re.match(r'\s*[|;&]', fragment)
     ]
     if len(fragments) > 1:
         candidates.append(' '.join(shlex.quote(fragment) for fragment in fragments))

@@ -464,6 +464,36 @@ else
   fail=$((fail + 1))
 fi
 
+# Markdown table rows inside string literals open with a pipe, which no shell
+# could execute; they used to reach the command-position scanner anyway and
+# fail closed on their inline backtick spans.
+python3 - "$FILE_TMP/doc-tables.py" <<'DOCTABLES'
+import sys
+
+tick = chr(96)
+lines = [
+    "import subprocess",
+    "",
+    'ROWS = ["| ' + tick + "action" + tick + ' | yes | warn, block |",',
+    '        "| ' + tick + "pattern" + tick + ' | regex | matched input |"]',
+    "",
+    "def emit():",
+    '    subprocess.run(["column", "-t", "-s", "|"], input="\\n".join(ROWS), text=True)',
+]
+with open(sys.argv[1], "w") as fh:
+    fh.write("\n".join(lines) + "\n")
+DOCTABLES
+set +e
+GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/doc-tables.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (markdown table strings should be allowed; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
 # A destructive payload that starts mid-argument-vector is still joined and
 # caught after the suffix-join cap was introduced.
 python3 - "$FILE_TMP/midvec.py" <<'MIDVEC'
