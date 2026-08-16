@@ -117,8 +117,8 @@ Replace `<sorted list of INV-N descriptions>` with the actual finding descriptio
 2. After ALL fixes are applied:
    - **Code-change sessions:** re-run `/dxreview --single-pass` on the **full scope** (not just modified files).
    - Re-run your manual passes (Step 3) on the **entire change set** — fixes can regress untouched files.
-3. If new findings → add to inventory, fix, and re-verify. **Maximum 3 cycles.**
-4. Do NOT proceed with known findings. If findings persist after 3 cycles, continue fixing — the iteration limit in the stop hook is the only safety valve, not this step.
+3. If new findings → add to inventory, fix, and re-verify. This typically converges within 3 cycles.
+4. Do NOT proceed with known findings. If findings persist, continue fixing — the iteration limit in the stop hook is the only hard cap, not this step.
 
 ## Step 6: /dxverify Quality Pipeline (code-change sessions only)
 
@@ -131,7 +131,7 @@ Run /dxverify to execute the full quality verification pipeline:
 4. Code generation — if applicable, run generators and check for uncommitted changes
 5. Test — run the full test suite
 
-If any check fails, fix and re-run (max 3 retries per check type). After 3 failures on the same check, escalate to the user.
+If any check fails, fix and re-run within the budget from `prompts/failure-recovery.md`: 3 retries per strategy, 2 strategies (6 attempts), then ACCEPT_WITH_DEBT or ESCALATE.
 
 All checks must pass before proceeding to Step 7.
 

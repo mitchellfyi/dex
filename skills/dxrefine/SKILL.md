@@ -113,7 +113,7 @@ For each pattern you propose, capture:
 - **Sub-ticket(s) that embody it.** Each sub-ticket should be tied to at most one dominant pattern.
 - **Alternative considered.** One sentence on what was rejected and why (e.g. "considered a Factory but the construction is trivial — Strategy alone is enough").
 
-Cross-reference against §2c (Codebase Component Map): if the same pattern already exists in this codebase, **reuse it, do not reinvent it**. Cite the existing implementation's path.
+Cross-reference against §2b (Codebase Component Map): if the same pattern already exists in this codebase, **reuse it, do not reinvent it**. Cite the existing implementation's path.
 
 If a refinement genuinely involves only mechanical work (config, copy, plumbing) with no pattern worth naming, record `— none, all sub-tickets are mechanical` explicitly. Silent absence is not allowed.
 
@@ -122,7 +122,7 @@ If a refinement genuinely involves only mechanical work (config, copy, plumbing)
 This is your **working memory**, not the user-facing output. Build all fifteen sections below so you have the inputs you need for the quality gate, the `ExitPlanMode` summary in Step 8, and the tracker write-back in Step 9. If a section is genuinely empty for this ticket, mark it `— none` rather than omitting it; an empty section is data too.
 
 1. **Problem Statement (technical).** The change, broken into the natural engineering sub-domains the conversation surfaced (e.g. "Creation", "Allocation", "Expiration", "Visibility"). These sub-domains drive the grouping of Verification Criteria below.
-2. **Codebase Component Map.** The table from §2c, finalised. Every entry cites a real path in this repo.
+2. **Codebase Component Map.** The table from §2b, finalised. Every entry cites a real path in this repo.
 3. **Impact Domains.** Per-pillar **Heavy / Medium / Light / None** table with a one-paragraph reason per pillar. Walk every pillar discovered in Step 2, not a fixed list. Pillars not touched are listed as `None — <reason>`.
 4. **Cross-component / cross-team interfaces.** For each Heavy- or Medium-impact pillar, name the contract: who owns what, where the boundary is in code, what shape data crosses it.
 5. **Assumptions.** Explicit list of every assumption that survived the question loop. Each line ends with a source: `— user said X` / `— universally safe` / `— deferred to implementation` / `— deferred by user`.
@@ -221,7 +221,7 @@ Domain labels, estimates, paths, ticket IDs, links, and checklist syntax exactly
    1. **Architecture + Component Map.** Link to `.dex/architecture.md` (note its `last-refreshed` date), then paste the Codebase Component Map (§2) + Impact Domains (§3).
    2. **Design Patterns** — §10 table.
    3. **Risk Register** — §11.
-   4. **NFRs** — §9 (Performance / Observability / Configurability / Pluggability / Multi-tenancy).
+   4. **NFRs** — §9 (Performance / Observability / Configurability / Pluggability / Project constraints).
    5. **Open Questions + Decision Log** — §14 + §15.
 3. **Never edit the parent ticket's description.** The parent description is owned by whoever wrote the ticket; refinement output goes in comments and child tickets.
 4. **If `/dxarchitect` was run earlier in this `dx refine` invocation** (i.e. the architecture map was built fresh), remind the user in the final summary to commit `.dex/architecture.md` themselves: `git add .dex/architecture.md && git commit -m "docs: bootstrap architecture map"`. The skill never commits.

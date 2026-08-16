@@ -192,7 +192,8 @@ artifact in three steps:
 3. Confirm the byte count, content type, and SHA-256 digest with
    `POST /api/v1/runs/<run_id>/artifacts/<artifact_id>`.
 
-The registration body contains `kind`, `title`, `filename`, and `content_type`.
+The registration body contains `kind`, `title`, `filename`, `content_type`,
+`byte_size`, and `sha256`.
 The confirmation body has this shape:
 
 ```json
@@ -288,8 +289,8 @@ again on a later retry.
 
 Each sync attempt drains queued events in bounded batches rather than sending
 only one batch. This matters at the end of a run: if earlier events are still
-queued, the terminal `run.completed`, `run.failed`, `run.blocked` or
-`run.cancelled` event must still reach DexCode during the final flush. Numeric
+queued, the terminal `run.completed`, `run.failed`, or `run.blocked` event
+must still reach DexCode during the final flush. Numeric
 token-count fields such as `total_input_tokens` and `total_output_tokens` are
 kept as telemetry; actual token, credential and authorization fields are still
 redacted before they are written or synced.
@@ -310,16 +311,27 @@ Configuration variables:
 | `DEX_FACTORY_RETRY_BASE_SECONDS` | `1` | Initial backoff after a failed request. |
 | `DEX_FACTORY_RETRY_MAX_SECONDS` | `60` | Maximum backoff between retry attempts. |
 
+For local (non-headless) runs on a connected machine, Dex currently exports
+the machine's DexCode CLI token as `DEX_RUN_TOKEN`/`DEX_FACTORY_TOKEN` so the
+run's events can sync; unlike headless worker runs, those values are not
+scoped to one run and are visible to the whole launched process tree.
+
 Sync state lives beside the run journal:
 
 ```text
 ~/.dex/runs/<run_id>/.factory-sync/
   cursor
+  offset
   status.json
+  last-log
+  .lock/
 ```
 
-`cursor` stores the highest sequence that Factory accepted. `status.json`
-stores the latest sync or configuration failure and the next retry time. Failed
+`cursor` stores the highest sequence that Factory accepted, and `offset` a
+validated byte-offset hint into the journal so a flush can resume without a
+full rescan. `status.json` stores the latest sync or configuration failure and
+the next retry time; `last-log` rate-limits repeated failure log lines, and
+`.lock/` serializes concurrent flush attempts. Failed
 sync attempts are logged to `logs.txt` with rate limiting so a broken collector
 does not flood the run log.
 

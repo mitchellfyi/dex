@@ -239,8 +239,8 @@ Evidence-Ref: criteria:<section>:<1-based-index>:<slug> | <kind> | <substantive 
 `verification_requirements`. `slug` is a unique lowercase identifier of up to
 64 characters using letters, digits, `.`, `_`, or `-`. `kind` is `analysis`,
 `command`, `file`, or `test`. The detail must state the concrete observation,
-path and behavior, or command result that supports the outcome; placeholders
-such as `N/A`, `none`, `TBD`, or `TODO` are invalid. Put the marker portion,
+path and behavior, or command result that supports the outcome, in 12 to 500
+characters; placeholders such as `N/A`, `none`, `TBD`, or `TODO` are invalid. Put the marker portion,
 starting with `criteria:`, in that item's `evidence_refs` array. Every
 `Evidence-Ref` line must be referenced once, and every manifest reference must
 have one matching context line. Standalone review has no criteria evidence
@@ -323,7 +323,7 @@ Final output:
 - Profile: light | standard | thorough
 - Context pack: <path>
 - Review coverage: <profiles/domains/verifier pass run>
-- Deterministic checks: PASS | FAIL | PARTIAL
+- Deterministic checks: PASS | FAIL | PARTIAL | UNAVAILABLE
 - Verified findings: N
 - Fixes applied this wave: N
 - Result signal: CLEAN | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason-code | CHURN:reason-code | ESCALATE:normal:reason-code | ESCALATE:complex:reason-code

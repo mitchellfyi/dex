@@ -22,9 +22,8 @@ The caller may provide:
 - `--include-working-tree`: allow uncommitted working-tree changes to be used as
   promotion evidence. Default is false.
 
-If no state directory is supplied, use `${DX_LEARNING_DIR:-}` when set, otherwise
-use a Dex-managed external state directory outside the repo. Do not store raw
-episodes inside the git checkout.
+If no state directory is supplied, use a Dex-managed external state directory
+outside the repo. Do not store raw episodes inside the git checkout.
 
 ## Trusted Files
 
@@ -111,7 +110,6 @@ Read current Dex context:
 Gather raw observations from:
 
 - the explicit `--state-dir`
-- `${DX_LEARNING_DIR:-}` if set
 - recent commits, especially `fix:` commits
 - recent changed hot spots
 - recent PR review comments when GitHub is available

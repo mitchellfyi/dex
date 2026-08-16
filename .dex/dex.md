@@ -30,14 +30,14 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 
 ## Project Structure
 ```
-dx.sh                Main shell functions (zsh only, ~5300 lines)
+dx.sh                Main shell functions (zsh only, ~3700 lines)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
-bin/                 CLI scripts: install, uninstall, init, uninit, config, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
+bin/                 CLI scripts: install, uninstall, init, uninit, config, control, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
 docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (8 rules)
-lib/                 Shared shell libraries (22 modules, including the shared lock,
+lib/                 Shared shell libraries (23 modules, including the shared lock,
                      evidence, and controller modules)
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
@@ -88,7 +88,9 @@ agent.
 
 ## Reviewers
 
-Reviewers assigned when the PR is marked ready for review (Phase 6). Two types:
+Request-type reviewers are attached in Phase 5 while the PR is still a draft;
+Phase 6 marks the PR ready, re-requests them, and posts mention comments. Two
+types:
 - `request` — native GitHub review request via Dex's reviewer helper
 - `mention` — `@<handle>` posted as a PR comment (for AI agents that watch mentions)
 

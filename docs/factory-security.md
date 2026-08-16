@@ -86,7 +86,14 @@ authenticated DexCode origin. Keep signed download URLs short-lived.
 
 ## Remote Worker Start
 
-The v1 remote start model is SSH bootstrap:
+The preferred remote start model is the pull-based worker daemon:
+`dx worker register` enrolls a machine per organisation and stores a
+`dc_worker_` credential, and `dx worker run` polls for assigned runs, claims
+one, launches `dx run` with a run-scoped token, renews the lease while the
+child lives, and settles the attempt afterwards. DexCode never dials the
+machine, and no token crosses an SSH command line. See lib/worker.sh.
+
+SSH bootstrap remains available for one-off starts:
 
 ```bash
 ssh dex-worker@example.com "cd /srv/dex/repos/org/repo && dx run --spec-url https://factory.example.com/api/v1/runs/run_123/spec --run-token ..."
@@ -119,14 +126,12 @@ Never include these in event `message`, event `data`, logs or artifact metadata:
 
 ## Future Evolution
 
-The v1 boundary leaves room for:
+Per-run tokens, worker registration credentials, and the pull-based worker
+daemon shipped with the worker path above. The boundary still leaves room for:
 
-- per-run token rows bound to one `run_id`
 - GitHub App installation tokens
 - managed secret references
-- worker registration tokens
 - per-company isolation controls
-- a worker daemon that avoids passing tokens through SSH command arguments
 
 Those are later hardening steps. The first production path should keep Factory
 as an observer and starter, not a central credential store.

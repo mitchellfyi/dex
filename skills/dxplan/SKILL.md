@@ -180,7 +180,9 @@ Present the approaches briefly (2-3 sentences each), then recommend one with rea
 3. Note any dependencies between tasks (e.g., "migration must come before entity").
 4. Identify risks, unknowns, or decisions that need user input.
 5. Classify each change as additive (safe), modification (potentially breaking), or removal (breaking). Note migration needs for breaking changes.
-6. Assign a **risk level** to each task. This drives review depth in `/dxreview`:
+6. Assign a **risk level** to each task. This informs the Phase 2 review-risk
+   selection (`prompts/review-risk-assessment.md`) and tells the implementer
+   where to concentrate care:
    - **HIGH** — security, auth, data access, migrations, new external integrations, financial logic
    - **MEDIUM** — business logic, refactors touching multiple files, API contract changes
    - **LOW** — config, docs, formatting, simple additive changes, test-only changes

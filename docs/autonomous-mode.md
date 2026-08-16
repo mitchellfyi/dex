@@ -323,6 +323,7 @@ Each phase has its own completion promise:
 
 | Phase | Promise |
 |-------|---------|
+| 0 | `PHASE_0_COMPLETE` |
 | 1 | `PHASE_1_COMPLETE` |
 | 2 | `PHASE_2_COMPLETE` |
 | 3 | `PHASE_3_COMPLETE` |
@@ -451,6 +452,10 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - `.control-lock` — transition lock that prevents two Stop-hook invocations from applying the same receipt
 - `.watch-pause` — marker that scheduled Phase 6 PR watcher should no-op after a direct user prompt
 - `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dxwatchpr` cycle
+- `.pause-state` — machine-readable reason/source for the current pause
+- `.complete-state` — Phase 6 cycle bookkeeping (`cycle:last_check_epoch`); the Stop hook holds its wait window from this
+- `.owner` — Claude session id that claimed the loop; bystander sessions in the same checkout stay inert
+- `.phase-0.ready` — Phase 0 marker written after ticket setup; the Stop hook blocks the Phase 0 stop without it
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dxplan`; the Stop hook does not count plan audit iterations until the approval marker exists
 - `.phase-2.ready` — Phase 2 marker written by `dximplement` only after every
   acceptance criterion and verification gate is complete and a valid
@@ -458,6 +463,7 @@ Loop state is stored in `~/.claude/.dex-loops/`:
   ignores `PHASE_2_COMPLETE` without it
 - `.phase-3.busy` — Phase 3 marker written by `dxreviewloop` while a review wave is running; the Stop hook does not count audit iterations while waiting
 - `.phase-3.busy-notice` — timestamp used to throttle repeated Phase 3 busy-gate notices while the same review pass is still running
+- `.phase-3.busy-cancel` / `.phase-3.busy-quiesced` — the cancellation request and the owner's acknowledgement in the review-child quiesce protocol
 - `.review-criteria.json` — strict approved objectives, acceptance criteria,
   and verification requirements created after plan approval; each lifecycle
   assessor and wave gets a temporary child-scoped copy
@@ -492,11 +498,13 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - Old files (7+ days) are pruned by `dxclean`
 
 Phase state is stored in `~/.claude/.dex-phases/`:
-- One `.phase` file per worktree, tracking which phase is current (1-6; 7 = ticket complete)
+- One `.phase` file per worktree, tracking which phase is current (0-6; 7 = ticket complete)
 - One `.times` file per worktree, tracking start times for elapsed calculations
 - One `.system-context` file per worktree, used by `--append-system-prompt-file` for compaction resilience (regenerated each phase, cleaned up by `SessionEnd` hook)
 - One `.branch` file per lifecycle session, used by in-place mode to resume on the correct branch after branch renames or shell navigation
 - One `.interventions` file per lifecycle session, recording human control receipts for audit without storing prompt text
+- One `.phase-outcomes` file per lifecycle session — the durable terminal outcome ledger (completed/skipped/waived) behind the progress header symbols
+- One `.human-complete` file per lifecycle session when a human marked the lifecycle done, which preserves the workspace instead of cleaning it up
 
 UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots, videos, traces, flow scripts, logs, and PR upload manifests stay out of git.
 
@@ -506,10 +514,12 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 |----------|---------|-------------|
 | `DEX_LOOP_ACTIVE` | `0` | Set to `1` to enable the phase audit loop |
 | `DEX_LOOP_MAX_ITERATIONS` | `30` | Max iterations per phase before forced stop |
+| `DEX_LOOP_STALL_TIMEOUT` | `300` | Seconds between audit iterations before a stall is counted |
+| `DEX_LOOP_STALL_ESCALATE` | `3` | Consecutive stalls before the failure-recovery escalation prompt |
 | `DEX_LOOP_MIN_AUDITS` | (per-phase) | Min audit iterations before completion is authorized |
 | `DEX_LOOP_PROMISE` | `DEX_TICKET_COMPLETE` | Completion signal for the current phase |
 | `DEX_LOOP_PROMPT` | (from file) | Audit prompt injected on each loop iteration |
-| `DEX_LOOP_PHASE` | (set by wrapper) | Current phase number (1-6) or `prompt-loop`, used to find audit file |
+| `DEX_LOOP_PHASE` | (set by wrapper) | Current phase number (0-6) or `prompt-loop`, used to find audit file |
 | `DEX_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
 | `DEX_RUN_ID` | set by Dex | Current run ID passed into hooks and provider subprocesses |
 | `DEX_FACTORY_SYNC` | auto | Enable optional Factory event sync; `false`, `0`, `no`, or `off` disables it |

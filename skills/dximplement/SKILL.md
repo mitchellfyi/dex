@@ -45,7 +45,7 @@ old lesson.
 
 Before editing UI-affecting files, decide whether the approved plan changes browser UI, visual layout, styles, routes, or user flows. If it does, invoke `dxuicapture` immediately for before evidence and add the generated `visual-evidence.md` manifest path to your working notes. Capture the representative routes/flows you expect to change. If UI files have already been modified before the baseline can be captured, do not synthesize a before state; record `Before capture: unavailable — UI was already modified before capture` in the manifest and final evidence.
 
-### 1. Design the Test Strategy First
+### 2. Design the Test Strategy First
 
 Before writing implementation code, map the test surface for the approved plan:
 
@@ -69,7 +69,7 @@ For each task in the approved plan:
 5. Codebase stewardship: if you encounter dead code, stale comments, or outdated references in files you are modifying, clean them up — but do not expand scope to files outside the plan.
 6. `TaskUpdate(task_id, "completed")`
 
-### 2. Keep `.dex/` in Sync
+### 3. Keep `.dex/` in Sync
 
 After completing each task, check if your changes require updating project documentation in `.dex/`:
 
@@ -82,7 +82,7 @@ After completing each task, check if your changes require updating project docum
 Only update when the change is meaningful and lasting — don't document one-off implementation details.
 Do not create `.dex/learnings.md`; raw observations are not trusted memory.
 
-### 3. Handle Scope Changes
+### 4. Handle Scope Changes
 
 If during implementation you discover:
 - **A requirement is ambiguous**: STOP. Present 2-3 options with trade-offs. Ask the user to choose.
@@ -116,7 +116,7 @@ When stopping for scope changes, do NOT output a completion promise (e.g., `PHAS
 
 Update the ticket via the configured tracker (see dex.md § Integrations) with the scope change details. If no tracker is configured, inform the user in conversation.
 
-### 4. Implementation Inventory
+### 5. Implementation Inventory
 
 After all tasks are completed, run a focused implementation inventory to catch
 issues before the dedicated Phase 3 review loop takes over.
@@ -150,7 +150,7 @@ If the final inventory is empty and the evidence table has zero NOT FOUND
 entries: implementation is complete. When run via `dx`, the next phase (Review)
 follows automatically after the Stop hook audits this phase.
 
-### 5. Final Implementation Checks
+### 6. Final Implementation Checks
 
 After the implementation inventory passes and the evidence table has zero NOT
 FOUND entries, run the project's relevant deterministic checks one more time and
@@ -158,7 +158,7 @@ update the evidence table with final pass/fail status. Do not invoke `/dxreview`
 from Phase 2; the dedicated Phase 3 `/dxreviewloop` handles adversarial review
 after implementation is complete.
 
-### 6. UI Capture Evidence
+### 7. UI Capture Evidence
 
 If the change affects browser UI, invoke the `dxuicapture` skill before Phase 2 completes. Ensure the evidence includes:
 
@@ -172,7 +172,7 @@ Artifacts must stay in Dex's artifact directory and must not be committed. Add a
 
 If no browser UI changed, add `UI capture: N/A — no UI-affecting files changed` to the evidence.
 
-### 7. Manual Local Smoke Test
+### 8. Manual Local Smoke Test
 
 A green test suite is not the same as a working feature. Before marking Phase 2 ready, exercise the change end-to-end the way a human reviewer would — run it locally and watch it actually work.
 
@@ -183,7 +183,7 @@ A green test suite is not the same as a working feature. Before marking Phase 2 
 - **Clean up after yourself.** Stop every process/server you started, remove any rows, temp data, or fixture files you created, and leave no Phase 2 background process in flight. Smoke-test artifacts follow the same rule as UI capture — do not commit them.
 - **Record the result** in the implementation evidence: what you ran, how you drove it (browser vs Playwright vs API/CLI), what you observed, and the cleanup you performed. If the change genuinely cannot be exercised locally, record `Manual smoke test: N/A — <reason>` instead of silently skipping it; the reason must clear the same bar as any other `N/A` (see the blocker rule above).
 
-### 8. Select Phase 3 Review Risk
+### 9. Select Phase 3 Review Risk
 
 After the final in-scope edit and verification run, use
 `prompts/review-risk-assessment.md` as the source of truth. Its first matching
@@ -232,7 +232,7 @@ Candidate-branch edits cannot lower the active gate, and
 The selection is not a review pass. Rewrite it if any later Phase 2 edit changes
 the scope.
 
-### 9. Mark Phase 2 Ready
+### 10. Mark Phase 2 Ready
 
 When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), write the Phase 2 ready marker only after all of these are true:
 
@@ -273,9 +273,9 @@ During implementation, avoid unrelated lifecycle administration:
 You SHOULD:
 - Implement all planned tasks with TDD
 - Run quality checks on changed files after each task (format, lint, typecheck)
-- Run the self-review loop (Step 4) and final implementation checks (Step 5)
+- Run the self-review loop (Step 5) and final implementation checks (Step 6)
 - Run `/dxuicapture` for UI-affecting changes before UI edits and after implementation, then link the artifacts
-- Run the manual local smoke test (Step 7) before marking Phase 2 ready, cleaning up anything it starts or seeds
+- Run the manual local smoke test (Step 8) before marking Phase 2 ready, cleaning up anything it starts or seeds
 - Select and persist the Phase 3 review risk after the final in-scope change
 - Update `.dex/` project docs if your changes require it
 

@@ -230,9 +230,12 @@ C4Component
 
 For trivial containers (Postgres, Redis, SQS, an Nginx instance): one line in the Containers section is enough — `Allocation DB — schema documented in repo/migrations/, no Level-3 diagram needed`.
 
-#### Section 4 — Multi-tenancy Boundary (dex supplement)
+#### Section 4 — Isolation/Tenancy Boundary (dex supplement)
 
-Not part of canonical C4. Required for every dex project because the platform constraint mandates it.
+Not part of canonical C4. Required whenever the codebase has tenant, user,
+or data isolation; for a codebase with none (a CLI, a library, a
+single-user app), record `Not tenant-aware — <one-line reason>` instead of
+inventing a boundary.
 
 Prose + a checklist. State the pattern verbatim, citing a file/line you read to confirm:
 
@@ -281,7 +284,7 @@ Before writing the file, verify all of the following.
 
 **Dex cross-cutting:**
 
-12. Multi-tenancy section is non-empty and cites a file/line from the actual code.
+12. Isolation/Tenancy section is non-empty and cites a file/line from the actual code, or explicitly records `Not tenant-aware — <reason>`.
 13. Every Level-2 container has a Tenancy mode set in the container table.
 14. Plug-points section lists every existing strategy/registry interface discovered in §3 (or `— none found`).
 

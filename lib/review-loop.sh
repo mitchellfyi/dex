@@ -284,7 +284,7 @@ __dx_review_wave_message_template() {
     scope_source_detail="IMPORTANT: No current change set was found, so this pass is a whole-codebase review. Do not stop because \`git diff\` is empty. Use these commands as the authoritative codebase inventory, then read and review the listed files as needed:"
     scope_boundary="REVIEW FOCUS: review and fix the entire codebase in this repository. Commit, push, and PR actions remain available when useful, but publishing does not replace the review gate. Substantive content changes require a fresh wave."
   else
-    scope_source_detail="IMPORTANT: When the audit prompt or /dxreview SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead. This is the full current change set, including committed branch changes, staged changes, unstaged changes, and untracked files:"
+    scope_source_detail="IMPORTANT: When the audit prompt or /dxreviewloop SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead. This is the full current change set, including committed branch changes, staged changes, unstaged changes, and untracked files:"
     scope_boundary="REVIEW FOCUS: review and fix the full current change set above. Commit, push, and PR actions remain available when useful, but publishing does not replace the review gate. Substantive content changes require a fresh wave."
   fi
 

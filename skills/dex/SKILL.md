@@ -93,7 +93,7 @@ resulting state and continue using the current phase's completion criteria.
 ### Phase 4: Verify & Commit
 
 1. Run `/dxverify` — format, lint, typecheck, generate, test.
-2. Fix any failures. Re-run until all green (max 3 retries per check).
+2. Fix any failures. Re-run until all green, within the retry budget from `prompts/failure-recovery.md` (3 retries per strategy, 2 strategies).
 3. Run `/dxcommit` — atomic conventional commits, push to origin.
 4. Output `PHASE_4_COMPLETE` when all checks pass and code is pushed.
 

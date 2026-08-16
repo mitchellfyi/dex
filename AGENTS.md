@@ -22,12 +22,12 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (22 modules sourced by common.sh; see the module table below)
+lib/                 Shared shell libraries (23 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
-dx.sh                Main shell functions (zsh only, ~5300 lines)
+dx.sh                Main shell functions (zsh only, ~3700 lines)
 settings.json        Hook definitions template
 install.sh           Quick-start installer (delegates to bin/install.sh)
 ```
@@ -85,8 +85,8 @@ Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`
 `attribution.sh`, `codex.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
 `lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
 `provider.sh`, `review.sh`, `review-controller.sh`, `review-loop.sh`,
-`review-policy.sh`, `rtk.sh`,
-`run-spec.sh`, `session.sh`, `ui-capture.sh`, and `worktree.sh`.
+`review-policy.sh`, `rtk.sh`, `run-spec.sh`, `session.sh`, `ui-capture.sh`,
+`worker.sh`, and `worktree.sh`.
 
 ### Output
 
@@ -210,7 +210,7 @@ Stored in `prompts/`. Skills reference them by plain repo-relative path, e.g.
 - `pr-description.md` — PR description template
 - `ticket-instructions.md` — Ticket intake workflow (injected by SessionStart hook)
 - `init-analysis.md` — Codebase analysis prompt (used by `dx init`)
-- `phase-audits/*.md` — Numbered 1-6 matching lifecycle phases, plus `prompt-loop.md`
+- `phase-audits/*.md` — Numbered 0-6 matching lifecycle phases (Phase 0 is Setup), plus `prompt-loop.md`; `3-review-loop.md` is the lifecycle Phase 3 audit and `3-review.md` the per-wave audit the review loop injects
 
 ## Key Architecture Concepts
 
@@ -345,6 +345,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 | `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap | `dx_bootstrap_agent_tooling()`, `dx_install_safe_official_claude_plugins()`, `dx_install_openai_docs_mcp_servers()` |
 | `attribution.sh` | Commit/PR attribution installation, hook chaining, and restoration | `dx_install_repo_attribution()`, `dx_uninstall_repo_attribution()`, `dx_commit_attribution_message()` |
 | `codex.sh` | Codex CLI skill installation helpers | `dx_install_codex_skills()`, `dx_count_dex_skills()`, `dx_codex_dex_skills_complete()`, `dx_uninstall_codex_skills()` |
+| `dexcode.sh` | DexCode login, org connections, run registration/sync, artifact upload | `dx_dexcode_login()`, `dx_dexcode_command()`, `dx_dexcode_prepare_run_sync()`, `dx_dexcode_upload_artifact()` |
 | `events.sh` | Run IDs, local run directories, JSONL event journals, redacted logs, artifact manifests, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_log_append()`, `dx_run_register_artifact()`, `dx_run_write_summary()` |
 | `factory.sh` | Optional Dex Factory event sync over HTTP | `dx_factory_sync_pending_events()`, `dx_factory_events_endpoint()`, `dx_factory_sync_requested()` |
 | `git.sh` | Git helpers | `dx_default_branch()`, `dx_slugify()` |
@@ -361,6 +362,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 | `session.sh` | Session ID derivation, state file paths | `dx_session_id()`, `dx_provider_state_file()`, `dx_cleanup_session()` |
 | `output.sh` | Formatted user-facing output | `dx_done()`, `dx_ok()`, `dx_warn()`, `dx_error()`, etc. |
 | `ui-capture.sh` | Playwright/UI capture tooling, artifact paths, MCP bootstrap | `dx_install_ui_capture_tooling()`, `dx_ui_capture_run_dir()`, `dx_ui_capture_playwright_ready()` |
+| `worker.sh` | DexCode worker registration and the poll/claim/lease/settle daemon | `dx_worker_command()`, `dx_worker_register()`, `dx_worker_daemon()` |
 | `worktree.sh` | Worktree management utilities | `dx_wt_branch()`, `dx_wt_remove()`, `dx_cleanup_last_session()`, `dx_cleanup_stale_files()` |
 
 **dx.sh internal structure** (sections in file order). Locate any of these with
@@ -442,6 +444,7 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DX_PLAN_EFFORT` | Override Phase 1/plan effort | `DX_CLAUDE_EFFORT`, profile plan effort, else session default |
 | `DX_ALLOW_API_BILLED_AUTH` | Allow `dx provider doctor` to tolerate API/gateway env vars | `0` |
 | `DX_ALLOW_REPO_GATEWAY_PROVIDER` | Explicitly allow a trusted repo-local gateway/API provider profile for the current invocation | `0` |
+| `DX_ALLOW_FORK_PR_CHECKOUT` | Skill-level opt-in letting `/dxprreview` check out fork PRs | `0` |
 
 ## Files to Never Commit
 

@@ -152,6 +152,8 @@ ALL of these must be true before you stop:
 - Every acceptance criterion has status MET in the evidence table (Step 3)
 - All tests pass (run the test suite one final time to confirm)
 - No acceptance criterion or verification gate is deferred, skipped, blocked, or delegated to future CI
+- The change was exercised end-to-end locally and passed the manual smoke
+  test, or manual verification is explicitly N/A with a reason
 - No TODO/FIXME/debugging artifacts remain
 - No background processes or long-running verification commands started during Phase 2 are still in flight
 - Any needed `.dex/` updates are staged

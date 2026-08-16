@@ -20,7 +20,7 @@ Prioritise improvements in this order:
 
 ## How to Work
 
-Apply the criteria from `prompts/review.md` (10 review passes) and the principles from `prompts/guardrails.md` (implementation discipline). For each area:
+Apply the criteria from `prompts/review.md` (12 review passes) and the principles from `prompts/guardrails.md` (implementation discipline). For each area:
 
 - **Investigate first** — read the code, understand the context, check for prior art before changing anything.
 - **Make targeted fixes** — prefer small, focused changes over sweeping rewrites. Each change should be independently correct.

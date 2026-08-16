@@ -141,7 +141,7 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
 
 Note: `mention`-type reviewers (AI bots) do not issue native GitHub reviews and DO NOT gate completion via review state. Their substantive comments should already be addressed via `/dxprreview` during the cycle, with clear review threads resolved after Dex replies. Only successfully requested `request`-type reviewers' approval status matters for Case A.
 
-Update the ticket (if a tracker is configured — see `dex.md § Integrations`). Print the completion summary (per `skills/dxcomplete/SKILL.md` Step 5). Cycle is done — proceed to Termination.
+Update the ticket (if a tracker is configured — see `dex.md § Integrations`). Print the completion summary (per `skills/dxcomplete/SKILL.md`, the Print Summary step). Cycle is done — proceed to Termination.
 
 ### Case B — Pending checks/reviews or unresolved comments, but progress was made
 

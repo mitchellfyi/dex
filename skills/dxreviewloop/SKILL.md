@@ -60,8 +60,10 @@ is still invalid.
 The wrapper reserves the reason codes `operator-override` for an explicit
 environment override and `wave-escalation` for a verified upward promotion.
 Selection sources are `environment`, `lifecycle-agent`, `lifecycle-assessor`,
-`standalone-assessor`, or `wave-escalation`. These are structured orchestration
-values, not alternatives the risk assessor may invent.
+`standalone-assessor`, `deterministic-floor` (wrapper-recorded when the
+deterministic floor raises an assessed tier), or `wave-escalation`. These are
+structured orchestration values, not alternatives the risk assessor may
+invent.
 
 In the normal lifecycle flow, the implementation agent must record this
 selection before Phase 2 hands off to Phase 3. When a legacy or resumed

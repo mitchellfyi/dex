@@ -107,7 +107,7 @@ Required fields:
 
 | Field | Notes |
 |-------|-------|
-| `run_id` | Must start with `run_`, contain only letters, numbers, `.`, `_`, or `-`, and fit within 200 UTF-8 bytes. |
+| `run_id` | Must start with `run_`, contain only letters, numbers, `.`, `_`, or `-`, and fit within 128 UTF-8 bytes. |
 | `repository.working_directory` | Existing git checkout where Dex should run. |
 | `source.type` | Source kind, such as `github_issue` or `task`. |
 | one source identifier | At least one of `source.id`, `source.url`, `source.title`, or `source.body`. |

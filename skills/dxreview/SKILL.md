@@ -6,7 +6,8 @@ description: "Run one independent full-scope Dex review wave at the selected ris
 # Skill: dxreview
 
 Run one full-scope review wave. Direct `/dxreview` invocations dispatch to
-`/dxreviewloop`; single-pass mode is reserved for `/dxreviewloop` and Phase 3.
+`/dxreviewloop`; single-pass mode is for callers that pass `--single-pass`
+explicitly (`/dxreviewloop`, Phase 3, and the dxloop audit).
 
 ## Dispatch
 

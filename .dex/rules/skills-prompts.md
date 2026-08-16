@@ -26,15 +26,23 @@ name: unique-guard-name
 enabled: true
 event: bash|file|commit|all
 pattern: python-regex
+detector: optional-built-in-detector
 action: warn|block
+match: all|path
 case_sensitive: false
+allow_pattern: optional-python-regex
+env_var: OPTIONAL_ENV_NAME
+env_value: optional-exact-value
 ---
 ```
 
 - Patterns are Python regexes evaluated by `guard-handler.py`
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it)
 - Frontmatter parser is regex-based — flat `key: value` only, no nested objects or arrays
-- Built-in guards: `claude-attribution`, `destructive-commands`, `hardcoded-secrets`, `raw-codex-delegation`, `sensitive-files` — don't duplicate these
+- Built-in guards (by `name:`): `block-claude-attribution`, `block-destructive-commands`,
+  `block-raw-codex-delegation`, `block-review-assessment-bash`,
+  `block-review-assessment-file-edits`, `warn-await-in-loop`,
+  `warn-hardcoded-secrets`, `warn-sensitive-files` — don't duplicate these
 
 ## Prompts
 
