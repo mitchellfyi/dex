@@ -6,8 +6,7 @@
 #   dx log <session_id>     Show log for a specific session
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'USAGE'

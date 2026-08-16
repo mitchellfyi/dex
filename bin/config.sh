@@ -37,13 +37,13 @@ if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   repo_root=""
 fi
 if [[ -z "$repo_root" ]]; then
-  echo "ERROR: Not in a git repository."
+  dx_error "Not in a git repository."
   exit 1
 fi
 
 dex_md="$repo_root/.dex/dex.md"
 if [[ ! -f "$dex_md" ]]; then
-  echo "ERROR: .dex/dex.md not found. Run 'dx init' first."
+  dx_error ".dex/dex.md not found. Run 'dx init' first."
   exit 1
 fi
 

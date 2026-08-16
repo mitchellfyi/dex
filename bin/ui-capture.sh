@@ -8,7 +8,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 usage() {
   cat <<'USAGE'
 Usage:
-  ui-capture.sh --url <url> [--name <name>] [--desktop] [--mobile] [--video] [--trace] [--flow <file>] [--wait-ms <ms>]
+  ui-capture.sh --url <url> [--name <name>] [--desktop] [--mobile] [--video] [--trace] [--flow <file>] [--wait-ms <ms>] [--out <dir>]
   ui-capture.sh --install-only
 
 Artifacts are written to:

@@ -54,7 +54,13 @@ dx_install_ui_capture_playwright() {
   mkdir -p "$tools_dir"
 
   if [[ ! -f "$tools_dir/package.json" ]]; then
-    printf '%s\n' '{"private":true,"name":"dex-ui-capture-tools","description":"Dex-managed Playwright tooling; do not edit manually."}' > "$tools_dir/package.json"
+    local package_tmp="$tools_dir/package.json.tmp.$$"
+    if ! printf '%s\n' '{"private":true,"name":"dex-ui-capture-tools","description":"Dex-managed Playwright tooling; do not edit manually."}' >| "$package_tmp" ||
+       ! command mv -f "$package_tmp" "$tools_dir/package.json"; then
+      command rm -f "$package_tmp" 2>/dev/null || true
+      dx_warn "Could not write $tools_dir/package.json"
+      return 1
+    fi
   fi
 
   if dx_ui_capture_playwright_ready; then

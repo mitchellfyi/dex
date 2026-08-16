@@ -370,6 +370,10 @@ else
   INIT_PROVIDER_SESSION_ID="${INIT_RUN_SESSION_ID:-init-$(dx_unique_session_id)}"
   dx_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID"
   INIT_ANALYSIS_OUTPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/dex-init-analysis.XXXXXX")
+  # +e as well as +o pipefail (matching bin/sync.sh): a failing tail stage —
+  # e.g. python3 dying inside dx_run_log_tee — must reach the CLAUDE_EXIT
+  # handling below rather than killing init via errexit.
+  set +e
   set +o pipefail
   DEX_SESSION_ID="$INIT_PROVIDER_SESSION_ID" DEX_RUN_ID="${INIT_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_provider_claude -p "${analysis_prompt}${provider_prompt}" \
     ${model_flags[@]+"${model_flags[@]}"} \
@@ -380,6 +384,7 @@ else
     | dx_run_log_tee "${INIT_RUN_ID:-}" "init-provider"
   CLAUDE_EXIT=${PIPESTATUS[0]}
   set -o pipefail
+  set -e
   dx_provider_cleanup_session_state "$INIT_PROVIDER_SESSION_ID"
   INIT_PROVIDER_SESSION_ID=""
   if [[ $CLAUDE_EXIT -ne 0 ]]; then

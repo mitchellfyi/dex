@@ -9,6 +9,10 @@ QUIET=0
 for arg in "$@"; do
   case "$arg" in
     --quiet) QUIET=1 ;;
+    *)
+      dx_error "Unknown install-settings option: $arg"
+      exit 1
+      ;;
   esac
 done
 

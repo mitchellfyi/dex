@@ -31,6 +31,13 @@ export DX_TOOL_DIR="${DX_TOOL_DIR:-$HOME/.claude/.dex-tools}"
 # Used by run event helpers
 export DX_RUN_ROOT="${DX_RUN_ROOT:-$HOME/.dex/runs}"
 
+# Matches a ~/.zshrc line that loads Dex: the current install layout, the
+# legacy dex-cli checkout name, and DEX_DIR-based source lines. Shared by
+# bin/install.sh, bin/status.sh, and bin/uninstall.sh so detection and removal
+# stay in lockstep.
+# shellcheck disable=SC2034  # consumed by the bin/ scripts above
+DX_ZSHRC_SOURCE_PATTERN='dex(-cli)?/dx\.sh|DEX_DIR.*/dx\.sh'
+
 # dx_repo_root — print the *main* repo toplevel or return 1
 # If cwd is inside a dex worktree (.dex/worktrees/<name>/...),
 # returns the main repo root, not the worktree root. This prevents dx
