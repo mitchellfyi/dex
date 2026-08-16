@@ -255,6 +255,7 @@ run_shell_suite() {
       mkdir -p "$concurrent_results"
       DX_CONCURRENT_HISTORY="$concurrent_history" DX_CONCURRENT_RESULT="$concurrent_results/one" \
         DEX_DIR="$DEX_DIR" "$TEST_SHELL_NAME" -c "
+          source \"\$DEX_DIR/lib/lock.sh\"
           source \"\$DEX_DIR/lib/review.sh\"
           source \"\$DEX_DIR/lib/review-controller.sh\"
           dx_review_findings_history_append \"\$DX_CONCURRENT_HISTORY\" 0000000000000008 &&
@@ -263,6 +264,7 @@ run_shell_suite() {
       first_pid=$!
       DX_CONCURRENT_HISTORY="$concurrent_history" DX_CONCURRENT_RESULT="$concurrent_results/two" \
         DEX_DIR="$DEX_DIR" "$TEST_SHELL_NAME" -c "
+          source \"\$DEX_DIR/lib/lock.sh\"
           source \"\$DEX_DIR/lib/review.sh\"
           source \"\$DEX_DIR/lib/review-controller.sh\"
           dx_review_findings_history_append \"\$DX_CONCURRENT_HISTORY\" 0000000000000009 &&
