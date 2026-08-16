@@ -84,6 +84,11 @@ dx_rtk_target_triple() {
   esac
 }
 
+__dx_rtk_version_valid() {
+  local version="${1:-}"
+  [[ -n "$version" && ${#version} -le 100 && "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
 dx_rtk_latest_release() {
   local version
 
@@ -93,14 +98,16 @@ dx_rtk_latest_release() {
     | tr -d '\r' \
     | tail -n 1)
 
-  if [[ -z "$version" ]]; then
+  # Fall back to the API when the redirect gave nothing usable — a Location
+  # without /tag/ leaves the whole URL in $version, which used to hard-fail
+  # here instead of trying the API.
+  if ! __dx_rtk_version_valid "$version"; then
     version=$(command curl -q -fsSL "https://api.github.com/repos/${DX_RTK_REPO}/releases/latest" \
       | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
       | head -n 1)
   fi
 
-  [[ -n "$version" ]] || return 1
-  [[ ${#version} -le 100 && "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+  __dx_rtk_version_valid "$version" || return 1
   printf '%s\n' "$version"
 }
 
@@ -189,22 +196,24 @@ dx_install_rtk_user_path_link() {
   target="$local_bin/rtk"
   mkdir -p "$local_bin"
 
+  # Best-effort: the hooks address RTK by absolute path, so a conflicting or
+  # failed convenience link warns without failing the install.
   if [[ -L "$target" ]]; then
     current=$(readlink "$target")
     if [[ "$current" == "$managed" ]]; then
       dx_ok "RTK linked at ${target}"
     else
       dx_warn "${target} points to ${current}; leaving it unchanged"
-      return 1
+      return 0
     fi
   elif [[ -e "$target" ]]; then
     dx_warn "${target} exists and is not a symlink; leaving it unchanged"
-    return 1
+    return 0
   elif ln -s "$managed" "$target"; then
     dx_done "Linked RTK into ${target}"
   else
     dx_warn "Could not link RTK into ${target}"
-    return 1
+    return 0
   fi
 
   path_entry=":${PATH:-}:"
@@ -226,19 +235,26 @@ dx_install_rtk_binary() {
   if existing_path=$(dx_rtk_resolved_binary 2>/dev/null); then
     dx_ok "RTK available at ${existing_path}"
     if [[ -n "${DX_RTK_BIN:-}" ]] || [[ "$existing_path" == "$managed" ]]; then
-      dx_install_rtk_user_path_link || return 1
+      dx_install_rtk_user_path_link
       return 0
     fi
     if [[ -x "$managed" ]] && dx_rtk_binary_is_token_killer "$managed"; then
-      dx_install_rtk_user_path_link || return 1
+      dx_install_rtk_user_path_link
       return 0
     fi
     dx_info "Installing Dex-managed RTK fallback for hooks"
+  elif [[ -n "${DX_RTK_BIN:-}" ]]; then
+    # With DX_RTK_BIN set, resolution never falls back to a managed copy, so
+    # installing one would report success while hooks and checks stay broken.
+    dx_warn "DX_RTK_BIN is set to '${DX_RTK_BIN}' but it did not verify as Rust Token Killer; fix or unset DX_RTK_BIN"
+    return 1
   fi
 
-  existing=$(command -v rtk 2>/dev/null || true)
-  if [[ -n "$existing" ]]; then
-    dx_warn "Found '${existing}', but 'rtk rewrite' did not verify Rust Token Killer; installing a Dex-managed RTK binary"
+  if [[ -z "${existing_path:-}" ]]; then
+    existing=$(command -v rtk 2>/dev/null || true)
+    if [[ -n "$existing" ]]; then
+      dx_warn "Found '${existing}', but 'rtk rewrite' did not verify Rust Token Killer; installing a Dex-managed RTK binary"
+    fi
   fi
 
   command -v curl >/dev/null 2>&1 || {
@@ -331,7 +347,7 @@ dx_install_rtk_binary() {
   fi
 
   dx_done "Installed RTK ${version}"
-  dx_install_rtk_user_path_link || return 1
+  dx_install_rtk_user_path_link
 }
 
 dx_rtk_codex_markdown_block() {

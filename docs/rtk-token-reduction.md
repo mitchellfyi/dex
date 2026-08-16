@@ -36,10 +36,12 @@ oversized expanded contents.
 
 Claude Code Bash tool calls now run through Dex guards first. If a guard allows
 the command, the RTK hook gets the same payload and may return an `updatedInput`
-command. The wrapper prefixes rewritten commands with RTK's install directory in
-`PATH`, so the generated `rtk ...` command still works when the agent shell did
-not load `~/.local/bin`. If RTK is unavailable or fails, the wrapper exits
-successfully and leaves the original command untouched.
+command. When `python3` is available, the wrapper prefixes rewritten commands
+with RTK's install directory in `PATH`, so the generated `rtk ...` command
+still works when the agent shell did not load `~/.local/bin`; without
+`python3` the rewrite is passed through unprefixed. If RTK is unavailable or
+fails, the wrapper exits successfully and leaves the original command
+untouched.
 
 Codex does not currently expose the same transparent Bash rewrite path through
 Dex, so Codex receives compact global instructions. Those instructions prefer
@@ -49,8 +51,9 @@ available when exact output matters.
 RTK's `gain` command may still warn that `rtk init -g` has not installed a hook,
 because upstream RTK only recognizes a literal `rtk hook claude` settings entry.
 Dex's hook is a wrapper around that same entrypoint so it can locate a
-Dex-managed binary and fail open when RTK is unavailable. Use `dx status` or
-`dx tools doctor` to check the Dex-managed RTK hook.
+Dex-managed binary and fail open when RTK is unavailable. `dx status` reports
+whether the RTK binary resolves; `dx tools doctor` also checks the Dex-managed
+RTK hook wiring.
 
 ## Configuration
 
