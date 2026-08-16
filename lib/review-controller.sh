@@ -80,14 +80,8 @@ dx_review_transition() {
         return 1
       fi
       if [[ "$scope_changed" != "true" && "$working_changed" != "true" ]]; then
-        selection_op="keep"
-        state_op="write"
-        if [[ "$scope_changed" == "true" ]]; then
-          selection_op="invalidate"
-          state_op="invalidate"
-        fi
-        printf '1\tpause\t%s\t%s\t0\tclaimed_fix_without_change\t-\treset\tkeep\t%s\t%s\tinvalidate\n' \
-          "$current_tier" "$current_required" "$selection_op" "$state_op"
+        printf '1\tpause\t%s\t%s\t0\tclaimed_fix_without_change\t-\treset\tkeep\tkeep\twrite\tinvalidate\n' \
+          "$current_tier" "$current_required"
         return 0
       fi
       if [[ "$churn_kind" != "none" ]]; then

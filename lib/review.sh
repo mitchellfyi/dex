@@ -20,16 +20,6 @@ dx_review_tier_profile() {
   esac
 }
 
-dx_review_tier_clean_passes() {
-  local tier
-  tier=$(dx_review_normalize_tier "${1:-}") || return 1
-  case "$tier" in
-    small) printf '%s\n' "3" ;;
-    normal) printf '%s\n' "6" ;;
-    complex) printf '%s\n' "9" ;;
-  esac
-}
-
 dx_review_tier_rank() {
   local tier
   tier=$(dx_review_normalize_tier "${1:-}") || return 1
@@ -40,18 +30,6 @@ dx_review_tier_rank() {
   esac
 }
 
-dx_review_higher_tier() {
-  local first second first_rank second_rank
-  first=$(dx_review_normalize_tier "${1:-}") || return 1
-  second=$(dx_review_normalize_tier "${2:-}") || return 1
-  first_rank=$(dx_review_tier_rank "$first") || return 1
-  second_rank=$(dx_review_tier_rank "$second") || return 1
-  if [[ "$first_rank" -ge "$second_rank" ]]; then
-    printf '%s\n' "$first"
-  else
-    printf '%s\n' "$second"
-  fi
-}
 
 dx_review_is_positive_integer() {
   local value="${1:-}"
@@ -2300,7 +2278,13 @@ EOF
   IFS=$'\t' read -r selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding selection_policy_binding <<EOF
 $selection
 EOF
-  receipt_tier_min=$(dx_review_policy_for_tier "$repo_dir" "$receipt_tier" "$expected_policy_binding" | cut -f1) || return 1
+  # Capture before splitting: sourced libs run without pipefail, so a `|| return`
+  # after a pipeline would only see cut's status and an empty field would slip
+  # into the arithmetic as zero.
+  local receipt_policy_record
+  receipt_policy_record=$(dx_review_policy_for_tier "$repo_dir" "$receipt_tier" "$expected_policy_binding") || return 1
+  receipt_tier_min="${receipt_policy_record%%$'\t'*}"
+  [[ "$receipt_tier_min" =~ ^[0-9]+$ ]] || return 1
   [[ $((10#$receipt_required)) -ge $((10#$receipt_tier_min)) ]] || return 1
   [[ $((10#$receipt_clean)) -eq $((10#$receipt_required)) ]] || return 1
   [[ "$selection_policy_binding" == "$expected_policy_binding" ]] || return 1

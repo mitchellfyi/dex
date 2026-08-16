@@ -437,29 +437,16 @@ DX_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 # Review sub-loop configuration.
 # Lifecycle Phase 3 uses the /dxreviewloop skill in the same Claude session.
 # A risk assessment selects small/normal/complex before the first review wave.
-# The trusted default-branch policy maps that tier to a clean-pass gate, using
-# 3/6/9 by default. Legacy light/standard/thorough profile names remain
-# accepted. There is no outer iteration limit; verified churn, provider
-# failures, timeouts, invalid evidence, and user interrupts pause it.
+# The trusted default-branch policy (lib/review-policy.sh) maps that tier to a
+# clean-pass gate, using 3/6/9 by default. Legacy light/standard/thorough
+# profile names remain accepted. There is no outer iteration limit; verified
+# churn, provider failures, timeouts, invalid evidence, and user interrupts
+# pause it.
 # Override risk: DEX_REVIEW_TIER=complex
 # Raise the loop gate: DEX_REVIEW_CLEAN_PASSES=12
 # Review waves launch with MCP servers disabled (waves only use local tools);
 # this avoids each spawned session forking node/Chromium MCP processes. Restore
 # the inherited MCP config with DEX_REVIEW_DISABLE_MCP=0.
-# shellcheck disable=SC2034 # read by dx_review_loop_run in lib/review-loop.sh
-DX_REVIEW_PROFILE=auto
-DX_REVIEW_SMALL_CLEAN_PASSES=3
-DX_REVIEW_NORMAL_CLEAN_PASSES=6
-DX_REVIEW_COMPLEX_CLEAN_PASSES=9
-# Backward-compatible profile aliases for callers that source these constants.
-# shellcheck disable=SC2034
-DX_REVIEW_LIGHT_CLEAN_PASSES=$DX_REVIEW_SMALL_CLEAN_PASSES
-# shellcheck disable=SC2034
-DX_REVIEW_STANDARD_CLEAN_PASSES=$DX_REVIEW_NORMAL_CLEAN_PASSES
-# shellcheck disable=SC2034
-DX_REVIEW_THOROUGH_CLEAN_PASSES=$DX_REVIEW_COMPLEX_CLEAN_PASSES
-# shellcheck disable=SC2034
-DX_REVIEW_CLEAN_PASSES=$DX_REVIEW_THOROUGH_CLEAN_PASSES
 
 # Phase 6 (Complete) cycle configuration.
 # DX_COMPLETE_MAX_CYCLES: max review cycles before escalating to user (default 3).

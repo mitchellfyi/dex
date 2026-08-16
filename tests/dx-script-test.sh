@@ -46,9 +46,6 @@ assert_contains "'dx rename' is not a command" "$TMP_DIR/rename.out"
 DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
   set -e
-  unset DX_REVIEW_PROFILE \
-    DX_REVIEW_SMALL_CLEAN_PASSES DX_REVIEW_NORMAL_CLEAN_PASSES DX_REVIEW_COMPLEX_CLEAN_PASSES \
-    DX_REVIEW_LIGHT_CLEAN_PASSES DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES
 
   [[ "$(dx_review_normalize_tier small)" == "small" ]]
   [[ "$(dx_review_normalize_tier light)" == "small" ]]
@@ -56,12 +53,6 @@ DEX_DIR="$ROOT" zsh -fc '
   [[ "$(dx_review_normalize_tier standard)" == "normal" ]]
   [[ "$(dx_review_normalize_tier complex)" == "complex" ]]
   [[ "$(dx_review_normalize_tier thorough)" == "complex" ]]
-  [[ "$(__dx_review_profile_clean_passes light)" == "3" ]]
-  [[ "$(__dx_review_profile_clean_passes standard)" == "6" ]]
-  [[ "$(__dx_review_profile_clean_passes thorough)" == "9" ]]
-  [[ "$(dx_review_tier_clean_passes small)" == "3" ]]
-  [[ "$(dx_review_tier_clean_passes normal)" == "6" ]]
-  [[ "$(dx_review_tier_clean_passes complex)" == "9" ]]
   __dx_review_is_positive_integer 08
   unset DX_PHASE_PROMISES
   [[ "$(__dx_review_phase_promise)" == "PHASE_3_COMPLETE" ]]

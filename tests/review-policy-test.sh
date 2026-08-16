@@ -59,11 +59,6 @@ assert_eq "complex" "$(dx_review_normalize_tier high-risk)" "high-risk alias"
 assert_eq "light" "$(dx_review_tier_profile small)" "small depth"
 assert_eq "standard" "$(dx_review_tier_profile normal)" "normal depth"
 assert_eq "thorough" "$(dx_review_tier_profile complex)" "complex depth"
-assert_eq "3" "$(dx_review_tier_clean_passes small)" "small gate"
-assert_eq "6" "$(dx_review_tier_clean_passes normal)" "normal gate"
-assert_eq "9" "$(dx_review_tier_clean_passes complex)" "complex gate"
-assert_eq "normal" "$(dx_review_higher_tier small normal)" "tier promotion"
-assert_eq "complex" "$(dx_review_higher_tier complex normal)" "tier retention"
 assert_rejected "unknown tier" dx_review_normalize_tier unknown
 
 dx_review_is_positive_integer 08

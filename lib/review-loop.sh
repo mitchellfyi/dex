@@ -8,11 +8,6 @@
 #
 # Names keep their __dx_ prefix because dx.sh calls them directly.
 
-# __dx_review_profile_clean_passes <profile>
-# Print the default consecutive CLEAN waves required for a review profile.
-__dx_review_profile_clean_passes() {
-  dx_review_tier_clean_passes "$1"
-}
 # __dx_review_is_positive_integer <value>
 # Return 0 only for positive decimals that fit zsh arithmetic safely.
 __dx_review_is_positive_integer() {
@@ -103,7 +98,7 @@ __dx_review_pause_intervention() {
     provider_error)
       printf '%s\n' "Restore the selected provider CLI and authentication, then rerun dxreviewloop."
       ;;
-    completion_receipt_missing|context_pack_missing|findings_hash_invalid|invalid_result|inconsistent_findings_evidence)
+    completion_receipt_missing|context_pack_missing|findings_hash_invalid|invalid_result|inconsistent_findings_evidence|evidence_manifest_invalid|pass_attestation_invalid)
       printf '%s\n' "Correct the review-wave result contract, then rerun dxreviewloop."
       ;;
     repeated_fingerprint|alternating_fingerprints|wave_reported_churn)
@@ -359,7 +354,12 @@ dx_review_loop_run() {
     dx_error "dxreviewloop does not accept arguments; configure review gates with DEX_REVIEW_* variables."
     return 1
   fi
-  setopt localoptions localtraps
+  # Scope option/trap changes to this function under zsh (its only caller is
+  # the zsh-only dxreviewloop wrapper). Bash has no equivalent; a bare setopt
+  # would be command-not-found there and every trap would leak shell-global.
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    setopt localoptions localtraps
+  fi
   __dx_refresh_provider || return 1
 
   local provider_agent
@@ -804,7 +804,9 @@ $(__dx_provider_prompt)"
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
     return 1
   }
-  local required_clean="" required_candidate="" tier_min_clean=""
+  # The tier's policy value seeds required_clean and the overrides below only
+  # ever raise it, so the gate can never end up under the tier minimum.
+  local required_clean="" required_candidate=""
   required_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
     "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || return 1
   for required_candidate in "$selection_required" "$prior_required" "$explicit_clean_gate"; do
@@ -818,16 +820,6 @@ $(__dx_provider_prompt)"
     return 1
   }
   required_clean=$((10#$required_clean))
-  tier_min_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
-    "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || {
-    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
-    return 1
-  }
-  if [[ $required_clean -lt $((10#$tier_min_clean)) ]]; then
-    dx_error "Review tier '${review_tier}' requires at least ${tier_min_clean} consecutive clean passes; got ${required_clean}."
-    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed gate_below_tier_minimum "$session_id"
-    return 1
-  fi
   if ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" \
     "$PWD" "$required_clean" "$review_criteria_binding" "$review_policy_binding"; then
     dx_error "Could not persist the review risk selection."
@@ -1242,6 +1234,7 @@ ${message}"
         "completion receipt missing") terminal_reason="completion_receipt_missing" ;;
         "context pack missing or empty") terminal_reason="context_pack_missing" ;;
         "evidence manifest missing or invalid") terminal_reason="evidence_manifest_invalid" ;;
+        "pass attestation missing or invalid") terminal_reason="pass_attestation_invalid" ;;
         *) terminal_reason="findings_hash_invalid" ;;
       esac
       dx_warn "Review pass returned incomplete state: ${review_contract_error}."
