@@ -374,7 +374,8 @@ dx_install_pr_attribution_template() {
 
   mkdir -p "$repo_root/.github" || return $?
   template_tmp=$(mktemp "$repo_root/.github/.dex-pr-template.XXXXXX") || return $?
-  if ! dx_attribution_pr_template > "$template_tmp"; then
+  # >| because mktemp already created the file (noclobber-safe under zsh).
+  if ! dx_attribution_pr_template >| "$template_tmp"; then
     rm -f "$template_tmp"
     return 1
   fi

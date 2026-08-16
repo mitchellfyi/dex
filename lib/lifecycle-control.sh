@@ -42,7 +42,9 @@ dx_lifecycle_atomic_write() {
   fi
   tmp_file=$(mktemp "${target}.tmp.XXXXXX") || return 1
   chmod 600 "$tmp_file" 2>/dev/null || true
-  if ! printf '%s\n' "$content" > "$tmp_file" || ! command mv -f "$tmp_file" "$target"; then
+  # >| because mktemp already created the file; a plain > is refused when the
+  # caller's interactive zsh sets noclobber (lib/ runs inside that shell).
+  if ! printf '%s\n' "$content" >| "$tmp_file" || ! command mv -f "$tmp_file" "$target"; then
     command rm -f "$tmp_file" 2>/dev/null || true
     return 1
   fi
@@ -178,7 +180,7 @@ dx_write_lifecycle_control() {
     printf 'source=%s\n' "$source"
     printf 'owner_session=%s\n' "$owner_session"
     printf 'prompt_sha256=%s\n' "$prompt_sha256"
-  } > "$tmp_file"; then
+  } >| "$tmp_file"; then
     write_status=1
   fi
 
@@ -186,10 +188,10 @@ dx_write_lifecycle_control() {
     history_tmp_file=$(mktemp "${history_file}.tmp.XXXXXX") || write_status=1
   fi
   if [[ "$write_status" -eq 0 && -f "$history_file" ]]; then
-    if ! cat "$history_file" > "$history_tmp_file"; then
+    if ! cat "$history_file" >| "$history_tmp_file"; then
       write_status=1
     fi
-  elif [[ "$write_status" -eq 0 ]] && ! printf 'issued_at\tgeneration\taction\ttarget_phase\texpected_phase\tsource\towner_session\tprompt_sha256\n' > "$history_tmp_file"; then
+  elif [[ "$write_status" -eq 0 ]] && ! printf 'issued_at\tgeneration\taction\ttarget_phase\texpected_phase\tsource\towner_session\tprompt_sha256\n' >| "$history_tmp_file"; then
     write_status=1
   fi
   if [[ "$write_status" -eq 0 ]] && ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \

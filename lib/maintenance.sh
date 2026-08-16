@@ -206,7 +206,8 @@ dx_maintenance_write_last_success() {
   ref=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
   target=$(dx_maintenance_last_success_file "$session_id")
   tmp_file=$(mktemp "${target}.tmp.XXXXXX")
-  if ! printf 'run_id=%s\nref=%s\nepoch=%s\n' "$run_id" "$ref" "$(date +%s)" > "$tmp_file"; then
+  # >| because mktemp already created the file (noclobber-safe under zsh).
+  if ! printf 'run_id=%s\nref=%s\nepoch=%s\n' "$run_id" "$ref" "$(date +%s)" >| "$tmp_file"; then
     rm -f "$tmp_file"
     return 1
   fi

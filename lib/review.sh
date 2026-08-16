@@ -1364,7 +1364,9 @@ dx_review_write_atomic() {
   local target="$1" content="$2" tmp_file
   mkdir -p "$(dirname "$target")" || return 1
   tmp_file=$(mktemp "${target}.tmp.XXXXXX") || return 1
-  if ! chmod 600 "$tmp_file" || ! printf '%s\n' "$content" > "$tmp_file" ||
+  # >| because mktemp already created the file: a plain > is refused under the
+  # user's `setopt noclobber`, which dx.sh inherits from the interactive zsh.
+  if ! chmod 600 "$tmp_file" || ! printf '%s\n' "$content" >| "$tmp_file" ||
      ! command mv -f "$tmp_file" "$target"; then
     command rm -f "$tmp_file" 2>/dev/null || true
     return 1

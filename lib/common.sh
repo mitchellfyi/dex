@@ -68,9 +68,15 @@ __dx_require_lib() {
 # deliberately not exported: a child process gets the full set unless it opts
 # out for itself.
 if [[ -n "${DX_COMMON_MODULES:-}" ]]; then
-  for _dx_module in ${DX_COMMON_MODULES}; do
+  # Split on whitespace explicitly: zsh does not word-split an unquoted
+  # parameter, so a bare ${DX_COMMON_MODULES} loop would treat the whole
+  # list as one module name there.
+  while IFS= read -r _dx_module; do
+    [[ -n "$_dx_module" ]] || continue
     __dx_require_lib "${_dx_module}.sh"
-  done
+  done <<EOF
+$(printf '%s\n' "$DX_COMMON_MODULES" | tr ' ' '\n')
+EOF
   unset _dx_module
   return 0 2>/dev/null || true
 fi

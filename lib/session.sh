@@ -991,13 +991,14 @@ dx_phase_outcome_record() {
 
   tmp_file=$(mktemp "${outcome_file}.tmp.XXXXXX") || return 1
   chmod 600 "$tmp_file" 2>/dev/null || true
+  # >| because mktemp already created the file (noclobber-safe under zsh).
   if [[ -f "$outcome_file" ]]; then
-    if ! command cat "$outcome_file" > "$tmp_file"; then
+    if ! command cat "$outcome_file" >| "$tmp_file"; then
       command rm -f "$tmp_file" 2>/dev/null || true
       return 1
     fi
   elif ! printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    recorded_at phase outcome source generation reason > "$tmp_file"; then
+    recorded_at phase outcome source generation reason >| "$tmp_file"; then
     command rm -f "$tmp_file" 2>/dev/null || true
     return 1
   fi
