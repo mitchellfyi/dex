@@ -57,6 +57,10 @@ dx_project_has_other_init_state() {
     case "$line" in
       "worktree "*)
         worktree_path=${line#worktree }
+        # A worktree whose directory was deleted without `git worktree prune`
+        # still appears in the porcelain listing. It is not an active checkout,
+        # so skip it rather than aborting uninit and attribution restore.
+        [[ -d "$worktree_path" ]] || continue
         if candidate_git_dir=$(git -C "$worktree_path" rev-parse --path-format=absolute \
           --absolute-git-dir 2>/dev/null); then
           :

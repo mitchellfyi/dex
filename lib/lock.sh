@@ -157,14 +157,20 @@ dx_lock_with() {
   local lock_dir="$1" owner_token="$2" timeout="$3"
   shift 3
   # `status` is read-only in zsh; lib/ must work in both shells.
-  local waited=0 command_status
-  while ! dx_lock_acquire "$lock_dir" "$owner_token"; do
-    [[ $? -eq 2 ]] && return 2
-    if [[ "$waited" -ge "$timeout" ]]; then
+  local waited_tenths=0 command_status acquire_status
+  while :; do
+    # Capture the real status: inside `while ! cmd`, $? reflects the negated
+    # condition (always 0 in the body), so a hard error could never surface.
+    dx_lock_acquire "$lock_dir" "$owner_token" && break
+    acquire_status=$?
+    [[ "$acquire_status" -eq 2 ]] && return 2
+    # The retry sleeps a tenth of a second, so the deadline is timeout * 10
+    # ticks — comparing ticks against seconds cut every wait to a tenth.
+    if [[ "$waited_tenths" -ge $((timeout * 10)) ]]; then
       return 75
     fi
     sleep 0.1
-    waited=$((waited + 1))
+    waited_tenths=$((waited_tenths + 1))
   done
   "$@"
   command_status=$?
