@@ -329,7 +329,7 @@ ${scope_boundary}
 This is an independent pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. Judge only the current checkout and the scope supplied above.
 
 After writing the review result signal, evidence JSON, and findings hash, touch the per-pass completion path above, output \`${review_promise}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
-$(dx_provider_prompt)"
+$(__dx_provider_prompt)"
 }
 
 # Provider seam. These are one-line passthroughs, but tests redefine

@@ -243,7 +243,9 @@ MAX_SOURCE_BODY_BYTES = 128 * 1024
 RUN_ID_RE = re.compile(r"^run_[A-Za-z0-9._-]+$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")
 SECRET_KEY_RE = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.I)
-SECRET_QUERY_RE = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.I)
+# One pattern: a divergence here would silently weaken secret rejection in
+# exactly one of the two paths that share it.
+SECRET_QUERY_RE = SECRET_KEY_RE
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 REPO_FULL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
