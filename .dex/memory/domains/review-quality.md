@@ -7,9 +7,9 @@ evidence standards Dex reviews depend on.
 
 Domain: review-quality
 Status: active
-Scope: agents/review-*.md, agents/self-reviewer.md, agents/review-verifier.md, prompts/review-wave.md, prompts/review.md, skills/dxreview*/SKILL.md
+Scope: prompts/review-wave.md, prompts/review.md, skills/dxreview*/SKILL.md
 Applies to phases: review (Phase 3), prompt-loop
-Applies to paths: agents/review-*.md, agents/self-reviewer.md, agents/review-verifier.md, prompts/review-wave.md, prompts/review.md
+Applies to paths: prompts/review-wave.md, prompts/review.md, skills/dxreview*/SKILL.md
 Last verified: 2026-05-20
 Recheck when: a new specialist reviewer is added, agent frontmatter schema changes, or `.claude/agent-memory/` semantics change
 
@@ -44,9 +44,9 @@ Future agent behavior:
 
 Domain: review-quality
 Status: active
-Scope: lib/review.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review-loop.md, prompts/phase-audits/3-review.md, skills/dximplement/SKILL.md, skills/dxreviewloop/SKILL.md, skills/dxreview/SKILL.md, agents/review-*.md, agents/review-verifier.md
+Scope: lib/review.sh, lib/review-loop.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review-loop.md, prompts/phase-audits/3-review.md, skills/dximplement/SKILL.md, skills/dxreviewloop/SKILL.md, skills/dxreview/SKILL.md
 Applies to phases: review (Phase 3), prompt-loop
-Applies to paths: lib/review.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review*.md, skills/dximplement/SKILL.md, skills/dxreview*/SKILL.md, agents/review-*.md, agents/review-verifier.md
+Applies to paths: lib/review*.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review*.md, skills/dximplement/SKILL.md, skills/dxreview*/SKILL.md
 Last verified: 2026-08-07
 Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the dxreviewloop tier/gate/churn policy changes
 
@@ -114,8 +114,8 @@ Future agent behavior:
   and record a normalized pause. A timeout setting that is only displayed or
   polled by the Stop hook is not enough.
 - Do not add a routine outer review maximum. Residual findings, blockers, churn,
-  invalid results, and provider failures pause the loop. The deprecated
-  `DEX_REVIEW_MAX_ITERATIONS` is only an explicit emergency ceiling.
+  invalid results, and provider failures pause the loop. `DEX_REVIEW_MAX_ITERATIONS`
+  was the last such ceiling and no longer exists; do not reintroduce one.
 - When invoking review outside the lifecycle, still build the context pack
   before broad semantic exploration. Without an explicit tier/profile override,
   run the read-only risk assessor before the first wave.

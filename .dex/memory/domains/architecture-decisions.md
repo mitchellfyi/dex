@@ -9,7 +9,7 @@ Domain: architecture-decisions
 Status: active
 Scope: skills/*/SKILL.md, prompts/*.md, prompts/phase-audits/*.md, prompts/init-analysis.md, research harness
 Applies to phases: plan, implement, review, verify, complete (any phase that loads skills or prompts)
-Applies to paths: skills/, prompts/, agents/
+Applies to paths: skills/, prompts/
 Last verified: 2026-05-15
 Recheck when: a new shared prompt is introduced, the research harness changes, or a skill encodes per-repo quality-gate commands
 
