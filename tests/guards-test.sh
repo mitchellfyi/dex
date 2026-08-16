@@ -9,6 +9,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HANDLER="$ROOT/hooks/guard-handler.py"
 export DEX_DIR="$ROOT"
 
+# Hermeticity: the handler's provider fallback reads ~/.dex/providers.json, so
+# guard applicability must not vary with the developer's real config.
+GUARD_HOME_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-home.XXXXXX")"
+export HOME="$GUARD_HOME_TMP/home"
+mkdir -p "$HOME"
+trap 'rm -rf "$GUARD_HOME_TMP"' EXIT
+
 pass=0
 fail=0
 
@@ -481,7 +488,7 @@ rm -rf "$FILE_TMP"
 # checking a command has to deny it; letting the call through would silently
 # disable the guard exactly when the input is hostile.
 GUARD_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-failclosed.XXXXXX")"
-trap 'rm -rf "$GUARD_TMP"' EXIT
+trap 'rm -rf "$GUARD_TMP" "$GUARD_HOME_TMP"' EXIT
 mkdir -p "$GUARD_TMP/repo/.dex/guards"
 git -C "$GUARD_TMP/repo" init -q
 

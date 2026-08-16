@@ -22,6 +22,7 @@ git -C "$TEST_REPO" init -q
 
 zsh -fc '
   source "$DEX_DIR/dx.sh"
+  set -e
   cd "$TEST_REPO"
 
   __dx_refresh_provider() {

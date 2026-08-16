@@ -20,6 +20,7 @@ done
 # shellcheck disable=SC2016
 DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
+  set -e
   wrapper_body=$(functions dxreviewloop)
   [[ "$wrapper_body" == *"dx_review_loop_run"* ]]
   loop_body=$(functions dx_review_loop_run)

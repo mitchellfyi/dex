@@ -13,6 +13,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="$ROOT/hooks/phase-loop.sh"
 export DEX_DIR="$ROOT"
+# The hook re-resolves the review policy from its working directory, and the
+# expected bindings below are computed from $ROOT — pin the cwd so the suite
+# also passes when invoked from outside the Dex checkout.
+cd "$ROOT"
 
 # Hermeticity: this suite may itself run inside a Dex lifecycle or review-wave
 # session whose environment already carries loop state. `env VAR=x` preserves

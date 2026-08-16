@@ -35,6 +35,7 @@ TEST_DEFAULT_BRANCH=$(git -C "$TEST_REPO" branch --show-current)
 
 zsh -fc '
 source "$DEX_DIR/dx.sh"
+set -e
 
 export DX_PROVIDER_ENGINE=codex-plugin
 session_id="inline-missing-receipt"

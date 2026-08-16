@@ -8,6 +8,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HANDLER="$ROOT/hooks/guard-handler.py"
 export DEX_DIR="$ROOT"
 
+# Hermeticity: keep the handler's provider fallback away from the developer's
+# real ~/.dex/providers.json.
+GUARD_HOME_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-push-guards-home.XXXXXX")"
+export HOME="$GUARD_HOME_TMP/home"
+mkdir -p "$HOME"
+trap 'rm -rf "$GUARD_HOME_TMP"' EXIT
+
 unset DEX_REVIEW_PASS_ACTIVE DEX_LOOP_ACTIVE DEX_LOOP_PHASE DEX_LOOP_PROMISE \
   DEX_LOOP_PROMPT DEX_LOOP_MIN_AUDITS DEX_PHASE_HANDOFF DEX_SESSION_ID \
   DEX_REVIEW_ASSESSMENT_ACTIVE DX_LIFECYCLE_PUSH_FORBIDDEN DX_STATE_DIR DX_LOOP_DIR

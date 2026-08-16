@@ -61,6 +61,7 @@ fi
 
 zsh -fc '
 source "$DEX_DIR/dx.sh"
+set -e
 cd "$TEST_REPO"
 session_id="$(dx_session_id ticket-61)"
 touch "$(dx_state_file "$session_id")"

@@ -270,6 +270,7 @@ DEX_DIR="$ROOT" DX_STATE_DIR="$SIGNAL_STATE_DIR" DX_LOOP_DIR="$SIGNAL_LOOP_DIR" 
 # other verification sources. Claude keeps using its non-shell read tools.
 DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
+  set -e
   codex_guidance=$(__dx_review_assessment_inspection_guidance codex)
   claude_guidance=$(__dx_review_assessment_inspection_guidance claude)
   [[ "$codex_guidance" == *"read-only shell commands"* ]]

@@ -34,6 +34,7 @@ git -C "$TEST_REPO" worktree add -q \
 
 zsh -fc '
   source "$DEX_DIR/dx.sh"
+  set -e
   cd "$TEST_REPO"
 
   linked_session=$(dx_session_id task-linked)
@@ -54,7 +55,9 @@ zsh -fc '
   cd "$TEST_REPO"
 
   __dx_cli revert 123 > /dev/null
-  [[ "$(cat "$TEST_REVERT_CAPTURE")" == "2::$expected" ]]
+  # dx_repo_root resolves symlinked path components (macOS /var -> /private/var),
+  # so compare against the resolved expected path.
+  [[ "$(cat "$TEST_REVERT_CAPTURE")" == "2::${expected:A}" ]]
 
   dxrm 123 > /dev/null
   [[ ! -d "$expected" ]]
