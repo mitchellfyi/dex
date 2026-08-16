@@ -15,71 +15,14 @@ dx_claude_dir() {
   printf '%s\n' "$HOME/.claude"
 }
 
+# Per-skill link management is shared with the Codex path; the helpers live
+# in lib/codex.sh.
 dx_install_claude_skill_links() {
-  local skills_dir="$1"
-  if ! mkdir -p "$skills_dir"; then
-    dx_warn "Could not create ${skills_dir}; skipping Claude skill links"
-    return 1
-  fi
-
-  local installed=0
-  local expected=0
-  local failed=0
-  local skipped=0
-  local skill_dir skill_name target current
-  for skill_dir in "$DEX_DIR"/skills/*; do
-    [[ -d "$skill_dir" && -f "$skill_dir/SKILL.md" ]] || continue
-    expected=$((expected + 1))
-    skill_name=$(basename "$skill_dir")
-    target="$skills_dir/$skill_name"
-
-    if [[ -L "$target" ]]; then
-      current=$(readlink "$target")
-      if [[ "$current" == "$skill_dir" ]]; then
-        installed=$((installed + 1))
-      else
-        dx_warn "${skills_dir}/${skill_name} is a symlink to ${current} — leaving it unchanged"
-        skipped=$((skipped + 1))
-      fi
-    elif [[ -e "$target" ]]; then
-      dx_warn "${skills_dir}/${skill_name} exists and is not a symlink — leaving it unchanged"
-      skipped=$((skipped + 1))
-    else
-      if ln -s "$skill_dir" "$target"; then
-        installed=$((installed + 1))
-      else
-        failed=$((failed + 1))
-      fi
-    fi
-  done
-
-  if [[ $failed -gt 0 || $skipped -gt 0 || $installed -ne $expected ]]; then
-    dx_warn "Installed ${installed}/${expected} Claude skill link(s); skipped ${skipped}; failed ${failed}"
-    return 1
-  fi
-
-  dx_done "Installed ${installed}/${expected} Dex skill link(s) for Claude Code"
+  __dx_install_skill_links "$1" "Claude Code"
 }
 
 dx_count_claude_dex_skill_links() {
-  local skills_dir="$1"
-  [[ -d "$skills_dir" ]] || {
-    printf '%s\n' "0"
-    return 0
-  }
-
-  local count=0
-  local skill_dir skill_name target current
-  for skill_dir in "$DEX_DIR"/skills/*; do
-    [[ -d "$skill_dir" && -f "$skill_dir/SKILL.md" ]] || continue
-    skill_name=$(basename "$skill_dir")
-    target="$skills_dir/$skill_name"
-    if [[ -L "$target" ]]; then
-      current=$(readlink "$target")
-      [[ "$current" == "$skill_dir" ]] && count=$((count + 1))
-    fi
-  done
-  printf '%s\n' "$count"
+  __dx_count_dex_skill_links "$1"
 }
 
 dx_claude_dex_skill_links_complete() {
@@ -362,16 +305,9 @@ dx_install_safe_official_claude_plugin() {
   return 1
 }
 
-dx_find_project_file_by_name() {
-  local root="$1" name="$2"
-  [[ -n "$root" && -d "$root" ]] || return 1
-
-  find "$root" -maxdepth 4 \
-    \( -path "*/.git" -o -path "*/.dex/worktrees" -o -path "*/node_modules" -o -path "*/vendor" \) -prune \
-    -o -type f -name "$name" -print -quit 2>/dev/null
-}
-
-dx_find_project_file_by_glob() {
+# `find -name` treats exact names and glob patterns identically, so one finder
+# serves both spellings.
+dx_find_project_file() {
   local root="$1" pattern="$2"
   [[ -n "$root" && -d "$root" ]] || return 1
 
@@ -380,22 +316,12 @@ dx_find_project_file_by_glob() {
     -o -type f -name "$pattern" -print -quit 2>/dev/null
 }
 
-dx_project_has_named_file() {
-  local root="$1" name
-  shift
-
-  for name in "$@"; do
-    [[ -n "$(dx_find_project_file_by_name "$root" "$name")" ]] && return 0
-  done
-  return 1
-}
-
-dx_project_has_glob_file() {
+dx_project_has_file() {
   local root="$1" pattern
   shift
 
   for pattern in "$@"; do
-    [[ -n "$(dx_find_project_file_by_glob "$root" "$pattern")" ]] && return 0
+    [[ -n "$(dx_find_project_file "$root" "$pattern")" ]] && return 0
   done
   return 1
 }
@@ -419,8 +345,8 @@ dx_project_package_json_has_dependency() {
 
 dx_project_uses_javascript_or_typescript() {
   local root="$1"
-  dx_project_has_named_file "$root" "package.json" "tsconfig.json" "jsconfig.json" && return 0
-  dx_project_has_glob_file "$root" "*.ts" "*.tsx" "*.js" "*.jsx" && return 0
+  dx_project_has_file "$root" "package.json" "tsconfig.json" "jsconfig.json" && return 0
+  dx_project_has_file "$root" "*.ts" "*.tsx" "*.js" "*.jsx" && return 0
   return 1
 }
 
@@ -428,28 +354,28 @@ dx_project_uses_frontend() {
   local root="$1"
 
   dx_project_package_json_has_dependency "$root" 'react|react-dom|next|vue|@vue/[A-Za-z0-9._/-]+|svelte|@sveltejs/[A-Za-z0-9._/-]+|astro|nuxt|@angular/core|vite|preact|solid-js|@remix-run/[A-Za-z0-9._/-]+' && return 0
-  dx_project_has_named_file "$root" "vite.config.ts" "vite.config.js" "next.config.js" "next.config.mjs" "next.config.ts" "svelte.config.js" "astro.config.mjs" "nuxt.config.ts" "tailwind.config.js" "tailwind.config.ts" && return 0
-  dx_project_has_glob_file "$root" "*.tsx" "*.jsx" "*.vue" "*.svelte" && return 0
+  dx_project_has_file "$root" "vite.config.ts" "vite.config.js" "next.config.js" "next.config.mjs" "next.config.ts" "svelte.config.js" "astro.config.mjs" "nuxt.config.ts" "tailwind.config.js" "tailwind.config.ts" && return 0
+  dx_project_has_file "$root" "*.tsx" "*.jsx" "*.vue" "*.svelte" && return 0
 
   return 1
 }
 
 dx_project_uses_python() {
   local root="$1"
-  dx_project_has_named_file "$root" "pyproject.toml" "setup.py" "requirements.txt" "Pipfile" && return 0
-  dx_project_has_glob_file "$root" "*.py" && return 0
+  dx_project_has_file "$root" "pyproject.toml" "setup.py" "requirements.txt" "Pipfile" && return 0
+  dx_project_has_file "$root" "*.py" && return 0
   return 1
 }
 
 dx_project_uses_rust() {
   local root="$1"
-  dx_project_has_named_file "$root" "Cargo.toml" && return 0
+  dx_project_has_file "$root" "Cargo.toml" && return 0
   return 1
 }
 
 dx_project_uses_go() {
   local root="$1"
-  dx_project_has_named_file "$root" "go.mod" && return 0
+  dx_project_has_file "$root" "go.mod" && return 0
   return 1
 }
 

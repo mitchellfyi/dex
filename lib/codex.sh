@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# Dex helpers for Codex CLI integration.
+# Dex helpers for Codex CLI integration, plus the per-skill symlink
+# management shared with the Claude install path in lib/agent-tools.sh.
 
 dx_codex_skills_dir() {
   printf '%s\n' "${CODEX_HOME:-$HOME/.codex}/skills"
@@ -15,11 +16,13 @@ dx_count_dex_skills() {
   printf '%s\n' "$count"
 }
 
-dx_install_codex_skills() {
-  local codex_dir
-  codex_dir=$(dx_codex_skills_dir)
-  if ! mkdir -p "$codex_dir"; then
-    dx_warn "Could not create ${codex_dir}; skipping Codex skill links"
+# __dx_install_skill_links <skills_dir> <label>
+# Link every Dex skill into <skills_dir>, refusing to disturb anything that
+# is not a Dex-owned symlink. <label> names the consumer in messages.
+__dx_install_skill_links() {
+  local skills_dir="$1" label="$2"
+  if ! mkdir -p "$skills_dir"; then
+    dx_warn "Could not create ${skills_dir}; skipping ${label} skill links"
     return 1
   fi
 
@@ -32,18 +35,18 @@ dx_install_codex_skills() {
     [[ -d "$skill_dir" && -f "$skill_dir/SKILL.md" ]] || continue
     expected=$((expected + 1))
     skill_name=$(basename "$skill_dir")
-    target="$codex_dir/$skill_name"
+    target="$skills_dir/$skill_name"
 
     if [[ -L "$target" ]]; then
       current=$(readlink "$target")
       if [[ "$current" == "$skill_dir" ]]; then
         installed=$((installed + 1))
       else
-        dx_warn "${codex_dir}/${skill_name} is a symlink to ${current} — leaving it unchanged"
+        dx_warn "${skills_dir}/${skill_name} is a symlink to ${current} — leaving it unchanged"
         skipped=$((skipped + 1))
       fi
     elif [[ -e "$target" ]]; then
-      dx_warn "${codex_dir}/${skill_name} exists and is not a symlink — leaving it unchanged"
+      dx_warn "${skills_dir}/${skill_name} exists and is not a symlink — leaving it unchanged"
       skipped=$((skipped + 1))
     else
       if ln -s "$skill_dir" "$target"; then
@@ -55,17 +58,18 @@ dx_install_codex_skills() {
   done
 
   if [[ $failed -gt 0 || $skipped -gt 0 || $installed -ne $expected ]]; then
-    dx_warn "Installed ${installed}/${expected} Codex skill link(s); skipped ${skipped}; failed ${failed}"
+    dx_warn "Installed ${installed}/${expected} ${label} skill link(s); skipped ${skipped}; failed ${failed}"
     return 1
-  else
-    dx_done "Installed ${installed}/${expected} Dex skill link(s) for Codex CLI"
   fi
+
+  dx_done "Installed ${installed}/${expected} Dex skill link(s) for ${label}"
 }
 
-dx_count_codex_dex_skills() {
-  local codex_dir
-  codex_dir=$(dx_codex_skills_dir)
-  [[ -d "$codex_dir" ]] || {
+# __dx_count_dex_skill_links <skills_dir>
+# Count how many Dex skills are correctly linked into <skills_dir>.
+__dx_count_dex_skill_links() {
+  local skills_dir="$1"
+  [[ -d "$skills_dir" ]] || {
     printf '%s\n' "0"
     return 0
   }
@@ -75,13 +79,21 @@ dx_count_codex_dex_skills() {
   for skill_dir in "$DEX_DIR"/skills/*; do
     [[ -d "$skill_dir" && -f "$skill_dir/SKILL.md" ]] || continue
     skill_name=$(basename "$skill_dir")
-    target="$codex_dir/$skill_name"
+    target="$skills_dir/$skill_name"
     if [[ -L "$target" ]]; then
       current=$(readlink "$target")
       [[ "$current" == "$skill_dir" ]] && count=$((count + 1))
     fi
   done
   printf '%s\n' "$count"
+}
+
+dx_install_codex_skills() {
+  __dx_install_skill_links "$(dx_codex_skills_dir)" "Codex CLI"
+}
+
+dx_count_codex_dex_skills() {
+  __dx_count_dex_skill_links "$(dx_codex_skills_dir)"
 }
 
 dx_codex_dex_skills_complete() {
