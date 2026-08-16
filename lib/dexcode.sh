@@ -961,6 +961,27 @@ PY
     open "$verify_url" >/dev/null 2>&1 || true
   fi
 
+  # The device code is a credential: whoever redeems it first collects the
+  # access token. Build its poll payload once, in the 0700 temp dir, and post
+  # it with --data-binary @file so it never sits in curl's argv — repeated
+  # every few seconds for up to fifteen minutes, that was a standing ps leak.
+  local poll_payload_file="$tmp_dir/token-request.json"
+  DX_DEXCODE_DEVICE_CODE="$device_code" \
+  DX_DEXCODE_POLL_PAYLOAD_FILE="$poll_payload_file" \
+  python3 - <<'PY' || {
+import json
+import os
+from pathlib import Path
+
+Path(os.environ["DX_DEXCODE_POLL_PAYLOAD_FILE"]).write_text(
+    json.dumps({"device_code": os.environ["DX_DEXCODE_DEVICE_CODE"]}, separators=(",", ":")),
+    encoding="utf-8",
+)
+PY
+    command rm -rf "$tmp_dir"
+    return 1
+  }
+
   start=$(date +%s)
   while true; do
     now=$(date +%s)
@@ -974,22 +995,12 @@ PY
     if [[ "$request_timeout" -gt "$remaining" ]]; then
       request_timeout="$remaining"
     fi
-    payload=$(DX_DEXCODE_DEVICE_CODE="$device_code" python3 - <<'PY'
-import json
-import os
-
-print(json.dumps({"device_code": os.environ["DX_DEXCODE_DEVICE_CODE"]}, separators=(",", ":")))
-PY
-    ) || {
-      command rm -rf "$tmp_dir"
-      return 1
-    }
     if ! http_status=$(command curl -q -sS -o "$token_file" -w "%{http_code}" \
       --max-time "$request_timeout" \
       --proto '=http,https' \
       -H "Content-Type: application/json" \
       -H "Accept: application/json" \
-      -d "$payload" \
+      --data-binary @"$poll_payload_file" \
       "${api_url}/api/v1/device_authorizations/token" 2>/dev/null); then
       http_status="000"
     fi
