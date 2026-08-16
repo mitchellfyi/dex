@@ -64,7 +64,10 @@ __dx_factory_nonnegative_int() {
       printf '%s\n' "$fallback"
       ;;
     *)
-      if [[ ${#value} -gt 9 || "$value" -gt "$maximum" ]]; then
+      # More digits than the maximum is necessarily larger (leading zeros are
+      # already rejected), and the length gate keeps oversized strings away
+      # from the arithmetic comparison.
+      if [[ ${#value} -gt ${#maximum} || "$value" -gt "$maximum" ]]; then
         printf '%s\n' "$fallback"
       else
         printf '%s\n' "$value"
@@ -80,7 +83,7 @@ __dx_factory_positive_int() {
       printf '%s\n' "$fallback"
       ;;
     *)
-      if [[ ${#value} -gt 9 || "$value" -gt "$maximum" ]]; then
+      if [[ ${#value} -gt ${#maximum} || "$value" -gt "$maximum" ]]; then
         printf '%s\n' "$fallback"
       else
         printf '%s\n' "$value"
@@ -260,8 +263,10 @@ __dx_factory_sync_read_offset_hint() {
 
 __dx_factory_sync_write_offset_hint() {
   local run_id="$1" cursor="$2" offset="$3" offset_file tmp_file
-  __dx_factory_nonnegative_int "$cursor" 0 999999999 >/dev/null || return 0
-  __dx_factory_nonnegative_int "$offset" 0 9999999999999 >/dev/null || return 0
+  # The validators never fail — they print a fallback — so compare against a
+  # sentinel; `|| return 0` on their exit status could never fire.
+  [[ "$(__dx_factory_nonnegative_int "$cursor" invalid 999999999)" != "invalid" ]] || return 0
+  [[ "$(__dx_factory_nonnegative_int "$offset" invalid 9999999999999)" != "invalid" ]] || return 0
   offset_file=$(dx_factory_sync_offset_file "$run_id") || return 0
   mkdir -p "$(dirname "$offset_file")"
   tmp_file="${offset_file}.tmp.$$"
