@@ -31,17 +31,27 @@ RUN_FLAGS=()
 ALLOW_MAIN=0
 COMMIT_ACCEPTED=0
 
+require_value() {
+  if [[ $# -lt 2 || -z "${2:-}" ]]; then
+    log_error "$1 requires a value"
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --max-iterations)
+      require_value "$1" "${2:-}"
       MAX_ITER="$2"
       shift 2
       ;;
     --cost-limit)
+      require_value "$1" "${2:-}"
       COST_LIMIT="$2"
       shift 2
       ;;
     --scenario)
+      require_value "$1" "${2:-}"
       SCENARIO_FLAG="$2"
       RUN_FLAGS+=(--scenario "$2")
       shift 2
@@ -52,6 +62,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --runner)
+      require_value "$1" "${2:-}"
       RUN_FLAGS+=(--runner "$2")
       shift 2
       ;;
@@ -112,13 +123,18 @@ _changelog "## Loop: $(date +%Y-%m-%d\ %H:%M:%S)"
 _changelog "Branch: $(dx_branch) | Start commit: $(dx_commit_hash)"
 _changelog ""
 
+if [[ ! "$MAX_ITER" =~ ^[0-9]+$ ]]; then
+  log_error "--max-iterations must be a non-negative integer"
+  exit 1
+fi
+
 # ── Baseline run ───────────────────────────────────────────────────────────
 log_step "Running baseline suite..."
 
-BASELINE_RUN_ID=$("$SCRIPT_DIR/run.sh" "${RUN_FLAGS[@]}" --iteration 0 2>&1 | tail -1)
+BASELINE_RUN_ID=$("$SCRIPT_DIR/run.sh" ${RUN_FLAGS[@]+"${RUN_FLAGS[@]}"} --iteration 0 2>&1 | tail -1) || true
 BASELINE_DIR="$RESULTS_DIR/$BASELINE_RUN_ID"
 
-if [[ ! -f "$BASELINE_DIR/summary.json" ]]; then
+if [[ -z "$BASELINE_RUN_ID" || ! -f "$BASELINE_DIR/summary.json" ]]; then
   log_error "Baseline run failed. Check results in $RESULTS_DIR"
   exit 1
 fi
@@ -131,11 +147,6 @@ PREV_SUMMARY="$BASELINE_DIR/summary.json"
 PREV_RUN_ID="$BASELINE_RUN_ID"
 CUMULATIVE_COST=0
 ITERS_COMPLETED=0
-
-if [[ ! "$MAX_ITER" =~ ^[0-9]+$ ]]; then
-  log_error "--max-iterations must be a non-negative integer"
-  exit 1
-fi
 
 # ── Improvement loop ──────────────────────────────────────────────────────
 iter=0
@@ -168,33 +179,11 @@ while [[ "$MAX_ITER" -eq 0 || "$iter" -lt "$MAX_ITER" ]]; do
 
   # ── Apply ──────────────────────────────────────────────────────────────
   log_step "Applying patch..."
-  applied=0
-  # Try individual patch parts first (avoids hunk offset issues)
-  # Use `patch` instead of `git apply` for better fuzz/offset tolerance
-  part_idx=0
-  while [[ -f "${PATCH_FILE}.${part_idx}" ]]; do
-    if (cd "$DEX_DIR" && patch -p1 --fuzz=3 --no-backup-if-mismatch < "${PATCH_FILE}.${part_idx}" 2>/dev/null); then
-      applied=$((applied + 1))
-    else
-      log_warn "Patch part $part_idx failed to apply"
-    fi
-    part_idx=$((part_idx + 1))
-  done
-
-  # Fallback: try applying the combined patch if no parts exist
-  if [[ $part_idx -eq 0 ]]; then
-    if (cd "$DEX_DIR" && patch -p1 --fuzz=3 --no-backup-if-mismatch < "$PATCH_FILE" 2>/dev/null); then
-      applied=1
-    fi
-  fi
-
-  if [[ $applied -eq 0 ]]; then
+  if ! safety_apply_patch "$PATCH_FILE"; then
     log_warn "No patches applied. Skipping iteration."
     _changelog "### Iteration $iter: SKIP (patch failed to apply)"
     continue
   fi
-
-  log_info "Applied $applied patch part(s)"
 
   # Copy patch to applied/
   cp "$PATCH_FILE" "$IMPROVEMENTS_DIR/applied/$(basename "$PATCH_FILE")"
@@ -222,10 +211,10 @@ while [[ "$MAX_ITER" -eq 0 || "$iter" -lt "$MAX_ITER" ]]; do
 
   # ── Full suite ─────────────────────────────────────────────────────────
   log_step "Running full suite..."
-  CURR_RUN_ID=$("$SCRIPT_DIR/run.sh" "${RUN_FLAGS[@]}" --iteration "$iter" 2>&1 | tail -1)
+  CURR_RUN_ID=$("$SCRIPT_DIR/run.sh" ${RUN_FLAGS[@]+"${RUN_FLAGS[@]}"} --iteration "$iter" 2>&1 | tail -1) || true
   CURR_DIR="$RESULTS_DIR/$CURR_RUN_ID"
 
-  if [[ ! -f "$CURR_DIR/summary.json" ]]; then
+  if [[ -z "$CURR_RUN_ID" || ! -f "$CURR_DIR/summary.json" ]]; then
     log_warn "Suite run failed. Reverting."
     safety_reverse_patch "$PATCH_FILE" || exit 1
     _changelog "### Iteration $iter: REVERT (suite run failed)"

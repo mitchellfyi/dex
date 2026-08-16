@@ -9,7 +9,7 @@ You are the **research orchestrator**. You run continuously, monitoring the auto
 ## Quick Start
 
 ```bash
-# Run all 12 scenarios (skip LLM judge to save cost)
+# Run every scenario (skip LLM judge to save cost)
 bash research/run.sh --skip-llm-judge
 
 # Run one scenario for quick testing
@@ -38,7 +38,14 @@ Every iteration:
 5. **Run full suite**: Confirm no regressions across all runnable scenarios before accepting broad prompt or harness changes
 6. **Record evidence**: Leave accepted changes unstaged by default with run IDs and score deltas in `research/improvements/changelog.md`; use `--commit` only when the operator explicitly wants accepted changes committed
 
-## Scenarios (12 Total)
+## Scenarios
+
+`research/scenarios/` is the source of truth for the current catalog (25
+scenarios at the time of writing; list them with
+`ls research/scenarios | grep -v _template`). Newer workflow-focused
+scenarios (review loops, refinement, maintenance intake, scope control)
+follow the same `scenario.json` + `prompt.md` layout. The two original
+groups:
 
 ### Original 7 (target: 90+)
 | Scenario | Type | Language | Description |
@@ -67,8 +74,8 @@ Every iteration:
 | Correctness | 30% | `rubric_correctness()` | Code works as specified |
 | Test Quality | 20% | `rubric_test_quality()` | Tests exist, pass, cover key paths |
 | Robustness | 15% | `rubric_robustness()` | Error handling, edge cases, code quality |
-| Verification | 15% | `score_verification()` | Lint/typecheck/tests pass (shared) |
-| Issue Detection | 10% | `score_issue_detection()` | DX self-reviewed and iterated (shared) |
+| Verification | 15% | `_score_verification()` | Lint/typecheck/tests pass (shared) |
+| Issue Detection | 10% | `_score_issue_detection_default()` | DX self-reviewed and iterated (shared) |
 | Code Quality | 10% | LLM-judged | Idiomatic, clean, well-structured (or default 50 when `--skip-llm-judge`) |
 
 ## Key Technical Details

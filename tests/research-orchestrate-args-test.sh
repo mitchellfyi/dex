@@ -116,6 +116,13 @@ run_success \
   'timeout=60 args=[--runner][claude][--skip-llm-judge][--iteration][1]' \
   --max-cycles 0001 --scenario-timeout 0060 --runner claude --allow-main
 
+# No --runner/--scenario at all: RUN_FLAGS stays empty, which used to crash
+# macOS bash 3.2 with "RUN_FLAGS[@]: unbound variable" under set -u.
+run_success \
+  no-run-flags \
+  'timeout=60 args=[--skip-llm-judge][--iteration][1]' \
+  --max-cycles 1 --scenario-timeout 60 --allow-main
+
 run_success \
   equals-values \
   'timeout=61 args=[--runner][codex][--skip-llm-judge][--iteration][1]' \

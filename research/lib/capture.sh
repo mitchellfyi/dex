@@ -241,6 +241,9 @@ _capture_lifecycle() {
   mkdir -p "$state_dir" "$loop_dir"
 
   local half_timeout=$((timeout / 2))
+  # A 1-second budget would halve to 0, and a 0 duration disables the timeout
+  # entirely (GNU semantics; the local shim matches). Floor it at 1.
+  [[ $half_timeout -ge 1 ]] || half_timeout=1
 
   # Phase 1: Plan
   log_info "Phase 1: Planning"
@@ -347,6 +350,9 @@ _capture_codex_lifecycle() {
   _inject_workspace_context "$ws" "codex"
 
   local half_timeout=$((timeout / 2))
+  # A 1-second budget would halve to 0, and a 0 duration disables the timeout
+  # entirely (GNU semantics; the local shim matches). Floor it at 1.
+  [[ $half_timeout -ge 1 ]] || half_timeout=1
 
   log_info "Phase 1: Planning"
   local plan_prompt

@@ -31,9 +31,17 @@ EXEC_MODE="dxloop"
 ITERATION="0"
 RUNNER="$RESEARCH_RUNNER"
 
+require_value() {
+  if [[ $# -lt 2 || -z "${2:-}" ]]; then
+    log_error "$1 requires a value"
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scenario)
+      require_value "$1" "${2:-}"
       SCENARIO_FILTER="$2"
       shift 2
       ;;
@@ -46,10 +54,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --runner)
+      require_value "$1" "${2:-}"
       RUNNER="$2"
       shift 2
       ;;
     --iteration)
+      require_value "$1" "${2:-}"
       ITERATION="$2"
       shift 2
       ;;

@@ -57,48 +57,6 @@ GITIGNORE
   echo "$ws"
 }
 
-# workspace_reset <scenario_name>
-# Destroy and recreate the workspace.
-workspace_reset() {
-  workspace_create "$1"
-}
-
-# workspace_exists <scenario_name>
-# Returns 0 if workspace exists, 1 otherwise.
-workspace_exists() {
-  local ws
-  scenario_name_require_valid "$1" || return 1
-  ws=$(workspace_dir "$1")
-  [[ -d "$ws/.git" ]]
-}
-
-# workspace_destroy <scenario_name>
-# Remove a workspace entirely.
-workspace_destroy() {
-  local ws
-  scenario_name_require_valid "$1" || return 1
-  ws=$(workspace_dir "$1")
-  if [[ -d "$ws" ]]; then
-    rm -rf "$ws"
-    log_info "Destroyed workspace: $1"
-  fi
-}
-
-# workspace_diff <scenario_name>
-# Show the full diff of what DX created/modified in the workspace.
-workspace_diff() {
-  local ws
-  ws=$(workspace_dir "$1")
-  git -C "$ws" diff HEAD 2>/dev/null || true
-  git -C "$ws" diff --cached HEAD 2>/dev/null || true
-  # Also show untracked files content
-  git -C "$ws" ls-files --others --exclude-standard 2>/dev/null | while read -r f; do
-    echo "--- /dev/null"
-    echo "+++ b/$f"
-    cat "$ws/$f" 2>/dev/null || true
-  done
-}
-
 # workspace_files_changed <scenario_name>
 # List all files created or modified by DX.
 workspace_files_changed() {

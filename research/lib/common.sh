@@ -61,12 +61,6 @@ run_result_dir() {
   echo "$RESULTS_DIR/$1"
 }
 
-# Path to a scenario's result within a run
-scenario_result_dir() {
-  local run="$1" scenario="$2"
-  echo "$RESULTS_DIR/$run/$scenario"
-}
-
 # ── Scenario discovery ─────────────────────────────────────────────────────
 
 # List all scenario names (directories under scenarios/ excluding _template)
@@ -135,13 +129,15 @@ print(d.get(os.environ['_JF_KEY'], ''))
 # Usage: json_write file.json '{"key": "value"}'
 json_write() {
   local file="$1" content="$2"
+  # Pass the path via argv like json_field does; interpolating it into the
+  # program text breaks on a single quote in the path.
   python3 -c "
 import json, sys
-d = json.loads(sys.argv[1])
-with open('$file', 'w') as f:
+d = json.loads(sys.argv[2])
+with open(sys.argv[1], 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
-" "$content"
+" "$file" "$content"
 }
 
 # ── Git helpers ────────────────────────────────────────────────────────────

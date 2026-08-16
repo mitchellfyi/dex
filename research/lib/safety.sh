@@ -31,7 +31,9 @@ safety_check_clean() {
 }
 
 # safety_tag_checkpoint <iteration>
-# Create a git tag before applying improvements.
+# Create a git tag before applying improvements. Nothing in the harness
+# consumes these tags; they exist so a human can find the pre-patch commit
+# after an aborted or misbehaving run.
 safety_tag_checkpoint() {
   local iter="$1"
   local tag="dx-research/pre-iter-${iter}"
@@ -39,34 +41,83 @@ safety_tag_checkpoint() {
   log_info "Tagged checkpoint: $tag"
 }
 
-# safety_revert_to_checkpoint <iteration>
-# Revert DX repo to the checkpoint tag for a given iteration.
-safety_revert_to_checkpoint() {
-  local iter="$1"
-  local tag="dx-research/pre-iter-${iter}"
+# safety_apply_patch <patch-file>
+# Apply a generated patch: individual .N parts first (better fuzz/offset
+# tolerance than one combined diff), the combined file when no parts exist.
+# Records which parts applied in <patch-file>.applied-parts so
+# safety_reverse_patch can undo exactly those, and only counts success when
+# at least one part landed.
+safety_apply_patch() {
+  local patch_file="$1"
+  local applied=0 part_idx=0
+  local applied_record="${patch_file}.applied-parts"
 
-  if ! git -C "$DEX_DIR" rev-parse --verify "$tag" &>/dev/null; then
-    log_error "Checkpoint tag $tag not found"
+  if [[ -z "$patch_file" || ! -f "$patch_file" ]]; then
+    log_error "Patch file not found: $patch_file"
     return 1
   fi
 
-  log_warn "Reverting to checkpoint: $tag"
-  git -C "$DEX_DIR" reset --hard "$tag" 2>/dev/null
-  log_success "Reverted to $tag"
+  : > "$applied_record"
+  while [[ -f "${patch_file}.${part_idx}" ]]; do
+    if (cd "$DEX_DIR" && patch -p1 --fuzz=3 --no-backup-if-mismatch < "${patch_file}.${part_idx}" 2>/dev/null); then
+      applied=$((applied + 1))
+      printf '%s\n' "${patch_file}.${part_idx}" >> "$applied_record"
+    else
+      log_warn "Patch part $part_idx failed to apply"
+    fi
+    part_idx=$((part_idx + 1))
+  done
+
+  if [[ $part_idx -eq 0 ]]; then
+    if (cd "$DEX_DIR" && patch -p1 --fuzz=3 --no-backup-if-mismatch < "$patch_file" 2>/dev/null); then
+      applied=1
+      printf '%s\n' "$patch_file" >> "$applied_record"
+    fi
+  fi
+
+  if [[ $applied -eq 0 ]]; then
+    rm -f "$applied_record"
+    return 1
+  fi
+  log_info "Applied $applied patch part(s)"
+  return 0
 }
 
 # safety_reverse_patch <patch-file>
 # Remove an uncommitted generated patch without rewriting branch history.
+# When safety_apply_patch recorded which parts applied, every one of them
+# must reverse — a partial reversal used to report success and leave the
+# repo half-reverted against a wrong baseline.
 safety_reverse_patch() {
   local patch_file="$1"
   local part_idx=0
   local reversed=0
   local parts=()
   local part
+  local applied_record="${patch_file}.applied-parts"
 
   if [[ -z "$patch_file" || ! -f "$patch_file" ]]; then
     log_error "Patch file not found: $patch_file"
     return 1
+  fi
+
+  if [[ -s "$applied_record" ]]; then
+    while IFS= read -r part; do
+      [[ -n "$part" && -f "$part" ]] || { log_error "Recorded patch part missing: $part"; return 1; }
+      parts+=("$part")
+    done < "$applied_record"
+    for ((part_idx=${#parts[@]} - 1; part_idx >= 0; part_idx--)); do
+      part="${parts[$part_idx]}"
+      if ! (cd "$DEX_DIR" && patch -p1 --reverse --dry-run --fuzz=3 --no-backup-if-mismatch < "$part" >/dev/null 2>&1) ||
+         ! (cd "$DEX_DIR" && patch -p1 --reverse --fuzz=3 --no-backup-if-mismatch < "$part" >/dev/null); then
+        log_error "Could not reverse applied patch part: $part"
+        return 1
+      fi
+      reversed=$((reversed + 1))
+    done
+    rm -f "$applied_record"
+    log_success "Reversed $reversed applied patch part(s)"
+    return 0
   fi
 
   if git -C "$DEX_DIR" apply --reverse --check "$patch_file" 2>/dev/null; then
@@ -227,13 +278,4 @@ if cumulative > limit:
 print(f'Cost OK: \${cumulative:.2f} / \${limit:.2f}')
 sys.exit(0)
 "
-}
-
-# safety_cleanup_tags
-# Remove all dx-research tags.
-safety_cleanup_tags() {
-  git -C "$DEX_DIR" tag -l "dx-research/*" | while read -r tag; do
-    git -C "$DEX_DIR" tag -d "$tag" 2>/dev/null
-  done
-  log_info "Cleaned up research tags"
 }

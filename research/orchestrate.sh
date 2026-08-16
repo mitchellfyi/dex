@@ -14,7 +14,7 @@
 #
 # Notes:
 #   • The between-cycle sleep is intentionally short (30s) — each cycle already
-#     runs a full suite (~1h with 12 scenarios at the default budget), so this is
+#     runs the full scenario suite (hours at the default budget), so this is
 #     just a breather for log flushing, not a rate limiter.
 #   • SCENARIO_TIMEOUT (per-scenario agent budget) defaults to 3600s. Override
 #     via `--scenario-timeout N` here, or set SCENARIO_TIMEOUT_OVERRIDE in env.
@@ -205,6 +205,7 @@ _orchestrate_commit_pending() {
 }
 
 # ── Main loop ──────────────────────────────────────────────────────────────
+COMPLETED_CYCLES=0
 while true; do
   CYCLE=$((CYCLE + 1))
 
@@ -213,12 +214,19 @@ while true; do
     break
   fi
 
+  # A failed merge or an interrupted git operation can leave the checkout on
+  # the wrong branch; the pre-flight check alone does not cover that.
+  if ! safety_check_branch; then
+    _orchestrate_log "No longer on a safe research branch. Stopping."
+    break
+  fi
+
   _orchestrate_log "════ Cycle $CYCLE ════"
 
   # Step 1: Run full suite
   _orchestrate_log "Running full suite..."
   RUN_ID=""
-  RUN_ID=$(bash "$SCRIPT_DIR/run.sh" "${RUN_FLAGS[@]}" --skip-llm-judge --iteration "$CYCLE" 2>&1 | tail -1) || true
+  RUN_ID=$(bash "$SCRIPT_DIR/run.sh" ${RUN_FLAGS[@]+"${RUN_FLAGS[@]}"} --skip-llm-judge --iteration "$CYCLE" 2>&1 | tail -1) || true
 
   if [[ -z "$RUN_ID" || ! -f "$RESULTS_DIR/$RUN_ID/summary.json" ]]; then
     _orchestrate_log "Suite run failed. Waiting before retry..."
@@ -274,6 +282,10 @@ while true; do
         git merge "$current_branch" --no-ff -m "Merge research: all scenarios 90+ (aggregate $AGG_SCORE)" && \
         git checkout "$current_branch") || {
           _orchestrate_log "Merge to main failed — continuing on research branch"
+          # A conflicted merge leaves an unmerged index that blocks the
+          # checkout back; without the abort the loop keeps running on main
+          # and the next commit would land conflict markers there.
+          (cd "$DEX_DIR" && git merge --abort) 2>/dev/null || true
           (cd "$DEX_DIR" && git checkout "$current_branch") 2>/dev/null || true
         }
     fi
@@ -289,12 +301,14 @@ while true; do
       # Tag checkpoint
       safety_tag_checkpoint "cycle-$CYCLE"
 
-      # Apply
-      if (cd "$DEX_DIR" && git apply "$PATCH_FILE" 2>/dev/null); then
+      # Apply with the same parts-then-combined mechanism improve.sh used to
+      # validate applicability; plain `git apply` rejected every patch that
+      # only applied under `patch --fuzz`.
+      if safety_apply_patch "$PATCH_FILE"; then
         _orchestrate_log "Applied improvement patch"
 
         # Validate with a quick run
-        VALIDATE_ID=$(bash "$SCRIPT_DIR/run.sh" "${RUN_FLAGS[@]}" --skip-llm-judge --iteration "${CYCLE}-validate" 2>&1 | tail -1) || true
+        VALIDATE_ID=$(bash "$SCRIPT_DIR/run.sh" ${RUN_FLAGS[@]+"${RUN_FLAGS[@]}"} --skip-llm-judge --iteration "${CYCLE}-validate" 2>&1 | tail -1) || true
 
         if [[ -n "$VALIDATE_ID" && -f "$RESULTS_DIR/$VALIDATE_ID/summary.json" ]]; then
           NEW_SCORE=$(json_field "$RESULTS_DIR/$VALIDATE_ID/summary.json" "aggregate_score")
@@ -318,6 +332,7 @@ while true; do
                   git merge "$current_branch" --no-ff -m "Merge research improvement: cycle $CYCLE ($AGG_SCORE → $NEW_SCORE)" && \
                   git checkout "$current_branch") || {
                     _orchestrate_log "Merge failed — staying on research branch"
+                    (cd "$DEX_DIR" && git merge --abort) 2>/dev/null || true
                     (cd "$DEX_DIR" && git checkout "$current_branch") 2>/dev/null || true
                   }
               fi
@@ -345,9 +360,10 @@ while true; do
   fi
 
   # Step 5: Wait before next cycle
+  COMPLETED_CYCLES=$CYCLE
   _orchestrate_log "Cycle $CYCLE complete. Next cycle in ${INTERVAL}s."
   _orchestrate_log ""
   sleep "$INTERVAL"
 done
 
-_orchestrate_log "Orchestrator stopped after $CYCLE cycles."
+_orchestrate_log "Orchestrator stopped after $COMPLETED_CYCLES cycles."
