@@ -13,7 +13,7 @@
 # Concurrency: dx_unique_session_id() appends PID+epoch to avoid collisions
 # when multiple dxloop invocations run on the same branch. The unique ID is
 # passed to Claude via DEX_SESSION_ID env var so the stop hook resolves
-# to the same unique ID. See: hooks/phase-loop.sh line 29.
+# to the same unique ID (see the SESSION_ID bootstrap in hooks/phase-loop.sh).
 
 # dx_session_repo_key
 # Derive a filesystem-safe repo key from the main repo root. The basename keeps

@@ -103,17 +103,7 @@ dx_phase_iteration_count() {
   fi
 }
 
-dx_format_duration() {
-  local seconds="$1" minutes remainder
-  if [[ ! "$seconds" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$seconds"
-    return 0
-  fi
-
-  minutes=$((seconds / 60))
-  remainder=$((seconds % 60))
-  printf '%dm %ds\n' "$minutes" "$remainder"
-}
+# dx_format_duration comes from lib/output.sh via common.sh.
 
 # Normalize an environment-supplied loop limit before bash arithmetic sees it.
 # Fifteen digits leave enough headroom for the minute-to-second conversions
@@ -1415,7 +1405,7 @@ echo "" >&2
 # Completion gate — only provide completion instructions after enough audit iterations.
 # Before the threshold: Claude can't complete (doesn't know how to write .complete).
 # After the threshold: Claude receives the .complete file path and promise string.
-# COMPLETE_FILE was already set above (line 87) for the early-exit check.
+# COMPLETE_FILE was already set above for the early-exit check.
 if [[ $ITERATION -ge $MIN_AUDIT_ITERATIONS ]]; then
   printf '%s\n' "---" >&2
   printf '%s\n' "## Completion Signal Available ($ITERATION/$MIN_AUDIT_ITERATIONS audit iterations reached)" >&2

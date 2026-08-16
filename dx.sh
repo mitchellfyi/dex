@@ -312,16 +312,6 @@ __dx_phase_message() {
   local wt_dir="${4:-}"
   if [[ "$step" -eq 0 ]]; then
     printf '%s\n' "$DX_PHASE_0_MESSAGE"
-  elif [[ "$step" -eq 1 ]]; then
-    cat <<'EOF'
-Phase 0 setup (branch rename, push, ticket status → In Progress, assignment) is already complete. Do NOT redo it unless you find it missing.
-
-Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill tool with skill: "dxplan" (or /dxplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dxplan skill unless the skill explicitly instructs you to.
-
-The dxplan skill writes the required Phase 1 lifecycle markers. For freeform `dx "<task>"` requests with a configured tracker, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues and select the first implementation ticket. After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
-
-For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval.
-EOF
   else
     printf '%s\n' "${DX_PHASE_MESSAGES[$step]}"
   fi
@@ -356,7 +346,13 @@ DX_PHASE_PROMISES=(\
 )
 
 DX_PHASE_MESSAGES=(\
-  "Call EnterPlanMode now, then immediately invoke the dxplan skill. Do not perform exploration or planning by hand outside dxplan unless the skill explicitly instructs you to. Ticket setup (branch rename, status update, assignment, push) was already done in Phase 0; if anything looks incomplete (status still Backlog/Todo, no assignee, branch not renamed/pushed), finish it before calling EnterPlanMode. For freeform task requests with a configured tracker, after the user approves the plan via ExitPlanMode, offer the dxplan tracker intake choices before writing the Phase 1 approval marker. After the gate is complete or explicitly skipped, write the Phase 1 approval marker and stop once so the Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt." \
+  "Phase 0 setup (branch rename, push, ticket status → In Progress, assignment) is already complete. Do NOT redo it unless you find it missing.
+
+Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill tool with skill: \"dxplan\" (or /dxplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dxplan skill unless the skill explicitly instructs you to.
+
+The dxplan skill writes the required Phase 1 lifecycle markers. For freeform \`dx \"<task>\"\` requests with a configured tracker, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues and select the first implementation ticket. After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
+
+For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. For UI-affecting changes, Phase 2 must invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. Phase focus: implementation, testing, and UI capture evidence. Commit, push, branch, and PR actions remain available when useful; later phases still perform the canonical verification, commit, and PR handoff. When done, stop — the audit loop will verify your work." \
   "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful; later phases still perform their normal handoff steps. When the loop writes a valid success receipt, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dxcommit\" to commit and push. Phase focus: verification and the canonical commit, but PR creation and implementation fixes remain available when useful. When pushed, stop — the audit loop will verify." \
@@ -1808,9 +1804,6 @@ __dx_run_phases_inline() {
 
   local message
   message=$(__dx_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")
-  if [[ $step -eq 3 ]]; then
-    message="Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 3, normal 6, and complex 9 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance."
-  fi
 
   local session_timeout="${DEX_SESSION_TIMEOUT:-$DX_SESSION_TIMEOUT}"
   local _dx_watchdog_pid="" _dx_pidfile=""
@@ -1903,20 +1896,20 @@ __dx_run_phases_inline() {
     return 1
   fi
 
-	  if [[ "$final_step" -ge 7 ]]; then
-	    dx_run_log_append_for_session "$session_id" "info" "dx" "Ticket lifecycle complete"
-	    dx_provider_cleanup_session_state "$session_id"
-	    rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" 2>/dev/null
-	    __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
-	    echo ""
-	    echo "Ticket lifecycle complete."
-	    if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
-	      dx_info "Human-controlled completion preserved the lifecycle workspace."
-	      return 0
-	    fi
-	    __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
-	    return $?
-	  fi
+  if [[ "$final_step" -ge 7 ]]; then
+    dx_run_log_append_for_session "$session_id" "info" "dx" "Ticket lifecycle complete"
+    dx_provider_cleanup_session_state "$session_id"
+    rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" 2>/dev/null
+    __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
+    echo ""
+    echo "Ticket lifecycle complete."
+    if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
+      dx_info "Human-controlled completion preserved the lifecycle workspace."
+      return 0
+    fi
+    __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
+    return $?
+  fi
 
   if [[ $exit_code -ne 0 ]]; then
     local terminal_data terminal_reason="provider-exit" terminal_detail="exited"
@@ -2599,10 +2592,10 @@ dx() {
 
     if [[ $step -gt 6 ]]; then
       echo "Ticket lifecycle already complete for ${_dx_wt_name}."
-	    if [[ "$_dx_workspace_mode" == "worktree" ]]; then
-	      echo "Local cleanup should already be complete. If files remain, run dxrm ${_dx_wt_name}."
-	    else
-	      echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
+      if [[ "$_dx_workspace_mode" == "worktree" ]]; then
+        echo "Local cleanup should already be complete. If files remain, run dxrm ${_dx_wt_name}."
+      else
+        echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
       fi
       return 0
     fi
@@ -2662,13 +2655,13 @@ dx() {
     [[ "$step" =~ ^[0-7]$ ]] || step=0
   fi
 
-	  if [[ $step -gt 6 ]]; then
-	    echo "Ticket lifecycle already complete for ${_dx_wt_name}."
-	    if [[ "$_dx_workspace_mode" == "worktree" ]]; then
-	      echo "Local cleanup should already be complete. If files remain, run dxrm ${raw_input}."
-	    else
-	      echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
-	    fi
+  if [[ $step -gt 6 ]]; then
+    echo "Ticket lifecycle already complete for ${_dx_wt_name}."
+    if [[ "$_dx_workspace_mode" == "worktree" ]]; then
+      echo "Local cleanup should already be complete. If files remain, run dxrm ${raw_input}."
+    else
+      echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
+    fi
     return 0
   fi
 
@@ -3031,7 +3024,7 @@ dxcomplete() {
   echo "  PR:    #${pr_num}"
   echo "  Phase: Monitor CI → Address reviews → Close ticket"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	  echo ""
+  echo ""
 
   # Use a session ID derived from the current location (worktree-aware via dx_session_id)
   local session_id start_dir cleanup_repo_root cleanup_default_branch cleanup_mode="" cleanup_wt_name="" cleanup_wt_dir=""
