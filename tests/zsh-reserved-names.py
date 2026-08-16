@@ -64,7 +64,7 @@ HEREDOC = re.compile(r"(?<!<)<<-?(?!<)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 FOR_VAR = re.compile(r"(?:^|[;&|{(]|\bdo\b|\bthen\b|\belse\b)\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\bin\b|;|$)")
 ARITH_ASSIGN = re.compile(r"\(\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)")
 READ_CMD = re.compile(
-    r"(?:^|[;&|{(]\s*|\b(?:do|then|else|while|until)\s+)(?:IFS=\S*\s+)?read\s+(.*)$"
+    r"(?:^\s*|[;&|{(]\s*|\b(?:do|then|else|while|until)\s+)(?:IFS=\S*\s+)?read\s+(.*)$"
 )
 KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "{"}
 
@@ -158,7 +158,8 @@ def read_targets(remainder: str) -> list[str]:
     # them and let the option eat the following name.
     remainder = re.split(r"[;|&]", remainder, maxsplit=1)[0]
     try:
-        tokens = shlex.split(remainder)
+        # comments=True drops a trailing " # …" so its words are not targets.
+        tokens = shlex.split(remainder, comments=True)
     except ValueError:
         return []
     names: list[str] = []
