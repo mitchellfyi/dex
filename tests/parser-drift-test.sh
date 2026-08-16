@@ -45,8 +45,9 @@ COMMIT_ONLY = {
     "has_git_commit", "substitution_git_commit_target", "xargs_commit_target",
     # local spellings of shared primitives
     "assignment", "base", "command_substitution_body_parts", "extract_backticks",
-    "extract_dollars", "normalize", "resolve_dir", "resolve_shell_token",
-    "shell_quote_parts", "skip_prefix", "takes_value", "tokens",
+    "extract_dollars", "normalize", "read_shell_file", "resolve_dir",
+    "resolve_shell_token", "shell_quote_parts", "skip_prefix", "takes_value",
+    "tokens",
 }
 
 guard_names = function_names(guard)

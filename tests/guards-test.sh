@@ -526,6 +526,33 @@ else
   fail=$((fail + 1))
 fi
 
+# A --- inside a frontmatter value must not end the frontmatter early. The
+# old substring split dropped every key after such a value, so this block
+# guard would have silently loaded as a warn guard.
+cat > "$GUARD_TMP/repo/.dex/guards/dashes-block.md" <<'GUARD'
+---
+name: test-dashes-block
+enabled: true
+event: bash
+pattern: forbidden---token
+action: block
+---
+
+Test guard: pattern value contains the frontmatter fence characters.
+GUARD
+set +e
+GUARD_OUT="$(mkbashpayload 'echo forbidden---token' | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'test-dashes-block'; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (guard with --- inside a value should keep its action: block; rc=%s)\n%s\n' \
+    "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+rm -f "$GUARD_TMP/repo/.dex/guards/dashes-block.md"
+
 # A benign command in a repo with project guards must still be allowed, so the
 # fail-closed paths above cannot be passing for the wrong reason.
 set +e

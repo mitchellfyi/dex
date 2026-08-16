@@ -86,13 +86,17 @@ def parse_guard(filepath):
         print(f"[guard] skipped {filepath}: missing frontmatter", file=sys.stderr)
         return None
 
-    parts = content.split('---', 2)
-    if len(parts) < 3:
+    # The closing fence is a line that is exactly ---. Splitting on the bare
+    # substring instead used to end the frontmatter at the first --- inside a
+    # value, silently dropping every key after it (a block guard could lose
+    # its action: line and quietly become a warn guard).
+    fence = re.match(r'^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|\Z)', content, re.DOTALL)
+    if not fence:
         print(f"[guard] skipped {filepath}: malformed frontmatter", file=sys.stderr)
         return None
 
     try:
-        meta = parse_frontmatter(parts[1])
+        meta = parse_frontmatter(fence.group(1))
     except Exception as e:
         print(f"[guard] skipped {filepath}: parse error: {e}", file=sys.stderr)
         return None
@@ -100,7 +104,7 @@ def parse_guard(filepath):
     if not meta or not meta.get('enabled', True):
         return None
 
-    meta['message'] = parts[2].strip()
+    meta['message'] = content[fence.end():].strip()
     meta['source'] = filepath
     return meta
 
@@ -133,13 +137,7 @@ def load_guards(event_type):
 
     # Project-specific guards — resolve project root via git toplevel so guards
     # are found regardless of which subdirectory the tool runs from.
-    try:
-        project_root = subprocess.check_output(
-            ['git', 'rev-parse', '--show-toplevel'],
-            text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except Exception:
-        project_root = os.getcwd()
+    project_root = git_toplevel() or os.getcwd()
     project_dir = os.path.join(project_root, '.dex', 'guards')
     if os.path.isdir(project_dir):
         for f in sorted(glob.glob(os.path.join(project_dir, '*.md'))):
@@ -310,6 +308,12 @@ def provider_session_id():
 
 def provider_session_engine():
     explicit_session_id = os.environ.get('DEX_SESSION_ID', '')
+    # Without an explicit session id, an exported DX_PROVIDER_ENGINE wins over
+    # session state (mirrored below after the read). Deciding that from the
+    # environment alone skips the git/cksum session-id derivation and the
+    # state-file read on every tool call in Dex-launched sessions.
+    if not explicit_session_id and os.environ.get('DX_PROVIDER_ENGINE', ''):
+        return ''
     session_id = provider_session_id()
     if not session_id:
         return ''
@@ -685,18 +689,6 @@ def is_trusted_dex_helper(path, variables=None, cwd=None):
     return relative == os.path.join('bin', 'ui-capture.sh')
 
 
-def read_shell_file(path, variables=None, cwd=None):
-    resolved = resolve_shell_path(path, variables, cwd)
-    if not resolved or is_dex_codex_wrapper(path, variables, cwd):
-        return ''
-    try:
-        with open(resolved, 'r', encoding='utf-8', errors='replace') as f:
-            body = f.read(1024 * 1024)
-            return '' if '\x00' in body else body
-    except OSError:
-        return ''
-
-
 def shell_file_body_status(path, variables=None, cwd=None):
     if is_dex_codex_wrapper(path, variables, cwd):
         return '', 'wrapper'
@@ -933,7 +925,6 @@ SHELL_COMMAND_KEYWORDS = {'if', 'then', 'elif', 'else', 'while', 'until', 'do', 
 SHELL_END_KEYWORDS = {'fi', 'done', 'esac', '}'}
 
 SHELLS = {'bash', 'sh', 'zsh', 'dash', 'ksh'}
-WRAPPER_COMMANDS = {'command', 'builtin'}
 EVAL_COMMANDS = {'eval'}
 SOURCE_COMMANDS = {'source', '.'}
 ASSIGNMENT_BUILTINS = {'export', 'readonly', 'declare', 'typeset', 'local'}
@@ -981,9 +972,7 @@ SHELL_SCRIPT_VALUE_OPTIONS = {'--init-file', '--rcfile', '-O', '-D'}
 SHELL_VARIABLE_WORD_RE = re.compile(r'^\s*(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)\s*$')
 SHELL_LEADING_VARIABLE_RE = re.compile(r'^\s*(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)(?:\s|$)')
 SHELL_VARIABLE_REF_RE = re.compile(r'\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))')
-PYTHON_INLINE_OPTIONS = {'-c'}
 PYTHON_VALUE_OPTIONS = {'-c', '-m', '-W', '-X', '--check-hash-based-pycs'}
-NODE_INLINE_OPTIONS = {'-e', '--eval', '-p', '--print'}
 NODE_VALUE_OPTIONS = {
     '-e', '--eval', '-p', '--print', '-r', '--require',
     '--loader', '--import', '--experimental-loader',
@@ -1356,7 +1345,15 @@ def code_has_raw_codex_delegation(code, kind, depth=0, cwd=None, whole_file=Fals
 
 
 def code_has_destructive_command(code, depth=0, whole_file=False):
-    """Inspect literal commands passed to process-launch APIs in inline code."""
+    """Inspect literal commands passed to process-launch APIs in inline code.
+
+    Unlike code_has_raw_codex_delegation, an unverifiable payload (UNKNOWN
+    stdin, runaway depth) is allowed rather than blocked: this guard runs on
+    every Bash call, and blocking every `python3 -c "$VAR"` whose value it
+    cannot see would deny far more legitimate work than it could ever catch.
+    The raw-codex guard covers a narrow delegation wrapper, so it can afford
+    to fail closed on the same shapes.
+    """
     if code is UNKNOWN_SHELL_STDIN or depth > 12:
         return False
     if not code or not code.strip():
@@ -3422,15 +3419,6 @@ def rm_invocation_is_destructive(tokens, command_index, variables=None, cwd=None
     return False
 
 
-def rm_targets_have_destructive_placeholder(targets, roots, variables=None, cwd=None):
-    for target in targets:
-        if target == '{}':
-            return any(rm_target_is_destructive(root, variables, cwd) for root in roots)
-        if rm_target_is_destructive(target, variables, cwd):
-            return True
-    return False
-
-
 def destructive_command_segment_is_blocked(tokens, command_index, variables=None, cwd=None):
     command_base = token_basename(tokens[command_index])
     segment_tokens = []
@@ -3601,7 +3589,10 @@ def substitution_invocation_is_destructive(tokens, index, shell_vars=None, cwd=N
 
 
 def has_destructive_command(text, depth=0):
-    if depth > 8:
+    # Fail closed on runaway nesting, at the same depth the raw-codex and
+    # commit parsers use. The previous cap of 8 blocked benign commands with
+    # nine levels of ordinary command substitution.
+    if depth > 24:
         return True
     if not text.strip():
         return False

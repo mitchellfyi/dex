@@ -18,7 +18,6 @@ SEPARATORS = {';', ';;', ';&', ';;&', '&', '&&', '|', '||', '(', ')', '{', '}', 
 REDIRECTS = {'<', '<<', '<<<', '>', '>>', '<>'}
 COMMAND_KEYWORDS = {'if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{'}
 END_KEYWORDS = {'fi', 'done', 'esac', '}'}
-WRAPPERS = {'command', 'builtin'}
 ENV_OPTION_ARGS = {'-u', '--unset', '-C', '--chdir', '-S', '--split-string'}
 SUDO_OPTION_ARGS = {
     '-A', '-a', '-b', '-C', '-c', '-D', '-g', '-h', '-p', '-R', '-r', '-T', '-t', '-U', '-u',
@@ -44,9 +43,7 @@ SHELL_SCRIPT_VALUE_OPTIONS = {'--init-file', '--rcfile', '-O', '-D'}
 SHELL_VARIABLE_WORD_RE = re.compile(r'^\s*(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)\s*$')
 SHELL_LEADING_VARIABLE_RE = re.compile(r'^\s*(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)(?:\s|$)')
 SHELL_VARIABLE_REF_RE = re.compile(r'\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))')
-PYTHON_INLINE_OPTIONS = {'-c'}
 PYTHON_VALUE_OPTIONS = {'-c', '-m', '-W', '-X', '--check-hash-based-pycs'}
-NODE_INLINE_OPTIONS = {'-e', '--eval', '-p', '--print'}
 NODE_VALUE_OPTIONS = {
     '-e', '--eval', '-p', '--print', '-r', '--require',
     '--loader', '--import', '--experimental-loader',
