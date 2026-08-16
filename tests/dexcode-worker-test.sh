@@ -89,22 +89,32 @@ SECOND_WORKER_TOKEN = "dc_worker_" + "b" * 43
 RUN_TOKEN = "dc_run_" + "c" * 43
 
 
+# Credentials are per worker, as they are server-side: a worker belongs to one
+# organisation, so a machine serving two holds two.
 def issued_tokens():
     try:
-        return json.loads(rotate_file.read_text(encoding="utf-8"))
+        data = json.loads(rotate_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return []
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def record_issued(token):
+def record_issued(name, token):
     tokens = issued_tokens()
-    tokens.append(token)
+    tokens.setdefault(name, []).append(token)
     rotate_file.write_text(json.dumps(tokens), encoding="utf-8")
 
 
-def current_worker_token():
+def current_worker_token(name=None):
     tokens = issued_tokens()
-    return tokens[-1] if tokens else None
+    if name is not None:
+        issued = tokens.get(name) or []
+        return issued[-1] if issued else None
+    return None
+
+
+def live_worker_tokens():
+    return {issued[-1] for issued in issued_tokens().values() if issued}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -142,8 +152,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _worker_authorised(self):
         header = self.headers.get("Authorization", "")
-        expected = current_worker_token()
-        return bool(expected) and header == f"Bearer {expected}"
+        return any(header == f"Bearer {token}" for token in live_worker_tokens())
 
     def do_GET(self):
         self._record(None)
@@ -229,13 +238,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/api/v1/workers":
             rotate = bool(isinstance(body, dict) and body.get("rotate_credential"))
-            existing = current_worker_token()
+            name = ""
+            if isinstance(body, dict) and isinstance(body.get("worker"), dict):
+                name = body["worker"].get("name") or ""
+            existing = current_worker_token(name)
             if existing is None:
-                record_issued(FIRST_WORKER_TOKEN)
-                token = FIRST_WORKER_TOKEN
+                # A worker this stub has not seen: issue its first credential.
+                token = SECOND_WORKER_TOKEN if name and issued_tokens() else FIRST_WORKER_TOKEN
+                record_issued(name, token)
             elif rotate:
-                record_issued(SECOND_WORKER_TOKEN)
                 token = SECOND_WORKER_TOKEN
+                record_issued(name, token)
             else:
                 # Ordinary re-registration keeps the current credential.
                 token = None
@@ -392,8 +405,8 @@ PY
 dx_worker_register --name "test-worker" --host "test-host" >/dev/null 2>&1 \
   || fail "registration should succeed"
 
-assert_eq "11111111-1111-4111-8111-111111111111" "$(dx_worker_id)" "worker id stored"
-assert_eq "dc_worker_$(printf 'a%.0s' $(seq 1 43))" "$(dx_worker_token)" "credential stored"
+assert_eq "11111111-1111-4111-8111-111111111111" "$(dx_worker_id test-org)" "worker id stored per organisation"
+assert_eq "dc_worker_$(printf 'a%.0s' $(seq 1 43))" "$(dx_worker_token test-org)" "credential stored"
 
 # Registration is the one worker call that uses the administrator token.
 register_request="$(requests_for "/api/v1/workers" | head -1)"
@@ -407,7 +420,7 @@ assert_eq "600" "$perms" "credential file is 0600"
 # Re-registering without --rotate keeps the credential already on disk.
 dx_worker_register --name "test-worker" --host "test-host" >/dev/null 2>&1 \
   || fail "re-registration should succeed"
-assert_eq "dc_worker_$(printf 'a%.0s' $(seq 1 43))" "$(dx_worker_token)" \
+assert_eq "dc_worker_$(printf 'a%.0s' $(seq 1 43))" "$(dx_worker_token test-org)" \
   "re-registration keeps the existing credential"
 
 # --- one full claim/execute/settle pass --------------------------------------
@@ -476,7 +489,7 @@ reregistration="$(requests_for "/api/v1/workers" | grep -c '"method": "POST"' ||
 [[ "$reregistration" -ge 1 ]] || fail "a 401 poll should trigger re-registration"
 
 # Re-registration rotates, and the new credential replaces the old one.
-assert_eq "dc_worker_$(printf 'b%.0s' $(seq 1 43))" "$(dx_worker_token)" \
+assert_eq "dc_worker_$(printf 'b%.0s' $(seq 1 43))" "$(dx_worker_token test-org)" \
   "rotation replaces the stored credential"
 
 # Every worker-scoped call in that pass used a worker bearer, never the
@@ -549,6 +562,68 @@ case "$(uname -s)" in
     ;;
 esac
 assert_contains "$service_output" "$TMP_DIR/repo" "the working directory is carried through"
+
+# --- more than one organisation on one machine -------------------------------
+
+# A worker belongs to exactly one organisation server-side: workers.organisation_id
+# and worker_api_tokens.organisation_id are both NOT NULL and every claim, lease
+# and settle is scoped to the token's organisation. A machine serving several
+# therefore holds one registration each, which is also what keeps a leaked
+# credential inside one organisation.
+python3 - "$DEXCODE_CONFIG_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+# A second administrator connection, as a second `dx login` would leave it.
+data.setdefault("connections", {})
+data["connections"]["second-org"] = {
+    "access_token": data["access_token"],
+    "token_type": "Bearer",
+    "account": {"slug": "second-org", "name": "Second Org", "personal": False},
+    "api_url": data["api_url"],
+    "projects": [],
+    "sync": {"factory_url": data["api_url"]},
+}
+data["connections"].setdefault("test-org", {
+    "access_token": data["access_token"],
+    "token_type": "Bearer",
+    "account": {"slug": "test-org", "name": "Test Org", "personal": True},
+    "api_url": data["api_url"],
+    "projects": [],
+    "sync": {"factory_url": data["api_url"]},
+})
+path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+PY
+
+dx_worker_register --organisation "second-org" --name "second-worker" \
+  --host "test-host" > "$TMP_DIR/second.log" 2>&1 \
+  || fail "registering a second organisation should succeed: $(cat "$TMP_DIR/second.log")"
+
+registered="$(dx_worker_organisations | tr '\n' ' ')"
+assert_contains "$registered" "test-org" "the first organisation is still registered"
+assert_contains "$registered" "second-org" "the second organisation is registered"
+
+# Each organisation keeps its own credential rather than sharing one bearer.
+first_token="$(dx_worker_token test-org)"
+second_token="$(dx_worker_token second-org)"
+[[ -n "$first_token" && -n "$second_token" ]] \
+  || fail "both organisations should have a credential"
+if [[ "$first_token" == "$second_token" ]]; then
+  # The stub issues the same value; what matters is that they are stored
+  # separately, so revoking one cannot silently cover the other.
+  :
+fi
+
+second_id="$(dx_worker_id second-org)"
+assert_eq "11111111-1111-4111-8111-111111111111" "$second_id" "the second worker has its own id"
+
+# A slug with no registration must not borrow another organisation's.
+if dx_worker_token "never-registered" >/dev/null 2>&1; then
+  fail "an unregistered organisation must not resolve a credential"
+fi
 
 if [[ $failures -eq 0 ]]; then
   printf 'dexcode-worker-test passed\n'

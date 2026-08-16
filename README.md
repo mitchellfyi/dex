@@ -135,6 +135,13 @@ never connects to this machine. Use `dx worker run --once --dry-run` to prove
 the wiring without doing any work, and `dx worker service` to print a launchd
 agent or systemd unit that keeps it running.
 
+A worker serves its whole organisation — every project and repository in it,
+unless an allowlist narrows that. To serve several organisations from one
+machine, register once per organisation
+(`dx worker register --organisation <slug>`); `dx worker run` then polls them
+all. Each organisation issues its own credential and can revoke it without
+touching the others, which a single cross-organisation token could not offer.
+
 `dex` and `dexter` are aliases for `dx`.
 
 For `dx "task description"`, Phase 1 first produces an implementation plan.

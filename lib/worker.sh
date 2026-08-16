@@ -58,15 +58,70 @@ dx_worker_config_value() {
   __dx_worker_json_field "$(dx_worker_config_file)" "$1"
 }
 
+# One machine can serve several organisations. It cannot do so with one
+# credential: `workers.organisation_id` and `worker_api_tokens.organisation_id`
+# are both NOT NULL, and every claim, lease and settle is scoped to the
+# organisation the token belongs to. Spanning organisations with a single
+# bearer would mean unpicking that boundary, and would make one leaked token
+# reach all of them.
+#
+# So the daemon does what `dx login` already does for administrator tokens: it
+# holds one registration per organisation, keyed by slug. Each organisation
+# grants and revokes independently.
+__dx_worker_entry_field() {
+  local slug="$1" key="$2" value
+  value="$(dx_worker_config_value "workers.${slug}.${key}" 2>/dev/null)" || value=""
+  if [[ -z "$value" ]]; then
+    # A registration made before the map existed. It described the only
+    # organisation this machine served, so it answers for any slug until the
+    # next registration replaces it.
+    dx_worker_config_value "workers" >/dev/null 2>&1 && return 1
+    value="$(dx_worker_config_value "$key" 2>/dev/null)" || return 1
+  fi
+  [[ -n "$value" ]] || return 1
+  printf '%s\n' "$value"
+}
+
+# Slugs with a stored registration, one per line.
+dx_worker_organisations() {
+  local file
+  file="$(dx_worker_config_file)"
+  [[ -f "$file" ]] || return 0
+  DX_WORKER_FILE="$file" python3 - <<'PY' 2>/dev/null
+import json
+import os
+from pathlib import Path
+
+try:
+    data = json.loads(Path(os.environ["DX_WORKER_FILE"]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+
+workers = data.get("workers")
+if isinstance(workers, dict) and workers:
+    for slug in sorted(workers):
+        if isinstance(workers[slug], dict) and workers[slug].get("worker_id"):
+            print(slug)
+    raise SystemExit(0)
+
+# Pre-map registration: one unnamed organisation.
+if data.get("worker_id"):
+    print(data.get("organisation_slug") or "default")
+PY
+}
+
 # Written 0600 and replaced atomically: it holds a bearer token.
 __dx_worker_config_store() {
-  local worker_id="$1" worker_name="$2" api_url="$3" token="$4"
+  local slug="$1" worker_id="$2" worker_name="$3" api_url="$4" token="$5"
   local file
   file="$(dx_worker_config_file)"
   mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
   chmod 700 "$(dirname "$file")" 2>/dev/null || true
 
   DX_WORKER_FILE="$file" \
+  DX_WORKER_SLUG="$slug" \
   DX_WORKER_ID="$worker_id" \
   DX_WORKER_NAME="$worker_name" \
   DX_WORKER_API_URL="$api_url" \
@@ -85,14 +140,31 @@ try:
 except (OSError, json.JSONDecodeError):
     data = {}
 
-data["worker_id"] = os.environ["DX_WORKER_ID"]
-data["worker_name"] = os.environ["DX_WORKER_NAME"]
-data["api_url"] = os.environ["DX_WORKER_API_URL"]
+slug = os.environ["DX_WORKER_SLUG"]
+workers = data.get("workers")
+if not isinstance(workers, dict):
+    workers = {}
+
+entry = workers.get(slug)
+if not isinstance(entry, dict):
+    entry = {}
+
+entry["worker_id"] = os.environ["DX_WORKER_ID"]
+entry["worker_name"] = os.environ["DX_WORKER_NAME"]
+entry["api_url"] = os.environ["DX_WORKER_API_URL"]
 
 # An ordinary re-registration returns no token and the stored one stays valid.
 token = os.environ.get("DX_WORKER_TOKEN") or ""
 if token:
-    data["worker_token"] = token
+    entry["worker_token"] = token
+
+workers[slug] = entry
+data["workers"] = workers
+
+# The pre-map fields described this same machine; leaving them would give two
+# answers to "which credential is this".
+for legacy in ("worker_id", "worker_name", "api_url", "worker_token"):
+    data.pop(legacy, None)
 
 handle, temporary = tempfile.mkstemp(
     prefix=".worker.", suffix=".json", dir=str(target.parent)
@@ -113,14 +185,15 @@ PY
 }
 
 dx_worker_token() {
-  local token
-  token="$(dx_worker_config_value "worker_token" 2>/dev/null)" || return 1
-  [[ -n "$token" ]] || return 1
-  printf '%s\n' "$token"
+  __dx_worker_entry_field "${1:?organisation slug}" "worker_token"
 }
 
 dx_worker_id() {
-  dx_worker_config_value "worker_id"
+  __dx_worker_entry_field "${1:?organisation slug}" "worker_id"
+}
+
+dx_worker_api_url() {
+  __dx_worker_entry_field "${1:?organisation slug}" "api_url"
 }
 
 # The worker bearer has its own shape; refusing anything else here keeps a
@@ -141,11 +214,11 @@ __dx_worker_auth_config() {
 # __dx_worker_request <method> <url> <response_file> [payload_file]
 # Prints the HTTP status. The token is piped in, never placed in argv.
 __dx_worker_request() {
-  local method="$1" url="$2" response_file="$3" payload_file="${4:-}"
+  local slug="$1" method="$2" url="$3" response_file="$4" payload_file="${5:-}"
   local token http_code timeout_seconds
   timeout_seconds="${DEXCODE_HTTP_TIMEOUT_SECONDS:-15}"
 
-  if ! token="$(dx_worker_token)"; then
+  if ! token="$(dx_worker_token "$slug")"; then
     printf '000\n'
     return 1
   fi
@@ -179,7 +252,7 @@ __dx_worker_request() {
 # the only place a worker token can be issued.
 dx_worker_register() {
   local worker_name="" worker_host="" rotate="false" max_concurrency=""
-  local working_directory="" worker_status="" arg
+  local working_directory="" worker_status="" organisation="" arg
 
   while [[ $# -gt 0 ]]; do
     arg="$1"
@@ -188,15 +261,19 @@ dx_worker_register() {
       --host) worker_host="${2:-}"; shift 2 || return 1 ;;
       --max-concurrency) max_concurrency="${2:-}"; shift 2 || return 1 ;;
       --working-directory) working_directory="${2:-}"; shift 2 || return 1 ;;
+      --organisation) organisation="${2:-}"; shift 2 || return 1 ;;
       --status) worker_status="${2:-}"; shift 2 || return 1 ;;
       --rotate) rotate="true"; shift ;;
       -h|--help)
         cat <<'USAGE'
 Usage:
-  dx worker register [--name <name>] [--host <host>] [--rotate]
-                     [--max-concurrency <n>] [--working-directory <path>]
+  dx worker register [--organisation <slug>] [--name <name>] [--host <host>]
+                     [--rotate] [--max-concurrency <n>]
+                     [--working-directory <path>]
 
-Registers this machine as a DexCode worker and stores the worker credential.
+Registers this machine as a worker for one organisation and stores that
+organisation's worker credential. Run it once per organisation to serve
+several from the same machine; `dx worker run` then polls all of them.
 Re-registering keeps the existing credential; --rotate replaces it.
 USAGE
         return 0
@@ -214,11 +291,22 @@ USAGE
   fi
 
   local api_url cli_token
-  api_url="$(dx_dexcode_api_url)" || return 1
-  if ! cli_token="$(dx_dexcode_token)"; then
+  # A worker belongs to exactly one organisation, so registration uses that
+  # organisation's administrator token rather than whichever happens to be
+  # active.
+  if [[ -z "$organisation" ]]; then
+    organisation="$(dx_dexcode_config_value 'account.slug' 2>/dev/null || printf '')"
+  fi
+  if [[ -z "$organisation" ]]; then
     dx_error "Not connected to DexCode. Run 'dx login' first."
     return 1
   fi
+  if ! cli_token="$(dx_dexcode_token_for "$organisation" 2>/dev/null)"; then
+    dx_error "No DexCode connection for ${organisation}. Run 'dx login' and pick it."
+    return 1
+  fi
+  api_url="$(dx_dexcode_api_url_for "$organisation" 2>/dev/null)" \
+    || api_url="$(dx_dexcode_api_url)" || return 1
 
   local tmp_dir payload_file response_file
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/dex-worker-register.XXXXXX")" || return 1
@@ -298,19 +386,20 @@ PY
     return 1
   fi
 
-  __dx_worker_config_store "$worker_id" "$worker_name" "$api_url" "$issued_token" || {
+  __dx_worker_config_store "$organisation" "$worker_id" "$worker_name" \
+    "$api_url" "$issued_token" || {
     dx_error "Could not store the worker credential."
     command rm -rf "$tmp_dir"
     return 1
   }
   command rm -rf "$tmp_dir"
 
-  if ! dx_worker_token >/dev/null 2>&1; then
+  if ! dx_worker_token "$organisation" >/dev/null 2>&1; then
     dx_error "No worker credential is stored. Re-run with --rotate to issue one."
     return 1
   fi
 
-  dx_done "Worker ${worker_name} registered."
+  dx_done "Worker ${worker_name} registered for ${organisation}."
   dx_info "Worker id: ${worker_id}"
   return 0
 }
@@ -325,20 +414,21 @@ __dx_worker_default_name() {
   printf '%s\n' "$candidate"
 }
 
-# dx_worker_poll <response_file> — prints the HTTP status.
+# dx_worker_poll <organisation> <response_file> — prints the HTTP status.
 dx_worker_poll() {
-  local response_file="$1" api_url worker_id
-  api_url="$(dx_worker_config_value "api_url")" || return 1
-  worker_id="$(dx_worker_id)" || return 1
-  __dx_worker_request GET "${api_url}/api/v1/workers/${worker_id}" "$response_file"
+  local slug="$1" response_file="$2" api_url worker_id
+  api_url="$(dx_worker_api_url "$slug")" || return 1
+  worker_id="$(dx_worker_id "$slug")" || return 1
+  __dx_worker_request "$slug" GET \
+    "${api_url}/api/v1/workers/${worker_id}" "$response_file"
 }
 
-# dx_worker_start <run_id> <response_file> — claims a run. Prints the status.
+# dx_worker_start <organisation> <run_id> <response_file> — claims a run.
 dx_worker_start() {
-  local run_id="$1" response_file="$2" api_url worker_id
-  api_url="$(dx_worker_config_value "api_url")" || return 1
-  worker_id="$(dx_worker_id)" || return 1
-  __dx_worker_request POST \
+  local slug="$1" run_id="$2" response_file="$3" api_url worker_id
+  api_url="$(dx_worker_api_url "$slug")" || return 1
+  worker_id="$(dx_worker_id "$slug")" || return 1
+  __dx_worker_request "$slug" POST \
     "${api_url}/api/v1/workers/${worker_id}/runs/${run_id}/start" "$response_file"
 }
 
@@ -376,13 +466,13 @@ PY
 # The launch id and attempt travel on every renewal, so a daemon holding a
 # stale claim cannot keep a newer attempt alive.
 dx_worker_lease() {
-  local run_id="$1" launch_request_id="$2" attempt="$3" response_file="$4"
+  local slug="$1" run_id="$2" launch_request_id="$3" attempt="$4" response_file="$5"
   local api_url worker_id payload_file rc
-  api_url="$(dx_worker_config_value "api_url")" || return 1
-  worker_id="$(dx_worker_id)" || return 1
+  api_url="$(dx_worker_api_url "$slug")" || return 1
+  worker_id="$(dx_worker_id "$slug")" || return 1
   payload_file="$(dirname "$response_file")/lease-request.json"
   __dx_worker_launch_payload "$payload_file" "$launch_request_id" "$attempt" || return 1
-  __dx_worker_request POST \
+  __dx_worker_request "$slug" POST \
     "${api_url}/api/v1/workers/${worker_id}/runs/${run_id}/lease" \
     "$response_file" "$payload_file"
   rc=$?
@@ -392,15 +482,15 @@ dx_worker_lease() {
 
 # dx_worker_settle <run_id> <launch_request_id> <attempt> <outcome> [error_class] <response_file>
 dx_worker_settle() {
-  local run_id="$1" launch_request_id="$2" attempt="$3" outcome="$4"
-  local error_class="$5" response_file="$6"
+  local slug="$1" run_id="$2" launch_request_id="$3" attempt="$4" outcome="$5"
+  local error_class="$6" response_file="$7"
   local api_url worker_id payload_file rc
-  api_url="$(dx_worker_config_value "api_url")" || return 1
-  worker_id="$(dx_worker_id)" || return 1
+  api_url="$(dx_worker_api_url "$slug")" || return 1
+  worker_id="$(dx_worker_id "$slug")" || return 1
   payload_file="$(dirname "$response_file")/settle-request.json"
   __dx_worker_launch_payload "$payload_file" "$launch_request_id" "$attempt" \
     "$outcome" "$error_class" || return 1
-  __dx_worker_request POST \
+  __dx_worker_request "$slug" POST \
     "${api_url}/api/v1/workers/${worker_id}/runs/${run_id}/settle" \
     "$response_file" "$payload_file"
   rc=$?
@@ -451,7 +541,8 @@ PY
 # lives, settle after it exits. Never settles on the terminal event alone —
 # `dx run` emits that before uploading its final summary.
 __dx_worker_execute() {
-  local run_id="$1" work_dir="$2" scratch_dir="$3" start_file="$4" dry_run="${5:-0}"
+  local slug="$1" run_id="$2" work_dir="$3" scratch_dir="$4" start_file="$5"
+  local dry_run="${6:-0}"
   local launch_request_id attempt run_token spec_url
   local child_pid child_rc outcome error_class waited response_file
 
@@ -466,7 +557,7 @@ __dx_worker_execute() {
   # this worker until the lease expired.
   response_file="$scratch_dir/lease.json"
 
-  dx_info "Claimed ${run_id} (attempt ${attempt})."
+  dx_info "Claimed ${run_id} for ${slug} (attempt ${attempt})."
 
   # Only the spec URL and the run token cross into the child. The worker
   # credential stays in this process.
@@ -489,7 +580,7 @@ __dx_worker_execute() {
     waited=$((waited + 1))
     if [[ $((waited % DX_WORKER_LEASE_RENEW_SECONDS)) -eq 0 ]]; then
       local lease_code
-      lease_code="$(dx_worker_lease "$run_id" "$launch_request_id" "$attempt" "$response_file")"
+      lease_code="$(dx_worker_lease "$slug" "$run_id" "$launch_request_id" "$attempt" "$response_file")"
       if ! dx_dexcode_http_success "$lease_code"; then
         # A refused renewal means this attempt is no longer ours. Stop
         # renewing; the child is still allowed to finish and settle will say
@@ -515,7 +606,7 @@ __dx_worker_execute() {
   fi
 
   local settle_code
-  settle_code="$(dx_worker_settle "$run_id" "$launch_request_id" "$attempt" \
+  settle_code="$(dx_worker_settle "$slug" "$run_id" "$launch_request_id" "$attempt" \
     "$outcome" "$error_class" "$scratch_dir/settle.json")"
   if ! dx_dexcode_http_success "$settle_code"; then
     dx_error "Could not settle ${run_id} as ${outcome} (HTTP ${settle_code})."
@@ -567,11 +658,17 @@ __dx_worker_wait_for_children() {
 # the app still shows the machine as not responding, because it stops checking
 # in — so this is a courtesy, not the mechanism.
 __dx_worker_mark_offline() {
-  local worker_name
-  worker_name="$(dx_worker_config_value 'worker_name' 2>/dev/null || printf '')"
-  [[ -n "$worker_name" ]] || return 0
-  dx_dexcode_token >/dev/null 2>&1 || return 0
-  dx_worker_register --name "$worker_name" --status offline >/dev/null 2>&1 || true
+  local slug worker_name
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    worker_name="$(__dx_worker_entry_field "$slug" 'worker_name' 2>/dev/null || printf '')"
+    [[ -n "$worker_name" ]] || continue
+    dx_dexcode_token_for "$slug" >/dev/null 2>&1 || continue
+    dx_worker_register --organisation "$slug" --name "$worker_name" \
+      --status offline >/dev/null 2>&1 || true
+  done <<EOF
+$(dx_worker_organisations)
+EOF
 }
 
 # dx_worker_daemon [--once] [--interval <seconds>] [--working-directory <path>]
@@ -592,8 +689,9 @@ Usage:
   dx worker run [--once] [--dry-run] [--interval <seconds>]
                 [--concurrency <n>] [--working-directory <path>]
 
-Polls DexCode for runs assigned to this worker, claims them, and runs each one
-to completion, up to the worker's registered concurrency. --once polls a single
+Polls DexCode for runs assigned to this worker in every organisation it is
+registered with, claims them, and runs each one to completion, up to each
+worker's registered concurrency. --once polls a single
 time and exits. --concurrency asks for fewer than the server allows, never
 more. --dry-run claims and validates a run, then stops the child before the
 lifecycle launches — use it to prove a worker is wired up without doing the
@@ -608,7 +706,9 @@ USAGE
     esac
   done
 
-  if ! dx_worker_token >/dev/null 2>&1; then
+  local slugs
+  slugs="$(dx_worker_organisations)"
+  if [[ -z "$slugs" ]]; then
     dx_error "This machine is not registered as a worker. Run 'dx worker register'."
     return 1
   fi
@@ -633,51 +733,54 @@ USAGE
       break
     fi
 
-    local poll_code
-    poll_code="$(dx_worker_poll "$poll_file")"
+    # Each organisation is polled with its own credential. One being
+    # unreachable, or having revoked this worker, must not stop the others.
+    local slug poll_code
+    while IFS= read -r slug; do
+      [[ -n "$slug" ]] || continue
+      [[ "${DX_WORKER_STOPPING:-0}" -eq 1 ]] && break
 
-    if [[ "$poll_code" == "401" || "$poll_code" == "403" ]]; then
-      # The credential was rotated or the worker disabled. Re-register with the
-      # administrator token; never fall back to it for worker calls.
-      dx_warn "Worker credential rejected (HTTP ${poll_code}); re-registering."
-      if ! dx_worker_register --name "$(dx_worker_config_value 'worker_name')" --rotate; then
-        dx_error "Re-registration failed."
-        rc=1
-        break
+      poll_code="$(dx_worker_poll "$slug" "$poll_file")"
+
+      if [[ "$poll_code" == "401" || "$poll_code" == "403" ]]; then
+        # The credential was rotated or the worker disabled. Re-register with
+        # that organisation's administrator token; never fall back to it for
+        # worker calls.
+        dx_warn "Worker credential for ${slug} rejected (HTTP ${poll_code}); re-registering."
+        if ! dx_worker_register --organisation "$slug" \
+          --name "$(__dx_worker_entry_field "$slug" 'worker_name')" --rotate; then
+          dx_error "Re-registration for ${slug} failed."
+          rc=1
+        fi
+        continue
       fi
-      [[ $once -eq 1 ]] && break
-      continue
-    fi
 
-    if ! dx_dexcode_http_success "$poll_code"; then
-      dx_warn "Worker poll failed (HTTP ${poll_code})."
-      if [[ $once -eq 1 ]]; then
-        rc=1
-        break
+      if ! dx_dexcode_http_success "$poll_code"; then
+        dx_warn "Worker poll for ${slug} failed (HTTP ${poll_code})."
+        [[ $once -eq 1 ]] && rc=1
+        continue
       fi
-      sleep "$(__dx_worker_bounded_interval "${interval:-$DX_WORKER_DEFAULT_POLL_INTERVAL}")"
-      continue
-    fi
 
-    # The server is the authority on how many runs this worker may hold; a
-    # local --concurrency can only ask for fewer.
-    local allowed running slots
-    allowed="$(__dx_worker_json_field "$poll_file" "max_concurrency" 2>/dev/null || printf '1')"
-    case "$allowed" in ''|*[!0-9]*) allowed=1 ;; esac
-    [[ "$allowed" -ge 1 ]] || allowed=1
-    if [[ -n "$concurrency" && "$concurrency" -lt "$allowed" ]]; then
-      allowed="$concurrency"
-    fi
-    running="$(__dx_worker_child_count)"
-    slots=$((allowed - running))
+      # The server is the authority on how many runs this worker may hold; a
+      # local --concurrency can only ask for fewer.
+      local allowed running slots
+      allowed="$(__dx_worker_json_field "$poll_file" "max_concurrency" 2>/dev/null || printf '1')"
+      case "$allowed" in ''|*[!0-9]*) allowed=1 ;; esac
+      [[ "$allowed" -ge 1 ]] || allowed=1
+      if [[ -n "$concurrency" && "$concurrency" -lt "$allowed" ]]; then
+        allowed="$concurrency"
+      fi
+      running="$(__dx_worker_child_count)"
+      slots=$((allowed - running))
 
-    local queued run_id start_code claim_file
-    queued="$(__dx_worker_queued_runs "$poll_file")"
-    if [[ -n "$queued" && $slots -gt 0 ]]; then
+      local queued run_id start_code claim_file
+      queued="$(__dx_worker_queued_runs "$poll_file")"
+      [[ -n "$queued" && $slots -gt 0 ]] || continue
+
       while IFS= read -r run_id; do
         [[ -n "$run_id" ]] || continue
         [[ $slots -gt 0 ]] || break
-        start_code="$(dx_worker_start "$run_id" "$start_file")"
+        start_code="$(dx_worker_start "$slug" "$run_id" "$start_file")"
         if ! dx_dexcode_http_success "$start_code"; then
           # 409 is ordinary: another worker took it first.
           dx_info "Could not claim ${run_id} (HTTP ${start_code})."
@@ -687,13 +790,16 @@ USAGE
         # overwrites the shared start file while this child is still reading it.
         claim_file="${tmp_dir}/start-$(__dx_worker_child_count)-$$.json"
         command cp "$start_file" "$claim_file" 2>/dev/null || continue
-        __dx_worker_execute "$run_id" "$work_dir" "$tmp_dir" "$claim_file" "$dry_run" &
+        __dx_worker_execute "$slug" "$run_id" "$work_dir" "$tmp_dir" \
+          "$claim_file" "$dry_run" &
         DX_WORKER_CHILD_PIDS+=("$!")
         slots=$((slots - 1))
-      done <<EOF
+      done <<RUNS
 $queued
-EOF
-    fi
+RUNS
+    done <<SLUGS
+$slugs
+SLUGS
 
     if [[ $once -eq 1 ]]; then
       break
@@ -703,6 +809,9 @@ EOF
     wait_seconds="$(__dx_worker_json_field "$poll_file" "poll_interval" 2>/dev/null || printf '')"
     [[ -n "$interval" ]] && wait_seconds="$interval"
     sleep "$(__dx_worker_bounded_interval "$wait_seconds")"
+
+    # A registration added or removed while running is picked up next round.
+    slugs="$(dx_worker_organisations)"
   done
 
   # Whether this was --once or a signal, the runs already claimed have to be
@@ -741,7 +850,7 @@ USAGE
     esac
   done
 
-  if ! dx_worker_id >/dev/null 2>&1; then
+  if [[ -z "$(dx_worker_organisations)" ]]; then
     dx_error "This machine is not registered as a worker. Run 'dx worker register' first."
     return 1
   fi
@@ -749,7 +858,8 @@ USAGE
   local dex_dir log_dir worker_name
   dex_dir="${DEX_DIR:-$HOME/work/dex}"
   log_dir="${HOME}/.dex/logs"
-  worker_name="$(dx_worker_config_value 'worker_name' 2>/dev/null || printf 'dex-worker')"
+  worker_name="$(dx_worker_organisations | head -1)"
+  [[ -n "$worker_name" ]] || worker_name="dex-worker"
 
   case "$(uname -s 2>/dev/null || printf 'Linux')" in
     Darwin)
@@ -810,23 +920,26 @@ UNIT
 }
 
 dx_worker_status() {
-  local worker_id worker_name api_url
-  worker_id="$(dx_worker_id 2>/dev/null)" || {
+  local slugs slug worker_id worker_name api_url
+  slugs="$(dx_worker_organisations)"
+  if [[ -z "$slugs" ]]; then
     dx_info "This machine is not registered as a DexCode worker."
     dx_info "Run 'dx worker register' to register it."
     return 0
-  }
-  worker_name="$(dx_worker_config_value 'worker_name' 2>/dev/null || printf 'unknown')"
-  api_url="$(dx_worker_config_value 'api_url' 2>/dev/null || printf 'unknown')"
-
-  dx_info "Worker: ${worker_name}"
-  dx_info "Worker id: ${worker_id}"
-  dx_info "API: ${api_url}"
-  if dx_worker_token >/dev/null 2>&1; then
-    dx_info "Credential: stored"
-  else
-    dx_warn "Credential: missing (run 'dx worker register --rotate')"
   fi
+
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    worker_id="$(dx_worker_id "$slug" 2>/dev/null || printf 'unknown')"
+    worker_name="$(__dx_worker_entry_field "$slug" 'worker_name' 2>/dev/null || printf 'unknown')"
+    api_url="$(dx_worker_api_url "$slug" 2>/dev/null || printf 'unknown')"
+    dx_info "${slug}: ${worker_name} (${worker_id}) at ${api_url}"
+    if ! dx_worker_token "$slug" >/dev/null 2>&1; then
+      dx_warn "  no credential — run 'dx worker register --organisation ${slug} --rotate'"
+    fi
+  done <<EOF
+$slugs
+EOF
   return 0
 }
 
