@@ -54,7 +54,7 @@ dx_run_id_file() { printf '%s/%s.run-id\n' "$DX_STATE_DIR" "$1"; }
 
 dx_run_write_for_session() {
   local session_id="$1" run_id="$2" run_id_file tmp_file
-  [[ -n "$session_id" ]] || return 1
+  dx_session_id_valid "$session_id" || return 1
   dx_run_validate_id "$run_id" || return 1
 
   run_id_file=$(dx_run_id_file "$session_id")
@@ -73,7 +73,7 @@ dx_run_read_for_session() {
     return 0
   fi
 
-  [[ -n "$session_id" ]] || return 1
+  dx_session_id_valid "$session_id" || return 1
   run_id_file=$(dx_run_id_file "$session_id")
   [[ -f "$run_id_file" ]] || return 1
   run_id=$(cat "$run_id_file" 2>/dev/null || true)
@@ -372,12 +372,18 @@ rel = safe_artifact_path(os.environ["DX_RUN_ARTIFACT_PATH"])
 
 manifest = {"schema_version": 1, "artifacts": [], "created_at": utc_now(), "updated_at": utc_now()}
 if manifest_path.exists():
-    with manifest_path.open("r", encoding="utf-8") as fh:
-        loaded = json.load(fh)
-        if isinstance(loaded, dict):
-            manifest.update(loaded)
-            if not isinstance(manifest.get("artifacts"), list):
-                manifest["artifacts"] = []
+    # Start a fresh manifest over a corrupt one: raising here would block every
+    # future registration for the run, while the artifact files themselves are
+    # still on disk.
+    try:
+        with manifest_path.open("r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        loaded = None
+    if isinstance(loaded, dict):
+        manifest.update(loaded)
+        if not isinstance(manifest.get("artifacts"), list):
+            manifest["artifacts"] = []
 
 size_bytes = int(os.environ["DX_RUN_ARTIFACT_SIZE"])
 sha256 = os.environ["DX_RUN_ARTIFACT_SHA"]
@@ -707,10 +713,15 @@ if not isinstance(data, dict):
 
 spec = {}
 if spec_file.exists():
-    with spec_file.open("r", encoding="utf-8") as fh:
-        loaded = json.load(fh)
-        if isinstance(loaded, dict):
-            spec = loaded
+    # A corrupt spec must not stop every later event for the run; the fields it
+    # feeds are contextual, not structural.
+    try:
+        with spec_file.open("r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        loaded = None
+    if isinstance(loaded, dict):
+        spec = loaded
 
 try:
     sequence = int(sequence_file.read_text(encoding="utf-8").strip() or "0")
@@ -931,7 +942,11 @@ except Exception:
         pass
     raise
 PY
-  dx_run_register_artifact_safe "$run_id" "run_summary" "run-summary.md" "Run summary" "{\"status\":\"${run_status}\"}"
+  # The metadata JSON is assembled by hand; only interpolate a status that
+  # cannot break out of the string literal.
+  local status_json="{}"
+  [[ "$run_status" =~ ^[A-Za-z0-9_-]+$ ]] && status_json="{\"status\":\"${run_status}\"}"
+  dx_run_register_artifact_safe "$run_id" "run_summary" "run-summary.md" "Run summary" "$status_json"
 }
 
 dx_run_write_summary_safe() {
