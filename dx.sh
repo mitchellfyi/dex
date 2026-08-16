@@ -328,23 +328,13 @@ __dx_phase_message() {
   fi
 }
 
-# Phase definitions (zsh arrays are 1-indexed, so index 1 = Phase 1).
-# Phase 0 (Setup) bootstraps ticket state before planning begins; its constants
-# live in the DX_PHASE_0_* variables and the __dx_phase_* helpers below, kept
-# out of the 1-indexed arrays because zsh aliases arr[0] to arr[1]. Phases 1-6
-# then run autonomously via `dx`. Phase 6 marks the PR ready, requests the
-# configured reviewers, monitors CI/reviews, and closes the ticket.
-DX_PHASE_NAMES=("Plan" "Implement" "Review" "Verify & Commit" "PR" "Complete")
-
-DX_PHASE_PROMISES=(\
-  "PHASE_1_COMPLETE" \
-  "PHASE_2_COMPLETE" \
-  "PHASE_3_COMPLETE" \
-  "PHASE_4_COMPLETE" \
-  "PHASE_5_COMPLETE" \
-  "DEX_TICKET_COMPLETE" \
-)
-
+# Phase launch messages (zsh array, 1-indexed, so index 1 = Phase 1). Phase 0
+# (Setup) bootstraps ticket state before planning begins; its message lives in
+# DX_PHASE_0_MESSAGE because zsh aliases arr[0] to arr[1]. Phases 1-6 then run
+# autonomously via `dx`. Phase 6 marks the PR ready, requests the configured
+# reviewers, monitors CI/reviews, and closes the ticket. Phase names,
+# completion promises, audit basenames, and min-audit counts come from the
+# shared tables in lib/lifecycle-control.sh via the __dx_phase_* helpers below.
 DX_PHASE_MESSAGES=(\
   "Phase 0 setup (branch rename, push, ticket status → In Progress, assignment) is already complete. Do NOT redo it unless you find it missing.
 
@@ -360,75 +350,29 @@ For headless dx run sessions with workflow.requires_plan_approval=false, the run
   "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, wait DEX_COMPLETE_WAIT_MINUTES per cycle, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
 )
 
-# Audit prompt file basenames (must match prompts/phase-audits/ filenames)
-DX_PHASE_AUDIT_FILES=("1-plan" "2-implement" "3-review-loop" "4-verify" "5-pr" "6-complete")
-
-# Phase 0 (Setup) constants — kept out of the 1-indexed arrays to avoid zsh's
-# arr[0]==arr[1] aliasing. Surfaced through the __dx_phase_* helpers below.
-DX_PHASE_0_NAME="Setup"
-DX_PHASE_0_PROMISE="PHASE_0_COMPLETE"
-DX_PHASE_0_AUDIT_FILE="0-setup"
-DX_PHASE_0_MIN_AUDITS="1"
 DX_PHASE_0_TIMEOUT="0"
 DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (c) rename the lifecycle branch to the tracker's git branch name and push it; PR creation is normally deferred until Phase 5 but remains available when useful; (d) set ticket status to In Progress; (e) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, push the current lifecycle branch and proceed. Phase focus: ticket setup. Planning and implementation normally begin in later phases, but commits, pushes, branches, and PR actions remain available. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
 
+# Thin wrappers over the shared phase tables in lib/lifecycle-control.sh; the
+# __dx_ names stay because dx.sh uses them throughout.
+
 # __dx_phase_name <step>
-# Display name for the given phase number. Centralises Phase 0 (kept out of
-# DX_PHASE_NAMES) without forcing callers to special-case the array lookup.
-__dx_phase_name() {
-  case "$1" in
-    0) printf '%s' "$DX_PHASE_0_NAME" ;;
-    *) printf '%s' "${DX_PHASE_NAMES[$1]:-Unknown}" ;;
-  esac
-}
+__dx_phase_name() { dx_lifecycle_phase_label "$1"; }
 
 # __dx_phase_promise <step>
-__dx_phase_promise() {
-  case "$1" in
-    0) printf '%s' "$DX_PHASE_0_PROMISE" ;;
-    *) printf '%s' "${DX_PHASE_PROMISES[$1]:-DEX_TICKET_COMPLETE}" ;;
-  esac
-}
+__dx_phase_promise() { dx_lifecycle_phase_promise "$1"; }
 
 # __dx_phase_audit_basename <step>
-__dx_phase_audit_basename() {
-  case "$1" in
-    0) printf '%s' "$DX_PHASE_0_AUDIT_FILE" ;;
-    *) printf '%s' "${DX_PHASE_AUDIT_FILES[$1]:-}" ;;
-  esac
-}
+__dx_phase_audit_basename() { dx_lifecycle_phase_audit_basename "$1"; }
 
 # __dx_phase_min_audits <step>
-# Respects DEX_PHASE_<step>_MIN_AUDITS env override; falls back to defaults.
-__dx_phase_min_audits() {
-  # shellcheck disable=SC2034  # used via zsh ${(P)env_name} indirect expansion below
-  local step="$1" env_name value
-  # shellcheck disable=SC2034
-  env_name="DEX_PHASE_${step}_MIN_AUDITS"
-  value="${(P)env_name:-}"
-  if [[ -n "$value" ]]; then
-    printf '%s' "$value"
-    return
-  fi
-  case "$step" in
-    0) printf '%s' "$DX_PHASE_0_MIN_AUDITS" ;;
-    *) printf '%s' "${DX_PHASE_MIN_AUDITS[$step]:-1}" ;;
-  esac
-}
+# Respects the DEX_PHASE_<step>_MIN_AUDITS env override; defaults to 1.
+__dx_phase_min_audits() { dx_lifecycle_phase_min_audits "$1"; }
 
 # Session timeout in seconds — single budget for the entire dx run (all phases).
 # Default: 86400 (24 hours). Set to 0 to disable.
 # Override: DEX_SESSION_TIMEOUT=14400 (4h)
 DX_SESSION_TIMEOUT=86400
-
-# Minimum audit iterations per phase before the Stop hook authorizes completion.
-# Phase 2 (Implement) requires 1 pass (completeness check; deep review is Phase 3).
-# Phase 3 (Review) uses /dxreviewloop; the audit verifies that loop's SUCCESS report.
-# Phase 6 (Complete) wait windows are enforced inside the audit prompt; min 1 here.
-# Other phases require 1 pass (the audit prompt must be followed at least once).
-# Override: DEX_PHASE_2_MIN_AUDITS=5
-# zsh 1-indexed: [1]=Plan, [2]=Implement, [3]=Review, [4]=Verify, [5]=PR, [6]=Complete
-DX_PHASE_MIN_AUDITS=("1" "1" "1" "1" "1" "1")
 
 # Review sub-loop configuration.
 # Lifecycle Phase 3 uses the /dxreviewloop skill in the same Claude session.
@@ -1731,7 +1675,7 @@ __dx_run_phases_inline() {
   local claude_session_name
   claude_session_name=$(__dx_claude_session_name "$workspace_mode" "$wt_name")
 
-  [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
+  [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
   if [[ "${DX_PROVIDER_ENGINE:-}" != "codex-plugin" ]] && ! command -v claude &>/dev/null; then
     dx_error "Claude Code CLI not found in PATH."
     dx_info "Install it from https://docs.anthropic.com/en/docs/claude-code then try again."
@@ -1843,7 +1787,7 @@ __dx_run_phases_inline() {
     DEX_HEADLESS_RUN_SPEC_FILE="${DEX_HEADLESS_RUN_SPEC_FILE:-}" \
     DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="${DEX_HEADLESS_REQUIRES_PLAN_APPROVAL:-}" \
     DEX_LOOP_ACTIVE=1 \
-    DEX_LOOP_PROMISE="${DX_PHASE_PROMISES[$step]}" \
+    DEX_LOOP_PROMISE="$(__dx_phase_promise "$step")" \
     DEX_LOOP_PHASE="$step" \
     DEX_PHASE_HANDOFF=inline \
     DEX_COMPLETE_MAX_CYCLES="${DEX_COMPLETE_MAX_CYCLES:-$DX_COMPLETE_MAX_CYCLES}" \

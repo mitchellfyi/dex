@@ -59,20 +59,6 @@ __dx_complete_phase_active() {
   return 1
 }
 
-__dx_lifecycle_phase_label() {
-  case "$1" in
-    0) printf '%s\n' "Setup" ;;
-    1) printf '%s\n' "Plan" ;;
-    2) printf '%s\n' "Implement" ;;
-    3) printf '%s\n' "Review" ;;
-    4) printf '%s\n' "Verify & Commit" ;;
-    5) printf '%s\n' "PR" ;;
-    6) printf '%s\n' "Complete" ;;
-    7) printf '%s\n' "Lifecycle complete" ;;
-    *) printf '%s\n' "Unknown" ;;
-  esac
-}
-
 __dx_write_human_control() {
   local action="$1" target_phase="$2" prompt_sha256="$3"
   if ! dx_write_lifecycle_control "$SESSION_ID" "$action" "$target_phase" user-prompt \
@@ -87,13 +73,7 @@ __dx_write_human_control() {
 
 __dx_detach_lifecycle_now() {
   local action="${1:-pause}" reason="${2:-manual-${1:-pause}}"
-  dx_write_pause_state "$SESSION_ID" "$reason" "user-prompt" 2>/dev/null || true
-  if [[ -f "$(dx_phase_busy_file "$SESSION_ID" 3)" ]]; then
-    dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-  fi
-  touch "$(dx_paused_file "$SESSION_ID")"
-  rm -f "$(dx_active_file "$SESSION_ID")" \
-    "$(dx_complete_file "$SESSION_ID")" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+  dx_lifecycle_detach "$SESSION_ID" "$reason" "user-prompt"
   dx_write_watch_pause "$SESSION_ID" "human-${action}" 2>/dev/null || true
 }
 
@@ -192,7 +172,7 @@ JSON
       fi
       __dx_write_human_control "$CONTROL_ACTION" "$CONTROL_TARGET" "$CONTROL_HASH" || exit 0
       rm -f "$(dx_paused_file "$SESSION_ID")" "$(dx_complete_file "$SESSION_ID")" 2>/dev/null || true
-      TARGET_LABEL=$(__dx_lifecycle_phase_label "$CONTROL_TARGET")
+      TARGET_LABEL=$(dx_lifecycle_phase_label "$CONTROL_TARGET")
       cat <<JSON
 {"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Direct human lifecycle instruction accepted. The latest human request has priority over Dex phase and audit gates. Dex will move to Phase ${CONTROL_TARGET} (${TARGET_LABEL}) without requiring the skipped phase's readiness, review, or verification markers. Stop once now so the Stop hook can apply the human-authorized transition, then follow the new phase handoff."}}
 JSON

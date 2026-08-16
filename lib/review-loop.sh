@@ -25,7 +25,7 @@ __dx_review_validate_gates() {
 # __dx_review_phase_promise
 # Resolve the Phase 3 promise even when a child shell inherited functions only.
 __dx_review_phase_promise() {
-  echo "${DX_PHASE_PROMISES[3]:-PHASE_3_COMPLETE}"
+  dx_lifecycle_phase_promise 3
 }
 __dx_review_emit_event() {
   local run_id="$1" event_type="$2" severity="$3" message="$4" phase="$5" data

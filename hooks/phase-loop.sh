@@ -35,57 +35,19 @@ if ! dx_session_id_valid "$SESSION_ID"; then
   exit 1
 fi
 
-dx_phase_name() {
-  case "$1" in
-    0) printf '%s\n' "Setup" ;;
-    1) printf '%s\n' "Plan" ;;
-    2) printf '%s\n' "Implement" ;;
-    3) printf '%s\n' "Review" ;;
-    4) printf '%s\n' "Verify & Commit" ;;
-    5) printf '%s\n' "PR" ;;
-    6) printf '%s\n' "Complete" ;;
-    *) printf '%s\n' "Unknown" ;;
-  esac
-}
+# Phase tables come from lib/lifecycle-control.sh; the local names remain
+# because this hook uses them throughout.
+dx_phase_name() { dx_lifecycle_phase_label "$1"; }
 
-dx_phase_promise() {
-  case "$1" in
-    0) printf '%s\n' "PHASE_0_COMPLETE" ;;
-    1) printf '%s\n' "PHASE_1_COMPLETE" ;;
-    2) printf '%s\n' "PHASE_2_COMPLETE" ;;
-    3) printf '%s\n' "PHASE_3_COMPLETE" ;;
-    4) printf '%s\n' "PHASE_4_COMPLETE" ;;
-    5) printf '%s\n' "PHASE_5_COMPLETE" ;;
-    6) printf '%s\n' "DEX_TICKET_COMPLETE" ;;
-    *) printf '%s\n' "DEX_TICKET_COMPLETE" ;;
-  esac
-}
+dx_phase_promise() { dx_lifecycle_phase_promise "$1"; }
 
 dx_phase_audit_file() {
-  local phase="$1" name
-  case "$phase" in
-    0) name="0-setup" ;;
-    1) name="1-plan" ;;
-    2) name="2-implement" ;;
-    3) name="3-review-loop" ;;
-    4) name="4-verify" ;;
-    5) name="5-pr" ;;
-    6) name="6-complete" ;;
-    *) name="" ;;
-  esac
+  local name
+  name=$(dx_lifecycle_phase_audit_basename "$1")
   [[ -n "$name" ]] && printf '%s\n' "$DEX_DIR/prompts/phase-audits/${name}.md"
 }
 
-dx_phase_min_audits() {
-  local phase="$1" env_name value
-  env_name="DEX_PHASE_${phase}_MIN_AUDITS"
-  value="$(printenv "$env_name" 2>/dev/null || true)"
-  if [[ "$value" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$value"
-  else
-    printf '%s\n' "1"
-  fi
-}
+dx_phase_min_audits() { dx_lifecycle_phase_min_audits "$1"; }
 
 dx_reverse_file_lines() {
   local file="$1"
@@ -426,10 +388,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
       dx_lifecycle_control_lock_release "$SESSION_ID" || true
       ;;
     pause|cancel)
-      dx_write_pause_state "$SESSION_ID" "manual-${CONTROL_ACTION}" "$CONTROL_SOURCE" 2>/dev/null || true
-      [[ -f "$(dx_phase_busy_file "$SESSION_ID" 3)" ]] && dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-      touch "$PAUSED_FILE"
-      rm -f "$ACTIVE_FILE" "$COMPLETE_FILE" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+      dx_lifecycle_detach "$SESSION_ID" "manual-${CONTROL_ACTION}" "$CONTROL_SOURCE"
       dx_run_log_append_for_session "$SESSION_ID" "warn" "phase-loop" \
         "Dex lifecycle ${CONTROL_ACTION} accepted from direct human instruction; generation=${CONTROL_GENERATION}" 2>/dev/null || true
       dx_lifecycle_control_lock_release "$SESSION_ID" || true
@@ -442,9 +401,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
       CONTROL_RECOVERY=0
       CONTROL_CAN_APPLY=1
       if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" || "$HANDOFF_MODE" != "inline" ]]; then
-        dx_write_pause_state "$SESSION_ID" "manual-${CONTROL_ACTION}" "$CONTROL_SOURCE" 2>/dev/null || true
-        touch "$PAUSED_FILE"
-        rm -f "$ACTIVE_FILE" "$COMPLETE_FILE" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+        dx_lifecycle_detach "$SESSION_ID" "manual-${CONTROL_ACTION}" "$CONTROL_SOURCE"
         dx_lifecycle_control_lock_release "$SESSION_ID" || true
         printf '{"continue":false,"stopReason":"Dex loop stopped by direct human instruction."}\n'
         exit 0
@@ -476,10 +433,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
           dx_clear_lifecycle_control_unlocked "$SESSION_ID"
           dx_lifecycle_control_lock_release "$SESSION_ID" || true
         elif dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CONTROL_FROM_PHASE" "$CONTROL_TARGET"; then
-          dx_write_pause_state "$SESSION_ID" "review-child-active" "$CONTROL_SOURCE" 2>/dev/null || true
-          dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-          touch "$PAUSED_FILE"
-          rm -f "$ACTIVE_FILE" "$COMPLETE_FILE" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+          dx_lifecycle_detach "$SESSION_ID" "review-child-active" "$CONTROL_SOURCE"
           dx_lifecycle_control_lock_release "$SESSION_ID" || true
           printf '\n%s\n\n' "--- Dex detached by direct human instruction ---" >&2
           printf '%s\n' "The active review child must finish or be interrupted before a phase jump can be applied. Its result will not advance the lifecycle." >&2
@@ -1079,11 +1033,8 @@ if [[ -f "$COMPLETE_FILE" ]]; then
     if [[ -n "$LATE_CONTROL_SNAPSHOT" ]]; then
       LATE_CONTROL_ACTION=$(dx_lifecycle_control_value "$LATE_CONTROL_SNAPSHOT" action)
       if [[ "$LATE_CONTROL_ACTION" == "pause" || "$LATE_CONTROL_ACTION" == "cancel" ]]; then
-        dx_write_pause_state "$SESSION_ID" "manual-${LATE_CONTROL_ACTION}" \
-          "$(dx_lifecycle_control_value "$LATE_CONTROL_SNAPSHOT" source)" 2>/dev/null || true
-        [[ -f "$(dx_phase_busy_file "$SESSION_ID" 3)" ]] && dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-        touch "$PAUSED_FILE"
-        rm -f "$ACTIVE_FILE" "$COMPLETE_FILE" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+        dx_lifecycle_detach "$SESSION_ID" "manual-${LATE_CONTROL_ACTION}" \
+          "$(dx_lifecycle_control_value "$LATE_CONTROL_SNAPSHOT" source)"
         dx_lifecycle_control_lock_release "$SESSION_ID" || true
         printf '{"continue":false,"stopReason":"Dex lifecycle paused by direct human instruction."}\n'
         exit 0
@@ -1097,10 +1048,7 @@ if [[ -f "$COMPLETE_FILE" ]]; then
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" =~ ^[0-9]+$ && "$CURRENT_PHASE" -lt 6 ]]; then
     NEXT_PHASE=$((CURRENT_PHASE + 1))
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$NEXT_PHASE"; then
-      dx_write_pause_state "$SESSION_ID" "review-child-active" "phase-loop" 2>/dev/null || true
-      dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-      touch "$PAUSED_FILE"
-      rm -f "$ACTIVE_FILE" "$COMPLETE_FILE" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+      dx_lifecycle_detach "$SESSION_ID" "review-child-active" "phase-loop"
       dx_lifecycle_control_lock_release "$SESSION_ID" || true
       printf '\n%s\n' "Dex paused before crossing Phase 3 because its review child has not acknowledged quiescence." >&2
       exit 0

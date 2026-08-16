@@ -32,18 +32,7 @@ phase_number() {
   esac
 }
 
-phase_label() {
-  case "$1" in
-    0) printf 'Setup\n' ;;
-    1) printf 'Plan\n' ;;
-    2) printf 'Implement\n' ;;
-    3) printf 'Review\n' ;;
-    4) printf 'Verify & Commit\n' ;;
-    5) printf 'PR\n' ;;
-    6) printf 'Complete\n' ;;
-    7) printf 'Lifecycle complete\n' ;;
-  esac
-}
+phase_label() { dx_lifecycle_phase_label "$1"; }
 
 activate_recorded_phase() {
   if [[ "$CURRENT_PHASE" =~ ^[0-6]$ ]]; then
@@ -124,11 +113,7 @@ case "$COMMAND" in
     ACTION="pause"
     [[ "$COMMAND" == "stop" || "$COMMAND" == "cancel" ]] && ACTION="cancel"
     dx_write_lifecycle_control "$SESSION_ID" "$ACTION" "" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-    dx_write_pause_state "$SESSION_ID" "manual-${ACTION}" "terminal"
-    [[ -f "$(dx_phase_busy_file "$SESSION_ID" 3)" ]] && dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-    touch "$(dx_paused_file "$SESSION_ID")"
-    rm -f "$(dx_active_file "$SESSION_ID")" \
-      "$(dx_complete_file "$SESSION_ID")" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+    dx_lifecycle_detach "$SESSION_ID" "manual-${ACTION}" "terminal"
     dx_done "Dex ${ACTION} accepted for Phase ${CURRENT_PHASE:-unknown}. The workspace and phase state are preserved."
     ;;
   done|complete)
@@ -136,11 +121,7 @@ case "$COMMAND" in
     TARGET_PHASE=$((CURRENT_PHASE + 1))
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$TARGET_PHASE"; then
       dx_write_lifecycle_control "$SESSION_ID" pause "" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-      dx_write_pause_state "$SESSION_ID" "review-child-active" "terminal"
-      dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-      touch "$(dx_paused_file "$SESSION_ID")"
-      rm -f "$(dx_active_file "$SESSION_ID")" \
-        "$(dx_complete_file "$SESSION_ID")" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+      dx_lifecycle_detach "$SESSION_ID" "review-child-active" "terminal"
       dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. Jump after that process ends."
       exit 0
     fi
@@ -155,11 +136,7 @@ case "$COMMAND" in
     fi
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$TARGET_PHASE"; then
       dx_write_lifecycle_control "$SESSION_ID" pause "" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-      dx_write_pause_state "$SESSION_ID" "review-child-active" "terminal"
-      dx_phase_busy_request_cancel "$SESSION_ID" 3 2>/dev/null || true
-      touch "$(dx_paused_file "$SESSION_ID")"
-      rm -f "$(dx_active_file "$SESSION_ID")" \
-        "$(dx_complete_file "$SESSION_ID")" "$(dx_loop_file "$SESSION_ID")" 2>/dev/null || true
+      dx_lifecycle_detach "$SESSION_ID" "review-child-active" "terminal"
       dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. Jump after that process ends."
       exit 0
     fi

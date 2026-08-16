@@ -9,8 +9,81 @@ dx_lifecycle_session_id_valid() {
     return
   fi
   [[ -n "$session_id" && ${#session_id} -le 180 ]] || return 1
-  [[ "$session_id" != "." && "$session_id" != ".." ]]
+  [[ "$session_id" != "." && "$session_id" != ".." ]] || return 1
   [[ "$session_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+# One phase table for every consumer. The Stop hook, the UserPromptSubmit
+# hook, dx control, and dx.sh each carried a private copy that had already
+# drifted (some knew about phase 7, some did not).
+
+# dx_lifecycle_phase_label <phase>
+dx_lifecycle_phase_label() {
+  case "${1:-}" in
+    0) printf '%s\n' "Setup" ;;
+    1) printf '%s\n' "Plan" ;;
+    2) printf '%s\n' "Implement" ;;
+    3) printf '%s\n' "Review" ;;
+    4) printf '%s\n' "Verify & Commit" ;;
+    5) printf '%s\n' "PR" ;;
+    6) printf '%s\n' "Complete" ;;
+    7) printf '%s\n' "Lifecycle complete" ;;
+    *) printf '%s\n' "Unknown" ;;
+  esac
+}
+
+# dx_lifecycle_phase_promise <phase>
+dx_lifecycle_phase_promise() {
+  case "${1:-}" in
+    0) printf '%s\n' "PHASE_0_COMPLETE" ;;
+    1) printf '%s\n' "PHASE_1_COMPLETE" ;;
+    2) printf '%s\n' "PHASE_2_COMPLETE" ;;
+    3) printf '%s\n' "PHASE_3_COMPLETE" ;;
+    4) printf '%s\n' "PHASE_4_COMPLETE" ;;
+    5) printf '%s\n' "PHASE_5_COMPLETE" ;;
+    *) printf '%s\n' "DEX_TICKET_COMPLETE" ;;
+  esac
+}
+
+# dx_lifecycle_phase_audit_basename <phase> — prompts/phase-audits/<name>.md
+dx_lifecycle_phase_audit_basename() {
+  case "${1:-}" in
+    0) printf '%s\n' "0-setup" ;;
+    1) printf '%s\n' "1-plan" ;;
+    2) printf '%s\n' "2-implement" ;;
+    3) printf '%s\n' "3-review-loop" ;;
+    4) printf '%s\n' "4-verify" ;;
+    5) printf '%s\n' "5-pr" ;;
+    6) printf '%s\n' "6-complete" ;;
+    *) printf '%s\n' "" ;;
+  esac
+}
+
+# dx_lifecycle_phase_min_audits <phase>
+# Honors the DEX_PHASE_<n>_MIN_AUDITS override; defaults to one audit pass.
+dx_lifecycle_phase_min_audits() {
+  local phase="${1:-}" value
+  value="$(printenv "DEX_PHASE_${phase}_MIN_AUDITS" 2>/dev/null || true)"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "1"
+  fi
+}
+
+# dx_lifecycle_detach <session_id> <reason> <source>
+# The shared detach sequence: record why, ask a running Phase 3 review child
+# to stop, mark the pause, and drop the activation/completion/iteration
+# markers so the loop cannot re-enter.
+dx_lifecycle_detach() {
+  local session_id="$1" reason="$2" detach_source="$3"
+  dx_write_pause_state "$session_id" "$reason" "$detach_source" 2>/dev/null || true
+  if [[ -f "$(dx_phase_busy_file "$session_id" 3)" ]]; then
+    dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
+  fi
+  touch "$(dx_paused_file "$session_id")"
+  rm -f "$(dx_active_file "$session_id")" \
+    "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null || true
 }
 
 dx_lifecycle_control_file() {
