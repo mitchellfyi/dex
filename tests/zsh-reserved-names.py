@@ -16,6 +16,11 @@ dx_lock_path_age_seconds returned 127 for every input because python3 was no
 longer on its PATH. shellcheck cannot see either one — the names are perfectly
 ordinary in bash — and the test suite runs under bash, so neither could it.
 
+Covered shapes: declarations (local/typeset/declare/export/readonly), plain
+and arithmetic assignments, command-prefix assignment runs (`a=1 b=2 cmd`),
+`for` loop variables, and `read` targets. Known limitation: assignments inside
+a double-quoted command substitution (`x="$(path=/y; ...)"`) are not seen.
+
 `hooks/` and `bin/` are executed with a bash shebang and are deliberately not
 scanned.
 
@@ -26,6 +31,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import shlex
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -48,46 +54,131 @@ RESERVED = {
     "terminfo", "usergroups",
 }
 
-DECL = re.compile(r"^\s*(?:local|typeset|declare)\s+(.*)$")
-# A name being declared, with or without a value: `-r foo=1 bar` -> foo, bar
-DECL_NAME = re.compile(r"(?<![\w-])([A-Za-z_][A-Za-z0-9_]*)(?==|\s|$)")
-NAME_AT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(?!=)")
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+DECL = re.compile(r"^\s*(?:local|typeset|declare|export|readonly)\s+(.*)$")
+NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+NAME_AT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\+|\[[^\]]*\])?=(?!=)")
+# A real heredoc opener. The lookarounds keep `<<<word` here-strings from
+# matching as `<<word`, which used to swallow every following line while the
+# scanner waited for a terminator that never came.
+HEREDOC = re.compile(r"(?<!<)<<-?(?!<)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+FOR_VAR = re.compile(r"(?:^|[;&|{(]|\bdo\b|\bthen\b|\belse\b)\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\bin\b|;|$)")
+ARITH_ASSIGN = re.compile(r"\(\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)")
+READ_CMD = re.compile(
+    r"(?:^|[;&|{(]\s*|\b(?:do|then|else|while|until)\s+)(?:IFS=\S*\s+)?read\s+(.*)$"
+)
+KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "{"}
 
 
-def assignments(line: str) -> list[str]:
-    """Names assigned at the start of a statement, ignoring quoted text.
-
-    `dx_log "...; status=${phase_status}; ..."` assigns nothing — the text is
-    an argument. Only an assignment sitting where a command could start counts.
-    """
-    names: list[str] = []
+def strip_quotes(line: str) -> str:
+    """Blank out single- and double-quoted regions, preserving length."""
+    out: list[str] = []
     in_single = in_double = False
-    statement_start = True
     index = 0
-
     while index < len(line):
         char = line[index]
-        if char == "\\" and not in_single:
+        if char == "\\" and not in_single and index + 1 < len(line):
+            out.append("  ")
             index += 2
             continue
         if char == "'" and not in_double:
             in_single = not in_single
+            out.append(" ")
         elif char == '"' and not in_single:
             in_double = not in_double
-        elif not in_single and not in_double:
-            if char in ";&|(":
-                statement_start = True
-                index += 1
-                continue
-            if not char.isspace():
-                if statement_start:
-                    match = NAME_AT.match(line, index)
-                    if match:
-                        names.append(match.group(1))
-                    statement_start = False
+            out.append(" ")
+        elif in_single or in_double:
+            out.append(" ")
+        else:
+            out.append(char)
         index += 1
+    return "".join(out)
 
+
+def assignments(line: str) -> list[str]:
+    """Names assigned where a command could start, ignoring quoted text.
+
+    `dx_log "...; status=${phase_status}; ..."` assigns nothing — the text is
+    an argument. A run of prefix assignments (`a=1 b=2 cmd`) flags every name
+    in the run, not only the first.
+    """
+    names: list[str] = []
+    stripped = strip_quotes(line)
+    statement_start = True
+    index = 0
+
+    while index < len(stripped):
+        char = stripped[index]
+        if char in ";&|(":
+            statement_start = True
+            index += 1
+            continue
+        if char.isspace():
+            index += 1
+            continue
+        # A word begins here.
+        end = index
+        while end < len(stripped) and not stripped[end].isspace() and stripped[end] not in ";&|(":
+            end += 1
+        word = stripped[index:end]
+        if statement_start:
+            match = NAME_AT.match(word)
+            if match:
+                names.append(match.group(1))
+                # Stay in prefix position: `status=1 path=/x cmd` assigns both.
+                index = end
+                continue
+            if word in KEYWORDS:
+                index = end
+                continue
+            statement_start = False
+        index = end
+
+    return names
+
+
+def declaration_names(remainder: str) -> list[str]:
+    """Names declared by a local/typeset/declare/export/readonly line.
+
+    Quoted values are stripped first so `local msg="the status is fine"` does
+    not flag the word inside the string.
+    """
+    names: list[str] = []
+    for token in strip_quotes(remainder).split():
+        if token.startswith("-"):
+            continue
+        candidate = token.split("=", 1)[0]
+        if NAME.match(candidate):
+            names.append(candidate)
+    return names
+
+
+def read_targets(remainder: str) -> list[str]:
+    # Only the current command's arguments; shlex keeps empty quoted values
+    # ("" as -d's argument) as real tokens where naive quote-stripping lost
+    # them and let the option eat the following name.
+    remainder = re.split(r"[;|&]", remainder, maxsplit=1)[0]
+    try:
+        tokens = shlex.split(remainder)
+    except ValueError:
+        return []
+    names: list[str] = []
+    index = 0
+    value_options = {"-d", "-n", "-N", "-p", "-t", "-u", "-i", "-k"}
+    while index < len(tokens):
+        token = tokens[index]
+        if token in value_options:
+            index += 2
+            continue
+        if token == "-a" and index + 1 < len(tokens):
+            names.append(tokens[index + 1])
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        if NAME.match(token):
+            names.append(token)
+        index += 1
     return names
 
 
@@ -111,14 +202,25 @@ def scan(path: pathlib.Path) -> list[tuple[int, str, str]]:
         if not line or line.startswith("#"):
             continue
 
+        found: list[str] = []
         declaration = DECL.match(raw)
         if declaration:
-            for name in DECL_NAME.findall(declaration.group(1)):
-                if name in RESERVED:
-                    findings.append((number, name, raw.rstrip()))
+            found.extend(declaration_names(declaration.group(1)))
+        found.extend(assignments(raw))
 
-        for name in assignments(raw):
-            if name in RESERVED:
+        stripped = strip_quotes(raw)
+        for match in FOR_VAR.finditer(stripped):
+            found.append(match.group(1))
+        for match in ARITH_ASSIGN.finditer(stripped):
+            found.append(match.group(1))
+        read_match = READ_CMD.search(raw)
+        if read_match:
+            found.extend(read_targets(read_match.group(1)))
+
+        seen: set[str] = set()
+        for name in found:
+            if name in RESERVED and name not in seen:
+                seen.add(name)
                 findings.append((number, name, raw.rstrip()))
 
     return findings
