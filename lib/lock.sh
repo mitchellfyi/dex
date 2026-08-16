@@ -17,6 +17,13 @@
 # The last point is why hand-rolled `rm -f lock && mkdir lock` takeovers are
 # unsafe: two contenders can both observe an expired lock, and the second
 # removes the first's freshly created one, leaving two live writers.
+#
+# Known residual window: recovering a *stale reaper* (a process that died
+# inside the mutex during its own milliseconds-long critical section, observed
+# 30s later) is itself an unserialized rmdir+mkdir, so two waiters arriving in
+# that exact window could both claim it. The steal path below still bounds the
+# damage — a second stealer's rmdir fails once the first has republished an
+# owner — and fully closing it needs a different primitive than mkdir.
 
 # dx_lock_path_age_seconds <path> — portable age in seconds, or empty
 dx_lock_path_age_seconds() {
