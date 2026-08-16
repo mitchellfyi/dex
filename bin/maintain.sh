@@ -40,6 +40,8 @@ usage() {
 Usage: dx maintain [options]
        dx maintain install-workflow [--force]
        dx maintain respond --pr <number> [--event <kind>] [--dry-run]
+         (workflow-internal: --trusted-preflight, --context-dir <dir>,
+          --expected-branch <ref>, --expected-head-sha <sha>)
        dx maintain publish --state-file <path>
        dx maintain publish-response --state-file <path>
        dx maintain resolve-mode --event <event> [--explicit-mode <mode>]
@@ -1208,19 +1210,6 @@ for item in iter_comment_items(allowed_data):
     if item.get("id") is not None:
         allowed_comments[str(item["id"])] = str(item.get("node_id") or "")
 
-def redact(text: str) -> str:
-    text = re.sub(r"(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]+", r"\1[redacted]", text)
-    text = re.sub(r"\b(sk-ant-|sk-|xox[baprs]-|ya29\.)[A-Za-z0-9._-]{8,}", r"\1[redacted]", text)
-    text = re.sub(r"(?i)(authorization:\s*(?:bearer|basic)\s+)[A-Za-z0-9+/=._-]+", r"\1[redacted]", text)
-    text = re.sub(
-        r"(?i)\b((?:[A-Z][A-Z0-9_]{2,}_(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIALS?)|"
-        r"(?:API|AUTH|ACCESS|REFRESH|PRIVATE)_?(?:TOKEN|KEY|SECRET)|"
-        r"token|secret|password))\s*[:=]\s*\S+",
-        r"\1=[redacted]",
-        text,
-    )
-    return text[:4000]
-
 for idx, raw in enumerate(source.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
     if not raw.strip():
         continue
@@ -1539,7 +1528,7 @@ __dx_maintain_resolve_mode() {
 }
 
 __dx_maintain_run_provider() {
-  local command="$1" repo_root="$2" run_id="$3" report_file="$4" invocation="$5" write_success="${6:-0}" budget_minutes="${7:-0}" enforce_clean="${8:-0}" scrub_github_auth="${9:-0}"
+  local command="$1" repo_root="$2" run_id="$3" report_file="$4" invocation="$5" budget_minutes="${6:-0}" enforce_clean="${7:-0}"
   local budget_seconds=0 before_status after_status dirty_detail prompt_payload provider_shell old_pwd
 
   __dx_maintain_write_report_header "$report_file" "$command" "$repo_root" "$run_id" "starting" "$invocation"
@@ -1584,9 +1573,10 @@ shift
 dx_provider_claude "$@"
 '
   set +e
-  if [[ "$scrub_github_auth" == "1" ]]; then
-    MAINTAIN_GH_CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dex-maintain-gh.XXXXXX")
-    dx_run_with_timeout "$budget_seconds" env \
+  # Every provider launch is credential-scrubbed: the session must never see
+  # GitHub write tokens, Actions runtime tokens, or git credential helpers.
+  MAINTAIN_GH_CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dex-maintain-gh.XXXXXX")
+  dx_run_with_timeout "$budget_seconds" env \
       -u GH_TOKEN -u GITHUB_TOKEN -u DX_MAINTAIN_TOKEN \
       -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_OUTPUT -u GITHUB_STEP_SUMMARY -u GITHUB_STATE \
       -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
@@ -1607,15 +1597,6 @@ dx_provider_claude "$@"
       -p "$prompt_payload" \
       ${model_flags[@]+"${model_flags[@]}"} \
       --dangerously-skip-permissions --permission-mode bypassPermissions
-  else
-    dx_run_with_timeout "$budget_seconds" env \
-      DEX_DIR="$DEX_DIR" \
-      DEX_SESSION_ID="$MAINTAIN_PROVIDER_SESSION_ID" \
-      bash -c "$provider_shell" bash "$MAINTAIN_PROVIDER_SESSION_ID" \
-      -p "$prompt_payload" \
-      ${model_flags[@]+"${model_flags[@]}"} \
-      --dangerously-skip-permissions --permission-mode bypassPermissions
-  fi
   local claude_exit=$?
   set -e
   if [[ "$enforce_clean" == "1" ]]; then
@@ -1656,10 +1637,6 @@ dx_provider_claude "$@"
       dx_error "Maintain ${command} exited with code $claude_exit."
     fi
     exit "$claude_exit"
-  fi
-
-  if [[ "$command" == "run" && "$write_success" == "1" ]]; then
-    dx_maintenance_write_last_success "$(dx_maintenance_session_id)" "$run_id" 2>/dev/null || true
   fi
 
   echo ""
@@ -2017,7 +1994,7 @@ exit. Do not push branches or call GitHub write APIs from the provider session.
 "
   fi
 
-  __dx_maintain_run_provider "respond" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "0" "${DEX_MAINTAIN_RESPOND_BUDGET_MINUTES:-30}" "$dry_run" "1"
+  __dx_maintain_run_provider "respond" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "${DEX_MAINTAIN_RESPOND_BUDGET_MINUTES:-30}" "$dry_run"
   if [[ "$response_worktree_temp" -eq 1 ]]; then
     __dx_maintain_cleanup_response_worktree "$repo_root" "$provider_repo_root"
     MAINTAIN_RESPONSE_WORKTREE_REPO=""
@@ -2292,10 +2269,10 @@ EOF
 )
 
   if [[ "$dry_run" -eq 1 ]]; then
-    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "0" "${budget_minutes:-0}" "1" "1"
+    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "${budget_minutes:-0}" "1"
     dx_maintenance_write_last_success "$(dx_maintenance_session_id)" "$run_id" 2>/dev/null || true
   else
-    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "0" "${budget_minutes:-0}" "0" "1"
+    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "${budget_minutes:-0}" "0"
     if [[ "$no_pr" -eq 0 && "$max_prs" -gt 0 ]]; then
       if [[ -n "$defer_publish_file" ]]; then
         __dx_maintain_write_publish_state "$defer_publish_file" "$repo_root" "$provider_repo_root" "$branch_name" "$mode" "$run_id" "$report_file" "$base_sha" "$allowed_categories"
