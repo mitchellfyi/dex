@@ -213,8 +213,6 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
       fi
       DX_CLAUDE_FLAGS=()
     }
-    dx_agent_host() { print -r -- "$TEST_AMBIENT_HOST"; }
-    dx_agent_host_label() { print -r -- "$TEST_AMBIENT_HOST"; }
     dx_session_id() { print -r -- "review-${TEST_PROVIDER}"; }
     dx_provider_write_session_state() { return 0; }
     dx_provider_cleanup_session_state() { return 0; }

@@ -62,8 +62,17 @@ dx_lifecycle_phase_audit_basename() {
 # dx_lifecycle_phase_min_audits <phase>
 # Honors the DEX_PHASE_<n>_MIN_AUDITS override; defaults to one audit pass.
 dx_lifecycle_phase_min_audits() {
-  local phase="${1:-}" value
-  value="$(printenv "DEX_PHASE_${phase}_MIN_AUDITS" 2>/dev/null || true)"
+  local phase="${1:-}" env_name value
+  [[ "$phase" =~ ^[0-9]+$ ]] || phase=""
+  env_name="DEX_PHASE_${phase}_MIN_AUDITS"
+  value="$(printenv "$env_name" 2>/dev/null || true)"
+  if [[ -z "$value" && -n "$phase" ]]; then
+    # An unexported override set in the caller's interactive shell (a plain
+    # DEX_PHASE_2_MIN_AUDITS=5 in .zshrc) is invisible to printenv; read it
+    # indirectly. env_name is validated digits-only above, so the eval cannot
+    # expand anything user-controlled.
+    eval "value=\${${env_name}:-}"
+  fi
   if [[ "$value" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$value"
   else
@@ -74,7 +83,10 @@ dx_lifecycle_phase_min_audits() {
 # dx_lifecycle_detach <session_id> <reason> <source>
 # The shared detach sequence: record why, ask a running Phase 3 review child
 # to stop, mark the pause, and drop the activation/completion/iteration
-# markers so the loop cannot re-enter.
+# markers so the loop cannot re-enter. The child-cancel request applies to
+# every detach deliberately — a detaching session must not leave an orphan
+# review wave editing files — including the one historical site that skipped
+# it.
 dx_lifecycle_detach() {
   local session_id="$1" reason="$2" detach_source="$3"
   dx_write_pause_state "$session_id" "$reason" "$detach_source" 2>/dev/null || true
