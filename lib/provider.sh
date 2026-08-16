@@ -541,42 +541,6 @@ dx_provider_profile_matches_agent() {
   [[ "$profile_agent" == "$agent" ]]
 }
 
-dx_agent_host() {
-  case "${DEX_AGENT_HOST:-${DX_AGENT_HOST:-auto}}" in
-    codex|Codex)
-      printf '%s\n' "codex"
-      return 0
-      ;;
-    claude|Claude)
-      printf '%s\n' "claude"
-      return 0
-      ;;
-    auto|"") ;;
-    *)
-      dx_warn "Unknown DEX_AGENT_HOST '${DEX_AGENT_HOST:-${DX_AGENT_HOST:-}}'; using auto detection."
-      ;;
-  esac
-
-  if [[ -n "${CODEX_THREAD_ID:-}" || "${CODEX_CI:-}" == "1" || -n "${CODEX_MANAGED_BY_NPM:-}" ]]; then
-    printf '%s\n' "codex"
-    return 0
-  fi
-
-  if [[ -n "${CLAUDE_CODE_SESSION_ID:-}" || -n "${CLAUDE_CODE_SSE_PORT:-}" || -n "${CLAUDECODE:-}" ]]; then
-    printf '%s\n' "claude"
-    return 0
-  fi
-
-  printf '%s\n' "claude"
-}
-
-dx_agent_host_label() {
-  case "$(dx_agent_host)" in
-    codex) printf '%s\n' "Codex" ;;
-    *) printf '%s\n' "Claude" ;;
-  esac
-}
-
 dx_provider_codex_read_only_mode_valid() {
   case "${DX_CODEX_READ_ONLY:-0}" in
     0|1) return 0 ;;
@@ -764,6 +728,11 @@ dx_provider_apply() {
   DX_PROVIDER_LAST_PROVIDER_PLAN_MODEL="$DX_PROVIDER_PLAN_MODEL"
   DX_PROVIDER_LAST_PROVIDER_EFFORT="$DX_PROVIDER_EFFORT"
   DX_PROVIDER_LAST_PROVIDER_PLAN_EFFORT="$DX_PROVIDER_PLAN_EFFORT"
+
+  # Deliberately not exported: launched sessions export DX_PROVIDER_ENGINE, so
+  # a dex process spawned inside one would otherwise skip apply and read the
+  # non-exported profile state that only exists in the applying shell.
+  DX_PROVIDER_APPLIED=1
 }
 
 # __dx_provider_env_unset_args prints all env var names that should be stripped
@@ -788,7 +757,7 @@ EOF
 }
 
 dx_provider_claude() {
-  [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
+  [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
   if [[ -n "${DEX_SESSION_ID:-}" ]]; then
     dx_provider_write_session_state "$DEX_SESSION_ID" || return 1
   fi
@@ -828,6 +797,10 @@ dx_provider_claude() {
       if [[ -n "$token" ]]; then
         # BSD env stops option parsing at the first NAME=VALUE operand, so -u
         # flags must precede the assignments already queued in env_args.
+        # The token assignment must ride in env's argv: the strip list -u's
+        # ANTHROPIC_AUTH_TOKEN first, and only an argv assignment lands after
+        # that. The value is ps-visible for the milliseconds before env execs
+        # claude — accepted for a launch that happens once per session.
         [[ -n "${DX_PROVIDER_AUTH_ENV:-}" ]] && env_args=(-u "$DX_PROVIDER_AUTH_ENV" "${env_args[@]}")
         env_args+=(
           ANTHROPIC_BASE_URL="$DX_PROVIDER_BASE_URL"
@@ -927,7 +900,12 @@ dx_provider_codex_prompt_from_claude_args() {
         ;;
       --)
         shift
-        prompt="$*"
+        if [[ -n "$prompt" && $# -gt 0 ]]; then
+          dx_error "Codex provider received more than one task prompt."
+          return 1
+        fi
+        # A bare trailing -- must not erase a prompt that already arrived.
+        [[ $# -eq 0 ]] || prompt="$*"
         break
         ;;
       -*)
@@ -1116,7 +1094,7 @@ dx_provider_codex_wrapper_args() {
 }
 
 dx_provider_claude_diagnostic() {
-  [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
+  [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
   local env_args=()
   local _env_name
   while IFS= read -r _env_name; do
@@ -1178,10 +1156,6 @@ dx_provider_codex_required_flags_check() {
   return $failed
 }
 
-dx_provider_codex_ignore_user_config_check() {
-  dx_provider_codex_required_flags_check
-}
-
 dx_provider_codex_ready_check() {
   dx_provider_codex_read_only_mode_valid || return 1
   if ! command -v codex >/dev/null 2>&1; then
@@ -1206,7 +1180,7 @@ dx_provider_codex_ready_check() {
 }
 
 dx_provider_agent_ready_check() {
-  [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
+  [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
 
   case "$DX_PROVIDER_ENGINE" in
     codex-plugin)
@@ -1227,7 +1201,7 @@ dx_provider_agent_ready_check() {
 }
 
 dx_provider_prompt() {
-  [[ -n "${DX_PROVIDER_ENGINE:-}" ]] || dx_provider_apply || return 1
+  [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
 
   if [[ "$DX_PROVIDER_ENGINE" == "codex-plugin" ]]; then
     cat <<EOF
@@ -1521,9 +1495,14 @@ dx_provider_doctor() {
       dx_warn "Dex Codex skills are not linked; run 'dx install' to refresh skill links"
     fi
 
-    local plugin_status
-    plugin_status=$(dx_provider_claude_diagnostic plugin list 2>/dev/null || true)
-    if printf '%s\n' "$plugin_status" | grep -A4 "codex@openai-codex" | grep -qi "enabled"; then
+    local plugin_status="unknown"
+    # The JSON-based check pins "enabled" to this plugin's own record; the old
+    # text grep matched any neighboring plugin's "enabled" within four lines.
+    # provider.sh is sourced standalone in tests, so guard the cross-module call.
+    if command -v dx_claude_plugin_status >/dev/null 2>&1; then
+      plugin_status=$(dx_claude_plugin_status "codex@openai-codex")
+    fi
+    if [[ "$plugin_status" == "enabled" ]]; then
       dx_ok "OpenAI Codex Claude Code plugin installed"
     else
       if [[ $codex_cli_found -eq 1 ]]; then

@@ -362,8 +362,6 @@ run_case() {
         DX_CLAUDE_FLAGS=()
         return 0
       }
-      dx_agent_host() { print -r -- claude; }
-      dx_agent_host_label() { print -r -- Claude; }
       dx_session_id() { print -r -- "$CASE_DERIVED_SESSION_ID"; }
       dx_provider_write_session_state() { return 0; }
       dx_provider_cleanup_session_state() { return 0; }
@@ -784,8 +782,6 @@ run_concurrent_case() {
           DX_CLAUDE_FLAGS=()
           return 0
         }
-        dx_agent_host() { print -r -- claude; }
-        dx_agent_host_label() { print -r -- Claude; }
         dx_session_id() { print -r -- "$CASE_SESSION_ID"; }
         dx_provider_write_session_state() { return 0; }
         dx_provider_cleanup_session_state() { return 0; }

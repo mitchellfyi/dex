@@ -111,11 +111,12 @@ case "$subcmd" in
           ;;
         --)
           shift
-          if [[ $# -gt 1 ]]; then
+          if [[ $# -gt 1 ]] || [[ -n "$prompt" && $# -gt 0 ]]; then
             dx_error "dxcodex review accepts a single prompt argument."
             exit 2
           fi
-          prompt="${1:-}"
+          # A bare trailing -- keeps a prompt that already arrived.
+          [[ $# -eq 0 ]] || prompt="$1"
           shift $#
           ;;
         -*)

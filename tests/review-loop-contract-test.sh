@@ -43,8 +43,6 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
       fi
       DX_CLAUDE_FLAGS=()
     }
-    dx_agent_host() { print -r -- "$TEST_AGENT_HOST"; }
-    dx_agent_host_label() { print -r -- "$TEST_AGENT_HOST"; }
     dx_session_id() { print -r -- "contract-${TEST_AGENT_HOST}-${TEST_REVIEW_SCENARIO}"; }
     dx_provider_write_session_state() { return 0; }
     dx_provider_cleanup_session_state() { return 0; }

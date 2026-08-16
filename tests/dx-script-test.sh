@@ -71,8 +71,6 @@ zsh -fc '
     DX_PROVIDER_AGENT=claude
     DX_CLAUDE_FLAGS=()
   }
-  dx_agent_host() { print -r -- claude; }
-  dx_agent_host_label() { print -r -- Claude; }
   dx_session_id() { print -r -- review-profile-test; }
   dx_provider_write_session_state() { return 0; }
   dx_provider_cleanup_session_state() { return 0; }
