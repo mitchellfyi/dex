@@ -21,14 +21,18 @@ else
   printf 'SKIP zsh syntax (zsh not installed)\n'
 fi
 
-for path in "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh "$ROOT"/bin/*.sh "$ROOT"/tests/*.sh; do
+for path in "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh "$ROOT"/bin/*.sh \
+  "$ROOT"/tests/*.sh "$ROOT"/research/*.sh "$ROOT"/research/lib/*.sh \
+  "$ROOT"/research/review-loop/*.sh; do
   [[ -f "$path" ]] || continue
   bash -n "$path" || fail "bash -n ${path#"$ROOT"/}"
 done
 
 if command -v shellcheck >/dev/null 2>&1; then
   # Run per-file: shellcheck is much slower on one large invocation.
-  for path in "$ROOT"/dx.sh "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh "$ROOT"/bin/*.sh "$ROOT"/tests/*.sh; do
+  for path in "$ROOT"/dx.sh "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh \
+    "$ROOT"/bin/*.sh "$ROOT"/tests/*.sh "$ROOT"/research/*.sh \
+    "$ROOT"/research/lib/*.sh "$ROOT"/research/review-loop/*.sh; do
     [[ -f "$path" ]] || continue
     shellcheck -S warning "$path" || fail "shellcheck ${path#"$ROOT"/}"
   done

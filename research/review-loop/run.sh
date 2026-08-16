@@ -204,6 +204,7 @@ run_dir="$output_root/${stage}-${run_stamp}-${dex_sha:0:12}-$$"
 mkdir -p "$run_dir/trials"
 chmod 700 "$run_dir" "$run_dir/trials"
 controller_inputs=$(review_eval_archive_controller_inputs "$run_dir")
+# shellcheck disable=SC2034  # repoints the global the sourced lib.sh reads
 REVIEW_EVAL_DIR="$controller_inputs/controller"
 REVIEW_EVAL_SCENARIOS_DIR="$controller_inputs/scenarios"
 export REVIEW_EVAL_SCENARIOS_DIR
