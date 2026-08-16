@@ -40,7 +40,7 @@ GITIGNORE
 
   # Optional: copy the scenario's seed/ directory into the workspace so
   # scenarios can start with pre-existing code. Seed files are folded into the
-  # baseline commit so workspace_diff / workspace_files_changed only report
+  # baseline commit so workspace_files_changed only reports
   # what DX actually changed.
   local seed_dir
   seed_dir="$(scenario_dir "$name")/seed"

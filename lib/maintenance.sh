@@ -94,10 +94,6 @@ except OSError:
 PY
 }
 
-dx_maintenance_state_file() {
-  printf '%s/%s.state\n' "$DX_MAINTENANCE_DIR" "$1"
-}
-
 dx_maintenance_artifact_dir() {
   dx_maintenance_validate_run_id "$1" || return 1
   printf '%s/maintenance/%s\n' "$DX_ARTIFACT_DIR" "$1"

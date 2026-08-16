@@ -388,17 +388,6 @@ dx_lifecycle_control_lock_acquire() {
   return 1
 }
 
-dx_lifecycle_control_lock_owned() {
-  local session_id="$1" lock_dir owner_raw expected
-  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" ]] || return 1
-  [[ -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
-  lock_dir=$(dx_lifecycle_control_lock_dir "$session_id")
-  [[ -f "$lock_dir/owner" && ! -L "$lock_dir/owner" ]] || return 1
-  owner_raw=$(cat "$lock_dir/owner" 2>/dev/null || true)
-  expected="$$"$'\t'"${owner_raw#*$'\t'}"
-  [[ "$owner_raw" == "$expected" && "${owner_raw##*$'\t'}" == "$DX_LIFECYCLE_CONTROL_LOCK_TOKEN" ]]
-}
-
 dx_lifecycle_control_lock_release() {
   local session_id="$1" lock_dir owner_file owner_raw owner_pid owner_token
   dx_lifecycle_session_id_valid "$session_id" || return 1

@@ -54,7 +54,6 @@ DEX_DIR="$ROOT" zsh -fc '
   [[ "$(dx_review_normalize_tier complex)" == "complex" ]]
   [[ "$(dx_review_normalize_tier thorough)" == "complex" ]]
   __dx_review_is_positive_integer 08
-  unset DX_PHASE_PROMISES
   [[ "$(__dx_review_phase_promise)" == "PHASE_3_COMPLETE" ]]
 ' > "$TMP_DIR/review-profile-defaults.out"
 
@@ -109,9 +108,7 @@ zsh -fc '
     print -u2 -- "expected a zero clean-pass requirement to fail"
     return 1
   fi
-  unset DX_REVIEW_PROFILE \
-    DX_REVIEW_LIGHT_CLEAN_PASSES DX_REVIEW_STANDARD_CLEAN_PASSES DX_REVIEW_THOROUGH_CLEAN_PASSES \
-    DX_PHASE_PROMISES DEX_REVIEW_CLEAN_PASSES
+  unset DX_REVIEW_PROFILE DEX_REVIEW_CLEAN_PASSES
   DEX_REVIEW_PROFILE=thorough dxreviewloop
 ' > "$TMP_DIR/review-profile-validation.out" 2>&1
 assert_contains "Invalid clean-pass requirement '0'." "$TMP_DIR/review-profile-validation.out"
