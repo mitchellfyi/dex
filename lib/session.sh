@@ -1140,7 +1140,12 @@ dx_cleanup_session() {
     rmdir "${DX_LOOP_DIR}/${sid}.control-lock" 2>/dev/null || true
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" -o -name "${sid}.phase-*.busy-cancel" -o -name "${sid}.phase-*.busy-quiesced" \) -exec rm -f {} + 2>/dev/null || true
   fi
-  [[ -d "$DX_STATE_DIR" ]] && rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null
+  # `&&` here would make a missing state directory the function's exit status,
+  # which contradicts the promise above and would abort a `set -e` caller.
+  if [[ -d "$DX_STATE_DIR" ]]; then
+    rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null || true
+  fi
+  return 0
 }
 
 __dx_review_credit_session_from_path() {
