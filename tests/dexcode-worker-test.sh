@@ -649,6 +649,32 @@ mixed_first="$(DEXCODE_WORKER_CONFIG_FILE="$mixed_config" dx_worker_token test-o
   || fail "registered slugs must still resolve alongside stale legacy keys"
 assert_eq "$first_token" "$mixed_first" "the map answers for registered slugs, not the legacy keys"
 
+# An empty or null `workers` records no registration. dx_worker_organisations
+# reads it that way and falls back to the pre-map fields, so the credential
+# lookup must agree — otherwise the daemon reports a worker it cannot
+# authenticate and polls forever with an empty HTTP status.
+for shape in '{}' 'null' '"nope"'; do
+  empty_config="$TMP_DIR/worker-empty.json"
+  python3 - "$empty_config" "$shape" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(json.dumps({
+    "workers": json.loads(sys.argv[2]),
+    "worker_id": "88888888-8888-4888-8888-888888888888",
+    "worker_name": "legacy-only",
+    "api_url": "http://legacy.invalid",
+    "worker_token": "dc_worker_" + "y" * 43,
+}, indent=2), encoding="utf-8")
+PY
+  registered_shape="$(DEXCODE_WORKER_CONFIG_FILE="$empty_config" dx_worker_organisations | tr '\n' ' ')"
+  token_shape="$(DEXCODE_WORKER_CONFIG_FILE="$empty_config" dx_worker_token default 2>/dev/null || printf 'none')"
+  if [[ -n "${registered_shape// /}" && "$token_shape" == "none" ]]; then
+    fail "workers=$shape: reported as registered [$registered_shape] but no credential resolves"
+  fi
+done
+
 if [[ $failures -eq 0 ]]; then
   printf 'dexcode-worker-test passed\n'
   exit 0
