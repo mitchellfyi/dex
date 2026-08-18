@@ -3636,11 +3636,15 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
         if (stdin_text is not UNKNOWN_SHELL_STDIN and not stdin_text
                 and xargs_stdin_source_visible(tokens, command_index, command_start)):
             # The line shows where the input comes from and there is nothing in
-            # it at all, so the command runs no times. Note this asks about the
-            # text, not the items: a whitespace-only line yields no item here
-            # but is still an item to xargs, which runs the command once with
-            # the replacement expanded to nothing.
-            return False
+            # it at all, so no value is substituted. That is not the same as
+            # the command not running: GNU xargs runs it once anyway unless
+            # given `-r`, with the replacement left as written. So judge the
+            # command as it stands rather than calling it inert.
+            #
+            # This asks about the text, not the items: a whitespace-only line
+            # yields no item here but is still an item to xargs, which runs the
+            # command once with the replacement expanded to nothing.
+            return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
         if stdin_text is UNKNOWN_SHELL_STDIN or not values:
             if not xargs_placeholder_is_used(command_tokens, replacement):
                 # The values never reach the command, so judge it as written.

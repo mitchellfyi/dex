@@ -380,6 +380,14 @@ assert_destructive_clean "xargs with a visibly empty redirect" \
   'xargs rm -rf ./build < /dev/null'
 assert_destructive_clean "xargs with a visibly empty pipe" \
   'printf "" | xargs rm -rf ./build'
+# Empty input means no value is substituted, not that nothing runs: GNU xargs
+# runs the command once anyway without `-r`, with the replacement as written.
+assert_destructive_blocks "empty input still running a destructive command" \
+  'printf "" | xargs -i rm -rf /'
+assert_destructive_blocks "empty input still running a destructive command with -I" \
+  'printf "" | xargs -I{} rm -rf ~'
+assert_destructive_clean "empty input running a bounded command" \
+  'printf "" | xargs -I{} rm -rf ./build'
 # An unreadable value handed to a shell, interpreter or package runner is a
 # possible command, and the answer is fail-closed. Telling code positions from
 # data ones was tried and kept getting it wrong — a script can `eval` its own
