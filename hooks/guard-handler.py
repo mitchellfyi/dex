@@ -2482,16 +2482,23 @@ def command_substitution_body_tokens(tokens, index):
 
 
 def command_substitution_literal_command_token(tokens, index, variables=None, cwd=None):
+    """Command a substitution resolves to, its end index, and the words after it.
+
+    The shell word-splits the output of a substitution in command position, so
+    `$(echo 'rm -rf /')` runs `rm` with `-rf /`. Returning only the first word
+    dropped exactly the arguments that decide whether the command is
+    destructive, and a bare `rm` is not.
+    """
     body_tokens, end_index = command_substitution_body_tokens(tokens, index)
     if body_tokens is None:
-        return None, None
+        return None, None, []
     output = literal_command_substitution_body_output(body_tokens, variables, cwd)
     if output is UNKNOWN_SHELL_STDIN:
-        return UNKNOWN_SHELL_STDIN, end_index
+        return UNKNOWN_SHELL_STDIN, end_index, []
     output_tokens = shell_tokens(output)
     if not output_tokens:
-        return '', end_index
-    return output_tokens[0], end_index
+        return '', end_index, []
+    return output_tokens[0], end_index, output_tokens[1:]
 
 
 def command_segment_end(tokens, index):
@@ -2501,12 +2508,15 @@ def command_segment_end(tokens, index):
 
 
 def command_substitution_resolved_invocation(tokens, index, variables=None, cwd=None):
-    command_token, end_index = command_substitution_literal_command_token(tokens, index, variables, cwd)
+    command_token, end_index, output_args = command_substitution_literal_command_token(
+        tokens, index, variables, cwd)
     if end_index is None:
         return None
 
     segment_end = command_segment_end(tokens, end_index + 1)
-    args = tokens[end_index + 1:segment_end]
+    # The substitution's own trailing words come first: they are closer to the
+    # command than anything written after the substitution on the line.
+    args = output_args + tokens[end_index + 1:segment_end]
     if command_token is UNKNOWN_SHELL_STDIN:
         return UNKNOWN_SHELL_STDIN, args, end_index
     if not command_token:

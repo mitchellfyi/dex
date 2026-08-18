@@ -1605,16 +1605,22 @@ def command_substitution_body_parts(parts, index):
 
 
 def command_substitution_literal_command_token(parts, index, cwd, variables=None):
+    """Command a substitution resolves to, its end index, and the words after it.
+
+    The shell word-splits the output of a substitution in command position, so
+    `$(echo 'git commit -m x')` runs `git` with `commit -m x`. Keeping only the
+    first word dropped the subcommand this parser exists to find.
+    """
     body_parts, end_index = command_substitution_body_parts(parts, index)
     if body_parts is None:
-        return None, None
+        return None, None, []
     output = literal_command_substitution_body_output(body_parts, cwd, variables)
     if output is UNKNOWN_SHELL_STDIN:
-        return UNKNOWN_SHELL_STDIN, end_index
+        return UNKNOWN_SHELL_STDIN, end_index, []
     output_parts = tokens(output)
     if not output_parts:
-        return '', end_index
-    return output_parts[0], end_index
+        return '', end_index, []
+    return output_parts[0], end_index, output_parts[1:]
 
 
 def command_segment_end(parts, index):
@@ -1624,11 +1630,14 @@ def command_segment_end(parts, index):
 
 
 def command_substitution_resolved_invocation(parts, index, cwd, variables=None):
-    command_token, end_index = command_substitution_literal_command_token(parts, index, cwd, variables)
+    command_token, end_index, output_args = command_substitution_literal_command_token(
+        parts, index, cwd, variables)
     if end_index is None:
         return None
     segment_end = command_segment_end(parts, end_index + 1)
-    args = parts[end_index + 1:segment_end]
+    # The substitution's own trailing words come first: they are closer to the
+    # command than anything written after the substitution on the line.
+    args = output_args + parts[end_index + 1:segment_end]
     if command_token is UNKNOWN_SHELL_STDIN:
         return UNKNOWN_SHELL_STDIN, args, end_index
     if not command_token:

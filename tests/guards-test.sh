@@ -206,10 +206,29 @@ assert_destructive_blocks "Node process wrapper" \
   'node -e '\''require("child_process").execSync("rm -rf /")'\'''
 assert_destructive_blocks "Perl process wrapper" \
   'perl -e '\''system("rm -rf /")'\'''
+# The shell word-splits the output of a substitution in command position, so
+# these run `rm` with `-rf /`. Only the first word used to be examined, which
+# left a bare `rm` — not destructive on its own.
+assert_destructive_blocks "substitution resolving to a destructive command" \
+  '$(printf '\''%s'\'' '\''rm -rf /'\'')'
+assert_destructive_blocks "echo substitution resolving to a destructive command" \
+  '$(echo '\''rm -rf /'\'')'
+assert_destructive_blocks "backtick substitution resolving to a destructive command" \
+  '`echo '\''rm -rf /'\''`'
+assert_destructive_blocks "substitution supplying only the command and flags" \
+  '$(printf '\''%s'\'' '\''rm -rf'\'') /'
 assert_destructive_clean "dd to a regular file" \
   'dd if=/dev/zero of=./disk-image.bin bs=1024 count=1'
 assert_destructive_clean "dd to null" \
   'dd if=/dev/zero of=/dev/null bs=1024 count=1'
+# A substitution in command position is ordinary tooling; resolving its output
+# must not make these look destructive.
+assert_destructive_clean "substitution naming an interpreter" \
+  '$(command -v python3) -c '\''print(1)'\'''
+assert_destructive_clean "substitution resolving to a bounded removal" \
+  '$(echo rm) -rf ./build'
+assert_destructive_clean "substitution used as a path prefix" \
+  '$(git rev-parse --show-toplevel)/tests/check.sh'
 
 # --- hardcoded-secret remediation regressions ---
 assert_secret_warns "literal secret remains warned" \
