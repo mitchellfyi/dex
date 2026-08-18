@@ -417,6 +417,18 @@ assert_destructive_blocks "xargs -I{} preloading the value" \
   'xargs -I{} node -r {} app.js'
 assert_destructive_clean "xargs -I{} passing a value after the program" \
   'xargs -I{} python3 tool.py -e {}'
+# With a replacement, xargs reads one item per line, not per blank-separated
+# word. Splitting on whitespace turned a readable line carrying a whole command
+# into a handful of harmless words, so the one case where the values are known
+# and it matters saw nothing.
+assert_destructive_blocks "a readable value the script evaluates" \
+  'printf "rm -rf /\n" | xargs -I{} bash -c '\''eval "$1"'\'' bash {}'
+assert_destructive_blocks "a readable value used as the program" \
+  'printf "rm -rf /\n" | xargs -I{} sh {}'
+assert_destructive_clean "a readable value used as a filename" \
+  'printf "a.txt\n" | xargs -I{} python3 process.py {}'
+assert_destructive_clean "a readable value completing a bounded path" \
+  'echo build | xargs -I{} rm -rf ./{}'
 assert_destructive_clean "xargs -I{} passing a value to a text tool" \
   'xargs -I{} awk '\''{print}'\'' {}'
 # Without a replacement the values are appended, so they are the targets.

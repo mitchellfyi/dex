@@ -1873,12 +1873,20 @@ def xargs_uses_null_delimiter(tokens, command_index):
     return False
 
 
-def xargs_stdin_tokens(stdin_text, null_delimited=False):
+def xargs_stdin_tokens(stdin_text, null_delimited=False, by_line=False):
+    """Input items, split the way xargs itself would.
+
+    `by_line` is what a replacement option asks for: with `-I`, blanks stop
+    separating items and each line is one item. Splitting on whitespace there
+    turned a line like a whole command into a handful of harmless words.
+    """
     if not stdin_text:
         return []
     if null_delimited:
         values = [value for value in stdin_text.split('\0') if value]
         return values
+    if by_line:
+        return [line for line in stdin_text.splitlines() if line.strip()]
     try:
         return shlex.split(stdin_text)
     except ValueError:
@@ -3657,7 +3665,8 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
     null_delimited = xargs_uses_null_delimiter(tokens, command_index)
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
-        values = [] if stdin_text is UNKNOWN_SHELL_STDIN else xargs_stdin_tokens(stdin_text, null_delimited)
+        values = [] if stdin_text is UNKNOWN_SHELL_STDIN else xargs_stdin_tokens(
+            stdin_text, null_delimited, by_line=True)
         # No values visible on the line is not the same as no values: `xargs`
         # without a pipe reads the terminal, and every line typed there runs
         # the command. Judging it as written is what the unreadable case
@@ -3682,7 +3691,14 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
             if xargs_unbounded_removal(command_tokens):
                 return True
             return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
+        # Where the value lands in code, it has to be read as a command in its
+        # own right. Substituted in and re-scanned it is only ever an argument,
+        # so a readable `rm -rf /` arriving at `sh -c 'eval "$1"' sh {}` looked
+        # harmless — the one case where the values are known and it mattered.
+        substitutes_into_code = xargs_placeholder_is_code(command_tokens, replacement)
         for value in values:
+            if substitutes_into_code and has_destructive_command(value, depth + 1):
+                return True
             replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
             if replaced_tokens is UNKNOWN_SHELL_STDIN:
                 return True
