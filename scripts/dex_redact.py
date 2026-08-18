@@ -17,15 +17,23 @@ from datetime import datetime, timezone
 
 SECRET_PATTERNS = [
     re.compile(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+"),
+    # The optional quote before the separator matters: an API error body logged
+    # as a message arrives as `{"access_token": "…"}`, and without it the key's
+    # closing quote ended the match before the colon.
     re.compile(
         r"(?i)(\b(?!authorization\b)[A-Z0-9_]*"
-        r"(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*\s*[=:]\s*)"
+        r"(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|AUTH)[A-Z0-9_]*[\"']?\s*[=:]\s*)"
         r"([\"']?)[^\"'\s]+"
     ),
     re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+    # Dex's own three credential kinds. These are the tokens most likely to
+    # appear in Dex's own logs, and a bare one carries no key name to anchor
+    # the pattern above: dc_live_ administers, dc_worker_ runs the daemon's
+    # control loop, dc_run_ is handed to a single child.
+    re.compile(r"\bdc_(?:live|worker|run)_[A-Za-z0-9_-]{8,}\b"),
 ]
 SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
 SECRET_KEY_RE = re.compile(r"(?i)(token|secret|password|passwd|api[_-]?key|credential)")

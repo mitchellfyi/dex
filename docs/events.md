@@ -144,11 +144,16 @@ when provider analysis runs.
 
 Dex applies basic redaction before writing to logs:
 
-- token, secret, password, auth, and API-key assignments
+- token, secret, password, auth, and API-key assignments, including the
+  `{"access_token": "…"}` form an API error body arrives in
 - common GitHub, OpenAI, Slack, and bearer/basic auth token forms
+- Dex's own `dc_live_`, `dc_worker_`, and `dc_run_` credentials, which need no
+  surrounding key name to be recognized
 
-This is a guardrail, not a full secret scanner. Logs stay local and must not be
-committed to the product repo.
+This is a guardrail, not a full secret scanner. Two shapes it will not catch: a
+credential containing a space, and a bare high-entropy string with no key,
+prefix, or header to anchor on. Logs stay local and must not be committed to the
+product repo.
 
 ## Artifacts
 

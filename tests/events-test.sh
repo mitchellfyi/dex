@@ -49,13 +49,15 @@ assert_file "$(dx_run_artifact_manifest_file "$run_id")"
 dx_run_maybe_emit_started "$run_id" "Test run started" '{"command":"test"}'
 dx_event_maybe_emit_phase_started "$run_id" "1" "Plan" "test"
 dx_event_emit "$run_id" "plan.created" "info" "Plan created" "1" '{"items":2}'
-dx_event_emit "$run_id" "phase.completed" "info" "Phase 1 completed with Authorization: Bearer ghp_eventmessage1234567890" "1" '{"duration_s":3,"iterations":1,"token":"event-token-secret","tokens":["list-secret-value"],"credentials":{"value":"nested-secret-value"},"details":{"remote":"https://token-user:event-secret-token@github.com/example/private.git","auth_header":"Authorization: Basic abcdefghijklmnop"}}'
+dx_event_emit "$run_id" "phase.completed" "info" "Phase 1 completed with Authorization: Bearer ghp_eventmessage1234567890" "1" '{"duration_s":3,"iterations":1,"token":"event-token-secret","tokens":["list-secret-value"],"credentials":{"value":"nested-secret-value"},"note":"registered with dc_live_notekeynotekeynotekeynotekeynotekeynote","details":{"remote":"https://token-user:event-secret-token@github.com/example/private.git","auth_header":"Authorization: Basic abcdefghijklmnop"}}'
 dx_event_emit "$run_id" "run.completed" "info" "Run completed" "1" '{"total_input_tokens":1200,"total_output_tokens":340,"total_cache_read_tokens":5600,"total_cache_write_tokens":78,"estimated_cost_cents":91,"access_token":"secret-token-value"}'
 artifact_file="$(dx_run_artifact_file "$run_id" "reports/test-output.txt")"
 mkdir -p "$(dirname "$artifact_file")"
 printf 'test output\n' > "$artifact_file"
 dx_run_register_artifact "$run_id" "test_output" "reports/test-output.txt" "Test output" '{"command":"test"}'
-dx_run_log_append "$run_id" "info" "test" "Saved token=supersecret, Authorization: Basic abcdefghijklmnop, https://token-user:super-secret-token@github.com/example/private.git, and sk-12345678901234567890"
+# The trailing two shapes carry no key name the pattern can anchor to: a bare
+# Dex credential, and an API error body logged verbatim as a message.
+dx_run_log_append "$run_id" "info" "test" 'Saved token=supersecret, Authorization: Basic abcdefghijklmnop, https://token-user:super-secret-token@github.com/example/private.git, and sk-12345678901234567890, worker dc_worker_logtokenlogtokenlogtokenlogtokenlogtokenlog, run dc_run_runtokenruntokenruntokenruntokenruntokenrun, body {"access_token": "jsonbodysecretvalue"}'
 printf 'provider github_pat_12345678901234567890 secret=plain\n' | dx_run_log_tee "$run_id" "provider" > "$TMP_DIR/tee-output.txt"
 dx_run_write_summary "$run_id" "completed" "events test completed with https://token-user:super-secret-token@github.com/example/private.git and Authorization: Bearer ghp_12345678901234567890"
 
@@ -130,6 +132,8 @@ assert "nested-secret-value" not in json.dumps(events)
 assert "event-secret-token" not in json.dumps(events)
 assert "secret-token-value" not in json.dumps(events)
 assert "ghp_eventmessage1234567890" not in json.dumps(events)
+assert events[3]["data"]["note"] == "registered with [REDACTED]"
+assert "dc_live_" not in json.dumps(events)
 assert events[5]["data"]["path"] == "reports/test-output.txt"
 assert events[6]["data"]["path"] == "run-summary.md"
 
@@ -160,6 +164,14 @@ assert "https://[REDACTED]@github.com/example/private.git" in log_text
 assert "supersecret" not in log_text
 assert "abcdefg" not in log_text
 assert "github_pat_12345678901234567890" not in log_text
+# Dex's own credentials, with no key name to anchor on.
+assert "dc_worker_" not in log_text
+assert "dc_run_" not in log_text
+assert "logtokenlogtoken" not in log_text
+assert "runtokenruntoken" not in log_text
+# A JSON body logged as free text: the key's closing quote must not end the match.
+assert '"access_token": "[REDACTED]"' in log_text
+assert "jsonbodysecretvalue" not in log_text
 assert "sk-12345678901234567890" not in log_text
 
 summary_artifact_text = (run_dir / "artifacts" / "run-summary.md").read_text(encoding="utf-8")
