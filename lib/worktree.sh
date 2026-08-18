@@ -48,8 +48,24 @@ dx_wt_is_registered() {
 
 # dx_wt_remove <wt_dir>
 # Force-remove a worktree. Tries git worktree remove first, falls back to rm -rf.
+#
+# The fallback runs whenever git declines, including when the target is not a
+# linked worktree at all — so the target has to be checked here rather than
+# trusted. In-place mode keeps the repository root in a variable named much
+# like this argument, and `rm -rf` on a repository root is not recoverable.
+# The worktrees directory itself is refused too: only a directory inside it.
 dx_wt_remove() {
-  git worktree remove "$1" --force 2>/dev/null || rm -rf "$1"
+  local wt_dir="${1:-}"
+  case "$wt_dir" in
+    *"/../"* | *"/..") wt_dir="" ;;
+    */.dex/worktrees/?* | .dex/worktrees/?*) ;;
+    *) wt_dir="" ;;
+  esac
+  if [[ -z "$wt_dir" ]]; then
+    dx_error "Refusing to remove '${1:-}': not a path inside .dex/worktrees/"
+    return 1
+  fi
+  git worktree remove "$wt_dir" --force 2>/dev/null || rm -rf "$wt_dir"
 }
 
 # dx_cleanup_last_session <wt_name>

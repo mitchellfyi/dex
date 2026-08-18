@@ -62,6 +62,22 @@ dx_link_claude_to_worktree "$repo" "$wt"
 [[ "$(grep -Fxc ".claude" "$exclude_file")" -eq 1 ]]
 [[ "$(grep -Fxc ".claude/*" "$exclude_file")" -eq 1 ]]
 
+# dx_wt_remove falls back to `rm -rf`, so it must refuse anything that is not a
+# directory inside .dex/worktrees — a repository root reaching it is unrecoverable.
+stray="$repo/.dex/worktrees/stray"
+mkdir -p "$stray/inner"
+dx_wt_remove "$stray"
+[[ ! -e "$stray" ]]
+
+mkdir -p "$repo/keepme"
+for refused in "$repo" "$repo/.dex/worktrees" "$repo/keepme" "$repo/.dex/worktrees/../.." ""; do
+  if dx_wt_remove "$refused" >/dev/null 2>&1; then
+    printf 'dx_wt_remove accepted a target outside .dex/worktrees: %s\n' "$refused" >&2
+    exit 1
+  fi
+done
+[[ -d "$repo/.git" && -d "$repo/keepme" && -d "$repo/.dex/worktrees" ]]
+
 old_dir="$TMP_DIR/old-state"
 mkdir -p "$old_dir"
 touch "$old_dir/one.state" "$old_dir/two.complete"
