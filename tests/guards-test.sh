@@ -388,6 +388,16 @@ assert_destructive_blocks "empty input still running a destructive command with 
   'printf "" | xargs -I{} rm -rf ~'
 assert_destructive_clean "empty input running a bounded command" \
   'printf "" | xargs -I{} rm -rf ./build'
+# xargs strips an item's surrounding blanks before substituting it, so an
+# indented list still names its targets — ` /` is `/`.
+assert_destructive_blocks "an indented input item" \
+  'printf " /\n" | xargs -I{} rm -rf {}'
+assert_destructive_blocks "an indented list among ordinary items" \
+  'printf "  a\n  /\n" | xargs -I{} rm -rf {}'
+assert_destructive_blocks "an item with a trailing blank" \
+  'printf "/ \n" | xargs -I{} rm -rf {}'
+assert_destructive_clean "an indented ordinary item" \
+  'printf " build\n" | xargs -I{} rm -rf ./{}'
 # An unreadable value handed to a shell, interpreter or package runner is a
 # possible command, and the answer is fail-closed. Telling code positions from
 # data ones was tried and kept getting it wrong — a script can `eval` its own

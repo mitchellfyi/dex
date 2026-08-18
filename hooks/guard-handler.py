@@ -1889,7 +1889,12 @@ def xargs_stdin_tokens(stdin_text, null_delimited=False, by_line=False):
         values = [value for value in stdin_text.split('\0') if value]
         return values
     if by_line:
-        return [line for line in stdin_text.splitlines() if line.strip()]
+        # xargs strips an item's leading and trailing blanks before
+        # substituting it, so a line of `  /` is the target `/`. Keeping the
+        # blanks made the value stop matching anything once substitution began
+        # inserting it whole — an indented list is enough to hide a target.
+        stripped = (line.strip() for line in stdin_text.splitlines())
+        return [line for line in stripped if line]
     try:
         return shlex.split(stdin_text)
     except ValueError:
@@ -1938,8 +1943,12 @@ def xargs_stdin_source_visible(tokens, command_index, command_start):
     """
     if command_start >= 1 and tokens[command_start - 1] == '|':
         return True
+    # `{` and `}` are separators to the tokenizer but arguments to xargs, so a
+    # bare `{}` would end the scan before it reached the redirect behind it —
+    # the same exclusion both callers of this function already make.
+    xargs_separators = SHELL_SEPARATORS - {'{', '}'}
     index = command_index + 1
-    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+    while index < len(tokens) and tokens[index] not in xargs_separators:
         if tokens[index] in {'<', '<<<'}:
             return True
         index += 1
