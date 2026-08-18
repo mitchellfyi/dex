@@ -37,10 +37,11 @@ bin/                 CLI scripts: install, uninstall, init, uninit, config, cont
 docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (8 rules)
-lib/                 Shared shell libraries (23 modules, including the shared lock,
-                     evidence, and controller modules)
+lib/                 Shared shell libraries (common.sh sources the other 23,
+                     including the lock, review, and controller modules)
 prompts/             Prompt templates for skills/agents
-  phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
+  phase-audits/      Phase-specific audit prompts (0-6, two Phase 3 variants,
+                     plus prompt-loop)
 research/            DX research and the isolated review-loop evaluation harness
 skills/              Lifecycle skills (18 total, linked into ~/.claude/skills/)
 .dex/                Per-project config (this directory)

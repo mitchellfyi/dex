@@ -322,7 +322,7 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 
 ### Modularizing large scripts
 
-`dx.sh` is the largest file (~5300 lines). When adding shared or self-contained logic, prefer extracting it into `lib/` modules. The pattern:
+`dx.sh` is the largest file (~3700 lines), ahead of `bin/maintain.sh` and `lib/review.sh` at roughly 2400 each. When adding shared or self-contained logic, prefer extracting it into `lib/` modules. The pattern:
 
 **When to extract:**
 - Same logic appears in 2+ functions → extract to `lib/`
