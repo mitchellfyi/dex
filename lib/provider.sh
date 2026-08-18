@@ -261,22 +261,6 @@ dx_provider_repo_default_profile() {
   printf '%s\n' "$default_profile"
 }
 
-dx_provider_default_profile() {
-  local default_profile
-  dx_provider_validate_config_files || return 1
-  default_profile=$(dx_provider_repo_default_profile 2>/dev/null || true)
-  if [[ -n "$default_profile" ]]; then
-    printf '%s\n' "$default_profile"
-    return 0
-  fi
-  default_profile=$(__dx_provider_json_default "$DX_PROVIDER_GLOBAL_CONFIG" 2>/dev/null || true)
-  if [[ -n "$default_profile" ]]; then
-    printf '%s\n' "$default_profile"
-    return 0
-  fi
-  printf '%s\n' "claude-subscription"
-}
-
 dx_provider_resolve_source() {
   local profile="$1" preferred="${2:-auto}" repo_config
   repo_config=$(dx_provider_repo_config 2>/dev/null || true)
@@ -1097,6 +1081,10 @@ dx_provider_codex_wrapper_args() {
   fi
 }
 
+# dx_provider_claude_diagnostic [claude args…]
+# Run `claude` under exactly the environment Dex would give it. Nothing calls
+# this and nothing should: it exists to be typed by hand when the question is
+# "what does the provider environment actually look like from Claude's side".
 dx_provider_claude_diagnostic() {
   [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
   local env_args=()

@@ -25,14 +25,6 @@ dx_count_claude_dex_skill_links() {
   __dx_count_dex_skill_links "$1"
 }
 
-dx_claude_dex_skill_links_complete() {
-  local skills_dir="$1"
-  local expected installed
-  expected=$(dx_count_dex_skills)
-  installed=$(dx_count_claude_dex_skill_links "$skills_dir")
-  [[ "$expected" -gt 0 && "$installed" -eq "$expected" ]]
-}
-
 dx_install_claude_dex_link() {
   local kind="$1" target="$2"
   local claude_dir link current

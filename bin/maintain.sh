@@ -1257,21 +1257,6 @@ PY
   rm -rf "$tmp_dir"
 }
 
-__dx_maintain_checkout_pr_head() {
-  local pr_num="$1" repo_root="$2" expected_branch="$3" expected_sha="$4" fetched_sha
-  [[ -n "$expected_branch" && -n "$expected_sha" ]] || return 1
-  fetched_sha=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")
-  if [[ "$fetched_sha" != "$expected_sha" ]]; then
-    __dx_maintain_fetch_branch "$repo_root" "$expected_branch"
-    fetched_sha=$(git -C "$repo_root" rev-parse FETCH_HEAD)
-    if [[ "$fetched_sha" != "$expected_sha" ]]; then
-      dx_error "PR #${pr_num} moved during checkout; expected ${expected_sha}, got ${fetched_sha}."
-      return 1
-    fi
-  fi
-  git -C "$repo_root" checkout -B "$expected_branch" "$expected_sha" >/dev/null
-}
-
 __dx_maintain_verify_pr_head() {
   local pr_num="$1" expected_sha="$2" report_file="$3" repo current_sha
   [[ -n "$expected_sha" ]] || return 0
