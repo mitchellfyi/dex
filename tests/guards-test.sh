@@ -415,6 +415,25 @@ assert_destructive_blocks "an interpreter reading behind a bare placeholder" \
   'xargs -I{} python3 -c '\''{}'\'' <<< '\''rm -rf /'\'''
 assert_destructive_blocks "an unreadable source behind a bare placeholder" \
   'xargs -I{} sh -c '\''{}'\'' < /nonexistent-xyz'
+# A replacement normally makes each line one item, but `-n` overrides that and
+# blanks separate again — `echo 'safe /' | xargs -n1 -I{}` runs twice, the
+# second time with `/`. Reading that line as one item hides the target.
+assert_destructive_blocks "-n beside -I still splitting on blanks" \
+  'echo "safe /" | xargs -n1 -I{} rm -rf {}'
+assert_destructive_blocks "--max-args beside -I" \
+  'echo "a b /" | xargs --max-args=1 -I{} rm -rf {}'
+assert_destructive_blocks "-n written after -I" \
+  'printf "safe /\n" | xargs -I{} -n 1 rm -rf {}'
+assert_destructive_clean "-n beside -I with ordinary items" \
+  'printf "a b\n" | xargs -n1 -I{} du -k {}'
+# Resolution gives up on a nested substitution ladder from the second level, so
+# the nesting cap is the only thing standing in the way of one that ends in a
+# destructive command.
+assert_destructive_blocks "a nested substitution ladder" \
+  '$(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo rm -rf /)))))))))'
+# A payload whose command starts late in an argument vector is still modelled.
+assert_destructive_blocks "a command starting mid-argument-vector" \
+  'python3 -c "import subprocess; subprocess.run([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,'\''rm'\'','\''-rf'\'','\''/'\''])"'
 # An unreadable value handed to a shell, interpreter or package runner is a
 # possible command, and the answer is fail-closed. Telling code positions from
 # data ones was tried and kept getting it wrong — a script can `eval` its own

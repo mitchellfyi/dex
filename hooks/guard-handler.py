@@ -1289,7 +1289,16 @@ def execution_call_regions(code):
 # (["helper", "rm", "-rf", "/"]). Uncapped, a call with many string arguments
 # expanded into quadratic re-parsed content, which let an ordinary
 # `python3 <file>` run past the evaluation budget and be denied.
-CODE_FRAGMENT_SUFFIX_JOINS = 16
+#
+# The cap is where a real command stops being modelled, so it is a coverage
+# limit as much as a budget one. Measured on a file of 640 launch calls: 16
+# costs 0.59s and misses a verb past argv index 16; 32 costs 0.97s and reaches
+# index 24; 64 costs 1.74s and reaches past 32; 128 costs 2.06s, which trips
+# the 2s budget and denies the file outright. 32 is the most coverage that
+# leaves real headroom — the budget is wall clock, so a loaded machine eats
+# what is left. Reaching further wants a cheaper model than joining every
+# suffix: only suffixes beginning with a command worth checking need joining.
+CODE_FRAGMENT_SUFFIX_JOINS = 32
 
 
 def fragment_region_candidates(fragments):
@@ -1958,6 +1967,27 @@ def xargs_stdin_source_visible(tokens, command_index, command_start):
     return False
 
 
+def xargs_splits_items_on_blanks(tokens, command_index):
+    """Whether blanks still separate items despite a replacement option.
+
+    A replacement normally makes each line one item, but `-n`/`--max-args`
+    overrides that and blanks separate again: `echo 'safe /' | xargs -n1 -I{}`
+    runs twice, the second time with `/`. Reading that line as one item is how
+    a target hides in plain sight.
+    """
+    index = command_index + 1
+    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+        token = tokens[index]
+        if token == '--':
+            break
+        if token in {'-n', '--max-args'} or token.startswith('--max-args='):
+            return True
+        if short_option_has_attached_value(token, {'-n'}):
+            return True
+        index += 1
+    return False
+
+
 def xargs_unbounded_removal(command_tokens):
     """A recursive forced removal whose targets come from the xargs values.
 
@@ -2023,7 +2053,8 @@ def xargs_command_is_blocked(tokens, command_index, command_start, variables=Non
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
         values = [] if stdin_text is UNKNOWN_SHELL_STDIN else xargs_stdin_tokens(
-            stdin_text, xargs_uses_null_delimiter(tokens, command_index), by_line=True)
+            stdin_text, xargs_uses_null_delimiter(tokens, command_index),
+            by_line=not xargs_splits_items_on_blanks(tokens, command_index))
         # No values on the line is not no values: `xargs` without a pipe reads
         # the terminal, and the command runs for every line typed there. Judge
         # it the same way unreadable input already is.
@@ -3636,7 +3667,8 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
         values = [] if stdin_text is UNKNOWN_SHELL_STDIN else xargs_stdin_tokens(
-            stdin_text, null_delimited, by_line=True)
+            stdin_text, null_delimited,
+            by_line=not xargs_splits_items_on_blanks(tokens, command_index))
         # No values visible on the line is not the same as no values: `xargs`
         # without a pipe reads the terminal, and every line typed there runs
         # the command. Judging it as written is what the unreadable case
@@ -3789,10 +3821,14 @@ def substitution_invocation_is_destructive(tokens, index, shell_vars=None, cwd=N
 
 
 def has_destructive_command(text, depth=0):
-    # Fail closed on runaway nesting, at the same depth the raw-codex and
-    # commit parsers use. The previous cap of 8 blocked benign commands with
-    # nine levels of ordinary command substitution.
-    if depth > 24:
+    # Fail closed on runaway nesting. This is lower than the raw-codex and
+    # commit parsers' 24 on purpose: resolution gives up on a nested `$(…)`
+    # ladder from the second level, so between here and there the cap is the
+    # only thing standing in the way of one that ends in a destructive
+    # command. Raising it to match the siblings was measured to let depths 9
+    # through 24 execute. Aligning them means teaching resolution to see
+    # through the ladder first.
+    if depth > 8:
         return True
     if not text.strip():
         return False
