@@ -494,7 +494,7 @@ dx_uninstall_repo_attribution() {
   cleanup_status=0
   python3 "$DEX_DIR/scripts/project-state.py" attribution-cleanup \
     "$state_file" \
-    "$hook_dir" > "$cleanup_output_file" || cleanup_status=$?
+    "$hook_dir" >| "$cleanup_output_file" || cleanup_status=$?
   if [[ $cleanup_status -ne 0 ]]; then
     rm -f "$cleanup_output_file"
     return "$cleanup_status"
