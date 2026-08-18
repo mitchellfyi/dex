@@ -1943,12 +1943,15 @@ def xargs_stdin_source_visible(tokens, command_index, command_start):
     """
     if command_start >= 1 and tokens[command_start - 1] == '|':
         return True
-    # `{` and `}` are separators to the tokenizer but arguments to xargs, so a
-    # bare `{}` would end the scan before it reached the redirect behind it —
-    # the same exclusion both callers of this function already make.
-    xargs_separators = SHELL_SEPARATORS - {'{', '}'}
+    # This deliberately stops at `{` and `}` even though xargs treats them as
+    # arguments. `shell_stdin_literal`, which actually reads the source, stops
+    # there too — and the pair only holds together while they agree. Excluding
+    # them here alone made this say "a source is visible" while the reader
+    # returned nothing, and a readable `<<< 'rm -rf /'` became "provably empty".
+    # Whoever teaches the reader to look past a bare placeholder can teach this
+    # to as well, in the same change.
     index = command_index + 1
-    while index < len(tokens) and tokens[index] not in xargs_separators:
+    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
         if tokens[index] in {'<', '<<<'}:
             return True
         index += 1

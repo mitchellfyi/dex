@@ -406,6 +406,15 @@ assert_destructive_blocks "an item with a trailing blank" \
   'printf "/ \n" | xargs -I{} rm -rf {}'
 assert_destructive_clean "an indented ordinary item" \
   'printf " build\n" | xargs -I{} rm -rf ./{}'
+# Deciding a source is visible while the reader cannot see it turns a readable,
+# destructive source into "provably empty". The two must stop at the same
+# tokens, so a bare placeholder hides the redirect from both or from neither.
+assert_destructive_blocks "a here-string behind a bare placeholder" \
+  'xargs -I{} sh -c '\''{}'\'' <<< '\''rm -rf /'\'''
+assert_destructive_blocks "an interpreter reading behind a bare placeholder" \
+  'xargs -I{} python3 -c '\''{}'\'' <<< '\''rm -rf /'\'''
+assert_destructive_blocks "an unreadable source behind a bare placeholder" \
+  'xargs -I{} sh -c '\''{}'\'' < /nonexistent-xyz'
 # An unreadable value handed to a shell, interpreter or package runner is a
 # possible command, and the answer is fail-closed. Telling code positions from
 # data ones was tried and kept getting it wrong — a script can `eval` its own
