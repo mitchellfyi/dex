@@ -51,8 +51,16 @@ Stored in `prompts/`. Referenced by skills by plain repo-relative path
 
 - `guardrails.md` — Implementation discipline
 - `review.md` — 12-pass review criteria (A-L) with confidence scoring
+- `review-risk-assessment.md` — Read-only tier choice before the first wave
+- `review-wave.md` — One `/dxreviewloop` iteration over the supplied scope
+- `failure-recovery.md` — Analysis to run instead of a third identical retry
 - `commit-format.md` — Conventional Commits specification
 - `pr-description.md` — PR description template
 - `ticket-instructions.md` — Ticket intake workflow (injected by SessionStart hook)
 - `init-analysis.md` — Codebase analysis prompt (used by `dx init`)
-- `phase-audits/*.md` — Numbered 1-6 matching lifecycle phases, plus `prompt-loop.md`
+- `sync-memory.md` — Project context and repo memory refresh (`dx sync`)
+- `maintain.md` — Repo-resident background maintenance workflow
+- `default-loop.md` — What `dxloop` runs when called with no prompt
+- `phase-audits/*.md` — Numbered 0-6 matching lifecycle phases, plus
+  `prompt-loop.md`; `3-review-loop.md` audits the lifecycle phase and
+  `3-review.md` the individual wave the review loop injects

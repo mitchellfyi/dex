@@ -24,7 +24,7 @@ hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (markdown with YAML frontmatter)
 lib/                 Shared shell libraries (23 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
-  phase-audits/      Phase-specific audit prompts (1-6 + prompt-loop)
+  phase-audits/      Phase-specific audit prompts (0-6 + prompt-loop)
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
 dx.sh                Main shell functions (zsh only, ~3700 lines)
