@@ -669,7 +669,6 @@ dx_provider_apply() {
   DX_PROVIDER_AUTH_ENV=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "auth_env" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   DX_PROVIDER_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   DX_PROVIDER_PLAN_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "plan_model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "$DX_PROVIDER_MODEL")
-  # shellcheck disable=SC2034
   DX_PROVIDER_HAIKU_MODEL=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "haiku_model" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "$DX_PROVIDER_MODEL")
   DX_PROVIDER_EFFORT=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "effort" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "")
   DX_PROVIDER_PLAN_EFFORT=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "plan_effort" "$DX_PROVIDER_SOURCE" 2>/dev/null || echo "$DX_PROVIDER_EFFORT")
@@ -709,13 +708,11 @@ dx_provider_apply() {
   fi
 
   DX_CLAUDE_MODEL="${DX_USER_CLAUDE_MODEL:-$DX_PROVIDER_MODEL}"
-  # shellcheck disable=SC2034
   DX_PLAN_MODEL="${DX_USER_PLAN_MODEL:-${DX_USER_CLAUDE_MODEL:-$DX_PROVIDER_PLAN_MODEL}}"
   dx_provider_validate_model_field "DX_CLAUDE_MODEL" "$DX_CLAUDE_MODEL" || return 1
   dx_provider_validate_model_field "DX_PLAN_MODEL" "$DX_PLAN_MODEL" || return 1
   dx_provider_validate_model_field "DX_CODEX_MODEL" "$DX_CODEX_MODEL" || return 1
   DX_CLAUDE_EFFORT="${DX_USER_CLAUDE_EFFORT:-$DX_PROVIDER_EFFORT}"
-  # shellcheck disable=SC2034
   DX_PLAN_EFFORT="${DX_USER_PLAN_EFFORT:-${DX_USER_CLAUDE_EFFORT:-$DX_PROVIDER_PLAN_EFFORT}}"
   dx_provider_validate_effort_field "DX_CLAUDE_EFFORT" "$DX_CLAUDE_EFFORT" || return 1
   dx_provider_validate_effort_field "DX_PLAN_EFFORT" "$DX_PLAN_EFFORT" || return 1
