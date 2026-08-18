@@ -242,6 +242,9 @@ MAX_SOURCE_BODY_BYTES = 128 * 1024
 
 RUN_ID_RE = re.compile(r"^run_[A-Za-z0-9._-]+$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")
+# The same set dx_provider_validate_effort_field enforces. A spec may only ask
+# for an effort the CLI could actually pass on.
+SPEC_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 SECRET_KEY_RE = re.compile(r"(token|secret|password|passwd|api[_-]?key|credential)", re.I)
 # One pattern: a divergence here would silently weaken secret rejection in
 # exactly one of the two paths that share it.
@@ -427,6 +430,14 @@ validate_url(source_url, "source.url", allow_fragment=True)
 harness_name = string_at(harness, "name", "harness", required=False) or "claude-code"
 if harness_name not in VALID_HARNESS_NAMES:
     fail(f"harness.name must be one of: {', '.join(sorted(VALID_HARNESS_NAMES))}")
+harness_effort = harness.get("effort")
+if harness_effort is None:
+    harness_effort = ""
+elif not isinstance(harness_effort, str) or harness_effort.strip() not in SPEC_EFFORTS:
+    fail("harness.effort must be one of: " + ", ".join(sorted(SPEC_EFFORTS)))
+else:
+    harness_effort = harness_effort.strip()
+
 harness_model = harness.get("model")
 if harness_model is None:
     harness_model = ""
@@ -517,6 +528,7 @@ normalized["harness"] = {
     **harness,
     "name": harness_name,
     "model": harness_model or None,
+    "effort": harness_effort or None,
 }
 normalized["workflow"] = {
     **workflow,

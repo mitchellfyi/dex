@@ -266,6 +266,67 @@ for path in root.glob("*/events.jsonl"):
 assert any(event["type"] == "run.failed" and event["data"].get("stage") == "validation" for event in events)
 PY
 
+# DexCode sends harness.effort beside harness.model so a run can say how hard to
+# think. It is a closed set on both sides: one the CLI does not know would reach
+# an agent as an argument the agent refuses.
+EFFORT_SPEC="$TMP_DIR/effort-run-spec.json"
+write_spec "$EFFORT_SPEC" "run_test_effort" "$REPO_DIR"
+python3 - "$EFFORT_SPEC" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+spec = json.loads(path.read_text(encoding="utf-8"))
+spec["harness"] = {"name": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"}
+path.write_text(json.dumps(spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+dx_run_spec_normalize "$EFFORT_SPEC" "$TMP_DIR/effort-normalized.json" > "$TMP_DIR/effort.out" 2>&1
+python3 - "$TMP_DIR/effort-normalized.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+spec = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert spec["harness"]["effort"] == "xhigh", spec["harness"]
+assert spec["harness"]["model"] == "gpt-5.6-sol", spec["harness"]
+PY
+
+# A spec that omits it stays valid: an older factory sends no effort at all, and
+# that has to mean "leave the profile alone", not "fail the run".
+ABSENT_EFFORT_SPEC="$TMP_DIR/absent-effort-spec.json"
+write_spec "$ABSENT_EFFORT_SPEC" "run_test_no_effort" "$REPO_DIR"
+dx_run_spec_normalize "$ABSENT_EFFORT_SPEC" "$TMP_DIR/absent-normalized.json" \
+  > "$TMP_DIR/absent.out" 2>&1
+python3 - "$TMP_DIR/absent-normalized.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+spec = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert spec["harness"]["effort"] is None, spec["harness"]
+PY
+
+BAD_EFFORT_SPEC="$TMP_DIR/bad-effort-spec.json"
+write_spec "$BAD_EFFORT_SPEC" "run_test_bad_effort" "$REPO_DIR"
+python3 - "$BAD_EFFORT_SPEC" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+spec = json.loads(path.read_text(encoding="utf-8"))
+spec["harness"] = {"name": "codex", "effort": "extremely"}
+path.write_text(json.dumps(spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if dx_run_spec_normalize "$BAD_EFFORT_SPEC" "$TMP_DIR/bad-effort-normalized.json" \
+  > "$TMP_DIR/bad-effort.out" 2>&1; then
+  printf 'unusable harness.effort unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_contains "harness.effort must be one of" "$TMP_DIR/bad-effort.out"
+
 RELATIVE_SPEC="$TMP_DIR/relative-run-spec.json"
 write_spec "$RELATIVE_SPEC" "run_test_relative" "relative/repo"
 if dx_run_spec_normalize "$RELATIVE_SPEC" "$TMP_DIR/relative-normalized.json" > "$TMP_DIR/relative.out" 2>&1; then

@@ -578,7 +578,7 @@ dx_provider_codex_exec() {
 }
 
 dx_provider_apply() {
-  local preferred_source="auto" default_profile explicit_engine agent_override="" model_override=""
+  local preferred_source="auto" default_profile explicit_engine agent_override="" model_override="" effort_override=""
   dx_provider_validate_config_files || return 1
   if [[ -n "${DX_AGENT_OVERRIDE:-}" ]]; then
     agent_override=$(dx_agent_normalize "$DX_AGENT_OVERRIDE") || return 1
@@ -587,6 +587,8 @@ dx_provider_apply() {
   fi
   model_override="${DX_MODEL_OVERRIDE:-${DX_MODEL:-}}"
   dx_provider_validate_model_field "DX_MODEL override" "$model_override" || return 1
+  effort_override="${DX_EFFORT_OVERRIDE:-${DX_EFFORT:-}}"
+  dx_provider_validate_effort_field "DX_EFFORT override" "$effort_override" || return 1
 
   if [[ -n "$agent_override" ]]; then
     default_profile=$(dx_provider_repo_default_profile 2>/dev/null || true)
@@ -712,6 +714,10 @@ dx_provider_apply() {
   dx_provider_validate_model_field "DX_CLAUDE_MODEL" "$DX_CLAUDE_MODEL" || return 1
   dx_provider_validate_model_field "DX_PLAN_MODEL" "$DX_PLAN_MODEL" || return 1
   dx_provider_validate_model_field "DX_CODEX_MODEL" "$DX_CODEX_MODEL" || return 1
+  if [[ -n "$effort_override" ]]; then
+    DX_USER_CLAUDE_EFFORT="$effort_override"
+    DX_USER_PLAN_EFFORT="$effort_override"
+  fi
   DX_CLAUDE_EFFORT="${DX_USER_CLAUDE_EFFORT:-$DX_PROVIDER_EFFORT}"
   DX_PLAN_EFFORT="${DX_USER_PLAN_EFFORT:-${DX_USER_CLAUDE_EFFORT:-$DX_PROVIDER_PLAN_EFFORT}}"
   dx_provider_validate_effort_field "DX_CLAUDE_EFFORT" "$DX_CLAUDE_EFFORT" || return 1
@@ -834,6 +840,7 @@ dx_provider_claude() {
         DX_CODEX_MODEL="${DX_CODEX_MODEL:-}"
         DX_AGENT_OVERRIDE="${DX_AGENT_OVERRIDE:-}"
         DX_MODEL_OVERRIDE="${DX_MODEL_OVERRIDE:-}"
+        DX_EFFORT_OVERRIDE="${DX_EFFORT_OVERRIDE:-}"
       )
       local codex_prompt
       codex_prompt=$(dx_provider_codex_prompt_from_claude_args "$@") || return 1

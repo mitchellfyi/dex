@@ -1990,7 +1990,7 @@ __dx_run_spec_record_failure() {
 unalias __dx_run_spec_apply_env 2>/dev/null; unfunction __dx_run_spec_apply_env 2>/dev/null
 __dx_run_spec_apply_env() {
   local spec_file="$1" run_token="${2:-}"
-  local token factory_url events_endpoint harness_name harness_model plan_approval default_branch
+  local token factory_url events_endpoint harness_name harness_model harness_effort plan_approval default_branch
 
   token=$(dx_run_spec_token "$run_token" 2>/dev/null || true)
   if [[ -n "$token" ]]; then
@@ -2028,6 +2028,15 @@ __dx_run_spec_apply_env() {
   if [[ -n "$harness_model" ]]; then
     dx_provider_validate_model_field "run spec harness.model" "$harness_model" || return 1
     export DX_MODEL_OVERRIDE="$harness_model"
+  fi
+
+  # Sent by DexCode beside the model, and applied the same way: the run says
+  # how hard to think, and an older factory that sends nothing leaves the
+  # profile's own setting alone.
+  harness_effort=$(dx_run_spec_field "$spec_file" "harness.effort")
+  if [[ -n "$harness_effort" ]]; then
+    dx_provider_validate_effort_field "run spec harness.effort" "$harness_effort" || return 1
+    export DX_EFFORT_OVERRIDE="$harness_effort"
   fi
 
   plan_approval=$(dx_run_spec_field "$spec_file" "workflow.requires_plan_approval")

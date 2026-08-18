@@ -176,6 +176,15 @@ def unordered_equal(left, right):
 
 
 def merge_settings(existing, template, dex_dir, home):
+    # Only these two keys have merge rules. A third one added to the template
+    # would otherwise install as a silent no-op, and the failure would surface
+    # much later as a setting that simply never took effect.
+    unhandled = sorted(set(template) - {"hooks", "worktree"})
+    if unhandled:
+        raise ValueError(
+            "settings template has keys with no merge rule: " + ", ".join(unhandled)
+        )
+
     result = copy.deepcopy(existing)
     existing_hooks = existing.get("hooks")
     merged_hooks = copy.deepcopy(existing_hooks) if isinstance(existing_hooks, dict) else {}
