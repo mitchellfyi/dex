@@ -1788,6 +1788,13 @@ def xargs_command_start(tokens, command_index):
             replacement = '{}'
             index += 1
             continue
+        if token == '-i' or (token.startswith('-i') and not token.startswith('--')):
+            # GNU's deprecated spelling of --replace. Its argument is optional
+            # and attached; unrecognised, the command read as one with no
+            # replacement at all and was judged by the wrong branch.
+            replacement = token[2:] or '{}'
+            index += 1
+            continue
         if token in XARGS_REPLACEMENT_OPTIONS:
             if index + 1 < len(tokens):
                 if tokens[index + 1:index + 3] == ['{', '}']:
@@ -1910,6 +1917,24 @@ def xargs_substitution_can_launch(command_tokens, replacement):
     )
 
 
+def xargs_stdin_source_visible(tokens, command_index, command_start):
+    """Whether the line says where this xargs reads its input.
+
+    An empty result from `shell_stdin_literal` means two different things:
+    a source was read and had nothing in it, or no source appears at all and
+    the command will read the terminal. The first is provably inert, the
+    second is unknowable — they must not be judged the same way.
+    """
+    if command_start >= 1 and tokens[command_start - 1] == '|':
+        return True
+    index = command_index + 1
+    while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+        if tokens[index] in {'<', '<<<'}:
+            return True
+        index += 1
+    return False
+
+
 def xargs_unbounded_removal(command_tokens):
     """A recursive forced removal whose targets come from the xargs values.
 
@@ -1960,17 +1985,19 @@ def xargs_placeholder_is_used(command_tokens, replacement):
                for token in xargs_join_split_placeholder(command_tokens, replacement))
 
 
-# Options whose argument a shell or interpreter runs as code.
-INLINE_CODE_OPTIONS = {'-c', '--command', '-e', '--eval', '-E'}
-
-
 def xargs_placeholder_is_code(command_tokens, replacement):
-    """Whether a substituted value is parsed as code rather than read as data.
+    """Whether a substituted value chooses what runs, rather than being read.
 
-    `xargs -I{} bash -c 'echo {}'` puts the value inside a script, so any input
-    line is an arbitrary command. `xargs -I{} python3 process.py {}` passes it
-    as an argument, where it is a filename and nothing more — the distinction
-    between denying a real injection and denying ordinary batch work.
+    The question is where the value sits relative to the thing that decides
+    what executes. `xargs -I{} python3 process.py {}` has already chosen its
+    program, so the value is an argument to it — ordinary batch work.
+    `python3 {}`, `python3 -m {}` and `node -r {} app.js` all let the value
+    name the program, and a shell will run whatever it is handed.
+
+    Enumerating code-carrying options was tried and is not safe: a script can
+    `eval` or `exec` its own positionals, so `bash -c 'eval "$1"' bash {}`
+    runs the input line as a command while looking like an argument. For a
+    shell, therefore, any placeholder counts.
     """
     if not command_tokens or not replacement:
         return False
@@ -1984,26 +2011,18 @@ def xargs_placeholder_is_code(command_tokens, replacement):
     base = token_basename(tokens[base_index])
     if base in EVAL_COMMANDS or base in SOURCE_COMMANDS:
         return True
-    is_shell = base in SHELLS
-    if not is_shell and not interpreter_kind(base):
+    if base in SHELLS:
+        return any(replacement in token for token in tokens[base_index + 1:])
+    if not interpreter_kind(base):
         return False
-    index = base_index + 1
-    while index < len(tokens):
-        token = tokens[index]
-        if token in INLINE_CODE_OPTIONS:
-            if index + 1 < len(tokens) and replacement in tokens[index + 1]:
-                return True
-            # A shell runs its script with the next argument as $0, and `$0`
-            # expanded in command position is a command. Later positionals are
-            # `"$1"`-style data, which is how `sh -c 'gzip "$1"' _ {}` works.
-            if is_shell and index + 2 < len(tokens) and replacement in tokens[index + 2]:
-                return True
-            index += 2
-            continue
-        if any(token.startswith(option) and replacement in token
-               for option in INLINE_CODE_OPTIONS):
+    # For an interpreter, the first token that is not an option is its program.
+    # A value at or before that point picks what runs; after it, the program is
+    # already fixed and the value is one of its arguments.
+    for token in tokens[base_index + 1:]:
+        if replacement in token:
             return True
-        index += 1
+        if not token.startswith('-'):
+            return False
     return False
 
 
@@ -3643,6 +3662,11 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
         # without a pipe reads the terminal, and every line typed there runs
         # the command. Judging it as written is what the unreadable case
         # already does, and returning False here skipped the command entirely.
+        if (stdin_text is not UNKNOWN_SHELL_STDIN and not values
+                and xargs_stdin_source_visible(tokens, command_index, command_start)):
+            # The line shows where the input comes from and it is empty, so
+            # with a replacement the command runs no times at all.
+            return False
         if stdin_text is UNKNOWN_SHELL_STDIN or not values:
             if not xargs_placeholder_is_used(command_tokens, replacement):
                 # The values never reach the command, so judge it as written.
@@ -3670,6 +3694,10 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
         # Without a replacement the values are appended as further arguments,
         # so they are targets. Not seeing them on the line says nothing about
         # what they will be — the same reasoning as the `-I` branch above.
+        # A source that is there and empty appends nothing, which is different.
+        if (stdin_text is not UNKNOWN_SHELL_STDIN and not stdin_text
+                and xargs_stdin_source_visible(tokens, command_index, command_start)):
+            return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
         if stdin_text is UNKNOWN_SHELL_STDIN or not stdin_text:
             if xargs_unbounded_removal(command_tokens):
                 return True

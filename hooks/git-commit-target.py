@@ -1337,6 +1337,11 @@ def xargs_command_start(parts, command_index):
             replacement = '{}'
             index += 1
             continue
+        if token == '-i' or (token.startswith('-i') and not token.startswith('--')):
+            # GNU's deprecated spelling of --replace; its argument is attached.
+            replacement = token[2:] or '{}'
+            index += 1
+            continue
         if token in XARGS_REPLACEMENT_OPTIONS:
             if index + 1 < len(parts):
                 if parts[index + 1:index + 3] == ['{', '}']:

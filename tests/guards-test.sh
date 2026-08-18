@@ -366,6 +366,20 @@ assert_destructive_clean "xargs -I{} removing a bounded path" \
   'xargs -I{} rm -rf ./build'
 assert_destructive_clean "xargs --replace removing a bounded path" \
   'xargs --replace rm -rf ./build'
+# `-i` is GNU's deprecated spelling of --replace. Unrecognised, it read as a
+# command with no replacement at all and was judged by the wrong branch.
+assert_destructive_clean "xargs -i removing a bounded path" \
+  'xargs -i rm -rf ./build'
+assert_destructive_clean "xargs -i{} removing a bounded path" \
+  'xargs -i{} rm -rf ./build'
+assert_destructive_blocks "xargs -i removing what its values name" \
+  'xargs -i rm -rf {}'
+# A source that is on the line and empty appends nothing, which is not the same
+# as no source at all — the second reads the terminal.
+assert_destructive_clean "xargs with a visibly empty redirect" \
+  'xargs rm -rf ./build < /dev/null'
+assert_destructive_clean "xargs with a visibly empty pipe" \
+  'printf "" | xargs rm -rf ./build'
 assert_destructive_clean "xargs -I{} passing a value to an interpreter" \
   'xargs -I{} python3 process.py {}'
 assert_destructive_clean "xargs -I{} passing a value to a package runner" \
@@ -382,11 +396,27 @@ assert_destructive_blocks "xargs -I{} making the value the command behind a wrap
   'xargs -I{} sudo {} arg'
 assert_destructive_blocks "xargs -I{} passing the value as a shell script" \
   'xargs -I{} sh -c {}'
-# A shell runs its script with the next argument as $0, so that slot is code.
+# Any value handed to a shell counts as code. A script can run its own
+# positionals — `sh -c 'eval "$1"' sh {}` executes the input line — and that is
+# indistinguishable from `sh -c 'gzip "$1"' _ {}`, which only reads it. The
+# safe half of that pair is the one that gets blocked with it.
 assert_destructive_blocks "xargs -I{} substituting into the shell's \$0" \
   'xargs -I{} sh -c '\''$0'\'' {}'
-assert_destructive_clean "xargs -I{} substituting into a later positional" \
+assert_destructive_blocks "xargs -I{} substituting into a shell positional" \
+  'xargs -I{} sh -c '\''eval "$1"'\'' sh {}'
+assert_destructive_blocks "xargs -I{} handing a shell a script to read" \
   'xargs -I{} sh -c '\''gzip "$1"'\'' _ {}'
+# An interpreter's program is fixed by its first non-option argument, so a
+# value after that is an argument to it — but a value that names the program,
+# or a module or file the interpreter loads, chooses what runs.
+assert_destructive_blocks "xargs -I{} making the value an interpreter's program" \
+  'xargs -I{} python3 {}'
+assert_destructive_blocks "xargs -I{} making the value a loaded module" \
+  'xargs -I{} python3 -m {}'
+assert_destructive_blocks "xargs -I{} preloading the value" \
+  'xargs -I{} node -r {} app.js'
+assert_destructive_clean "xargs -I{} passing a value after the program" \
+  'xargs -I{} python3 tool.py -e {}'
 assert_destructive_clean "xargs -I{} passing a value to a text tool" \
   'xargs -I{} awk '\''{print}'\'' {}'
 # Without a replacement the values are appended, so they are the targets.
