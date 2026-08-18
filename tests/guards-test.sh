@@ -270,6 +270,23 @@ assert_destructive_clean "xargs -I{} passing a value to a package runner" \
   'xargs -I{} npx eslint {}'
 assert_destructive_blocks "xargs -I{} substituting into a script argument" \
   'xargs -I{} bash -c '\''echo {}'\'''
+# The tokenizer splits a bare `{}` in two, which made the default spelling read
+# differently from every other one: `-I% %` was judged and `-I{} {}` was not.
+assert_destructive_blocks "xargs -I{} making the value the command" \
+  'xargs -I{} {}'
+assert_destructive_blocks "xargs -I% making the value the command" \
+  'xargs -I% %'
+assert_destructive_blocks "xargs -I{} making the value the command behind a wrapper" \
+  'xargs -I{} sudo {} arg'
+assert_destructive_blocks "xargs -I{} passing the value as a shell script" \
+  'xargs -I{} sh -c {}'
+# A shell runs its script with the next argument as $0, so that slot is code.
+assert_destructive_blocks "xargs -I{} substituting into the shell's \$0" \
+  'xargs -I{} sh -c '\''$0'\'' {}'
+assert_destructive_clean "xargs -I{} substituting into a later positional" \
+  'xargs -I{} sh -c '\''gzip "$1"'\'' _ {}'
+assert_destructive_clean "xargs -I{} passing a value to a text tool" \
+  'xargs -I{} awk '\''{print}'\'' {}'
 # Without a replacement the values are appended, so they are the targets.
 assert_destructive_blocks "xargs appending values to a recursive removal" \
   'xargs rm -rf'

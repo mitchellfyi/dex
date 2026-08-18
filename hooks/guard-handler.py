@@ -1928,6 +1928,26 @@ def xargs_unbounded_removal(command_tokens):
             and any(rm_option_is_force(token) for token in rest))
 
 
+def xargs_join_split_placeholder(command_tokens, replacement):
+    """Re-join the `{` and `}` tokens the tokenizer splits a bare `{}` into.
+
+    Without this the default spelling reads differently from every other one:
+    `xargs -I% %` was judged and `xargs -I{} {}` was not.
+    """
+    if replacement != '{}':
+        return list(command_tokens)
+    joined = []
+    index = 0
+    while index < len(command_tokens):
+        if command_tokens[index:index + 2] == ['{', '}']:
+            joined.append('{}')
+            index += 2
+            continue
+        joined.append(command_tokens[index])
+        index += 1
+    return joined
+
+
 def xargs_placeholder_is_used(command_tokens, replacement):
     """Whether substituted values reach the command at all.
 
@@ -1936,13 +1956,8 @@ def xargs_placeholder_is_used(command_tokens, replacement):
     """
     if not replacement:
         return False
-    if any(replacement in token for token in command_tokens):
-        return True
-    # The tokenizer splits a bare `{}` into two punctuation tokens.
-    return replacement == '{}' and any(
-        command_tokens[offset:offset + 2] == ['{', '}']
-        for offset in range(len(command_tokens))
-    )
+    return any(replacement in token
+               for token in xargs_join_split_placeholder(command_tokens, replacement))
 
 
 # Options whose argument a shell or interpreter runs as code.
@@ -1959,21 +1974,29 @@ def xargs_placeholder_is_code(command_tokens, replacement):
     """
     if not command_tokens or not replacement:
         return False
-    base_index = skip_wrapper_prefix(command_tokens, 0)
-    if base_index >= len(command_tokens):
+    tokens = xargs_join_split_placeholder(command_tokens, replacement)
+    base_index = skip_wrapper_prefix(tokens, 0)
+    if base_index >= len(tokens):
         return False
-    if xargs_placeholder_is_used(command_tokens[base_index:base_index + 1], replacement):
+    if replacement in tokens[base_index]:
+        # The value is the command word itself.
         return True
-    base = token_basename(command_tokens[base_index])
+    base = token_basename(tokens[base_index])
     if base in EVAL_COMMANDS or base in SOURCE_COMMANDS:
         return True
-    if base not in SHELLS and not interpreter_kind(base):
+    is_shell = base in SHELLS
+    if not is_shell and not interpreter_kind(base):
         return False
     index = base_index + 1
-    while index < len(command_tokens):
-        token = command_tokens[index]
+    while index < len(tokens):
+        token = tokens[index]
         if token in INLINE_CODE_OPTIONS:
-            if index + 1 < len(command_tokens) and replacement in command_tokens[index + 1]:
+            if index + 1 < len(tokens) and replacement in tokens[index + 1]:
+                return True
+            # A shell runs its script with the next argument as $0, and `$0`
+            # expanded in command position is a command. Later positionals are
+            # `"$1"`-style data, which is how `sh -c 'gzip "$1"' _ {}` works.
+            if is_shell and index + 2 < len(tokens) and replacement in tokens[index + 2]:
                 return True
             index += 2
             continue
