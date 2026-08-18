@@ -251,6 +251,36 @@ assert_destructive_clean "xargs -I{} removing without recursion" \
   'xargs -I{} rm -f {}'
 assert_destructive_clean "xargs --replace with an explicit token" \
   'xargs --replace=% echo %'
+# `--replace` takes an optional argument, so it must not be treated as one that
+# consumes the next token — doing so hid this command's own NUL delimiter and
+# left the substituted value carrying a stray NUL, which matched no rm target.
+assert_destructive_blocks "xargs --replace does not hide the NUL delimiter" \
+  "printf '/\\0' | xargs --replace -0 rm -rf {}"
+assert_destructive_blocks "xargs --replace does not hide --null" \
+  "printf '/\\0' | xargs --replace --null rm -rf {}"
+# Values reach the command only where the placeholder is, and there they are
+# filenames unless they land inside a script argument.
+assert_destructive_clean "xargs -I{} removing a bounded path" \
+  'xargs -I{} rm -rf ./build'
+assert_destructive_clean "xargs --replace removing a bounded path" \
+  'xargs --replace rm -rf ./build'
+assert_destructive_clean "xargs -I{} passing a value to an interpreter" \
+  'xargs -I{} python3 process.py {}'
+assert_destructive_clean "xargs -I{} passing a value to a package runner" \
+  'xargs -I{} npx eslint {}'
+assert_destructive_blocks "xargs -I{} substituting into a script argument" \
+  'xargs -I{} bash -c '\''echo {}'\'''
+# Without a replacement the values are appended, so they are the targets.
+assert_destructive_blocks "xargs appending values to a recursive removal" \
+  'xargs rm -rf'
+assert_destructive_blocks "xargs appending values through a wrapper" \
+  'xargs sudo rm -rf'
+assert_destructive_blocks "xargs reading targets from a file it was given" \
+  'xargs -a targets.txt rm -rf'
+assert_destructive_clean "xargs appending values to an ordinary command" \
+  'xargs grep -l TODO'
+assert_destructive_clean "xargs removing without recursion" \
+  'xargs rm -f'
 assert_destructive_clean "substitution naming an interpreter" \
   '$(command -v python3) -c '\''print(1)'\'''
 assert_destructive_clean "substitution resolving to a bounded removal" \

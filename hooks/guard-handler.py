@@ -961,8 +961,12 @@ RUNNER_VALUE_OPTIONS = {
 RUNNER_SHELL_VALUE_OPTIONS = {'-c', '--call'}
 NICE_VALUE_OPTIONS = {'-n', '--adjustment'}
 TIMEOUT_VALUE_OPTIONS = {'-k', '--kill-after', '-s', '--signal'}
+# Options whose argument is required and therefore separate. `--replace` is
+# absent on purpose: its argument is optional, so treating it as required made
+# the option scanners skip the token after it — which is how `xargs --replace
+# -0 …` hid its own NUL delimiter.
 XARGS_VALUE_OPTIONS = {
-    '-a', '--arg-file', '-d', '--delimiter', '-E', '--eof', '-I', '--replace',
+    '-a', '--arg-file', '-d', '--delimiter', '-E', '--eof', '-I',
     '-L', '--max-lines', '-n', '--max-args', '-P', '--max-procs',
     '-s', '--max-chars',
 }
@@ -1895,6 +1899,80 @@ def xargs_substitution_can_launch(command_tokens, replacement):
         or base in DIRECT_CODEX_RUNNERS
         or base in PACKAGE_MANAGER_RUNNERS
     )
+
+
+def xargs_unbounded_removal(command_tokens):
+    """A recursive forced removal whose targets come from the xargs values.
+
+    Looks past `sudo`, `nice` and the other wrapper prefixes: `xargs sudo rm
+    -rf` is as unbounded as `xargs rm -rf`.
+    """
+    if not command_tokens:
+        return False
+    base_index = skip_wrapper_prefix(command_tokens, 0)
+    if base_index >= len(command_tokens):
+        return False
+    if token_basename(command_tokens[base_index]) != 'rm':
+        return False
+    rest = command_tokens[base_index + 1:]
+    return (any(rm_option_is_recursive(token) for token in rest)
+            and any(rm_option_is_force(token) for token in rest))
+
+
+def xargs_placeholder_is_used(command_tokens, replacement):
+    """Whether substituted values reach the command at all.
+
+    With `-I`, a command that never names the replacement runs unchanged for
+    every input line, so the values cannot influence what it does.
+    """
+    if not replacement:
+        return False
+    if any(replacement in token for token in command_tokens):
+        return True
+    # The tokenizer splits a bare `{}` into two punctuation tokens.
+    return replacement == '{}' and any(
+        command_tokens[offset:offset + 2] == ['{', '}']
+        for offset in range(len(command_tokens))
+    )
+
+
+# Options whose argument a shell or interpreter runs as code.
+INLINE_CODE_OPTIONS = {'-c', '--command', '-e', '--eval', '-E'}
+
+
+def xargs_placeholder_is_code(command_tokens, replacement):
+    """Whether a substituted value is parsed as code rather than read as data.
+
+    `xargs -I{} bash -c 'echo {}'` puts the value inside a script, so any input
+    line is an arbitrary command. `xargs -I{} python3 process.py {}` passes it
+    as an argument, where it is a filename and nothing more — the distinction
+    between denying a real injection and denying ordinary batch work.
+    """
+    if not command_tokens or not replacement:
+        return False
+    base_index = skip_wrapper_prefix(command_tokens, 0)
+    if base_index >= len(command_tokens):
+        return False
+    if xargs_placeholder_is_used(command_tokens[base_index:base_index + 1], replacement):
+        return True
+    base = token_basename(command_tokens[base_index])
+    if base in EVAL_COMMANDS or base in SOURCE_COMMANDS:
+        return True
+    if base not in SHELLS and not interpreter_kind(base):
+        return False
+    index = base_index + 1
+    while index < len(command_tokens):
+        token = command_tokens[index]
+        if token in INLINE_CODE_OPTIONS:
+            if index + 1 < len(command_tokens) and replacement in command_tokens[index + 1]:
+                return True
+            index += 2
+            continue
+        if any(token.startswith(option) and replacement in token
+               for option in INLINE_CODE_OPTIONS):
+            return True
+        index += 1
+    return False
 
 
 def xargs_command_is_blocked(tokens, command_index, command_start, variables=None, cwd=None, depth=0):
@@ -3517,21 +3595,19 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
         # the command. Judging it as written is what the unreadable case
         # already does, and returning False here skipped the command entirely.
         if stdin_text is UNKNOWN_SHELL_STDIN or not values:
-            # Unreadable values are only dangerous if they can become a
-            # command, or if the fixed command is itself destructive with the
-            # values as its targets. They can only become a command when the
-            # placeholder appears somewhere in it: `xargs -I{} bash -c 'make
-            # build'` runs that same fixed command whatever arrives on stdin.
-            placeholder_used = any(replacement in token for token in command_tokens) or (
-                replacement == '{}'
-                and any(command_tokens[offset:offset + 2] == ['{', '}']
-                        for offset in range(len(command_tokens)))
-            )
-            if placeholder_used and xargs_substitution_can_launch(command_tokens, replacement):
+            if not xargs_placeholder_is_used(command_tokens, replacement):
+                # The values never reach the command, so judge it as written.
+                # `xargs -I{} rm -rf ./build` removes that directory and
+                # nothing else, however many lines arrive on stdin.
+                return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
+            if xargs_placeholder_is_code(command_tokens, replacement):
+                # Substituted into a script argument, an unknown value is an
+                # unknown command. Nothing else about the line can rule it out.
                 return True
-            command_base = token_basename(command_tokens[0]) if command_tokens else ''
-            if command_base == 'rm':
-                return any(rm_option_is_recursive(token) for token in command_tokens[1:]) and any(rm_option_is_force(token) for token in command_tokens[1:])
+            # Substituted into an ordinary argument it is a filename, which is
+            # only destructive for a recursive forced removal.
+            if xargs_unbounded_removal(command_tokens):
+                return True
             return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
         for value in values:
             replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
@@ -3542,13 +3618,14 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
         return False
     else:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
-        if stdin_text is UNKNOWN_SHELL_STDIN:
-            command_base = token_basename(command_tokens[0]) if command_tokens else ''
-            if command_base == 'rm':
-                return any(rm_option_is_recursive(token) for token in command_tokens[1:]) and any(rm_option_is_force(token) for token in command_tokens[1:])
-            return False
-        if stdin_text:
-            command_tokens.extend(xargs_stdin_tokens(stdin_text, null_delimited))
+        # Without a replacement the values are appended as further arguments,
+        # so they are targets. Not seeing them on the line says nothing about
+        # what they will be — the same reasoning as the `-I` branch above.
+        if stdin_text is UNKNOWN_SHELL_STDIN or not stdin_text:
+            if xargs_unbounded_removal(command_tokens):
+                return True
+            return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
+        command_tokens.extend(xargs_stdin_tokens(stdin_text, null_delimited))
     return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
 
 

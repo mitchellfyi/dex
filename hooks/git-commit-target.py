@@ -69,8 +69,10 @@ RUNNER_VALUE_OPTIONS = {
 RUNNER_SHELL_VALUE_OPTIONS = {'-c', '--call'}
 NICE_VALUE_OPTIONS = {'-n', '--adjustment'}
 TIMEOUT_VALUE_OPTIONS = {'-k', '--kill-after', '-s', '--signal'}
+# `--replace` is absent on purpose: its argument is optional, so treating it as
+# required makes the option scanners skip the token after it.
 XARGS_VALUE_OPTIONS = {
-    '-a', '--arg-file', '-d', '--delimiter', '-E', '--eof', '-I', '--replace',
+    '-a', '--arg-file', '-d', '--delimiter', '-E', '--eof', '-I',
     '-L', '--max-lines', '-n', '--max-args', '-P', '--max-procs',
     '-s', '--max-chars',
 }
