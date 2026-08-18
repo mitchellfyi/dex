@@ -1829,13 +1829,16 @@ def replace_xargs_placeholders(command_tokens, replacement, value):
     replaced = []
     index = 0
     while index < len(command_tokens):
+        # xargs substitutes the item as one argument; it does not re-parse it.
+        # Splitting it here turned `python3 -c '<source>'` into a row of loose
+        # tokens, so the checks that read an interpreter's payload saw nothing.
         if replacement == '{}' and command_tokens[index:index + 2] == ['{', '}']:
-            replaced.extend(shell_tokens(value))
+            replaced.append(value)
             index += 2
             continue
         token = command_tokens[index]
         if token == replacement:
-            replaced.extend(shell_tokens(value))
+            replaced.append(value)
         elif replacement in token:
             replaced.append(token.replace(replacement, value))
         else:
@@ -1991,47 +1994,6 @@ def xargs_placeholder_is_used(command_tokens, replacement):
         return False
     return any(replacement in token
                for token in xargs_join_split_placeholder(command_tokens, replacement))
-
-
-def xargs_placeholder_is_code(command_tokens, replacement):
-    """Whether a substituted value chooses what runs, rather than being read.
-
-    The question is where the value sits relative to the thing that decides
-    what executes. `xargs -I{} python3 process.py {}` has already chosen its
-    program, so the value is an argument to it — ordinary batch work.
-    `python3 {}`, `python3 -m {}` and `node -r {} app.js` all let the value
-    name the program, and a shell will run whatever it is handed.
-
-    Enumerating code-carrying options was tried and is not safe: a script can
-    `eval` or `exec` its own positionals, so `bash -c 'eval "$1"' bash {}`
-    runs the input line as a command while looking like an argument. For a
-    shell, therefore, any placeholder counts.
-    """
-    if not command_tokens or not replacement:
-        return False
-    tokens = xargs_join_split_placeholder(command_tokens, replacement)
-    base_index = skip_wrapper_prefix(tokens, 0)
-    if base_index >= len(tokens):
-        return False
-    if replacement in tokens[base_index]:
-        # The value is the command word itself.
-        return True
-    base = token_basename(tokens[base_index])
-    if base in EVAL_COMMANDS or base in SOURCE_COMMANDS:
-        return True
-    if base in SHELLS:
-        return any(replacement in token for token in tokens[base_index + 1:])
-    if not interpreter_kind(base):
-        return False
-    # For an interpreter, the first token that is not an option is its program.
-    # A value at or before that point picks what runs; after it, the program is
-    # already fixed and the value is one of its arguments.
-    for token in tokens[base_index + 1:]:
-        if replacement in token:
-            return True
-        if not token.startswith('-'):
-            return False
-    return False
 
 
 def xargs_command_is_blocked(tokens, command_index, command_start, variables=None, cwd=None, depth=0):
@@ -3671,10 +3633,13 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
         # without a pipe reads the terminal, and every line typed there runs
         # the command. Judging it as written is what the unreadable case
         # already does, and returning False here skipped the command entirely.
-        if (stdin_text is not UNKNOWN_SHELL_STDIN and not values
+        if (stdin_text is not UNKNOWN_SHELL_STDIN and not stdin_text
                 and xargs_stdin_source_visible(tokens, command_index, command_start)):
-            # The line shows where the input comes from and it is empty, so
-            # with a replacement the command runs no times at all.
+            # The line shows where the input comes from and there is nothing in
+            # it at all, so the command runs no times. Note this asks about the
+            # text, not the items: a whitespace-only line yields no item here
+            # but is still an item to xargs, which runs the command once with
+            # the replacement expanded to nothing.
             return False
         if stdin_text is UNKNOWN_SHELL_STDIN or not values:
             if not xargs_placeholder_is_used(command_tokens, replacement):
@@ -3682,20 +3647,26 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
                 # `xargs -I{} rm -rf ./build` removes that directory and
                 # nothing else, however many lines arrive on stdin.
                 return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
-            if xargs_placeholder_is_code(command_tokens, replacement):
-                # Substituted into a script argument, an unknown value is an
-                # unknown command. Nothing else about the line can rule it out.
+            if xargs_substitution_can_launch(command_tokens, replacement):
+                # Handed to a shell or an interpreter, an unknown value can be
+                # a command. Telling the code positions from the data ones was
+                # tried and repeatedly got it wrong — a script can `eval` or
+                # `exec` its own positionals, an option's separate value hides
+                # the program, and each refinement lost coverage somewhere
+                # else. This is the coarse answer, and it is the safe one.
                 return True
             # Substituted into an ordinary argument it is a filename, which is
             # only destructive for a recursive forced removal.
             if xargs_unbounded_removal(command_tokens):
                 return True
             return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
-        # Where the value lands in code, it has to be read as a command in its
-        # own right. Substituted in and re-scanned it is only ever an argument,
-        # so a readable `rm -rf /` arriving at `sh -c 'eval "$1"' sh {}` looked
-        # harmless — the one case where the values are known and it mattered.
-        substitutes_into_code = xargs_placeholder_is_code(command_tokens, replacement)
+        # A readable value handed to a shell has to be read as a command in its
+        # own right: substituted in, it is only ever an argument, so a readable
+        # `rm -rf /` arriving at `sh -c 'eval "$1"' sh {}` looked harmless.
+        substitutes_into_code = (
+            xargs_placeholder_is_used(command_tokens, replacement)
+            and xargs_substitution_can_launch(command_tokens, replacement)
+        )
         for value in values:
             if substitutes_into_code and has_destructive_command(value, depth + 1):
                 return True

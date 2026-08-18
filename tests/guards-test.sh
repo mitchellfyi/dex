@@ -380,9 +380,15 @@ assert_destructive_clean "xargs with a visibly empty redirect" \
   'xargs rm -rf ./build < /dev/null'
 assert_destructive_clean "xargs with a visibly empty pipe" \
   'printf "" | xargs rm -rf ./build'
-assert_destructive_clean "xargs -I{} passing a value to an interpreter" \
+# An unreadable value handed to a shell, interpreter or package runner is a
+# possible command, and the answer is fail-closed. Telling code positions from
+# data ones was tried and kept getting it wrong — a script can `eval` its own
+# positionals, and an option's separate value hides which argument is the
+# program — so this stays coarse. A value that can be read is judged for what
+# it actually is, below.
+assert_destructive_blocks "xargs -I{} passing an unreadable value to an interpreter" \
   'xargs -I{} python3 process.py {}'
-assert_destructive_clean "xargs -I{} passing a value to a package runner" \
+assert_destructive_blocks "xargs -I{} passing an unreadable value to a package runner" \
   'xargs -I{} npx eslint {}'
 assert_destructive_blocks "xargs -I{} substituting into a script argument" \
   'xargs -I{} bash -c '\''echo {}'\'''
@@ -415,7 +421,7 @@ assert_destructive_blocks "xargs -I{} making the value a loaded module" \
   'xargs -I{} python3 -m {}'
 assert_destructive_blocks "xargs -I{} preloading the value" \
   'xargs -I{} node -r {} app.js'
-assert_destructive_clean "xargs -I{} passing a value after the program" \
+assert_destructive_blocks "xargs -I{} passing an unreadable value after the program" \
   'xargs -I{} python3 tool.py -e {}'
 # With a replacement, xargs reads one item per line, not per blank-separated
 # word. Splitting on whitespace turned a readable line carrying a whole command
@@ -429,6 +435,19 @@ assert_destructive_clean "a readable value used as a filename" \
   'printf "a.txt\n" | xargs -I{} python3 process.py {}'
 assert_destructive_clean "a readable value completing a bounded path" \
   'echo build | xargs -I{} rm -rf ./{}'
+# xargs substitutes an item as one argument and does not re-parse it. Splitting
+# it turned an interpreter's `-c` source into loose tokens, so the checks that
+# read such a payload saw nothing.
+assert_destructive_blocks "a readable value that is interpreter source" \
+  'printf "import os; os.system(\"rm -rf /\")\n" | xargs -I{} python3 -c {}'
+assert_destructive_blocks "a readable value that is node source" \
+  'printf "require(\"child_process\").execSync(\"rm -rf /\")\n" | xargs -I{} node -e {}'
+# A whitespace-only line is still an input item: xargs runs the command once
+# with the replacement expanded to nothing. Only genuinely empty input is inert.
+assert_destructive_blocks "a whitespace-only input line" \
+  'printf "   \n" | xargs -I{} rm -rf ./{}'
+assert_destructive_blocks "a whitespace-only here-string" \
+  'xargs -I{} rm -rf ./{} <<< " "'
 assert_destructive_clean "xargs -I{} passing a value to a text tool" \
   'xargs -I{} awk '\''{print}'\'' {}'
 # Without a replacement the values are appended, so they are the targets.
