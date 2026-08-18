@@ -192,6 +192,15 @@ assert_raw_codex_blocks "raw Codex remains blocked" \
 # shellcheck disable=SC2016
 assert_raw_codex_blocks "trusted source plus direct provider call remains blocked" \
   'source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"; dx_provider_codex exec "do work"'
+# This guard shares the xargs replacement parsing with the destructive-command
+# detector, so the same input-not-on-the-line and --replace misreads let raw
+# delegation through here too.
+assert_raw_codex_blocks "xargs -I{} running Codex directly" \
+  'xargs -I{} codex exec do-work'
+assert_raw_codex_blocks "xargs -I{} running Codex through a shell" \
+  'xargs -I{} bash -c '\''codex exec do-work'\'''
+assert_raw_codex_blocks "xargs --replace running Codex through a shell" \
+  'xargs --replace bash -c '\''codex exec do-work'\'''
 
 # --- destructive-command bypass regressions ---
 assert_destructive_blocks "dd raw-device output" \

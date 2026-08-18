@@ -1911,12 +1911,23 @@ def xargs_command_is_blocked(tokens, command_index, command_start, variables=Non
     stdin_text = None
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
-        if stdin_text is UNKNOWN_SHELL_STDIN:
-            if xargs_substitution_can_launch(command_tokens, replacement):
+        values = [] if stdin_text is UNKNOWN_SHELL_STDIN else xargs_stdin_tokens(
+            stdin_text, xargs_uses_null_delimiter(tokens, command_index))
+        # No values on the line is not no values: `xargs` without a pipe reads
+        # the terminal, and the command runs for every line typed there. Judge
+        # it the same way unreadable input already is.
+        if stdin_text is UNKNOWN_SHELL_STDIN or not values:
+            # Values can only become a command where the placeholder appears.
+            placeholder_used = any(replacement in token for token in command_tokens) or (
+                replacement == '{}'
+                and any(command_tokens[offset:offset + 2] == ['{', '}']
+                        for offset in range(len(command_tokens)))
+            )
+            if placeholder_used and xargs_substitution_can_launch(command_tokens, replacement):
                 return True
             # Values can only land in argument position, so judge the template.
             return has_raw_codex_delegation(shell_quote_tokens(command_tokens), depth + 1, cwd)
-        for value in xargs_stdin_tokens(stdin_text, xargs_uses_null_delimiter(tokens, command_index)):
+        for value in values:
             replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
             if replaced_tokens is UNKNOWN_SHELL_STDIN:
                 return True
@@ -3508,8 +3519,15 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
         if stdin_text is UNKNOWN_SHELL_STDIN or not values:
             # Unreadable values are only dangerous if they can become a
             # command, or if the fixed command is itself destructive with the
-            # values as its targets.
-            if xargs_substitution_can_launch(command_tokens, replacement):
+            # values as its targets. They can only become a command when the
+            # placeholder appears somewhere in it: `xargs -I{} bash -c 'make
+            # build'` runs that same fixed command whatever arrives on stdin.
+            placeholder_used = any(replacement in token for token in command_tokens) or (
+                replacement == '{}'
+                and any(command_tokens[offset:offset + 2] == ['{', '}']
+                        for offset in range(len(command_tokens)))
+            )
+            if placeholder_used and xargs_substitution_can_launch(command_tokens, replacement):
                 return True
             command_base = token_basename(command_tokens[0]) if command_tokens else ''
             if command_base == 'rm':
