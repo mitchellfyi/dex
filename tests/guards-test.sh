@@ -70,6 +70,34 @@ assert_raw_codex_clean() {
   fi
 }
 
+# The commit event carries the committed file names and the subject line in
+# CLAUDE_TOOL_USE_INPUT rather than a JSON payload — see hooks/post-commit-guard.sh.
+run_commit_guard() {
+  set +e
+  GUARD_OUT="$(printf '' | env DEX_GUARD_EVENT=commit CLAUDE_TOOL_USE_INPUT="$1" python3 "$HANDLER" 2>&1)"
+  set -e
+}
+
+assert_sensitive_warns() {
+  run_commit_guard "$2"
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-sensitive-files'; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (expected sensitive-file warning): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_sensitive_clean() {
+  run_commit_guard "$2"
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-sensitive-files'; then
+    printf 'FAIL (sensitive-file false positive): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
+  fi
+}
+
 # The attribution guard is scoped by `env_var: DEX_SESSION_ID`, so it only
 # applies inside a Dex lifecycle session.
 run_attribution_guard() {
@@ -229,6 +257,32 @@ assert_raw_codex_blocks "xargs -I{} running Codex through a shell" \
   'xargs -I{} bash -c '\''codex exec do-work'\'''
 assert_raw_codex_blocks "xargs --replace running Codex through a shell" \
   'xargs --replace bash -c '\''codex exec do-work'\'''
+
+# --- sensitive files in a commit (the only guard on the commit event) ---
+assert_sensitive_warns "a dotenv file" \
+  '.env
+feat: add config'
+assert_sensitive_warns "a scoped dotenv file" \
+  'src/.env.local
+fix: thing'
+assert_sensitive_warns "a credentials file" \
+  'config/credentials.json
+fix: thing'
+assert_sensitive_warns "a certificate" \
+  'certs/server.pem
+fix: thing'
+assert_sensitive_warns "a private key" \
+  'keys/id_rsa
+fix: thing'
+assert_sensitive_clean "a source file whose name merely reads like a secret" \
+  'app/secrets.ts
+fix: thing'
+assert_sensitive_clean "documentation" \
+  'README.md
+docs: update'
+assert_sensitive_clean "a source file starting with the same letters as .env" \
+  'src/environment.ts
+fix: thing'
 
 # --- Claude attribution ---
 assert_attribution_blocks "generated-by footer in a PR body" \
