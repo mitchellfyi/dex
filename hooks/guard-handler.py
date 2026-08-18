@@ -1769,6 +1769,12 @@ def xargs_command_start(tokens, command_index):
             replacement = token.split('=', 1)[1] or '{}'
             index += 1
             continue
+        if token == '--replace':
+            # Its argument is optional and defaults to `{}`. Taking the next
+            # token as the replacement swallowed the command being run.
+            replacement = '{}'
+            index += 1
+            continue
         if token in XARGS_REPLACEMENT_OPTIONS:
             if index + 1 < len(tokens):
                 if tokens[index + 1:index + 3] == ['{', '}']:
@@ -3494,17 +3500,22 @@ def xargs_destructive_command_is_blocked(tokens, command_index, command_start, v
     null_delimited = xargs_uses_null_delimiter(tokens, command_index)
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
-        if stdin_text is UNKNOWN_SHELL_STDIN:
-            # Mirror the no-replacement branch below: unreadable values are only
-            # dangerous if they can become a command, or if the fixed command is
-            # itself destructive with the values as its targets.
+        values = [] if stdin_text is UNKNOWN_SHELL_STDIN else xargs_stdin_tokens(stdin_text, null_delimited)
+        # No values visible on the line is not the same as no values: `xargs`
+        # without a pipe reads the terminal, and every line typed there runs
+        # the command. Judging it as written is what the unreadable case
+        # already does, and returning False here skipped the command entirely.
+        if stdin_text is UNKNOWN_SHELL_STDIN or not values:
+            # Unreadable values are only dangerous if they can become a
+            # command, or if the fixed command is itself destructive with the
+            # values as its targets.
             if xargs_substitution_can_launch(command_tokens, replacement):
                 return True
             command_base = token_basename(command_tokens[0]) if command_tokens else ''
             if command_base == 'rm':
                 return any(rm_option_is_recursive(token) for token in command_tokens[1:]) and any(rm_option_is_force(token) for token in command_tokens[1:])
             return has_destructive_command(shell_quote_tokens(command_tokens), depth + 1)
-        for value in xargs_stdin_tokens(stdin_text, null_delimited):
+        for value in values:
             replaced_tokens = replace_xargs_placeholders(command_tokens, replacement, value)
             if replaced_tokens is UNKNOWN_SHELL_STDIN:
                 return True

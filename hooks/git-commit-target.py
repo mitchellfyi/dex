@@ -1306,6 +1306,12 @@ def xargs_command_start(parts, command_index):
             replacement = token.split('=', 1)[1] or '{}'
             index += 1
             continue
+        if token == '--replace':
+            # Its argument is optional and defaults to `{}`. Taking the next
+            # token as the replacement swallowed the command being run.
+            replacement = '{}'
+            index += 1
+            continue
         if token in XARGS_REPLACEMENT_OPTIONS:
             if index + 1 < len(parts):
                 if parts[index + 1:index + 3] == ['{', '}']:

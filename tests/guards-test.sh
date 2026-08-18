@@ -223,6 +223,25 @@ assert_destructive_clean "dd to null" \
   'dd if=/dev/zero of=/dev/null bs=1024 count=1'
 # A substitution in command position is ordinary tooling; resolving its output
 # must not make these look destructive.
+# `xargs` without a pipe reads the terminal, so "no values on the line" is not
+# "no values". The replacement branch used to return early and never look at
+# the command it would run for each of them.
+assert_destructive_blocks "xargs -I{} running a destructive shell payload" \
+  'xargs -I{} bash -c '\''rm -rf /'\'''
+assert_destructive_blocks "xargs -I{} running a destructive command directly" \
+  'xargs -I{} rm -rf /'
+assert_destructive_blocks "xargs -0 -I{} running a destructive shell payload" \
+  'xargs -0 -I{} bash -c '\''rm -rf /'\'''
+# --replace takes an optional argument; consuming the next token as the
+# replacement hid the command being run.
+assert_destructive_blocks "xargs --replace running a destructive shell payload" \
+  'xargs --replace bash -c '\''rm -rf /'\'''
+assert_destructive_clean "xargs -I{} passing values as arguments" \
+  'xargs -I{} du -k {}'
+assert_destructive_clean "xargs -I{} removing without recursion" \
+  'xargs -I{} rm -f {}'
+assert_destructive_clean "xargs --replace with an explicit token" \
+  'xargs --replace=% echo %'
 assert_destructive_clean "substitution naming an interpreter" \
   '$(command -v python3) -c '\''print(1)'\'''
 assert_destructive_clean "substitution resolving to a bounded removal" \
