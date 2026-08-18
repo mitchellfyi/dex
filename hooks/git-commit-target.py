@@ -68,6 +68,13 @@ RUNNER_VALUE_OPTIONS = {
 }
 RUNNER_SHELL_VALUE_OPTIONS = {'-c', '--call'}
 NICE_VALUE_OPTIONS = {'-n', '--adjustment'}
+# Wrappers that take their own options and then run the rest as a command,
+# mapped to the options of theirs that take a separate value.
+PREFIX_WRAPPER_VALUE_OPTIONS = {
+    'stdbuf': {'-i', '--input', '-o', '--output', '-e', '--error'},
+    'setsid': set(),
+    'unbuffer': set(),
+}
 TIMEOUT_VALUE_OPTIONS = {'-k', '--kill-after', '-s', '--signal'}
 # `--replace` is absent on purpose: its argument is optional, so treating it as
 # required makes the option scanners skip the token after it.
@@ -938,6 +945,22 @@ def skip_prefix(parts, index):
                     continue
                 if token.startswith('-'):
                     needs_value = token in ENV_OPTION_ARGS or takes_value(token, ENV_OPTION_ARGS)
+                    index += 1
+                    if needs_value and index < len(parts):
+                        index += 1
+                    continue
+                break
+            continue
+        if name in PREFIX_WRAPPER_VALUE_OPTIONS:
+            value_options = PREFIX_WRAPPER_VALUE_OPTIONS[name]
+            index += 1
+            while index < len(parts) and parts[index] not in SEPARATORS:
+                token = parts[index]
+                if token == '--':
+                    index += 1
+                    break
+                if token.startswith('-'):
+                    needs_value = token in value_options or takes_value(token, value_options)
                     index += 1
                     if needs_value and index < len(parts):
                         index += 1

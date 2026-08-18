@@ -961,6 +961,15 @@ RUNNER_VALUE_OPTIONS = {
 RUNNER_SHELL_VALUE_OPTIONS = {'-c', '--call'}
 NICE_VALUE_OPTIONS = {'-n', '--adjustment'}
 TIMEOUT_VALUE_OPTIONS = {'-k', '--kill-after', '-s', '--signal'}
+# Wrappers that take their own options and then run the rest as a command,
+# mapped to the options of theirs that take a separate value. Unknown to the
+# scanner, a wrapper hides everything after it: `stdbuf -oL <anything>` was
+# read as a command named `stdbuf` and looked at no further.
+PREFIX_WRAPPER_VALUE_OPTIONS = {
+    'stdbuf': {'-i', '--input', '-o', '--output', '-e', '--error'},
+    'setsid': set(),
+    'unbuffer': set(),
+}
 # Options whose argument is required and therefore separate. `--replace` is
 # absent on purpose: its argument is optional, so treating it as required made
 # the option scanners skip the token after it — which is how `xargs --replace
@@ -3255,6 +3264,23 @@ def skip_wrapper_prefix(tokens, index):
                     continue
                 if token.startswith('-'):
                     needs_value = token in ENV_OPTION_ARGS or token_takes_value(token, ENV_OPTION_ARGS)
+                    index += 1
+                    if needs_value and index < len(tokens):
+                        index += 1
+                    continue
+                break
+            continue
+
+        if base in PREFIX_WRAPPER_VALUE_OPTIONS:
+            value_options = PREFIX_WRAPPER_VALUE_OPTIONS[base]
+            index += 1
+            while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+                token = tokens[index]
+                if token == '--':
+                    index += 1
+                    break
+                if token.startswith('-'):
+                    needs_value = token in value_options or token_takes_value(token, value_options)
                     index += 1
                     if needs_value and index < len(tokens):
                         index += 1

@@ -110,6 +110,13 @@ check commit 'echo . | xargs -I{} git commit -m x'
 check commit 'find . -name "*.txt" -exec git commit -m x \;'
 check none   'find . -name "*.txt" -exec ls {} \;'
 
+# Prefix wrappers: these run the rest as a command, so it must still be read.
+check commit 'stdbuf -oL git commit -m x'
+check commit 'stdbuf -o L git commit -m x'
+check commit 'setsid git commit -m x'
+check commit 'unbuffer git commit -m x'
+check none   'stdbuf -oL git status'
+
 # Command substitution.
 check commit 'git commit -m "$(date)"'
 check none   'echo "$(git log -1)"'

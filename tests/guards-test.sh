@@ -281,6 +281,23 @@ assert_destructive_clean "xargs appending values to an ordinary command" \
   'xargs grep -l TODO'
 assert_destructive_clean "xargs removing without recursion" \
   'xargs rm -f'
+# A wrapper the scanner does not know hides everything after it.
+assert_destructive_blocks "stdbuf prefixing a destructive command" \
+  'stdbuf -oL rm -rf /'
+assert_destructive_blocks "stdbuf with a separated option value" \
+  'stdbuf -o L rm -rf /'
+assert_destructive_blocks "setsid prefixing a destructive command" \
+  'setsid rm -rf /'
+assert_destructive_blocks "unbuffer prefixing a destructive command" \
+  'unbuffer rm -rf /'
+assert_destructive_blocks "stdbuf prefixing a destructive xargs" \
+  'stdbuf -oL xargs -I{} rm -rf /'
+assert_destructive_clean "stdbuf prefixing ordinary work" \
+  'stdbuf -oL make build'
+assert_destructive_clean "setsid prefixing ordinary work" \
+  'setsid npm run dev'
+assert_destructive_clean "stdbuf prefixing a bounded removal" \
+  'stdbuf -oL rm -rf ./build'
 assert_destructive_clean "substitution naming an interpreter" \
   '$(command -v python3) -c '\''print(1)'\'''
 assert_destructive_clean "substitution resolving to a bounded removal" \
