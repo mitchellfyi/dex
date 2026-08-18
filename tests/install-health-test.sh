@@ -159,4 +159,27 @@ if grep -Fq "Install complete." "$TMP_DIR/conflict.out"; then
   exit 1
 fi
 
+# Commenting the source line out is how people turn Dex off. Detection must not
+# read that as "already installed" — install would then add nothing, status
+# would report integration that is absent, and uninstall would claim a removal
+# it did not make. A conditional source line must still count as present.
+# shellcheck disable=SC1091
+source "$ROOT/lib/common.sh"
+zshrc_probe="$TMP_DIR/zshrc-probe"
+zshrc_case() {
+  printf '%s\n' "$2" > "$zshrc_probe"
+  if grep -qE "$DX_ZSHRC_SOURCE_ACTIVE_PATTERN" "$zshrc_probe" 2>/dev/null; then
+    [[ "$3" == "yes" ]] || { printf 'zshrc detection: %s should not count as installed\n' "$1" >&2; exit 1; }
+  else
+    [[ "$3" == "no" ]] || { printf 'zshrc detection: %s should count as installed\n' "$1" >&2; exit 1; }
+  fi
+}
+zshrc_case "a plain source line" 'source "$DEX_DIR/dx.sh"' yes
+zshrc_case "the dot form" '. "$DEX_DIR/dx.sh"' yes
+zshrc_case "a guarded source line" '[[ -f "$DEX_DIR/dx.sh" ]] && source "$DEX_DIR/dx.sh"' yes
+zshrc_case "a legacy checkout path" 'source ~/work/dex-cli/dx.sh' yes
+zshrc_case "a commented-out source line" '# source "$DEX_DIR/dx.sh"' no
+zshrc_case "an indented comment" '   #source "$DEX_DIR/dx.sh"' no
+zshrc_case "a comment mentioning dx.sh" '# Dex loads from dex/dx.sh nowadays' no
+
 printf 'install health tests passed\n'

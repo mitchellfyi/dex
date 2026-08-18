@@ -38,6 +38,14 @@ export DX_RUN_ROOT="${DX_RUN_ROOT:-$HOME/.dex/runs}"
 # shellcheck disable=SC2034  # consumed by the bin/ scripts above
 DX_ZSHRC_SOURCE_PATTERN='dex(-cli)?/dx\.sh|DEX_DIR.*/dx\.sh'
 
+# The same reference, but only where it can actually run: a line whose first
+# non-blank character is not `#`. Commenting the source line out is how people
+# turn Dex off, and asking the bare pattern then answers "already installed"
+# for a line the shell never executes — so install adds nothing, status reports
+# integration that is not there, and uninstall claims a removal it did not do.
+# shellcheck disable=SC2034  # consumed by the bin/ scripts above
+DX_ZSHRC_SOURCE_ACTIVE_PATTERN="^[[:space:]]*[^#[:space:]].*(${DX_ZSHRC_SOURCE_PATTERN})"
+
 # dx_repo_root — print the *main* repo toplevel or return 1
 # If cwd is inside a dex worktree (.dex/worktrees/<name>/...),
 # returns the main repo root, not the worktree root. This prevents dx

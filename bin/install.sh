@@ -78,7 +78,7 @@ if ! dx_bootstrap_agent_tooling "" "install"; then
 fi
 
 # 3. Source dx.sh in ~/.zshrc
-if grep -qE "$DX_ZSHRC_SOURCE_PATTERN" "$ZSHRC" 2>/dev/null; then
+if grep -qE "$DX_ZSHRC_SOURCE_ACTIVE_PATTERN" "$ZSHRC" 2>/dev/null; then
   dx_ok "dx.sh already sourced in ~/.zshrc"
 else
   {

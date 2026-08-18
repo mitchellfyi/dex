@@ -115,7 +115,7 @@ if command -v codex &>/dev/null; then
   fi
 fi
 
-if grep -qE "$DX_ZSHRC_SOURCE_PATTERN" "$HOME/.zshrc" 2>/dev/null; then
+if grep -qE "$DX_ZSHRC_SOURCE_ACTIVE_PATTERN" "$HOME/.zshrc" 2>/dev/null; then
   echo "  Shell:     sourced in ~/.zshrc"
 else
   echo "  Shell:     NOT INSTALLED"

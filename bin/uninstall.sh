@@ -176,7 +176,7 @@ if [[ $worktree_cleanup_complete -eq 1 ]]; then
 fi
 
 # 5. Remove source line and Dex comment from zshrc
-if grep -qE "$DX_ZSHRC_SOURCE_PATTERN" "$ZSHRC" 2>/dev/null; then
+if grep -qE "$DX_ZSHRC_SOURCE_ACTIVE_PATTERN" "$ZSHRC" 2>/dev/null; then
   # -x matches entire line; removes "# Dex" or "# Dex — ..." exact lines.
   # Also removes the DEX_DIR export and source lines. The source-line pattern
   # is anchored to source/. commands: the old bare 'dex.*dx\.sh' also deleted
