@@ -2020,18 +2020,14 @@ def xargs_command_is_blocked(tokens, command_index, command_start, variables=Non
     if replacement:
         stdin_text = shell_stdin_literal(tokens, command_index, command_start, variables, cwd)
         values = [] if stdin_text is UNKNOWN_SHELL_STDIN else xargs_stdin_tokens(
-            stdin_text, xargs_uses_null_delimiter(tokens, command_index))
+            stdin_text, xargs_uses_null_delimiter(tokens, command_index), by_line=True)
         # No values on the line is not no values: `xargs` without a pipe reads
         # the terminal, and the command runs for every line typed there. Judge
         # it the same way unreadable input already is.
         if stdin_text is UNKNOWN_SHELL_STDIN or not values:
             # Values can only become a command where the placeholder appears.
-            placeholder_used = any(replacement in token for token in command_tokens) or (
-                replacement == '{}'
-                and any(command_tokens[offset:offset + 2] == ['{', '}']
-                        for offset in range(len(command_tokens)))
-            )
-            if placeholder_used and xargs_substitution_can_launch(command_tokens, replacement):
+            if xargs_placeholder_is_used(command_tokens, replacement) \
+                    and xargs_substitution_can_launch(command_tokens, replacement):
                 return True
             # Values can only land in argument position, so judge the template.
             return has_raw_codex_delegation(shell_quote_tokens(command_tokens), depth + 1, cwd)

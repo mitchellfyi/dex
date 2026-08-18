@@ -257,6 +257,14 @@ assert_raw_codex_blocks "xargs -I{} running Codex through a shell" \
   'xargs -I{} bash -c '\''codex exec do-work'\'''
 assert_raw_codex_blocks "xargs --replace running Codex through a shell" \
   'xargs --replace bash -c '\''codex exec do-work'\'''
+# This guard reads xargs input the same way the destructive one does: with a
+# replacement the items are lines, stripped of their surrounding blanks.
+assert_raw_codex_blocks "a readable value that delegates to Codex" \
+  'printf "codex exec build\n" | xargs -I{} bash -c '\''{}'\'''
+assert_raw_codex_blocks "the same value indented" \
+  'printf "  codex exec build\n" | xargs -I{} bash -c '\''{}'\'''
+assert_raw_codex_clean "a readable value that does not" \
+  'printf "build\n" | xargs -I{} make {}'
 
 # --- sensitive files in a commit (the only guard on the commit event) ---
 assert_sensitive_warns "a dotenv file" \
