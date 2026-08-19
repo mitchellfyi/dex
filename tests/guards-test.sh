@@ -557,6 +557,29 @@ assert_destructive_clean "substitution resolving to a bounded removal" \
   '$(echo rm) -rf ./build'
 assert_destructive_clean "substitution used as a path prefix" \
   '$(git rev-parse --show-toplevel)/tests/check.sh'
+# `$((` is arithmetic, and the shell needs `$( (` with a space to open a
+# subshell there. Reading the arithmetic as a command made its operands a
+# command list, so any substitution inside ordinary arithmetic warned.
+assert_destructive_clean "arithmetic over a substitution" \
+  'echo "total: $(( $(wc -l < README.md) + 1 ))"'
+assert_destructive_clean "arithmetic assignment over a substitution" \
+  'n=$(( $(wc -l < README.md) + 1 ))'
+assert_destructive_clean "plain arithmetic" \
+  'echo "$(( 1 + 2 ))"'
+# The subshell spelling still resolves, so this must stay caught.
+assert_destructive_blocks "a subshell inside a substitution" \
+  '$( (rm -rf /) )'
+# A variable in command position resolves like any other name for it.
+assert_destructive_blocks "a variable holding the command" \
+  'R=rm; $R -rf /'
+assert_destructive_blocks "an assignment builtin holding the command" \
+  'export R=rm; $R -rf /'
+assert_destructive_blocks "a default expansion holding the command" \
+  '${RM:-rm} -rf /'
+assert_destructive_clean "a default expansion holding something else" \
+  '${EDITOR:-vi} notes.txt'
+assert_destructive_clean "a variable holding a bounded removal" \
+  'R=rm; $R -rf ./build'
 
 # --- hardcoded-secret remediation regressions ---
 assert_secret_warns "literal secret remains warned" \

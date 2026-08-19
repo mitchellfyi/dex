@@ -35,16 +35,16 @@ __all__ = [
     'PREFIX_WRAPPER_VALUE_OPTIONS', 'PRINTF_SPECIFIERS',
     'PYTHON_VALUE_OPTIONS', 'RUNNER_SHELL_VALUE_OPTIONS',
     'RUNNER_VALUE_OPTIONS', 'SHELLS', 'SHELL_COMMAND_KEYWORDS',
-    'SHELL_END_KEYWORDS', 'SHELL_LEADING_VARIABLE_RE', 'SHELL_REDIRECTS',
-    'SHELL_SCRIPT_VALUE_OPTIONS', 'SHELL_SEPARATORS', 'SHELL_VARIABLE_REF_RE',
-    'SHELL_VARIABLE_WORD_RE', 'SOURCE_COMMANDS', 'SUDO_OPTION_ARGS',
-    'TIMEOUT_VALUE_OPTIONS', 'TIME_FLAGS', 'TIME_OPTION_ARGS',
-    'UNKNOWN_SHELL_STDIN', 'XARGS_REPLACEMENT_OPTIONS', 'XARGS_VALUE_OPTIONS',
-    'adjacent_string_fragments', 'apply_literal_variables',
-    'apply_parameter_expansion_defaults', 'assignment_end', 'assignment_parts',
-    'backtick_substitution_end', 'cd_target', 'code_execution_fragments',
-    'code_without_string_literals', 'collect_aliases',
-    'collect_literal_variables', 'command_segment_end',
+    'SHELL_END_KEYWORDS', 'SHELL_LEADING_VARIABLE_RE', 'SHELL_NAME_RE',
+    'SHELL_REDIRECTS', 'SHELL_SCRIPT_VALUE_OPTIONS', 'SHELL_SEPARATORS',
+    'SHELL_VARIABLE_REF_RE', 'SHELL_VARIABLE_WORD_RE', 'SOURCE_COMMANDS',
+    'SUDO_OPTION_ARGS', 'TIMEOUT_VALUE_OPTIONS', 'TIME_FLAGS',
+    'TIME_OPTION_ARGS', 'UNKNOWN_SHELL_STDIN', 'XARGS_REPLACEMENT_OPTIONS',
+    'XARGS_VALUE_OPTIONS', 'adjacent_string_fragments',
+    'apply_literal_variables', 'apply_parameter_expansion_defaults',
+    'assignment_end', 'assignment_parts', 'backtick_substitution_end',
+    'cd_target', 'code_execution_fragments', 'code_without_string_literals',
+    'collect_aliases', 'collect_literal_variables', 'command_segment_end',
     'command_substitution_body_tokens', 'command_substitution_end',
     'command_substitution_literal_command_token',
     'command_substitution_resolved_invocation',
@@ -164,7 +164,15 @@ def extract_executable_backticks(text):
 
 
 def extract_dollar_substitutions(text):
-    """Return $(...) command-substitution bodies outside single quotes."""
+    """Return $(...) command-substitution bodies outside single quotes.
+
+    `$((` is arithmetic expansion, not a command substitution: the shell needs
+    `$( (` with a space to open a subshell there. Reading `$(( … ))` as a
+    command made its operands a command list, so `$(( $(wc -l < f) + 1 ))`
+    became "a command I cannot resolve" and warned about ordinary arithmetic.
+    Scanning continues inside it, so a substitution the arithmetic really does
+    run is still returned on its own.
+    """
     fragments = []
     in_single = False
     in_double = False
@@ -189,6 +197,9 @@ def extract_dollar_substitutions(text):
             index += 1
             continue
         if char == '$' and not in_single and index + 1 < len(text) and text[index + 1] == '(':
+            if index + 2 < len(text) and text[index + 2] == '(':
+                index += 2
+                continue
             start = index + 2
             index = start
             depth = 1
@@ -540,14 +551,27 @@ def shell_wrapper_variables(tokens, start_index, command_index, variables=None):
 
 
 def variable_name_at(tokens, index):
+    """The variable a word in command position names, if it plainly names one.
+
+    `${VAR:-git}` is not a variable called `VAR:-git`. Returning that as a name
+    found nothing to look up, and the caller took a name it could not resolve
+    as reason to move past the word — so expand_shell_command_token, which does
+    know how to resolve the expansion, never saw it. Anything that is not a
+    bare name is left for expansion to handle.
+    """
     if index >= len(tokens):
         return None, index
     token = tokens[index]
     if token.startswith('$') and len(token) > 1:
         if token.startswith('${') and token.endswith('}'):
-            return token[2:-1], index + 1
+            name = token[2:-1]
+            if not SHELL_NAME_RE.fullmatch(name):
+                return None, index
+            return name, index + 1
         return token[1:], index + 1
     if token == '$' and index + 3 < len(tokens) and tokens[index + 1] == '{' and tokens[index + 3] == '}':
+        if not SHELL_NAME_RE.fullmatch(tokens[index + 2]):
+            return None, index
         return tokens[index + 2], index + 4
     return None, index
 
@@ -620,6 +644,7 @@ SHELL_SCRIPT_VALUE_OPTIONS = {'--init-file', '--rcfile', '-O', '-D'}
 SHELL_VARIABLE_WORD_RE = re.compile(r'^\s*(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)\s*$')
 SHELL_LEADING_VARIABLE_RE = re.compile(r'^\s*(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)(?:\s|$)')
 SHELL_VARIABLE_REF_RE = re.compile(r'\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))')
+SHELL_NAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 PYTHON_VALUE_OPTIONS = {'-c', '-m', '-W', '-X', '--check-hash-based-pycs'}
 NODE_VALUE_OPTIONS = {
     '-e', '--eval', '-p', '--print', '-r', '--require',

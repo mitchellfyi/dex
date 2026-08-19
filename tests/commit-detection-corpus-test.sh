@@ -133,6 +133,13 @@ check commit 'declare G=git; $G commit -m x'
 check commit 'readonly G=git; $G commit -m x'
 check none   'export G=echo; $G commit -m x'
 check commit 'find . -name "*.txt" -exec $(echo git) commit -m x \;'
+# `${G:-git}` is not a variable named `G:-git`. Reading it as one skipped the
+# word before the expansion that resolves it ever ran.
+check commit 'G=git; ${G:-git} commit -m x'
+check commit '${GIT:-git} commit -m x'
+check none   'G=echo; ${G:-git} commit -m x'
+# Arithmetic is not a command list, and a substitution inside it is still read.
+check none   'echo "total: $(( $(git log --oneline | wc -l) + 1 ))"'
 
 # An xargs item is one argument, not a fresh command line to re-split.
 check commit 'printf "a\nb\n" | xargs -I{} git commit -m {}'

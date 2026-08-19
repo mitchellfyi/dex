@@ -1426,7 +1426,19 @@ def has_destructive_command(text, depth=0):
             command_index = skip_wrapper_prefix(tokens, index)
             if command_index >= len(tokens):
                 return False
-            command_base = token_basename(tokens[command_index])
+            # Resolve the command word the way has_raw_codex_delegation does.
+            # Reading the raw token meant `R=rm; $R -rf /` named no command this
+            # guard knows, so it passed in silence — while the same line written
+            # as an alias or a substitution was caught. An unresolvable word is
+            # left alone rather than warned about: the coarse answer belongs to
+            # payloads that can launch something, not to every unknown name.
+            segment_tokens = tokens
+            command_token = expand_shell_command_token(tokens[command_index], shell_vars)
+            if command_token is not UNKNOWN_SHELL_STDIN and command_token != tokens[command_index]:
+                segment_tokens = (
+                    tokens[:command_index] + [command_token] + tokens[command_index + 1:]
+                )
+            command_base = token_basename(segment_tokens[command_index])
             if command_base in aliases:
                 alias_body = aliases[command_base]
                 if alias_body is UNKNOWN_SHELL_STDIN:
@@ -1444,7 +1456,7 @@ def has_destructive_command(text, depth=0):
                 continue
             if eval_destructive_command_is_blocked(tokens, command_index, shell_vars, depth):
                 return True
-            if destructive_command_segment_is_blocked(tokens, command_index, shell_vars, None):
+            if destructive_command_segment_is_blocked(segment_tokens, command_index, shell_vars, None):
                 return True
             env_payload = env_split_payload(tokens, command_index, shell_vars)
             if env_payload is UNKNOWN_SHELL_STDIN:
