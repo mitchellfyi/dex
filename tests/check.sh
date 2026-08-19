@@ -50,7 +50,13 @@ else
 fi
 
 if command -v python3 >/dev/null 2>&1; then
+  # The review-loop oracles are here for the same reason the scenario rubrics
+  # are in BASH_FILES. An oracle deciding whether a seeded defect was fixed
+  # exits 1 on a SyntaxError, and lib.sh reads 1 as "fail" — the defect is
+  # still there — while only other codes count as "invalid". A broken oracle
+  # therefore scores every trial against the agent instead of erroring.
   python3 -m py_compile "$ROOT"/hooks/*.py "$ROOT"/scripts/*.py \
+    "$ROOT"/research/review-loop/scenarios/*/hidden/oracle.py \
     || fail "python3 -m py_compile"
   # Most of Dex's Python is not in those files: it is embedded in shell
   # heredocs, where py_compile never sees it and a typo only surfaces when a
