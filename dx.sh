@@ -3631,7 +3631,10 @@ dxclean() {
   # 4. Clean up old loop state files (older than 7 days).
   # 7 days gives enough time to resume interrupted sessions while preventing
   # indefinite accumulation. Most tickets complete within a day or two.
-  local old_files old_review_credit=0
+  # old_files is already declared at the top of dxclean. Naming it again with
+  # no value does not redeclare it in zsh — it prints `old_files=<value>` to
+  # stdout, which is how "old_files=''" ended up in dxclean's output.
+  local old_review_credit=0
   old_review_credit=$(dx_cleanup_stale_review_credit 7) || cleanup_failed=1
   if [[ "$old_review_credit" -gt 0 ]]; then
     echo "  Cleaned ${old_review_credit} old review credit bundle(s)"

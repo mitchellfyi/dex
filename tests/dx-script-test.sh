@@ -122,4 +122,34 @@ if grep -Fvxq "PHASE_3_COMPLETE" "$TMP_DIR/review-calls.out"; then
   exit 1
 fi
 
+# Naming an already-declared local again with no value does not redeclare it in
+# zsh — `local x` prints `x=<current value>` on stdout and leaves the value
+# alone. dxclean did that with old_files and printed "old_files=''" above its
+# own report. bash does not, shellcheck reads dx.sh as bash, and the suite runs
+# under bash, so nothing else sees it. Assert on the symptom: none of these
+# commands may print a shell assignment.
+SCRATCH_REPO="$TMP_DIR/scratch-repo"
+git init -q "$SCRATCH_REPO"
+git -C "$SCRATCH_REPO" config user.email test@example.com
+git -C "$SCRATCH_REPO" config user.name Test
+git -C "$SCRATCH_REPO" commit --allow-empty -qm init
+
+for command in dxls dxclean; do
+  DEX_DIR="$ROOT" DX_STATE_DIR="$TMP_DIR/leak-state" DX_LOOP_DIR="$TMP_DIR/leak-loops" \
+  DX_ARTIFACT_DIR="$TMP_DIR/leak-art" DX_TOOL_DIR="$TMP_DIR/leak-tools" \
+  DEXCODE_SYNC=0 DX_TEST_COMMAND="$command" \
+  zsh -fc '
+    source "$DEX_DIR/dx.sh"
+    cd '"$SCRATCH_REPO"'
+    "$DX_TEST_COMMAND"
+  ' > "$TMP_DIR/leak-$command.out" 2>&1
+  if grep -qE "^ *[a-z_][a-z0-9_]*=" "$TMP_DIR/leak-$command.out"; then
+    printf '%s leaked a shell assignment into its output:\n' "$command" >&2
+    cat "$TMP_DIR/leak-$command.out" >&2
+    exit 1
+  fi
+done
+assert_contains "Nothing to clean." "$TMP_DIR/leak-dxclean.out"
+assert_contains "No worktrees." "$TMP_DIR/leak-dxls.out"
+
 printf 'dx-script-test passed\n'
