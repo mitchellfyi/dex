@@ -190,7 +190,16 @@ dx_lifecycle_current_phase() {
   fi
 
   phase="${DEX_LOOP_PHASE:-}"
-  [[ "$phase" =~ ^[0-7]$ ]] && printf '%s\n' "$phase"
+  if [[ "$phase" =~ ^[0-7]$ ]]; then
+    printf '%s\n' "$phase"
+  fi
+  # "No lifecycle is running" is an answer, not a failure — the same answer the
+  # invalid-session-id guard above already returns 0 for. Leaving the trailing
+  # test as the function's exit status made it the caller's failure instead:
+  # every one of them assigns the output under `set -e`, so `dx control` died
+  # on line 64 without printing a word, including `dx control status`, the one
+  # command whose whole job is to say whether a lifecycle is running.
+  return 0
 }
 
 dx_lifecycle_session_active() {
@@ -511,7 +520,14 @@ dx_phase_busy_token() {
   raw=$(cat "$busy_file" 2>/dev/null || true)
   raw="${raw#*$'\t'}"
   token="${raw%%$'\t'*}"
-  [[ "$token" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] && printf '%s\n' "$token"
+  if [[ "$token" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
+    printf '%s\n' "$token"
+  fi
+  # Three guards above already answer "no token" with 0. A busy file that was
+  # truncated or half-written answers the same question, so it must not answer
+  # it differently: every caller assigns the output, and both hooks that do so
+  # run under `set -e`, which would end them over an unreadable marker.
+  return 0
 }
 
 dx_phase_busy_begin() {

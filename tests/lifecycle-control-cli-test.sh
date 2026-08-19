@@ -114,4 +114,24 @@ set -e
 grep -q "No active Dex lifecycle" "$TMP_DIR/completed.out"
 [[ ! -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 
+# A checkout with no lifecycle state at all. Every case above wrote a phase
+# file first, which hid the fact that dx_lifecycle_current_phase reported "no
+# phase" by returning 1: control.sh reads it into CURRENT_PHASE on line 64
+# under `set -e`, so the whole command died there without printing a word —
+# `status` and `--help` included. The messages below were always written; they
+# were simply unreachable.
+rm -f "$(dx_state_file "$DEX_SESSION_ID")" "$(dx_paused_file "$DEX_SESSION_ID")" \
+  "$(dx_active_file "$DEX_SESSION_ID")" "$(dx_handoff_mode_file "$DEX_SESSION_ID")" \
+  "$(dx_loop_config_file "$DEX_SESSION_ID")" "$(dx_owner_file "$DEX_SESSION_ID")"
+dx_clear_lifecycle_control "$DEX_SESSION_ID"
+
+bash "$CONTROL" status > "$TMP_DIR/bare-status.out" 2>&1
+assert_contains "No Dex lifecycle state was found" "$TMP_DIR/bare-status.out"
+
+bash "$CONTROL" --help > "$TMP_DIR/bare-help.out" 2>&1
+assert_contains "Usage: dx control" "$TMP_DIR/bare-help.out"
+
+assert_rejected "$LINENO" bash "$CONTROL" stop > "$TMP_DIR/bare-stop.out" 2>&1
+assert_contains "No active Dex lifecycle" "$TMP_DIR/bare-stop.out"
+
 printf 'lifecycle control CLI tests passed\n'

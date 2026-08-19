@@ -44,7 +44,15 @@ dx_phase_promise() { dx_lifecycle_phase_promise "$1"; }
 dx_phase_audit_file() {
   local name
   name=$(dx_lifecycle_phase_audit_basename "$1")
-  [[ -n "$name" ]] && printf '%s\n' "$DEX_DIR/prompts/phase-audits/${name}.md"
+  if [[ -n "$name" ]]; then
+    printf '%s\n' "$DEX_DIR/prompts/phase-audits/${name}.md"
+  fi
+  # A phase with no audit prompt — 7, or anything unrecognised — is a phase
+  # with no audit prompt, not an error. Every caller reads the output and this
+  # hook runs under `set -e`, so leaving the test as the exit status ended the
+  # Stop hook mid-decision. The `|| true` at the one call site that hit it is
+  # the workaround this makes unnecessary.
+  return 0
 }
 
 dx_phase_min_audits() { dx_lifecycle_phase_min_audits "$1"; }
@@ -1284,7 +1292,7 @@ if [[ -z "$AUDIT_PROMPT" ]]; then
 fi
 
 if [[ -z "$AUDIT_SOURCE_FILE" ]]; then
-  AUDIT_SOURCE_FILE=$(dx_phase_audit_file "${DEX_LOOP_PHASE:-}" 2>/dev/null || true)
+  AUDIT_SOURCE_FILE=$(dx_phase_audit_file "${DEX_LOOP_PHASE:-}")
 fi
 
 if [[ -z "$AUDIT_PROMPT" ]]; then

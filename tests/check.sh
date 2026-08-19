@@ -67,12 +67,16 @@ if command -v python3 >/dev/null 2>&1; then
   # apply no limit at all — and a call site that reads one raw works fine for
   # every sane value, so nothing else notices it went around the validator.
   python3 "$ROOT/tests/validated-settings.py" || fail "unvalidated settings"
+  # `[[ … ]] && printf …` as a function's last statement makes "nothing to
+  # print" an error, and every caller assigns that output under `set -e`.
+  python3 "$ROOT/tests/accidental-exit-status.py" || fail "accidental exit status"
 else
   printf 'SKIP python compile (python3 not installed)\n'
   printf 'SKIP inline python syntax (python3 not installed)\n'
   printf 'SKIP bare test assertions (python3 not installed)\n'
   printf 'SKIP zsh reserved names (python3 not installed)\n'
   printf 'SKIP unvalidated settings (python3 not installed)\n'
+  printf 'SKIP accidental exit status (python3 not installed)\n'
 fi
 
 if command -v node >/dev/null 2>&1; then
