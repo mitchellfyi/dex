@@ -21,6 +21,13 @@
 __DX_TEST_FILE="${BASH_SOURCE[1]:-$0}"
 __dx_test_died() {
   local exit_code=$?
+  # An ERR trap fires whether or not errexit is on, so a test that deliberately
+  # runs a failing command inside `set +e` would be reported as dying. Only say
+  # something when the failure is actually about to stop the script.
+  case "$-" in
+    *e*) ;;
+    *) return "$exit_code" ;;
+  esac
   printf '%s:%s: failed (exit %s): %s\n' \
     "${BASH_SOURCE[1]##*/}" "${BASH_LINENO[0]}" "$exit_code" "$BASH_COMMAND" >&2
   return "$exit_code"

@@ -235,4 +235,30 @@ if [[ -n "$undefined_helpers" ]]; then
   exit 1
 fi
 
+# The branch name reaches `git checkout -B` in the credentialed publish step,
+# after the agent process has written it into state. Its second check used to
+# discard its own result, so every shape below was accepted.
+eval "$(sed -n '/^__dx_maintain_validate_branch_name()/,/^}/p' "$ROOT/bin/maintain.sh")"
+branch_accepts() {
+  local branch="$1"
+  __dx_maintain_validate_branch_name "$branch" \
+    || fail "expected the branch name to be accepted: $branch"
+}
+branch_rejects() {
+  local branch="$1"
+  if __dx_maintain_validate_branch_name "$branch"; then
+    fail "expected the branch name to be rejected: $branch"
+  fi
+}
+branch_accepts "dex/maintain-docs-refresh"
+branch_accepts "maintain-plain"
+branch_rejects "../../maintain-escape"
+branch_rejects "/abs/maintain-x"
+branch_rejects "a/./maintain-y"
+branch_rejects "dex/maintain-z.lock"
+branch_rejects "dex/maintain-a..b"
+branch_rejects "dex/not-the-prefix"
+branch_rejects 'dex/maintain-$(id)'
+branch_rejects ""
+
 printf 'maintenance tests passed\n'

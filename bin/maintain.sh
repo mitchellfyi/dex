@@ -562,7 +562,12 @@ __dx_maintain_write_response_state() {
 __dx_maintain_validate_branch_name() {
   local branch="$1" suffix
   [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
-  [[ "$branch" != *".."* && "$branch" != /* && "$branch" != *"/."* && "$branch" != *".lock" ]]
+  # This check's result used to be discarded — no `|| return 1`, and the
+  # function's callers all invoke it under `||`, which disables errexit for the
+  # body. The charset above admits `.` and `/`, so every shape this line exists
+  # to reject was reaching the credentialed publish step: `../../maintain-x`,
+  # `/abs/maintain-x`, `a/./maintain-x`, and `dex/maintain-x.lock` all passed.
+  [[ "$branch" != *".."* && "$branch" != /* && "$branch" != *"/."* && "$branch" != *".lock" ]] || return 1
   suffix="${branch##*/}"
   [[ "$suffix" == maintain-* ]]
 }
