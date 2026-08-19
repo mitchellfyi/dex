@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Claims in AGENTS.md and .dex/dex.md that can be checked against the tree.
+# Claims about Dex that can be checked against the tree: what AGENTS.md and
+# .dex/dex.md say, and the three places dx.sh lists its own commands.
 #
 # These are the ones that had gone stale, each found by reading rather than by
 # anything failing: a module table missing a module, a "23 modules" count, a
@@ -105,6 +106,36 @@ for match in re.finditer(r"~(\d{3,5}) lines", agents + dex_md):
     if 2000 < claimed < 6000 and abs(claimed - dx_lines) > 150:
         problems.append(f"dx.sh is described as ~{claimed} lines; it is {dx_lines}")
 
+# dx.sh names its management commands three times: the case labels in
+# __dx_cli, the allowlist in dx() that routes to it, and the `dx help` text.
+# The allowlist is the one that bites — a command missing from it does not
+# print "unknown command", it falls through to the lifecycle path and is
+# treated as a task description, so `dx <newcommand>` cuts a worktree, a
+# branch, and an autonomous agent run instead of doing what it says.
+dx_sh = (root / "dx.sh").read_text(encoding="utf-8")
+cli_body = dx_sh[dx_sh.index("__dx_cli() {"):dx_sh.index("# ─── Phase configuration")]
+cli_commands = set()
+for line in cli_body.splitlines():
+    label = re.match(r"^    ([a-z|_-]+(?:\|[a-z|_-]+)*)\)", line)
+    if label:
+        cli_commands.update(label.group(1).split("|"))
+
+routed = set(re.search(r"\n    (init\|[^)]+)\)\n", dx_sh).group(1).split("|"))
+if cli_commands != routed:
+    unrouted = sorted(cli_commands - routed)
+    unknown = sorted(routed - cli_commands)
+    if unrouted:
+        problems.append(
+            f"dx() does not route {unrouted} to __dx_cli, so they run as task descriptions"
+        )
+    if unknown:
+        problems.append(f"dx() routes {unknown} to __dx_cli, which has no case for them")
+
+documented = set(re.findall(r'echo "  dx ([a-z-]+)', cli_body))
+undocumented = sorted(cli_commands - documented - {"help", "--help", "-h"})
+if undocumented:
+    problems.append(f"`dx help` lists no line for {undocumented}")
+
 if problems:
     for problem in problems:
         print(f"docs: {problem}", file=sys.stderr)
@@ -112,7 +143,7 @@ if problems:
 
 print(
     f"docs-consistency: {len(on_disk)} lib modules, {len(guards)} guards, "
-    f"{len(wired)} hooks, {skills} skills all match the docs"
+    f"{len(wired)} hooks, {skills} skills, {len(routed)} dx commands all match"
 )
 PY
 
