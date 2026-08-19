@@ -63,11 +63,16 @@ if command -v python3 >/dev/null 2>&1; then
   # special. shellcheck cannot see this and the suite runs under bash, so
   # nothing else catches it.
   python3 "$ROOT/tests/zsh-reserved-names.py" || fail "zsh reserved names"
+  # Some settings are only safe once checked — `--max-time 0` tells curl to
+  # apply no limit at all — and a call site that reads one raw works fine for
+  # every sane value, so nothing else notices it went around the validator.
+  python3 "$ROOT/tests/validated-settings.py" || fail "unvalidated settings"
 else
   printf 'SKIP python compile (python3 not installed)\n'
   printf 'SKIP inline python syntax (python3 not installed)\n'
   printf 'SKIP bare test assertions (python3 not installed)\n'
   printf 'SKIP zsh reserved names (python3 not installed)\n'
+  printf 'SKIP unvalidated settings (python3 not installed)\n'
 fi
 
 if command -v node >/dev/null 2>&1; then

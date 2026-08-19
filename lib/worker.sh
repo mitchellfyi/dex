@@ -224,7 +224,10 @@ __dx_worker_auth_config() {
 __dx_worker_request() {
   local slug="$1" method="$2" url="$3" response_file="$4" payload_file="${5:-}"
   local token http_code timeout_seconds
-  timeout_seconds="${DEXCODE_HTTP_TIMEOUT_SECONDS:-15}"
+  # Through the validator, not around it: curl reads `--max-time 0` as "no
+  # limit at all", so reading the variable raw turns a nonsense setting into a
+  # worker request that can hang forever.
+  timeout_seconds="$(dx_dexcode_http_timeout)"
 
   if ! token="$(dx_worker_token "$slug")"; then
     printf '000\n'
@@ -372,7 +375,7 @@ PY
   local http_code
   http_code="$(__dx_dexcode_auth_config "$cli_token" | command curl -q -sS --config - \
     -o "$response_file" -w "%{http_code}" \
-    --max-time "${DEXCODE_HTTP_TIMEOUT_SECONDS:-15}" \
+    --max-time "$(dx_dexcode_http_timeout)" \
     --proto '=http,https' \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
