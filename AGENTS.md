@@ -329,7 +329,10 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 
 ### Modularizing large scripts
 
-`dx.sh` is the largest file (~3700 lines), ahead of `bin/maintain.sh` and `lib/review.sh` at roughly 2400 each. When adding shared or self-contained logic, prefer extracting it into `lib/` modules. The pattern:
+`dx.sh` is the largest shell file (~3700 lines), ahead of `lib/dexcode.sh`,
+`bin/maintain.sh`, and `lib/review.sh` at roughly 2400-2600 each. When adding
+shared or self-contained logic, prefer extracting it into `lib/` modules. The
+pattern:
 
 **When to extract:**
 - Same logic appears in 2+ functions → extract to `lib/`
@@ -390,11 +393,11 @@ they go stale on every edit:
 | Stale cleanup | `dxclean()` |
 
 **Extraction candidates:** provider/model launch logic and Codex skill-link
-logic have both moved out, to `lib/provider.sh` and `lib/codex.sh`. What is
-left is `__dx_show_header()` and `__dx_format_elapsed()`, which belong beside
-`dx_format_duration()` in `lib/output.sh` — note the two formatters disagree
-under a minute (`45s` against `0m 45s`), so moving them is a user-visible
-change, not a pure refactor.
+logic have both moved out, to `lib/provider.sh` and `lib/codex.sh`. Duration
+formatting has too: there is one `dx_format_duration()` in `lib/output.sh` and
+`dx.sh` calls it. What is left is `__dx_show_header()`, which prints the
+lifecycle banner — it reads phase state and outcome files, so moving it means
+moving that reading too, not just the printing.
 
 The provider seam is why `__dx_claude` and `__dx_provider_prompt` still exist as one-line
 passthroughs: three test files redefine `__dx_claude` to stand in for the provider CLI, so
@@ -432,9 +435,9 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DEX_REVIEW_DISABLE_MCP` | Disable inherited MCP servers in review waves (`0` restores them); read-only assessors always disable them | `1` |
 | `DEX_REVIEW_PASS_TIMEOUT` | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables it | 900 (15m 0s) |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | Minimum seconds between repeated Phase 3 busy-gate notices | 120 (2m 0s) |
-| `DEX_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (0m 45s) |
+| `DEX_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (45s) |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation | 120 (2m 0s) |
-| `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | Maximum runtime for one GitHub/local shell command inside a watcher cycle | 30 (0m 30s) |
+| `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | Maximum runtime for one GitHub/local shell command inside a watcher cycle | 30 (30s) |
 | `DEX_WATCH_PAUSE_TTL_SECONDS` | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt | 3600 (60m 0s) |
 | `DEX_COMPLETE_MAX_CYCLES` | Max idle PR watch cycles before Phase 6 pauses for manual follow-up | 3 |
 | `DEX_COMPLETE_WAIT_MINUTES` | Minimum wait window per Phase 6 cycle (minutes) | 5 |

@@ -2260,17 +2260,6 @@ __dx_run_spec_cli() {
   return "$run_status"
 }
 
-# __dx_format_elapsed <seconds>
-# Format seconds as "Xm Ys"
-__dx_format_elapsed() {
-  local secs=$1
-  if [[ $secs -lt 60 ]]; then
-    echo "${secs}s"
-  else
-    echo "$((secs / 60))m $((secs % 60))s"
-  fi
-}
-
 # __dx_show_header <wt_name> <current_step> <wt_dir> [default_branch] [session_id] [workspace_mode]
 # Display lifecycle progress between phases
 __dx_show_header() {
@@ -2359,11 +2348,11 @@ __dx_show_header() {
     local timing=""
     if [[ -n "$prev_start" ]]; then
       phase_elapsed=$((now - prev_start))
-      timing+="  Phase ${prev_step} took $(__dx_format_elapsed $phase_elapsed)"
+      timing+="  Phase ${prev_step} took $(dx_format_duration "$phase_elapsed")"
     fi
     if [[ -n "$total_start" ]]; then
       total_elapsed=$((now - total_start))
-      timing+=" | Total: $(__dx_format_elapsed $total_elapsed)"
+      timing+=" | Total: $(dx_format_duration "$total_elapsed")"
     fi
     [[ -n "$timing" ]] && echo "$timing"
   fi
