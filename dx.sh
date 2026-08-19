@@ -1199,12 +1199,6 @@ __dx_configure_inline_phase() {
   __dx_write_state "$(dx_loop_config_file "$session_id")" "${step}:${promise}:${audit_file}:${min_audits}"
 }
 
-# __dx_run_phases_inline <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
-#
-# Same-session lifecycle runner. The shell launches Claude once; the Stop hook
-# advances phases by updating state/config files and injecting the next phase's
-# instructions back into the existing session. This avoids the Claude TUI
-# handoff problem where a completed phase leaves the user needing /exit + resume.
 unalias __dx_cleanup_completed_workspace 2>/dev/null; unfunction __dx_cleanup_completed_workspace 2>/dev/null
 __dx_cleanup_completed_workspace() {
   local wt_name="$1" wt_dir="$2" default_branch="$3" workspace_mode="${4:-worktree}" session_id="${5:-}"
@@ -1667,6 +1661,17 @@ __dx_codex_direct_phase_handoff() {
   return 0
 }
 
+# __dx_run_phases_inline <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
+#
+# Phase lifecycle entrypoint, and the same-session runner. The shell launches
+# Claude once; the Stop hook advances phases by updating state/config files and
+# injecting the next phase's instructions back into the existing session. This
+# avoids the Claude TUI handoff problem where a completed phase leaves the user
+# needing /exit + resume.
+# Phase 6 (Complete) is autonomous: it marks the PR ready, requests configured
+# reviewers (see dex.md § Reviewers), monitors CI/reviews, addresses comments,
+# and closes the ticket. The user is in the loop only as a configured reviewer.
+# Returns non-zero if the user interrupts or an error occurs.
 __dx_run_phases_inline() {
   local wt_name="$1" wt_dir="$2" default_branch="$3" step="$4"
   local state_file="$5" times_file="$6" resume_hint="$7"
@@ -1919,18 +1924,6 @@ __dx_run_phases_inline() {
   echo "Claude session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
   echo "Resume with: ${resume_hint}"
   return 1
-}
-
-# __dx_run_phases <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
-#
-# Phase lifecycle entrypoint. Launches one Claude session and lets the Stop hook
-# advance phases inline.
-# Phase 6 (Complete) is autonomous: it marks the PR ready, requests configured
-# reviewers (see dex.md § Reviewers), monitors CI/reviews, addresses comments,
-# and closes the ticket. The user is in the loop only as a configured reviewer.
-# Returns non-zero if user interrupts or an error occurs.
-__dx_run_phases() {
-  __dx_run_phases_inline "$@"
 }
 
 unalias __dx_run_spec_usage 2>/dev/null; unfunction __dx_run_spec_usage 2>/dev/null
@@ -2260,7 +2253,7 @@ __dx_run_spec_cli() {
   dx_info "Starting headless Dex run ${run_id}"
   local resume_hint="dx run --spec ${source_label}"
   [[ -n "$spec_url" ]] && resume_hint="dx run --spec-url ${source_label}"
-  __dx_run_phases "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
+  __dx_run_phases_inline "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
   local run_status=$?
   cd "$original_dir" 2>/dev/null || true
   command rm -rf "$tmp_dir" 2>/dev/null || true
@@ -2556,7 +2549,7 @@ dx() {
     echo "Resuming ${_dx_wt_name} from Phase ${step}: $(__dx_phase_name "$step")..."
 
     cd "$_dx_wt_dir" 2>/dev/null || return 1
-    __dx_run_phases "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "dx --resume" "$_dx_workspace_mode" "$session_id" "$raw_input"
+    __dx_run_phases_inline "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "dx --resume" "$_dx_workspace_mode" "$session_id" "$raw_input"
     return $?
   fi
 
@@ -2631,7 +2624,7 @@ dx() {
   local resume_hint="dx ${raw_input}"
   [[ "$_dx_workspace_mode" == "in-place" ]] && resume_hint="dx --no-worktree ${raw_input}"
   cd "$_dx_wt_dir" 2>/dev/null || return 1
-  __dx_run_phases "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
+  __dx_run_phases_inline "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
   return $?
 }
 
