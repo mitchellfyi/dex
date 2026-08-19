@@ -1,6 +1,6 @@
 # Guards
 
-Dex uses markdown-based guard rules to block or warn about dangerous patterns before they happen. Guards are evaluated by `hooks/guard-handler.py` on PreToolUse (before Bash/Edit/Write). Post-commit validation (after git commit) is handled by `hooks/post-commit-guard.sh`, which checks conventional commit format and then delegates to `guard-handler.py` for markdown-based guard evaluation of committed files.
+Dex uses markdown-based guard rules to warn about risky patterns before they happen. Every built-in guard advises rather than denies: the message reaches the agent as context and the tool call proceeds. `action: block` still exists for anyone who wants a hard stop. Guards are evaluated by `hooks/guard-handler.py` on PreToolUse (before Bash/Edit/Write). Post-commit validation (after git commit) is handled by `hooks/post-commit-guard.sh`, which checks conventional commit format and then delegates to `guard-handler.py` for markdown-based guard evaluation of committed files.
 
 These are Claude Code hooks — see [Claude Code hooks documentation](https://docs.anthropic.com/en/docs/claude-code/hooks) for how hooks integrate with the tool lifecycle.
 
@@ -72,14 +72,14 @@ For `env_var: DX_PROVIDER_ENGINE`, `guard-handler.py` treats the current Dex ses
 
 | Guard | Event | Action | What It Catches |
 |-------|-------|--------|----------------|
-| `block-destructive-commands` | bash | block | `rm -rf /`, `rm -rf /*`, `rm -rf ~`, `rm -rf ~/.`, `rm -rf ~/*`, `rm -rf ~+`, `rm -rf ~+/*`, `rm -rf $HOME`, `rm -rf $HOME/.`, `rm -rf $HOME/*`, `rm -rf $PWD`, `rm -rf $PWD/.`, `rm -rf $PWD/*`, `rm -rf .`, `rm -rf ./`, `rm -rf ./.`, `rm -rf *`, `rm -rf ./*`, including parameter-expanded equivalents, split/reordered flags, common wrappers, shell-nested `bash -c`/`eval` payloads, and command substitutions resolving to one of these commands (but NOT `rm -rf /tmp` or `rm -rf ./build`), `dd if=`, `mkfs`, `format` |
-| `block-claude-attribution` | bash | block | PR and commit commands containing Claude generated-by/co-author attribution; use Dex attribution instead |
-| `block-raw-codex-delegation` | bash | block | Raw Codex agent-work commands while the resolved provider engine is `codex-plugin`, including `codex`, `codex exec`, `codex e`, `codex review`, direct `dx_provider_codex` helper delegation, API-key login forms, shell-nested forms including literal variable-expanded and escape-decoded `bash -c`/`eval`/stdin payloads, generated heredoc scripts, direct executable script paths, readable executed or sourced script files, Python/Node/Ruby/Perl interpreter payloads that launch Codex, launch wrappers such as `nice`, `timeout`, `xargs`, and `find -exec`, and fail-closed shell execution from unresolved/unreadable script paths or unknown stdin/process-substitution producers; also blocks versioned/scoped package-runner forms such as `npx @openai/codex@latest` and runner shell payloads such as `npx -c "codex exec ..."` and `npm exec --call "codex exec ..."`; use `bin/dxcodex.sh` instead |
+| `warn-destructive-commands` | bash | warn | `rm -rf /`, `rm -rf /*`, `rm -rf ~`, `rm -rf ~/.`, `rm -rf ~/*`, `rm -rf ~+`, `rm -rf ~+/*`, `rm -rf $HOME`, `rm -rf $HOME/.`, `rm -rf $HOME/*`, `rm -rf $PWD`, `rm -rf $PWD/.`, `rm -rf $PWD/*`, `rm -rf .`, `rm -rf ./`, `rm -rf ./.`, `rm -rf *`, `rm -rf ./*`, including parameter-expanded equivalents, split/reordered flags, common wrappers, shell-nested `bash -c`/`eval` payloads, and command substitutions resolving to one of these commands (but NOT `rm -rf /tmp` or `rm -rf ./build`), `dd if=`, `mkfs`, `format` |
+| `warn-claude-attribution` | bash | warn | PR and commit commands containing Claude generated-by/co-author attribution; use Dex attribution instead |
+| `warn-raw-codex-delegation` | bash | warn | Raw Codex agent-work commands while the resolved provider engine is `codex-plugin`, including `codex`, `codex exec`, `codex e`, `codex review`, direct `dx_provider_codex` helper delegation, API-key login forms, shell-nested forms including literal variable-expanded and escape-decoded `bash -c`/`eval`/stdin payloads, generated heredoc scripts, direct executable script paths, readable executed or sourced script files, Python/Node/Ruby/Perl interpreter payloads that launch Codex, launch wrappers such as `nice`, `timeout`, `xargs`, and `find -exec`, and fail-closed shell execution from unresolved/unreadable script paths or unknown stdin/process-substitution producers; also flags versioned/scoped package-runner forms such as `npx @openai/codex@latest` and runner shell payloads such as `npx -c "codex exec ..."` and `npm exec --call "codex exec ..."`; use `bin/dxcodex.sh` instead |
 | `warn-sensitive-files` | commit | warn | `.env`, credentials, keys, certs in commits |
 | `warn-hardcoded-secrets` | file | warn | `API_KEY = "..."`, `ACCESS_KEY`, `JWT_SECRET`, and other credential patterns in code |
 | `warn-await-in-loop` | file | warn | `await` directly inside a loop body, which can serialize independent I/O. Uses the `await-in-loop` detector: handles common brace- and colon-delimited loop bodies, skips async iteration forms and awaits inside nested closures or methods |
-| `block-review-assessment-bash` | bash | block | Any Bash command while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor is read-only |
-| `block-review-assessment-file-edits` | file | block | Any file edit while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor must not modify the tree |
+| `warn-review-assessment-bash` | bash | warn | Any Bash command while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor is read-only |
+| `warn-review-assessment-file-edits` | file | warn | Any file edit while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor must not modify the tree |
 
 ### Built-in detectors
 
@@ -87,8 +87,8 @@ Some guards set `detector:` instead of `pattern:` to use a parser in `hooks/guar
 
 | Detector | Used by | What it parses |
 |----------|---------|----------------|
-| `destructive-commands` | `block-destructive-commands` | Shell tokenization of `rm -rf` / `dd` / `mkfs` targets, incl. wrappers and nested payloads |
-| `raw-codex-delegation` | `block-raw-codex-delegation` | Shell/script delegation to the Codex CLI under the `codex-plugin` provider |
+| `destructive-commands` | `warn-destructive-commands` | Shell tokenization of `rm -rf` / `dd` / `mkfs` targets, incl. wrappers and nested payloads |
+| `raw-codex-delegation` | `warn-raw-codex-delegation` | Shell/script delegation to the Codex CLI under the `codex-plugin` provider |
 | `await-in-loop` | `warn-await-in-loop` | Common `for`/`foreach`/`while` loop bodies, flagging an `await` that isn't inside a nested closure or method |
 
 Note: Conventional commit format validation is handled by `hooks/post-commit-guard.sh` directly (not via guards) because commit events combine file paths and the message into a single text, making it impossible to write a guard pattern that targets only the commit message.

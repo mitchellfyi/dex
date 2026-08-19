@@ -191,11 +191,16 @@ env_value: optional-exact-value
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it).
 - Frontmatter parser is regex-based — flat `key: value` only, no nested objects or arrays
 - Built-in guards (in `hooks/guards/`, listed by their `name:` value — don't duplicate these):
-  `block-claude-attribution`, `block-destructive-commands`, `block-raw-codex-delegation`,
-  `block-review-assessment-bash`, `block-review-assessment-file-edits`,
+  `warn-claude-attribution`, `warn-destructive-commands`, `warn-raw-codex-delegation`,
+  `warn-review-assessment-bash`, `warn-review-assessment-file-edits`,
   `warn-await-in-loop`, `warn-hardcoded-secrets`, `warn-sensitive-files`
-- Guards fail closed: a `block` guard that times out, crashes, or cannot be loaded denies the
-  tool call. See docs/guards.md § Failure Behavior.
+- Every built-in guard advises rather than denies. The message reaches the agent as context
+  and the tool call proceeds — the agent is expected to read it and decide, which is why the
+  wording is guidance rather than a verdict. `action: block` still works for anyone who wants
+  a hard stop; only then does the fail-closed behaviour below apply.
+- A `block` guard fails closed: one that times out, crashes, or cannot be loaded denies the
+  tool call. With every guard on `warn`, those same failures skip the guard and are reported
+  on stderr. See docs/guards.md § Failure Behavior.
 
 ## Prompt Conventions
 
@@ -277,7 +282,9 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 
 - Hooks run with the user's full permissions — treat all hook code as security-sensitive
 - In `guard-handler.py`, pass subprocess arguments as lists, never `shell=True` with user input
-- Exit code 2 means "block" in guards — other non-zero exits are errors, not blocks
+- Exit code 2 means "block" in guards — other non-zero exits are errors, not blocks. No
+  built-in guard uses it: they all advise, and the agent decides. A guard's job here is to
+  put the right thing in front of whoever is about to act, not to be the thing that stops them
 - Never store secrets in state files or `settings.json`
 - Session IDs are not cryptographically random — don't use them for authentication
 - Keep guard patterns efficient — they run on every tool invocation

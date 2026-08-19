@@ -4576,6 +4576,19 @@ def check_guards(guards, full_text, path_text=''):
         if detector_match is not None:
             if not detector_match:
                 continue
+            # A detector answers "does this shape appear", which is coarse by
+            # design. `allow_pattern` is how a guard says "except when it looks
+            # like this" — the same escape hatch pattern guards have, so a
+            # known-good form can be exempted in the guard file rather than in
+            # the parser. Checked against the whole text: a detector match is
+            # not a span.
+            if allow_pattern:
+                try:
+                    if re.search(allow_pattern, text,
+                                 re.MULTILINE | (0 if guard.get('case_sensitive') else re.IGNORECASE)):
+                        continue
+                except re.error as error:
+                    print(f"[guard:{name}] invalid allow_pattern regex: {error}", file=sys.stderr)
             entry = {
                 'name': name,
                 'message': guard.get('message', 'Guard triggered.'),

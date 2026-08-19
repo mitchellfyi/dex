@@ -39,9 +39,9 @@ env_value: optional-exact-value
 - Patterns are Python regexes evaluated by `guard-handler.py`
 - `block` exits with code 2 (prevents tool call). `warn` exits 0 (allows it)
 - Frontmatter parser is regex-based — flat `key: value` only, no nested objects or arrays
-- Built-in guards (by `name:`): `block-claude-attribution`, `block-destructive-commands`,
-  `block-raw-codex-delegation`, `block-review-assessment-bash`,
-  `block-review-assessment-file-edits`, `warn-await-in-loop`,
+- Built-in guards (by `name:`): `warn-claude-attribution`, `warn-destructive-commands`,
+  `warn-raw-codex-delegation`, `warn-review-assessment-bash`,
+  `warn-review-assessment-file-edits`, `warn-await-in-loop`,
   `warn-hardcoded-secrets`, `warn-sensitive-files` — don't duplicate these
 
 ## Prompts

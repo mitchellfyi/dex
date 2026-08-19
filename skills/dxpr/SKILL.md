@@ -102,7 +102,7 @@ EOF
 )"
 ```
 
-Before either command, inspect the exact body text. If it contains Claude attribution, remove it. The built-in `block-claude-attribution` guard will block PR create/edit/comment commands that still contain Claude generated-by or co-author text.
+Before either command, inspect the exact body text. If it contains Claude attribution, remove it. The built-in `warn-claude-attribution` guard will block PR create/edit/comment commands that still contain Claude generated-by or co-author text.
 
 ### 5. Attach Request-Type Reviewers
 

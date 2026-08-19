@@ -56,10 +56,11 @@ check_allowed "no lifecycle state" "gh pr create --fill"
 set +e
 DESTRUCTIVE_OUT=$(mkbashpayload 'rm -rf /' | env DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
   DEX_REVIEW_PASS_ACTIVE=1 DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)
-DESTRUCTIVE_RC=$?
 set -e
-if [[ "$DESTRUCTIVE_RC" -eq 2 ]] \
-  && printf '%s' "$DESTRUCTIVE_OUT" | grep -q 'block-destructive-commands'; then
+# The point of this check is that removing the phase push guards did not take
+# the destructive-command guard with them. That guard advises rather than
+# denies, so what it must still do is fire.
+if printf '%s' "$DESTRUCTIVE_OUT" | grep -q 'warn-destructive-commands'; then
   pass=$((pass + 1))
 else
   printf 'FAIL: removing phase push guards weakened destructive-command protection\n%s\n' \

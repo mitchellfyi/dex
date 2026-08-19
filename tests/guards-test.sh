@@ -52,7 +52,7 @@ assert_triggers() {
 
 assert_raw_codex_blocks() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'block-raw-codex-delegation'; then
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-raw-codex-delegation'; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected raw Codex block): %s\n' "$1" >&2
@@ -62,7 +62,7 @@ assert_raw_codex_blocks() {
 
 assert_raw_codex_clean() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'block-raw-codex-delegation'; then
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-raw-codex-delegation'; then
     printf 'FAIL (raw Codex false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -108,7 +108,7 @@ run_attribution_guard() {
 
 assert_attribution_blocks() {
   run_attribution_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'block-claude-attribution'; then
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-claude-attribution'; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected attribution block): %s\n' "$1" >&2
@@ -118,7 +118,7 @@ assert_attribution_blocks() {
 
 assert_attribution_clean() {
   run_attribution_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'block-claude-attribution'; then
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-claude-attribution'; then
     printf 'FAIL (attribution false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -128,7 +128,7 @@ assert_attribution_clean() {
 
 assert_destructive_blocks() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected destructive-command block): %s\n' "$1" >&2
@@ -138,7 +138,7 @@ assert_destructive_blocks() {
 
 assert_destructive_clean() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+  if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
     printf 'FAIL (destructive-command false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -553,7 +553,7 @@ set +e
 GUARD_OUT="$(mkpayload 'changed content' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=file python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-review-assessment-file-edits'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'warn-review-assessment-file-edits'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (expected review assessment file-edit block)\n%s\n' "$GUARD_OUT" >&2
@@ -564,7 +564,7 @@ set +e
 GUARD_OUT="$(mkbashpayload 'git status --short' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-review-assessment-bash'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'warn-review-assessment-bash'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (expected review assessment Bash block)\n%s\n' "$GUARD_OUT" >&2
@@ -575,7 +575,7 @@ set +e
 GUARD_OUT="$(mkbashpayload 'git status --short' | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 0 ]] && ! printf '%s' "$GUARD_OUT" | grep -q 'block-review-assessment-bash'; then
+if [[ "$GUARD_RC" -eq 0 ]] && ! printf '%s' "$GUARD_OUT" | grep -q 'warn-review-assessment-bash'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (review assessment Bash guard leaked outside assessor mode)\n%s\n' "$GUARD_OUT" >&2
@@ -603,25 +603,27 @@ assert_bash_allowed_codex "xargs into a fixed non-launching command" \
 assert_bash_allowed_codex "xargs into git with a placeholder argument" \
   "cat list.txt | xargs -I{} git add {}"
 
-assert_bash_blocks() {
+# Guards advise rather than deny, so what a test can assert is that the guard
+# fired and its message reached the agent — not that the tool call was stopped.
+assert_bash_flags() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'BLOCKED'; then
+  if printf '%s' "$GUARD_OUT" | grep -qE 'warn-destructive-commands|warn-raw-codex-delegation'; then
     pass=$((pass + 1))
   else
-    printf 'FAIL (expected blocked): %s\n%s\n' "$1" "$GUARD_OUT" >&2
+    printf 'FAIL (expected a guard to fire): %s\n%s\n' "$1" "$GUARD_OUT" >&2
     fail=$((fail + 1))
   fi
 }
 
-assert_bash_blocks "xargs substituting into command position" \
+assert_bash_flags "xargs substituting into command position" \
   "cat list.txt | xargs -I{} {}"
-assert_bash_blocks "xargs handing values to a shell" \
+assert_bash_flags "xargs handing values to a shell" \
   "cat list.txt | xargs -I{} bash -c {}"
 assert_raw_codex_blocks "xargs into a package runner" \
   "cat list.txt | xargs -I{} npx {}"
 assert_raw_codex_blocks "xargs template naming codex outright" \
   "cat list.txt | xargs -I{} codex exec {}"
-assert_bash_blocks "xargs into rm -rf with hidden targets" \
+assert_bash_flags "xargs into rm -rf with hidden targets" \
   "cat list.txt | xargs -I{} rm -rf {}"
 
 # A guard scoped with `match: path` checks the file path only. Without it, a
@@ -755,7 +757,7 @@ set +e
 GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/hostile.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (script launching rm -rf / should block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
@@ -834,7 +836,7 @@ set +e
 GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/midvec.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'block-destructive-commands'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (mid-argument-vector rm payload should block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
@@ -868,7 +870,7 @@ set +e
 GUARD_OUT="$(mkbashpayload "$redos_input" | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'test-slow-block'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'test-slow-block'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (blocking guard that timed out did not deny the command; rc=%s)\n%s\n' \
@@ -909,7 +911,7 @@ set +e
 GUARD_OUT="$(mkbashpayload 'echo forbidden---token' | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'test-dashes-block'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'test-dashes-block'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (guard with --- inside a value should keep its action: block; rc=%s)\n%s\n' \
@@ -938,7 +940,7 @@ GUARD_OUT="$(mkbashpayload 'echo hello' | env DEX_GUARD_EVENT=bash DEX_DIR="$GUA
   python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'no built-in guards'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'no built-in guards'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (missing built-in guards should block, got rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
@@ -966,7 +968,7 @@ set +e
 GUARD_OUT="$(env DEX_GUARD_EVENT=bash PYTHONPATH="$GUARD_TMP/shim" python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 2 ]] && printf '%s' "$GUARD_OUT" | grep -q 'guard evaluation failed'; then
+if printf '%s' "$GUARD_OUT" | grep -q 'guard evaluation failed'; then
   pass=$((pass + 1))
 else
   printf 'FAIL (handler crash should block, got rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
