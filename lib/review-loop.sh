@@ -112,6 +112,36 @@ __dx_review_pause_intervention() {
       ;;
   esac
 }
+# __dx_review_record_pause <run_id> <telemetry_session_id> <standalone>
+#   <session_id> <review_phase> <message> <run_status> <reason> [event fields ...]
+#
+# Record a paused review: emit the event, then close the run the way this
+# invocation needs closing — a standalone run finishes its own telemetry, a
+# lifecycle run leaves the marker its Stop hook reads.
+#
+# Exactly one of those two has to happen at every pause. Written out by hand at
+# each site, one of the seven had already drifted: review_criteria_copy_failed
+# touched the lifecycle marker unconditionally and never closed a standalone
+# run. That path is reachable only with a sealed criteria binding, which only a
+# lifecycle run has, so it was right by accident rather than by construction —
+# and would have become wrong the first time a standalone review carried one.
+#
+# Returns 0. Callers do their own `return 1`, so the pause and the control flow
+# stay visible at the call site rather than hiding in here.
+__dx_review_record_pause() {
+  local run_id="$1" telemetry_session_id="$2" standalone="$3" session_id="$4"
+  local review_phase="$5" message="$6" run_status="$7" reason="$8"
+  shift 8
+  __dx_review_emit_event "$run_id" "review.paused" "warn" "$message" "$review_phase" \
+    reason="$reason" "$@"
+  if [[ "$standalone" == "1" ]]; then
+    __dx_review_finish_standalone_run "$run_id" "$telemetry_session_id" "$run_status" "$reason" "$session_id"
+  else
+    touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+  fi
+  return 0
+}
+
 __dx_review_handle_interrupt() {
   local run_id="$1" telemetry_session_id="$2" standalone="$3" session_id="$4"
   local child_session_id="$5" review_phase="$6" reason="$7" busy_token="${8:-}"
@@ -124,13 +154,45 @@ __dx_review_handle_interrupt() {
       dx_phase_busy_finish "$session_id" 3 "$busy_token" 2>/dev/null || true
     fi
   fi
-  __dx_review_emit_event "$run_id" "review.paused" "warn" "Review interrupted" "$review_phase" reason="$reason"
-  if [[ "$standalone" == "1" ]]; then
-    __dx_review_finish_standalone_run "$run_id" "$telemetry_session_id" blocked "$reason" "$session_id"
-  else
-    touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-  fi
+  __dx_review_record_pause "$run_id" "$telemetry_session_id" "$standalone" "$session_id" \
+    "$review_phase" "Review interrupted" blocked "$reason"
 }
+# __dx_review_assessment_message <scope_name> <files_changed> <context_file>
+#   <criteria_block> <provider_agent> <policy_small> <policy_normal>
+#   <policy_complex> <policy_binding> <rubric>
+#
+# The prompt the read-only risk assessor is given. Pure text assembly, kept out
+# of the retry loop so the loop reads as what it does — launch, check the
+# checkout did not move, parse the decision — rather than as a page of prose.
+__dx_review_assessment_message() {
+  local scope_name="$1" files_changed="$2" context_file="$3" criteria_block="$4"
+  local provider_agent="$5" policy_small="$6" policy_normal="$7" policy_complex="$8"
+  local policy_binding="$9" rubric="${10}"
+
+  printf '%s\n' "Select the review risk tier for the current checkout before any review wave starts.
+
+Scope: ${scope_name} (${files_changed} files).
+Read the prepared scope at: \`${context_file}\`.
+${criteria_block}
+$(__dx_review_assessment_inspection_guidance "$provider_agent")
+
+Trusted clean-pass policy for this decision:
+- small: ${policy_small} consecutive CLEAN waves
+- normal: ${policy_normal} consecutive CLEAN waves
+- complex: ${policy_complex} consecutive CLEAN waves
+Policy binding: ${policy_binding}
+Choose the tier up front; its mapped streak is the deterministic requirement.
+
+${rubric}
+
+Return exactly one JSON object and no prose or markdown:
+\`{\"tier\":\"<small|normal|complex>\",\"reason_codes\":\"<comma-separated-reason-codes>\"}\`
+
+Do not run a review wave, edit files, change git state, install tooling, commit,
+push, create a PR, or write review state. The wrapper records a valid decision.
+$(__dx_provider_prompt)"
+}
+
 __dx_review_assessment_inspection_guidance() {
   case "${1:-}" in
     codex)
@@ -571,9 +633,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
   mkdir -p "$DX_LOOP_DIR"
   __dx_write_state "$review_empty_mcp" '{"mcpServers":{}}' || {
     dx_error "Could not prepare isolated review MCP configuration."
-    __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=mcp_config_error
-    [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed mcp_config_error "$session_id"
+    __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+      "$standalone_review_prompt" "$session_id" "$review_phase" \
+      "Review paused" failed mcp_config_error
     return 1
   }
   assessment_mcp_flags=(--strict-mcp-config --mcp-config "$review_empty_mcp")
@@ -620,9 +682,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     local assessment_prompt_file="$DEX_DIR/prompts/review-risk-assessment.md" assessment_rubric=""
     if [[ ! -f "$assessment_prompt_file" ]]; then
       dx_error "Review risk assessment prompt is missing: ${assessment_prompt_file}"
-      __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=assessment_prompt_missing
-      [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-      [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked assessment_prompt_missing "$session_id"
+      __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+        "$standalone_review_prompt" "$session_id" "$review_phase" \
+        "Review paused" blocked assessment_prompt_missing
       return 1
     fi
     assessment_rubric=$(cat "$assessment_prompt_file")
@@ -632,9 +694,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     local assessment_codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
     assessment_before=$(dx_review_scope_fingerprint "$PWD") || {
       dx_error "Could not fingerprint the review scope before assessment."
-      __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=scope_fingerprint_error
-      [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-      [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked scope_fingerprint_error "$session_id"
+      __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+        "$standalone_review_prompt" "$session_id" "$review_phase" \
+        "Review paused" blocked scope_fingerprint_error
       return 1
     }
     dx_info "Starting a fresh read-only agent to select the review risk tier."
@@ -653,8 +715,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
          ! dx_review_copy_criteria "$parent_criteria_file" "$assessment_criteria_file" "$review_criteria_binding"; then
         current_review_child_session=""
         dx_error "Could not prepare the approved criteria for the risk assessor."
-        __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=review_criteria_copy_failed
-        touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+        __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+          "$standalone_review_prompt" "$session_id" "$review_phase" \
+          "Review paused" blocked review_criteria_copy_failed
         return 1
       fi
       assessment_criteria_block=$(__dx_review_criteria_prompt "$assessment_session_id" "$review_criteria_binding") || {
@@ -669,28 +732,11 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         dx_cleanup_session "$assessment_session_id"
         break
       fi
-      assessment_message="Select the review risk tier for the current checkout before any review wave starts.
-
-Scope: ${scope_name} (${files_changed} files).
-Read the prepared scope at: \`${assessment_context_file}\`.
-${assessment_criteria_block}
-$(__dx_review_assessment_inspection_guidance "$provider_agent")
-
-Trusted clean-pass policy for this decision:
-- small: ${review_policy_small} consecutive CLEAN waves
-- normal: ${review_policy_normal} consecutive CLEAN waves
-- complex: ${review_policy_complex} consecutive CLEAN waves
-Policy binding: ${review_policy_binding}
-Choose the tier up front; its mapped streak is the deterministic requirement.
-
-${assessment_rubric}
-
-Return exactly one JSON object and no prose or markdown:
-\`{\"tier\":\"<small|normal|complex>\",\"reason_codes\":\"<comma-separated-reason-codes>\"}\`
-
-Do not run a review wave, edit files, change git state, install tooling, commit,
-push, create a PR, or write review state. The wrapper records a valid decision.
-$(__dx_provider_prompt)"
+      assessment_message=$(__dx_review_assessment_message \
+        "$scope_name" "$files_changed" "$assessment_context_file" \
+        "$assessment_criteria_block" "$provider_agent" \
+        "$review_policy_small" "$review_policy_normal" "$review_policy_complex" \
+        "$review_policy_binding" "$assessment_rubric")
 
       dx_provider_write_session_state "$assessment_session_id" 2>/dev/null || true
       assessment_exit=0
@@ -731,9 +777,9 @@ $(__dx_provider_prompt)"
         dx_provider_write_session_state "$session_id" 2>/dev/null || true
         rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" 2>/dev/null
         dx_error "Approved review criteria changed during risk assessment; review has been paused."
-        __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=review_criteria_changed
-        [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-        [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked review_criteria_changed "$session_id"
+        __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+          "$standalone_review_prompt" "$session_id" "$review_phase" \
+          "Review paused" blocked review_criteria_changed
         return 1
       fi
 
@@ -743,9 +789,9 @@ $(__dx_provider_prompt)"
         dx_provider_write_session_state "$session_id" 2>/dev/null || true
         rm -f "$(dx_review_selection_file "$session_id")" "$(dx_review_receipt_file "$session_id")" 2>/dev/null
         dx_error "The review risk assessor changed the checkout; review has been paused."
-        __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason=assessment_mutated_scope
-        [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-        [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked assessment_mutated_scope "$session_id"
+        __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+          "$standalone_review_prompt" "$session_id" "$review_phase" \
+          "Review paused" blocked assessment_mutated_scope
         return 1
       fi
 
@@ -792,9 +838,10 @@ $(__dx_provider_prompt)"
         assessment_failure="assessment_provider_error"
       fi
       dx_error "The review risk assessor could not complete after two attempts (${assessment_failure})."
-      __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" reason="$assessment_failure" provider_exit_int="$assessment_exit"
-      [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-      [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked "$assessment_failure" "$session_id"
+      __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+        "$standalone_review_prompt" "$session_id" "$review_phase" \
+        "Review paused" blocked "$assessment_failure" \
+        provider_exit_int="$assessment_exit"
       return 1
     fi
   fi
