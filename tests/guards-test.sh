@@ -561,6 +561,12 @@ assert_destructive_clean "substitution used as a path prefix" \
 # --- hardcoded-secret remediation regressions ---
 assert_secret_warns "literal secret remains warned" \
   'PASSWORD="hardcoded-secret-value"'
+assert_secret_warns "unquoted literal secret" \
+  'API_KEY=AKIAIOSFODNN7EXAMPLE'
+# A JWT is dotted like an attribute chain, so allowing bare dotted references
+# would hide one. Only a call or a subscript is exempt.
+assert_secret_warns "a dotted literal is still a literal" \
+  'TOKEN=eyJhbGciOi.eyJzdWIiOi.SflKxwRJSM'
 assert_secret_clean "Python environment access" \
   'PASSWORD=os.environ["PASSWORD"]'
 assert_secret_clean "Node environment access" \
@@ -568,6 +574,22 @@ assert_secret_clean "Node environment access" \
 # shellcheck disable=SC2016
 assert_secret_clean "shell environment access" \
   'AUTH_TOKEN=${AUTH_TOKEN_FROM_ENV}'
+# A secret is a literal. These are calls, subscripts, and substitutions — every
+# one of them warned, which is how ordinary code teaches people to ignore a guard.
+assert_secret_clean "a value returned by a call" \
+  'api_key = load_key(config)'
+assert_secret_clean "a call whose own name ends in the keyword" \
+  'command_token = expand_shell_command_token(tokens[command_index], shell_vars)'
+assert_secret_clean "a method call on an attribute chain" \
+  'self.password = hash_password(raw)'
+assert_secret_clean "a value read out of a subscript" \
+  'access_token = response.json()["access_token"]'
+# shellcheck disable=SC2016
+assert_secret_clean "a command substitution, quoted" \
+  'TOKEN="$(vault read -field=value secret/app)"'
+# shellcheck disable=SC2016
+assert_secret_clean "a command substitution, bare" \
+  'AUTH_TOKEN=$(cat /run/secrets/token)'
 set +e
 GUARD_OUT="$(mkpayload 'changed content' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=file python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
