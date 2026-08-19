@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# dex-test-lane: serial
+# Asserts the login device-flow poll gives up within 15s of its 1s deadline.
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
 source "$ROOT/tests/helpers.sh"

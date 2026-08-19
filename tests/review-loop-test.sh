@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# dex-test-lane: serial
+# One case asserts the review pass timeout is bounded at 8s. It is also the
+# longest test in the suite, so running it alone costs no wall clock either.
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
 source "$ROOT/tests/helpers.sh"

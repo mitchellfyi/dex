@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# dex-test-lane: serial
+# Asserts the review pass timeout terminates its process tree within 8s.
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
 source "$ROOT/tests/helpers.sh"

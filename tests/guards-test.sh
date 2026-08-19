@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# dex-test-lane: serial
+# No wall-clock assertion, but every guard has a 2s evaluation budget and a
+# detector that blows it is skipped — which reads here as a wrong answer
+# rather than as load. Under a full parallel batch this took 541s and
+# reported 29 false positives.
+
 # Tests for the await-in-loop built-in guard (hooks/guards/await-in-loop.md +
 # the `await-in-loop` detector in hooks/guard-handler.py). Drives the guard
 # handler with synthetic file-event payloads and asserts whether the guard fires.

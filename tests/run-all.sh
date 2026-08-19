@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Run every tests/*-test.sh, in parallel, with a per-test timeout.
 #
+# A test whose assertions are wall-clock bounds cannot share the machine with
+# seven others. Those declare themselves with a `# dex-test-lane: serial` line
+# and run one at a time, after the parallel batch has finished — the fact lives
+# with the test, so adding one does not mean editing this runner.
+#
 # Usage:
 #   bash tests/run-all.sh                 # all tests
 #   bash tests/run-all.sh review worktree # only tests whose name matches a filter
@@ -56,7 +61,29 @@ if [[ -z "$tests" ]]; then
 fi
 
 total="$(printf '%s\n' "$tests" | wc -l | tr -d ' ')"
-printf 'running %s test(s), %s at a time, %ss timeout\n' "$total" "$JOBS" "$TIMEOUT"
+
+# Split off the tests that measure elapsed time. The marker is read from the
+# head of the file so a test declares its own lane.
+parallel_tests=""
+serial_tests=""
+while IFS= read -r name; do
+  [[ -n "$name" ]] || continue
+  if head -40 "$ROOT/tests/$name" | grep -q '^# dex-test-lane: serial'; then
+    serial_tests="${serial_tests}${name}"$'\n'
+  else
+    parallel_tests="${parallel_tests}${name}"$'\n'
+  fi
+done <<EOF
+$tests
+EOF
+serial_total="$(printf '%s' "$serial_tests" | grep -c . || true)"
+
+if [[ "$serial_total" -gt 0 ]]; then
+  printf 'running %s test(s): %s at a time, then %s in a serial lane, %ss timeout\n' \
+    "$total" "$JOBS" "$serial_total" "$TIMEOUT"
+else
+  printf 'running %s test(s), %s at a time, %ss timeout\n' "$total" "$JOBS" "$TIMEOUT"
+fi
 
 run_one() {
   local name="$1" start end rc
@@ -89,9 +116,17 @@ while IFS= read -r name; do
   done
   run_one "$name" </dev/null &
 done <<EOF
-$tests
+$parallel_tests
 EOF
 wait
+
+# The serial lane, on a machine the runner has stopped loading.
+while IFS= read -r name; do
+  [[ -n "$name" ]] || continue
+  run_one "$name" </dev/null
+done <<EOF
+$serial_tests
+EOF
 
 passed=0
 failed=""

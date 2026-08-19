@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# dex-test-lane: serial
+# Asserts that a trial's deadline fires within a wall-clock bound. Sharing
+# the machine with seven other tests made it take 33s against a 7s bound.
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
 source "$ROOT/tests/helpers.sh"

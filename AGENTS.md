@@ -271,7 +271,7 @@ formatter; verification is static checks plus the test suite.
 | Check | Command | Notes |
 |-------|---------|-------|
 | Static | `bash tests/check.sh` | `zsh -n` on the zsh files, `bash -n` plus `shellcheck -S warning` on every other shell file the repo ships (`lib/`, `hooks/`, `bin/`, `tests/`, and `research/` including the scenario rubrics), `py_compile`, the embedded-Python and zsh-reserved-name checks, `node --check`. Optional tools are skipped with a notice. |
-| Tests | `bash tests/run-all.sh` | Runs every `tests/*-test.sh` in parallel with a per-test timeout. Filter with `bash tests/run-all.sh review worktree`. |
+| Tests | `bash tests/run-all.sh` | Runs every `tests/*-test.sh` in parallel with a per-test timeout, then the serial lane. Filter with `bash tests/run-all.sh review worktree`. |
 | One test | `bash tests/<name>-test.sh` | For iterating on a single surface. |
 
 Both commands run in CI (`.github/workflows/ci.yml`) on Linux and macOS for
@@ -280,6 +280,26 @@ every push to `main` and every pull request.
 Run `bash tests/check.sh` before committing, and at minimum the tests covering
 the surface you changed. The review-loop suites are slow (10+ minutes each);
 `tests/run-all.sh` parallelizes them, so prefer it over serial runs.
+
+### The serial lane
+
+A test whose assertion is a wall-clock bound cannot share the machine with
+seven others. `guards-test` under a full parallel batch took 541s and reported
+29 false positives, because every guard has a 2s evaluation budget and a
+detector that blows it is skipped. Such a test declares itself:
+
+```bash
+# dex-test-lane: serial
+# <why this one measures time>
+```
+
+`tests/run-all.sh` reads that from the head of the file and runs those last,
+one at a time, once the parallel batch has finished. The marker lives with the
+test, so adding one does not mean editing the runner.
+
+Reach for it only when a bound is genuinely about elapsed time. A slow test is
+not a serial test — the lane is not a place to hide flakiness that has another
+cause.
 
 ### Writing an assertion
 
