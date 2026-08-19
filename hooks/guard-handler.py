@@ -4540,10 +4540,26 @@ def check_guards(guards, full_text, path_text=''):
         # both: for a blocking guard, an evaluation failure on this specific
         # input must deny the command rather than let it through unchecked.
         # Only this one tool call is affected, so the user can rephrase it.
+        # `allow_pattern` exempts a span, not the command. Blanking the allowed
+        # spans and judging what is left is the difference between "this form
+        # is fine" and "mentioning this form makes the rest invisible": a
+        # command that pairs an exempted `eval` with something else still gets
+        # judged on the something else. Done before the detector runs, so it
+        # costs one parse rather than two.
+        detector_text = text
+        if allow_pattern and guard.get('detector'):
+            try:
+                detector_text = re.sub(
+                    allow_pattern, ' ', text,
+                    flags=re.MULTILINE | (0 if guard.get('case_sensitive') else re.IGNORECASE))
+            except re.error as error:
+                print(f"[guard:{name}] invalid allow_pattern regex: {error}", file=sys.stderr)
+                detector_text = text
+
         _prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
         signal.alarm(GUARD_EVAL_TIMEOUT_SECONDS)
         try:
-            detector_match = guard_detector_matches(guard, text)
+            detector_match = guard_detector_matches(guard, detector_text)
             detector_error = ''
         except TimeoutError:
             detector_match = None
@@ -4576,19 +4592,6 @@ def check_guards(guards, full_text, path_text=''):
         if detector_match is not None:
             if not detector_match:
                 continue
-            # A detector answers "does this shape appear", which is coarse by
-            # design. `allow_pattern` is how a guard says "except when it looks
-            # like this" — the same escape hatch pattern guards have, so a
-            # known-good form can be exempted in the guard file rather than in
-            # the parser. Checked against the whole text: a detector match is
-            # not a span.
-            if allow_pattern:
-                try:
-                    if re.search(allow_pattern, text,
-                                 re.MULTILINE | (0 if guard.get('case_sensitive') else re.IGNORECASE)):
-                        continue
-                except re.error as error:
-                    print(f"[guard:{name}] invalid allow_pattern regex: {error}", file=sys.stderr)
             entry = {
                 'name': name,
                 'message': guard.get('message', 'Guard triggered.'),

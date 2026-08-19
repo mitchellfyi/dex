@@ -292,6 +292,25 @@ assert_sensitive_clean "a source file starting with the same letters as .env" \
   'src/environment.ts
 fix: thing'
 
+# --- allow_pattern on a detector guard ---
+# It exempts a span, not the command. A command that pairs an exempted form
+# with something else still gets judged on the something else — otherwise
+# naming an allowed tool would be a way to turn the guard off.
+assert_destructive_clean "an allowlisted shell-init eval" \
+  'eval "$(direnv hook bash)"'
+assert_destructive_clean "another allowlisted init form" \
+  'eval "$(rbenv init -)"'
+assert_destructive_clean "an allowlisted eval beside ordinary work" \
+  'eval "$(brew shellenv)" && make build'
+assert_destructive_blocks "an allowlisted eval beside a destructive command" \
+  'eval "$(direnv hook bash)"; rm -rf /'
+assert_destructive_blocks "a destructive command before an allowlisted eval" \
+  'rm -rf /; eval "$(direnv hook bash)"'
+assert_destructive_blocks "an allowlisted eval named in a comment" \
+  'rm -rf / # eval "$(direnv hook bash)"'
+assert_destructive_blocks "an eval of something unreadable" \
+  'eval "$(cat setup.sh)"'
+
 # --- Claude attribution ---
 assert_attribution_blocks "generated-by footer in a PR body" \
   'gh pr create --body "Generated with Claude Code"'

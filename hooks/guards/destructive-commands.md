@@ -4,7 +4,7 @@ enabled: true
 event: bash
 detector: destructive-commands
 action: warn
-allow_pattern: (?i)\beval\s+"?\$\((?:[a-z0-9_.-]*/)?(?:direnv|rbenv|pyenv|nodenv|jenv|goenv|tfenv|asdf|mise|rtx|nvm|fnm|volta|starship|zoxide|atuin|mcfly|thefuck|navi|brew|ssh-agent|gpg-agent|keychain|docker-machine|minikube|kubectl|helm|gh|hub|aws|gcloud|az|op|dotenv|pipenv|poetry|conda|micromamba|rustup|cargo|deno|bun|pnpm|yarn|npm|node|python3?|ruby|perl|luarocks|opam|sdk|jabba|tmuxifier|fzf|dircolors|lesspipe|register-python-argcomplete|_[A-Z0-9_]+_COMPLETE)\b
+allow_pattern: (?i)\beval\s+"?\$\((?:[a-z0-9_.-]*/)?(?:direnv|rbenv|pyenv|nodenv|jenv|goenv|tfenv|asdf|mise|rtx|nvm|fnm|volta|starship|zoxide|atuin|mcfly|thefuck|navi|brew|ssh-agent|gpg-agent|keychain|docker-machine|minikube|kubectl|helm|gh|hub|aws|gcloud|az|op|dotenv|terraform|tofu|vault|doppler|sops|aws-vault|chamber|infisical|teller|envchain|pipenv|poetry|conda|micromamba|rustup|cargo|deno|bun|pnpm|yarn|npm|node|python3?|ruby|perl|luarocks|opam|sdk|jabba|tmuxifier|fzf|dircolors|lesspipe|register-python-argcomplete|_[A-Z0-9_]+_COMPLETE)\b[^()]*\)"?
 ---
 
 Destructive system command detected.
