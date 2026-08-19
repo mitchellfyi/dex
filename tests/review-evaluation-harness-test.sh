@@ -1025,7 +1025,12 @@ REVIEW_EVAL_DETACHED_PARENT_FILE="$detached_test_parent_file" \
       whole_deadline_status=$?
 whole_deadline_elapsed=$(( $(date +%s) - whole_deadline_started ))
 assert_eq "124" "$whole_deadline_status" "whole-trial preflight deadline exit"
-[[ $whole_deadline_elapsed -le 7 ]] || \
+# The trial's deadline is 2s and its fake provider would otherwise sleep 30s,
+# so any bound well under 30 proves the deadline fired rather than the work
+# finishing. 7s left 5s of slack, which run-all.sh does not have: it runs eight
+# tests at once, and this one was seen taking 33s on a loaded machine — a
+# flake, not a regression. 20s still distinguishes the two outcomes.
+[[ $whole_deadline_elapsed -le 20 ]] || \
   fail "whole-trial deadline took too long: ${whole_deadline_elapsed}s"
 python3 - "$whole_deadline_trial/manifest.json" "$DETACHED_TEST_PID_FILE" <<'PY'
 import json
@@ -1111,7 +1116,9 @@ detached_cancel_status=0
 wait "$detached_cancel_pid" || detached_cancel_status=$?
 detached_cancel_elapsed=$(( $(date +%s) - detached_cancel_started ))
 assert_eq "143" "$detached_cancel_status" "detached cancellation exit"
-[[ $detached_cancel_elapsed -le 5 ]] || \
+# Same reasoning as the whole-trial bound above: the alternative to prompt
+# cancellation is a 30s sleep, so 15s tells the two apart with room for load.
+[[ $detached_cancel_elapsed -le 15 ]] || \
   fail "detached cancellation took too long: ${detached_cancel_elapsed}s"
 python3 - "$DETACHED_TEST_PID_FILE" <<'PY'
 import subprocess

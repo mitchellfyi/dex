@@ -152,7 +152,9 @@ and choose the first issue to implement.
 ## Requirements
 
 - **zsh as your interactive shell.** `dx.sh` uses zsh-only syntax and is sourced
-  from `~/.zshrc`; the installer refuses to proceed without it.
+  from `~/.zshrc`. The installer runs under any shell and writes the same files,
+  but warns when `$SHELL` is not zsh, because nothing it installs will load for
+  you until you get there.
 - Claude Code CLI installed and signed in.
 - A git repository.
 - Python 3 (standard library only).

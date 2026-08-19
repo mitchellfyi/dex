@@ -174,6 +174,39 @@ assert_contains "user-owned workflow temp" "${workflow_target}.tmp.$$"
 assert_contains "DEX_REPO: example/dex" "$workflow_target"
 assert_contains "DEX_REF: test-ref" "$workflow_target"
 
+# This repo runs its own installed copy of the workflow, so there are two of
+# them: the template every other repo gets, and .github/workflows here. Editing
+# the live one and forgetting the template ships a stale workflow everywhere
+# else, and nothing would say so. They must match apart from the two values the
+# installer substitutes.
+python3 - "$ROOT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+template = (root / "templates/github/workflows/dx-maintain.yml").read_text(encoding="utf-8")
+installed = (root / ".github/workflows/dx-maintain.yml").read_text(encoding="utf-8")
+
+# Undo the substitution the installer makes, then the two must be identical.
+normalized = re.sub(r"(?m)^(  DEX_REPO:) .*$", r"\1 __DEX_REPO__", installed)
+normalized = re.sub(r"(?m)^(  DEX_REF:) .*$", r"\1 __DEX_REF__", normalized)
+if normalized != template:
+    import difflib
+
+    print(
+        "templates/github/workflows/dx-maintain.yml and .github/workflows/dx-maintain.yml\n"
+        "differ by more than the substituted DEX_REPO/DEX_REF values:",
+        file=sys.stderr,
+    )
+    for line in difflib.unified_diff(
+        template.splitlines(), normalized.splitlines(), "template", "installed", n=2, lineterm=""
+    ):
+        print(line, file=sys.stderr)
+    raise SystemExit(1)
+print("maintenance workflow template matches the installed copy")
+PY
+
 linked_repo="$TMP_DIR/linked-repo"
 linked_target="$TMP_DIR/linked-target"
 mkdir -p "$linked_repo/.dex" "$linked_target"
