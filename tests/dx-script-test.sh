@@ -152,4 +152,26 @@ done
 assert_contains "Nothing to clean." "$TMP_DIR/leak-dxclean.out"
 assert_contains "No worktrees." "$TMP_DIR/leak-dxls.out"
 
+# __dx_show_header reads the same times file bin/status-line.sh does, and put
+# its fields straight into $(( )). zsh evaluates an array subscript there as an
+# arithmetic expression too, so a start time of `HOME[$(…)]` ran that command
+# every time a phase header was drawn.
+HEADER_CANARY="$TMP_DIR/header-canary"
+DEX_DIR="$ROOT" DX_STATE_DIR="$TMP_DIR/header-state" DX_LOOP_DIR="$TMP_DIR/header-loops" \
+DX_ARTIFACT_DIR="$TMP_DIR/header-art" DX_TOOL_DIR="$TMP_DIR/header-tools" \
+DEXCODE_SYNC=0 DX_TEST_CANARY="$HEADER_CANARY" \
+zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  session_id=$(dx_session_id)
+  mkdir -p "$DX_STATE_DIR"
+  print -r -- "0:HOME[\$(touch $DX_TEST_CANARY)]" > "$(dx_times_file "$session_id")"
+  print -r -- "1:HOME[\$(touch $DX_TEST_CANARY)]" >> "$(dx_times_file "$session_id")"
+  __dx_show_header "wt" 3 "$DEX_DIR" main "$session_id" worktree
+' > "$TMP_DIR/header.out" 2>&1
+if [[ -e "$HEADER_CANARY" ]]; then
+  printf 'dx.sh phase header executed a command from the times file\n' >&2
+  exit 1
+fi
+assert_not_contains 'HOME[' "$TMP_DIR/header.out"
+
 printf 'dx-script-test passed\n'

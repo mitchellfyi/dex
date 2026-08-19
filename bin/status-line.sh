@@ -47,7 +47,13 @@ ELAPSED=""
 TIMES_FILE=$(dx_times_file "$SESSION_ID")
 if [[ -f "$TIMES_FILE" ]]; then
   TOTAL_START=$(head -1 "$TIMES_FILE" 2>/dev/null | cut -d: -f2)
-  if [[ -n "${TOTAL_START:-}" ]]; then
+  # Digits, not merely non-empty. $(( )) evaluates an array subscript as an
+  # arithmetic expression, so a times file holding `HOME[$(…)]` runs that
+  # command — and this script runs on every prompt render, long after whatever
+  # wrote the file is gone. `set -u` does not stop it: naming a variable that
+  # is already set keeps nounset quiet. bin/log.sh reads the same file and
+  # already checks this way.
+  if [[ "${TOTAL_START:-}" =~ ^[0-9]+$ ]]; then
     NOW=$(date +%s)
     SECS=$((NOW - TOTAL_START))
     if [[ $SECS -lt 60 ]]; then

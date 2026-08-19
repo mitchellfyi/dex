@@ -2347,12 +2347,17 @@ __dx_show_header() {
     prev_start=$(grep "^${prev_step}:" "$times_file" 2>/dev/null | tail -1 | cut -d: -f2)
     total_start=$(head -1 "$times_file" 2>/dev/null | cut -d: -f2)
 
+    # Digits, not merely non-empty. Both shells evaluate an array subscript
+    # inside $(( )) as an arithmetic expression, so a times file holding
+    # `HOME[$(…)]` runs that command here; `set -u` does not stop it, because
+    # naming a variable that is already set keeps nounset quiet. bin/log.sh
+    # reads the same file and already checks this way.
     local timing=""
-    if [[ -n "$prev_start" ]]; then
+    if [[ "$prev_start" =~ ^[0-9]+$ ]]; then
       phase_elapsed=$((now - prev_start))
       timing+="  Phase ${prev_step} took $(dx_format_duration "$phase_elapsed")"
     fi
-    if [[ -n "$total_start" ]]; then
+    if [[ "$total_start" =~ ^[0-9]+$ ]]; then
       total_elapsed=$((now - total_start))
       timing+=" | Total: $(dx_format_duration "$total_elapsed")"
     fi

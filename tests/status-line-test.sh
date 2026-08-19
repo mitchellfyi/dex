@@ -93,6 +93,31 @@ dx_write_lifecycle_control "$DEX_SESSION_ID" pause "operator" 2>/dev/null || \
 run_status_line
 check "human pause" "Dex paused by human"
 
+# A times file is data, and this script renders it on every prompt — long
+# after whatever wrote it has gone. Both shells evaluate an array subscript
+# inside $(( )) as an arithmetic expression, so a start time of `HOME[$(…)]`
+# used to run that command from the prompt. `set -u` does not stop it: naming
+# a variable that is already set keeps nounset quiet, so only checking the
+# value is digits does.
+CANARY="$TMP_DIR/times-file-canary"
+rm -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" "$(dx_paused_file "$DEX_SESSION_ID")"
+printf '3\n' > "$(dx_state_file "$DEX_SESSION_ID")"
+printf 'total:HOME[$(touch %s)]\n' "$CANARY" > "$(dx_times_file "$DEX_SESSION_ID")"
+run_status_line
+check "hostile times file still renders" "Phase 3/6"
+if [[ -e "$CANARY" ]]; then
+  printf 'FAIL hostile times file: the status line executed a command from it\n' >&2
+  fail=$((fail + 1))
+else
+  pass=$((pass + 1))
+fi
+if printf '%s' "$STATUS_OUT" | grep -Fq 'HOME['; then
+  printf 'FAIL hostile times file: raw file contents reached the status line\n%s\n' "$STATUS_OUT" >&2
+  fail=$((fail + 1))
+else
+  pass=$((pass + 1))
+fi
+
 printf 'status-line-test: %d passed, %d failed\n' "$pass" "$fail"
 if [[ "$fail" -ne 0 ]]; then
   exit 1
