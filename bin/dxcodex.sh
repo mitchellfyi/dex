@@ -38,6 +38,7 @@ esac
 # Any provider profile may delegate through this wrapper; codex-plugin profiles
 # resolve a codex_model override, other engines use the Codex session default.
 unset DX_CODEX_MODEL
+unset DX_CODEX_EFFORT
 dx_provider_apply
 
 dx_provider_codex_read_only_mode_valid || exit 2
@@ -66,6 +67,9 @@ case "$subcmd" in
     fi
     if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
       codex_args+=(-m "$DX_CODEX_MODEL")
+    fi
+    if [[ -n "${DX_CODEX_EFFORT:-}" ]]; then
+      codex_args+=(-c "model_reasoning_effort=$DX_CODEX_EFFORT")
     fi
     allow_dash_prompt=0
     if [[ "${1:-}" == "--" ]]; then
@@ -143,6 +147,9 @@ case "$subcmd" in
       codex_args=(exec "${codex_policy_args[@]}")
       if [[ -n "${DX_CODEX_MODEL:-}" ]]; then
         codex_args+=(-m "$DX_CODEX_MODEL")
+      fi
+      if [[ -n "${DX_CODEX_EFFORT:-}" ]]; then
+        codex_args+=(-c "model_reasoning_effort=$DX_CODEX_EFFORT")
       fi
       review_scope=$(
         printf '%s\n' "${scope_notes[@]}"

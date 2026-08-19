@@ -205,4 +205,24 @@ grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox
 grep -q -- "Initial phase: Phase 0 (Setup)." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Begin Phase 0: Setup" "$DEX_TEST_CODEX_PROMPT"
 
+# A run spec can say how hard to think. Codex takes effort as configuration
+# rather than a flag of its own, so it has to arrive as -c
+# model_reasoning_effort — it used to be resolved, validated, and then dropped
+# for the one agent DexCode plans with by default.
+: > "$DEX_TEST_CODEX_ARGS"
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+DX_EFFORT_OVERRIDE=xhigh DX_CODEX_READ_ONLY=1 \
+  bash "$ROOT/bin/dxcodex.sh" exec -- "think hard about this"
+grep -q -- "-c model_reasoning_effort=xhigh" "$DEX_TEST_CODEX_LAST_ARGS"
+
+# ...and nothing is passed when nothing asked for it, so the profile's own
+# setting still decides.
+: > "$DEX_TEST_CODEX_ARGS"
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+DX_CODEX_READ_ONLY=1 bash "$ROOT/bin/dxcodex.sh" exec -- "no effort stated"
+if grep -q -- "model_reasoning_effort" "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "codex was given an effort nobody asked for" >&2
+  exit 1
+fi
+
 printf 'provider codex launch test passed\n'

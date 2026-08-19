@@ -667,6 +667,14 @@ dx_provider_apply() {
     DX_CODEX_MODEL="$model_override"
   fi
 
+  # Codex reads effort from configuration rather than a flag of its own, so it
+  # is resolved here and applied by the wrapper. Without this the effort a run
+  # spec asks for reached Claude and was dropped for Codex, which is the agent
+  # DexCode plans with by default.
+  DX_CODEX_EFFORT="${effort_override:-$DX_PROVIDER_EFFORT}"
+  dx_provider_validate_effort_field "DX_CODEX_EFFORT" "$DX_CODEX_EFFORT" || return 1
+  export DX_CODEX_EFFORT
+
   if [[ "$DX_PROVIDER_ENGINE" != "codex-plugin" && -n "$model_override" ]]; then
     DX_USER_CLAUDE_MODEL="$model_override"
     DX_USER_PLAN_MODEL="$model_override"
@@ -825,6 +833,7 @@ dx_provider_claude() {
         DX_AGENT_OVERRIDE="${DX_AGENT_OVERRIDE:-}"
         DX_MODEL_OVERRIDE="${DX_MODEL_OVERRIDE:-}"
         DX_EFFORT_OVERRIDE="${DX_EFFORT_OVERRIDE:-}"
+        DX_CODEX_EFFORT="${DX_CODEX_EFFORT:-}"
       )
       local codex_prompt
       codex_prompt=$(dx_provider_codex_prompt_from_claude_args "$@") || return 1
