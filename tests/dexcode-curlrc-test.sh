@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dexcode-curlrc-test.XXXXXX")"
 SERVER_PID=""
 
@@ -32,15 +34,6 @@ printf 'location-trusted\n' > "$HOME/.curlrc"
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
-
-request_count() {
-  local file="$1"
-  [[ -f "$file" ]] || {
-    printf '0\n'
-    return 0
-  }
-  wc -l < "$file" | tr -d '[:space:]'
-}
 
 cat > "$TMP_DIR/server.py" <<'PY'
 import base64

@@ -30,15 +30,6 @@ export DEX_FACTORY_RETRY_MAX_SECONDS=0
 source "$ROOT/lib/common.sh"
 
 
-request_count() {
-  local file="$1"
-  [[ -f "$file" ]] || {
-    printf '0\n'
-    return 0
-  }
-  wc -l < "$file" | tr -d '[:space:]'
-}
-
 cat > "$TMP_DIR/server.py" <<'PY'
 import json
 import sys

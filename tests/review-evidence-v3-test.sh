@@ -25,15 +25,6 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 source "$ROOT/lib/common.sh"
 
 
-assert_rejected() {
-  local label="$1"
-  shift
-  if "$@"; then
-    printf '%s: expected command to fail\n' "$label" >&2
-    exit 1
-  fi
-}
-
 REPO="$TMP_DIR/repo"
 git init -q -b main "$REPO"
 git -C "$REPO" config user.name "Dex Test"

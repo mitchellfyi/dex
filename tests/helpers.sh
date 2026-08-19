@@ -42,6 +42,28 @@ assert_not_contains() {
   fi
 }
 
+# assert_rejected <label> <command...> — the command must fail
+assert_rejected() {
+  local label="$1"
+  shift
+  if "$@"; then
+    printf '%s: expected command to fail\n' "$label" >&2
+    exit 1
+  fi
+}
+
+# request_count <file> — lines in a request log, 0 when it does not exist yet.
+# A fake HTTP server writes one line per request; "no file" and "no requests"
+# have to read the same or the first assertion in a test races the server.
+request_count() {
+  local file="$1"
+  [[ -f "$file" ]] || {
+    printf '0\n'
+    return 0
+  }
+  wc -l < "$file" | tr -d '[:space:]'
+}
+
 # assert_file <path>
 assert_file() {
   if [[ ! -f "$1" ]]; then

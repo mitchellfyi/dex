@@ -652,7 +652,7 @@ fi
 # Piping into `xargs -I{}` hides the values from the guard. Denying every such
 # command is too blunt: values can only become a command when the template
 # puts them in command position or hands them to a shell/interpreter.
-assert_bash_allowed_codex() {
+assert_bash_allowed() {
   run_bash_guard "$(mkbashpayload "$2")"
   if printf '%s' "$GUARD_OUT" | grep -q 'BLOCKED'; then
     printf 'FAIL (expected allowed): %s\n%s\n' "$1" "$GUARD_OUT" >&2
@@ -662,9 +662,9 @@ assert_bash_allowed_codex() {
   fi
 }
 
-assert_bash_allowed_codex "xargs into a fixed non-launching command" \
+assert_bash_allowed "xargs into a fixed non-launching command" \
   "git ls-files | xargs -I{} du -k {}"
-assert_bash_allowed_codex "xargs into git with a placeholder argument" \
+assert_bash_allowed "xargs into git with a placeholder argument" \
   "cat list.txt | xargs -I{} git add {}"
 
 # Guards advise rather than deny, so what a test can assert is that the guard
@@ -753,16 +753,6 @@ cat > "$NOEXEC_TMP/payload.sh" <<'PAYLOAD'
 codex exec "do the work"
 PAYLOAD
 chmod +x "$NOEXEC_TMP/payload.sh"
-
-assert_bash_allowed() {
-  run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'BLOCKED'; then
-    printf 'FAIL (expected allowed): %s\n%s\n' "$1" "$GUARD_OUT" >&2
-    fail=$((fail + 1))
-  else
-    pass=$((pass + 1))
-  fi
-}
 
 assert_bash_allowed "bash -n on a codex-calling script" "bash -n $NOEXEC_TMP/payload.sh"
 assert_bash_allowed "zsh -n on a codex-calling script" "zsh -n $NOEXEC_TMP/payload.sh"

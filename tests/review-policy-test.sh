@@ -27,15 +27,6 @@ source "$ROOT/lib/common.sh"
 source "$ROOT/tests/review-proof-fixture.sh"
 
 
-assert_rejected() {
-  local label="$1"
-  shift
-  if "$@"; then
-    printf '%s: expected command to fail\n' "$label" >&2
-    exit 1
-  fi
-}
-
 append_clean_ledger() {
   local session_id="$1" count="$2" fingerprint="$3" criteria_binding="$4"
   local policy_binding="$5" pass_prefix="$6" profile="$7" iteration pass_id
