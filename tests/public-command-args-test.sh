@@ -65,6 +65,36 @@ zsh -fc '
       exit 1
     fi
   done
+
+  dx help > "$TEST_REPO/dx-help.out"
 '
+
+# `dx help` is the only listing most people read, and it had quietly fallen
+# behind the dispatcher: `dx worker` and `dx dexcode` were both reachable and
+# documented elsewhere while being absent from it. Compare the two directly.
+python3 - "$ROOT" "$TEST_REPO/dx-help.out" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+root, help_path = Path(sys.argv[1]), Path(sys.argv[2])
+source = (root / "dx.sh").read_text(encoding="utf-8")
+body = re.search(r"^__dx_cli\(\) \{$(.*?)^\}$", source, re.S | re.M).group(1)
+
+# Case labels at the dispatcher's own indent level, minus the help aliases it
+# cannot list as commands and `revert`/`log`, which the worktree section covers.
+listed_elsewhere = {"help", "--help", "-h", "revert", "log"}
+commands = set()
+for match in re.finditer(r"^ {4}([a-z|_-]+)\)", body, re.M):
+    commands.update(match.group(1).split("|"))
+commands -= listed_elsewhere
+
+help_text = help_path.read_text(encoding="utf-8")
+missing = sorted(c for c in commands if not re.search(rf"^\s+dx {re.escape(c)}\b", help_text, re.M))
+if missing:
+    print("dx help does not list: " + ", ".join(missing), file=sys.stderr)
+    raise SystemExit(1)
+print(f"dx help lists all {len(commands)} dispatcher commands")
+PY
 
 printf 'public command argument tests passed\n'

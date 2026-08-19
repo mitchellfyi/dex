@@ -8,7 +8,14 @@ SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 dx_lifecycle_session_id_valid "$SESSION_ID" || exit 0
 HOOK_INPUT=$(cat)
 
-__dx_user_prompt_from_json() {
+# Read both fields in one interpreter start. This hook runs on every user
+# prompt, and two python3 launches to read two keys out of the same object was
+# the largest thing it did.
+#
+# The prompt is printed last and may contain newlines; the session id may not,
+# so a single leading line carries it. Fields are printed even when absent, so
+# the caller can tell "not present" from "payload was not JSON" (exit 1).
+__dx_hook_fields_from_json() {
   printf '%s' "$HOOK_INPUT" | python3 -c '
 import json
 import sys
@@ -18,25 +25,13 @@ try:
 except Exception:
     sys.exit(1)
 
-prompt = data.get("prompt", "")
-if isinstance(prompt, str):
-    print(prompt)
-' 2>/dev/null
-}
 
-__dx_hook_session_from_json() {
-  printf '%s' "$HOOK_INPUT" | python3 -c '
-import json
-import sys
+def text(value):
+    return value if isinstance(value, str) else ""
 
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(1)
 
-session_id = data.get("session_id", "")
-if isinstance(session_id, str):
-    print(session_id)
+print(text(data.get("session_id", "")).replace("\n", " "))
+print(text(data.get("prompt", "")), end="")
 ' 2>/dev/null
 }
 
@@ -97,9 +92,23 @@ __dx_prompt_resumes_watchers() {
   return 1
 }
 
-PROMPT=$(__dx_user_prompt_from_json || printf '%s' "$HOOK_INPUT")
+HOOK_CLAUDE_SESSION_ID=""
+PROMPT=""
+if HOOK_FIELDS=$(__dx_hook_fields_from_json); then
+  case "$HOOK_FIELDS" in
+    # Command substitution eats the trailing newline, so an empty prompt leaves
+    # no separator behind and the session id would be read as the prompt too.
+    *$'\n'*)
+      HOOK_CLAUDE_SESSION_ID="${HOOK_FIELDS%%$'\n'*}"
+      PROMPT="${HOOK_FIELDS#*$'\n'}"
+      ;;
+    *) HOOK_CLAUDE_SESSION_ID="$HOOK_FIELDS" ;;
+  esac
+else
+  # Not JSON: the whole payload is the prompt, as it was before hooks sent one.
+  PROMPT="$HOOK_INPUT"
+fi
 PROMPT_LC=$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]')
-HOOK_CLAUDE_SESSION_ID=$(__dx_hook_session_from_json || true)
 HOOK_SESSION_VALID=0
 dx_lifecycle_session_id_valid "$HOOK_CLAUDE_SESSION_ID" && HOOK_SESSION_VALID=1
 

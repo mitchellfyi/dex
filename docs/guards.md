@@ -87,7 +87,7 @@ Some guards set `detector:` instead of `pattern:` to use a parser in `hooks/guar
 
 | Detector | Used by | What it parses |
 |----------|---------|----------------|
-| `destructive-commands` | `warn-destructive-commands` | Shell tokenization of `rm -rf` / `dd` / `mkfs` targets, incl. wrappers and nested payloads |
+| `destructive-commands` | `warn-destructive-commands` | Shell tokenization of `rm -rf` / `dd` / `mkfs` targets, incl. wrappers, nested payloads, and a command word held in a variable or a default expansion |
 | `raw-codex-delegation` | `warn-raw-codex-delegation` | Shell/script delegation to the Codex CLI under the `codex-plugin` provider |
 | `await-in-loop` | `warn-await-in-loop` | Common `for`/`foreach`/`while` loop bodies, flagging an `await` that isn't inside a nested closure or method |
 

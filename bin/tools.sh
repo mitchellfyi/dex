@@ -59,7 +59,7 @@ case "$cmd" in
     ;;
   *)
     dx_error "Unknown tools command: $cmd"
-    usage
+    usage >&2
     exit 1
     ;;
 esac

@@ -139,6 +139,8 @@ __dx_cli() {
       echo "  dx login            Connect this machine to DexCode sync"
       echo "  dx whoami           Show the active DexCode account and project"
       echo "  dx logout           Disconnect DexCode sync on this machine"
+      echo "  dx dexcode          Manage the DexCode connection and selected project"
+      echo "  dx worker           Register this machine and run DexCode-dispatched work"
       echo "  dx maintain         Run background maintenance or install the GitHub workflow"
       echo "  dx tools            Check or install Claude/Codex tooling bootstrap"
       echo "  dx config           Configure integrations (ticket tracker, Figma, etc.)"

@@ -108,7 +108,7 @@ for arg in "$@"; do
       ;;
     *)
       dx_error "Unknown init option: $arg"
-      usage
+      usage >&2
       exit 1
       ;;
   esac

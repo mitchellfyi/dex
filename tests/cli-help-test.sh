@@ -58,11 +58,19 @@ run_entrypoint_checks() {
       DEX_DIR="$ROOT" \
       DX_RTK_ENABLED=0 \
       bash "$script" --not-an-option
-  ) > "$case_dir/unknown.out" 2>&1; then
+  ) > "$case_dir/unknown.stdout" 2> "$case_dir/unknown.stderr"; then
     printf '%s accepted an unknown option\n' "$name" >&2
     exit 1
   fi
-  assert_contains "Unknown ${name} option: --not-an-option" "$case_dir/unknown.out"
+  assert_contains "Unknown ${name} option: --not-an-option" "$case_dir/unknown.stderr"
+  # A rejected invocation produces no stdout. Half these entry points used to
+  # print their usage there, so `dx init --typo 2>/dev/null` handed the caller
+  # help text as if it were output, and hid the diagnostic.
+  if [[ -s "$case_dir/unknown.stdout" ]]; then
+    printf '%s wrote to stdout while rejecting an unknown option:\n' "$name" >&2
+    cat "$case_dir/unknown.stdout" >&2
+    exit 1
+  fi
   assert_unchanged "$home_snapshot" "$test_home" "${name}-unknown-home"
   assert_unchanged "$repo_snapshot" "$test_repo" "${name}-unknown-repo"
 }
@@ -72,6 +80,10 @@ run_entrypoint_checks uninstall "$ROOT/bin/uninstall.sh" "Usage: dx uninstall"
 run_entrypoint_checks status "$ROOT/bin/status.sh" "Usage: dx status"
 run_entrypoint_checks config "$ROOT/bin/config.sh" "Usage: dx config"
 run_entrypoint_checks uninit "$ROOT/bin/uninit.sh" "Usage: dx uninit"
+run_entrypoint_checks init "$ROOT/bin/init.sh" "Usage: dx init"
+# sync said only "Unknown option", which does not say which of the scripts in
+# an init chain is complaining.
+run_entrypoint_checks sync "$ROOT/bin/sync.sh" "Usage: dx sync"
 
 tools_home="$TMP_DIR/tools/home"
 tools_repo="$TMP_DIR/tools/repo"

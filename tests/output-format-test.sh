@@ -35,7 +35,11 @@ check_duration 59 '59s'
 check_duration 60 '1m 0s'
 check_duration 61 '1m 1s'
 check_duration 900 '15m 0s'
-check_duration 3600 '60m 0s'
+check_duration 3599 '59m 59s'
+# The hour boundary: seconds stop carrying information, so they are dropped.
+check_duration 3600 '1h 0m'
+check_duration 3661 '1h 1m'
+check_duration 86400 '24h 0m'
 # A config file may spell a duration with a leading zero. Shell arithmetic and
 # printf both read that as octal, which silently reported the wrong duration.
 check_duration 090 '1m 30s'

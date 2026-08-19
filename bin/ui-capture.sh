@@ -16,12 +16,12 @@ Artifacts are written to:
 USAGE
 }
 
+# A run name becomes a directory component, so bound its length. The slug
+# itself is dx_slugify's, from lib/git.sh — this had its own copy that agreed
+# with it on every input tried, which is the kind of duplicate that only stays
+# correct until one of them is taught something.
 slugify() {
-  local value="$1"
-  printf '%s\n' "$value" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
-    | cut -c1-80
+  printf '%.80s\n' "$(dx_slugify "$1")"
 }
 
 url=""
@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --url)
       [[ $# -ge 2 ]] || {
         dx_error "--url requires a value"
-        usage
+        usage >&2
         exit 2
       }
       url="$2"
@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
     --name)
       [[ $# -ge 2 ]] || {
         dx_error "--name requires a value"
-        usage
+        usage >&2
         exit 2
       }
       name="$2"
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
     --out)
       [[ $# -ge 2 ]] || {
         dx_error "--out requires a value"
-        usage
+        usage >&2
         exit 2
       }
       out_dir="$2"
@@ -72,7 +72,7 @@ while [[ $# -gt 0 ]]; do
     --flow|--wait-ms)
       [[ $# -ge 2 ]] || {
         dx_error "$1 requires a value"
-        usage
+        usage >&2
         exit 2
       }
       runner_args+=("$1" "$2")
@@ -83,8 +83,8 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      dx_error "Unknown argument: $1"
-      usage
+      dx_error "Unknown ui-capture argument: $1"
+      usage >&2
       exit 2
       ;;
   esac
@@ -113,7 +113,7 @@ fi
 
 if [[ -z "$url" ]]; then
   dx_error "Missing required --url"
-  usage
+  usage >&2
   exit 2
 fi
 

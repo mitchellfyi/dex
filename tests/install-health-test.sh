@@ -72,9 +72,21 @@ for command_name in bash basename find git grep python3 readlink tr wc; do
   ln -s "$command_path" "$STATUS_BIN/$command_name"
 done
 
+# Match the label and the state, not the padding between them: the value
+# column is presentation, and pinning it here failed the whole health test the
+# first time a longer label was added to `dx status`.
+assert_status_row() {
+  local label="$1" state="$2" file="$3"
+  if ! grep -Eq "^  ${label}:[[:space:]]+${state}" "$file"; then
+    printf 'dx status did not report "%s: %s"\n' "$label" "$state" >&2
+    cat "$file" >&2
+    exit 1
+  fi
+}
+
 env PATH="$STATUS_BIN" bash "$ROOT/bin/status.sh" > "$TMP_DIR/status.out"
-grep -Fq "Hooks:     INCOMPLETE" "$TMP_DIR/status.out"
-grep -Fq "RTK:       disabled (DX_RTK_ENABLED=0)" "$TMP_DIR/status.out"
+assert_status_row "Hooks" "INCOMPLETE" "$TMP_DIR/status.out"
+assert_status_row "RTK" "disabled \\(DX_RTK_ENABLED=0\\)" "$TMP_DIR/status.out"
 
 dx_check_claude_dex_links() { return 0; }
 dx_check_codex_skill_links() { return 0; }
@@ -99,7 +111,7 @@ dx_install_safe_official_claude_plugins() { return 0; }
 dx_bootstrap_agent_tooling "" "install" > "$TMP_DIR/repair.out"
 dx_claude_settings_complete
 env PATH="$STATUS_BIN" bash "$ROOT/bin/status.sh" > "$TMP_DIR/repaired-status.out"
-grep -Fq "Hooks:     installed in ~/.claude/settings.json" "$TMP_DIR/repaired-status.out"
+assert_status_row "Hooks" "installed in ~/.claude/settings.json" "$TMP_DIR/repaired-status.out"
 
 python3 - "$HOME/.claude/settings.json" <<'PY'
 import json

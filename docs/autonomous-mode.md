@@ -521,6 +521,10 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_LOOP_PROMPT` | (from file) | Audit prompt injected on each loop iteration |
 | `DEX_LOOP_PHASE` | (set by wrapper) | Current phase number (0-6) or `prompt-loop`, used to find audit file |
 | `DEX_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
+| `DEX_PHASE_TIMEOUT` | `0` | Seconds any one phase may run; 0 leaves the session budget in charge |
+| `DEX_PHASE_N_TIMEOUT` | unset | Per-phase override (e.g. `DEX_PHASE_2_TIMEOUT=3600`); wins over `DEX_PHASE_TIMEOUT` |
+| `DEX_STOP_SOUND` | `1` | Play a sound when Claude stops (macOS only); set to 0 to turn it off |
+| `DEX_STOP_SOUND_FILE` | unset | Play this sound file instead of a random system one |
 | `DEX_RUN_ID` | set by Dex | Current run ID passed into hooks and provider subprocesses |
 | `DEX_FACTORY_SYNC` | auto | Enable optional Factory event sync; `false`, `0`, `no`, or `off` disables it |
 | `DEX_FACTORY_URL` | unset | Base Factory URL for event submission |
@@ -545,7 +549,7 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |
-| `DEX_WATCH_PAUSE_TTL_SECONDS` | `3600` (60m 0s) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |
+| `DEX_WATCH_PAUSE_TTL_SECONDS` | `3600` (1h 0m) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |
 | `DEX_COMPLETE_MAX_CYCLES` | `3` | Max idle cycles before Phase 6 pauses for manual follow-up |
 | `DEX_COMPLETE_WAIT_MINUTES` | `5` | Minimum wait window per Phase 6 cycle (minutes) |
 | `DX_ARTIFACT_DIR` | `~/.claude/.dex-artifacts` | Screenshots, videos, traces, and logs produced by Dex |

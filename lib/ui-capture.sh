@@ -88,84 +88,63 @@ dx_install_ui_capture_playwright() {
   dx_done "Playwright Chromium browser ready"
 }
 
-dx_claude_mcp_server_exists() {
-  local name="$1"
-  command -v claude >/dev/null 2>&1 || return 1
-  claude mcp get "$name" >/dev/null 2>&1
+# __dx_mcp_server_exists <cli> <name>
+__dx_mcp_server_exists() {
+  local cli="$1" name="$2"
+  command -v "$cli" >/dev/null 2>&1 || return 1
+  "$cli" mcp get "$name" >/dev/null 2>&1
 }
 
-dx_codex_mcp_server_exists() {
-  local name="$1"
-  command -v codex >/dev/null 2>&1 || return 1
-  codex mcp get "$name" >/dev/null 2>&1
+dx_claude_mcp_server_exists() { __dx_mcp_server_exists claude "$1"; }
+
+dx_codex_mcp_server_exists() { __dx_mcp_server_exists codex "$1"; }
+
+# The browser MCP servers Dex installs, as "<name> <npm package>". Both agents
+# get the same list; adding a third server is a line here, not another pair of
+# near-identical blocks.
+DX_UI_MCP_SERVERS='playwright @playwright/mcp@latest
+chrome-devtools chrome-devtools-mcp@latest'
+
+# __dx_install_ui_mcp_servers <label> <cli> [scope args...]
+# Install every browser MCP server for one agent CLI, skipping ones already
+# configured. Returns 1 if any install failed.
+__dx_install_ui_mcp_servers() {
+  local label="$1" cli="$2"
+  shift 2
+  local scope_args=("$@")
+
+  if ! command -v "$cli" >/dev/null 2>&1; then
+    dx_skip "${label} CLI not found; skipping ${label} MCP browser servers"
+    return 0
+  fi
+
+  local failed=0 name package
+  while read -r name package; do
+    [[ -n "$name" ]] || continue
+    if __dx_mcp_server_exists "$cli" "$name"; then
+      dx_ok "${label} MCP server '${name}' already configured"
+      continue
+    fi
+    dx_info "Installing ${label} MCP server '${name}'"
+    if "$cli" mcp add ${scope_args[@]+"${scope_args[@]}"} "$name" -- npx -y "$package" >/dev/null; then
+      dx_done "Installed ${label} MCP server '${name}'"
+    else
+      dx_warn "Could not install ${label} MCP server '${name}'"
+      failed=1
+    fi
+  done <<EOF
+$DX_UI_MCP_SERVERS
+EOF
+
+  return "$failed"
 }
 
 dx_install_claude_ui_mcp_servers() {
-  if ! command -v claude >/dev/null 2>&1; then
-    dx_skip "Claude Code CLI not found; skipping Claude MCP browser servers"
-    return 0
-  fi
-
-  local failed=0
-  if dx_claude_mcp_server_exists "playwright"; then
-    dx_ok "Claude MCP server 'playwright' already configured"
-  else
-    dx_info "Installing Claude MCP server 'playwright'"
-    if claude mcp add --scope user playwright -- npx -y @playwright/mcp@latest >/dev/null; then
-      dx_done "Installed Claude MCP server 'playwright'"
-    else
-      dx_warn "Could not install Claude MCP server 'playwright'"
-      failed=1
-    fi
-  fi
-
-  if dx_claude_mcp_server_exists "chrome-devtools"; then
-    dx_ok "Claude MCP server 'chrome-devtools' already configured"
-  else
-    dx_info "Installing Claude MCP server 'chrome-devtools'"
-    if claude mcp add --scope user chrome-devtools -- npx -y chrome-devtools-mcp@latest >/dev/null; then
-      dx_done "Installed Claude MCP server 'chrome-devtools'"
-    else
-      dx_warn "Could not install Claude MCP server 'chrome-devtools'"
-      failed=1
-    fi
-  fi
-
-  return "$failed"
+  __dx_install_ui_mcp_servers "Claude" claude --scope user
 }
 
 dx_install_codex_ui_mcp_servers() {
-  if ! command -v codex >/dev/null 2>&1; then
-    dx_skip "Codex CLI not found; skipping Codex MCP browser servers"
-    return 0
-  fi
-
-  local failed=0
-  if dx_codex_mcp_server_exists "playwright"; then
-    dx_ok "Codex MCP server 'playwright' already configured"
-  else
-    dx_info "Installing Codex MCP server 'playwright'"
-    if codex mcp add playwright -- npx -y @playwright/mcp@latest >/dev/null; then
-      dx_done "Installed Codex MCP server 'playwright'"
-    else
-      dx_warn "Could not install Codex MCP server 'playwright'"
-      failed=1
-    fi
-  fi
-
-  if dx_codex_mcp_server_exists "chrome-devtools"; then
-    dx_ok "Codex MCP server 'chrome-devtools' already configured"
-  else
-    dx_info "Installing Codex MCP server 'chrome-devtools'"
-    if codex mcp add chrome-devtools -- npx -y chrome-devtools-mcp@latest >/dev/null; then
-      dx_done "Installed Codex MCP server 'chrome-devtools'"
-    else
-      dx_warn "Could not install Codex MCP server 'chrome-devtools'"
-      failed=1
-    fi
-  fi
-
-  return "$failed"
+  __dx_install_ui_mcp_servers "Codex" codex
 }
 
 dx_install_ui_capture_tooling() {

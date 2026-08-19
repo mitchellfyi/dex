@@ -138,8 +138,8 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      dx_error "Unknown option: $1"
-      usage
+      dx_error "Unknown sync option: $1"
+      usage >&2
       exit 1
       ;;
   esac

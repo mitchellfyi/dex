@@ -1470,7 +1470,7 @@ __dx_maintain_install_workflow() {
         ;;
       *)
         dx_error "Unknown install-workflow option: $1"
-        usage
+        usage >&2
         exit 1
         ;;
     esac
@@ -1501,7 +1501,7 @@ __dx_maintain_resolve_mode() {
         ;;
       *)
         dx_error "Unknown resolve-mode option: $1"
-        usage
+        usage >&2
         exit 1
         ;;
     esac
@@ -1839,7 +1839,7 @@ __dx_maintain_respond() {
         ;;
       *)
         dx_error "Unknown respond option: $1"
-        usage
+        usage >&2
         exit 1
         ;;
     esac
@@ -2100,7 +2100,7 @@ __dx_maintain_run() {
         ;;
       *)
         dx_error "Unknown maintain option: $1"
-        usage
+        usage >&2
         exit 1
         ;;
     esac
@@ -2294,7 +2294,7 @@ __dx_maintain_publish_deferred() {
         ;;
       *)
         dx_error "Unknown publish option: $1"
-        usage
+        usage >&2
         exit 1
         ;;
     esac
@@ -2351,7 +2351,7 @@ __dx_maintain_publish_response_deferred() {
         ;;
       *)
         dx_error "Unknown publish-response option: $1"
-        usage
+        usage >&2
         exit 1
         ;;
     esac

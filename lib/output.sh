@@ -8,9 +8,11 @@ dx_skip()  { printf '[skip]  %s\n' "$*"; }
 dx_info()  { printf '[info]  %s\n' "$*"; }
 dx_error() { printf '[error] %s\n' "$*" >&2; }
 
-# dx_format_duration <seconds> — format a numeric duration as "Xm Ys", or just
-# "Ys" below a minute. Anything that is not a whole number of seconds is passed
-# through unchanged, so a caller can hand over a value it never resolved.
+# dx_format_duration <seconds> — the one duration formatter. Prints "Ys" below
+# a minute, "Xm Ys" below an hour, and "Xh Ym" above one, dropping the unit
+# that has stopped carrying information. Anything that is not a whole number of
+# seconds is passed through unchanged, so a caller can hand over a value it
+# never resolved rather than have it reported as zero.
 dx_format_duration() {
   local seconds="$1"
   if [[ ! "$seconds" =~ ^[0-9]+$ ]]; then
@@ -23,9 +25,11 @@ dx_format_duration() {
 
   if [[ "$seconds" -lt 60 ]]; then
     printf '%ds\n' "$seconds"
-    return 0
+  elif [[ "$seconds" -lt 3600 ]]; then
+    printf '%dm %ds\n' "$((seconds / 60))" "$((seconds % 60))"
+  else
+    printf '%dh %dm\n' "$((seconds / 3600))" "$(((seconds % 3600) / 60))"
   fi
-  printf '%dm %ds\n' "$((seconds / 60))" "$((seconds % 60))"
 }
 
 # dx_progress_filter — parse Claude Code CLI stream-json output and display

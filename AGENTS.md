@@ -436,8 +436,18 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DEX_PHASE_HANDOFF` | Same-session phase handoff marker (`inline` for `dx`) | unset |
 | `DEX_LOOP_PROMISE` | Completion signal string | unset |
 | `DEX_LOOP_MAX_ITERATIONS` | Max loop iterations | 30 |
+| `DEX_PHASE_TIMEOUT` | Seconds any one phase may run; `0` disables it | `0` (the session budget covers it) |
+| `DEX_PHASE_<N>_TIMEOUT` | Same, for one phase only (e.g. `DEX_PHASE_2_TIMEOUT=3600`); wins over `DEX_PHASE_TIMEOUT` | unset |
+| `DEX_SESSION_TIMEOUT` | Seconds for the whole `dx` run across every phase; `0` disables it | 86400 (24h) |
+| `DEX_STOP_SOUND` | Play a sound when Claude stops (macOS only); `0` turns it off | `1` |
+| `DEX_STOP_SOUND_FILE` | Play this sound file instead of a random system one | unset |
+| `DEX_SKIP_TOOL_BOOTSTRAP` | `1` makes `dx init` skip the Claude/Codex tooling bootstrap, for callers that already ran it | `0` |
+| `DEX_SYNC_BUDGET_MINUTES` | Runtime budget for one `dx sync` provider run | 60 |
+| `DEX_MAINTAIN_BUDGET_MINUTES` | Runtime budget for one scheduled maintenance run | 60 |
+| `DEX_MAINTAIN_RESPOND_BUDGET_MINUTES` | Runtime budget for one maintenance PR feedback run | 30 |
 | `DEX_REVIEW_TIER` | Canonical explicit review-risk override (`small`, `normal`, or `complex`); takes precedence over `DEX_REVIEW_PROFILE` | agent-selected |
 | `DEX_REVIEW_PROFILE` | Legacy review-depth alias (`light`, `standard`, or `thorough`) | unset |
+| `DX_REVIEW_PROFILE` | Older spelling of `DEX_REVIEW_PROFILE`, still read as a fallback | unset |
 | `DEX_REVIEW_CLEAN_PASSES` | Optional higher clean-wave requirement; cannot lower the selected tier's trusted policy gate | trusted policy (defaults 3/6/9) |
 | `DEX_REVIEW_DISABLE_MCP` | Disable inherited MCP servers in review waves (`0` restores them); read-only assessors always disable them | `1` |
 | `DEX_REVIEW_PASS_TIMEOUT` | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables it | 900 (15m 0s) |
@@ -445,7 +455,7 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (45s) |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation | 120 (2m 0s) |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | Maximum runtime for one GitHub/local shell command inside a watcher cycle | 30 (30s) |
-| `DEX_WATCH_PAUSE_TTL_SECONDS` | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt | 3600 (60m 0s) |
+| `DEX_WATCH_PAUSE_TTL_SECONDS` | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt | 3600 (1h 0m) |
 | `DEX_COMPLETE_MAX_CYCLES` | Max idle PR watch cycles before Phase 6 pauses for manual follow-up | 3 |
 | `DEX_COMPLETE_WAIT_MINUTES` | Minimum wait window per Phase 6 cycle (minutes) | 5 |
 | `DEX_SESSION_ID` | Unique session ID (set by dxloop for stop hook) | unset |

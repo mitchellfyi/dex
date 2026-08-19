@@ -19,18 +19,6 @@ Options:
 USAGE
 }
 
-format_duration() {
-  local secs=$1
-  [[ "$secs" =~ ^[0-9]+$ ]] || secs=0
-  if [[ $secs -lt 60 ]]; then
-    echo "${secs}s"
-  elif [[ $secs -lt 3600 ]]; then
-    echo "$((secs / 60))m $((secs % 60))s"
-  else
-    echo "$((secs / 3600))h $(( (secs % 3600) / 60 ))m"
-  fi
-}
-
 format_status() {
   case "$1" in
     advance)  echo "advance" ;;
@@ -95,7 +83,7 @@ main() {
     tail -n +2 "$log_file" | while IFS=$'\t' read -r _ phase phase_name _ _ dur iters status _; do
       [[ -z "$phase" ]] && continue
       local formatted_dur formatted_status
-      formatted_dur=$(format_duration "$dur")
+      formatted_dur=$(dx_format_duration "$dur")
       formatted_status=$(format_status "$status")
       printf "  %-5s  %-18s  %-10s  %-10s  %s\n" "$phase" "$phase_name" "$formatted_dur" "$iters" "$formatted_status"
     done
@@ -107,7 +95,7 @@ main() {
     if [[ -n "$first_start" ]] && [[ -n "$last_end" ]] && [[ "$first_start" =~ ^[0-9]+$ ]] && [[ "$last_end" =~ ^[0-9]+$ ]]; then
       local total=$((last_end - first_start))
       echo ""
-      echo "  Total: $(format_duration $total)"
+      echo "  Total: $(dx_format_duration "$total")"
     fi
     echo ""
   done

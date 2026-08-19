@@ -15,6 +15,13 @@ over a root, home, or current-directory one.
 
 Caught patterns: `rm -rf /`, `rm -rf /*`, `rm -rf ~`, `rm -rf ~/.`, `rm -rf ~/*`, `rm -rf ~/`, `rm -rf ~+`, `rm -rf ~+/*`, `rm -rf $HOME`, `rm -rf $HOME/.`, `rm -rf $HOME/*`, `rm -rf $PWD`, `rm -rf $PWD/.`, `rm -rf $PWD/*`, `rm -rf .`, `rm -rf ./`, `rm -rf ./.`, `rm -rf *`, `rm -rf ./*`, and variants with parameter expansion or reordered flags (`-fr`, etc.), including BusyBox, common wrappers, shell-nested `bash -c`/`eval` payloads, command substitutions whose output resolves to one of these commands, and literal process-launch calls from Python, Node.js, Ruby, or Perl. Paths with subdirectories (e.g., `rm -rf ./build`, `rm -rf /tmp`) are NOT flagged — only the root/home/cwd targets themselves. Dex also flags raw-device `dd` writes, destructive `diskutil` operations, `mkfs`, and `format X:`.
 
-The detector is deliberately coarse where it cannot resolve a value: a payload
-it cannot read counts as one it cannot vouch for. That is a reason to look, not
-a reason to stop — this guard advises and does not deny.
+The command word is resolved before it is judged, so a variable or a default
+expansion holding the command reads the same as writing it out: `R=rm;
+$R -rf /` and `${RM:-rm} -rf /` are both caught. A word that cannot be resolved
+is left alone rather than warned about.
+
+The detector is deliberately coarse where it cannot resolve a *payload* — a
+script, a heredoc, an interpreter argument it cannot read counts as one it
+cannot vouch for. That is a reason to look, not a reason to stop: this guard
+advises and does not deny. Arithmetic is not a payload, so `$(( … ))` is read
+as arithmetic and only the substitutions it really runs are judged.
