@@ -181,9 +181,46 @@ if state == "live":
 if state == "invalid" and time.time() - lock_stat.st_mtime < stale_seconds:
     raise SystemExit(1)
 
-try:
-    claim.mkdir(mode=0o700)
-except OSError:
+
+def take_claim():
+    """Enter the recovery mutex, reclaiming it from a recoverer that died.
+
+    The claim is made and dropped inside one short critical section, so an
+    existing one normally means another process is recovering right now and we
+    should stand down. But a process killed between the mkdir and the finally
+    below leaves it forever, and because acquiring gives up quietly, factory
+    sync for that run then stops without a word — a lock nothing can recover
+    and nobody is holding.
+
+    lib/lock.sh reclaims its own reaper the same way, after the same grace, and
+    carries the same residual window: two processes arriving inside it can both
+    claim. The steal below re-checks the lock's identity and owner before
+    removing anything, which is what bounds the damage.
+    """
+    try:
+        claim.mkdir(mode=0o700)
+        return True
+    except FileExistsError:
+        pass
+    except OSError:
+        return False
+    try:
+        claim_stat = claim.lstat()
+    except OSError:
+        return False
+    if not stat.S_ISDIR(claim_stat.st_mode):
+        return False
+    if time.time() - claim_stat.st_mtime < stale_seconds:
+        return False
+    try:
+        claim.rmdir()
+        claim.mkdir(mode=0o700)
+    except OSError:
+        return False
+    return True
+
+
+if not take_claim():
     raise SystemExit(1)
 
 recovered = False

@@ -378,6 +378,33 @@ assert_no_file "$(dx_factory_sync_cursor_file "$live_owner_run")"
 rm -f "$live_owner_lock/owner"
 rmdir "$live_owner_lock"
 
+# Recovery takes a `.recovery` claim so two recoverers can't race, and drops it
+# again a few lines later. A process killed in between leaves the claim behind,
+# and since recovery gives up quietly, that used to end Factory sync for the run
+# with no cursor movement and nothing said. A claim still inside its grace is a
+# live recoverer and must be left alone; past it, there is nobody to wait for.
+abandoned_claim_run="$(dx_run_prepare "abandoned-claim" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+export DEX_FACTORY_SYNC=false
+dx_event_emit "$abandoned_claim_run" "run.started" "info" "Abandoned claim" "" '{}'
+abandoned_claim_lock="$(dx_factory_sync_dir "$abandoned_claim_run")/.lock"
+mkdir -p "$abandoned_claim_lock/.recovery"
+printf '999999\n' > "$abandoned_claim_lock/owner"
+age_lock "$abandoned_claim_lock"
+export DEX_FACTORY_SYNC=true
+DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$abandoned_claim_run"
+[[ -d "$abandoned_claim_lock" ]] || {
+  printf 'Factory recovered a lock while another recoverer still held the claim\n' >&2
+  exit 1
+}
+assert_no_file "$(dx_factory_sync_cursor_file "$abandoned_claim_run")"
+age_lock "$abandoned_claim_lock/.recovery"
+dx_factory_sync_pending_events "$abandoned_claim_run"
+assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$abandoned_claim_run")")" "abandoned-claim cursor"
+[[ ! -d "$abandoned_claim_lock" ]] || {
+  printf 'Factory sync stayed wedged behind an abandoned recovery claim\n' >&2
+  exit 1
+}
+
 missing_token_run="$(dx_run_prepare "missing-token" "$ROOT" "test" "factory-sync-test" "issue-47" "dx test")"
 unset DEX_FACTORY_TOKEN
 before_missing_token_requests="$(request_count)"
