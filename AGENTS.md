@@ -465,6 +465,7 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DX_RTK_BIN` | Override RTK binary path used by Dex hooks/checks | unset |
 | `DX_RTK_INSTALL_DIR` | RTK binary install directory | `$DX_TOOL_DIR/rtk/bin` |
 | `DX_RTK_VERSION` | Pin RTK release installed by Dex | latest GitHub release |
+| `DX_RTK_HTTP_TIMEOUT_SECONDS` | Seconds one RTK download may take | 20 for release metadata, 180 for the binary |
 | `DEX_LOOP_ACTIVE` | Enable phase audit loop | unset |
 | `DEX_LOOP_PHASE` | Current phase (1-6 or "prompt-loop") | unset |
 | `DEX_PHASE_HANDOFF` | Same-session phase handoff marker (`inline` for `dx`) | unset |

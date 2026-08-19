@@ -63,6 +63,7 @@ RTK hook wiring.
 | `DX_RTK_BIN=/path/to/rtk` | Force Dex to use a specific RTK binary. |
 | `DX_RTK_INSTALL_DIR=/path` | Override Dex's RTK install directory. |
 | `DX_RTK_VERSION=vX.Y.Z` | Pin the RTK release downloaded from GitHub. |
+| `DX_RTK_HTTP_TIMEOUT_SECONDS=N` | Seconds one download may take. Defaults to 20 for release metadata and 180 for the binary; a single value here applies to both. |
 
 ## Manual Verification
 

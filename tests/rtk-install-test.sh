@@ -109,6 +109,39 @@ if grep -Ev '^-q ' "$DX_TEST_CURL_LOG" | grep -q .; then
   exit 1
 fi
 
+# Every fetch has to be able to end. These four calls had no bound while every
+# other network call in lib/ set one, so a host that accepts the connection and
+# then says nothing hung `dx install` with no output past "Installing RTK".
+if grep -v -- '--max-time' "$DX_TEST_CURL_LOG" | grep -q .; then
+  printf 'an RTK download ran without --max-time:\n' >&2
+  grep -v -- '--max-time' "$DX_TEST_CURL_LOG" >&2
+  exit 1
+fi
+if grep -v -- '--connect-timeout' "$DX_TEST_CURL_LOG" | grep -q .; then
+  printf 'an RTK download ran without --connect-timeout:\n' >&2
+  grep -v -- '--connect-timeout' "$DX_TEST_CURL_LOG" >&2
+  exit 1
+fi
+
+# The budget itself: metadata is a few hundred bytes, the archive is a binary,
+# and an unusable override falls back rather than passing junk to curl.
+[[ "$(dx_rtk_http_timeout metadata)" == "20" ]] || {
+  printf 'unexpected RTK metadata timeout: %s\n' "$(dx_rtk_http_timeout metadata)" >&2
+  exit 1
+}
+[[ "$(dx_rtk_http_timeout archive)" == "180" ]] || {
+  printf 'unexpected RTK archive timeout: %s\n' "$(dx_rtk_http_timeout archive)" >&2
+  exit 1
+}
+[[ "$(DX_RTK_HTTP_TIMEOUT_SECONDS=45 dx_rtk_http_timeout metadata)" == "45" ]] || {
+  printf 'DX_RTK_HTTP_TIMEOUT_SECONDS did not take effect\n' >&2
+  exit 1
+}
+[[ "$(DX_RTK_HTTP_TIMEOUT_SECONDS=nonsense dx_rtk_http_timeout archive)" == "180" ]] || {
+  printf 'an unusable RTK timeout override was not rejected\n' >&2
+  exit 1
+}
+
 python3 - "$TMP_DIR/unsafe-path.tar.gz" "$TMP_DIR/unsafe-link.tar.gz" <<'PY'
 import io
 import sys

@@ -9,6 +9,26 @@ dx_rtk_enabled() {
   [[ "${DX_RTK_ENABLED:-1}" != "0" ]]
 }
 
+# dx_rtk_http_timeout [kind]
+# Seconds one RTK download may take. `metadata` asks GitHub which release is
+# latest — a few hundred bytes; `archive` fetches the binary itself.
+#
+# RTK is optional and fails open, but that only holds if the fetch can end.
+# These four curl calls had no bound while every other network call in lib/
+# sets one, so a host that accepts the connection and then says nothing — a
+# captive portal, a blackholed route — hung `dx install`, `dx init`, `dx sync`,
+# and `dx tools bootstrap` with no output past "Installing RTK".
+dx_rtk_http_timeout() {
+  local kind="${1:-metadata}" value fallback=20
+  [[ "$kind" == "archive" ]] && fallback=180
+  value="${DX_RTK_HTTP_TIMEOUT_SECONDS:-$fallback}"
+  if [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 4 && "$value" -le 3600 ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$fallback"
+  fi
+}
+
 dx_rtk_install_dir() {
   printf '%s\n' "${DX_RTK_INSTALL_DIR:-$(dx_tools_dir)/rtk/bin}"
 }
@@ -92,7 +112,9 @@ __dx_rtk_version_valid() {
 dx_rtk_latest_release() {
   local version
 
-  version=$(command curl -q -sI "https://github.com/${DX_RTK_REPO}/releases/latest" \
+  version=$(command curl -q -sI \
+    --connect-timeout 10 --max-time "$(dx_rtk_http_timeout metadata)" \
+    "https://github.com/${DX_RTK_REPO}/releases/latest" \
     | grep -i '^location:' \
     | sed -E 's|.*/tag/([^[:space:]]+).*|\1|' \
     | tr -d '\r' \
@@ -102,7 +124,9 @@ dx_rtk_latest_release() {
   # without /tag/ leaves the whole URL in $version, which used to hard-fail
   # here instead of trying the API.
   if ! __dx_rtk_version_valid "$version"; then
-    version=$(command curl -q -fsSL "https://api.github.com/repos/${DX_RTK_REPO}/releases/latest" \
+    version=$(command curl -q -fsSL \
+      --connect-timeout 10 --max-time "$(dx_rtk_http_timeout metadata)" \
+      "https://api.github.com/repos/${DX_RTK_REPO}/releases/latest" \
       | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
       | head -n 1)
   fi
@@ -295,12 +319,16 @@ dx_install_rtk_binary() {
   checksums_url="https://github.com/${DX_RTK_REPO}/releases/download/${version}/checksums.txt"
 
   dx_info "Installing RTK ${version} into ${install_dir}"
-  if ! command curl -q -fsSL "$url" -o "$archive"; then
+  if ! command curl -q -fsSL \
+      --connect-timeout 10 --max-time "$(dx_rtk_http_timeout archive)" \
+      "$url" -o "$archive"; then
     rm -rf "$temp_dir"
     dx_warn "Could not download RTK from ${url}"
     return 1
   fi
-  if ! command curl -q -fsSL "$checksums_url" -o "$checksums_file"; then
+  if ! command curl -q -fsSL \
+      --connect-timeout 10 --max-time "$(dx_rtk_http_timeout metadata)" \
+      "$checksums_url" -o "$checksums_file"; then
     rm -rf "$temp_dir"
     dx_warn "Could not download RTK checksums for ${version}"
     return 1
