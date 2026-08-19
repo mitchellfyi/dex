@@ -522,4 +522,48 @@ dx_dexcode_upload_artifact "$run_id" "$artifact_file" "test_output" \
   > "$TMP_DIR/idempotency-conflict.out" 2>&1
 assert_contains "artifact registration failed (HTTP 409)" "$TMP_DIR/idempotency-conflict.out"
 
+# Registering an artifact and sending its bytes are not the same request, and
+# they were sharing one 15s budget. dx_dexcode_content_type names webm, mp4 and
+# zip, so the bytes can be a captured video or a Playwright trace — which does
+# not cross a home upstream in fifteen seconds, and used to fail by the clock
+# with the artifact left sitting locally.
+timeout_stub_dir="$TMP_DIR/timeout-stub-bin"
+mkdir -p "$timeout_stub_dir"
+cat > "$timeout_stub_dir/curl" <<'STUB'
+#!/usr/bin/env bash
+# Drain stdin first and always: the caller pipes the auth config in, and a stub
+# that exits without reading it kills that printf with SIGPIPE, failing the
+# pipeline and reporting HTTP 000 on whichever call loses the race.
+cat > /dev/null
+printf '%s\n' "$*" >> "$DX_TEST_CURL_ARGV_LOG"
+output=""
+previous=""
+for argument in "$@"; do
+  [[ "$previous" == "-o" ]] && output="$argument"
+  previous="$argument"
+done
+if [[ "$*" != *"-X PUT"* && -n "$output" ]]; then
+  printf '{"id":"art_stub","state":"pending","upload":{"url":"http://127.0.0.1:1/put"}}' > "$output"
+fi
+printf '200'
+STUB
+chmod +x "$timeout_stub_dir/curl"
+
+export DX_TEST_CURL_ARGV_LOG="$TMP_DIR/timeout-argv.txt"
+: > "$DX_TEST_CURL_ARGV_LOG"
+PATH="$timeout_stub_dir:$PATH" dx_dexcode_upload_artifact \
+  "$run_id" "$artifact_file" "test_output" "Timeout budget" "capture.webm" >/dev/null 2>&1 || true
+
+assert_eq "3" "$(wc -l < "$DX_TEST_CURL_ARGV_LOG" | tr -d '[:space:]')" "artifact upload curl calls"
+put_budget="$(grep -F -- '-X PUT' "$DX_TEST_CURL_ARGV_LOG" | sed -n 's/.*--max-time \([0-9]*\).*/\1/p')"
+assert_eq "300" "$put_budget" "artifact body --max-time"
+api_budgets="$(grep -Fv -- '-X PUT' "$DX_TEST_CURL_ARGV_LOG" | sed -n 's/.*--max-time \([0-9]*\).*/\1/p' | sort -u)"
+assert_eq "15" "$api_budgets" "artifact API --max-time"
+
+: > "$DX_TEST_CURL_ARGV_LOG"
+PATH="$timeout_stub_dir:$PATH" DEXCODE_UPLOAD_TIMEOUT_SECONDS=42 dx_dexcode_upload_artifact \
+  "$run_id" "$artifact_file" "test_output" "Timeout override" "capture.webm" >/dev/null 2>&1 || true
+put_budget="$(grep -F -- '-X PUT' "$DX_TEST_CURL_ARGV_LOG" | sed -n 's/.*--max-time \([0-9]*\).*/\1/p')"
+assert_eq "42" "$put_budget" "overridden artifact body --max-time"
+
 printf 'dexcode-artifact-test passed\n'

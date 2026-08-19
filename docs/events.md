@@ -229,6 +229,10 @@ Set `DEXCODE_SYNC=0` (or `false`, `no`, or `off`) to disable run and artifact
 sync. `DEXCODE_CONTEXT_SYNC` accepts the same values for project context.
 DexCode API requests time out after 15 seconds by default; set
 `DEXCODE_HTTP_TIMEOUT_SECONDS` to a value from 1 to 3600 to change that limit.
+Sending an artifact's bytes is not an API request and gets its own budget of
+300 seconds, because a captured video or Playwright trace does not cross a home
+upstream in fifteen. Set `DEXCODE_UPLOAD_TIMEOUT_SECONDS` (1 to 3600) to change
+it; raising `DEXCODE_HTTP_TIMEOUT_SECONDS` past 300 raises uploads with it.
 
 Project-context requests are file-backed and size-limited. Each Markdown entry
 includes `source_byte_size`, `body_byte_size`, and `truncated`; the top-level

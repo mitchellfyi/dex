@@ -13,13 +13,27 @@ dx_dexcode_default_url() {
   printf '%s\n' "${DEXCODE_URL:-https://dexcode.ai}"
 }
 
+# A budget sized for a few hundred bytes of JSON cannot also carry an artifact
+# body. Everything Dex captures went out under the same 15s: dx_dexcode_content_type
+# names webm, mp4, zip and pdf, and a captured video or Playwright trace does
+# not cross a home upstream in fifteen seconds, so those uploads failed by the
+# clock and the artifact stayed local.
+#
+# Metadata keeps DEXCODE_HTTP_TIMEOUT_SECONDS. Bodies get their own, larger
+# budget — but never less than the metadata one, so anybody who already raised
+# the global to make big uploads work keeps exactly what they set.
 dx_dexcode_http_timeout() {
-  local value="${DEXCODE_HTTP_TIMEOUT_SECONDS:-15}"
-  if [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 4 && "$value" -le 3600 ]]; then
-    printf '%s\n' "$value"
-  else
-    printf '15\n'
+  local kind="${1:-metadata}" metadata upload
+  metadata=$(__dx_dexcode_bounded_positive_int "${DEXCODE_HTTP_TIMEOUT_SECONDS:-15}" 15 1 3600)
+  if [[ "$kind" != "upload" ]]; then
+    printf '%s\n' "$metadata"
+    return 0
   fi
+  upload=$(__dx_dexcode_bounded_positive_int "${DEXCODE_UPLOAD_TIMEOUT_SECONDS:-300}" 300 1 3600)
+  if [[ "${DEXCODE_UPLOAD_TIMEOUT_SECONDS:-}" == "" && "$metadata" -gt "$upload" ]]; then
+    upload="$metadata"
+  fi
+  printf '%s\n' "$upload"
 }
 
 dx_dexcode_http_success() {
@@ -2265,7 +2279,8 @@ dx_dexcode_prepare_run_sync() {
 dx_dexcode_upload_artifact() {
   local run_id="$1" file_path="$2" kind="$3" title="$4"
   local connection token api_url factory_url tmp_dir response_file http_status artifact_id upload_url artifact_state
-  local filename="${5:-}" content_type size sha file_stats timeout_seconds snapshot_file source_root source_name
+  local filename="${5:-}" content_type size sha file_stats timeout_seconds upload_timeout_seconds
+  local snapshot_file source_root source_name
   local local_artifact_id="${6:-}" sync_fingerprint="${7:-}" idempotency_key=""
 
   dx_dexcode_value_disabled "${DEXCODE_SYNC:-1}" && return 0
@@ -2283,6 +2298,7 @@ dx_dexcode_upload_artifact() {
   [[ -n "$filename" ]] || filename=$(basename "$file_path")
   content_type=$(dx_dexcode_content_type "$filename")
   timeout_seconds=$(dx_dexcode_http_timeout)
+  upload_timeout_seconds=$(dx_dexcode_http_timeout upload)
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dexcode-artifact.XXXXXX") || return 0
   chmod 700 "$tmp_dir" 2>/dev/null || {
     command rm -rf "$tmp_dir"
@@ -2372,7 +2388,7 @@ PY
   fi
 
   if ! http_status=$(command curl -q -sS -o /dev/null -w "%{http_code}" \
-    --max-time "$timeout_seconds" \
+    --max-time "$upload_timeout_seconds" \
     --proto '=http,https' \
     -X PUT \
     -H "Content-Type: ${content_type}" \
