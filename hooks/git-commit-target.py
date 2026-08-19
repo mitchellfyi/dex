@@ -11,12 +11,32 @@ hooks/guard-handler.py. What lives here is only the git question: which token
 is git, which subcommand it runs, and which directory the commit lands in.
 """
 import os
+import signal
 import sys
 
 # Running this file by path already puts hooks/ on sys.path, but not under
 # PYTHONSAFEPATH, so name the directory rather than depend on the default.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shell_parse import *  # noqa: E402,F403  shared shell-command parsing
+
+
+def _timeout_handler(signum, frame):
+    raise TimeoutError()
+
+
+# Wall-clock budget for reading one command. hooks/guard-handler.py has capped
+# every guard at 2s for the same reason since it was written; this parser, which
+# runs from the same PostToolUse hook on every Bash call, had no bound at all.
+#
+# It cost 4.7 CPU-hours twice over: a transient bug left two of these spinning,
+# and because nothing stopped them they stayed at 100% for hours — long after
+# the bug was fixed — quietly slowing every command and flaking the tests that
+# assert on elapsed time. The bound is what makes such a state self-limiting.
+#
+# 5s where a guard gets 2s: this one runs once per command rather than once per
+# guard, and the whole corpus finishes in milliseconds, so the extra headroom
+# costs nothing and keeps an exotic-but-real command from being abandoned.
+COMMIT_PARSE_TIMEOUT_SECONDS = int(os.environ.get('DEX_COMMIT_PARSE_TIMEOUT', '5') or 5)
 
 GIT_OPTION_ARGS = {
     '-C', '-c', '--config-env', '--exec-path', '--git-dir', '--work-tree',
@@ -622,7 +642,28 @@ def has_git_commit(text, cwd, depth=0):
 
 
 def main():
-    target = has_git_commit(os.environ.get('DX_HOOK_COMMAND', ''), os.getcwd())
+    command = os.environ.get('DX_HOOK_COMMAND', '')
+    # signal.alarm is Unix-only; Dex targets macOS and Linux.
+    previous = signal.signal(signal.SIGALRM, _timeout_handler)
+    if COMMIT_PARSE_TIMEOUT_SECONDS > 0:
+        signal.alarm(COMMIT_PARSE_TIMEOUT_SECONDS)
+    try:
+        target = has_git_commit(command, os.getcwd())
+    except TimeoutError:
+        # Report no commit rather than guess. The caller uses this answer to
+        # decide whether to validate HEAD's message, and claiming a commit that
+        # did not happen would validate the previous one — a confusing message
+        # about work nobody just did. Skipping the check is the quieter miss,
+        # and the notice says it happened.
+        print(
+            f'[dex] gave up reading this command for a commit after '
+            f'{COMMIT_PARSE_TIMEOUT_SECONDS}s; skipping commit-format validation',
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
     if not target:
         return 1
     print(target)

@@ -130,6 +130,61 @@ check "non-json payload ignored" 0
 run_hook '{"tool_input":{"command":12345}}'
 check "non-string command ignored" 0
 
+# Reading a command has to be bounded. This hook runs on every Bash call, and
+# for a while nothing stopped it: two of these were found at 100% CPU having
+# burned 4.7 hours each, still spinning long after the bug that started them
+# was fixed, slowing everything and flaking the tests that measure elapsed time.
+#
+# The parse is stubbed out rather than fed a pathological command, so the test
+# proves the deadline without depending on one staying pathological.
+alarm_out="$TMP_DIR/alarm.out"
+alarm_status=0
+python3 - "$ROOT" > "$alarm_out" 2>&1 <<'PY' || alarm_status=$?
+import importlib.util
+import os
+import sys
+import time
+
+root = sys.argv[1]
+sys.path.insert(0, os.path.join(root, "hooks"))
+spec = importlib.util.spec_from_file_location(
+    "commit_target", os.path.join(root, "hooks/git-commit-target.py")
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)  # the __main__ guard keeps main() from running
+
+module.COMMIT_PARSE_TIMEOUT_SECONDS = 1
+module.has_git_commit = lambda text, cwd, depth=0: time.sleep(30)
+os.environ["DX_HOOK_COMMAND"] = "git commit -m x"
+
+started = time.time()
+status = module.main()
+elapsed = time.time() - started
+
+if status != 1:
+    raise SystemExit(f"expected status 1 after the deadline, got {status}")
+if elapsed > 5:
+    raise SystemExit(f"the deadline did not stop the parse: {elapsed:.1f}s")
+PY
+if [[ "$alarm_status" -eq 0 ]] && grep -q 'gave up reading this command' "$alarm_out"; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL: the parse deadline did not stop and report (status %s)\n' "$alarm_status" >&2
+  cat "$alarm_out" >&2
+  fail=$((fail + 1))
+fi
+
+# A real command still fits comfortably inside the budget.
+budget_status=0
+DX_HOOK_COMMAND='git commit -m x' DEX_COMMIT_PARSE_TIMEOUT=1 \
+  python3 "$ROOT/hooks/git-commit-target.py" >/dev/null 2>&1 || budget_status=$?
+if [[ "$budget_status" -eq 0 ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL: a 1s budget was not enough to read `git commit -m x`\n' >&2
+  fail=$((fail + 1))
+fi
+
 printf 'post-commit-guard-test: %d passed, %d failed\n' "$pass" "$fail"
 if [[ "$fail" -ne 0 ]]; then
   exit 1
