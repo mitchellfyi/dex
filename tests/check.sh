@@ -14,25 +14,34 @@ fail() {
   status=1
 }
 
-# dx.sh is zsh-only; everything else must parse as bash.
+# Every bash file the repo ships. The scenario rubrics were missing from this
+# list: a syntax error in one scores its scenario as failing the rubric rather
+# than as broken, which is the wrong answer arriving quietly.
+BASH_FILES=(
+  "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh "$ROOT"/bin/*.sh
+  "$ROOT"/tests/*.sh "$ROOT"/research/*.sh "$ROOT"/research/lib/*.sh
+  "$ROOT"/research/review-loop/*.sh "$ROOT"/research/scenarios/*/*.sh
+)
+
+# dx.sh and the evaluation launcher are zsh; everything else must parse as bash.
 if command -v zsh >/dev/null 2>&1; then
   zsh -n "$ROOT/dx.sh" || fail "zsh -n dx.sh"
+  for path in "$ROOT"/research/review-loop/*.zsh; do
+    [[ -f "$path" ]] || continue
+    zsh -n "$path" || fail "zsh -n ${path#"$ROOT"/}"
+  done
 else
   printf 'SKIP zsh syntax (zsh not installed)\n'
 fi
 
-for path in "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh "$ROOT"/bin/*.sh \
-  "$ROOT"/tests/*.sh "$ROOT"/research/*.sh "$ROOT"/research/lib/*.sh \
-  "$ROOT"/research/review-loop/*.sh; do
+for path in "${BASH_FILES[@]}"; do
   [[ -f "$path" ]] || continue
   bash -n "$path" || fail "bash -n ${path#"$ROOT"/}"
 done
 
 if command -v shellcheck >/dev/null 2>&1; then
   # Run per-file: shellcheck is much slower on one large invocation.
-  for path in "$ROOT"/dx.sh "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh \
-    "$ROOT"/bin/*.sh "$ROOT"/tests/*.sh "$ROOT"/research/*.sh \
-    "$ROOT"/research/lib/*.sh "$ROOT"/research/review-loop/*.sh; do
+  for path in "$ROOT"/dx.sh "${BASH_FILES[@]}"; do
     [[ -f "$path" ]] || continue
     shellcheck -S warning "$path" || fail "shellcheck ${path#"$ROOT"/}"
   done
