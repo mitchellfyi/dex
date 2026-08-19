@@ -47,14 +47,14 @@ DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
   set -e
 
-  [[ "$(dx_review_normalize_tier small)" == "small" ]]
-  [[ "$(dx_review_normalize_tier light)" == "small" ]]
-  [[ "$(dx_review_normalize_tier normal)" == "normal" ]]
-  [[ "$(dx_review_normalize_tier standard)" == "normal" ]]
-  [[ "$(dx_review_normalize_tier complex)" == "complex" ]]
-  [[ "$(dx_review_normalize_tier thorough)" == "complex" ]]
+  [[ "$(dx_review_normalize_tier small)" == "small" ]] || assert_at $LINENO
+  [[ "$(dx_review_normalize_tier light)" == "small" ]] || assert_at $LINENO
+  [[ "$(dx_review_normalize_tier normal)" == "normal" ]] || assert_at $LINENO
+  [[ "$(dx_review_normalize_tier standard)" == "normal" ]] || assert_at $LINENO
+  [[ "$(dx_review_normalize_tier complex)" == "complex" ]] || assert_at $LINENO
+  [[ "$(dx_review_normalize_tier thorough)" == "complex" ]] || assert_at $LINENO
   __dx_review_is_positive_integer 08
-  [[ "$(__dx_review_phase_promise)" == "PHASE_3_COMPLETE" ]]
+  [[ "$(__dx_review_phase_promise)" == "PHASE_3_COMPLETE" ]] || assert_at $LINENO
 ' > "$TMP_DIR/review-profile-defaults.out"
 
 DEX_DIR="$ROOT" \

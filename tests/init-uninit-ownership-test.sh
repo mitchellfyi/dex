@@ -124,25 +124,25 @@ original_commit_msg=$(shasum -a 256 "$coexist_repo/.githooks/commit-msg" | awk '
 run_init "$coexist_repo" "$TMP_DIR/coexist-init-first.out"
 run_init "$coexist_repo" "$TMP_DIR/coexist-init-second.out"
 coexist_hook_dir=$(dx_attribution_hook_dir "$coexist_repo")
-[[ "$(git -C "$coexist_repo" config --local --get core.hooksPath)" == "$coexist_hook_dir" ]]
+[[ "$(git -C "$coexist_repo" config --local --get core.hooksPath)" == "$coexist_hook_dir" ]] || assert_at $LINENO
 
 printf 'content\n' > "$coexist_repo/file.txt"
 git -C "$coexist_repo" add file.txt
 DEX_TEST_HOOK_LOG="$TMP_DIR/hook.log" git -C "$coexist_repo" commit -q -m "feat: verify hook proxy"
-[[ "$(grep -c '^pre-commit$' "$TMP_DIR/hook.log")" -eq 1 ]]
-[[ "$(grep -c '^commit-msg:feat: verify hook proxy$' "$TMP_DIR/hook.log")" -eq 1 ]]
+[[ "$(grep -c '^pre-commit$' "$TMP_DIR/hook.log")" -eq 1 ]] || assert_at $LINENO
+[[ "$(grep -c '^commit-msg:feat: verify hook proxy$' "$TMP_DIR/hook.log")" -eq 1 ]] || assert_at $LINENO
 git -C "$coexist_repo" log -1 --pretty=%B > "$TMP_DIR/coexist-message.txt"
 assert_contains "Co-Authored-By: Dex <noreply@dexcode.ai>" "$TMP_DIR/coexist-message.txt"
 
 run_uninit "$coexist_repo" "$TMP_DIR/coexist-uninit.out"
-[[ "$(git -C "$coexist_repo" config --local --get core.hooksPath)" == ".githooks" ]]
-[[ "$(shasum -a 256 "$coexist_repo/.githooks/pre-commit" | awk '{print $1}')" == "$original_pre_commit" ]]
-[[ "$(shasum -a 256 "$coexist_repo/.githooks/commit-msg" | awk '{print $1}')" == "$original_commit_msg" ]]
+[[ "$(git -C "$coexist_repo" config --local --get core.hooksPath)" == ".githooks" ]] || assert_at $LINENO
+[[ "$(shasum -a 256 "$coexist_repo/.githooks/pre-commit" | awk '{print $1}')" == "$original_pre_commit" ]] || assert_at $LINENO
+[[ "$(shasum -a 256 "$coexist_repo/.githooks/commit-msg" | awk '{print $1}')" == "$original_commit_msg" ]] || assert_at $LINENO
 assert_absent "$coexist_hook_dir"
 assert_file "$coexist_repo/.dex/dex.md"
 assert_file "$coexist_repo/.dex/.gitignore"
 assert_file "$coexist_repo/.dex/rules/user.md"
-[[ "$(cat "$coexist_repo/.github/pull_request_template.md")" == "custom PR template" ]]
+[[ "$(cat "$coexist_repo/.github/pull_request_template.md")" == "custom PR template" ]] || assert_at $LINENO
 assert_absent "$coexist_repo/.dex/memory/index.md"
 
 # A later init may add required pointers or ignore entries around user content,
@@ -157,7 +157,7 @@ run_init "$modified_reinit_repo" "$TMP_DIR/modified-reinit-second.out"
 assert_contains "custom user instructions" "$modified_reinit_repo/.dex/AGENTS.md"
 assert_contains "custom Claude instructions" "$modified_reinit_repo/.dex/CLAUDE.md"
 assert_contains "custom-cache/" "$modified_reinit_repo/.dex/.gitignore"
-[[ "$(file_mode "$modified_reinit_repo/.dex/AGENTS.md")" == "640" ]]
+[[ "$(file_mode "$modified_reinit_repo/.dex/AGENTS.md")" == "640" ]] || assert_at $LINENO
 run_uninit "$modified_reinit_repo" "$TMP_DIR/modified-reinit-uninit.out"
 assert_file "$modified_reinit_repo/.dex/AGENTS.md"
 assert_file "$modified_reinit_repo/.dex/CLAUDE.md"
@@ -174,11 +174,11 @@ printf 'valuable AGENTS scratch data\n' > "$temp_name_repo/.dex/AGENTS.md.tmp"
 printf 'valuable CLAUDE scratch data\n' > "$temp_name_repo/.dex/CLAUDE.md.tmp"
 printf 'valuable memory scratch data\n' > "$temp_name_repo/.dex/memory/index.md.tmp"
 run_init "$temp_name_repo" "$TMP_DIR/temp-name-init.out"
-[[ "$(file_mode "$temp_name_repo/.dex/dex.md")" == "644" ]]
-[[ "$(file_mode "$temp_name_repo/.github/pull_request_template.md")" == "644" ]]
-[[ "$(cat "$temp_name_repo/.dex/AGENTS.md.tmp")" == "valuable AGENTS scratch data" ]]
-[[ "$(cat "$temp_name_repo/.dex/CLAUDE.md.tmp")" == "valuable CLAUDE scratch data" ]]
-[[ "$(cat "$temp_name_repo/.dex/memory/index.md.tmp")" == "valuable memory scratch data" ]]
+[[ "$(file_mode "$temp_name_repo/.dex/dex.md")" == "644" ]] || assert_at $LINENO
+[[ "$(file_mode "$temp_name_repo/.github/pull_request_template.md")" == "644" ]] || assert_at $LINENO
+[[ "$(cat "$temp_name_repo/.dex/AGENTS.md.tmp")" == "valuable AGENTS scratch data" ]] || assert_at $LINENO
+[[ "$(cat "$temp_name_repo/.dex/CLAUDE.md.tmp")" == "valuable CLAUDE scratch data" ]] || assert_at $LINENO
+[[ "$(cat "$temp_name_repo/.dex/memory/index.md.tmp")" == "valuable memory scratch data" ]] || assert_at $LINENO
 run_uninit "$temp_name_repo" "$TMP_DIR/temp-name-uninit.out"
 assert_file "$temp_name_repo/.dex/AGENTS.md.tmp"
 assert_file "$temp_name_repo/.dex/CLAUDE.md.tmp"
@@ -191,7 +191,7 @@ run_init "$owned_repo" "$TMP_DIR/owned-init.out"
 owned_hook_dir=$(dx_attribution_hook_dir "$owned_repo")
 owned_project_state=$(dx_project_state_file "$owned_repo")
 cp "$owned_repo/.dex/dex.md" "$TMP_DIR/owned-original-dex.md"
-[[ "$(git -C "$owned_repo" config --local --get core.hooksPath)" == "$owned_hook_dir" ]]
+[[ "$(git -C "$owned_repo" config --local --get core.hooksPath)" == "$owned_hook_dir" ]] || assert_at $LINENO
 printf '\nUser note.\n' >> "$owned_repo/.dex/dex.md"
 printf '\nUser section.\n' >> "$owned_repo/.github/pull_request_template.md"
 run_uninit "$owned_repo" "$TMP_DIR/owned-uninit.out"
@@ -219,7 +219,7 @@ mv "$template_escape_repo/.github" "$template_escape_target"
 ln -s "$template_escape_target" "$template_escape_repo/.github"
 run_uninit "$template_escape_repo" "$TMP_DIR/template-escape-uninit.out"
 assert_file "$template_escape_target/pull_request_template.md"
-[[ -L "$template_escape_repo/.github" ]]
+[[ -L "$template_escape_repo/.github" ]] || assert_at $LINENO
 assert_contains "Preserving modified or user-owned file: .github/pull_request_template.md" \
   "$TMP_DIR/template-escape-uninit.out"
 
@@ -251,9 +251,9 @@ run_uninit "$mode_repo" "$TMP_DIR/mode-uninit.out"
 assert_file "$mode_repo/.dex/dex.md"
 assert_file "$mode_repo/.github/pull_request_template.md"
 assert_file "$mode_hook_dir/commit-msg"
-[[ "$(file_mode "$mode_repo/.dex/dex.md")" == "755" ]]
-[[ "$(file_mode "$mode_repo/.github/pull_request_template.md")" == "600" ]]
-[[ "$(file_mode "$mode_hook_dir/commit-msg")" == "700" ]]
+[[ "$(file_mode "$mode_repo/.dex/dex.md")" == "755" ]] || assert_at $LINENO
+[[ "$(file_mode "$mode_repo/.github/pull_request_template.md")" == "600" ]] || assert_at $LINENO
+[[ "$(file_mode "$mode_hook_dir/commit-msg")" == "700" ]] || assert_at $LINENO
 assert_contains "Preserving modified hook:" "$TMP_DIR/mode-uninit.out"
 assert_contains "Preserving modified or user-owned file: .dex/dex.md" "$TMP_DIR/mode-uninit.out"
 assert_contains "Preserving modified or user-owned file: .github/pull_request_template.md" \
@@ -268,9 +268,9 @@ mv "$hook_escape_dir" "$hook_escape_target"
 ln -s "$hook_escape_target" "$hook_escape_dir"
 hook_escape_status=0
 run_uninit "$hook_escape_repo" "$TMP_DIR/hook-escape-uninit.out" || hook_escape_status=$?
-[[ "$hook_escape_status" -ne 0 ]]
+[[ "$hook_escape_status" -ne 0 ]] || assert_at $LINENO
 assert_file "$hook_escape_target/commit-msg"
-[[ -L "$hook_escape_dir" ]]
+[[ -L "$hook_escape_dir" ]] || assert_at $LINENO
 assert_contains "refusing to follow a symlinked hook proxy directory" "$TMP_DIR/hook-escape-uninit.out"
 if git -C "$hook_escape_repo" config --local --get core.hooksPath >/dev/null 2>&1; then
   printf 'core.hooksPath remained on a rejected symlinked proxy\n' >&2
@@ -309,7 +309,7 @@ changed_repo=$(new_repo changed)
 run_init "$changed_repo" "$TMP_DIR/changed-init.out"
 git -C "$changed_repo" config --local core.hooksPath .new-hooks
 run_uninit "$changed_repo" "$TMP_DIR/changed-uninit.out"
-[[ "$(git -C "$changed_repo" config --local --get core.hooksPath)" == ".new-hooks" ]]
+[[ "$(git -C "$changed_repo" config --local --get core.hooksPath)" == ".new-hooks" ]] || assert_at $LINENO
 assert_contains "preserving its current value" "$TMP_DIR/changed-uninit.out"
 
 # Repositories that use Git's worktree config keep the hook setting in the same
@@ -320,13 +320,13 @@ git -C "$worktree_config_repo" config extensions.worktreeConfig true
 git -C "$worktree_config_repo" config --worktree core.hooksPath .worktree-hooks
 run_init "$worktree_config_repo" "$TMP_DIR/worktree-config-init.out"
 worktree_config_hook_dir=$(dx_attribution_hook_dir "$worktree_config_repo")
-[[ "$(git -C "$worktree_config_repo" config --worktree --get core.hooksPath)" == "$worktree_config_hook_dir" ]]
+[[ "$(git -C "$worktree_config_repo" config --worktree --get core.hooksPath)" == "$worktree_config_hook_dir" ]] || assert_at $LINENO
 if git -C "$worktree_config_repo" config --local --get core.hooksPath >/dev/null 2>&1; then
   printf 'worktree hook config was incorrectly written to local scope\n' >&2
   exit 1
 fi
 run_uninit "$worktree_config_repo" "$TMP_DIR/worktree-config-uninit.out"
-[[ "$(git -C "$worktree_config_repo" config --worktree --get core.hooksPath)" == ".worktree-hooks" ]]
+[[ "$(git -C "$worktree_config_repo" config --worktree --get core.hooksPath)" == ".worktree-hooks" ]] || assert_at $LINENO
 
 # Local hook configuration is shared, while project files and templates belong
 # to each checkout. Uninitializing one checkout keeps the shared proxy alive
@@ -380,7 +380,7 @@ assert_absent "$DX_LOOP_DIR/$shared_linked_session.state"
 assert_file "$DX_LOOP_DIR/$shared_linked_session-123-456-789.state"
 assert_file "$DX_STATE_DIR/$shared_sibling_session.phase"
 assert_file "$DX_STATE_DIR/$shared_numeric_sibling_session.phase"
-[[ "$(git -C "$shared_repo" config --local --get core.hooksPath)" == "$shared_proxy" ]]
+[[ "$(git -C "$shared_repo" config --local --get core.hooksPath)" == "$shared_proxy" ]] || assert_at $LINENO
 assert_contains "Other initialized worktrees still use" "$TMP_DIR/shared-linked-uninit.out"
 
 run_uninit "$shared_repo" "$TMP_DIR/shared-main-uninit.out"
@@ -411,7 +411,7 @@ chmod +x "$legacy_repo/.dex/git-hooks/commit-msg"
 printf 'Generated by Dex\n' > "$legacy_repo/.github/pull_request_template.md"
 git -C "$legacy_repo" config --local core.hooksPath .dex/git-hooks
 run_uninit "$legacy_repo" "$TMP_DIR/legacy-uninit.out"
-[[ "$(git -C "$legacy_repo" config --local --get core.hooksPath)" == ".dex/git-hooks" ]]
+[[ "$(git -C "$legacy_repo" config --local --get core.hooksPath)" == ".dex/git-hooks" ]] || assert_at $LINENO
 assert_file "$legacy_repo/.dex/git-hooks/commit-msg"
 assert_file "$legacy_repo/.github/pull_request_template.md"
 assert_contains "Legacy Dex hooks have no restoration record" "$TMP_DIR/legacy-uninit.out"
@@ -426,9 +426,9 @@ symlink_status=0
   cd "$symlink_repo"
   bash "$ROOT/bin/init.sh" --skip-analysis --skip-config
 ) > "$TMP_DIR/symlink-init.out" 2>&1 || symlink_status=$?
-[[ "$symlink_status" -ne 0 ]]
+[[ "$symlink_status" -ne 0 ]] || assert_at $LINENO
 assert_contains "Refusing to initialize through a symlinked .dex directory" "$TMP_DIR/symlink-init.out"
-[[ -z "$(find "$TMP_DIR/outside-dex" -mindepth 1 -print -quit)" ]]
+[[ -z "$(find "$TMP_DIR/outside-dex" -mindepth 1 -print -quit)" ]] || assert_at $LINENO
 
 nested_file_repo=$(new_repo nested-file-symlink)
 mkdir -p "$nested_file_repo/.dex" "$TMP_DIR/nested-file-target"
@@ -438,7 +438,7 @@ nested_file_status=0
   cd "$nested_file_repo"
   bash "$ROOT/bin/init.sh" --skip-analysis --skip-config
 ) > "$TMP_DIR/nested-file-init.out" 2>&1 || nested_file_status=$?
-[[ "$nested_file_status" -ne 0 ]]
+[[ "$nested_file_status" -ne 0 ]] || assert_at $LINENO
 assert_absent "$TMP_DIR/nested-file-target/dex.md"
 assert_contains "while .dex contains a symlink" "$TMP_DIR/nested-file-init.out"
 
@@ -450,8 +450,8 @@ nested_dir_status=0
   cd "$nested_dir_repo"
   bash "$ROOT/bin/init.sh" --skip-analysis --skip-config
 ) > "$TMP_DIR/nested-dir-init.out" 2>&1 || nested_dir_status=$?
-[[ "$nested_dir_status" -ne 0 ]]
-[[ -z "$(find "$TMP_DIR/nested-memory-target" -mindepth 1 -print -quit)" ]]
+[[ "$nested_dir_status" -ne 0 ]] || assert_at $LINENO
+[[ -z "$(find "$TMP_DIR/nested-memory-target" -mindepth 1 -print -quit)" ]] || assert_at $LINENO
 assert_contains "while .dex contains a symlink" "$TMP_DIR/nested-dir-init.out"
 
 unmanaged_symlink_repo=$(new_repo unmanaged-worktree-symlink)
@@ -459,7 +459,7 @@ mkdir -p "$unmanaged_symlink_repo/.dex/worktrees/example" "$TMP_DIR/unmanaged-ta
 ln -s "$TMP_DIR/unmanaged-target" "$unmanaged_symlink_repo/.dex/worktrees/example/source-link"
 run_init "$unmanaged_symlink_repo" "$TMP_DIR/unmanaged-symlink-init.out"
 assert_contains "Init complete for:" "$TMP_DIR/unmanaged-symlink-init.out"
-[[ -L "$unmanaged_symlink_repo/.dex/worktrees/example/source-link" ]]
+[[ -L "$unmanaged_symlink_repo/.dex/worktrees/example/source-link" ]] || assert_at $LINENO
 
 # Init rejects special filesystem objects instead of reading from or replacing
 # them through its atomic-write helper.
@@ -468,9 +468,9 @@ mkdir -p "$fifo_repo/.dex"
 mkfifo "$fifo_repo/.dex/AGENTS.md"
 fifo_status=0
 run_init_bounded "$fifo_repo" > "$TMP_DIR/fifo-init.out" 2>&1 || fifo_status=$?
-[[ "$fifo_status" -ne 0 ]]
-[[ "$fifo_status" -ne 124 ]]
-[[ -p "$fifo_repo/.dex/AGENTS.md" ]]
+[[ "$fifo_status" -ne 0 ]] || assert_at $LINENO
+[[ "$fifo_status" -ne 124 ]] || assert_at $LINENO
+[[ -p "$fifo_repo/.dex/AGENTS.md" ]] || assert_at $LINENO
 assert_contains "Refusing to replace a non-regular project file" "$TMP_DIR/fifo-init.out"
 
 # A user-owned destination for the proxy is a hard conflict, not something init
@@ -486,8 +486,8 @@ collision_status=0
   cd "$collision_repo"
   bash "$ROOT/bin/init.sh" --skip-analysis --skip-config
 ) > "$TMP_DIR/collision-init.out" 2>&1 || collision_status=$?
-[[ "$collision_status" -ne 0 ]]
-[[ "$(shasum -a 256 "$collision_hook_dir/commit-msg" | awk '{print $1}')" == "$collision_hash" ]]
+[[ "$collision_status" -ne 0 ]] || assert_at $LINENO
+[[ "$(shasum -a 256 "$collision_hook_dir/commit-msg" | awk '{print $1}')" == "$collision_hash" ]] || assert_at $LINENO
 assert_contains "Refusing to replace the existing Dex hook proxy directory" "$TMP_DIR/collision-init.out"
 
 # Local provenance is treated as untrusted input before cleanup paths or Git
@@ -500,7 +500,7 @@ sed 's/"config_scope": "local"/"config_scope": "global"/' \
 mv "${tampered_state}.tmp" "$tampered_state"
 tampered_status=0
 run_uninit "$tampered_repo" "$TMP_DIR/tampered-uninit.out" || tampered_status=$?
-[[ "$tampered_status" -ne 0 ]]
+[[ "$tampered_status" -ne 0 ]] || assert_at $LINENO
 assert_contains "invalid attribution config scope" "$TMP_DIR/tampered-uninit.out"
 
 # Fields used later by hook cleanup are validated before core.hooksPath changes.
@@ -520,9 +520,9 @@ PY
 tampered_receipt_status=0
 run_uninit "$tampered_receipt_repo" "$TMP_DIR/tampered-receipt-uninit.out" \
   || tampered_receipt_status=$?
-[[ "$tampered_receipt_status" -ne 0 ]]
+[[ "$tampered_receipt_status" -ne 0 ]] || assert_at $LINENO
 tampered_receipt_hook_dir=$(dx_attribution_hook_dir "$tampered_receipt_repo")
-[[ "$(git -C "$tampered_receipt_repo" config --local --get core.hooksPath)" == "$tampered_receipt_hook_dir" ]]
+[[ "$(git -C "$tampered_receipt_repo" config --local --get core.hooksPath)" == "$tampered_receipt_hook_dir" ]] || assert_at $LINENO
 assert_file "$tampered_receipt_hook_dir/commit-msg"
 assert_contains "invalid generated hook name" "$TMP_DIR/tampered-receipt-uninit.out"
 
@@ -546,9 +546,9 @@ path.write_text(json.dumps(state), encoding="utf-8")
 PY
 tampered_path_status=0
 run_uninit "$tampered_path_repo" "$TMP_DIR/tampered-path-uninit.out" || tampered_path_status=$?
-[[ "$tampered_path_status" -ne 0 ]]
+[[ "$tampered_path_status" -ne 0 ]] || assert_at $LINENO
 assert_file "$tampered_external_hooks/commit-msg"
-[[ "$(git -C "$tampered_path_repo" config --local --get core.hooksPath)" == "$tampered_path_proxy" ]]
+[[ "$(git -C "$tampered_path_repo" config --local --get core.hooksPath)" == "$tampered_path_proxy" ]] || assert_at $LINENO
 assert_contains "invalid installed hook path" "$TMP_DIR/tampered-path-uninit.out"
 
 victim="$TMP_DIR/ownership-victim"
@@ -661,8 +661,8 @@ config_failure_status=0
     DEX_TEST_GIT_FAILURE_MODE=config-unset \
     bash "$ROOT/bin/uninit.sh"
 ) > "$TMP_DIR/config-failure-uninit.out" 2>&1 || config_failure_status=$?
-[[ "$config_failure_status" -eq 9 ]]
-[[ "$(git -C "$config_failure_repo" config --local --get core.hooksPath)" == "$config_failure_proxy" ]]
+[[ "$config_failure_status" -eq 9 ]] || assert_at $LINENO
+[[ "$(git -C "$config_failure_repo" config --local --get core.hooksPath)" == "$config_failure_proxy" ]] || assert_at $LINENO
 assert_file "$config_failure_state"
 assert_file "$config_failure_proxy/commit-msg"
 
@@ -680,8 +680,8 @@ config_read_failure_status=0
     DEX_TEST_GIT_FAILURE_MODE=config-get \
     bash "$ROOT/bin/uninit.sh"
 ) > "$TMP_DIR/config-read-failure-uninit.out" 2>&1 || config_read_failure_status=$?
-[[ "$config_read_failure_status" -eq 9 ]]
-[[ "$(git -C "$config_read_failure_repo" config --local --get core.hooksPath)" == "$config_read_failure_proxy" ]]
+[[ "$config_read_failure_status" -eq 9 ]] || assert_at $LINENO
+[[ "$(git -C "$config_read_failure_repo" config --local --get core.hooksPath)" == "$config_read_failure_proxy" ]] || assert_at $LINENO
 assert_file "$config_read_failure_state"
 assert_file "$config_read_failure_proxy/commit-msg"
 
@@ -699,8 +699,8 @@ worktree_list_failure_status=0
     DEX_TEST_GIT_FAILURE_MODE=worktree-list \
     bash "$ROOT/bin/uninit.sh"
 ) > "$TMP_DIR/worktree-list-failure-uninit.out" 2>&1 || worktree_list_failure_status=$?
-[[ "$worktree_list_failure_status" -eq 9 ]]
-[[ "$(git -C "$worktree_list_failure_repo" config --local --get core.hooksPath)" == "$worktree_list_failure_proxy" ]]
+[[ "$worktree_list_failure_status" -eq 9 ]] || assert_at $LINENO
+[[ "$(git -C "$worktree_list_failure_repo" config --local --get core.hooksPath)" == "$worktree_list_failure_proxy" ]] || assert_at $LINENO
 assert_file "$worktree_list_failure_state"
 assert_file "$worktree_list_failure_proxy/commit-msg"
 

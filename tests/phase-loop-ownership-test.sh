@@ -11,6 +11,8 @@ set -euo pipefail
 #     advances the lifecycle phase and instructs commit/push
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 HOOK="$ROOT/hooks/phase-loop.sh"
 export DEX_DIR="$ROOT"
 # The hook re-resolves the review policy from its working directory, and the
@@ -448,4 +450,4 @@ fi
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 printf 'phase-loop-ownership-test: %d passed, %d failed\n' "$pass" "$fail"
-[[ "$fail" -eq 0 ]]
+[[ "$fail" -eq 0 ]] || assert_at $LINENO

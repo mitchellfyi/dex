@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-rtk-uninstall-test.XXXXXX")"
 
 cleanup() {
@@ -38,7 +40,7 @@ dx_write_rtk_codex_markdown "$CODEX_HOME/RTK.md" "/managed/rtk"
 grep -Fq 'User instructions before Dex.' "$CODEX_HOME/RTK.md"
 grep -Fq 'User instructions after Dex.' "$CODEX_HOME/RTK.md"
 grep -Fq '/managed/rtk git status' "$CODEX_HOME/RTK.md"
-[[ "$(grep -Fc "$DX_RTK_MARKER_START" "$CODEX_HOME/RTK.md")" -eq 1 ]]
+[[ "$(grep -Fc "$DX_RTK_MARKER_START" "$CODEX_HOME/RTK.md")" -eq 1 ]] || assert_at $LINENO
 
 dx_uninstall_rtk_codex_instructions > "$TMP_DIR/uninstall.out"
 grep -Fq 'User instructions before Dex.' "$CODEX_HOME/RTK.md"
@@ -52,14 +54,14 @@ if grep -Fq "@${CODEX_HOME}/RTK.md" "$CODEX_HOME/AGENTS.md"; then
   printf 'managed RTK import survived uninstall\n' >&2
   exit 1
 fi
-[[ ! -e "$HOME/.local/bin/rtk" ]]
-[[ -f "$managed_binary" ]]
+[[ ! -e "$HOME/.local/bin/rtk" ]] || assert_at $LINENO
+[[ -f "$managed_binary" ]] || assert_at $LINENO
 
 printf '%s\n' "$DX_RTK_MARKER_START" 'managed only' "$DX_RTK_MARKER_END" > "$CODEX_HOME/RTK.md"
 printf '%s\n' "@${CODEX_HOME}/RTK.md" > "$CODEX_HOME/AGENTS.md"
 dx_uninstall_rtk_codex_instructions > /dev/null
-[[ ! -e "$CODEX_HOME/RTK.md" ]]
-[[ ! -e "$CODEX_HOME/AGENTS.md" ]]
+[[ ! -e "$CODEX_HOME/RTK.md" ]] || assert_at $LINENO
+[[ ! -e "$CODEX_HOME/AGENTS.md" ]] || assert_at $LINENO
 
 printf '%s\n' 'User content' "$DX_RTK_MARKER_START" 'unterminated managed block' > "$CODEX_HOME/RTK.md"
 cp "$CODEX_HOME/RTK.md" "$TMP_DIR/malformed-before.md"

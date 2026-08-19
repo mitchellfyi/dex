@@ -18,7 +18,7 @@ for command_name in bash python3 mkdir mv rm grep find readlink basename; do
   command_path=$(command -v "$command_name")
   ln -s "$command_path" "$NO_JQ_BIN/$command_name"
 done
-[[ ! -e "$NO_JQ_BIN/jq" ]]
+[[ ! -e "$NO_JQ_BIN/jq" ]] || assert_at $LINENO
 
 run_without_jq() {
   local test_home="$1"

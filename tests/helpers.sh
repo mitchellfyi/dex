@@ -10,6 +10,40 @@
 #
 # Every helper exits non-zero on failure rather than only printing, so a test
 # cannot pass by ignoring a result.
+#
+# Sourcing this also reports where a test died. Many assertions here are a bare
+# `[[ … ]]` under `set -e`, which exits without a word — the runner then shows
+# "FAIL(1)" over an empty log, and finding the line means re-running the whole
+# file under `bash -x`. The ERR trap fires exactly where `set -e` would exit,
+# so it adds a line to failures and nothing to passes.
+
+# shellcheck disable=SC2034  # read by the trap below, which shellcheck cannot follow
+__DX_TEST_FILE="${BASH_SOURCE[1]:-$0}"
+__dx_test_died() {
+  local exit_code=$?
+  printf '%s:%s: failed (exit %s): %s\n' \
+    "${BASH_SOURCE[1]##*/}" "${BASH_LINENO[0]}" "$exit_code" "$BASH_COMMAND" >&2
+  return "$exit_code"
+}
+# errtrace propagates the trap into functions and subshells; without it an
+# assertion inside a helper reports nothing, which is the case that matters.
+set -E
+trap '__dx_test_died' ERR
+
+# assert_at <line> — a bare `[[ … ]]` assertion did not hold.
+#
+# bash 3.2 is /bin/bash on macOS, and what the macOS CI leg runs. It does not
+# apply `set -e` to a failing `[[ … ]]` used as a statement, so 365 assertions
+# across this suite passed there no matter what they claimed — a test could
+# assert `"master" == "THIS-IS-WRONG"` and still report success. `false` and
+# every ordinary command do trip errexit; only the `[[ … ]]` keyword does not.
+#
+# Writing `[[ … ]] || assert_at $LINENO` is explicit control flow, so it holds
+# on every bash, and it names the line the way the silent form never could.
+assert_at() {
+  printf 'assertion failed at line %s\n' "$1" >&2
+  exit 1
+}
 
 # assert_eq <expected> <actual> <label>
 assert_eq() {

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 PARSER="$ROOT/scripts/lifecycle-control.py"
 
 pass=0
@@ -67,4 +69,4 @@ check "meta word in prior clause" 3 "The test passed; stop Dex." cancel ""
 check "sequenced instruction" 3 "Please explain the result, then stop Dex." cancel ""
 
 printf 'lifecycle-control-parser-test: %d passed, %d failed\n' "$pass" "$fail"
-[[ "$fail" -eq 0 ]]
+[[ "$fail" -eq 0 ]] || assert_at $LINENO

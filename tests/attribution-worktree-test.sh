@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-attribution-worktree.XXXXXX")"
 
 cleanup() {
@@ -64,22 +66,22 @@ write_logging_hook "$local_linked/.githooks/commit-msg" linked-relative
 git -C "$local_main" config --local core.hooksPath .githooks
 dx_install_repo_attribution "$local_main" > "$TMP_DIR/local-install.out"
 local_proxy=$(dx_attribution_hook_dir "$local_main")
-[[ "$(git -C "$local_main" config --local --get core.hooksPath)" == "$local_proxy" ]]
-[[ "$(git -C "$local_linked" config --local --get core.hooksPath)" == "$local_proxy" ]]
+[[ "$(git -C "$local_main" config --local --get core.hooksPath)" == "$local_proxy" ]] || assert_at $LINENO
+[[ "$(git -C "$local_linked" config --local --get core.hooksPath)" == "$local_proxy" ]] || assert_at $LINENO
 
 # The shared proxy set must also discover hooks added only in a linked
 # worktree after the main checkout was initialized.
 write_logging_hook "$local_linked/.githooks/pre-commit" linked-only-pre-commit
 commit_change "$local_linked" linked "feat: linked worktree change" "$TMP_DIR/local-hooks.log"
 commit_change "$local_main" main "feat: main worktree change" "$TMP_DIR/local-hooks.log"
-[[ "$(grep -c '^linked-only-pre-commit$' "$TMP_DIR/local-hooks.log")" -eq 1 ]]
-[[ "$(grep -c '^linked-relative$' "$TMP_DIR/local-hooks.log")" -eq 1 ]]
-[[ "$(grep -c '^main-relative$' "$TMP_DIR/local-hooks.log")" -eq 1 ]]
+[[ "$(grep -c '^linked-only-pre-commit$' "$TMP_DIR/local-hooks.log")" -eq 1 ]] || assert_at $LINENO
+[[ "$(grep -c '^linked-relative$' "$TMP_DIR/local-hooks.log")" -eq 1 ]] || assert_at $LINENO
+[[ "$(grep -c '^main-relative$' "$TMP_DIR/local-hooks.log")" -eq 1 ]] || assert_at $LINENO
 
 dx_uninstall_repo_attribution "$local_main" > "$TMP_DIR/local-uninstall.out"
-[[ "$(git -C "$local_main" config --local --get core.hooksPath)" == ".githooks" ]]
-[[ "$(git -C "$local_linked" config --local --get core.hooksPath)" == ".githooks" ]]
-[[ ! -e "$local_proxy" ]]
+[[ "$(git -C "$local_main" config --local --get core.hooksPath)" == ".githooks" ]] || assert_at $LINENO
+[[ "$(git -C "$local_linked" config --local --get core.hooksPath)" == ".githooks" ]] || assert_at $LINENO
+[[ ! -e "$local_proxy" ]] || assert_at $LINENO
 
 # Worktree-scoped config needs independent receipts and restoration values. A
 # linked worktree uninit must not remove or restore the main worktree's proxy.
@@ -96,24 +98,24 @@ main_proxy=$(dx_attribution_hook_dir "$scoped_main")
 dx_install_repo_attribution "$scoped_linked" > "$TMP_DIR/scoped-linked-install.out"
 linked_state=$(dx_attribution_state_file "$scoped_linked")
 linked_proxy=$(dx_attribution_hook_dir "$scoped_linked")
-[[ "$main_state" != "$linked_state" ]]
-[[ "$main_proxy" != "$linked_proxy" ]]
+[[ "$main_state" != "$linked_state" ]] || assert_at $LINENO
+[[ "$main_proxy" != "$linked_proxy" ]] || assert_at $LINENO
 
 commit_change "$scoped_linked" linked "fix: linked scoped hook" "$TMP_DIR/scoped-hooks.log"
 commit_change "$scoped_main" main "fix: main scoped hook" "$TMP_DIR/scoped-hooks.log"
-[[ "$(grep -c '^linked-scoped$' "$TMP_DIR/scoped-hooks.log")" -eq 1 ]]
-[[ "$(grep -c '^main-scoped$' "$TMP_DIR/scoped-hooks.log")" -eq 1 ]]
+[[ "$(grep -c '^linked-scoped$' "$TMP_DIR/scoped-hooks.log")" -eq 1 ]] || assert_at $LINENO
+[[ "$(grep -c '^main-scoped$' "$TMP_DIR/scoped-hooks.log")" -eq 1 ]] || assert_at $LINENO
 
 dx_uninstall_repo_attribution "$scoped_linked" > "$TMP_DIR/scoped-linked-uninstall.out"
-[[ "$(git -C "$scoped_linked" config --worktree --get core.hooksPath)" == ".linked-hooks" ]]
-[[ "$(git -C "$scoped_main" config --worktree --get core.hooksPath)" == "$main_proxy" ]]
-[[ -f "$main_state" ]]
-[[ -d "$main_proxy" ]]
+[[ "$(git -C "$scoped_linked" config --worktree --get core.hooksPath)" == ".linked-hooks" ]] || assert_at $LINENO
+[[ "$(git -C "$scoped_main" config --worktree --get core.hooksPath)" == "$main_proxy" ]] || assert_at $LINENO
+[[ -f "$main_state" ]] || assert_at $LINENO
+[[ -d "$main_proxy" ]] || assert_at $LINENO
 
 dx_uninstall_repo_attribution "$scoped_main" > "$TMP_DIR/scoped-main-uninstall.out"
-[[ "$(git -C "$scoped_main" config --worktree --get core.hooksPath)" == ".main-hooks" ]]
-[[ ! -e "$main_state" ]]
-[[ ! -e "$main_proxy" ]]
+[[ "$(git -C "$scoped_main" config --worktree --get core.hooksPath)" == ".main-hooks" ]] || assert_at $LINENO
+[[ ! -e "$main_state" ]] || assert_at $LINENO
+[[ ! -e "$main_proxy" ]] || assert_at $LINENO
 
 # Existing state determines uninstall ownership even if the user later unsets
 # the worktree hook override. The linked uninstall must not select local state.
@@ -131,16 +133,16 @@ unset_worktree_state=$(dx_attribution_state_file "$unset_linked")
 unset_worktree_proxy=$(dx_attribution_hook_dir "$unset_linked")
 git -C "$unset_linked" config --worktree --unset-all core.hooksPath
 
-[[ "$(dx_attribution_state_file "$unset_linked")" == "$unset_worktree_state" ]]
+[[ "$(dx_attribution_state_file "$unset_linked")" == "$unset_worktree_state" ]] || assert_at $LINENO
 dx_uninstall_repo_attribution "$unset_linked" > "$TMP_DIR/unset-linked-uninstall.out"
-[[ ! -e "$unset_worktree_state" ]]
-[[ ! -e "$unset_worktree_proxy" ]]
-[[ -f "$unset_local_state" ]]
-[[ -d "$unset_local_proxy" ]]
-[[ "$(git -C "$unset_linked" config --get core.hooksPath)" == "$unset_local_proxy" ]]
+[[ ! -e "$unset_worktree_state" ]] || assert_at $LINENO
+[[ ! -e "$unset_worktree_proxy" ]] || assert_at $LINENO
+[[ -f "$unset_local_state" ]] || assert_at $LINENO
+[[ -d "$unset_local_proxy" ]] || assert_at $LINENO
+[[ "$(git -C "$unset_linked" config --get core.hooksPath)" == "$unset_local_proxy" ]] || assert_at $LINENO
 
 dx_uninstall_repo_attribution "$unset_main" > "$TMP_DIR/unset-local-uninstall.out"
-[[ "$(git -C "$unset_main" config --local --get core.hooksPath)" == ".local-hooks" ]]
+[[ "$(git -C "$unset_main" config --local --get core.hooksPath)" == ".local-hooks" ]] || assert_at $LINENO
 
 # A newer manual worktree override must not hide an older local Dex receipt
 # from uninit. Removing that override later must not resurrect Dex's proxy.
@@ -153,12 +155,12 @@ masked_local_proxy=$(dx_attribution_hook_dir "$masked_main")
 
 git -C "$masked_main" config extensions.worktreeConfig true
 git -C "$masked_linked" config --worktree core.hooksPath .manual-hooks
-[[ "$(dx_attribution_state_file "$masked_linked")" == "$masked_local_state" ]]
+[[ "$(dx_attribution_state_file "$masked_linked")" == "$masked_local_state" ]] || assert_at $LINENO
 dx_uninstall_repo_attribution "$masked_linked" > "$TMP_DIR/masked-uninstall.out"
-[[ ! -e "$masked_local_state" ]]
-[[ ! -e "$masked_local_proxy" ]]
-[[ "$(git -C "$masked_linked" config --get core.hooksPath)" == ".manual-hooks" ]]
+[[ ! -e "$masked_local_state" ]] || assert_at $LINENO
+[[ ! -e "$masked_local_proxy" ]] || assert_at $LINENO
+[[ "$(git -C "$masked_linked" config --get core.hooksPath)" == ".manual-hooks" ]] || assert_at $LINENO
 git -C "$masked_linked" config --worktree --unset-all core.hooksPath
-[[ "$(git -C "$masked_linked" config --get core.hooksPath)" == ".local-hooks" ]]
+[[ "$(git -C "$masked_linked" config --get core.hooksPath)" == ".local-hooks" ]] || assert_at $LINENO
 
 printf 'attribution worktree tests passed\n'

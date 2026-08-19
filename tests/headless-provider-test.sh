@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-headless-provider-test.XXXXXX")"
 REAL_BASH=$(command -v bash)
 
@@ -132,13 +134,13 @@ make_repo "$OWNERSHIP_REPO" 1
   cd "$OWNERSHIP_REPO"
   "$REAL_BASH" "$ROOT/bin/sync.sh" --no-pr --budget-minutes 1
 ) > "$TMP_DIR/sync-ownership.out" 2>&1
-[[ -f "$OWNERSHIP_REPO/.github/pull_request_template.md" ]]
+[[ -f "$OWNERSHIP_REPO/.github/pull_request_template.md" ]] || assert_at $LINENO
 (
   cd "$OWNERSHIP_REPO"
   "$REAL_BASH" "$ROOT/bin/uninit.sh"
 ) > "$TMP_DIR/sync-ownership-uninit.out" 2>&1
-[[ ! -e "$OWNERSHIP_REPO/.github/pull_request_template.md" ]]
-[[ -f "$OWNERSHIP_REPO/.dex/dex.md" ]]
+[[ ! -e "$OWNERSHIP_REPO/.github/pull_request_template.md" ]] || assert_at $LINENO
+[[ -f "$OWNERSHIP_REPO/.dex/dex.md" ]] || assert_at $LINENO
 
 grep -Fq 'exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox' "$TEST_CODEX_LOG"
 grep -Fq '# DXSync Invocation' "$TEST_CODEX_LOG"

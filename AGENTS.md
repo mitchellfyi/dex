@@ -281,6 +281,20 @@ Run `bash tests/check.sh` before committing, and at minimum the tests covering
 the surface you changed. The review-loop suites are slow (10+ minutes each);
 `tests/run-all.sh` parallelizes them, so prefer it over serial runs.
 
+### Writing an assertion
+
+Write `[[ … ]] || assert_at $LINENO`, and source `tests/helpers.sh`. A bare
+`[[ … ]]` is not an assertion on bash 3.2 — `/bin/bash` on macOS, and what the
+macOS CI leg runs — because `set -e` does not apply to that keyword there. 365
+assertions across the suite were inert on that leg; one could claim
+`"master" == "THIS-IS-WRONG"` and the test still reported success. `false` and
+every ordinary command do trip errexit; only `[[ … ]]` does not.
+
+Keep the bare form only where the status is the value being returned — a
+predicate function, or a helper the caller checks. `tests/helpers.sh` also
+installs an ERR trap, so any other errexit death names its line instead of
+leaving the runner with "FAIL(1)" over an empty log.
+
 ## Security Considerations
 
 - Hooks run with the user's full permissions — treat all hook code as security-sensitive

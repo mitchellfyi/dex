@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 
 for shell_name in bash zsh; do
   # The child shell expands DEX_DIR after it inherits the scoped environment.
@@ -22,9 +24,9 @@ DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
   set -e
   wrapper_body=$(functions dxreviewloop)
-  [[ "$wrapper_body" == *"dx_review_loop_run"* ]]
+  [[ "$wrapper_body" == *"dx_review_loop_run"* ]] || assert_at $LINENO
   loop_body=$(functions dx_review_loop_run)
-  [[ "$loop_body" == *"dx_review_transition"* ]]
+  [[ "$loop_body" == *"dx_review_transition"* ]] || assert_at $LINENO
 '
 
 printf 'review-controller-integration-test passed\n'

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-lifecycle-progress.XXXXXX")"
 
 cleanup() { rm -rf "$TMP_DIR"; }
@@ -62,6 +64,10 @@ run_paused_lifecycle() {
   local status=$?
   set -e
 
+  # This one keeps the bare form on purpose: it is the function's return value,
+  # and the caller invokes run_paused_lifecycle bare under `set -e`, so a
+  # non-zero return still stops the test on bash 3.2. Elsewhere a bare
+  # `[[ … ]]` is inert there — see assert_at in tests/helpers.sh.
   [[ "$status" -eq 1 ]]
 }
 
@@ -115,14 +121,14 @@ dx_phase_outcome_record "$DISPLAY_SESSION" 2 skipped terminal display-2 human-ju
 DUPLICATE_STATUS=0
 dx_phase_outcome_record "$DISPLAY_SESSION" 2 skipped terminal display-2 human-jump \
   || DUPLICATE_STATUS=$?
-[[ "$DUPLICATE_STATUS" -eq 3 ]]
+[[ "$DUPLICATE_STATUS" -eq 3 ]] || assert_at $LINENO
 [[ "$(awk -F '\t' '$2 == 2 && $5 == "display-2" { count++ } END { print count + 0 }' \
   "$(dx_phase_outcomes_file "$DISPLAY_SESSION")")" -eq 1 ]]
 CONFLICT_STATUS=0
 dx_phase_outcome_record "$DISPLAY_SESSION" 2 waived user-prompt display-2 human-complete \
   || CONFLICT_STATUS=$?
-[[ "$CONFLICT_STATUS" -eq 1 ]]
-[[ "$(dx_phase_outcome_latest "$DISPLAY_SESSION" 2)" == "skipped" ]]
+[[ "$CONFLICT_STATUS" -eq 1 ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$DISPLAY_SESSION" 2)" == "skipped" ]] || assert_at $LINENO
 
 DISPLAY_OUTPUT="$TMP_DIR/outcomes.out"
 DISPLAY_SESSION="$DISPLAY_SESSION" TEST_REPO="$TEST_REPO" zsh -fc '
@@ -187,15 +193,15 @@ ln -s "$STALE_STATE_TARGET" "$STALE_STATE_FILE"
 touch "$(dx_complete_file "$STALE_SESSION")"
 
 run_hook "$STALE_SESSION" 4
-[[ "$HOOK_STATUS" -eq 2 ]]
-[[ "$(cat "$STALE_STATE_FILE")" == "4" ]]
-[[ ! -e "$(dx_complete_file "$STALE_SESSION")" ]]
+[[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
+[[ "$(cat "$STALE_STATE_FILE")" == "4" ]] || assert_at $LINENO
+[[ ! -e "$(dx_complete_file "$STALE_SESSION")" ]] || assert_at $LINENO
 grep -Fq "consumed completion receipt cannot affect the next phase" <<<"$HOOK_OUTPUT"
 
 run_hook "$STALE_SESSION" 4
-[[ "$HOOK_STATUS" -eq 2 ]]
-[[ "$(cat "$STALE_STATE_FILE")" == "4" ]]
-[[ "$(cut -d: -f1 "$(dx_loop_config_file "$STALE_SESSION")")" == "4" ]]
+[[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
+[[ "$(cat "$STALE_STATE_FILE")" == "4" ]] || assert_at $LINENO
+[[ "$(cut -d: -f1 "$(dx_loop_config_file "$STALE_SESSION")")" == "4" ]] || assert_at $LINENO
 grep -Fq "Phase Audit" <<<"$HOOK_OUTPUT"
 
 # If config/state committed before a crash, target==current completes the same
@@ -206,12 +212,12 @@ dx_phase_outcome_record "$RECOVERY_SESSION" 2 completed test-fixture old-phase-2
 touch "$(dx_complete_file "$RECOVERY_SESSION")"
 dx_write_lifecycle_control "$RECOVERY_SESSION" jump 4 terminal "" 2 ""
 run_hook "$RECOVERY_SESSION" 4
-[[ "$HOOK_STATUS" -eq 2 ]]
-[[ "$(cat "$(dx_state_file "$RECOVERY_SESSION")")" == "4" ]]
-[[ ! -e "$(dx_complete_file "$RECOVERY_SESSION")" ]]
-[[ ! -e "$(dx_lifecycle_control_file "$RECOVERY_SESSION")" ]]
-[[ "$(dx_phase_outcome_latest "$RECOVERY_SESSION" 2)" == "skipped" ]]
-[[ "$(dx_phase_outcome_latest "$RECOVERY_SESSION" 3)" == "skipped" ]]
+[[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
+[[ "$(cat "$(dx_state_file "$RECOVERY_SESSION")")" == "4" ]] || assert_at $LINENO
+[[ ! -e "$(dx_complete_file "$RECOVERY_SESSION")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_control_file "$RECOVERY_SESSION")" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$RECOVERY_SESSION" 2)" == "skipped" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$RECOVERY_SESSION" 3)" == "skipped" ]] || assert_at $LINENO
 [[ "$(awk -F '\t' '$2 == 2 && $5 == "old-phase-2" { count++ } END { print count + 0 }' \
   "$(dx_phase_outcomes_file "$RECOVERY_SESSION")")" -eq 1 ]]
 [[ "$(awk -F '\t' '$2 == 2 && $3 == "skipped" { count++ } END { print count + 0 }' \
@@ -219,8 +225,8 @@ run_hook "$RECOVERY_SESSION" 4
 grep -Fq "Phase 4 (Verify & Commit)" <<<"$HOOK_OUTPUT"
 
 run_hook "$RECOVERY_SESSION" 4
-[[ "$HOOK_STATUS" -eq 2 ]]
-[[ "$(cat "$(dx_state_file "$RECOVERY_SESSION")")" == "4" ]]
+[[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
+[[ "$(cat "$(dx_state_file "$RECOVERY_SESSION")")" == "4" ]] || assert_at $LINENO
 grep -Fq "Phase Audit" <<<"$HOOK_OUTPUT"
 
 # “Mark current phase done” is a waiver, not a successful gate completion.
@@ -228,8 +234,8 @@ WAIVER_SESSION="lifecycle-progress-human-waiver"
 setup_inline "$WAIVER_SESSION" 2
 dx_write_lifecycle_control "$WAIVER_SESSION" complete 3 terminal "" 2 ""
 run_hook "$WAIVER_SESSION" 2
-[[ "$HOOK_STATUS" -eq 2 ]]
-[[ "$(cat "$(dx_state_file "$WAIVER_SESSION")")" == "3" ]]
-[[ "$(dx_phase_outcome_latest "$WAIVER_SESSION" 2)" == "waived" ]]
+[[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
+[[ "$(cat "$(dx_state_file "$WAIVER_SESSION")")" == "3" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$WAIVER_SESSION" 2)" == "waived" ]] || assert_at $LINENO
 
 printf 'lifecycle progress tests passed\n'

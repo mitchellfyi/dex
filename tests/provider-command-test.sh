@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-provider-command-test.XXXXXX")"
 
 cleanup() {
@@ -106,7 +108,7 @@ assert_fails_with "Usage: dx provider current" dx_provider_command current unexp
 assert_fails_with "Usage: dx provider doctor" dx_provider_command doctor unexpected
 assert_fails_with "Usage: dx provider use [--repo] <profile>" dx_provider_command use claude-subscription unexpected
 assert_fails_with "Usage: dx provider help" dx_provider_command help unexpected
-[[ ! -e "$HOME/.dex/providers.json" ]]
+[[ ! -e "$HOME/.dex/providers.json" ]] || assert_at $LINENO
 
 cd "$TMP_DIR"
 assert_fails_with "Cannot set a repo provider profile outside a git repository." \

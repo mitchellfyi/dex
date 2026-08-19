@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-worktree-ticket-resolution.XXXXXX")"
 
 cleanup() {
@@ -51,18 +53,18 @@ zsh -fc '
 
   expected="$TEST_REPO/.dex/worktrees/task-linked"
   dxcd ENG-123
-  [[ "${PWD:A}" == "${expected:A}" ]]
+  [[ "${PWD:A}" == "${expected:A}" ]] || assert_at $LINENO
   cd "$TEST_REPO"
 
   __dx_cli revert 123 > /dev/null
   # dx_repo_root resolves symlinked path components (macOS /var -> /private/var),
   # so compare against the resolved expected path.
-  [[ "$(cat "$TEST_REVERT_CAPTURE")" == "2::${expected:A}" ]]
+  [[ "$(cat "$TEST_REVERT_CAPTURE")" == "2::${expected:A}" ]] || assert_at $LINENO
 
   dxrm 123 > /dev/null
-  [[ ! -d "$expected" ]]
+  [[ ! -d "$expected" ]] || assert_at $LINENO
   ! git show-ref --verify --quiet refs/heads/worktree-task-linked
-  [[ ! -e "$(dx_meta_file "$linked_session")" ]]
+  [[ ! -e "$(dx_meta_file "$linked_session")" ]] || assert_at $LINENO
 
   git branch worktree-task-inplace main
   inplace_session=$(__dx_session_id_for_workspace in-place task-inplace)
@@ -76,7 +78,7 @@ zsh -fc '
 
   rmdir "$TEST_REPO/.dex/worktrees"
   dxcd 456 > /dev/null
-  [[ "${PWD:A}" == "${TEST_REPO:A}" ]]
+  [[ "${PWD:A}" == "${TEST_REPO:A}" ]] || assert_at $LINENO
 
   if __dx_cli revert 456 > "$TEST_REPO/revert-inplace.out" 2>&1; then
     print -u2 -- "dx revert accepted an in-place lifecycle"
@@ -122,9 +124,9 @@ zsh -fc '
     grep -Fq "Multiple Dex workspaces are linked to ticket 999" \
       "$TEST_REPO/ambiguous-$command_name.out"
   done
-  [[ -d "$TEST_REPO/.dex/worktrees/task-first" ]]
-  [[ -d "$TEST_REPO/.dex/worktrees/task-second" ]]
-  [[ ! -e "$TEST_REPO/.dex/worktrees/ticket-999" ]]
+  [[ -d "$TEST_REPO/.dex/worktrees/task-first" ]] || assert_at $LINENO
+  [[ -d "$TEST_REPO/.dex/worktrees/task-second" ]] || assert_at $LINENO
+  [[ ! -e "$TEST_REPO/.dex/worktrees/ticket-999" ]] || assert_at $LINENO
 '
 
 printf 'worktree ticket resolution tests passed\n'

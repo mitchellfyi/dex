@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-codex-inline-handoff-test.XXXXXX")"
 
 cleanup() {
@@ -47,9 +49,9 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 0 "$state_file" "$TMP_DIR/rep
   printf "%s\n" "phase 0 did not advance with a ready marker" >&2
   exit 1
 fi
-[[ "$(cat "$state_file")" == "1" ]]
-[[ ! -f "$(dx_phase_ready_file "$session_id" 0)" ]]
-[[ "$(dx_phase_outcome_latest "$session_id" 0)" == "completed" ]]
+[[ "$(cat "$state_file")" == "1" ]] || assert_at $LINENO
+[[ ! -f "$(dx_phase_ready_file "$session_id" 0)" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$session_id" 0)" == "completed" ]] || assert_at $LINENO
 
 printf "1\n" > "$state_file"
 printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise the direct handoff.\"],\"acceptance_criteria\":[\"Phase gates must reject missing state.\"],\"verification_requirements\":[\"Run tests/codex-inline-handoff-test.sh.\"]}" > "$(dx_review_criteria_file "$session_id")"
@@ -69,9 +71,9 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 1 "$state_file" "$TMP_DIR/rep
   printf "%s\n" "phase 1 did not advance with valid approved review criteria" >&2
   exit 1
 fi
-[[ "$(cat "$state_file")" == "2" ]]
-[[ "$(cut -f2 "$(dx_review_criteria_approval_file "$session_id")")" == "1" ]]
-[[ "$(dx_phase_outcome_latest "$session_id" 1)" == "completed" ]]
+[[ "$(cat "$state_file")" == "2" ]] || assert_at $LINENO
+[[ "$(cut -f2 "$(dx_review_criteria_approval_file "$session_id")")" == "1" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$session_id" 1)" == "completed" ]] || assert_at $LINENO
 approved_criteria_hash=$(dx_review_read_criteria_approval "$session_id")
 
 printf "2\n" > "$state_file"
@@ -86,7 +88,7 @@ if __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
   exit 1
 fi
 printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise the direct handoff.\"],\"acceptance_criteria\":[\"Phase gates must reject missing state.\"],\"verification_requirements\":[\"Run tests/codex-inline-handoff-test.sh.\"]}" > "$(dx_review_criteria_file "$session_id")"
-[[ "$(dx_review_read_criteria_approval "$session_id")" == "$approved_criteria_hash" ]]
+[[ "$(dx_review_read_criteria_approval "$session_id")" == "$approved_criteria_hash" ]] || assert_at $LINENO
 if ! dx_review_write_selection "$session_id" complex lifecycle-agent broad-impact "$TMP_DIR/repo"; then
   printf "%s\n" "could not write the Phase 2 risk selection fixture" >&2
   exit 1
@@ -95,8 +97,8 @@ if ! __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/rep
   printf "%s\n" "phase 2 did not advance with valid criteria and risk selection" >&2
   exit 1
 fi
-[[ "$(cat "$state_file")" == "3" ]]
-[[ "$(dx_phase_outcome_latest "$session_id" 2)" == "completed" ]]
+[[ "$(cat "$state_file")" == "3" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$session_id" 2)" == "completed" ]] || assert_at $LINENO
 
 printf "3\n" > "$state_file"
 if __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"; then
@@ -125,22 +127,22 @@ if ! dx_review_write_receipt "$session_id" complex 9 9 "$TMP_DIR/repo" \
   exit 1
 fi
 review_proof_dir=$(dx_review_proof_dir "$session_id")
-[[ -d "$review_proof_dir" ]]
+[[ -d "$review_proof_dir" ]] || assert_at $LINENO
 if ! __dx_codex_direct_phase_handoff "$session_id" 3 "$state_file" "$TMP_DIR/repo"; then
   printf "%s\n" "phase 3 did not advance with a valid review receipt" >&2
   exit 1
 fi
-[[ "$(cat "$state_file")" == "4" ]]
-[[ "$(dx_phase_outcome_latest "$session_id" 3)" == "completed" ]]
-[[ ! -e "$review_proof_dir" && ! -L "$review_proof_dir" ]]
+[[ "$(cat "$state_file")" == "4" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$session_id" 3)" == "completed" ]] || assert_at $LINENO
+[[ ! -e "$review_proof_dir" && ! -L "$review_proof_dir" ]] || assert_at $LINENO
 
 printf "2\n" > "$state_file"
 dx_write_lifecycle_control "$session_id" jump 4 terminal "" 2 ""
 __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
-[[ "$(cat "$state_file")" == "4" ]]
-[[ ! -f "$(dx_lifecycle_control_file "$session_id")" ]]
-[[ "$(dx_phase_outcome_latest "$session_id" 2)" == "skipped" ]]
-[[ "$(dx_phase_outcome_latest "$session_id" 3)" == "skipped" ]]
+[[ "$(cat "$state_file")" == "4" ]] || assert_at $LINENO
+[[ ! -f "$(dx_lifecycle_control_file "$session_id")" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$session_id" 2)" == "skipped" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$session_id" 3)" == "skipped" ]] || assert_at $LINENO
 
 printf "2\n" > "$state_file"
 touch "$(dx_active_file "$session_id")"
@@ -151,10 +153,10 @@ if __dx_codex_direct_phase_handoff "$session_id" 2 "$state_file" "$TMP_DIR/repo"
 else
   pause_status=$?
 fi
-[[ "$pause_status" -eq 2 ]]
-[[ -f "$(dx_paused_file "$session_id")" ]]
-[[ -f "$(dx_lifecycle_control_file "$session_id")" ]]
-[[ ! -f "$(dx_active_file "$session_id")" ]]
+[[ "$pause_status" -eq 2 ]] || assert_at $LINENO
+[[ -f "$(dx_paused_file "$session_id")" ]] || assert_at $LINENO
+[[ -f "$(dx_lifecycle_control_file "$session_id")" ]] || assert_at $LINENO
+[[ ! -f "$(dx_active_file "$session_id")" ]] || assert_at $LINENO
 '
 
 zsh -fc '
@@ -186,12 +188,12 @@ if __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 2 "$stat
 else
   wrapper_status=$?
 fi
-[[ "$wrapper_status" -eq 1 ]]
-[[ ! -f "$TMP_DIR/provider-launched-after-pause" ]]
-[[ -f "$(dx_paused_file "$session_id")" ]]
-[[ "$(dx_pause_state_read "$session_id" reason)" == "manual-cancel" ]]
-[[ ! -f "$(dx_lifecycle_control_file "$session_id")" ]]
-[[ -f "$(dx_handoff_mode_file "$session_id")" ]]
+[[ "$wrapper_status" -eq 1 ]] || assert_at $LINENO
+[[ ! -f "$TMP_DIR/provider-launched-after-pause" ]] || assert_at $LINENO
+[[ -f "$(dx_paused_file "$session_id")" ]] || assert_at $LINENO
+[[ "$(dx_pause_state_read "$session_id" reason)" == "manual-cancel" ]] || assert_at $LINENO
+[[ ! -f "$(dx_lifecycle_control_file "$session_id")" ]] || assert_at $LINENO
+[[ -f "$(dx_handoff_mode_file "$session_id")" ]] || assert_at $LINENO
 '
 
 zsh -fc '
@@ -214,8 +216,8 @@ __dx_claude() {
 }
 
 __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
-[[ "$(cat "$state_file")" == "7" ]]
-[[ "$(dx_phase_outcome_latest "$session_id" 6)" == "completed" ]]
+[[ "$(cat "$state_file")" == "7" ]] || assert_at $LINENO
+[[ "$(dx_phase_outcome_latest "$session_id" 6)" == "completed" ]] || assert_at $LINENO
 '
 
 zsh -fc '

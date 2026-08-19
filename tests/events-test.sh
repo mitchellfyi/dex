@@ -37,7 +37,7 @@ fi
 session_id="test-session"
 run_id="$(dx_run_prepare "$session_id" "$ROOT" "test" "events-test" "issue-46" "dx test")"
 [[ -n "$run_id" ]] || { printf 'run id was empty\n' >&2; exit 1; }
-[[ "$(dx_run_read_for_session "$session_id")" == "$run_id" ]]
+[[ "$(dx_run_read_for_session "$session_id")" == "$run_id" ]] || assert_at $LINENO
 
 run_dir="$(dx_run_dir "$run_id")"
 assert_dir "$run_dir"

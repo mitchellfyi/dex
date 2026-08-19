@@ -124,7 +124,7 @@ for template_name in pull_request_template.md PULL_REQUEST_TEMPLATE.md PULL_REQU
     printf 'existing template symlink was overwritten: %s\n' "$template_name" >&2
     exit 1
   }
-  [[ "$(readlink "$dangling_repo/.github/$template_name")" == "$dangling_target" ]]
+  [[ "$(readlink "$dangling_repo/.github/$template_name")" == "$dangling_target" ]] || assert_at $LINENO
   [[ ! -e "$dangling_target" ]] || {
     printf 'dangling template target was created: %s\n' "$template_name" >&2
     exit 1
@@ -163,10 +163,10 @@ set +e
 dx_install_attribution_hook "$empty_config_repo" > "$TMP_DIR/empty-config-install.out" 2>&1
 empty_config_status=$?
 set -e
-[[ "$empty_config_status" -ne 0 ]]
-[[ ! -e "$empty_config_state" ]]
-[[ ! -e "$empty_config_hook_dir" ]]
-[[ -z "$(git -C "$empty_config_repo" config --local --get core.hooksPath)" ]]
+[[ "$empty_config_status" -ne 0 ]] || assert_at $LINENO
+[[ ! -e "$empty_config_state" ]] || assert_at $LINENO
+[[ ! -e "$empty_config_hook_dir" ]] || assert_at $LINENO
+[[ -z "$(git -C "$empty_config_repo" config --local --get core.hooksPath)" ]] || assert_at $LINENO
 assert_contains "configured with an empty value" "$TMP_DIR/empty-config-install.out"
 
 # Hook refreshes keep both the old and new receipts until every proxy has been
@@ -235,8 +235,8 @@ for name, receipt in completed["generated_hooks"].items():
         raise SystemExit(f"proxy receipt mismatch after retry: {name}")
 PY
 dx_uninstall_repo_attribution "$refresh_repo" > "$TMP_DIR/refresh-uninstall.out"
-[[ ! -e "$refresh_state" ]]
-[[ ! -e "$refresh_proxy" ]]
+[[ ! -e "$refresh_state" ]] || assert_at $LINENO
+[[ ! -e "$refresh_proxy" ]] || assert_at $LINENO
 
 template_failure_repo="$TMP_DIR/template-failure-propagation"
 template_failure_target="$TMP_DIR/template-failure-target"
@@ -271,7 +271,7 @@ git -C "$identity_repo" add value.txt
 identity_status=0
 run_command_bounded git -C "$identity_repo" commit -q -m "fix: avoid proxy recursion" \
   > "$TMP_DIR/identity-commit.out" 2>&1 || identity_status=$?
-[[ "$identity_status" -eq 0 ]]
+[[ "$identity_status" -eq 0 ]] || assert_at $LINENO
 git -C "$identity_repo" log -1 --pretty=%B > "$TMP_DIR/identity-message.txt"
 assert_contains "Co-Authored-By: Dex <noreply@dexcode.ai>" "$TMP_DIR/identity-message.txt"
 
@@ -300,10 +300,10 @@ printf 'new\n' > "$push_source/value.txt"
 git -C "$push_source" add value.txt
 git -C "$push_source" commit -q -m "fix: update pushed value"
 git -C "$push_source" push -q origin HEAD
-[[ "$(cat "$push_target/value.txt")" == "new" ]]
-[[ -z "$(git -C "$push_target" status --porcelain)" ]]
+[[ "$(cat "$push_target/value.txt")" == "new" ]] || assert_at $LINENO
+[[ -z "$(git -C "$push_target" status --porcelain)" ]] || assert_at $LINENO
 dx_uninstall_repo_attribution "$push_target" > "$TMP_DIR/push-uninstall.out"
-[[ "$(git -C "$push_target" config --local --get core.hooksPath)" == "dex-hooks" ]]
+[[ "$(git -C "$push_target" config --local --get core.hooksPath)" == "dex-hooks" ]] || assert_at $LINENO
 
 # Absolute proxy paths are refreshed safely after a repository move. Default
 # Git hooks are resolved from the current common Git directory at runtime.
@@ -320,8 +320,8 @@ dx_install_attribution_hook "$relocate_init_old" > "$TMP_DIR/relocate-initial-in
 relocate_old_proxy=$(dx_attribution_hook_dir "$relocate_init_old")
 mv "$relocate_init_old" "$relocate_init_new"
 relocate_new_proxy=$(dx_attribution_hook_dir "$relocate_init_new")
-[[ "$relocate_old_proxy" != "$relocate_new_proxy" ]]
-[[ "$(git -C "$relocate_init_new" config --local --get core.hooksPath)" == "$relocate_old_proxy" ]]
+[[ "$relocate_old_proxy" != "$relocate_new_proxy" ]] || assert_at $LINENO
+[[ "$(git -C "$relocate_init_new" config --local --get core.hooksPath)" == "$relocate_old_proxy" ]] || assert_at $LINENO
 
 cat > "$relocate_init_new/.git/hooks/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
@@ -330,13 +330,13 @@ printf 'default-hook\n' >> "$DEX_TEST_HOOK_LOG"
 HOOK
 chmod +x "$relocate_init_new/.git/hooks/pre-commit"
 dx_install_attribution_hook "$relocate_init_new" > "$TMP_DIR/relocate-reinstall.out"
-[[ "$(git -C "$relocate_init_new" config --local --get core.hooksPath)" == "$relocate_new_proxy" ]]
-[[ "$(__dx_attribution_state_get "$relocate_init_new" installed_hooks_path)" == "$relocate_new_proxy" ]]
+[[ "$(git -C "$relocate_init_new" config --local --get core.hooksPath)" == "$relocate_new_proxy" ]] || assert_at $LINENO
+[[ "$(__dx_attribution_state_get "$relocate_init_new" installed_hooks_path)" == "$relocate_new_proxy" ]] || assert_at $LINENO
 printf 'moved\n' >> "$relocate_init_new/value.txt"
 git -C "$relocate_init_new" add value.txt
 DEX_TEST_HOOK_LOG="$TMP_DIR/relocate-hook.log" \
   git -C "$relocate_init_new" commit -q -m "fix: verify relocated hook"
-[[ "$(grep -c '^default-hook$' "$TMP_DIR/relocate-hook.log")" -eq 1 ]]
+[[ "$(grep -c '^default-hook$' "$TMP_DIR/relocate-hook.log")" -eq 1 ]] || assert_at $LINENO
 git -C "$relocate_init_new" log -1 --pretty=%B > "$TMP_DIR/relocate-message.txt"
 assert_contains "Co-Authored-By: Dex <noreply@dexcode.ai>" "$TMP_DIR/relocate-message.txt"
 dx_uninstall_repo_attribution "$relocate_init_new" > "$TMP_DIR/relocate-reinit-uninstall.out"
@@ -344,7 +344,7 @@ if git -C "$relocate_init_new" config --local --get core.hooksPath >/dev/null 2>
   printf 'relocated reinstall did not remove the Dex hook override\n' >&2
   exit 1
 fi
-[[ ! -e "$relocate_new_proxy" ]]
+[[ ! -e "$relocate_new_proxy" ]] || assert_at $LINENO
 
 # Uninit also recognizes the recorded pre-move value without touching the old
 # absolute path; cleanup is confined to the proxy that moved with the repo.
@@ -358,11 +358,11 @@ relocate_uninit_old_proxy=$(dx_attribution_hook_dir "$relocate_uninit_old")
 mv "$relocate_uninit_old" "$relocate_uninit_new"
 relocate_uninit_new_proxy=$(dx_attribution_hook_dir "$relocate_uninit_new")
 relocate_uninit_state=$(dx_attribution_state_file "$relocate_uninit_new")
-[[ "$(git -C "$relocate_uninit_new" config --local --get core.hooksPath)" == "$relocate_uninit_old_proxy" ]]
+[[ "$(git -C "$relocate_uninit_new" config --local --get core.hooksPath)" == "$relocate_uninit_old_proxy" ]] || assert_at $LINENO
 dx_uninstall_repo_attribution "$relocate_uninit_new" > "$TMP_DIR/relocate-direct-uninstall.out"
-[[ "$(git -C "$relocate_uninit_new" config --local --get core.hooksPath)" == ".githooks" ]]
-[[ ! -e "$relocate_uninit_new_proxy" ]]
-[[ ! -e "$relocate_uninit_state" ]]
+[[ "$(git -C "$relocate_uninit_new" config --local --get core.hooksPath)" == ".githooks" ]] || assert_at $LINENO
+[[ ! -e "$relocate_uninit_new_proxy" ]] || assert_at $LINENO
+[[ ! -e "$relocate_uninit_state" ]] || assert_at $LINENO
 
 # Attribution is best-effort: the commit-msg proxy runs for every commit in an
 # initialized repo, so a moved or deleted Dex checkout must degrade to an

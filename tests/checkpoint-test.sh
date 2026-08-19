@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-checkpoint-test.XXXXXX")"
 
 cleanup() {
@@ -51,35 +53,35 @@ dx_checkpoint_tag 2 "$wt_b"
 ref_a=$(dx_checkpoint_ref 2 "$wt_a")
 ref_b=$(dx_checkpoint_ref 2 "$wt_b")
 
-[[ "$ref_a" != "$ref_b" ]]
-[[ "$(git -C "$repo" rev-parse "$ref_a")" == "$sha_a" ]]
-[[ "$(git -C "$repo" rev-parse "$ref_b")" == "$sha_b" ]]
-[[ -z "$(git -C "$repo" tag -l 'dx-checkpoint/phase-*')" ]]
+[[ "$ref_a" != "$ref_b" ]] || assert_at $LINENO
+[[ "$(git -C "$repo" rev-parse "$ref_a")" == "$sha_a" ]] || assert_at $LINENO
+[[ "$(git -C "$repo" rev-parse "$ref_b")" == "$sha_b" ]] || assert_at $LINENO
+[[ -z "$(git -C "$repo" tag -l 'dx-checkpoint/phase-*')" ]] || assert_at $LINENO
 
 git -C "$wt_a" branch -m feat/task-a
-[[ "$(dx_checkpoint_ref 2 "$wt_a")" == "$ref_a" ]]
+[[ "$(dx_checkpoint_ref 2 "$wt_a")" == "$ref_a" ]] || assert_at $LINENO
 
 printf 'after checkpoint\n' >> "$wt_a/a.txt"
 git -C "$wt_a" add a.txt
 git -C "$wt_a" commit -q -m "advance task a"
 printf 'remove me\n' > "$wt_a/untracked.txt"
 dx_revert_to_checkpoint 2 "$wt_a" >/dev/null
-[[ "$(git -C "$wt_a" rev-parse HEAD)" == "$sha_a" ]]
-[[ ! -e "$wt_a/untracked.txt" ]]
-[[ "$(git -C "$wt_b" rev-parse HEAD)" == "$sha_b" ]]
+[[ "$(git -C "$wt_a" rev-parse HEAD)" == "$sha_a" ]] || assert_at $LINENO
+[[ ! -e "$wt_a/untracked.txt" ]] || assert_at $LINENO
+[[ "$(git -C "$wt_b" rev-parse HEAD)" == "$sha_b" ]] || assert_at $LINENO
 
 dx_checkpoint_tag 4 "$wt_a"
 dx_checkpoint_tag 6 "$wt_b"
-[[ "$(dx_latest_checkpoint_phase "$wt_a")" == "4" ]]
-[[ "$(dx_latest_checkpoint_phase "$wt_b")" == "6" ]]
+[[ "$(dx_latest_checkpoint_phase "$wt_a")" == "4" ]] || assert_at $LINENO
+[[ "$(dx_latest_checkpoint_phase "$wt_b")" == "6" ]] || assert_at $LINENO
 
 dx_cleanup_checkpoints "$wt_a"
 if git -C "$repo" show-ref --verify --quiet "$ref_a"; then
   printf 'task-a checkpoint survived task-a cleanup\n' >&2
   exit 1
 fi
-[[ "$(git -C "$repo" rev-parse "$ref_b")" == "$sha_b" ]]
-[[ "$(dx_latest_checkpoint_phase "$wt_b")" == "6" ]]
+[[ "$(git -C "$repo" rev-parse "$ref_b")" == "$sha_b" ]] || assert_at $LINENO
+[[ "$(dx_latest_checkpoint_phase "$wt_b")" == "6" ]] || assert_at $LINENO
 
 # In-place lifecycle branches in the main checkout also get separate refs.
 main_branch=$(git -C "$repo" symbolic-ref --short HEAD)
@@ -88,7 +90,7 @@ main_ref=$(dx_checkpoint_ref 2 "$repo")
 git -C "$repo" switch -q -c in-place-task
 dx_checkpoint_tag 2 "$repo"
 in_place_ref=$(dx_checkpoint_ref 2 "$repo")
-[[ "$main_ref" != "$in_place_ref" ]]
+[[ "$main_ref" != "$in_place_ref" ]] || assert_at $LINENO
 git -C "$repo" switch -q "$main_branch"
 dx_cleanup_checkpoints "$repo"
 if git -C "$repo" show-ref --verify --quiet "$main_ref"; then
@@ -108,7 +110,7 @@ if dx_revert_to_checkpoint 3 "$wt_a" >/dev/null; then
   printf 'ambiguous legacy checkpoint was accepted\n' >&2
   exit 1
 fi
-[[ "$(git -C "$wt_a" rev-parse HEAD)" == "$before_revert" ]]
+[[ "$(git -C "$wt_a" rev-parse HEAD)" == "$before_revert" ]] || assert_at $LINENO
 
 dx_cleanup_checkpoints "$wt_b"
 git -C "$repo" worktree remove --force "$wt_b"
@@ -123,9 +125,9 @@ printf 'legacy advance\n' >> "$wt_a/a.txt"
 git -C "$wt_a" add a.txt
 git -C "$wt_a" commit -q -m "advance legacy task"
 
-[[ "$(dx_latest_checkpoint_phase "$wt_a")" == "3" ]]
+[[ "$(dx_latest_checkpoint_phase "$wt_a")" == "3" ]] || assert_at $LINENO
 dx_revert_to_checkpoint 3 "$wt_a" >/dev/null
-[[ "$(git -C "$wt_a" rev-parse HEAD)" == "$sha_a" ]]
+[[ "$(git -C "$wt_a" rev-parse HEAD)" == "$sha_a" ]] || assert_at $LINENO
 dx_cleanup_checkpoints "$wt_a"
 if git -C "$repo" show-ref --verify --quiet refs/tags/dx-checkpoint/phase-3; then
   printf 'safe legacy checkpoint survived cleanup\n' >&2

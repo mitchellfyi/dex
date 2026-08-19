@@ -5,6 +5,8 @@ set -euo pipefail
 # commit, push, or PR commands into blocked tool calls.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 HANDLER="$ROOT/hooks/guard-handler.py"
 export DEX_DIR="$ROOT"
 
@@ -69,4 +71,4 @@ else
 fi
 
 printf 'push-guards-test: %d passed, %d failed\n' "$pass" "$fail"
-[[ "$fail" -eq 0 ]]
+[[ "$fail" -eq 0 ]] || assert_at $LINENO

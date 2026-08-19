@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-loop-contract-test.XXXXXX")"
 export HOME="$TMP_DIR/home"
 export DX_RUN_ROOT="$TMP_DIR/runs"
@@ -170,15 +172,15 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
       criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
       if [[ -e "$criteria_path" ]]; then
         criteria_binding=$(dx_review_criteria_hash "$criteria_path") || return 1
-        [[ "${DEX_REVIEW_CRITERIA_BINDING:-}" == "$criteria_binding" ]]
-        [[ "${DEX_REVIEW_CRITERIA_FILE:-}" == "$criteria_path" ]]
-        [[ "$invocation" == *"$criteria_path"* ]]
-        [[ "$invocation" == *"$criteria_binding"* ]]
+        [[ "${DEX_REVIEW_CRITERIA_BINDING:-}" == "$criteria_binding" ]] || return 1
+        [[ "${DEX_REVIEW_CRITERIA_FILE:-}" == "$criteria_path" ]] || return 1
+        [[ "$invocation" == *"$criteria_path"* ]] || return 1
+        [[ "$invocation" == *"$criteria_binding"* ]] || return 1
         return
       fi
-      [[ "${DEX_REVIEW_CRITERIA_BINDING:-}" == "standalone" ]]
-      [[ "$invocation" == *"Approved requirements: N/A — standalone review"* ]]
-      [[ "$invocation" != *"$criteria_path"* ]]
+      [[ "${DEX_REVIEW_CRITERIA_BINDING:-}" == "standalone" ]] || return 1
+      [[ "$invocation" == *"Approved requirements: N/A — standalone review"* ]] || return 1
+      [[ "$invocation" != *"$criteria_path"* ]] || return 1
     }
 
     __dx_claude() {
@@ -263,7 +265,7 @@ DEX_DIR="$ROOT" DX_STATE_DIR="$SIGNAL_STATE_DIR" DX_LOOP_DIR="$SIGNAL_LOOP_DIR" 
   source "$DEX_DIR/dx.sh"
   token=$(dx_phase_busy_begin signal-review-parent 3 "signal fixture")
   __dx_review_handle_interrupt "" "" 0 signal-review-parent "" 3 user_interrupt "$token"
-  [[ ! -f "$(dx_phase_busy_file signal-review-parent 3)" ]]
+  [[ ! -f "$(dx_phase_busy_file signal-review-parent 3)" ]] || assert_at $LINENO
 '
 
 # Codex assessments need their read-only shell to inspect unchanged tests and
@@ -273,10 +275,10 @@ DEX_DIR="$ROOT" zsh -fc '
   set -e
   codex_guidance=$(__dx_review_assessment_inspection_guidance codex)
   claude_guidance=$(__dx_review_assessment_inspection_guidance claude)
-  [[ "$codex_guidance" == *"read-only shell commands"* ]]
-  [[ "$codex_guidance" == *"focused verification sources"* ]]
-  [[ "$codex_guidance" != *"Do not use Bash"* ]]
-  [[ "$claude_guidance" == *"non-shell read-only inspection tools"* ]]
+  [[ "$codex_guidance" == *"read-only shell commands"* ]] || assert_at $LINENO
+  [[ "$codex_guidance" == *"focused verification sources"* ]] || assert_at $LINENO
+  [[ "$codex_guidance" != *"Do not use Bash"* ]] || assert_at $LINENO
+  [[ "$claude_guidance" == *"non-shell read-only inspection tools"* ]] || assert_at $LINENO
   ! __dx_review_assessment_inspection_guidance unsupported >/dev/null 2>&1
 '
 

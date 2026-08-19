@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-completion-receipt-test.XXXXXX")"
 
 cleanup() {
@@ -50,7 +52,7 @@ if __dx_run_phases_inline "repo" "$TEST_REPO" "$TEST_DEFAULT_BRANCH" 0 "$state_f
 fi
 
 grep -q "Claude session exited at Phase 0" "$TEST_TMP_DIR/inline-receipt.out"
-[[ ! -f "$(dx_active_file "$session_id")" ]]
+[[ ! -f "$(dx_active_file "$session_id")" ]] || assert_at $LINENO
 run_id="$(dx_run_read_for_session "$session_id")"
 python3 - "$(dx_run_summary_file "$run_id")" <<"PY"
 import json

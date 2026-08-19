@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-worktree-test.XXXXXX")"
 
 cleanup() {
@@ -44,7 +46,7 @@ if dx_wt_is_registered "$repo" "$plain_dir"; then
 fi
 
 dx_link_claude_to_worktree "$repo" "$wt"
-[[ -L "$wt/.claude" ]]
+[[ -L "$wt/.claude" ]] || assert_at $LINENO
 
 status="$(git -C "$wt" status --short)"
 if printf '%s\n' "$status" | grep -Fq ".claude"; then
@@ -59,15 +61,15 @@ grep -Fxq ".claude/*" "$exclude_file"
 
 # Idempotency: re-linking should not duplicate exclude entries.
 dx_link_claude_to_worktree "$repo" "$wt"
-[[ "$(grep -Fxc ".claude" "$exclude_file")" -eq 1 ]]
-[[ "$(grep -Fxc ".claude/*" "$exclude_file")" -eq 1 ]]
+[[ "$(grep -Fxc ".claude" "$exclude_file")" -eq 1 ]] || assert_at $LINENO
+[[ "$(grep -Fxc ".claude/*" "$exclude_file")" -eq 1 ]] || assert_at $LINENO
 
 # dx_wt_remove falls back to `rm -rf`, so it must refuse anything that is not a
 # directory inside .dex/worktrees — a repository root reaching it is unrecoverable.
 stray="$repo/.dex/worktrees/stray"
 mkdir -p "$stray/inner"
 dx_wt_remove "$stray"
-[[ ! -e "$stray" ]]
+[[ ! -e "$stray" ]] || assert_at $LINENO
 
 mkdir -p "$repo/keepme"
 for refused in "$repo" "$repo/.dex/worktrees" "$repo/keepme" "$repo/.dex/worktrees/../.." ""; do
@@ -76,7 +78,7 @@ for refused in "$repo" "$repo/.dex/worktrees" "$repo/keepme" "$repo/.dex/worktre
     exit 1
   fi
 done
-[[ -d "$repo/.git" && -d "$repo/keepme" && -d "$repo/.dex/worktrees" ]]
+[[ -d "$repo/.git" && -d "$repo/keepme" && -d "$repo/.dex/worktrees" ]] || assert_at $LINENO
 
 old_dir="$TMP_DIR/old-state"
 mkdir -p "$old_dir"
@@ -84,6 +86,6 @@ touch "$old_dir/one.state" "$old_dir/two.complete"
 touch -t 202001010000 "$old_dir/one.state" "$old_dir/two.complete"
 export TEST_OLD_DIR="$old_dir"
 old_count=$(zsh -fc 'source "$DEX_DIR/lib/common.sh"; dx_cleanup_stale_files "$TEST_OLD_DIR" "state complete" 7')
-[[ "$old_count" -eq 2 ]]
+[[ "$old_count" -eq 2 ]] || assert_at $LINENO
 
 printf 'worktree-test passed\n'

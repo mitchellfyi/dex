@@ -51,8 +51,8 @@ PASS_BINDING="$(dx_review_pass_binding "$PASS_ID" "$SCOPE_FINGERPRINT" "$CRITERI
 assert_eq "$PASS_BINDING" \
   "$(dx_review_pass_binding "$PASS_ID" "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$POLICY_BINDING")" \
   "pass binding is deterministic"
-[[ "$PASS_BINDING" != "$(dx_review_pass_binding evidence-v3-pass-2 "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$POLICY_BINDING")" ]]
-[[ "$PASS_BINDING" != "$(dx_review_pass_binding "$PASS_ID" "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$OTHER_POLICY_BINDING")" ]]
+[[ "$PASS_BINDING" != "$(dx_review_pass_binding evidence-v3-pass-2 "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$POLICY_BINDING")" ]] || assert_at $LINENO
+[[ "$PASS_BINDING" != "$(dx_review_pass_binding "$PASS_ID" "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$OTHER_POLICY_BINDING")" ]] || assert_at $LINENO
 assert_rejected "pass binding rejects malformed policy" \
   dx_review_pass_binding "$PASS_ID" "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" invalid
 
@@ -250,8 +250,8 @@ assert_eq "4" "$(cut -f1 "$(dx_review_ledger_file "$SESSION_ID")" | sort -u)" "l
 
 PROOF_DIR="$(dx_review_proof_dir "$SESSION_ID")"
 for iteration in 1 2 3; do
-  [[ -f "$PROOF_DIR/$iteration/evidence.json" && ! -L "$PROOF_DIR/$iteration/evidence.json" ]]
-  [[ -f "$PROOF_DIR/$iteration/context.md" && ! -L "$PROOF_DIR/$iteration/context.md" ]]
+  [[ -f "$PROOF_DIR/$iteration/evidence.json" && ! -L "$PROOF_DIR/$iteration/evidence.json" ]] || assert_at $LINENO
+  [[ -f "$PROOF_DIR/$iteration/context.md" && ! -L "$PROOF_DIR/$iteration/context.md" ]] || assert_at $LINENO
   assert_eq "400" "$(stat -f '%Lp' "$PROOF_DIR/$iteration/evidence.json" 2>/dev/null || stat -c '%a' "$PROOF_DIR/$iteration/evidence.json")" \
     "retained evidence permissions"
   assert_eq "400" "$(stat -f '%Lp' "$PROOF_DIR/$iteration/context.md" 2>/dev/null || stat -c '%a' "$PROOF_DIR/$iteration/context.md")" \
@@ -272,7 +272,7 @@ assert_rejected "ledger append does not follow a source evidence symlink" \
   dx_review_ledger_append "$SESSION_ID" 4 evidence-v3-pass-4 light \
   "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$POLICY_BINDING" \
   "$TMP_DIR/symlink-evidence.json" "$CONTEXT_FILE"
-[[ ! -e "$PROOF_DIR/4" ]]
+[[ ! -e "$PROOF_DIR/4" ]] || assert_at $LINENO
 
 COPY_FAILURE_SESSION="evidence-v3-copy-failure"
 cp "$CRITERIA_FILE" "$(dx_review_criteria_file "$COPY_FAILURE_SESSION")"
@@ -283,7 +283,7 @@ assert_rejected "ledger append rejects a writable source evidence manifest" \
   dx_review_ledger_append "$COPY_FAILURE_SESSION" 1 evidence-v3-copy-failure-pass light \
   "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$POLICY_BINDING" \
   "$EVIDENCE_FILE" "$CONTEXT_FILE"
-[[ ! -e "$(dx_review_proof_dir "$COPY_FAILURE_SESSION")" ]]
+[[ ! -e "$(dx_review_proof_dir "$COPY_FAILURE_SESSION")" ]] || assert_at $LINENO
 chmod 644 "$EVIDENCE_FILE"
 
 BAD_LEDGER_SESSION="evidence-v3-bad-ledger"
@@ -310,7 +310,7 @@ assert_eq "small" "$receipt_tier" "receipt tier"
 assert_eq "3" "$receipt_required" "receipt gate"
 assert_eq "3" "$receipt_clean" "receipt clean count"
 assert_eq "$SCOPE_FINGERPRINT" "$receipt_fingerprint" "receipt scope binding"
-[[ "$receipt_ledger_hash" =~ ^[a-f0-9]{64}$ ]]
+[[ "$receipt_ledger_hash" =~ ^[a-f0-9]{64}$ ]] || assert_at $LINENO
 assert_eq "$CRITERIA_BINDING" "$receipt_criteria_binding" "receipt criteria binding"
 assert_eq "$POLICY_BINDING" "$receipt_policy_binding" "receipt policy binding"
 dx_review_receipt_valid "$SESSION_ID" "$REPO" "$CRITERIA_BINDING" "$POLICY_BINDING"
@@ -518,11 +518,11 @@ assert_rejected "ledger rejects a decreasing accepted-pass iteration" \
   dx_review_ledger_append "$DECREASING_ITERATION_SESSION" 4 \
     evidence-v3-decreasing-iteration-4 light "$SCOPE_FINGERPRINT" standalone \
     "$POLICY_BINDING" "$STANDALONE_EVIDENCE" "$STANDALONE_CONTEXT"
-[[ ! -e "$(dx_review_ledger_file "$DECREASING_ITERATION_SESSION")" ]]
-[[ ! -e "$(dx_review_proof_dir "$DECREASING_ITERATION_SESSION")" ]]
+[[ ! -e "$(dx_review_ledger_file "$DECREASING_ITERATION_SESSION")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_review_proof_dir "$DECREASING_ITERATION_SESSION")" ]] || assert_at $LINENO
 
 dx_review_ledger_reset "$SESSION_ID"
-[[ ! -e "$(dx_review_ledger_file "$SESSION_ID")" ]]
-[[ ! -e "$(dx_review_proof_dir "$SESSION_ID")" ]]
+[[ ! -e "$(dx_review_ledger_file "$SESSION_ID")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_review_proof_dir "$SESSION_ID")" ]] || assert_at $LINENO
 
 printf 'Review evidence v3 tests passed.\n'

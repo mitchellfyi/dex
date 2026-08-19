@@ -117,6 +117,13 @@ if [[ -n "$failed" ]]; then
   for name in $failed; do
     printf '\n--- %s (last 40 lines) ---\n' "$name"
     tail -40 "$LOG_DIR/$name.log" 2>/dev/null
+    # Several tests assert with a bare `[[ … ]]` under `set -e`, which exits
+    # without printing anything. "FAIL(1)" over an empty log says only that
+    # something went wrong, so name the command that shows what.
+    if [[ ! -s "$LOG_DIR/$name.log" ]]; then
+      printf '(no output — this test asserts silently)\n'
+      printf 'to see the failing line: bash -x tests/%s\n' "$name"
+    fi
   done
   printf '\nfull logs: %s\n' "$LOG_DIR"
   exit 1

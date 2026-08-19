@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-worktree-integrity-test.XXXXXX")"
 
 cleanup() {
@@ -73,19 +75,19 @@ if dxrm 61 > "$TEST_TMP_DIR/remove.out" 2>&1; then
   exit 1
 fi
 grep -q "branch and session state were left intact" "$TEST_TMP_DIR/remove.out"
-[[ -d "$TEST_REPO/.dex/worktrees/ticket-61" ]]
+[[ -d "$TEST_REPO/.dex/worktrees/ticket-61" ]] || assert_at $LINENO
 git show-ref --verify --quiet refs/heads/worktree-ticket-61
-[[ -f "$(dx_state_file "$session_id")" ]]
-[[ -f "$DX_STATE_DIR/last-session" ]]
+[[ -f "$(dx_state_file "$session_id")" ]] || assert_at $LINENO
+[[ -f "$DX_STATE_DIR/last-session" ]] || assert_at $LINENO
 
 if dxrm --all > "$TEST_TMP_DIR/remove-all.out" 2>&1; then
   printf "%s\n" "dxrm --all reported success after worktree removal failed" >&2
   exit 1
 fi
 grep -q "Some worktrees could not be removed" "$TEST_TMP_DIR/remove-all.out"
-[[ -d "$TEST_REPO/.dex/worktrees/ticket-61" ]]
-[[ -f "$(dx_state_file "$session_id")" ]]
-[[ -f "$DX_STATE_DIR/last-session" ]]
+[[ -d "$TEST_REPO/.dex/worktrees/ticket-61" ]] || assert_at $LINENO
+[[ -f "$(dx_state_file "$session_id")" ]] || assert_at $LINENO
+[[ -f "$DX_STATE_DIR/last-session" ]] || assert_at $LINENO
 '
 
 # dxclean's orphan-branch pass must not delete branches that were never

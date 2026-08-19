@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-hook-input-test.XXXXXX")"
 
 cleanup() {
@@ -25,18 +27,18 @@ printf 'paused\n' > "$PAUSE_FILE"
 
 printf '%s\n' '{"prompt":"Please resume watcher monitoring."}' \
   | bash "$ROOT/hooks/user-prompt-submit.sh" > "$TMP_DIR/resume.out"
-[[ ! -f "$PAUSE_FILE" ]]
+[[ ! -f "$PAUSE_FILE" ]] || assert_at $LINENO
 grep -q 'resumed scheduled Phase 6 watcher loops' "$TMP_DIR/resume.out"
 
 printf 'paused\n' > "$PAUSE_FILE"
 printf '%s\n' '{"prompt":"Do not resume watcher monitoring."}' \
   | bash "$ROOT/hooks/user-prompt-submit.sh" > "$TMP_DIR/negated.out"
-[[ -f "$PAUSE_FILE" ]]
+[[ -f "$PAUSE_FILE" ]] || assert_at $LINENO
 grep -q 'paused the scheduled PR watcher loop' "$TMP_DIR/negated.out"
 
 printf '%s\n' '{"prompt":"Please do not run /dxcomplete yet."}' \
   | bash "$ROOT/hooks/user-prompt-submit.sh" > "$TMP_DIR/negated-command.out"
-[[ -f "$PAUSE_FILE" ]]
+[[ -f "$PAUSE_FILE" ]] || assert_at $LINENO
 grep -q 'paused the scheduled PR watcher loop' "$TMP_DIR/negated-command.out"
 
 REPO="$TMP_DIR/repo"

@@ -138,7 +138,7 @@ dx_review_approve_criteria "$approval_session" reapproved "$approval_hash_b" "$a
   exit 1
 }
 dx_cleanup_session "$approval_session"
-[[ ! -e "$(dx_review_criteria_approval_file "$approval_session")" ]]
+[[ ! -e "$(dx_review_criteria_approval_file "$approval_session")" ]] || assert_at $LINENO
 
 copy_source=$(dx_review_criteria_file criteria-copy-source)
 copy_target=$(dx_review_criteria_file criteria-copy-target)
@@ -330,9 +330,9 @@ assert_eq "2" "$publish_state_iteration" "commit preserves review state iteratio
 assert_eq "1" "$publish_state_clean" "commit preserves review clean credit"
 assert_eq "$policy_binding" "$publish_state_policy" "commit preserves review policy binding"
 publish_proof_dir=$(dx_review_proof_dir "$publish_receipt_session")
-[[ -d "$publish_proof_dir" ]]
+[[ -d "$publish_proof_dir" ]] || assert_at $LINENO
 dx_cleanup_session "$publish_receipt_session"
-[[ ! -e "$publish_proof_dir" && ! -L "$publish_proof_dir" ]]
+[[ ! -e "$publish_proof_dir" && ! -L "$publish_proof_dir" ]] || assert_at $LINENO
 dx_cleanup_session "$publish_state_session"
 
 published_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
@@ -625,7 +625,7 @@ assert_eq "normal" "$receipt_tier" "higher-gate receipt tier"
 assert_eq "$higher_gate" "$receipt_required" "higher-gate receipt requirement"
 assert_eq "$higher_gate" "$receipt_clean" "higher-gate receipt clean count"
 assert_eq "$base_fingerprint" "$receipt_fingerprint" "higher-gate receipt fingerprint"
-[[ "$receipt_ledger_hash" =~ ^[a-f0-9]{64}$ ]]
+[[ "$receipt_ledger_hash" =~ ^[a-f0-9]{64}$ ]] || assert_at $LINENO
 assert_eq "$session_criteria_hash" "$receipt_binding" "receipt criteria binding"
 assert_eq "$policy_binding" "$receipt_policy" "receipt policy binding"
 assert_rejected "receipt gate must match selection" dx_review_receipt_valid \
@@ -716,14 +716,14 @@ printf '%s\n' "stale ledger fixture" > "$stale_ledger"
 printf '%s\n' "stale proof fixture" > "$stale_proof_dir/1/evidence.json"
 touch -t 202001010000 "$stale_ledger" "$stale_proof_dir"
 assert_eq "1" "$(dx_cleanup_stale_review_credit 7)" "stale review credit cleanup count"
-[[ ! -e "$stale_ledger" && ! -L "$stale_ledger" ]]
-[[ ! -e "$stale_proof_dir" && ! -L "$stale_proof_dir" ]]
+[[ ! -e "$stale_ledger" && ! -L "$stale_ledger" ]] || assert_at $LINENO
+[[ ! -e "$stale_proof_dir" && ! -L "$stale_proof_dir" ]] || assert_at $LINENO
 
 dx_cleanup_session "$session_id"
-[[ ! -e "$(dx_review_selection_file "$session_id")" ]]
-[[ ! -e "$(dx_review_state_file "$session_id")" ]]
-[[ ! -e "$(dx_review_receipt_file "$session_id")" ]]
-[[ ! -e "$(dx_review_criteria_file "$session_id")" ]]
-[[ ! -e "$(dx_review_criteria_approval_file "$session_id")" ]]
+[[ ! -e "$(dx_review_selection_file "$session_id")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_review_state_file "$session_id")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_review_receipt_file "$session_id")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_review_criteria_file "$session_id")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_review_criteria_approval_file "$session_id")" ]] || assert_at $LINENO
 
 printf 'review-policy-test passed\n'

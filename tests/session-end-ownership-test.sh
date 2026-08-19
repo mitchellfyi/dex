@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-session-end-ownership-test.XXXXXX")"
 
 cleanup() {
@@ -28,16 +30,16 @@ printf 'context\n' > "$CTX_FILE"
 printf 'claude-owner\n' > "$OWNER_FILE"
 
 printf '%s\n' '{"session_id":"claude-bystander"}' | bash "$ROOT/hooks/session-end.sh"
-[[ -f "$CTX_FILE" ]]
-[[ $(wc -l < "$TIMES_FILE") -eq 1 ]]
+[[ -f "$CTX_FILE" ]] || assert_at $LINENO
+[[ $(wc -l < "$TIMES_FILE") -eq 1 ]] || assert_at $LINENO
 
 printf '%s\n' 'not-json' | bash "$ROOT/hooks/session-end.sh"
-[[ -f "$CTX_FILE" ]]
-[[ $(wc -l < "$TIMES_FILE") -eq 1 ]]
+[[ -f "$CTX_FILE" ]] || assert_at $LINENO
+[[ $(wc -l < "$TIMES_FILE") -eq 1 ]] || assert_at $LINENO
 
 printf '%s\n' '{"session_id":"claude-owner"}' | bash "$ROOT/hooks/session-end.sh"
-[[ ! -f "$CTX_FILE" ]]
-[[ $(wc -l < "$TIMES_FILE") -eq 2 ]]
+[[ ! -f "$CTX_FILE" ]] || assert_at $LINENO
+[[ $(wc -l < "$TIMES_FILE") -eq 2 ]] || assert_at $LINENO
 grep -q '^end:[0-9][0-9]*$' "$TIMES_FILE"
 
 printf 'session end ownership tests passed\n'

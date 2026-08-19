@@ -184,7 +184,7 @@ if dx_maintenance_install_workflow "$linked_repo" > "$TMP_DIR/linked-workflow.ou
   exit 1
 fi
 assert_contains "linked .github path" "$TMP_DIR/linked-workflow.out"
-[[ ! -e "$linked_target/workflows/dx-maintain.yml" ]]
+[[ ! -e "$linked_target/workflows/dx-maintain.yml" ]] || assert_at $LINENO
 
 linked_file_repo="$TMP_DIR/linked-file-repo"
 mkdir -p "$linked_file_repo/.dex" "$linked_file_repo/.github/workflows"

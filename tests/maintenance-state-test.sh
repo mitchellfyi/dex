@@ -74,7 +74,7 @@ expect_failure "linked report append" python3 "$TOOL" report-io \
   --report "$REPORT_IO_FILE" \
   --artifact-root "$ARTIFACT_ROOT" \
   --input "$REPORT_IO_INPUT"
-[[ "$(cat "$TEST_DIR/report-victim")" == "report victim" ]]
+[[ "$(cat "$TEST_DIR/report-victim")" == "report victim" ]] || assert_at $LINENO
 
 rm -f "$REPORT_IO_FILE"
 printf 'single report\n' > "$REPORT_IO_FILE"
@@ -84,7 +84,7 @@ expect_failure "hard-linked report append" python3 "$TOOL" report-io \
   --report "$REPORT_IO_FILE" \
   --artifact-root "$ARTIFACT_ROOT" \
   --input "$REPORT_IO_INPUT"
-[[ "$(cat "$REPORT_IO_FILE")" == "single report" ]]
+[[ "$(cat "$REPORT_IO_FILE")" == "single report" ]] || assert_at $LINENO
 
 LINKED_REPORT_RUN_ID="maintain-20260807T115958Z-linked-u-12345678"
 mkdir -p "$TEST_DIR/external-report-dir"
@@ -94,7 +94,7 @@ expect_failure "linked report directory" python3 "$TOOL" report-io \
   --report "$ARTIFACT_ROOT/$LINKED_REPORT_RUN_ID/report.md" \
   --artifact-root "$ARTIFACT_ROOT" \
   --input "$REPORT_IO_INPUT"
-[[ ! -e "$TEST_DIR/external-report-dir/report.md" ]]
+[[ ! -e "$TEST_DIR/external-report-dir/report.md" ]] || assert_at $LINENO
 
 PUBLISH_META="$TEST_DIR/publish-metadata.tsv"
 PUBLISH_PATCH="$TEST_DIR/publish.patch"
@@ -134,8 +134,8 @@ expect_failure "existing bundle overwrite" python3 "$TOOL" seal \
   --patch "$PUBLISH_PATCH" \
   --report "$PUBLISH_REPORT" \
   --artifact-root "$ARTIFACT_ROOT"
-[[ "$(hash_file "$PUBLISH_STATE")" == "$state_before" ]]
-[[ "$(hash_file "$PUBLISH_STATE.patch")" == "$patch_before" ]]
+[[ "$(hash_file "$PUBLISH_STATE")" == "$state_before" ]] || assert_at $LINENO
+[[ "$(hash_file "$PUBLISH_STATE.patch")" == "$patch_before" ]] || assert_at $LINENO
 
 printf 'victim bytes\n' > "$TEST_DIR/victim"
 ln -s "$TEST_DIR/victim" "$ARTIFACT_ROOT/linked-patch-state.tsv.patch"
@@ -146,8 +146,8 @@ expect_failure "linked patch target" python3 "$TOOL" seal \
   --patch "$PUBLISH_PATCH" \
   --report "$PUBLISH_REPORT" \
   --artifact-root "$ARTIFACT_ROOT"
-[[ "$(cat "$TEST_DIR/victim")" == "victim bytes" ]]
-[[ ! -e "$ARTIFACT_ROOT/linked-patch-state.tsv" ]]
+[[ "$(cat "$TEST_DIR/victim")" == "victim bytes" ]] || assert_at $LINENO
+[[ ! -e "$ARTIFACT_ROOT/linked-patch-state.tsv" ]] || assert_at $LINENO
 
 ln -s "$TEST_DIR/victim" "$ARTIFACT_ROOT/linked-state.tsv"
 expect_failure "linked state target" python3 "$TOOL" seal \
@@ -157,8 +157,8 @@ expect_failure "linked state target" python3 "$TOOL" seal \
   --patch "$PUBLISH_PATCH" \
   --report "$PUBLISH_REPORT" \
   --artifact-root "$ARTIFACT_ROOT"
-[[ "$(cat "$TEST_DIR/victim")" == "victim bytes" ]]
-[[ ! -e "$ARTIFACT_ROOT/linked-state.tsv.patch" ]]
+[[ "$(cat "$TEST_DIR/victim")" == "victim bytes" ]] || assert_at $LINENO
+[[ ! -e "$ARTIFACT_ROOT/linked-state.tsv.patch" ]] || assert_at $LINENO
 
 printf 'tampered\n' >> "$PUBLISH_STATE.patch"
 expect_failure "tampered patch receipt" python3 "$TOOL" verify --kind publish --state "$PUBLISH_STATE"
@@ -294,6 +294,6 @@ printf 'changed\n' > "$SHELL_REPO/docs/guide.md"
 )
 python3 "$TOOL" verify --kind publish --state "$ARTIFACT_ROOT/shell-publish-state.tsv" > "$TEST_DIR/shell-verified.tsv"
 assert_contains $'base_sha\t'"$SHELL_BASE" "$TEST_DIR/shell-verified.tsv"
-[[ "$(cat "$TEST_DIR/report-victim")" == "report victim" ]]
+[[ "$(cat "$TEST_DIR/report-victim")" == "report victim" ]] || assert_at $LINENO
 
 printf 'maintenance state tests passed\n'

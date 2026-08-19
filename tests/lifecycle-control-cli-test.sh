@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 CONTROL="$ROOT/bin/control.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-lifecycle-control-cli.XXXXXX")"
 
@@ -39,20 +41,20 @@ set +e
 bash "$CONTROL" pause unexpected > "$TMP_DIR/extra-arg.out" 2>&1
 RC=$?
 set -e
-[[ "$RC" -ne 0 ]]
+[[ "$RC" -ne 0 ]] || assert_at $LINENO
 grep -q "does not accept arguments" "$TMP_DIR/extra-arg.out"
-[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]]
+[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 
 bash "$CONTROL" pause > "$TMP_DIR/pause.out"
-[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "pause" ]]
-[[ -f "$(dx_paused_file "$DEX_SESSION_ID")" ]]
-[[ ! -f "$(dx_active_file "$DEX_SESSION_ID")" ]]
-[[ "$(cat "$(dx_owner_file "$DEX_SESSION_ID")")" == "claude-owner" ]]
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "pause" ]] || assert_at $LINENO
+[[ -f "$(dx_paused_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
+[[ ! -f "$(dx_active_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
+[[ "$(cat "$(dx_owner_file "$DEX_SESSION_ID")")" == "claude-owner" ]] || assert_at $LINENO
 
 bash "$CONTROL" resume > "$TMP_DIR/resume.out"
-[[ ! -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]]
-[[ ! -f "$(dx_paused_file "$DEX_SESSION_ID")" ]]
-[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]]
+[[ ! -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
+[[ ! -f "$(dx_paused_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
+[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 
 # A wrapper-processed pause keeps a durable pause marker even after its live
 # receipt and activation files are gone. Terminal controls can resume or move
@@ -64,33 +66,33 @@ rm -f "$(dx_active_file "$DEX_SESSION_ID")" "$(dx_owner_file "$DEX_SESSION_ID")"
 bash "$CONTROL" status > "$TMP_DIR/durable-status.out"
 grep -q "Lifecycle: paused (manual-pause)" "$TMP_DIR/durable-status.out"
 bash "$CONTROL" "done" > "$TMP_DIR/durable-done.out"
-[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "complete" ]]
-[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]]
-[[ "$(cat "$(dx_handoff_mode_file "$DEX_SESSION_ID")")" == "inline" ]]
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "complete" ]] || assert_at $LINENO
+[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
+[[ "$(cat "$(dx_handoff_mode_file "$DEX_SESSION_ID")")" == "inline" ]] || assert_at $LINENO
 
 dx_clear_lifecycle_control "$DEX_SESSION_ID"
 rm -f "$(dx_active_file "$DEX_SESSION_ID")" "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
 touch "$(dx_paused_file "$DEX_SESSION_ID")"
 bash "$CONTROL" resume > "$TMP_DIR/durable-resume.out"
-[[ ! -f "$(dx_paused_file "$DEX_SESSION_ID")" ]]
-[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]]
-[[ "$(cat "$(dx_handoff_mode_file "$DEX_SESSION_ID")")" == "inline" ]]
+[[ ! -f "$(dx_paused_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
+[[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
+[[ "$(cat "$(dx_handoff_mode_file "$DEX_SESSION_ID")")" == "inline" ]] || assert_at $LINENO
 
 bash "$CONTROL" "done" > "$TMP_DIR/done.out"
-[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "complete" ]]
-[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" expected_phase)" == "2" ]]
-[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" target_phase)" == "3" ]]
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "complete" ]] || assert_at $LINENO
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" expected_phase)" == "2" ]] || assert_at $LINENO
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" target_phase)" == "3" ]] || assert_at $LINENO
 
 dx_clear_lifecycle_control "$DEX_SESSION_ID"
 bash "$CONTROL" jump verify > "$TMP_DIR/jump.out"
-[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "jump" ]]
-[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" target_phase)" == "4" ]]
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "jump" ]] || assert_at $LINENO
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" target_phase)" == "4" ]] || assert_at $LINENO
 
 set +e
 DEX_SESSION_ID="foreign-session" bash "$CONTROL" status > "$TMP_DIR/foreign.out" 2>&1
 RC=$?
 set -e
-[[ "$RC" -ne 0 ]]
+[[ "$RC" -ne 0 ]] || assert_at $LINENO
 grep -q "does not belong to this repository" "$TMP_DIR/foreign.out"
 
 dx_clear_lifecycle_control "$DEX_SESSION_ID"
@@ -100,7 +102,7 @@ set +e
 bash "$CONTROL" stop > "$TMP_DIR/inactive.out" 2>&1
 RC=$?
 set -e
-[[ "$RC" -ne 0 ]]
+[[ "$RC" -ne 0 ]] || assert_at $LINENO
 grep -q "No active Dex lifecycle" "$TMP_DIR/inactive.out"
 
 printf '%s\n' 7 > "$(dx_state_file "$DEX_SESSION_ID")"
@@ -108,8 +110,8 @@ set +e
 DEX_LOOP_ACTIVE=1 bash "$CONTROL" stop > "$TMP_DIR/completed.out" 2>&1
 RC=$?
 set -e
-[[ "$RC" -ne 0 ]]
+[[ "$RC" -ne 0 ]] || assert_at $LINENO
 grep -q "No active Dex lifecycle" "$TMP_DIR/completed.out"
-[[ ! -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]]
+[[ ! -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 
 printf 'lifecycle control CLI tests passed\n'
