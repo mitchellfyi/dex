@@ -1,89 +1,101 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Dex parses shell commands twice, for two different questions:
+# Dex reads a shell command twice, for two different questions:
 #
-#   hooks/guard-handler.py      does this command do something disallowed?
+#   hooks/guard-handler.py      does this command do something worth flagging?
 #   hooks/git-commit-target.py  did this command create a commit, and where?
 #
-# They share ~76 helper names but are NOT interchangeable: the commit parser
-# threads the working directory through its primitives so it can locate the
-# repository, so several shared names take different positional arguments
-# (literal_command_substitution_output(script, cwd, variables) here versus
-# (script, variables, cwd) there). Unifying them means redesigning the guard
-# primitives to carry cwd, not moving code.
+# The reading itself is one implementation, hooks/shell_parse.py. It used to be
+# copied into both hooks, and the copies drifted: one learned to expand
+# `${VAR:+…}`, to track `export`/`declare` assignments, to keep a backslash
+# inside double quotes, and to hand an xargs item over as a single argument,
+# while the other kept the older answers. Nothing announced the divergence,
+# because both files still parsed and both suites still passed.
 #
-# Until then the risk is silent drift: a capability taught to one parser and
-# not the other. That has already happened once — guard-handler.py learned to
-# honor `bash -n` while the commit parser kept treating it as executing. This
-# test makes that visible by pinning which helper names each parser has.
+# This test keeps them from growing apart again. A hook that redefines a name
+# shell_parse.py already owns shadows the shared one for itself alone, which is
+# how a second copy starts. If a primitive genuinely needs to differ per hook,
+# it needs a different name and a reason.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
-import re
+import ast
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-guard = (root / "hooks/guard-handler.py").read_text(encoding="utf-8")
-commit = (root / "hooks/git-commit-target.py").read_text(encoding="utf-8")
-
-
-def function_names(source):
-    return set(re.findall(r"^def ([a-zA-Z_][a-zA-Z0-9_]*)\(", source, re.M))
-
-
-# Helpers the commit parser owns: git-specific logic, plus its own names for
-# primitives the guard parser spells differently.
-COMMIT_ONLY = {
-    # git-specific
-    "code_git_commit_target", "collect_git_variables", "command_variable_resolves_to_git",
-    "direct_script_commit_target", "executable_script_git_commit_target",
-    "find_exec_commit_target", "git_assignment_name", "git_commit_creates_commit",
-    "git_lookup_fragment", "git_subcommand_info", "git_variable_commit_target",
-    "has_git_commit", "substitution_git_commit_target", "xargs_commit_target",
-    # local spellings of shared primitives
-    "assignment", "base", "command_substitution_body_parts", "extract_backticks",
-    "extract_dollars", "normalize", "read_shell_file", "resolve_dir",
-    "resolve_shell_token", "shell_quote_parts", "skip_prefix", "takes_value",
-    "tokens",
+shared_path = root / "hooks/shell_parse.py"
+hooks = {
+    "hooks/guard-handler.py": root / "hooks/guard-handler.py",
+    "hooks/git-commit-target.py": root / "hooks/git-commit-target.py",
 }
 
-guard_names = function_names(guard)
-commit_names = function_names(commit)
+shared_source = shared_path.read_text(encoding="utf-8")
+shared_tree = ast.parse(shared_source)
 
-unexpected = sorted((commit_names - guard_names) - COMMIT_ONLY)
-resolved = sorted(name for name in COMMIT_ONLY if name in guard_names)
+
+def top_level_names(tree):
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+shared_defined = top_level_names(shared_tree)
+shared_all = set()
+for node in shared_tree.body:
+    if isinstance(node, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+    ):
+        shared_all = {
+            element.value
+            for element in node.value.elts
+            if isinstance(element, ast.Constant)
+        }
 
 problems = []
-if unexpected:
+
+# __all__ is what `from shell_parse import *` actually exports, so a name that
+# is defined but unlisted is invisible to the hooks even though it looks shared.
+missing_from_all = sorted(shared_defined - shared_all - {"__all__"})
+if missing_from_all:
     problems.append(
-        "the commit parser defines helpers the guard parser does not, and they are\n"
-        "not on the owned list. Either give the guard parser the same capability or\n"
-        "add the name to COMMIT_ONLY with a reason:\n  " + "\n  ".join(unexpected)
+        "hooks/shell_parse.py defines these but does not export them in __all__,\n"
+        "so `import *` will not reach them:\n  " + "\n  ".join(missing_from_all)
     )
-if resolved:
+exported_but_undefined = sorted(shared_all - shared_defined)
+if exported_but_undefined:
     problems.append(
-        "these names are listed as commit-parser-only but now exist in both.\n"
-        "Drop them from COMMIT_ONLY, and check the two definitions agree:\n  "
-        + "\n  ".join(resolved)
+        "hooks/shell_parse.py lists these in __all__ but does not define them:\n  "
+        + "\n  ".join(exported_but_undefined)
     )
 
-# A capability taught to the guard parser that the commit parser also needs.
-# Both must reason about no-execute shells, or the commit parser reports
-# commits for commands that never ran.
-for required in ("shell_invocation_is_noexec",):
-    if required in guard_names and required not in commit_names:
+for label, path in hooks.items():
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    shadowed = sorted(top_level_names(tree) & shared_all)
+    if shadowed:
         problems.append(
-            f"{required} exists in the guard parser but not the commit parser; "
-            "the two must agree about which shell invocations execute"
+            f"{label} redefines names hooks/shell_parse.py already owns. That copy\n"
+            "only applies to this hook, which is how the two parsers drifted apart\n"
+            "before. Use the shared one, or rename and say why it must differ:\n  "
+            + "\n  ".join(shadowed)
         )
+    imports_shared = any(
+        isinstance(node, ast.ImportFrom) and node.module == "shell_parse"
+        for node in ast.walk(tree)
+    )
+    if not imports_shared:
+        problems.append(f"{label} no longer imports from hooks/shell_parse.py")
 
 if problems:
     for problem in problems:
         print(f"parser drift: {problem}", file=sys.stderr)
     raise SystemExit(1)
 
-print(f"parser-drift: {len(guard_names & commit_names)} shared helpers, no drift")
+print(f"parser-drift: {len(shared_all)} shared names, no local copies")
 PY

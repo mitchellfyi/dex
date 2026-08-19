@@ -12,7 +12,10 @@ Dex is a standalone workflow automation framework for Claude Code. It provides a
   - `dx.sh` — **zsh-only** (sourced in `~/.zshrc`, uses zsh syntax like `${(j: :)@}`)
   - `hooks/*.sh` — **bash** (`#!/usr/bin/env bash`)
   - `lib/*.sh` — **bash/zsh-compatible** (sourced by both dx.sh and hooks)
-- **Python 3 (stdlib only):** `hooks/guard-handler.py` — guard evaluation, no external dependencies
+- **Python 3 (stdlib only):** `hooks/guard-handler.py` — guard evaluation;
+  `hooks/git-commit-target.py` — did this command create a commit, and where;
+  `hooks/shell_parse.py` — the shell-command reading both of them share. No
+  external dependencies
 - **Markdown + YAML frontmatter:** Skills, guards, prompts, rules
 
 ## Directory Structure
@@ -20,7 +23,7 @@ Dex is a standalone workflow automation framework for Claude Code. It provides a
 ```
 bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
-hooks/               Claude Code hooks + guard handler
+hooks/               Claude Code hooks, guard handler, shared shell parser
   guards/            Built-in guard rules (markdown with YAML frontmatter)
 lib/                 Shared shell libraries (23 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
@@ -282,6 +285,10 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 
 - Hooks run with the user's full permissions — treat all hook code as security-sensitive
 - In `guard-handler.py`, pass subprocess arguments as lists, never `shell=True` with user input
+- `hooks/shell_parse.py` is the single reading of a shell command, shared by the guard
+  handler and the commit-target parser. Teach it a capability once and both get it; a
+  local copy in one hook is how they drifted before. `tests/parser-drift-test.sh` fails
+  on any hook that redefines a name the shared module owns
 - Exit code 2 means "block" in guards — other non-zero exits are errors, not blocks. No
   built-in guard uses it: they all advise, and the agent decides. A guard's job here is to
   put the right thing in front of whoever is about to act, not to be the thing that stops them

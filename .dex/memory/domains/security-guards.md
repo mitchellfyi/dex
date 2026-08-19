@@ -7,10 +7,10 @@ guard files must cover to remain effective.
 
 Domain: security-guards
 Status: active
-Scope: hooks/guard-handler.py detectors, hooks/guards/destructive-commands.md, hooks/guards/raw-codex-delegation.md, hooks/guards/sensitive-files.md, hooks/guards/hardcoded-secrets.md, .dex/guards/*.md
+Scope: hooks/guard-handler.py detectors, hooks/shell_parse.py, hooks/guards/destructive-commands.md, hooks/guards/raw-codex-delegation.md, hooks/guards/sensitive-files.md, hooks/guards/hardcoded-secrets.md, .dex/guards/*.md
 Applies to phases: any phase that runs a Bash tool; guard authoring/maintenance
-Applies to paths: hooks/guard-handler.py, hooks/guards/*.md, .dex/guards/*.md
-Last verified: 2026-05-27
+Applies to paths: hooks/guard-handler.py, hooks/shell_parse.py, hooks/git-commit-target.py, hooks/guards/*.md, .dex/guards/*.md
+Last verified: 2026-08-19
 Recheck when: a new dangerous-command class is added, a guard adds a new event type, or the guard frontmatter parser changes
 
 Lesson:
@@ -35,9 +35,13 @@ Evidence:
   interpreter payloads, package runners (`npx codex`, `npm exec --call …`),
   shell-nested `bash -c`/`eval` payloads, heredocs, and unresolved/unreadable
   script paths.
-- `hooks/guard-handler.py` exposes helpers including
-  `extract_executable_backticks`, `extract_dollar_substitutions`,
-  `is_dex_codex_wrapper`, and heredoc/substitution extraction.
+- That syntax-aware reading lives in `hooks/shell_parse.py`, which both
+  `guard-handler.py` and `git-commit-target.py` import. It exposes helpers
+  including `extract_executable_backticks`, `extract_dollar_substitutions`,
+  `is_dex_codex_wrapper`, and heredoc/substitution extraction. It was copied
+  into both hooks until 2026-08-19, and the copies drifted: only one expanded
+  `${VAR:+…}`, tracked `export`/`declare` assignments, kept a backslash inside
+  double quotes, or handed an xargs item over as a single argument.
 - Guard `.md` files state explicitly what is caught and what is intentionally
   allowed.
 
@@ -47,6 +51,9 @@ Future agent behavior:
 - New detectors must consider wrappers, substitutions, heredocs, interpreters,
   and package runners. If a class is genuinely flat-regex-safe, justify it in
   the guard body.
+- Teach a new reading capability to `hooks/shell_parse.py`, never to one hook.
+  A primitive redefined inside a hook applies only there, and
+  `tests/parser-drift-test.sh` fails on it.
 - Guard frontmatter is parsed regex-based and accepts only flat `key: value`
   pairs — no nested objects or arrays.
 - `block` actions exit 2; `warn` actions exit 0. Other non-zero exits are

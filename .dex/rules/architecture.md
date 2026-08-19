@@ -44,6 +44,12 @@ Symlinked directories (configured in `settings.json`): `node_modules`, `.venv`, 
 - Exit code 0 = pass or warn, exit code 2 = block; every built-in guard warns
 - Pass subprocess arguments as lists, never `shell=True` with user input
 
+Reading the shell command itself — wrappers, nested shells, aliases,
+interpreter payloads, heredocs, xargs, `find -exec`, substitutions — is
+`hooks/shell_parse.py`, shared with `hooks/git-commit-target.py`. Add a
+capability there, not in one hook: `tests/parser-drift-test.sh` fails on a hook
+that redefines a shared name, which is how the two copies drifted apart before.
+
 ## Security
 
 - Hooks run with the user's full permissions — treat all hook code as security-sensitive

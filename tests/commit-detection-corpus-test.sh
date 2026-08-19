@@ -124,6 +124,20 @@ check none   'echo "$(git log -1)"'
 # Aliases and functions defined inline.
 check commit 'alias gc="git commit"; gc -m x'
 
+# Variables that hold the git command. The bare assignment always worked; the
+# three assignment builtins reported "none" until this parser started sharing
+# hooks/shell_parse.py with the guard, which had learned them.
+check commit 'G=git; $G commit -m x'
+check commit 'export G=git; $G commit -m x'
+check commit 'declare G=git; $G commit -m x'
+check commit 'readonly G=git; $G commit -m x'
+check none   'export G=echo; $G commit -m x'
+check commit 'find . -name "*.txt" -exec $(echo git) commit -m x \;'
+
+# An xargs item is one argument, not a fresh command line to re-split.
+check commit 'printf "a\nb\n" | xargs -I{} git commit -m {}'
+check none   'printf "a\nb\n" | xargs -I{} echo git commit -m {}'
+
 # Not a commit even though the word appears.
 check none   'grep -r "git commit" .'
 check none   'git config alias.ci commit'

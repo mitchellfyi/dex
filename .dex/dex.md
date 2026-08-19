@@ -6,7 +6,9 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 - **Shell (zsh):** `dx.sh` — main CLI functions, sourced in `~/.zshrc`
 - **Shell (bash):** `hooks/*.sh`, `bin/*.sh` — hooks and CLI scripts
 - **Shell (bash/zsh-compatible):** `lib/*.sh` — shared libraries
-- **Python 3 (stdlib only):** `hooks/guard-handler.py` — guard evaluation engine
+- **Python 3 (stdlib only):** `hooks/guard-handler.py` — guard evaluation engine;
+  `hooks/git-commit-target.py` — commit detection; `hooks/shell_parse.py` — the
+  shell-command reading both share
 - **Markdown + YAML frontmatter:** Skills, agents, guards, prompts, rules
 
 ## Quality Gates
