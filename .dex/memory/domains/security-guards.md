@@ -51,5 +51,13 @@ Future agent behavior:
   pairs — no nested objects or arrays.
 - `block` actions exit 2; `warn` actions exit 0. Other non-zero exits are
   errors, not blocks. Keep detectors fast — they run on every tool invocation.
+- Every built-in guard is `warn`. A guard's job here is to put the right thing
+  in front of whoever is about to act, not to stop them, so write the body as
+  guidance and expect the agent to read it and decide. Detection accuracy still
+  matters as much as it ever did — a warning nobody can trust is worth nothing.
+- `allow_pattern` on a detector guard exempts the spans it matches: they are
+  blanked before the detector runs, and the rest of the command is still
+  judged. Make it match a whole syntactic unit, or blanking it leaves
+  unbalanced quotes and parens the parser cannot read past.
 - Update the guard `.md` body to document caught patterns and intentional
   exceptions so reviewers can audit the boundary.

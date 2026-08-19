@@ -143,7 +143,7 @@ Additional:
 - **Input validation at boundaries** — request handlers, queue consumers, file uploads, external API responses. Validate type, range, length, format. Reject early, log the rejection.
 - **Concurrency security** — race conditions in authorization checks (TOCTOU), token reuse windows, double-spend in financial operations.
 
-**Context check:** does the project have a `.dex/guards/` rule (or equivalent) that already blocks the pattern? Already-protected paths don't need re-flagging.
+**Context check:** does the project have a `.dex/guards/` rule (or equivalent) that already flags the pattern? Somewhere already covered doesn't need re-flagging.
 
 ## Pass D: Performance
 
