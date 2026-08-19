@@ -270,13 +270,22 @@ try:
     with tmp:
         json.dump(manifest, tmp, indent=2, sort_keys=True)
         tmp.write("\n")
-    os.replace(tmp.name, manifest_path)
-except Exception:
+    # os.link, not os.replace: this function creates the manifest only when
+    # there isn't one, and link is the primitive that says exactly that.
+    # replace would overwrite whatever arrived after the exists() check above,
+    # and dx_run_register_artifact calls this before taking the manifest lock,
+    # so what arrives can be another registration's manifest, artifacts and
+    # all. Twelve concurrent registrations never lost one, so the window is
+    # narrow — it is also unnecessary, and link closes it outright.
+    try:
+        os.link(tmp.name, manifest_path)
+    except FileExistsError:
+        pass
+finally:
     try:
         os.unlink(tmp.name)
     except OSError:
         pass
-    raise
 PY
 }
 
