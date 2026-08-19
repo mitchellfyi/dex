@@ -64,11 +64,14 @@ run_paused_lifecycle() {
   local status=$?
   set -e
 
-  # This one keeps the bare form on purpose: it is the function's return value,
-  # and the caller invokes run_paused_lifecycle bare under `set -e`, so a
-  # non-zero return still stops the test on bash 3.2. Elsewhere a bare
-  # `[[ … ]]` is inert there — see assert_at in tests/helpers.sh.
-  [[ "$status" -eq 1 ]]
+  # This was the last bare `[[ … ]]` in the suite. It happened to work — the
+  # status is the function's return value, and both callers invoke it bare
+  # under `set -e` — but only for as long as that stayed true. One caller
+  # written `run_paused_lifecycle … || something` would have turned the
+  # assertion off with nothing to say so. Saying what went wrong is also
+  # strictly better than a silent non-zero return.
+  [[ "$status" -eq 1 ]] \
+    || fail "expected the paused lifecycle to exit 1, got ${status}"
 }
 
 MAX_ITER_SESSION="lifecycle-progress-max-iter"

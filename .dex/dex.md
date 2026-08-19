@@ -14,7 +14,7 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 ## Quality Gates
 | Check | Command | Scope |
 |-------|---------|-------|
-| Lint + syntax | `bash tests/check.sh` | shellcheck, `zsh -n dx.sh`, `bash -n` for lib/hooks/bin/tests, `py_compile`, inline-Python syntax, zsh reserved names, `node --check` |
+| Lint + syntax | `bash tests/check.sh` | shellcheck, `zsh -n dx.sh`, `bash -n` for lib/hooks/bin/tests, `py_compile`, inline-Python syntax, bare test assertions, zsh reserved names, `node --check` |
 | Test | `bash tests/run-all.sh` | Whole suite, parallel, per-test timeout |
 | Test (focused) | `bash tests/<name>-test.sh` | Single surface |
 | Format | N/A | No formatter configured |

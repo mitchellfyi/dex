@@ -56,6 +56,9 @@ if command -v python3 >/dev/null 2>&1; then
   # heredocs, where py_compile never sees it and a typo only surfaces when a
   # lifecycle reaches that line.
   python3 "$ROOT/tests/inline-python.py" || fail "inline python syntax"
+  # bash 3.2 does not apply `set -e` to a failing `[[ … ]]`, so an assertion
+  # written that way passes on macOS whatever it claims.
+  python3 "$ROOT/tests/bare-assertions.py" || fail "bare test assertions"
   # zsh sources dx.sh and lib/, where names like `status` and `path` are
   # special. shellcheck cannot see this and the suite runs under bash, so
   # nothing else catches it.
@@ -63,6 +66,7 @@ if command -v python3 >/dev/null 2>&1; then
 else
   printf 'SKIP python compile (python3 not installed)\n'
   printf 'SKIP inline python syntax (python3 not installed)\n'
+  printf 'SKIP bare test assertions (python3 not installed)\n'
   printf 'SKIP zsh reserved names (python3 not installed)\n'
 fi
 

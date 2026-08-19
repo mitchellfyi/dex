@@ -270,7 +270,7 @@ formatter; verification is static checks plus the test suite.
 
 | Check | Command | Notes |
 |-------|---------|-------|
-| Static | `bash tests/check.sh` | `zsh -n` on the zsh files, `bash -n` plus `shellcheck -S warning` on every other shell file the repo ships (`lib/`, `hooks/`, `bin/`, `tests/`, and `research/` including the scenario rubrics), `py_compile`, the embedded-Python and zsh-reserved-name checks, `node --check`. Optional tools are skipped with a notice. |
+| Static | `bash tests/check.sh` | `zsh -n` on the zsh files, `bash -n` plus `shellcheck -S warning` on every other shell file the repo ships (`lib/`, `hooks/`, `bin/`, `tests/`, and `research/` including the scenario rubrics), `py_compile`, the embedded-Python, bare-assertion, and zsh-reserved-name checks, `node --check`. Optional tools are skipped with a notice. |
 | Tests | `bash tests/run-all.sh` | Runs every `tests/*-test.sh` in parallel with a per-test timeout, then the serial lane. Filter with `bash tests/run-all.sh review worktree`. |
 | One test | `bash tests/<name>-test.sh` | For iterating on a single surface. |
 
