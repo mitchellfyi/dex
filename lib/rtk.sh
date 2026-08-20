@@ -124,11 +124,15 @@ dx_rtk_latest_release() {
   # without /tag/ leaves the whole URL in $version, which used to hard-fail
   # here instead of trying the API.
   if ! __dx_rtk_version_valid "$version"; then
+    # Take the first line by trimming, not by piping into head: head exits on
+    # line one and would leave sed writing into a closed pipe, which pipefail
+    # reports as the assignment failing. sed's output is one short line here so
+    # it never actually bit, but this is the last of that shape in the tree.
     version=$(command curl -q -fsSL \
       --connect-timeout 10 --max-time "$(dx_rtk_http_timeout metadata)" \
       "https://api.github.com/repos/${DX_RTK_REPO}/releases/latest" \
-      | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' \
-      | head -n 1)
+      | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
+    version="${version%%$'\n'*}"
   fi
 
   __dx_rtk_version_valid "$version" || return 1

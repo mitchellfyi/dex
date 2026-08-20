@@ -889,7 +889,10 @@ USAGE
   local dex_dir log_dir worker_name
   dex_dir="${DEX_DIR:-$HOME/work/dex}"
   log_dir="${HOME}/.dex/logs"
-  worker_name="$(dx_worker_organisations | head -1)"
+  # First line by trimming rather than `| head -1`, for the reason above the
+  # matching change in lib/rtk.sh.
+  worker_name="$(dx_worker_organisations)"
+  worker_name="${worker_name%%$'\n'*}"
   [[ -n "$worker_name" ]] || worker_name="dex-worker"
 
   case "$(uname -s 2>/dev/null || printf 'Linux')" in
