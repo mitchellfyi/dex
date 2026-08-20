@@ -785,124 +785,27 @@ PY
   printf '%s/review-checkout-%s.lock\n' "$DX_LOOP_DIR" "$lock_key"
 }
 
-# __dx_review_path_age_seconds <path> — portable age check for lock recovery
-__dx_review_path_age_seconds() {
-  local target="$1"
-  DX_REVIEW_AGE_TARGET="$target" python3 - <<'PY'
-import os
-import time
-
-try:
-    modified = os.stat(os.environ["DX_REVIEW_AGE_TARGET"], follow_symlinks=False).st_mtime
-except OSError:
-    raise SystemExit(1)
-print(max(0, int(time.time() - modified)))
-PY
-}
-
-# __dx_review_lock_publish_owner <lock_dir> <owner_token> <owner_pid>
-__dx_review_lock_publish_owner() {
-  local lock_dir="$1" owner_token="$2" owner_pid="$3" owner_file tmp_file
-  owner_file="$lock_dir/owner"
-  tmp_file="$lock_dir/.owner.${owner_pid}.${owner_token}"
-  if ! printf '%s\t%s\t%s\n' "$(date +%s)" "$owner_pid" "$owner_token" > "$tmp_file" || \
-     ! command mv -f "$tmp_file" "$owner_file"; then
-    command rm -f "$tmp_file" 2>/dev/null || true
-    return 1
-  fi
-}
+# The review-loop checkout lock is lib/lock.sh's lock. It used to be a copy of
+# it — the same reaper mutex, the same owner record, the same return codes,
+# about a hundred lines of it — and the two had drifted in opposite directions.
+# This copy tested liveness with a bare `kill -0`, which reports EPERM for a
+# live process owned by another user and so read it as dead; lock.sh followed
+# symlinks when ageing a path. Neither was the good one, which is the argument
+# for keeping one.
 
 # dx_review_lock_acquire <repo_dir> <owner_token> [owner_pid] — atomically own one checkout
 dx_review_lock_acquire() {
-  local repo_dir="$1" owner_token="$2" caller_pid="${3:-$$}" lock_dir owner_file reaper_dir raw
-  local owner_epoch owner_pid recorded_token extra lock_age reaper_age
-  local stale_grace=30
-  [[ -n "$owner_token" && "$owner_token" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
-  [[ "$caller_pid" =~ ^[0-9]+$ ]] && kill -0 "$caller_pid" 2>/dev/null || return 2
+  local repo_dir="$1" owner_token="$2" caller_pid="${3:-$$}" lock_dir
   lock_dir=$(dx_review_lock_dir "$repo_dir") || return 2
-  owner_file="$lock_dir/owner"
-  reaper_dir="${lock_dir}.reap"
-  mkdir -p "$DX_LOOP_DIR" || return 2
-
-  # Every acquisition passes through this short-lived mutex. That closes the
-  # mkdir-to-owner publication window and serializes stale-lock reclamation.
-  if ! command mkdir "$reaper_dir" 2>/dev/null; then
-    reaper_age=$(__dx_review_path_age_seconds "$reaper_dir" 2>/dev/null || true)
-    if [[ "$reaper_age" =~ ^[0-9]+$ && "$reaper_age" -ge "$stale_grace" ]]; then
-      command rmdir "$reaper_dir" 2>/dev/null || return 1
-      command mkdir "$reaper_dir" 2>/dev/null || return 1
-    else
-      return 1
-    fi
-  fi
-
-  if command mkdir "$lock_dir" 2>/dev/null; then
-    if __dx_review_lock_publish_owner "$lock_dir" "$owner_token" "$caller_pid"; then
-      command rmdir "$reaper_dir" 2>/dev/null || true
-      return 0
-    fi
-    command rm -f "$owner_file" 2>/dev/null || true
-    command rmdir "$lock_dir" 2>/dev/null || true
-    command rmdir "$reaper_dir" 2>/dev/null || true
-    return 2
-  fi
-
-  raw=$(cat "$owner_file" 2>/dev/null || true)
-  owner_epoch=""
-  owner_pid=""
-  recorded_token=""
-  extra=""
-  IFS=$'\t' read -r owner_epoch owner_pid recorded_token extra <<EOF
-$raw
-EOF
-  if [[ -z "$extra" && "$owner_epoch" =~ ^[0-9]+$ && "$owner_pid" =~ ^[0-9]+$ && \
-        "$recorded_token" =~ ^[A-Za-z0-9._-]+$ ]]; then
-    if kill -0 "$owner_pid" 2>/dev/null; then
-      command rmdir "$reaper_dir" 2>/dev/null || true
-      return 1
-    fi
-  else
-    lock_age=$(__dx_review_path_age_seconds "$lock_dir" 2>/dev/null || true)
-    if [[ ! "$lock_age" =~ ^[0-9]+$ || "$lock_age" -lt "$stale_grace" ]]; then
-      command rmdir "$reaper_dir" 2>/dev/null || true
-      return 1
-    fi
-  fi
-
-  command rm -f "$owner_file" 2>/dev/null || {
-    command rmdir "$reaper_dir" 2>/dev/null || true
-    return 1
-  }
-  command rmdir "$lock_dir" 2>/dev/null || {
-    command rmdir "$reaper_dir" 2>/dev/null || true
-    return 1
-  }
-
-  command mkdir "$lock_dir" 2>/dev/null || {
-    command rmdir "$reaper_dir" 2>/dev/null || true
-    return 1
-  }
-  if __dx_review_lock_publish_owner "$lock_dir" "$owner_token" "$caller_pid"; then
-    command rmdir "$reaper_dir" 2>/dev/null || true
-    return 0
-  fi
-  command rm -f "$owner_file" 2>/dev/null || true
-  command rmdir "$lock_dir" 2>/dev/null || true
-  command rmdir "$reaper_dir" 2>/dev/null || true
-  return 2
+  dx_lock_acquire "$lock_dir" "$owner_token" "$caller_pid" 30
 }
 
 # dx_review_lock_release <repo_dir> <owner_token> — release only our own lock
 dx_review_lock_release() {
-  local repo_dir="$1" owner_token="$2" lock_dir owner_file raw recorded_token
+  local repo_dir="$1" owner_token="$2" lock_dir
   [[ -n "$owner_token" ]] || return 0
   lock_dir=$(dx_review_lock_dir "$repo_dir" 2>/dev/null) || return 0
-  owner_file="$lock_dir/owner"
-  raw=$(cat "$owner_file" 2>/dev/null || true)
-  recorded_token=$(printf '%s\n' "$raw" | awk -F '\t' 'NR == 1 { print $3 }')
-  [[ "$recorded_token" == "$owner_token" ]] || return 1
-  command rm -f "$owner_file" 2>/dev/null || return 1
-  command rmdir "$lock_dir" 2>/dev/null || return 1
+  dx_lock_release "$lock_dir" "$owner_token"
 }
 
 # dx_complete_state_file <session_id> — Phase 6 cycle bookkeeping ("cycle_count:last_check_epoch")
