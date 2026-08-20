@@ -1308,28 +1308,7 @@ __dx_record_inline_phase_result() {
     DX_PHASE_ITERATIONS="$iterations" \
     DX_PHASE_STATUS="$phase_status" \
     DX_PHASE_EXIT_CODE="$exit_code" \
-    python3 - <<'PY'
-import json
-import os
-
-
-def as_int(name):
-    try:
-        return int(os.environ.get(name, "0"))
-    except ValueError:
-        return 0
-
-
-print(json.dumps({
-    "phase_name": os.environ.get("DX_PHASE_NAME", ""),
-    "start_epoch": as_int("DX_PHASE_START_EPOCH"),
-    "end_epoch": as_int("DX_PHASE_END_EPOCH"),
-    "duration_s": as_int("DX_PHASE_DURATION"),
-    "iterations": as_int("DX_PHASE_ITERATIONS"),
-    "status": os.environ.get("DX_PHASE_STATUS", ""),
-    "exit_code": as_int("DX_PHASE_EXIT_CODE"),
-}, sort_keys=True, separators=(",", ":")))
-PY
+    dx_phase_result_data
   )
   dx_event_emit_for_session "$session_id" "$event_type" "$severity" "$message" "$phase" "$data_json"
   dx_run_log_append_for_session "$session_id" "$severity" "dx" "${message}; status=${phase_status}; duration_s=${duration}; iterations=${iterations}; exit_code=${exit_code}"

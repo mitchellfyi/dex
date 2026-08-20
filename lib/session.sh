@@ -868,6 +868,43 @@ dx_log_phase() {
     "$duration_s" "$iterations" "$phase_status" "$exit_code" >> "$log_file"
 }
 
+# dx_phase_result_data — the phase.completed / phase.failed event payload.
+#
+# Reads the same nine values dx_log_phase writes, from the environment:
+# DX_PHASE_NAME, DX_PHASE_START_EPOCH, DX_PHASE_END_EPOCH, DX_PHASE_DURATION,
+# DX_PHASE_ITERATIONS, DX_PHASE_STATUS, DX_PHASE_EXIT_CODE. Anything that is
+# not a whole number becomes 0 rather than breaking the JSON.
+#
+# It lives here, beside dx_log_phase, because the two describe one phase result
+# and drifting apart would give the log and the event different answers. Until
+# now it was written out twice — once in dx.sh for the inline lifecycle and once
+# in hooks/phase-loop.sh for the Stop hook — as byte-identical copies defining a
+# format that consumers read.
+dx_phase_result_data() {
+  python3 - <<'PY'
+import json
+import os
+
+
+def as_int(name):
+    try:
+        return int(os.environ.get(name, "0"))
+    except ValueError:
+        return 0
+
+
+print(json.dumps({
+    "phase_name": os.environ.get("DX_PHASE_NAME", ""),
+    "start_epoch": as_int("DX_PHASE_START_EPOCH"),
+    "end_epoch": as_int("DX_PHASE_END_EPOCH"),
+    "duration_s": as_int("DX_PHASE_DURATION"),
+    "iterations": as_int("DX_PHASE_ITERATIONS"),
+    "status": os.environ.get("DX_PHASE_STATUS", ""),
+    "exit_code": as_int("DX_PHASE_EXIT_CODE"),
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
+
 # dx_phase_outcome_record <session_id> <phase> <outcome> <source> <generation> <reason>
 # Atomically append one idempotent phase outcome. Returns 3 when the same
 # phase/generation receipt is already present.

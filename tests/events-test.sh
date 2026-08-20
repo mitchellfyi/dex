@@ -281,4 +281,39 @@ expected = sorted(f"file-{index}.txt" for index in range(1, 9))
 assert paths == expected, f"lost registrations creating the manifest: {paths}"
 PY
 
+# The phase.completed / phase.failed payload is a format consumers read, and
+# nothing pinned its shape. It was written out twice — once in dx.sh for the
+# inline lifecycle, once in hooks/phase-loop.sh for the Stop hook — as
+# byte-identical copies, so the two could have answered differently at any
+# point without anything noticing.
+phase_payload=$(
+  DX_PHASE_NAME="Review" \
+  DX_PHASE_START_EPOCH="1700000000" \
+  DX_PHASE_END_EPOCH="1700000125" \
+  DX_PHASE_DURATION="125" \
+  DX_PHASE_ITERATIONS="7" \
+  DX_PHASE_STATUS="advance" \
+  DX_PHASE_EXIT_CODE="0" \
+  dx_phase_result_data
+)
+assert_eq \
+  '{"duration_s":125,"end_epoch":1700000125,"exit_code":0,"iterations":7,"phase_name":"Review","start_epoch":1700000000,"status":"advance"}' \
+  "$phase_payload" "phase result payload"
+
+# A value that is not a whole number becomes 0 rather than breaking the JSON,
+# so an unresolved epoch cannot make the event unparseable.
+malformed_payload=$(
+  DX_PHASE_NAME="Implement" \
+  DX_PHASE_START_EPOCH="" \
+  DX_PHASE_END_EPOCH="x" \
+  DX_PHASE_DURATION="-3" \
+  DX_PHASE_ITERATIONS="abc" \
+  DX_PHASE_STATUS="max-iter" \
+  DX_PHASE_EXIT_CODE="88" \
+  dx_phase_result_data
+)
+assert_eq \
+  '{"duration_s":-3,"end_epoch":0,"exit_code":88,"iterations":0,"phase_name":"Implement","start_epoch":0,"status":"max-iter"}' \
+  "$malformed_payload" "phase result payload with unusable numbers"
+
 printf 'events tests passed\n'
