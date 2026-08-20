@@ -174,4 +174,66 @@ if [[ -e "$HEADER_CANARY" ]]; then
 fi
 assert_not_contains 'HOME[' "$TMP_DIR/header.out"
 
+# Management commands and the lifecycle share one argument slot, so a mistyped
+# subcommand is indistinguishable from a one-word task description — and used
+# to cut a worktree, a branch and a full agent run without a word. A word that
+# is nearly a command now has to be confirmed; anything else is untouched.
+DEX_DIR="$ROOT" zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  for pair in statu:status satus:status isntall:install confg:config refne:refine logs:log; do
+    word="${pair%%:*}"
+    expected="${pair##*:}"
+    got=$(__dx_nearest_command "$word" 2>/dev/null || true)
+    [[ "$got" == "$expected" ]] || {
+      print -u2 -- "nearest command for $word was ${got:-<none>}, expected $expected"
+      exit 1
+    }
+  done
+  # A real task description must not be mistaken for a typo.
+  for word in refactor frobnicate xyz; do
+    got=$(__dx_nearest_command "$word" 2>/dev/null || true)
+    [[ -z "$got" ]] || {
+      print -u2 -- "$word was matched to $got; a plain task description must not be"
+      exit 1
+    }
+  done
+' > "$TMP_DIR/nearest.out" 2>&1 || {
+  printf 'near-miss command matching failed:\n' >&2
+  cat "$TMP_DIR/nearest.out" >&2
+  exit 1
+}
+
+# Without a terminal there is nobody to ask, and refusing would break a script
+# that has always been allowed to pass a one-word task: warn, then continue.
+DEX_DIR="$ROOT" zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  __dx_confirm_task_word statu 1 || exit 1
+' > "$TMP_DIR/typo-headless.out" 2>&1 || {
+  printf 'a non-interactive near-miss was refused instead of warned about\n' >&2
+  cat "$TMP_DIR/typo-headless.out" >&2
+  exit 1
+}
+assert_contains "is not a Dex command" "$TMP_DIR/typo-headless.out"
+assert_contains "Did you mean 'dx status'" "$TMP_DIR/typo-headless.out"
+
+# The cases that must never be interrupted: a multi-word description, a ticket,
+# a flag, and an unquoted multi-argument task.
+DEX_DIR="$ROOT" zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  __dx_confirm_task_word "fix the login bug" 1 || exit 1
+  __dx_confirm_task_word 123 1 || exit 1
+  __dx_confirm_task_word ENG-456 1 || exit 1
+  __dx_confirm_task_word --resume 1 || exit 1
+  __dx_confirm_task_word fix 3 || exit 1
+' > "$TMP_DIR/typo-quiet.out" 2>&1 || {
+  printf 'an unambiguous request was interrupted by the typo guard:\n' >&2
+  cat "$TMP_DIR/typo-quiet.out" >&2
+  exit 1
+}
+if [[ -s "$TMP_DIR/typo-quiet.out" ]]; then
+  printf 'the typo guard spoke up for an unambiguous request:\n' >&2
+  cat "$TMP_DIR/typo-quiet.out" >&2
+  exit 1
+fi
+
 printf 'dx-script-test passed\n'

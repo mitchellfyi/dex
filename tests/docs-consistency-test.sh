@@ -136,6 +136,29 @@ undocumented = sorted(cli_commands - documented - {"help", "--help", "-h"})
 if undocumented:
     problems.append(f"`dx help` lists no line for {undocumented}")
 
+# A fourth copy: __dx_task_commands, the list a mistyped word is measured
+# against before dx() treats it as a task description. A command missing from
+# it gets no "did you mean" and no confirmation, which is the case that spends
+# money.
+task_body = re.search(
+    r"__dx_task_commands\(\) \{\n(.*?)\n\}", dx_sh, re.DOTALL
+).group(1)
+task_commands = set(re.findall(r"(?<![-\w])([a-z][a-z-]+)(?![\w-])", task_body)) - {
+    "printf", "s", "n"
+}
+# refine is routed before the allowlist case, so it belongs in the typo list
+# and not in the other one. The flag spellings never reach the typo check.
+expected_task = (cli_commands - {"--help", "-h"}) | {"refine"}
+if task_commands != expected_task:
+    unmeasured = sorted(expected_task - task_commands)
+    unknown = sorted(task_commands - expected_task)
+    if unmeasured:
+        problems.append(
+            f"__dx_task_commands omits {unmeasured}, so a typo of those gets no confirmation"
+        )
+    if unknown:
+        problems.append(f"__dx_task_commands names {unknown}, which dx() does not accept")
+
 if problems:
     for problem in problems:
         print(f"docs: {problem}", file=sys.stderr)

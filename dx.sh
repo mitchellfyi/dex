@@ -161,6 +161,7 @@ __dx_cli() {
       echo "Worktree commands:"
       echo "  dx <number>            Run autonomous lifecycle (Plan → Complete) for a ticket"
       echo "  dx \"<description>\"     Same, for a task without a ticket"
+      echo "                         (a single word that looks like a mistyped command asks first)"
       echo "  dx --agent codex --model gpt-5.3-codex \"<task>\""
       echo "  dx --no-worktree <task> Run lifecycle in the current checkout instead"
       echo "  dx --resume            Resume the most recent session"
@@ -2370,6 +2371,96 @@ __dx_show_header() {
 
 # ─── dx — phased lifecycle wrapper ──────────────────────────────────────────
 
+# The management commands and the lifecycle share one argument slot: whatever
+# dx() does not recognise becomes a task description. That is the documented
+# way to start work without a ticket, and it is also exactly what a mistyped
+# subcommand looks like — so `dx statu` used to cut a worktree, a branch and a
+# full agent run without a word, instead of printing the status.
+#
+# Only a single bare word that is nearly a real command earns an interruption.
+# A multi-word description is unambiguous, a ticket is a ticket, and a word
+# resembling nothing is a task somebody meant to type.
+#
+# Keep this list equal to the routing allowlist in dx() — minus the flag forms,
+# plus `refine`, which dx() intercepts before that case. Both, plus `dx help`,
+# are held together by tests/docs-consistency-test.sh.
+unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/null
+__dx_task_commands() {
+  printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
+    config provider run control research install uninstall uninit status \
+    reload help revert log refine
+}
+
+# Prints the nearest command within two edits, or nothing.
+unalias __dx_nearest_command 2>/dev/null; unfunction __dx_nearest_command 2>/dev/null
+__dx_nearest_command() {
+  local word="$1"
+  local candidates=("${(@f)$(__dx_task_commands)}")
+  command -v python3 >/dev/null 2>&1 || return 1
+  DX_TASK_WORD="$word" python3 - "${candidates[@]}" <<'PY'
+import os
+import sys
+
+word = os.environ["DX_TASK_WORD"]
+
+
+def edits(a, b):
+    if abs(len(a) - len(b)) > 2:
+        return 99
+    previous = list(range(len(b) + 1))
+    for index, left in enumerate(a, 1):
+        current = [index]
+        for offset, right in enumerate(b, 1):
+            current.append(min(
+                previous[offset] + 1,
+                current[offset - 1] + 1,
+                previous[offset - 1] + (left != right),
+            ))
+        previous = current
+    return previous[-1]
+
+
+best, score = "", 3
+for candidate in sys.argv[1:]:
+    distance = edits(word, candidate)
+    if distance < score:
+        best, score = candidate, distance
+if best:
+    print(best)
+PY
+}
+
+# Returns non-zero when the user declines, and dx() stops.
+unalias __dx_confirm_task_word 2>/dev/null; unfunction __dx_confirm_task_word 2>/dev/null
+__dx_confirm_task_word() {
+  local raw="$1" argc="$2" suggestion answer
+  [[ "$argc" -eq 1 ]] || return 0
+  [[ "$raw" != -* ]] || return 0
+  [[ "$raw" != *[[:space:]]* ]] || return 0
+  if __dx_is_ticket "$raw"; then
+    return 0
+  fi
+  suggestion=$(__dx_nearest_command "$raw" 2>/dev/null) || return 0
+  [[ -n "$suggestion" ]] || return 0
+
+  dx_warn "'${raw}' is not a Dex command, so Dex would run it as a task description."
+  dx_info "That starts a full lifecycle: a new worktree, a new branch, and an agent run."
+  dx_info "Did you mean 'dx ${suggestion}'?"
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    # Nothing to ask, and refusing here would break a script that has always
+    # been allowed to pass a one-word task. The warning above is the record.
+    dx_info "Not a terminal — continuing as a task description."
+    return 0
+  fi
+  printf "Run '%s' as a task description? [y/N]: " "$raw"
+  read -r answer
+  case "${answer:0:1}" in
+    y|Y) return 0 ;;
+  esac
+  dx_info "Nothing started. Run 'dx help' for the command list."
+  return 1
+}
+
 unalias dx 2>/dev/null; unfunction dx 2>/dev/null
 dx() {
   if [[ $# -eq 0 ]]; then
@@ -2470,6 +2561,10 @@ dx() {
       return $?
       ;;
   esac
+
+  # Everything below this point runs the lifecycle. A single word that is
+  # nearly a command is almost certainly a typo, so confirm before spending.
+  __dx_confirm_task_word "$1" "$#" || return 1
 
   __dx_refresh_provider || return 1
 
