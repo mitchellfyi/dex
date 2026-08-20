@@ -391,12 +391,20 @@ dx_watch_lock_file() { echo "${DX_LOOP_DIR}/${1}.${2}.watch-lock"; }
 #
 # The cost is the takeover lib/lock.sh's header calls out: two contenders can
 # both find the lease expired, both remove it, and the second delete can take
-# the first's freshly written replacement with it, leaving two watchers. The
-# window is one printf wide and did not reproduce in 200 rounds of four
-# contenders. Closing it properly needs mkdir plus a reaper — that is, it needs
-# lock.sh — so it is left as a known bound rather than half-fixed here.
+# the first's freshly written replacement with it, leaving two watchers. That
+# window stays open, deliberately. It is one printf wide, it did not reproduce
+# in 200 rounds of four contenders, and closing it would not buy the property
+# it looks like it buys — a cycle that outruns its budget hands the lease to
+# the next tick while still running, which is the same two watchers, by design
+# and far more often. Serialising the takeover would be precision applied to
+# the rarer of two causes of one outcome.
+#
+# What did need fixing is the case underneath it. Every lease has recorded the
+# owner pid since it was written and nothing ever read it, so a watcher that
+# crashed held the next tick off for the whole budget — two minutes of nothing.
+# That is now checked, and it is the common failure, not the race.
 dx_watch_lock_acquire() {
-  local session_id="$1" watch_name="$2" lock_file raw epoch now age timeout
+  local session_id="$1" watch_name="$2" lock_file raw epoch owner_pid now age timeout
   [[ -n "$session_id" && -n "$watch_name" ]] || return 1
 
   lock_file=$(dx_watch_lock_file "$session_id" "$watch_name")
@@ -408,14 +416,28 @@ dx_watch_lock_acquire() {
 
   raw=$(cat "$lock_file" 2>/dev/null || echo "")
   epoch="${raw%%$'\t'*}"
+  owner_pid="${raw#*$'\t'}"
+  owner_pid="${owner_pid%%$'\t'*}"
   timeout=$(dx_watch_cycle_timeout_seconds)
   now=$(date +%s)
 
   if [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
     rm -f "$lock_file" 2>/dev/null || true
+  elif [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! __dx_lock_pid_alive "$owner_pid"; then
+    # A watcher that is gone will not finish its cycle, whatever is left of the
+    # budget. Every lease has recorded this pid from the start and nothing ever
+    # read it, so a crashed watcher held the next tick off for the full timeout
+    # — two minutes of nothing, by default. lib/lock.sh's helper is used rather
+    # than a bare `kill -0`, which reports EPERM for another user's live
+    # process and would read it as dead.
+    rm -f "$lock_file" 2>/dev/null || true
   else
     age=$((now - epoch))
-    [[ "$timeout" -gt 0 && "$age" -lt "$timeout" ]] && return 1
+    # A budget of 0 is no budget, the same as it means to dx_run_with_timeout
+    # just above. It read the other way here — 0 skipped the age rule and so
+    # took the lease from a live watcher on every tick, which is the opposite
+    # of what asking for no limit asks for.
+    [[ "$timeout" -eq 0 || "$age" -lt "$timeout" ]] && return 1
     rm -f "$lock_file" 2>/dev/null || true
   fi
 

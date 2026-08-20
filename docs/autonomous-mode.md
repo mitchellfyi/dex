@@ -547,7 +547,7 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables the timeout |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
-| `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation |
+| `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation. A cycle that outruns it hands the lease to the next tick; a watcher that exits hands it over immediately, without waiting out the budget. `0` means no budget, as it does for the phase timeouts |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |
 | `DEX_WATCH_PAUSE_TTL_SECONDS` | `3600` (1h 0m) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |
 | `DEX_COMPLETE_MAX_CYCLES` | `3` | Max idle cycles before Phase 6 pauses for manual follow-up |
