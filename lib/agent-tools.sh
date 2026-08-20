@@ -231,7 +231,7 @@ print("missing")
     return 0
   fi
 
-  if printf '%s\n' "$plugin_json" | grep -F "\"id\": \"$plugin_ref\"" >/dev/null 2>&1; then
+  if grep -F "\"id\": \"$plugin_ref\"" >/dev/null 2>&1 <<< "$plugin_json"; then
     printf '%s\n' "unknown"
   else
     printf '%s\n' "missing"

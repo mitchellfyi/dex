@@ -120,7 +120,7 @@ fi
 # it needs to check the commit message specifically, not the combined text)
 # Full set of conventional commit types per https://www.conventionalcommits.org
 CONVENTIONAL_REGEX='^(feat|fix|refactor|perf|docs|test|chore|build|ci|style|revert)(\([^)]+\))?!?: .+'
-if [[ -n "$COMMIT_MSG" ]] && ! printf '%s\n' "$COMMIT_MSG" | grep -qE "$CONVENTIONAL_REGEX"; then
+if [[ -n "$COMMIT_MSG" ]] && ! grep -qE "$CONVENTIONAL_REGEX" <<< "${COMMIT_MSG}"; then
   echo "Commit message does not follow conventional format." >&2
   echo "Expected: <type>[(<scope>)][!]: <description>" >&2
   echo "Got: $COMMIT_MSG" >&2

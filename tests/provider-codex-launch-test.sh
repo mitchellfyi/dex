@@ -225,4 +225,31 @@ if grep -q -- "model_reasoning_effort" "$DEX_TEST_CODEX_LAST_ARGS"; then
   exit 1
 fi
 
+# The flag checks read a CLI's --help, which is long, and the flags they look
+# for appear near the top of it. Feeding that through `printf | grep -q` under
+# pipefail decided the answer on timing: grep exits at the first match, printf
+# is left writing into a closed pipe and exits 141, and pipefail reports 141 —
+# so `! pipeline` is true and Dex says the flag is unsupported when it is
+# right there. A long help text with an early match reproduced it every time.
+codex_stub_dir="$TMP_DIR/help-stub"
+mkdir -p "$codex_stub_dir"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [[ "$1" == "--version" ]]; then printf "codex 9.9.9\\n"; exit 0; fi\n'
+  # Every required flag first, then enough output to fill the pipe buffer.
+  printf 'printf -- "--ignore-user-config --sandbox --ephemeral --dangerously-bypass-approvals-and-sandbox\\n"\n'
+  printf 'python3 -c "print((chr(45) * 79 + chr(10)) * 40000)"\n'
+} > "$codex_stub_dir/codex"
+chmod +x "$codex_stub_dir/codex"
+
+codex_flags_out="$TMP_DIR/codex-flags.out"
+codex_flags_status=0
+PATH="$codex_stub_dir:$PATH" dx_provider_codex_required_flags_check \
+  > "$codex_flags_out" 2>&1 || codex_flags_status=$?
+if [[ "$codex_flags_status" -ne 0 ]]; then
+  printf 'a Codex CLI advertising every required flag was reported as missing one:\n' >&2
+  head -5 "$codex_flags_out" >&2
+  exit 1
+fi
+
 printf 'provider codex launch test passed\n'

@@ -1120,11 +1120,11 @@ dx_provider_claude_required_flags_check() {
   local claude_help
   claude_help=$(claude --help 2>&1 || true)
   local failed=0
-  if ! printf '%s\n' "$claude_help" | grep -q -- "--dangerously-skip-permissions"; then
+  if ! grep -q -- "--dangerously-skip-permissions" <<< "${claude_help}"; then
     dx_error "Claude Code CLI does not support --dangerously-skip-permissions; upgrade Claude before using Dex."
     failed=1
   fi
-  if ! printf '%s\n' "$claude_help" | grep -q -- "--permission-mode"; then
+  if ! grep -q -- "--permission-mode" <<< "${claude_help}"; then
     dx_error "Claude Code CLI does not support --permission-mode; upgrade Claude before using Dex."
     failed=1
   fi
@@ -1138,15 +1138,15 @@ dx_provider_codex_required_flags_check() {
   local failed=0
 
   if dx_provider_codex_read_only_enabled; then
-    if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--ignore-user-config"; then
+    if ! grep -q -- "--ignore-user-config" <<< "${codex_exec_help}"; then
       dx_error "Codex CLI does not support --ignore-user-config; upgrade Codex before using read-only delegation."
       failed=1
     fi
-    if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--sandbox"; then
+    if ! grep -q -- "--sandbox" <<< "${codex_exec_help}"; then
       dx_error "Codex CLI does not support --sandbox; upgrade Codex before using read-only delegation."
       failed=1
     fi
-    if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--ephemeral"; then
+    if ! grep -q -- "--ephemeral" <<< "${codex_exec_help}"; then
       dx_error "Codex CLI does not support --ephemeral; upgrade Codex before using read-only delegation."
       failed=1
     fi
@@ -1154,11 +1154,11 @@ dx_provider_codex_required_flags_check() {
   fi
 
   codex_review_help=$(dx_provider_codex exec review --help 2>&1 || true)
-  if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--ignore-user-config" || ! printf '%s\n' "$codex_review_help" | grep -q -- "--ignore-user-config"; then
+  if ! grep -q -- "--ignore-user-config" <<< "${codex_exec_help}" || ! grep -q -- "--ignore-user-config" <<< "${codex_review_help}"; then
     dx_error "Codex CLI does not support --ignore-user-config; upgrade Codex before using codex-subscription."
     failed=1
   fi
-  if ! printf '%s\n' "$codex_exec_help" | grep -q -- "--dangerously-bypass-approvals-and-sandbox" || ! printf '%s\n' "$codex_review_help" | grep -q -- "--dangerously-bypass-approvals-and-sandbox"; then
+  if ! grep -q -- "--dangerously-bypass-approvals-and-sandbox" <<< "${codex_exec_help}" || ! grep -q -- "--dangerously-bypass-approvals-and-sandbox" <<< "${codex_review_help}"; then
     dx_error "Codex CLI does not support --dangerously-bypass-approvals-and-sandbox; upgrade Codex before using codex-subscription."
     failed=1
   fi
@@ -1176,10 +1176,10 @@ dx_provider_codex_ready_check() {
 
   local login_status
   login_status=$(dx_provider_codex login status 2>&1 || true)
-  if printf '%s\n' "$login_status" | grep -qi "ChatGPT"; then
+  if grep -qi "ChatGPT" <<< "${login_status}"; then
     return 0
   fi
-  if printf '%s\n' "$login_status" | grep -q "Logged in"; then
+  if grep -q "Logged in" <<< "${login_status}"; then
     dx_error "Codex CLI is logged in, but ChatGPT subscription auth could not be confirmed."
   else
     dx_error "Codex CLI is not logged in with ChatGPT."
@@ -1477,9 +1477,9 @@ dx_provider_doctor() {
       fi
       local login_status
       login_status=$(dx_provider_codex login status 2>&1 || true)
-      if printf '%s\n' "$login_status" | grep -qi "ChatGPT"; then
+      if grep -qi "ChatGPT" <<< "${login_status}"; then
         dx_ok "Codex is logged in with ChatGPT"
-      elif printf '%s\n' "$login_status" | grep -q "Logged in"; then
+      elif grep -q "Logged in" <<< "${login_status}"; then
         dx_error "Codex is logged in, but doctor could not confirm ChatGPT subscription auth"
         failed=1
       else

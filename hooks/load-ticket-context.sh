@@ -17,7 +17,7 @@ BRANCH="${BRANCH//[^A-Za-z0-9._\/\-]/_}"
 TICKET_NUM=""
 if [[ "$BRANCH" != worktree-task-* ]]; then
   # Extract ticket number from branch name (handles: ticket-999, ENG-999, feature/ENG-999, etc.)
-  TICKET_NUM=$(printf '%s\n' "$BRANCH" | grep -oE 'ticket-[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+  TICKET_NUM=$(grep -oE 'ticket-[0-9]+' <<< "${BRANCH}" | head -1 | grep -oE '[0-9]+' || true)
   if [[ -z "$TICKET_NUM" ]]; then
     # Fallback: look for UPPERCASE project prefixes (e.g., ENG-123, PROJ-456).
     # Requires uppercase to avoid false positives on common branch name segments
@@ -74,16 +74,16 @@ DEFAULT_BRANCH=$(dx_default_branch "$REPO_TOP")
 CHANGED_FILES=$(git diff "origin/${DEFAULT_BRANCH}...HEAD" --name-only 2>/dev/null || echo "")
 FOCUS_AREAS=""
 
-if printf '%s\n' "$CHANGED_FILES" | grep -qE '^frontend/|^admin/' 2>/dev/null; then
+if grep -qE '^frontend/|^admin/' <<< "${CHANGED_FILES}" 2>/dev/null; then
   FOCUS_AREAS="${FOCUS_AREAS} frontend"
 fi
-if printf '%s\n' "$CHANGED_FILES" | grep -q '^backend/' 2>/dev/null; then
+if grep -q '^backend/' <<< "${CHANGED_FILES}" 2>/dev/null; then
   FOCUS_AREAS="${FOCUS_AREAS} backend"
 fi
-if printf '%s\n' "$CHANGED_FILES" | grep -qE 'guard|auth|rls|policy|security' 2>/dev/null; then
+if grep -qE 'guard|auth|rls|policy|security' <<< "${CHANGED_FILES}" 2>/dev/null; then
   FOCUS_AREAS="${FOCUS_AREAS} security"
 fi
-if printf '%s\n' "$CHANGED_FILES" | grep -qE '\.migration\.|migrations/' 2>/dev/null; then
+if grep -qE '\.migration\.|migrations/' <<< "${CHANGED_FILES}" 2>/dev/null; then
   FOCUS_AREAS="${FOCUS_AREAS} migration"
 fi
 
