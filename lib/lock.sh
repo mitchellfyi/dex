@@ -26,19 +26,25 @@
 # owner — and fully closing it needs a different primitive than mkdir.
 
 # dx_lock_path_age_seconds <path> — portable age in seconds, or empty
+#
+# The age decides whether a lock or reaper is stale enough to take, so it has
+# to be the age of the thing named and not of whatever it points at. os.stat
+# follows a symlink: pointing one at an old directory reported that directory's
+# age and made the lock reclaimable on demand, while pointing it at something
+# freshly touched kept it un-reclaimable forever.
 dx_lock_path_age_seconds() {
   local target="$1"
-  [[ -e "$target" ]] || return 1
+  [[ -e "$target" || -L "$target" ]] || return 1
   python3 - "$target" <<'PY' 2>/dev/null
 import os
 import sys
 import time
 
 try:
-    age = int(time.time() - os.stat(sys.argv[1]).st_mtime)
+    modified = os.stat(sys.argv[1], follow_symlinks=False).st_mtime
 except OSError:
     raise SystemExit(1)
-print(age if age > 0 else 0)
+print(max(0, int(time.time() - modified)))
 PY
 }
 

@@ -65,6 +65,32 @@ dx_lock_acquire "$lock" holder-c || {
 }
 dx_lock_release "$lock" holder-c
 
+# The age that decides staleness is the age of the path named, not of whatever
+# it points at. os.stat follows a symlink, so a reaper symlinked at an old
+# directory reported that directory's age and was reclaimable on demand — which
+# is the mutex that stops two waiters both stealing the same lock.
+symlink_target="$TMP_DIR/aged-target"
+mkdir -p "$symlink_target"
+python3 - "$symlink_target" <<'PY'
+import os
+import sys
+import time
+
+old = time.time() - 9999
+os.utime(sys.argv[1], (old, old))
+PY
+ln -s "$symlink_target" "$TMP_DIR/aged-link"
+if [[ "$(dx_lock_path_age_seconds "$symlink_target")" != "9999" ]]; then
+  printf 'the aged directory did not report its own age\n' >&2
+  exit 1
+fi
+if [[ "$(dx_lock_path_age_seconds "$TMP_DIR/aged-link")" != "0" ]]; then
+  printf 'a symlink reported its target age instead of its own: %s\n' \
+    "$(dx_lock_path_age_seconds "$TMP_DIR/aged-link")" >&2
+  exit 1
+fi
+rm -rf "$symlink_target" "$TMP_DIR/aged-link"
+
 # A lock with a corrupt owner record is only reclaimed after the grace period,
 # never immediately, so a publication in flight is not stolen.
 mkdir -p "$lock"
