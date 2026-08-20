@@ -381,6 +381,20 @@ dx_watch_command_timeout_seconds() {
 dx_watch_lock_file() { echo "${DX_LOOP_DIR}/${1}.${2}.watch-lock"; }
 
 # dx_watch_lock_acquire <session_id> <watch_name> — acquire or reject active watcher lock
+# This is a lease, not one of lib/lock.sh's locks, and the difference is
+# deliberate. DEX_WATCH_CYCLE_TIMEOUT_SECONDS is documented as a watcher
+# cycle's *runtime budget*: a cycle that outlives it has broken its contract,
+# and the next scheduled tick is meant to take over rather than wait behind a
+# watcher that may never finish. lock.sh refuses while the owner process is
+# alive, which is the right rule for a mutex and the wrong one here — a hung
+# watcher would block every later tick.
+#
+# The cost is the takeover lib/lock.sh's header calls out: two contenders can
+# both find the lease expired, both remove it, and the second delete can take
+# the first's freshly written replacement with it, leaving two watchers. The
+# window is one printf wide and did not reproduce in 200 rounds of four
+# contenders. Closing it properly needs mkdir plus a reaper — that is, it needs
+# lock.sh — so it is left as a known bound rather than half-fixed here.
 dx_watch_lock_acquire() {
   local session_id="$1" watch_name="$2" lock_file raw epoch now age timeout
   [[ -n "$session_id" && -n "$watch_name" ]] || return 1
