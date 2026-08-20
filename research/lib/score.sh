@@ -6,6 +6,48 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 # score_scenario <scenario_name> <result_dir> [--skip-llm-judge]
+# _rubric_show_error <file> — the tail of what a failed check printed.
+_rubric_show_error() {
+  local file="$1" line
+  [[ -s "$file" ]] || return 0
+  while IFS= read -r line; do
+    log_error "    ${line}"
+  done < <(tail -5 "$file")
+}
+
+# _rubric_score <label> <fallback> <command...>
+#
+# Run one rubric check and print its number. A check that fails, or answers
+# with something that is not a number, still yields the fallback so the run
+# continues — but it says so, and shows what the check printed.
+#
+# Every one of these used to be `$(check 2>/dev/null || echo 0)`, which made a
+# broken rubric and an agent that earned nothing produce the same number with
+# the reason discarded. A benchmark that cannot tell those apart reports the
+# wrong answer quietly, which is what check.sh already guards these files
+# against for syntax errors.
+_rubric_score() {
+  local label="$1" fallback="$2"
+  shift 2
+  local value stderr_file status=0
+  stderr_file=$(mktemp "${TMPDIR:-/tmp}/dex-rubric-stderr.XXXXXX") || {
+    "$@" 2>/dev/null || printf '%s\n' "$fallback"
+    return 0
+  }
+  value=$("$@" 2>"$stderr_file") || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    log_error "  ${label}: rubric check failed (exit ${status}); scoring ${fallback}"
+    _rubric_show_error "$stderr_file"
+    value="$fallback"
+  elif [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    log_error "  ${label}: rubric check answered '\''${value}'\'', which is not a number; scoring ${fallback}"
+    _rubric_show_error "$stderr_file"
+    value="$fallback"
+  fi
+  rm -f "$stderr_file"
+  printf '%s\n' "$value"
+}
+
 # Run all rubric checks and write results to result_dir.
 # Returns the total weighted score (0-100).
 score_scenario() {
@@ -25,9 +67,12 @@ score_scenario() {
     return 1
   fi
 
-  # Unset any rubric_* functions from prior scenarios to prevent pollution
+  # Unset the previous scenario's rubric entry points so one scenario cannot
+  # answer for the next. Anchored: an unanchored /rubric_/ matches any name
+  # containing it, which quietly took this file's own _rubric_score helper with
+  # it and left every check calling a function that no longer existed.
   local _fn
-  for _fn in $(declare -F | awk '/rubric_/{print $3}'); do
+  for _fn in $(declare -F | awk '$3 ~ /^rubric_/ {print $3}'); do
     unset -f "$_fn"
   done
 
@@ -84,42 +129,42 @@ except Exception:
 
   # Correctness (scenario-specific)
   if declare -f rubric_correctness &>/dev/null; then
-    correctness=$(rubric_correctness "$ws" 2>/dev/null || echo "0")
+    correctness=$(_rubric_score correctness 0 rubric_correctness "$ws")
     correctness=$(_clamp "$correctness")
     log_info "  Correctness: $correctness/100"
   fi
 
   # Test quality (scenario-specific)
   if declare -f rubric_test_quality &>/dev/null; then
-    test_quality=$(rubric_test_quality "$ws" 2>/dev/null || echo "0")
+    test_quality=$(_rubric_score test_quality 0 rubric_test_quality "$ws")
     test_quality=$(_clamp "$test_quality")
     log_info "  Test quality: $test_quality/100"
   fi
 
   # Robustness (scenario-specific)
   if declare -f rubric_robustness &>/dev/null; then
-    robustness=$(rubric_robustness "$ws" 2>/dev/null || echo "0")
+    robustness=$(_rubric_score robustness 0 rubric_robustness "$ws")
     robustness=$(_clamp "$robustness")
     log_info "  Robustness: $robustness/100"
   fi
 
   # Verification (shared — check if lint/typecheck/tests pass)
-  verification=$(_score_verification "$ws" 2>/dev/null || echo "0")
+  verification=$(_rubric_score verification 0 _score_verification "$ws")
   verification=$(_clamp "$verification")
   log_info "  Verification: $verification/100"
 
   # Issue detection (scenario-specific or default)
   if declare -f rubric_issue_detection &>/dev/null; then
-    issue_detection=$(rubric_issue_detection "$ws" "$result_dir" 2>/dev/null || echo "0")
+    issue_detection=$(_rubric_score issue_detection 0 rubric_issue_detection "$ws" "$result_dir")
   else
-    issue_detection=$(_score_issue_detection_default "$ws" "$result_dir" 2>/dev/null || echo "0")
+    issue_detection=$(_rubric_score issue_detection 0 _score_issue_detection_default "$ws" "$result_dir")
   fi
   issue_detection=$(_clamp "$issue_detection")
   log_info "  Issue detection: $issue_detection/100"
 
   # Code quality (LLM-judged)
   if [[ "$skip_llm" != "--skip-llm-judge" ]] && [[ -f "$sc_dir/rubric-llm.md" ]]; then
-    code_quality=$(_score_llm_judge "$scenario" "$ws" "$result_dir" 2>/dev/null || echo "50")
+    code_quality=$(_rubric_score code_quality 50 _score_llm_judge "$scenario" "$ws" "$result_dir")
     code_quality=$(_clamp "$code_quality")
     log_info "  Code quality (LLM): $code_quality/100"
   else
