@@ -129,6 +129,31 @@ run_signal_case() {
 }
 
 run_signal_case TERM 143 "TERM cleanup"
+
+# The HUP case is only meaningful where SIGHUP can be delivered. nohup sets it
+# to SIG_IGN, and an ignored disposition is inherited across both fork and exec
+# and cannot be reset by a child — so under `nohup bash tests/run-all.sh`, or
+# any supervisor that starts the suite the same way, the signal never arrives,
+# `wait` below never returns, and the test burns its entire per-test budget
+# before the harness kills it with no explanation. Say so in one second
+# instead.
+hup_is_deliverable() {
+  local probe_pid probe_status=0
+  /bin/sleep 1 &
+  probe_pid=$!
+  kill -HUP "$probe_pid" 2>/dev/null || true
+  wait "$probe_pid" 2>/dev/null || probe_status=$?
+  [[ "$probe_status" -eq 129 ]]
+}
+
+if ! hup_is_deliverable; then
+  printf 'review-timeout-test: SIGHUP is ignored in this environment, so the\n' >&2
+  printf '  HUP cleanup case cannot run. Re-run without nohup (or whatever\n' >&2
+  printf '  else set SIGHUP to ignored) — the signal disposition is inherited\n' >&2
+  printf '  by every descendant, including this test.\n' >&2
+  exit 1
+fi
+
 run_signal_case HUP 129 "HUP cleanup"
 
 # Exercise the same normal-exit cleanup through non-interactive zsh. The child
