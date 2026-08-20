@@ -48,7 +48,7 @@ run_bash_guard() {
 
 assert_triggers() {
   run_guard "$(mkpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-await-in-loop'; then
+  if [[ "${GUARD_OUT}" == *'warn-await-in-loop'* ]]; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected trigger): %s\n' "$1" >&2
@@ -58,7 +58,7 @@ assert_triggers() {
 
 assert_raw_codex_blocks() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-raw-codex-delegation'; then
+  if [[ "${GUARD_OUT}" == *'warn-raw-codex-delegation'* ]]; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected raw Codex block): %s\n' "$1" >&2
@@ -68,7 +68,7 @@ assert_raw_codex_blocks() {
 
 assert_raw_codex_clean() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-raw-codex-delegation'; then
+  if [[ "${GUARD_OUT}" == *'warn-raw-codex-delegation'* ]]; then
     printf 'FAIL (raw Codex false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -86,7 +86,7 @@ run_commit_guard() {
 
 assert_sensitive_warns() {
   run_commit_guard "$2"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-sensitive-files'; then
+  if [[ "${GUARD_OUT}" == *'warn-sensitive-files'* ]]; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected sensitive-file warning): %s\n' "$1" >&2
@@ -96,7 +96,7 @@ assert_sensitive_warns() {
 
 assert_sensitive_clean() {
   run_commit_guard "$2"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-sensitive-files'; then
+  if [[ "${GUARD_OUT}" == *'warn-sensitive-files'* ]]; then
     printf 'FAIL (sensitive-file false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -114,7 +114,7 @@ run_attribution_guard() {
 
 assert_attribution_blocks() {
   run_attribution_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-claude-attribution'; then
+  if [[ "${GUARD_OUT}" == *'warn-claude-attribution'* ]]; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected attribution block): %s\n' "$1" >&2
@@ -124,7 +124,7 @@ assert_attribution_blocks() {
 
 assert_attribution_clean() {
   run_attribution_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-claude-attribution'; then
+  if [[ "${GUARD_OUT}" == *'warn-claude-attribution'* ]]; then
     printf 'FAIL (attribution false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -134,7 +134,7 @@ assert_attribution_clean() {
 
 assert_destructive_blocks() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
+  if [[ "${GUARD_OUT}" == *'warn-destructive-commands'* ]]; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected destructive-command block): %s\n' "$1" >&2
@@ -144,7 +144,7 @@ assert_destructive_blocks() {
 
 assert_destructive_clean() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
+  if [[ "${GUARD_OUT}" == *'warn-destructive-commands'* ]]; then
     printf 'FAIL (destructive-command false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -154,7 +154,7 @@ assert_destructive_clean() {
 
 assert_secret_warns() {
   run_guard "$(mkpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-hardcoded-secrets'; then
+  if [[ "${GUARD_OUT}" == *'warn-hardcoded-secrets'* ]]; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected hardcoded-secret warning): %s\n' "$1" >&2
@@ -164,7 +164,7 @@ assert_secret_warns() {
 
 assert_secret_clean() {
   run_guard "$(mkpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-hardcoded-secrets'; then
+  if [[ "${GUARD_OUT}" == *'warn-hardcoded-secrets'* ]]; then
     printf 'FAIL (hardcoded-secret false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -174,7 +174,7 @@ assert_secret_clean() {
 
 assert_clean() {
   run_guard "$(mkpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'warn-await-in-loop'; then
+  if [[ "${GUARD_OUT}" == *'warn-await-in-loop'* ]]; then
     printf 'FAIL (false positive): %s\n' "$1" >&2
     fail=$((fail + 1))
   else
@@ -623,7 +623,7 @@ set +e
 GUARD_OUT="$(mkpayload 'changed content' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=file python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'warn-review-assessment-file-edits'; then
+if [[ "${GUARD_OUT}" == *'warn-review-assessment-file-edits'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (expected review assessment file-edit block)\n%s\n' "$GUARD_OUT" >&2
@@ -634,7 +634,7 @@ set +e
 GUARD_OUT="$(mkbashpayload 'git status --short' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'warn-review-assessment-bash'; then
+if [[ "${GUARD_OUT}" == *'warn-review-assessment-bash'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (expected review assessment Bash block)\n%s\n' "$GUARD_OUT" >&2
@@ -645,7 +645,7 @@ set +e
 GUARD_OUT="$(mkbashpayload 'git status --short' | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if [[ "$GUARD_RC" -eq 0 ]] && ! printf '%s' "$GUARD_OUT" | grep -q 'warn-review-assessment-bash'; then
+if [[ "$GUARD_RC" -eq 0 ]] && [[ "${GUARD_OUT}" != *'warn-review-assessment-bash'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (review assessment Bash guard leaked outside assessor mode)\n%s\n' "$GUARD_OUT" >&2
@@ -660,7 +660,7 @@ fi
 # puts them in command position or hands them to a shell/interpreter.
 assert_bash_allowed() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -q 'BLOCKED'; then
+  if [[ "${GUARD_OUT}" == *'BLOCKED'* ]]; then
     printf 'FAIL (expected allowed): %s\n%s\n' "$1" "$GUARD_OUT" >&2
     fail=$((fail + 1))
   else
@@ -677,7 +677,7 @@ assert_bash_allowed "xargs into git with a placeholder argument" \
 # fired and its message reached the agent — not that the tool call was stopped.
 assert_bash_flags() {
   run_bash_guard "$(mkbashpayload "$2")"
-  if printf '%s' "$GUARD_OUT" | grep -qE 'warn-destructive-commands|warn-raw-codex-delegation'; then
+  if [[ "${GUARD_OUT}" == *'warn-destructive-commands'* || "${GUARD_OUT}" == *'warn-raw-codex-delegation'* ]]; then
     pass=$((pass + 1))
   else
     printf 'FAIL (expected a guard to fire): %s\n%s\n' "$1" "$GUARD_OUT" >&2
@@ -722,7 +722,7 @@ run_scoped_guard() {
 }
 
 run_scoped_guard "/tmp/notes.md" "this doc talks about lib/common.sh at length"
-if printf '%s' "$GUARD_OUT" | grep -q 'test-path-scoped'; then
+if [[ "${GUARD_OUT}" == *'test-path-scoped'* ]]; then
   printf 'FAIL (path-scoped guard fired on a content mention)\n%s\n' "$GUARD_OUT" >&2
   fail=$((fail + 1))
 else
@@ -730,7 +730,7 @@ else
 fi
 
 run_scoped_guard "lib/common.sh" "printf 'hello\n'"
-if printf '%s' "$GUARD_OUT" | grep -q 'test-path-scoped'; then
+if [[ "${GUARD_OUT}" == *'test-path-scoped'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (path-scoped guard missed a real lib edit)\n%s\n' "$GUARD_OUT" >&2
@@ -742,7 +742,7 @@ sed 's/^match: path$//; s/test-path-scoped/test-unscoped/' \
   "$SCOPE_TMP/repo/.dex/guards/path-scoped.md" > "$SCOPE_TMP/repo/.dex/guards/unscoped.md"
 rm -f "$SCOPE_TMP/repo/.dex/guards/path-scoped.md"
 run_scoped_guard "/tmp/notes.md" "this doc talks about lib/common.sh"
-if printf '%s' "$GUARD_OUT" | grep -q 'test-unscoped'; then
+if [[ "${GUARD_OUT}" == *'test-unscoped'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (unscoped guard should still match content)\n%s\n' "$GUARD_OUT" >&2
@@ -817,7 +817,7 @@ set +e
 GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/hostile.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
+if [[ "${GUARD_OUT}" == *'warn-destructive-commands'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (script launching rm -rf / should block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
@@ -896,7 +896,7 @@ set +e
 GUARD_OUT="$(mkbashpayload "python3 $FILE_TMP/midvec.py" | env DEX_GUARD_EVENT=bash python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'warn-destructive-commands'; then
+if [[ "${GUARD_OUT}" == *'warn-destructive-commands'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (mid-argument-vector rm payload should block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
@@ -930,7 +930,7 @@ set +e
 GUARD_OUT="$(mkbashpayload "$redos_input" | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'test-slow-block'; then
+if [[ "${GUARD_OUT}" == *'test-slow-block'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (blocking guard that timed out did not deny the command; rc=%s)\n%s\n' \
@@ -971,7 +971,7 @@ set +e
 GUARD_OUT="$(mkbashpayload 'echo forbidden---token' | (cd "$GUARD_TMP/repo" && env DEX_GUARD_EVENT=bash python3 "$HANDLER") 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'test-dashes-block'; then
+if [[ "${GUARD_OUT}" == *'test-dashes-block'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (guard with --- inside a value should keep its action: block; rc=%s)\n%s\n' \
@@ -1000,7 +1000,7 @@ GUARD_OUT="$(mkbashpayload 'echo hello' | env DEX_GUARD_EVENT=bash DEX_DIR="$GUA
   python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'no built-in guards'; then
+if [[ "${GUARD_OUT}" == *'no built-in guards'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (missing built-in guards should block, got rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
@@ -1028,7 +1028,7 @@ set +e
 GUARD_OUT="$(env DEX_GUARD_EVENT=bash PYTHONPATH="$GUARD_TMP/shim" python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
 set -e
-if printf '%s' "$GUARD_OUT" | grep -q 'guard evaluation failed'; then
+if [[ "${GUARD_OUT}" == *'guard evaluation failed'* ]]; then
   pass=$((pass + 1))
 else
   printf 'FAIL (handler crash should block, got rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2

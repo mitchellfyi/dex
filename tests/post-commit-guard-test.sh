@@ -57,7 +57,7 @@ check() {
     fail=$((fail + 1))
     return
   fi
-  if [[ -n "$needle" ]] && ! printf '%s' "$HOOK_OUT" | grep -Fq "$needle"; then
+  if [[ -n "$needle" && "$HOOK_OUT" != *"$needle"* ]]; then
     printf 'FAIL %s: missing %s\n%s\n' "$label" "$needle" "$HOOK_OUT" >&2
     fail=$((fail + 1))
     return

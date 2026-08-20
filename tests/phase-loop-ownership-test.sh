@@ -79,11 +79,11 @@ assert_out_empty() { # <desc>
 }
 
 assert_out_contains() { # <desc> <fixed-string>
-  if printf '%s' "$OUT" | grep -qF -- "$2"; then report "$1" 0; else report "$1" 1; fi
+  if [[ "${OUT}" == *"$2"* ]]; then report "$1" 0; else report "$1" 1; fi
 }
 
 assert_out_lacks() { # <desc> <fixed-string>
-  if printf '%s' "$OUT" | grep -qF -- "$2"; then report "$1" 1; else report "$1" 0; fi
+  if [[ "${OUT}" == *"$2"* ]]; then report "$1" 1; else report "$1" 0; fi
 }
 
 assert_file_eq() { # <desc> <path> <expected-content>

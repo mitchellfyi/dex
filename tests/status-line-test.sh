@@ -43,14 +43,14 @@ check() {
     fail=$((fail + 1))
     return
   fi
-  if ! printf '%s' "$STATUS_OUT" | grep -Fq "$expected"; then
+  if [[ "$STATUS_OUT" != *"$expected"* ]]; then
     printf 'FAIL %s: expected %s, got %s\n' "$label" "$expected" "$STATUS_OUT" >&2
     fail=$((fail + 1))
     return
   fi
   # A helper from an unloaded module shows up here rather than in the exit code,
   # because the branches are guarded.
-  if printf '%s' "$STATUS_OUT" | grep -q 'command not found'; then
+  if [[ "${STATUS_OUT}" == *'command not found'* ]]; then
     printf 'FAIL %s: referenced an unloaded helper\n%s\n' "$label" "$STATUS_OUT" >&2
     fail=$((fail + 1))
     return
@@ -111,7 +111,7 @@ if [[ -e "$CANARY" ]]; then
 else
   pass=$((pass + 1))
 fi
-if printf '%s' "$STATUS_OUT" | grep -Fq 'HOME['; then
+if [[ "${STATUS_OUT}" == *'HOME['* ]]; then
   printf 'FAIL hostile times file: raw file contents reached the status line\n%s\n' "$STATUS_OUT" >&2
   fail=$((fail + 1))
 else
