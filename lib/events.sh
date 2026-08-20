@@ -323,7 +323,6 @@ dx_run_register_artifact() {
   [[ -n "$rel_path" && -n "$title" ]] || return 1
   manifest_file=$(dx_run_artifact_manifest_file "$run_id") || return 1
   artifact_root=$(dx_run_artifacts_dir "$run_id") || return 1
-  dx_run_artifact_manifest_prepare "$run_id" || return 1
 
   snapshot_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-artifact-snapshot.XXXXXX") || return 1
   if ! chmod 700 "$snapshot_dir" 2>/dev/null; then
@@ -342,6 +341,15 @@ dx_run_register_artifact() {
   # concurrent registrations both read the old copy and the later rename wins,
   # silently dropping an artifact.
   if ! __dx_event_acquire_lock "$(dx_run_artifact_manifest_lock_dir "$run_id")"; then
+    command rm -rf "$snapshot_dir"
+    return 1
+  fi
+  # Creating the manifest is part of the same read-modify-write and belongs
+  # under the same lock. It used to run before the lock was taken, which left
+  # its "is there one already?" check answerable by one process and its write
+  # performed after another had put artifacts in the file.
+  if ! dx_run_artifact_manifest_prepare "$run_id"; then
+    __dx_event_release_lock "$(dx_run_artifact_manifest_lock_dir "$run_id")"
     command rm -rf "$snapshot_dir"
     return 1
   fi

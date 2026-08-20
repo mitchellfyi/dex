@@ -251,4 +251,34 @@ expected = sorted(f"file-{index}.txt" for index in range(1, 9))
 assert paths == expected, f"lost concurrent artifact registrations: {paths}"
 PY
 
+# The same race with no manifest to start from. dx_run_prepare normally makes
+# one, so every registration above took the early return out of
+# dx_run_artifact_manifest_prepare and never exercised it under contention.
+# Creating it is part of the same read-modify-write, and it used to happen
+# before the lock was taken — so one process could answer "is there one
+# already?" and then write over a manifest another had just filled.
+missing_manifest_run="$(dx_run_prepare "missing-manifest" "$ROOT" "test" "concurrent" "issue-1" "dx test")"
+mkdir -p "$(dx_run_artifacts_dir "$missing_manifest_run")"
+rm -f "$(dx_run_artifact_manifest_file "$missing_manifest_run")"
+
+register_pids=""
+for i in $(seq 1 8); do
+  bash "$TMP_DIR/register.sh" "$missing_manifest_run" "$i" >/dev/null 2>&1 &
+  register_pids="$register_pids $!"
+done
+for pid in $register_pids; do
+  wait "$pid" || true
+done
+
+python3 - "$(dx_run_artifact_manifest_file "$missing_manifest_run")" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+paths = sorted(entry["path"] for entry in manifest["artifacts"])
+expected = sorted(f"file-{index}.txt" for index in range(1, 9))
+assert paths == expected, f"lost registrations creating the manifest: {paths}"
+PY
+
 printf 'events tests passed\n'
