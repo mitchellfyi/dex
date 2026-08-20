@@ -112,7 +112,7 @@ assert_process_gone "$(cat "$normal_pid_file")" "normal exit cleanup"
 
 run_signal_case() {
   local signal="$1" expected_status="$2" label="$3"
-  local pid_file="$TMP_DIR/${signal}-child.pid" helper_pid helper_status
+  local pid_file="$TMP_DIR/${signal}-child.pid" helper_pid helper_status alarm_pid
 
   set +e
   dx_run_with_timeout 0 spawn_resistant_descendant "$pid_file" &
@@ -120,39 +120,31 @@ run_signal_case() {
   set -e
   wait_for_file "$pid_file" "$label"
   kill "-$signal" "$helper_pid"
+  # Bound the wait. An unbounded one turns "the signal never arrived" into the
+  # whole per-test budget and a FAIL over an empty log — which is what nohup,
+  # or any supervisor that starts the suite with a signal ignored, produces:
+  # an ignored disposition is inherited across fork and exec by every
+  # descendant, and a child cannot reset it.
+  ( /bin/sleep 20; kill -KILL "$helper_pid" 2>/dev/null || true ) &
+  alarm_pid=$!
   set +e
   wait "$helper_pid"
   helper_status=$?
   set -e
+  kill -KILL "$alarm_pid" 2>/dev/null || true
+  wait "$alarm_pid" 2>/dev/null || true
+  if [[ "$helper_status" -eq 137 && "$expected_status" -ne 137 ]]; then
+    printf '%s: SIG%s never reached the helper — only the alarm ended it.\n' "$label" "$signal" >&2
+    printf '  SIG%s looks ignored in this environment. Re-run without nohup\n' "$signal" >&2
+    printf '  (or whatever else set it to ignored); the disposition is\n' >&2
+    printf '  inherited by every descendant, including this test.\n' >&2
+    exit 1
+  fi
   assert_eq "$expected_status" "$helper_status" "$label status"
   assert_process_gone "$(cat "$pid_file")" "$label"
 }
 
 run_signal_case TERM 143 "TERM cleanup"
-
-# The HUP case is only meaningful where SIGHUP can be delivered. nohup sets it
-# to SIG_IGN, and an ignored disposition is inherited across both fork and exec
-# and cannot be reset by a child — so under `nohup bash tests/run-all.sh`, or
-# any supervisor that starts the suite the same way, the signal never arrives,
-# `wait` below never returns, and the test burns its entire per-test budget
-# before the harness kills it with no explanation. Say so in one second
-# instead.
-hup_is_deliverable() {
-  local probe_pid probe_status=0
-  /bin/sleep 1 &
-  probe_pid=$!
-  kill -HUP "$probe_pid" 2>/dev/null || true
-  wait "$probe_pid" 2>/dev/null || probe_status=$?
-  [[ "$probe_status" -eq 129 ]]
-}
-
-if ! hup_is_deliverable; then
-  printf 'review-timeout-test: SIGHUP is ignored in this environment, so the\n' >&2
-  printf '  HUP cleanup case cannot run. Re-run without nohup (or whatever\n' >&2
-  printf '  else set SIGHUP to ignored) — the signal disposition is inherited\n' >&2
-  printf '  by every descendant, including this test.\n' >&2
-  exit 1
-fi
 
 run_signal_case HUP 129 "HUP cleanup"
 
