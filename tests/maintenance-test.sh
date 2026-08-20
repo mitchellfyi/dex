@@ -294,4 +294,102 @@ branch_rejects "dex/not-the-prefix"
 branch_rejects 'dex/maintain-$(id)'
 branch_rejects ""
 
+# The GitHub token that `dx maintain` pushes and fetches with had no coverage
+# at all, and it is the part worth covering: it must reach git through an
+# askpass file and nowhere else — not argv, where any local process can read it
+# from ps, and not the environment of the child, which git subprocesses inherit.
+maintain_git_log="$TMP_DIR/maintain-git.log"
+cat > "$TMP_DIR/bin/git" <<'GITSTUB'
+#!/usr/bin/env bash
+# Record what the real git would have been handed, then answer the askpass the
+# way a credential prompt would.
+{
+  printf 'argv\t%s\n' "$*"
+  printf 'env\tGH_TOKEN=%s\n' "${GH_TOKEN-<unset>}"
+  printf 'env\tGITHUB_TOKEN=%s\n' "${GITHUB_TOKEN-<unset>}"
+  printf 'env\tDX_MAINTAIN_TOKEN=%s\n' "${DX_MAINTAIN_TOKEN-<unset>}"
+  printf 'env\tGIT_TERMINAL_PROMPT=%s\n' "${GIT_TERMINAL_PROMPT-<unset>}"
+  # Key off Dex's own token file, not GIT_ASKPASS: editors set GIT_ASKPASS in
+  # the ambient environment, so its presence says nothing about what Dex did.
+  printf 'token-file\t%s\n' "${DX_MAINTAIN_TOKEN_FILE-<unset>}"
+  if [[ -n "${DX_MAINTAIN_TOKEN_FILE:-}" && -n "${GIT_ASKPASS:-}" && -x "${GIT_ASKPASS}" ]]; then
+    printf 'askpass-user\t%s\n' "$("$GIT_ASKPASS" 'Username for https://github.com: ')"
+    printf 'askpass-pass\t%s\n' "$("$GIT_ASKPASS" 'Password for https://github.com: ')"
+    printf 'askpass-mode\t%s\n' "$(stat -f '%Lp' "$DX_MAINTAIN_TOKEN_FILE" 2>/dev/null || echo '?')"
+    printf 'askpass-script\t%s\n' "$GIT_ASKPASS"
+  fi
+} >> "$DX_TEST_GIT_LOG"
+exit "${DX_TEST_GIT_EXIT:-0}"
+GITSTUB
+chmod +x "$TMP_DIR/bin/git"
+export DX_TEST_GIT_LOG="$maintain_git_log"
+# The repo fixture above already ran the real git, so bash has its path cached.
+# The token path calls git through `env`, which looks it up afresh and finds the
+# stub; the no-token path calls it directly and would reach the real one.
+hash -r
+
+# bin/maintain.sh only runs main when executed, so sourcing it here brings the
+# helpers into reach without running a maintenance pass.
+# shellcheck disable=SC1091
+source "$ROOT/bin/maintain.sh"
+
+: > "$maintain_git_log"
+DX_MAINTAIN_TOKEN="ghp_maintaintokenmaintaintokenmaintain" \
+DX_MAINTAIN_REPO="example/repo" \
+  __dx_maintain_push_branch "$repo" "dex/maintain-cover"
+
+assert_contains "push --set-upstream https://github.com/example/repo.git dex/maintain-cover" "$maintain_git_log"
+assert_contains "askpass-user	x-access-token" "$maintain_git_log"
+assert_contains "askpass-pass	ghp_maintaintokenmaintaintokenmaintain" "$maintain_git_log"
+assert_contains "askpass-mode	600" "$maintain_git_log"
+# Unset for the child, so a git subprocess cannot pick them up.
+assert_contains "GH_TOKEN=<unset>" "$maintain_git_log"
+assert_contains "GITHUB_TOKEN=<unset>" "$maintain_git_log"
+assert_contains "DX_MAINTAIN_TOKEN=<unset>" "$maintain_git_log"
+assert_contains "GIT_TERMINAL_PROMPT=0" "$maintain_git_log"
+if grep -F 'argv' "$maintain_git_log" | grep -Fq 'ghp_maintaintoken'; then
+  printf 'the GitHub token reached git argv:\n' >&2
+  grep -F 'argv' "$maintain_git_log" >&2
+  exit 1
+fi
+# Both scratch files are gone once the call returns.
+while IFS=$'\t' read -r key value; do
+  case "$key" in
+    askpass-script|token-file)
+      [[ ! -e "$value" ]] || {
+        printf 'maintain left a credential scratch file behind: %s\n' "$value" >&2
+        exit 1
+      }
+      ;;
+  esac
+done < "$maintain_git_log"
+
+# git's status is the function's status — a failed push must not read as one
+# that worked.
+: > "$maintain_git_log"
+push_status=0
+DX_TEST_GIT_EXIT=7 DX_MAINTAIN_TOKEN="ghp_maintaintokenmaintaintokenmaintain" \
+DX_MAINTAIN_REPO="example/repo" \
+  __dx_maintain_push_branch "$repo" "dex/maintain-cover" || push_status=$?
+assert_eq "7" "$push_status" "push reports git's status"
+
+# Fetch travels the same road.
+: > "$maintain_git_log"
+DX_MAINTAIN_TOKEN="ghp_maintaintokenmaintaintokenmaintain" \
+DX_MAINTAIN_REPO="example/repo" \
+  __dx_maintain_fetch_branch "$repo" "dex/maintain-cover"
+assert_contains "fetch https://github.com/example/repo.git dex/maintain-cover" "$maintain_git_log"
+assert_contains "askpass-pass	ghp_maintaintokenmaintaintokenmaintain" "$maintain_git_log"
+if grep -F 'argv' "$maintain_git_log" | grep -Fq 'ghp_maintaintoken'; then
+  printf 'the GitHub token reached git argv on the fetch path\n' >&2
+  exit 1
+fi
+
+# Without a token there is no askpass and no scratch file at all.
+: > "$maintain_git_log"
+DX_MAINTAIN_TOKEN="" DX_MAINTAIN_REPO="" \
+  __dx_maintain_fetch_branch "$repo" "dex/maintain-cover"
+assert_contains "fetch origin dex/maintain-cover" "$maintain_git_log"
+assert_contains "token-file	<unset>" "$maintain_git_log"
+
 printf 'maintenance tests passed\n'
