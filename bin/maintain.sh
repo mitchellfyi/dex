@@ -762,20 +762,28 @@ __dx_maintain_commit_if_needed() {
   git -C "$repo_root" -c core.hooksPath=/dev/null -c commit.gpgsign=false commit -m "chore(maintenance): ${mode} ${run_id}" >/dev/null
 }
 
-__dx_maintain_push_branch() {
-  local repo_root="$1" branch="$2" token repo remote_url askpass_file token_file push_status
-  token=$(__dx_maintain_github_token)
-  repo=$(__dx_maintain_repo_arg)
-  if [[ -n "$token" && -n "$repo" ]]; then
-    remote_url="https://github.com/${repo}.git"
-    token_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-token.XXXXXX")
-    askpass_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-askpass.XXXXXX")
-    # Belt-and-suspenders: RETURN trap ensures cleanup even on unexpected exits.
-    # shellcheck disable=SC2064
-    trap "rm -f '${token_file}' '${askpass_file}'" RETURN
-    chmod 600 "$token_file"
-    printf '%s' "$token" > "$token_file"
-    cat > "$askpass_file" <<'ASKPASS'
+# __dx_maintain_git_with_token <repo_root> <token> <git_args...>
+#
+# Run one git command with a GitHub token, and give the token only to git's
+# askpass. It never reaches argv, where any local process can read it out of
+# ps, and never the child's environment, which git's own subprocesses inherit —
+# which is also why the three ambient token variables are unset for the call.
+# Returns git's status.
+#
+# Both callers below had their own copy of this. Duplicated credential handling
+# is the kind that gets hardened in one place and left alone in the other.
+__dx_maintain_git_with_token() {
+  local repo_root="$1" token="$2"
+  shift 2
+  local askpass_file token_file command_status
+  token_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-token.XXXXXX")
+  askpass_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-askpass.XXXXXX")
+  # Belt-and-suspenders: RETURN trap ensures cleanup even on unexpected exits.
+  # shellcheck disable=SC2064
+  trap "rm -f '${token_file}' '${askpass_file}'" RETURN
+  chmod 600 "$token_file"
+  printf '%s' "$token" > "$token_file"
+  cat > "$askpass_file" <<'ASKPASS'
 #!/usr/bin/env bash
 case "$1" in
   *Username*) printf '%s\n' "x-access-token" ;;
@@ -783,54 +791,43 @@ case "$1" in
   *) printf '\n' ;;
 esac
 ASKPASS
-    chmod 700 "$askpass_file"
-    set +e
-    env -u GH_TOKEN -u GITHUB_TOKEN -u DX_MAINTAIN_TOKEN \
-      GIT_ASKPASS="$askpass_file" \
-      GIT_TERMINAL_PROMPT=0 \
-      DX_MAINTAIN_TOKEN_FILE="$token_file" \
-      git -C "$repo_root" -c core.hooksPath=/dev/null -c credential.helper= push --set-upstream "$remote_url" "$branch" >/dev/null
-    push_status=$?
-    rm -f "$askpass_file" "$token_file"
-    set -e
-    return "$push_status"
-  else
-    git -C "$repo_root" -c core.hooksPath=/dev/null -c credential.helper= push --set-upstream origin "$branch" >/dev/null
+  chmod 700 "$askpass_file"
+  set +e
+  env -u GH_TOKEN -u GITHUB_TOKEN -u DX_MAINTAIN_TOKEN \
+    GIT_ASKPASS="$askpass_file" \
+    GIT_TERMINAL_PROMPT=0 \
+    DX_MAINTAIN_TOKEN_FILE="$token_file" \
+    git -C "$repo_root" "$@" >/dev/null
+  command_status=$?
+  rm -f "$askpass_file" "$token_file"
+  set -e
+  return "$command_status"
+}
+
+__dx_maintain_push_branch() {
+  local repo_root="$1" branch="$2" token repo remote_url
+  token=$(__dx_maintain_github_token)
+  repo=$(__dx_maintain_repo_arg)
+  if [[ -n "$token" && -n "$repo" ]]; then
+    remote_url="https://github.com/${repo}.git"
+    __dx_maintain_git_with_token "$repo_root" "$token" \
+      -c core.hooksPath=/dev/null -c credential.helper= push --set-upstream "$remote_url" "$branch"
+    return $?
   fi
+  # No token: git uses whatever the checkout is already configured with. The
+  # push still runs with hooks off, because a repo hook is not this run's.
+  git -C "$repo_root" -c core.hooksPath=/dev/null -c credential.helper= push --set-upstream origin "$branch" >/dev/null
 }
 
 __dx_maintain_fetch_branch() {
-  local repo_root="$1" branch="$2" token repo remote_url askpass_file token_file fetch_status
+  local repo_root="$1" branch="$2" token repo remote_url
   token=$(__dx_maintain_github_token)
   repo=$(__dx_maintain_repo_arg)
   if [[ -n "$token" && -n "$repo" ]]; then
     remote_url="https://github.com/${repo}.git"
-    token_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-token.XXXXXX")
-    askpass_file=$(mktemp "${TMPDIR:-/tmp}/dex-maintain-askpass.XXXXXX")
-    # Belt-and-suspenders: RETURN trap ensures cleanup even on unexpected exits.
-    # shellcheck disable=SC2064
-    trap "rm -f '${token_file}' '${askpass_file}'" RETURN
-    chmod 600 "$token_file"
-    printf '%s' "$token" > "$token_file"
-    cat > "$askpass_file" <<'ASKPASS'
-#!/usr/bin/env bash
-case "$1" in
-  *Username*) printf '%s\n' "x-access-token" ;;
-  *Password*) cat "${DX_MAINTAIN_TOKEN_FILE:?}" ;;
-  *) printf '\n' ;;
-esac
-ASKPASS
-    chmod 700 "$askpass_file"
-    set +e
-    env -u GH_TOKEN -u GITHUB_TOKEN -u DX_MAINTAIN_TOKEN \
-      GIT_ASKPASS="$askpass_file" \
-      GIT_TERMINAL_PROMPT=0 \
-      DX_MAINTAIN_TOKEN_FILE="$token_file" \
-      git -C "$repo_root" -c credential.helper= fetch "$remote_url" "$branch" >/dev/null
-    fetch_status=$?
-    rm -f "$askpass_file" "$token_file"
-    set -e
-    return "$fetch_status"
+    __dx_maintain_git_with_token "$repo_root" "$token" \
+      -c credential.helper= fetch "$remote_url" "$branch"
+    return $?
   fi
   git -C "$repo_root" fetch origin "$branch" >/dev/null
 }
