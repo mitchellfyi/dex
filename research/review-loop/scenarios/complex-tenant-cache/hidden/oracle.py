@@ -4,6 +4,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import traceback
 
 
 def main() -> int:
@@ -59,4 +60,12 @@ const loadMembership = async (tenantId, userId) => (
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        status = main()
+    except Exception:
+        # Exit 1 is the harness's "the defect is still present". An oracle that
+        # crashed has established nothing, and saying "still present" scores it
+        # against the agent. 2 is "invalid", which stops the evaluation instead.
+        traceback.print_exc()
+        status = 2
+    raise SystemExit(status)
