@@ -482,7 +482,11 @@ dx_agent_normalize() {
       ;;
     *)
       dx_error "Unsupported agent: $agent"
-      dx_info "Supported agents: claude, codex"
+      # This function returns its answer on stdout, so every caller reads it
+      # through $( ). dx_info writes to stdout too, which meant the one line
+      # naming the agents that do work was captured and thrown away — the user
+      # saw "Unsupported agent: gpt4" and nothing else.
+      dx_info "Supported agents: claude, codex" >&2
       return 1
       ;;
   esac
@@ -941,7 +945,11 @@ dx_provider_codex() {
     dx_provider_codex_wrapper_args "$@" || return 2
   elif ! dx_provider_codex_diagnostic_args "$@"; then
     dx_error "Direct dx_provider_codex delegation is blocked."
-    dx_info "Use bin/dxcodex.sh so Dex can enforce Codex config, sandbox, and provider cleanup."
+    # This one was never actually losing its line — the four callers that
+    # capture this function all pass diagnostic arguments and never reach
+    # here. Kept on stderr anyway, beside the error it belongs to, so the rule
+    # holds without an exception to remember.
+    dx_info "Use bin/dxcodex.sh so Dex can enforce Codex config, sandbox, and provider cleanup." >&2
     return 2
   fi
 

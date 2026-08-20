@@ -182,4 +182,24 @@ rm -f "$HOME/.dex/providers.json" "$TMP_DIR/bin/claude"
 export DX_PROVIDER_PROFILE="codex-subscription"
 dx_provider_apply
 
+# dx_agent_normalize answers on stdout, so every caller reads it through $( ).
+# The line naming the agents that do work went to stdout too, which meant it
+# was captured with the value and discarded: `dx --agent gpt4` said only
+# "Unsupported agent: gpt4" and left the user to guess the alternatives.
+if dx_agent_normalize gpt4 > "$TMP_DIR/agent-stdout.txt" 2> "$TMP_DIR/agent-stderr.txt"; then
+  printf 'dx_agent_normalize accepted an unsupported agent\n' >&2
+  exit 1
+fi
+assert_contains "Unsupported agent: gpt4" "$TMP_DIR/agent-stderr.txt"
+assert_contains "Supported agents: claude, codex" "$TMP_DIR/agent-stderr.txt"
+if [[ -s "$TMP_DIR/agent-stdout.txt" ]]; then
+  printf 'dx_agent_normalize wrote diagnostics onto its own return value:\n' >&2
+  cat "$TMP_DIR/agent-stdout.txt" >&2
+  exit 1
+fi
+
+# And the answer itself is still exactly the value, nothing more.
+assert_eq "claude" "$(dx_agent_normalize claude)" "normalized claude"
+assert_eq "codex" "$(dx_agent_normalize Codex)" "normalized Codex"
+
 printf 'provider command tests passed\n'

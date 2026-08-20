@@ -76,6 +76,9 @@ if command -v python3 >/dev/null 2>&1; then
   # `[[ … ]] && printf …` as a function's last statement makes "nothing to
   # print" an error, and every caller assigns that output under `set -e`.
   python3 "$ROOT/tests/accidental-exit-status.py" || fail "accidental exit status"
+  # dx_info and friends print to stdout, so one written inside a function whose
+  # answer is its stdout is captured with the value and never seen.
+  python3 "$ROOT/tests/captured-stdout.py" || fail "captured stdout"
 else
   printf 'SKIP python compile (python3 not installed)\n'
   printf 'SKIP inline python syntax (python3 not installed)\n'
@@ -83,6 +86,7 @@ else
   printf 'SKIP zsh reserved names (python3 not installed)\n'
   printf 'SKIP unvalidated settings (python3 not installed)\n'
   printf 'SKIP accidental exit status (python3 not installed)\n'
+  printf 'SKIP captured stdout (python3 not installed)\n'
 fi
 
 if command -v node >/dev/null 2>&1; then

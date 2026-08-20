@@ -297,7 +297,9 @@ dx_maintenance_source_ref() {
     return 0
   fi
   dx_error "Could not choose a fetchable DX maintain source ref from ${source_repo}."
-  dx_info "Set DEX_MAINTAIN_SOURCE_REF to a pushed branch, tag, or advertised SHA."
+  # Same as dx_agent_normalize: this function's answer is its stdout, so the
+  # caller reads it through $( ) and dx_info's line would be captured with it.
+  dx_info "Set DEX_MAINTAIN_SOURCE_REF to a pushed branch, tag, or advertised SHA." >&2
   return 1
 }
 
