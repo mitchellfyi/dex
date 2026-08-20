@@ -2096,49 +2096,17 @@ EOF
 dx_review_ledger_hash() {
   local session_id="$1" ledger_file
   ledger_file=$(dx_review_ledger_file "$session_id") || return 1
-  python3 - "$ledger_file" <<'PY'
+  DX_PRIVATE_FILE_DIR="$DEX_DIR/scripts" python3 - "$ledger_file" <<'PY'
 import hashlib
 import os
-import stat
 import sys
-from pathlib import Path
 
-path = Path(sys.argv[1])
+sys.path.insert(0, os.environ["DX_PRIVATE_FILE_DIR"])
+from private_file import PrivateFileError, read_private_file  # noqa: E402
+
 try:
-    before = path.lstat()
-    if (
-        not stat.S_ISREG(before.st_mode)
-        or before.st_uid != os.geteuid()
-        or stat.S_IMODE(before.st_mode) != 0o600
-        or not 1 <= before.st_size <= 1048576
-    ):
-        raise ValueError
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    try:
-        opened = os.fstat(descriptor)
-        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-            raise ValueError
-        chunks = []
-        total = 0
-        while True:
-            chunk = os.read(descriptor, min(65536, 1048577 - total))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > 1048576:
-                raise ValueError
-        content = b"".join(chunks)
-        after = os.fstat(descriptor)
-        if (
-            total != opened.st_size
-            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
-        ):
-            raise ValueError
-    finally:
-        os.close(descriptor)
-except (OSError, ValueError):
+    content = read_private_file(sys.argv[1], 1048576)
+except PrivateFileError:
     raise SystemExit(1)
 print(hashlib.sha256(content).hexdigest())
 PY
@@ -2146,51 +2114,16 @@ PY
 
 __dx_review_read_private_record() {
   local record_file="$1" maximum="$2"
-  python3 - "$record_file" "$maximum" <<'PY'
+  DX_PRIVATE_FILE_DIR="$DEX_DIR/scripts" python3 - "$record_file" "$maximum" <<'PY'
 import os
-import stat
 import sys
-from pathlib import Path
 
-path = Path(sys.argv[1])
-maximum = int(sys.argv[2])
+sys.path.insert(0, os.environ["DX_PRIVATE_FILE_DIR"])
+from private_file import PrivateFileError, read_private_file  # noqa: E402
+
 try:
-    before = path.lstat()
-    if (
-        not stat.S_ISREG(before.st_mode)
-        or before.st_uid != os.geteuid()
-        or stat.S_IMODE(before.st_mode) != 0o600
-        or not 1 <= before.st_size <= maximum
-    ):
-        raise ValueError
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    try:
-        opened = os.fstat(descriptor)
-        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-            raise ValueError
-        chunks = []
-        total = 0
-        while True:
-            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > maximum:
-                raise ValueError
-        content = b"".join(chunks)
-        after = os.fstat(descriptor)
-        if (
-            total != opened.st_size
-            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
-            or not content.endswith(b"\n")
-            or b"\r" in content
-        ):
-            raise ValueError
-    finally:
-        os.close(descriptor)
-except (OSError, ValueError):
+    content = read_private_file(sys.argv[1], int(sys.argv[2]), require_text_lines=True)
+except PrivateFileError:
     raise SystemExit(1)
 sys.stdout.buffer.write(content)
 PY
