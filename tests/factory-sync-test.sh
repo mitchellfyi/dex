@@ -286,12 +286,19 @@ printf '200\n' > "$SERVER_DIR/status"
 printf 'json\n' > "$SERVER_DIR/body-mode"
 dx_factory_sync_pending_events "$plain_echo_run"
 
+# Factory sync uses lib/lock.sh, which publishes "<epoch>\t<pid>\t<token>".
+# A record it cannot parse counts as no record at all and is only reclaimed
+# after the grace period; a record naming a dead process is stale right now.
+write_lock_owner() {
+  printf '%s\t%s\tfactory-test\n' "$(date +%s)" "$2" > "$1/owner"
+}
+
 stale_lock_run="$(dx_run_prepare "stale-lock" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
 export DEX_FACTORY_SYNC=false
 dx_event_emit "$stale_lock_run" "run.started" "info" "Stale lock" "" '{"mode":"stale-lock"}'
 stale_lock_dir="$(dx_factory_sync_dir "$stale_lock_run")/.lock"
 mkdir -p "$stale_lock_dir"
-printf '999999\n' > "$stale_lock_dir/owner"
+write_lock_owner "$stale_lock_dir" 999999
 export DEX_FACTORY_SYNC=true
 dx_factory_sync_pending_events "$stale_lock_run"
 assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$stale_lock_run")")" "stale-lock cursor"
@@ -367,7 +374,7 @@ export DEX_FACTORY_SYNC=false
 dx_event_emit "$live_owner_run" "run.started" "info" "Live lock owner" "" '{}'
 live_owner_lock="$(dx_factory_sync_dir "$live_owner_run")/.lock"
 mkdir -p "$live_owner_lock"
-printf '%s\n' "$$" > "$live_owner_lock/owner"
+write_lock_owner "$live_owner_lock" "$$"
 export DEX_FACTORY_SYNC=true
 DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$live_owner_run"
 [[ -d "$live_owner_lock" ]] || {
@@ -378,30 +385,30 @@ assert_no_file "$(dx_factory_sync_cursor_file "$live_owner_run")"
 rm -f "$live_owner_lock/owner"
 rmdir "$live_owner_lock"
 
-# Recovery takes a `.recovery` claim so two recoverers can't race, and drops it
-# again a few lines later. A process killed in between leaves the claim behind,
-# and since recovery gives up quietly, that used to end Factory sync for the run
-# with no cursor movement and nothing said. A claim still inside its grace is a
-# live recoverer and must be left alone; past it, there is nobody to wait for.
-abandoned_claim_run="$(dx_run_prepare "abandoned-claim" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
+# lock.sh takes a short-lived `.reap` mutex around every acquisition, so two
+# waiters cannot both decide a dead lock is theirs to steal. A process killed
+# inside that mutex leaves the directory behind, and because acquiring gives up
+# quietly, Factory sync for the run then stops with no cursor movement and
+# nothing said. Inside the grace a reaper is a live recoverer and must be left
+# alone; past it there is nobody left to wait for.
+abandoned_reaper_run="$(dx_run_prepare "abandoned-reaper" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
 export DEX_FACTORY_SYNC=false
-dx_event_emit "$abandoned_claim_run" "run.started" "info" "Abandoned claim" "" '{}'
-abandoned_claim_lock="$(dx_factory_sync_dir "$abandoned_claim_run")/.lock"
-mkdir -p "$abandoned_claim_lock/.recovery"
-printf '999999\n' > "$abandoned_claim_lock/owner"
-age_lock "$abandoned_claim_lock"
+dx_event_emit "$abandoned_reaper_run" "run.started" "info" "Abandoned reaper" "" '{}'
+abandoned_reaper_lock="$(dx_factory_sync_dir "$abandoned_reaper_run")/.lock"
+mkdir -p "$abandoned_reaper_lock" "${abandoned_reaper_lock}.reap"
+write_lock_owner "$abandoned_reaper_lock" 999999
 export DEX_FACTORY_SYNC=true
-DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$abandoned_claim_run"
-[[ -d "$abandoned_claim_lock" ]] || {
-  printf 'Factory recovered a lock while another recoverer still held the claim\n' >&2
+DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$abandoned_reaper_run"
+[[ -d "$abandoned_reaper_lock" ]] || {
+  printf 'Factory reclaimed a lock while another reaper still held the mutex\n' >&2
   exit 1
 }
-assert_no_file "$(dx_factory_sync_cursor_file "$abandoned_claim_run")"
-age_lock "$abandoned_claim_lock/.recovery"
-dx_factory_sync_pending_events "$abandoned_claim_run"
-assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$abandoned_claim_run")")" "abandoned-claim cursor"
-[[ ! -d "$abandoned_claim_lock" ]] || {
-  printf 'Factory sync stayed wedged behind an abandoned recovery claim\n' >&2
+assert_no_file "$(dx_factory_sync_cursor_file "$abandoned_reaper_run")"
+age_lock "${abandoned_reaper_lock}.reap"
+dx_factory_sync_pending_events "$abandoned_reaper_run"
+assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$abandoned_reaper_run")")" "abandoned-reaper cursor"
+[[ ! -d "$abandoned_reaper_lock" ]] || {
+  printf 'Factory sync stayed wedged behind an abandoned reaper mutex\n' >&2
   exit 1
 }
 

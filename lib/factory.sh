@@ -92,186 +92,39 @@ __dx_factory_positive_int() {
   esac
 }
 
+# The Factory sync lock is lib/lock.sh's lock, not a second implementation of
+# one. It used to be a private copy — mkdir, a bespoke owner format, and its
+# own reaper — and the copy had drifted: a recoverer killed inside its
+# critical section left a claim nothing could clear, and Factory sync for that
+# run stopped without a word. lock.sh already reclaims its own reaper after a
+# grace period, publishes an owner record that tells a stale lock from a live
+# one, and serializes reclamation so two waiters cannot both steal. Sharing it
+# means the next fix to any of that lands in one place.
+__dx_factory_sync_lock_token() {
+  printf 'factory-%s\n' "$$"
+}
+
+# Retries on contention and then gives up quietly: failing to sync events must
+# never be the thing that ends a run.
 __dx_factory_sync_acquire_lock() {
-  local lock_dir="$1" attempts=0 owner_file owner_tmp max_attempts
-  owner_file="$lock_dir/owner"
+  local lock_dir="$1" attempts=0 max_attempts stale_seconds lock_status
   max_attempts=$(__dx_factory_positive_int "${DEX_FACTORY_LOCK_ATTEMPTS:-40}" 40 1000)
-  while ! mkdir "$lock_dir" 2>/dev/null; do
-    if __dx_factory_sync_recover_lock "$lock_dir"; then
-      continue
-    fi
+  stale_seconds=$(__dx_factory_positive_int "${DEX_FACTORY_LOCK_STALE_SECONDS:-5}" 5 3600)
+  while true; do
+    # `status` is read-only in zsh and lib/ is sourced by both shells, so the
+    # result gets an explicit name.
+    dx_lock_acquire "$lock_dir" "$(__dx_factory_sync_lock_token)" "$$" "$stale_seconds"
+    lock_status=$?
+    [[ "$lock_status" -eq 0 ]] && return 0
+    [[ "$lock_status" -eq 2 ]] && return 1
     attempts=$((attempts + 1))
     [[ "$attempts" -lt "$max_attempts" ]] || return 1
     sleep 0.05
   done
-  owner_tmp="$lock_dir/.owner.$RANDOM"
-  if ! DX_FACTORY_LOCK_OWNER_TMP="$owner_tmp" python3 - <<'PY'
-import os
-from pathlib import Path
-
-path = Path(os.environ["DX_FACTORY_LOCK_OWNER_TMP"])
-fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-with os.fdopen(fd, "w", encoding="ascii") as fh:
-    fh.write(f"{os.getppid()}\n")
-PY
-  then
-    command rm -f "$owner_tmp" 2>/dev/null || true
-    command rmdir "$lock_dir" 2>/dev/null || true
-    return 1
-  fi
-  if ! command mv -f "$owner_tmp" "$owner_file"; then
-    command rm -f "$owner_tmp" 2>/dev/null || true
-    command rmdir "$lock_dir" 2>/dev/null || true
-    return 1
-  fi
-}
-
-__dx_factory_sync_recover_lock() {
-  local lock_dir="$1" stale_seconds
-  command -v python3 >/dev/null 2>&1 || return 1
-  stale_seconds=$(__dx_factory_positive_int "${DEX_FACTORY_LOCK_STALE_SECONDS:-5}" 5 3600)
-  DX_FACTORY_LOCK_DIR="$lock_dir" \
-  DX_FACTORY_LOCK_STALE_SECONDS="$stale_seconds" \
-  python3 - <<'PY'
-import os
-import re
-import stat
-import time
-from pathlib import Path
-
-lock = Path(os.environ["DX_FACTORY_LOCK_DIR"])
-owner = lock / "owner"
-claim = lock / ".recovery"
-stale_seconds = int(os.environ["DX_FACTORY_LOCK_STALE_SECONDS"])
-
-
-def read_owner():
-    try:
-        with owner.open("r", encoding="ascii") as fh:
-            raw = fh.read(64)
-            if fh.read(1):
-                return "invalid", raw
-    except (OSError, UnicodeError):
-        return "invalid", ""
-    stripped = raw.strip()
-    if not re.fullmatch(r"[1-9][0-9]{0,9}", stripped):
-        return "invalid", raw
-    pid = int(stripped)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return "dead", raw
-    except PermissionError:
-        return "live", raw
-    except OSError:
-        return "live", raw
-    return "live", raw
-
-
-try:
-    lock_stat = lock.lstat()
-except OSError:
-    raise SystemExit(1)
-if not stat.S_ISDIR(lock_stat.st_mode) or lock.is_symlink():
-    raise SystemExit(1)
-
-state, owner_raw = read_owner()
-if state == "live":
-    raise SystemExit(1)
-if state == "invalid" and time.time() - lock_stat.st_mtime < stale_seconds:
-    raise SystemExit(1)
-
-
-def take_claim():
-    """Enter the recovery mutex, reclaiming it from a recoverer that died.
-
-    The claim is made and dropped inside one short critical section, so an
-    existing one normally means another process is recovering right now and we
-    should stand down. But a process killed between the mkdir and the finally
-    below leaves it forever, and because acquiring gives up quietly, factory
-    sync for that run then stops without a word — a lock nothing can recover
-    and nobody is holding.
-
-    lib/lock.sh reclaims its own reaper the same way, after the same grace, and
-    carries the same residual window: two processes arriving inside it can both
-    claim. The steal below re-checks the lock's identity and owner before
-    removing anything, which is what bounds the damage.
-    """
-    try:
-        claim.mkdir(mode=0o700)
-        return True
-    except FileExistsError:
-        pass
-    except OSError:
-        return False
-    try:
-        claim_stat = claim.lstat()
-    except OSError:
-        return False
-    if not stat.S_ISDIR(claim_stat.st_mode):
-        return False
-    if time.time() - claim_stat.st_mtime < stale_seconds:
-        return False
-    try:
-        claim.rmdir()
-        claim.mkdir(mode=0o700)
-    except OSError:
-        return False
-    return True
-
-
-if not take_claim():
-    raise SystemExit(1)
-
-recovered = False
-try:
-    current_stat = lock.lstat()
-    if (current_stat.st_dev, current_stat.st_ino) != (lock_stat.st_dev, lock_stat.st_ino):
-        raise SystemExit(1)
-    current_state, current_raw = read_owner()
-    if current_raw != owner_raw or current_state != state:
-        raise SystemExit(1)
-    if current_state == "live":
-        raise SystemExit(1)
-    names = {entry.name for entry in lock.iterdir()}
-    if not names.issubset({"owner", ".recovery"}):
-        raise SystemExit(1)
-    if owner.exists() or owner.is_symlink():
-        owner.unlink()
-    claim.rmdir()
-    lock.rmdir()
-    recovered = True
-finally:
-    if not recovered:
-        try:
-            claim.rmdir()
-        except OSError:
-            pass
-
-raise SystemExit(0 if recovered else 1)
-PY
 }
 
 __dx_factory_sync_release_lock() {
-  local lock_dir="$1"
-  DX_FACTORY_LOCK_DIR="$lock_dir" python3 - <<'PY' 2>/dev/null || true
-import os
-from pathlib import Path
-
-lock = Path(os.environ["DX_FACTORY_LOCK_DIR"])
-owner = lock / "owner"
-try:
-    owner_pid = int(owner.read_text(encoding="ascii").strip())
-except (OSError, UnicodeError, ValueError):
-    raise SystemExit(0)
-if owner_pid != os.getppid():
-    raise SystemExit(0)
-try:
-    owner.unlink()
-    lock.rmdir()
-except OSError:
-    pass
-PY
+  dx_lock_release "$1" "$(__dx_factory_sync_lock_token)" || true
 }
 
 __dx_factory_sync_read_cursor() {
