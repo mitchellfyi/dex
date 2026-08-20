@@ -572,65 +572,56 @@ __dx_maintain_validate_branch_name() {
   [[ "$suffix" == maintain-* ]]
 }
 
-__dx_maintain_prepare_publish_worktree() {
-  local repo_root="$1" branch="$2" base_sha="$3" run_id="$4" wt_parent wt_dir
+# __dx_maintain_prepare_state_worktree <repo_root> <branch> <sha> <run_id> <suffix> <label> [parent]
+#
+# Cut a worktree at <sha> on <branch>. With no <parent>, it lands under the
+# repo's .dex/worktrees and the path must not already exist — two runs sharing
+# one worktree would be two runs sharing one checkout. A caller that passes its
+# own parent has already made a fresh directory, so there is nothing to collide
+# with.
+#
+# <label> names the state the values came from, so a rejection says which one
+# was malformed. Validation comes first and unconditionally: neither value is
+# ours, and `git worktree add` would happily create whatever path it is given.
+__dx_maintain_prepare_state_worktree() {
+  local repo_root="$1" branch="$2" sha="$3" run_id="$4" suffix="$5" label="$6"
+  local wt_parent="${7:-}" wt_dir
   __dx_maintain_validate_branch_name "$branch" || {
-    dx_error "Unsafe maintenance branch name in deferred publish state: $branch"
+    dx_error "Unsafe maintenance branch name in ${label}: $branch"
     return 1
   }
   dx_maintenance_validate_run_id "$run_id" || {
-    dx_error "Unsafe maintenance run id in deferred publish state: $run_id"
+    dx_error "Unsafe maintenance run id in ${label}: $run_id"
     return 1
   }
-  wt_parent="$repo_root/.dex/worktrees"
-  wt_dir="$wt_parent/${run_id}-publish"
-  mkdir -p "$wt_parent"
-  if [[ -e "$wt_dir" ]]; then
-    dx_error "Maintenance publish worktree path already exists: $wt_dir"
-    return 1
+  if [[ -n "$wt_parent" ]]; then
+    wt_dir="$wt_parent/${run_id}-${suffix}"
+  else
+    wt_parent="$repo_root/.dex/worktrees"
+    wt_dir="$wt_parent/${run_id}-${suffix}"
+    mkdir -p "$wt_parent"
+    if [[ -e "$wt_dir" ]]; then
+      dx_error "Maintenance ${suffix} worktree path already exists: $wt_dir"
+      return 1
+    fi
   fi
-  git -C "$repo_root" worktree add --detach "$wt_dir" "$base_sha" >/dev/null
-  git -C "$wt_dir" checkout --ignore-other-worktrees -B "$branch" "$base_sha" >/dev/null
+  git -C "$repo_root" worktree add --detach "$wt_dir" "$sha" >/dev/null
+  git -C "$wt_dir" checkout --ignore-other-worktrees -B "$branch" "$sha" >/dev/null
   printf '%s\n' "$wt_dir"
+}
+
+__dx_maintain_prepare_publish_worktree() {
+  __dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "publish" "deferred publish state"
 }
 
 __dx_maintain_prepare_response_worktree() {
-  local repo_root="$1" branch="$2" head_sha="$3" run_id="$4" wt_parent wt_dir
-  __dx_maintain_validate_branch_name "$branch" || {
-    dx_error "Unsafe maintenance branch name in response state: $branch"
-    return 1
-  }
-  dx_maintenance_validate_run_id "$run_id" || {
-    dx_error "Unsafe maintenance run id in response state: $run_id"
-    return 1
-  }
-  wt_parent="$repo_root/.dex/worktrees"
-  wt_dir="$wt_parent/${run_id}-respond"
-  mkdir -p "$wt_parent"
-  if [[ -e "$wt_dir" ]]; then
-    dx_error "Maintenance response worktree path already exists: $wt_dir"
-    return 1
-  fi
-  git -C "$repo_root" worktree add --detach "$wt_dir" "$head_sha" >/dev/null
-  git -C "$wt_dir" checkout --ignore-other-worktrees -B "$branch" "$head_sha" >/dev/null
-  printf '%s\n' "$wt_dir"
+  __dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "respond" "response state"
 }
 
 __dx_maintain_prepare_response_temp_worktree() {
-  local repo_root="$1" branch="$2" head_sha="$3" run_id="$4" wt_parent wt_dir
-  __dx_maintain_validate_branch_name "$branch" || {
-    dx_error "Unsafe maintenance branch name in response state: $branch"
-    return 1
-  }
-  dx_maintenance_validate_run_id "$run_id" || {
-    dx_error "Unsafe maintenance run id in response state: $run_id"
-    return 1
-  }
-  wt_parent=$(mktemp -d "${TMPDIR:-/tmp}/dex-maintain-respond.XXXXXX")
-  wt_dir="$wt_parent/${run_id}-respond"
-  git -C "$repo_root" worktree add --detach "$wt_dir" "$head_sha" >/dev/null
-  git -C "$wt_dir" checkout --ignore-other-worktrees -B "$branch" "$head_sha" >/dev/null
-  printf '%s\n' "$wt_dir"
+  local wt_parent
+  wt_parent=$(mktemp -d "${TMPDIR:-/tmp}/dex-maintain-respond.XXXXXX") || return 1
+  __dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "respond" "response state" "$wt_parent"
 }
 
 __dx_maintain_cleanup_response_worktree() {

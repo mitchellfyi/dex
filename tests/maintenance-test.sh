@@ -294,6 +294,84 @@ branch_rejects "dex/not-the-prefix"
 branch_rejects 'dex/maintain-$(id)'
 branch_rejects ""
 
+# The worktree preparers had no coverage either, and they are where a bad
+# branch name or run id would otherwise reach `git worktree add`. These run
+# before the git stub below is installed, because they need the real git.
+# shellcheck disable=SC1091
+source "$ROOT/bin/maintain.sh"
+
+wt_repo="$TMP_DIR/wt-repo"
+git init -q -b main "$wt_repo"
+git -C "$wt_repo" config user.email test@example.com
+git -C "$wt_repo" config user.name Test
+git -C "$wt_repo" commit --allow-empty -qm "base"
+wt_base_sha="$(git -C "$wt_repo" rev-parse HEAD)"
+wt_run_id="maintain-20260807T120000Z-test-u-12345678"
+
+assert_prepared() {
+  local label="$1" dir="$2" branch="$3" sha="$4"
+  [[ -d "$dir" ]] || { printf '%s: no worktree at %s\n' "$label" "$dir" >&2; exit 1; }
+  local head branch_now
+  head="$(git -C "$dir" rev-parse HEAD)"
+  branch_now="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+  assert_eq "$sha" "$head" "$label head"
+  assert_eq "$branch" "$branch_now" "$label branch"
+  # A linked worktree has a .git *file* pointing at its gitdir, where a plain
+  # clone has a directory. Comparing paths instead would compare /var against
+  # /private/var on macOS.
+  [[ -f "$dir/.git" ]] || {
+    printf '%s: %s is not a linked worktree\n' "$label" "$dir" >&2
+    exit 1
+  }
+  # Resolve the repo path: macOS reports /private/var where mktemp said /var.
+  assert_eq "$(cd "$wt_repo" && pwd -P)/.git" \
+    "$(git -C "$dir" rev-parse --git-common-dir)" "$label shares the repo"
+}
+
+publish_dir="$(__dx_maintain_prepare_publish_worktree \
+  "$wt_repo" "dex/maintain-publish" "$wt_base_sha" "$wt_run_id")"
+assert_prepared "publish worktree" "$publish_dir" "dex/maintain-publish" "$wt_base_sha"
+assert_eq "${wt_run_id}-publish" "$(basename "$publish_dir")" "publish worktree name"
+
+response_dir="$(__dx_maintain_prepare_response_worktree \
+  "$wt_repo" "dex/maintain-respond" "$wt_base_sha" "$wt_run_id")"
+assert_prepared "response worktree" "$response_dir" "dex/maintain-respond" "$wt_base_sha"
+assert_eq "${wt_run_id}-respond" "$(basename "$response_dir")" "response worktree name"
+
+# The temp variant puts its worktree under a fresh mktemp parent rather than in
+# the repo, which is why it needs no collision check of its own.
+temp_dir="$(__dx_maintain_prepare_response_temp_worktree \
+  "$wt_repo" "dex/maintain-temp" "$wt_base_sha" "$wt_run_id")"
+assert_prepared "temp response worktree" "$temp_dir" "dex/maintain-temp" "$wt_base_sha"
+case "$temp_dir" in
+  "$wt_repo"/*)
+    printf 'the temp response worktree was created inside the repo: %s\n' "$temp_dir" >&2
+    exit 1
+    ;;
+esac
+
+# A branch name or run id that did not pass validation must never reach
+# `git worktree add`, which would happily create the path it names.
+for bad_branch in "../../escape" "/abs/x" "dex/maintain-a..b" 'dex/maintain-$(id)' ""; do
+  assert_rejected "$LINENO" __dx_maintain_prepare_publish_worktree \
+    "$wt_repo" "$bad_branch" "$wt_base_sha" "$wt_run_id" >/dev/null 2>&1
+  assert_rejected "$LINENO" __dx_maintain_prepare_response_worktree \
+    "$wt_repo" "$bad_branch" "$wt_base_sha" "$wt_run_id" >/dev/null 2>&1
+  assert_rejected "$LINENO" __dx_maintain_prepare_response_temp_worktree \
+    "$wt_repo" "$bad_branch" "$wt_base_sha" "$wt_run_id" >/dev/null 2>&1
+done
+for bad_run_id in "../escape" "has space" 'x$(id)' ""; do
+  assert_rejected "$LINENO" __dx_maintain_prepare_publish_worktree \
+    "$wt_repo" "dex/maintain-ok" "$wt_base_sha" "$bad_run_id" >/dev/null 2>&1
+  assert_rejected "$LINENO" __dx_maintain_prepare_response_temp_worktree \
+    "$wt_repo" "dex/maintain-ok" "$wt_base_sha" "$bad_run_id" >/dev/null 2>&1
+done
+
+# An existing path is refused rather than reused, so two runs cannot land in
+# one worktree.
+assert_rejected "$LINENO" __dx_maintain_prepare_publish_worktree \
+  "$wt_repo" "dex/maintain-publish" "$wt_base_sha" "$wt_run_id" >/dev/null 2>&1
+
 # The GitHub token that `dx maintain` pushes and fetches with had no coverage
 # at all, and it is the part worth covering: it must reach git through an
 # askpass file and nowhere else — not argv, where any local process can read it
@@ -327,11 +405,6 @@ export DX_TEST_GIT_LOG="$maintain_git_log"
 # The token path calls git through `env`, which looks it up afresh and finds the
 # stub; the no-token path calls it directly and would reach the real one.
 hash -r
-
-# bin/maintain.sh only runs main when executed, so sourcing it here brings the
-# helpers into reach without running a maintenance pass.
-# shellcheck disable=SC1091
-source "$ROOT/bin/maintain.sh"
 
 : > "$maintain_git_log"
 DX_MAINTAIN_TOKEN="ghp_maintaintokenmaintaintokenmaintain" \
