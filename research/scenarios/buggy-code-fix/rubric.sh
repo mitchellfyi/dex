@@ -448,10 +448,10 @@ rubric_robustness() {
     methods_validated=$((methods_validated + 1))
   fi
   if grep -qE "removeItem.*throw|removeItem.*if|removeItem.*!|removeItem.*Error" "$cart_file" 2>/dev/null || \
-     grep -A5 "removeItem" "$cart_file" 2>/dev/null | grep -qE "throw|if.*!|Error"; then
+     grep -qE "throw|if.*!|Error" <<< "$(grep -A5 "removeItem" "$cart_file" 2>/dev/null)"; then
     methods_validated=$((methods_validated + 1))
   fi
-  if grep -A5 "applyDiscount" "$cart_file" 2>/dev/null | grep -qE "throw|if.*!|Error|<\s*0|>\s*100"; then
+  if grep -qE "throw|if.*!|Error|<\s*0|>\s*100" <<< "$(grep -A5 "applyDiscount" "$cart_file" 2>/dev/null)"; then
     methods_validated=$((methods_validated + 1))
   fi
   [[ $methods_validated -ge 2 ]] && score=$((score + 15))
