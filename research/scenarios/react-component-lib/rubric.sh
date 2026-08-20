@@ -141,9 +141,9 @@ rubric_correctness() {
   # ── Tests pass: npm test (8 pts) ────────────────────────────────────
   local test_output
   test_output=$(cd "$ws" && npm test -- --watchAll=false --forceExit 2>&1) || true
-  if echo "$test_output" | grep -qE "Tests:.*passed|Test Suites:.*passed|passing" 2>/dev/null; then
+  if grep -qE "Tests:.*passed|Test Suites:.*passed|passing" <<< "${test_output}" 2>/dev/null; then
     # Tests actually passed (no failures)
-    if ! echo "$test_output" | grep -qE "Tests:.*failed|Test Suites:.*failed|failing" 2>/dev/null; then
+    if ! grep -qE "Tests:.*failed|Test Suites:.*failed|failing" <<< "${test_output}" 2>/dev/null; then
       score=$((score + 8))
     else
       score=$((score + 3))  # Partial: some passed, some failed
@@ -174,8 +174,8 @@ rubric_test_quality() {
   # ── Tests pass (25 pts) ─────────────────────────────────────────────
   local test_output
   test_output=$(cd "$ws" && npm test -- --watchAll=false --forceExit 2>&1) || true
-  if echo "$test_output" | grep -qE "Tests:.*passed|Test Suites:.*passed|passing" 2>/dev/null; then
-    if ! echo "$test_output" | grep -qE "Tests:.*failed|Test Suites:.*failed|failing" 2>/dev/null; then
+  if grep -qE "Tests:.*passed|Test Suites:.*passed|passing" <<< "${test_output}" 2>/dev/null; then
+    if ! grep -qE "Tests:.*failed|Test Suites:.*failed|failing" <<< "${test_output}" 2>/dev/null; then
       score=$((score + 25))
     else
       score=$((score + 10))  # Partial credit
@@ -314,7 +314,7 @@ rubric_robustness() {
     # Check package.json for jest config
     local pkg
     pkg=$(cat "$ws/package.json" 2>/dev/null) || true
-    echo "$pkg" | grep -q '"jest"' 2>/dev/null && has_jest_config=1
+    grep -q '"jest"' <<< "${pkg}" 2>/dev/null && has_jest_config=1
   fi
   [[ "$has_jest_config" -eq 1 ]] && score=$((score + 5))
 
@@ -324,7 +324,7 @@ rubric_robustness() {
   if [[ "$has_babel" -eq 0 ]]; then
     local pkg2
     pkg2=$(cat "$ws/package.json" 2>/dev/null) || true
-    echo "$pkg2" | grep -q '"babel"' 2>/dev/null && has_babel=1
+    grep -q '"babel"' <<< "${pkg2}" 2>/dev/null && has_babel=1
   fi
   # Also accept ts-jest or @swc/jest as alternatives to Babel
   if [[ "$has_babel" -eq 0 ]]; then

@@ -79,6 +79,10 @@ if command -v python3 >/dev/null 2>&1; then
   # dx_info and friends print to stdout, so one written inside a function whose
   # answer is its stdout is captured with the value and never seen.
   python3 "$ROOT/tests/captured-stdout.py" || fail "captured stdout"
+  # Under pipefail a pipeline whose consumer exits first reports the producer's
+  # EPIPE, not the consumer's answer — so the pipeline says "no" about a value
+  # that matched, on timing alone.
+  python3 "$ROOT/tests/pipefail-epipe.py" || fail "pipefail epipe"
 else
   printf 'SKIP python compile (python3 not installed)\n'
   printf 'SKIP inline python syntax (python3 not installed)\n'
@@ -87,6 +91,7 @@ else
   printf 'SKIP unvalidated settings (python3 not installed)\n'
   printf 'SKIP accidental exit status (python3 not installed)\n'
   printf 'SKIP captured stdout (python3 not installed)\n'
+  printf 'SKIP pipefail epipe (python3 not installed)\n'
 fi
 
 if command -v node >/dev/null 2>&1; then

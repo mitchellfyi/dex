@@ -789,7 +789,7 @@ rubric_robustness() {
   local has_routes
   has_routes=$(echo "$src_files" | while read -r f; do
     [[ -z "$f" ]] && continue
-    if echo "$f" | grep -qEi "route|router"; then
+    if grep -qEi "route|router" <<< "${f}"; then
       echo "found"; break
     fi
   done) || true
@@ -799,7 +799,7 @@ rubric_robustness() {
   local has_models
   has_models=$(echo "$src_files" | while read -r f; do
     [[ -z "$f" ]] && continue
-    if echo "$f" | grep -qEi "model|database|db\.|migration|schema"; then
+    if grep -qEi "model|database|db\.|migration|schema" <<< "${f}"; then
       echo "found"; break
     fi
   done) || true
@@ -809,7 +809,7 @@ rubric_robustness() {
   local has_middleware
   has_middleware=$(echo "$src_files" | while read -r f; do
     [[ -z "$f" ]] && continue
-    if echo "$f" | grep -qEi "middleware|validator|error.?handler"; then
+    if grep -qEi "middleware|validator|error.?handler" <<< "${f}"; then
       echo "found"; break
     fi
   done) || true

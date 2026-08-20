@@ -186,7 +186,7 @@ rubric_test_quality() {
   # Tests pass
   local test_output
   test_output=$(cd "$ws" && npm test 2>&1 | tail -30) || true
-  if echo "$test_output" | grep -qiE "pass|✓|ok|success"; then
+  if grep -qiE "pass|✓|ok|success" <<< "${test_output}"; then
     score=$((score + 25))
   fi
 

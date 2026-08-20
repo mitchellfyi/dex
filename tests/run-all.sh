@@ -68,7 +68,7 @@ parallel_tests=""
 serial_tests=""
 while IFS= read -r name; do
   [[ -n "$name" ]] || continue
-  if head -40 "$ROOT/tests/$name" | grep -q '^# dex-test-lane: serial'; then
+  if grep -q '^# dex-test-lane: serial' <<< "$(head -40 "$ROOT/tests/$name")"; then
     serial_tests="${serial_tests}${name}"$'\n'
   else
     parallel_tests="${parallel_tests}${name}"$'\n'

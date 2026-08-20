@@ -104,7 +104,7 @@ dx_install_rtk_binary > "$TMP_DIR/install.out"
   printf 'RTK install did not fetch exactly one archive and checksum file\n' >&2
   exit 1
 }
-if grep -Ev '^-q ' "$DX_TEST_CURL_LOG" | grep -q .; then
+if [[ -n "$(grep -Ev '^-q ' "$DX_TEST_CURL_LOG")" ]]; then
   printf 'RTK download did not disable curl configuration first\n' >&2
   exit 1
 fi
@@ -112,12 +112,12 @@ fi
 # Every fetch has to be able to end. These four calls had no bound while every
 # other network call in lib/ set one, so a host that accepts the connection and
 # then says nothing hung `dx install` with no output past "Installing RTK".
-if grep -v -- '--max-time' "$DX_TEST_CURL_LOG" | grep -q .; then
+if [[ -n "$(grep -v -- '--max-time' "$DX_TEST_CURL_LOG")" ]]; then
   printf 'an RTK download ran without --max-time:\n' >&2
   grep -v -- '--max-time' "$DX_TEST_CURL_LOG" >&2
   exit 1
 fi
-if grep -v -- '--connect-timeout' "$DX_TEST_CURL_LOG" | grep -q .; then
+if [[ -n "$(grep -v -- '--connect-timeout' "$DX_TEST_CURL_LOG")" ]]; then
   printf 'an RTK download ran without --connect-timeout:\n' >&2
   grep -v -- '--connect-timeout' "$DX_TEST_CURL_LOG" >&2
   exit 1

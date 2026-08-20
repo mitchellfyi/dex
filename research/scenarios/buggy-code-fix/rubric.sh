@@ -169,7 +169,7 @@ rubric_test_quality() {
   # Tests pass
   local test_output
   test_output=$(cd "$ws" && npm test 2>&1 | tail -30) || true
-  if echo "$test_output" | grep -qiE "pass|✓|ok|success"; then
+  if grep -qiE "pass|✓|ok|success" <<< "${test_output}"; then
     score=$((score + 20))
   fi
 
@@ -271,7 +271,7 @@ if (mutated === src) {
 " >/dev/null 2>&1) || true
     local mut1_result
     mut1_result=$(cd "$ws" && npm test 2>&1 | tail -20) || true
-    if echo "$mut1_result" | grep -qiE "fail|FAIL|error|Error|✕|✗"; then
+    if grep -qiE "fail|FAIL|error|Error|✕|✗" <<< "${mut1_result}"; then
       mutations_caught=$((mutations_caught + 1))
     fi
     # Restore original
@@ -304,7 +304,7 @@ if (mutated !== src) {
     if [[ "$mutant2" == *"MUTATED"* ]]; then
       local mut2_result
       mut2_result=$(cd "$ws" && npm test 2>&1 | tail -20) || true
-      if echo "$mut2_result" | grep -qiE "fail|FAIL|error|Error|✕|✗"; then
+      if grep -qiE "fail|FAIL|error|Error|✕|✗" <<< "${mut2_result}"; then
         mutations_caught=$((mutations_caught + 1))
       fi
     fi
@@ -337,7 +337,7 @@ if (mutated !== src) {
     if [[ "$mutant3" == *"MUTATED"* ]]; then
       local mut3_result
       mut3_result=$(cd "$ws" && npm test 2>&1 | tail -20) || true
-      if echo "$mut3_result" | grep -qiE "fail|FAIL|error|Error|✕|✗"; then
+      if grep -qiE "fail|FAIL|error|Error|✕|✗" <<< "${mut3_result}"; then
         mutations_caught=$((mutations_caught + 1))
       fi
     fi
@@ -368,7 +368,7 @@ if (mutated !== src) {
     if [[ "$mutant4" == *"MUTATED"* ]]; then
       local mut4_result
       mut4_result=$(cd "$ws" && npm test 2>&1 | tail -20) || true
-      if echo "$mut4_result" | grep -qiE "fail|FAIL|error|Error|✕|✗"; then
+      if grep -qiE "fail|FAIL|error|Error|✕|✗" <<< "${mut4_result}"; then
         mutations_caught=$((mutations_caught + 1))
       fi
     fi
@@ -415,7 +415,7 @@ if (commented) {
     if [[ "$mutant5" == *"MUTATED"* ]]; then
       local mut5_result
       mut5_result=$(cd "$ws" && npm test 2>&1 | tail -20) || true
-      if echo "$mut5_result" | grep -qiE "fail|FAIL|error|Error|✕|✗"; then
+      if grep -qiE "fail|FAIL|error|Error|✕|✗" <<< "${mut5_result}"; then
         mutations_caught=$((mutations_caught + 1))
       fi
     fi

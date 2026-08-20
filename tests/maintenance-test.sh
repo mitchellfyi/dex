@@ -347,7 +347,7 @@ assert_contains "GH_TOKEN=<unset>" "$maintain_git_log"
 assert_contains "GITHUB_TOKEN=<unset>" "$maintain_git_log"
 assert_contains "DX_MAINTAIN_TOKEN=<unset>" "$maintain_git_log"
 assert_contains "GIT_TERMINAL_PROMPT=0" "$maintain_git_log"
-if grep -F 'argv' "$maintain_git_log" | grep -Fq 'ghp_maintaintoken'; then
+if grep -Fq 'ghp_maintaintoken' <<< "$(grep -F 'argv' "$maintain_git_log")"; then
   printf 'the GitHub token reached git argv:\n' >&2
   grep -F 'argv' "$maintain_git_log" >&2
   exit 1
@@ -380,7 +380,7 @@ DX_MAINTAIN_REPO="example/repo" \
   __dx_maintain_fetch_branch "$repo" "dex/maintain-cover"
 assert_contains "fetch https://github.com/example/repo.git dex/maintain-cover" "$maintain_git_log"
 assert_contains "askpass-pass	ghp_maintaintokenmaintaintokenmaintain" "$maintain_git_log"
-if grep -F 'argv' "$maintain_git_log" | grep -Fq 'ghp_maintaintoken'; then
+if grep -Fq 'ghp_maintaintoken' <<< "$(grep -F 'argv' "$maintain_git_log")"; then
   printf 'the GitHub token reached git argv on the fetch path\n' >&2
   exit 1
 fi

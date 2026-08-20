@@ -49,11 +49,11 @@ rubric_correctness() {
   local tests_pass=false
   if [[ -f "$ws/package.json" ]] && grep -q '"test"' "$ws/package.json" 2>/dev/null; then
     local _npm_out; _npm_out=$(cd "$ws" && npm test 2>&1 | tail -10) || true
-    echo "$_npm_out" | grep -qiE "pass|ok|success" && tests_pass=true
+    grep -qiE "pass|ok|success" <<< "${_npm_out}" && tests_pass=true
   elif [[ -f "$ws/go.mod" ]]; then
     local _go_out; _go_out=$(cd "$ws" && go test ./... 2>&1) || true
     [[ "$_go_out" == *"PASS"* ]] && tests_pass=true
-  elif echo "$all_src" | head -1 | grep -q "\.py$" 2>/dev/null; then
+  elif grep -q "\.py$" <<< "$(head -1 <<< "$all_src")" 2>/dev/null; then
     local _py_out; _py_out=$(cd "$ws" && python3 -m pytest 2>&1) || true
     [[ "$_py_out" == *"passed"* ]] || [[ "$_py_out" == *"ok"* ]] && tests_pass=true
   fi
@@ -354,7 +354,7 @@ rubric_test_quality() {
   # Tests pass
   if [[ -f "$ws/package.json" ]]; then
     local _npm_t; _npm_t=$(cd "$ws" && npm test 2>&1 | tail -10) || true
-    echo "$_npm_t" | grep -qiE "pass|✓|ok" && score=$((score + 25))
+    grep -qiE "pass|✓|ok" <<< "${_npm_t}" && score=$((score + 25))
   elif [[ -f "$ws/go.mod" ]]; then
     local _go_t; _go_t=$(cd "$ws" && go test ./... 2>&1) || true
     [[ "$_go_t" == *"PASS"* ]] && score=$((score + 25))

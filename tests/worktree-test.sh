@@ -49,7 +49,7 @@ dx_link_claude_to_worktree "$repo" "$wt"
 [[ -L "$wt/.claude" ]] || assert_at $LINENO
 
 status="$(git -C "$wt" status --short)"
-if printf '%s\n' "$status" | grep -Fq ".claude"; then
+if grep -Fq ".claude" <<< "${status}"; then
   printf '.claude should be excluded from worktree status\n' >&2
   printf '%s\n' "$status" >&2
   exit 1
