@@ -326,6 +326,19 @@ review_eval_run_visible_check() {
   review_eval_run_scenario_command "$1" "$2" visible_test_command "${3:-}"
 }
 
+# The same three answers review_eval_oracle_status gives, for the same reason:
+# a check that could not run has not shown the tests failing. Collapsing that
+# to "fail" records the harness's own problem as the candidate's result.
+review_eval_visible_status() {
+  local status=0
+  review_eval_run_visible_check "$1" "$2" "${3:-}" || status=$?
+  case "$status" in
+    0) printf '%s\n' "pass" ;;
+    1) printf '%s\n' "fail" ;;
+    *) printf '%s\n' "invalid" ;;
+  esac
+}
+
 review_eval_oracle_status() {
   local status=0
   review_eval_run_scenario_command "$1" "$2" hidden_oracle_command "${3:-}" || status=$?
@@ -2037,11 +2050,8 @@ __review_eval_run_trial_worker() {
 $wave_record
 EOF
 
-        if review_eval_run_visible_check "$scenario" "$workspace" "$trial_dir/visible-after.log"; then
-          visible_after="pass"
-        else
-          visible_after="fail"
-        fi
+        visible_after=$(review_eval_visible_status "$scenario" "$workspace" "$trial_dir/visible-after.log")
+        [[ "$visible_after" != "invalid" ]] || harness_reason="final_visible_check_invalid"
         oracle_after=$(review_eval_oracle_status "$scenario" "$workspace" "$trial_dir/oracle-after.log")
         [[ "$oracle_after" != "invalid" ]] || harness_reason="final_oracle_invalid"
 
