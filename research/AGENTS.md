@@ -23,7 +23,27 @@ tail -20 research/results/scores.tsv
 
 # Run the automated improvement loop until stopped
 bash research/loop.sh --skip-llm-judge
+
+# Score every rubric against its own untouched seed
+bash research/seed-baseline.sh
+bash research/seed-baseline.sh long-refactor-inheritance
 ```
+
+### Reading a seed baseline
+
+`seed-baseline.sh` scores each rubric against the scenario's seed — the state
+before an agent touches it. Whatever it awards there is the floor: the score an
+agent gets for changing nothing, and the part of the scale that cannot separate
+one agent from another.
+
+A high floor is not automatically wrong. Most rubrics here are a large "did not
+regress" base plus a smaller "did the task" delta, and for a refactor scenario
+— preserve behaviour, preserve tests — a test-quality dimension that starts at
+100 and only falls is what the task asks for. Run it when changing a rubric or
+a seed, and check that the floor moved the way you intended.
+
+It is not in `tests/run-all.sh`: most rubrics run `npm install` or `pip
+install`, and the suite is hermetic.
 
 ## Core Loop
 
