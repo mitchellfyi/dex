@@ -182,6 +182,16 @@ if agg_drop > agg_threshold:
 prev_scenarios = prev.get("scenarios", {})
 curr_scenarios = curr.get("scenarios", {})
 
+# A scenario that stopped being scored is not an improvement. Skipping it —
+# which comparing only the names present in both amounts to — lets a change
+# that breaks a scenario badly enough to drop it out of the results raise the
+# average of whatever is left, and be accepted and committed on that basis.
+# There is no evidence it did not get worse, so it does not pass.
+missing = sorted(set(prev_scenarios) - set(curr_scenarios))
+if missing:
+    print(f"REGRESSION: scored before but not now: {', '.join(missing)}")
+    sys.exit(1)
+
 for name in prev_scenarios:
     if name in curr_scenarios:
         p = prev_scenarios[name].get("total", 0)
