@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "title",
+    "summary",
+    "problem",
+    "goals",
+    "nonGoals",
+    "acceptanceCriteria",
+    "implementationPlan",
+    "verificationPlan",
+    "dependencies",
+    "risks",
+    "questions",
+    "ready",
+    "readinessReason"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 8000 },
+    "problem": { "type": "string", "minLength": 1, "maxLength": 8000 },
+    "goals": { "$ref": "#/$defs/list" },
+    "nonGoals": { "$ref": "#/$defs/list" },
+    "acceptanceCriteria": { "$ref": "#/$defs/list" },
+    "implementationPlan": { "$ref": "#/$defs/list" },
+    "verificationPlan": { "$ref": "#/$defs/list" },
+    "dependencies": { "$ref": "#/$defs/list" },
+    "risks": { "$ref": "#/$defs/list" },
+    "questions": { "$ref": "#/$defs/list" },
+    "ready": { "type": "boolean" },
+    "readinessReason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+  },
+  "$defs": {
+    "list": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2000 }
+    }
+  }
+}
