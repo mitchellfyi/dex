@@ -29,8 +29,8 @@ mkdir -p "$RESULT_DIR"
 
 only="${1:-}"
 
-printf '%-30s %-6s %9s %9s %9s %9s\n' 'scenario' 'start' 'correct' 'tests' 'robust' 'issues'
-printf '%-30s %-6s %9s %9s %9s %9s\n' '------------------------------' '------' '---------' '---------' '---------' '---------'
+printf '%-30s %-6s %8s %8s %8s %8s %8s\n' 'scenario' 'start' 'correct' 'tests' 'robust' 'issues' 'TOTAL'
+printf '%-30s %-6s %8s %8s %8s %8s %8s\n' '------------------------------' '------' '--------' '--------' '--------' '--------' '--------'
 
 for scenario_path in "$SCENARIOS_DIR"/*/; do
   scenario="$(basename "$scenario_path")"
@@ -91,11 +91,44 @@ for scenario_path in "$SCENARIOS_DIR"/*/; do
   ) > "$WORK/$scenario.scores" 2>/dev/null
 
   read -r correctness tests robustness issues < "$WORK/$scenario.scores"
-  printf '%-30s %-6s %9s %9s %9s %9s\n' \
-    "$scenario" "$origin" "${correctness:-?}" "${tests:-?}" "${robustness:-?}" "${issues:-?}"
+  # The weighted floor: what score_scenario would report for this workspace.
+  # verification and code_quality are not measured here, so they contribute
+  # nothing — the total is a lower bound on the real floor, not an estimate.
+  total=$(
+    DX_C="${correctness:-0}" DX_T="${tests:-0}" DX_R="${robustness:-0}" DX_I="${issues:-0}" \
+    DX_SC="$scenario_path/scenario.json" python3 - <<'PYEOF'
+import json
+import os
+
+weights = {"correctness": 30, "test_quality": 20, "robustness": 15,
+           "verification": 15, "issue_detection": 10, "code_quality": 10}
+try:
+    override = json.load(open(os.environ["DX_SC"])).get("weights")
+    if isinstance(override, dict) and sum(int(v) for v in override.values()) == 100:
+        weights = {k: int(override[k]) for k in weights}
+except Exception:
+    pass
+
+
+def value(name):
+    raw = os.environ.get(name, "0")
+    return int(raw) if raw.isdigit() else 0
+
+
+print((value("DX_C") * weights["correctness"]
+       + value("DX_T") * weights["test_quality"]
+       + value("DX_R") * weights["robustness"]
+       + value("DX_I") * weights["issue_detection"]) // 100)
+PYEOF
+  )
+  printf '%-30s %-6s %8s %8s %8s %8s %8s\n' \
+    "$scenario" "$origin" "${correctness:-?}" "${tests:-?}" "${robustness:-?}" "${issues:-?}" "$total"
 done
 
 printf '\n%s\n' "The floor: what an agent scores for changing nothing."
 printf '%s\n' "start=empty scenarios are built from scratch, so any score there is unearned."
 printf '%s\n' "? means the check answered with something that is not a number."
 printf '%s\n' "- means the rubric does not define that check."
+printf '%s\n' "TOTAL is the weighted floor out of 100, counting only the four checks"
+printf '%s\n' "measured here — a lower bound. The rest of the scale is what an agent"
+printf '%s\n' "can actually win or lose."

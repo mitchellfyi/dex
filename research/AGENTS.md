@@ -36,11 +36,25 @@ before an agent touches it. Whatever it awards there is the floor: the score an
 agent gets for changing nothing, and the part of the scale that cannot separate
 one agent from another.
 
+`TOTAL` is the weighted floor out of 100, using the same weights
+`score_scenario` uses. It counts only the four checks this tool runs, so it is
+a lower bound — verification and the LLM judge are not included. What is left
+above it is the range an agent can actually win or lose.
+
 A high floor is not automatically wrong. Most rubrics here are a large "did not
 regress" base plus a smaller "did the task" delta, and for a refactor scenario
 — preserve behaviour, preserve tests — a test-quality dimension that starts at
-100 and only falls is what the task asks for. Run it when changing a rubric or
-a seed, and check that the floor moved the way you intended.
+100 and only falls is what the task asks for. An agent that breaks the seed
+loses exactly those points, which is that dimension working.
+
+It is still worth knowing where it leaves the scale. The seeded refactor and
+maintenance scenarios carry the highest floors — `memory-respect` 47,
+`long-refactor-inheritance` 45, `oss-bug-triage` 34 — while the from-scratch
+scenarios sit at or near zero. Those are the scenarios where two scores are
+closer together than the numbers make them look.
+
+Run it when changing a rubric or a seed, and check that the floor moved the way
+you intended. A floor that rises means more of the score is being given away.
 
 It is not in `tests/run-all.sh`: most rubrics run `npm install` or `pip
 install`, and the suite is hermetic.
