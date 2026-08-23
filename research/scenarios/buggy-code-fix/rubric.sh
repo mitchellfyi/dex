@@ -189,7 +189,7 @@ rubric_test_quality() {
                    "total|getTotal|sum|off.by.one|boundary" \
                    "discount.*subtract|discount.*correct|discount.*reduce|apply.*discount" \
                    "discount.*range|discount.*valid|discount.*100|discount.*0|discount.*bound"; do
-      if echo "$test_files" | xargs grep -qlEi "$pattern" 2>/dev/null; then
+      if [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qlEi "$pattern" 2>/dev/null; then
         bugs_tested=$((bugs_tested + 1))
       fi
     done
@@ -206,7 +206,7 @@ rubric_test_quality() {
   # Tests have descriptive names (not just "test 1", "test 2")
   local descriptive=0
   if [[ -n "$test_files" ]]; then
-    if echo "$test_files" | xargs grep -qlEi "should|when|given|invalid|negative|empty|error" 2>/dev/null; then
+    if [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qlEi "should|when|given|invalid|negative|empty|error" 2>/dev/null; then
       descriptive=1
     fi
   fi
@@ -217,7 +217,7 @@ rubric_test_quality() {
   local has_isolation=0
   if [[ -n "$test_files" ]]; then
     # Check for setup/teardown hooks
-    echo "$test_files" | xargs grep -qlE "beforeEach|afterEach|beforeAll|afterAll" 2>/dev/null && has_isolation=$((has_isolation + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qlE "beforeEach|afterEach|beforeAll|afterAll" 2>/dev/null && has_isolation=$((has_isolation + 1))
     # Check for new Cart() inside individual tests (not just top-level)
     local cart_in_tests
     cart_in_tests=$(echo "$test_files" | xargs grep -cE "new (ShoppingCart|Cart)" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}') || cart_in_tests=0

@@ -25,12 +25,12 @@ rubric_correctness() {
   all_src=$(find "$ws" -maxdepth 4 \( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.go" \) ! -path "*/node_modules/*" 2>/dev/null)
 
   # Has allow/deny or similar limit checking logic
-  if echo "$all_src" | xargs grep -qliE "allow|deny|limit|exceed|throttle|window|bucket|token" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "allow|deny|limit|exceed|throttle|window|bucket|token" 2>/dev/null; then
     score=$((score + 8))
   fi
 
   # Has configurable limits
-  if echo "$all_src" | xargs grep -qliE "max.*request|window.*size|limit.*config|rate.*config|tokens.*per|requests.*per" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "max.*request|window.*size|limit.*config|rate.*config|tokens.*per|requests.*per" 2>/dev/null; then
     score=$((score + 7))
   fi
 
@@ -60,14 +60,14 @@ rubric_correctness() {
   $tests_pass && score=$((score + 10))
 
   # Has a clear API (exported function/class for rate limiting)
-  if echo "$all_src" | xargs grep -qliE "class RateLimiter|class.*Limiter|function.*rateLimi|func.*RateLimit|def rate_limit|export.*RateLimit|export.*Limiter|createLimiter" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "class RateLimiter|class.*Limiter|function.*rateLimi|func.*RateLimit|def rate_limit|export.*RateLimit|export.*Limiter|createLimiter" 2>/dev/null; then
     score=$((score + 10))
   fi
 
   # HARDER: Implements multiple algorithms or strategies
   local algorithms=0
   for algo in "fixed.*window|fixedWindow" "sliding.*window|slidingWindow" "token.*bucket|tokenBucket" "leaky.*bucket|leakyBucket"; do
-    if echo "$all_src" | xargs grep -qliE "$algo" 2>/dev/null; then
+    if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "$algo" 2>/dev/null; then
       algorithms=$((algorithms + 1))
     fi
   done
@@ -371,10 +371,10 @@ rubric_test_quality() {
   # Tests cover edge cases
   local edge_tested=0
   if [[ -n "$test_files" ]]; then
-    echo "$test_files" | xargs grep -qliE "concurrent|simultaneous|parallel" 2>/dev/null && edge_tested=$((edge_tested + 1))
-    echo "$test_files" | xargs grep -qliE "reset|expire|window.*end|clean" 2>/dev/null && edge_tested=$((edge_tested + 1))
-    echo "$test_files" | xargs grep -qliE "multiple.*client|different.*key|per.client|isolation" 2>/dev/null && edge_tested=$((edge_tested + 1))
-    echo "$test_files" | xargs grep -qliE "burst|rapid|flood|many" 2>/dev/null && edge_tested=$((edge_tested + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qliE "concurrent|simultaneous|parallel" 2>/dev/null && edge_tested=$((edge_tested + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qliE "reset|expire|window.*end|clean" 2>/dev/null && edge_tested=$((edge_tested + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qliE "multiple.*client|different.*key|per.client|isolation" 2>/dev/null && edge_tested=$((edge_tested + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qliE "burst|rapid|flood|many" 2>/dev/null && edge_tested=$((edge_tested + 1))
   fi
   [[ $edge_tested -ge 1 ]] && score=$((score + 10))
   [[ $edge_tested -ge 2 ]] && score=$((score + 10))
@@ -394,9 +394,9 @@ rubric_test_quality() {
   local has_time_tests=0
   if [[ -n "$test_files" ]]; then
     # Check for fake timers / time mocking
-    echo "$test_files" | xargs grep -qliE "useFakeTimers|fakeTimers|sinon.*clock|jest.*timer|advanceTimersByTime|tick\(|mockDate|Date\.now|setTimeout|setInterval" 2>/dev/null && has_time_tests=$((has_time_tests + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qliE "useFakeTimers|fakeTimers|sinon.*clock|jest.*timer|advanceTimersByTime|tick\(|mockDate|Date\.now|setTimeout|setInterval" 2>/dev/null && has_time_tests=$((has_time_tests + 1))
     # Check for window/reset-related time tests
-    echo "$test_files" | xargs grep -qliE "window.*reset|reset.*window|expire|after.*window|wait.*reset|time.*pass|elapsed" 2>/dev/null && has_time_tests=$((has_time_tests + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qliE "window.*reset|reset.*window|expire|after.*window|wait.*reset|time.*pass|elapsed" 2>/dev/null && has_time_tests=$((has_time_tests + 1))
   fi
   [[ $has_time_tests -ge 1 ]] && score=$((score + 5))
   [[ $has_time_tests -ge 2 ]] && score=$((score + 5))
@@ -413,22 +413,22 @@ rubric_robustness() {
   all_src=$(find "$ws" -maxdepth 4 \( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.go" \) ! -path "*/node_modules/*" ! -name "*.test.*" ! -name "*.spec.*" ! -name "*_test.*" 2>/dev/null)
 
   # Has sensible defaults
-  if echo "$all_src" | xargs grep -qliE "default|DEFAULT|= 100|= 60|= 1000" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "default|DEFAULT|= 100|= 60|= 1000" 2>/dev/null; then
     score=$((score + 10))
   fi
 
   # Has time window management
-  if echo "$all_src" | xargs grep -qliE "Date\.now|time\.Now|time\(\)|datetime|window|interval" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "Date\.now|time\.Now|time\(\)|datetime|window|interval" 2>/dev/null; then
     score=$((score + 10))
   fi
 
   # Has error handling / input validation
-  if echo "$all_src" | xargs grep -qliE "throw|Error|raise|panic|if.*<.*0|invalid|IllegalArgument" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "throw|Error|raise|panic|if.*<.*0|invalid|IllegalArgument" 2>/dev/null; then
     score=$((score + 10))
   fi
 
   # Handles concurrent/multiple clients (key-based or IP-based)
-  if echo "$all_src" | xargs grep -qliE "key|client|ip|identifier|Map|dict|map\[" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "key|client|ip|identifier|Map|dict|map\[" 2>/dev/null; then
     score=$((score + 10))
   fi
 
@@ -436,7 +436,7 @@ rubric_robustness() {
   local has_types=false
   if find "$ws" -maxdepth 4 -name "*.ts" ! -path "*/node_modules/*" 2>/dev/null | grep -q .; then
     has_types=true
-  elif echo "$all_src" | xargs grep -qlE ":\s*(number|string|boolean|void|interface|type )" 2>/dev/null; then
+  elif [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qlE ":\s*(number|string|boolean|void|interface|type )" 2>/dev/null; then
     has_types=true
   fi
   $has_types && score=$((score + 10))
@@ -449,7 +449,7 @@ rubric_robustness() {
   [[ $console_in_src -le 1 ]] && score=$((score + 5))
 
   # Has cleanup mechanism (memory doesn't grow unbounded) (8 pts for code presence)
-  if echo "$all_src" | xargs grep -qliE "cleanup|clear|prune|gc|expire|evict|delete.*old|setTimeout.*clean|setInterval.*clean" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "cleanup|clear|prune|gc|expire|evict|delete.*old|setTimeout.*clean|setInterval.*clean" 2>/dev/null; then
     score=$((score + 8))
   fi
 
@@ -534,17 +534,17 @@ MEMJS
   fi
 
   # Uses modern JS/TS features (const/let, arrow functions, classes)
-  if echo "$all_src" | xargs grep -qE "class |=>" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qE "class |=>" 2>/dev/null; then
     score=$((score + 5))
   fi
 
   # Has JSDoc or proper documentation comments
-  if echo "$all_src" | xargs grep -qlE "/\*\*|///|\"\"\"" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qlE "/\*\*|///|\"\"\"" 2>/dev/null; then
     score=$((score + 10))
   fi
 
   # Implements retry-after or remaining count info
-  if echo "$all_src" | xargs grep -qliE "retry.after|retryAfter|remaining|reset.*time|resetAt|X-RateLimit" 2>/dev/null; then
+  if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "retry.after|retryAfter|remaining|reset.*time|resetAt|X-RateLimit" 2>/dev/null; then
     score=$((score + 10))
   fi
 

@@ -203,9 +203,9 @@ rubric_test_quality() {
   # Tests cover both valid and invalid inputs
   local validation_tests=0
   if [[ -n "$test_files" ]]; then
-    echo "$test_files" | xargs grep -qlEi "valid|invalid|error|fail|reject" 2>/dev/null && validation_tests=$((validation_tests + 1))
-    echo "$test_files" | xargs grep -qlEi "required|missing|empty" 2>/dev/null && validation_tests=$((validation_tests + 1))
-    echo "$test_files" | xargs grep -qlEi "edge|boundary|long|max" 2>/dev/null && validation_tests=$((validation_tests + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qlEi "valid|invalid|error|fail|reject" 2>/dev/null && validation_tests=$((validation_tests + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qlEi "required|missing|empty" 2>/dev/null && validation_tests=$((validation_tests + 1))
+    [[ -n "${test_files}" ]] && echo "$test_files" | xargs grep -qlEi "edge|boundary|long|max" 2>/dev/null && validation_tests=$((validation_tests + 1))
   fi
   [[ $validation_tests -ge 2 ]] && score=$((score + 10))
 
@@ -259,31 +259,46 @@ rubric_robustness() {
     fi
   fi
 
-  # No duplication remains in route files
-  local duplication_score=25
-  for f in "$ws/src/routes/users.js" "$ws/src/routes/products.js" "$ws/src/routes/orders.js"; do
-    [[ -f "$f" ]] || continue
-    # Penalize if route files still have inline validation patterns
-    local inline_checks
-    inline_checks="$(grep -cE 'typeof.*!==|\.length\s*>|\.includes\(' "$f" 2>/dev/null)" || inline_checks=0
-    if [[ $inline_checks -gt 2 ]]; then
-      duplication_score=$((duplication_score - 10))
-    fi
+  # Find the route files once. Everything below judges them, and this scenario
+  # starts from an empty workspace — so with none written, every "no duplication
+  # left", "routes are short" and "no var anywhere" check would pay out in full
+  # for code that does not exist.
+  local total_route_lines=0 route_files_found=0
+  local route_file
+  for route_file in "$ws/src/routes/users.js" "$ws/src/routes/products.js" "$ws/src/routes/orders.js"; do
+    [[ -f "$route_file" ]] || continue
+    route_files_found=$((route_files_found + 1))
+    local lines
+    lines=$(wc -l < "$route_file" | tr -d ' ')
+    total_route_lines=$((total_route_lines + lines))
   done
-  [[ $duplication_score -lt 0 ]] && duplication_score=0
+
+  # No duplication remains in route files
+  local duplication_score=0
+  if [[ "$route_files_found" -gt 0 ]]; then
+    duplication_score=25
+    for f in "$ws/src/routes/users.js" "$ws/src/routes/products.js" "$ws/src/routes/orders.js"; do
+      [[ -f "$f" ]] || continue
+      # Penalize if route files still have inline validation patterns
+      local inline_checks
+      inline_checks="$(grep -cE 'typeof.*!==|\.length\s*>|\.includes\(' "$f" 2>/dev/null)" || inline_checks=0
+      if [[ $inline_checks -gt 2 ]]; then
+        duplication_score=$((duplication_score - 10))
+      fi
+    done
+    [[ $duplication_score -lt 0 ]] && duplication_score=0
+  fi
   score=$((score + duplication_score))
 
   # Route files are SHORT (refactoring should reduce them)
-  local total_route_lines=0
-  for f in "$ws/src/routes/users.js" "$ws/src/routes/products.js" "$ws/src/routes/orders.js"; do
-    [[ -f "$f" ]] || continue
-    local lines
-    lines=$(wc -l < "$f" | tr -d ' ')
-    total_route_lines=$((total_route_lines + lines))
-  done
-  # If all 3 routes are under 30 lines each (90 total), great refactoring
-  [[ $total_route_lines -lt 120 ]] && score=$((score + 10))
-  [[ $total_route_lines -lt 90 ]] && score=$((score + 5))
+  # If all 3 routes are under 30 lines each (90 total), great refactoring.
+  # This scenario starts from an empty workspace, so the routes have to exist
+  # before their length says anything: with none written, zero lines would
+  # otherwise read as the best possible refactoring.
+  if [[ "$route_files_found" -gt 0 ]]; then
+    [[ $total_route_lines -lt 120 ]] && score=$((score + 10))
+    [[ $total_route_lines -lt 90 ]] && score=$((score + 5))
+  fi
 
   # Uses const/let, no var
   local has_var=false
@@ -296,7 +311,8 @@ rubric_robustness() {
   if [[ -n "$shared_file" ]] && grep -q "\bvar\b" "$shared_file" 2>/dev/null; then
     has_var=true
   fi
-  $has_var || score=$((score + 10))
+  # Same again: "no var anywhere" is free when there is no code anywhere.
+  [[ "$route_files_found" -gt 0 || -n "$shared_file" ]] && { $has_var || score=$((score + 10)); }
 
   # No console.log in source files
   local console_found=false
@@ -306,7 +322,7 @@ rubric_robustness() {
       console_found=true
     fi
   done
-  $console_found || score=$((score + 5))
+  [[ "$route_files_found" -gt 0 || -n "$shared_file" ]] && { $console_found || score=$((score + 5)); }
 
   # Module exports are clean (named exports, not default)
   if [[ -n "$shared_file" ]] && grep -qE "module\.exports\s*=\s*\{|exports\." "$shared_file" 2>/dev/null; then

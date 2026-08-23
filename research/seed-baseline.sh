@@ -24,28 +24,46 @@ RESEARCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCENARIOS_DIR="$RESEARCH_DIR/scenarios"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dex-seed-baseline.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+RESULT_DIR="$WORK/.empty-result"
+mkdir -p "$RESULT_DIR"
 
 only="${1:-}"
 
-printf '%-34s %9s %9s %9s %9s\n' 'scenario' 'correct' 'tests' 'robust' 'issues'
-printf '%-34s %9s %9s %9s %9s\n' '----------------------------------' '---------' '---------' '---------' '---------'
+printf '%-30s %-6s %9s %9s %9s %9s\n' 'scenario' 'start' 'correct' 'tests' 'robust' 'issues'
+printf '%-30s %-6s %9s %9s %9s %9s\n' '------------------------------' '------' '---------' '---------' '---------' '---------'
 
-for seed_dir in "$SCENARIOS_DIR"/*/seed; do
-  [[ -d "$seed_dir" ]] || continue
-  scenario="$(basename "$(dirname "$seed_dir")")"
+for scenario_path in "$SCENARIOS_DIR"/*/; do
+  scenario="$(basename "$scenario_path")"
+  [[ "$scenario" == "_template" ]] && continue
   [[ -z "$only" || "$only" == "$scenario" ]] || continue
-  rubric="$SCENARIOS_DIR/$scenario/rubric.sh"
+  rubric="$scenario_path/rubric.sh"
   [[ -f "$rubric" ]] || continue
+  seed_dir="$scenario_path/seed"
 
+  # Reproduce what research/lib/workspace.sh hands an agent: a git repo with a
+  # .gitignore commit, and the seed folded into that same commit when there is
+  # one. A scenario with no seed starts empty and is built from scratch, so its
+  # floor is whatever a rubric awards for an empty repo — which should be
+  # nothing at all.
   workspace="$WORK/$scenario"
   mkdir -p "$workspace"
-  cp -R "$seed_dir/." "$workspace/" 2>/dev/null || true
-  # The rubrics ask git what changed, so the seed has to be a committed tree.
   git -C "$workspace" init -q 2>/dev/null || true
-  git -C "$workspace" config user.email seed@example.test 2>/dev/null || true
-  git -C "$workspace" config user.name "Seed" 2>/dev/null || true
-  git -C "$workspace" add -A >/dev/null 2>&1 || true
-  git -C "$workspace" commit -qm "seed" >/dev/null 2>&1 || true
+  git -C "$workspace" config user.email research@dex.local 2>/dev/null || true
+  git -C "$workspace" config user.name "Research" 2>/dev/null || true
+  printf 'node_modules/\n__pycache__/\n.venv/\ndist/\nbuild/\n*.pyc\n.DS_Store\n' \
+    > "$workspace/.gitignore"
+  git -C "$workspace" add .gitignore >/dev/null 2>&1 || true
+  git -C "$workspace" commit -qm "init: empty workspace" >/dev/null 2>&1 || true
+  if [[ -d "$seed_dir" ]]; then
+    (cd "$seed_dir" && cp -R . "$workspace/") 2>/dev/null || true
+    if [[ -n "$(git -C "$workspace" status --porcelain 2>/dev/null)" ]]; then
+      git -C "$workspace" add -A >/dev/null 2>&1 || true
+      git -C "$workspace" commit -q --amend --no-edit >/dev/null 2>&1 || true
+    fi
+    origin="seed"
+  else
+    origin="empty"
+  fi
 
   # A subshell per rubric, so one scenario's definitions cannot answer for the
   # next — the same reason score_scenario unsets them between runs.
@@ -53,9 +71,16 @@ for seed_dir in "$SCENARIOS_DIR"/*/seed; do
     set +e
     # shellcheck disable=SC1090
     source "$rubric" 2>/dev/null
+    # rubric_issue_detection takes the result directory as well, the way
+    # score_scenario calls it. An empty one stands in for a run that produced
+    # no transcript.
     for check in rubric_correctness rubric_test_quality rubric_robustness rubric_issue_detection; do
       if declare -f "$check" >/dev/null 2>&1; then
-        value=$("$check" "$workspace" 2>/dev/null)
+        if [[ "$check" == "rubric_issue_detection" ]]; then
+          value=$("$check" "$workspace" "$RESULT_DIR" 2>/dev/null)
+        else
+          value=$("$check" "$workspace" 2>/dev/null)
+        fi
         [[ "$value" =~ ^[0-9]+$ ]] || value='?'
       else
         value='-'
@@ -66,10 +91,11 @@ for seed_dir in "$SCENARIOS_DIR"/*/seed; do
   ) > "$WORK/$scenario.scores" 2>/dev/null
 
   read -r correctness tests robustness issues < "$WORK/$scenario.scores"
-  printf '%-34s %9s %9s %9s %9s\n' \
-    "$scenario" "${correctness:-?}" "${tests:-?}" "${robustness:-?}" "${issues:-?}"
+  printf '%-30s %-6s %9s %9s %9s %9s\n' \
+    "$scenario" "$origin" "${correctness:-?}" "${tests:-?}" "${robustness:-?}" "${issues:-?}"
 done
 
-printf '\n%s\n' "- is the floor: what an agent scores for changing nothing."
+printf '\n%s\n' "The floor: what an agent scores for changing nothing."
+printf '%s\n' "start=empty scenarios are built from scratch, so any score there is unearned."
 printf '%s\n' "? means the check answered with something that is not a number."
 printf '%s\n' "- means the rubric does not define that check."
