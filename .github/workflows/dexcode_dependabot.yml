@@ -1,4 +1,4 @@
-# Managed by DexCode template dependabot-guard@1.1.0. Edit the template, not this file.
+# Managed by DexCode template dependabot-guard@1.2.0. Edit the template, not this file.
 #
 # What this does, and deliberately does not do.
 #
@@ -146,8 +146,15 @@ jobs:
             --author "app/dependabot" \
             --state open \
             --limit 100 \
-            --json number,title,labels,autoMergeRequest \
+            --json number,title,body,labels,autoMergeRequest \
             > /tmp/dexcode-dependabot.json
+
+          # Set when a pull request could not be queued for a reason that is
+          # about the repository rather than that pull request. The sweep keeps
+          # going — labelling majors still works, and stopping at the first one
+          # meant a single misconfigured branch hid the whole backlog — and
+          # reports it at the end.
+          blocked=""
 
           total="$(jq 'length' /tmp/dexcode-dependabot.json)"
           echo "Open Dependabot pull requests: ${total}"
@@ -156,6 +163,7 @@ jobs:
             pr="$(echo "${row}" | base64 --decode)"
             number="$(echo "${pr}" | jq -r '.number')"
             title="$(echo "${pr}" | jq -r '.title')"
+            body="$(echo "${pr}" | jq -r '.body // ""')"
             queued="$(echo "${pr}" | jq -r '.autoMergeRequest != null')"
             labelled="$(echo "${pr}" | jq -r '[.labels[].name] | index("dexcode:major-update") != null')"
 
@@ -169,17 +177,32 @@ jobs:
             fi
 
             # "Bump x from 1.2.3 to 2.0.0", with or without a conventional
-            # commit prefix. A grouped update carries no versions in its title
-            # and is deliberately left alone rather than guessed at.
-            if [[ "${title}" =~ from[[:space:]]+v?([0-9]+)[^[:space:]]*[[:space:]]+to[[:space:]]+v?([0-9]+)[^[:space:]]* ]]; then
-              from_major="${BASH_REMATCH[1]}"
-              to_major="${BASH_REMATCH[2]}"
-            else
-              echo "::notice::#${number} left alone: no version range in \"${title}\" (grouped updates are not swept)"
+            # commit prefix. A grouped update says "bump the all-actions group
+            # with 7 updates" and carries no versions in its title at all —
+            # most of one repository's backlog was that shape — so the body is
+            # read too, where Dependabot lists every bump it made. Any single
+            # major in a group makes the whole group a major: the group merges
+            # as one commit, so the most dangerous member decides.
+            versions="$(printf '%s\n%s' "${title}" "${body}" \
+              | grep -oiE 'from[[:space:]]+v?[0-9]+[^[:space:]]*[[:space:]]+to[[:space:]]+v?[0-9]+[^[:space:]]*' \
+              || true)"
+            if [ -z "${versions}" ]; then
+              echo "::notice::#${number} left alone: no version range in its title or body (\"${title}\")"
               continue
             fi
 
-            if [ "${from_major}" != "${to_major}" ]; then
+            is_major="false"
+            while IFS= read -r range; do
+              [ -z "${range}" ] && continue
+              if [[ "${range}" =~ from[[:space:]]+v?([0-9]+)[^[:space:]]*[[:space:]]+to[[:space:]]+v?([0-9]+)[^[:space:]]* ]]; then
+                if [ "${BASH_REMATCH[1]}" != "${BASH_REMATCH[2]}" ]; then
+                  is_major="true"
+                  break
+                fi
+              fi
+            done <<< "${versions}"
+
+            if [ "${is_major}" = "true" ]; then
               # Same treatment a major gets on the event path: labelled, never
               # merged, and the comment happens once because the label above is
               # checked first.
@@ -204,11 +227,26 @@ jobs:
             if ! output="$(gh pr merge --auto --squash "${number}" 2>&1)"; then
               case "${output}" in
                 *"Auto merge is not allowed"*)
-                  echo "::error::Enable Settings → General → Allow auto-merge on this repository. Until then DexCode can only merge updates whose checks have already passed."
-                  exit 1
+                  blocked="Auto-merge is switched off. Enable Settings → General → Allow auto-merge."
+                  continue
+                  ;;
+                *"Protected branch rules not configured"*)
+                  # Auto-merge waits for a branch's required checks. With no
+                  # protection rule there is nothing to wait for, and GitHub
+                  # refuses. Merging anyway would drop the one guarantee this
+                  # workflow is built on — that green-before-merge comes from
+                  # the repository's own required checks and not from this
+                  # script reading statuses and deciding for itself.
+                  blocked="The default branch has no protection rule, so there are no required checks for auto-merge to wait for. Add a branch protection rule with at least one required check, and these will merge themselves."
+                  continue
                   ;;
                 *) echo "::error::#${number}: ${output}"; exit 1 ;;
               esac
             fi
             echo "#${number}: auto-merge queued"
           done
+
+          if [ -n "${blocked}" ]; then
+            echo "::error::${blocked}"
+            exit 1
+          fi
