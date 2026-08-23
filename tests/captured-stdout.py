@@ -57,6 +57,61 @@ def functions(name, text):
             start = None
 
 
+# The check above rests on lib/output.sh splitting its helpers by stream. If
+# dx_error ever stopped writing to stderr, every guarded call site would start
+# contaminating its own return value and this file would still pass — so the
+# premise is asserted rather than assumed.
+#
+# research/ has the same arrangement reached differently: every log_* helper
+# routes through one _log, which writes to stderr. That is why research is not
+# scanned above — nothing there prints guidance to stdout — and it is only true
+# while _log keeps the redirect.
+STREAM_PREMISES = (
+    ("lib/output.sh", "dx_error", True),
+    ("lib/output.sh", "dx_warn", True),
+    ("lib/output.sh", "dx_info", False),
+    ("lib/output.sh", "dx_ok", False),
+    ("lib/output.sh", "dx_done", False),
+    ("lib/output.sh", "dx_skip", False),
+    ("research/lib/common.sh", "_log", True),
+)
+
+
+def helper_body(text, helper):
+    """The lines of a shell function definition, or None."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith(helper + "()"):
+            continue
+        if line.rstrip().endswith("}"):
+            return [line]          # a one-liner, as lib/output.sh writes them
+        body = []
+        for follow in lines[index + 1:]:
+            if follow == "}":
+                return body
+            body.append(follow)
+        return body
+    return None
+
+
+def check_premises():
+    """The helper definitions must still write where this check assumes."""
+    problems = []
+    for name, helper, to_stderr in STREAM_PREMISES:
+        text = (ROOT / name).read_text(encoding="utf-8", errors="replace")
+        body = helper_body(text, helper)
+        if body is None:
+            problems.append(f"{name}: cannot find {helper}; update tests/captured-stdout.py")
+            continue
+        if (">&2" in "\n".join(body)) != to_stderr:
+            expected = "stderr" if to_stderr else "stdout"
+            problems.append(
+                f"{name}: {helper} no longer writes to {expected}; the rule this file "
+                f"enforces rests on that"
+            )
+    return problems
+
+
 def main():
     files = tracked_shell_files()
     corpus = {name: (ROOT / name).read_text(encoding="utf-8", errors="replace")
@@ -81,11 +136,16 @@ def main():
                             f"swallowed; add >&2"
                         )
 
+    failures.extend(check_premises())
+
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
         return 1
-    print("captured stdout: no value-returning function writes guidance onto its own answer")
+    print(
+        "captured stdout: helpers write where they should, and no value-returning "
+        "function writes guidance onto its own answer"
+    )
     return 0
 
 
