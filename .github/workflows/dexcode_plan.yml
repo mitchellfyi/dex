@@ -1,0 +1,292 @@
+# Managed by DexCode template ticket-planner@3.6.0. Edit the template, not this file.
+name: DexCode plan ticket
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: DexCode run identifier
+        required: true
+        type: string
+      agent_definition:
+        description: Published DexCode planner definition
+        required: true
+        type: choice
+        options:
+          - codex-api-planner
+          - codex-access-planner
+          - claude-planner
+      prompt_ref:
+        description: Opaque DexCode work-item reference
+        required: true
+        type: string
+      trigger:
+        description: Planning trigger
+        required: true
+        type: choice
+        options: [manual, issue, schedule, cli]
+
+permissions: {}
+
+concurrency:
+  group: dexcode-plan-${{ inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      # Read once here rather than in each agent job: one copy of the check,
+      # and a bad specification stops the run before an agent starts.
+      model: ${{ steps.model.outputs.model }}
+      effort: ${{ steps.model.outputs.effort }}
+      codex_args: ${{ steps.model.outputs.codex_args }}
+      claude_model_arg: ${{ steps.model.outputs.claude_model_arg }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Fetch the run specification
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          mkdir -p .dex
+          OIDC_TOKEN="$(
+            curl --fail-with-body --silent --show-error \
+              --retry 2 --retry-all-errors --max-time 30 \
+              -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=dexcode%3Aplanning%3A${RUN_ID}%3Aspec" \
+              | jq -er '.value'
+          )"
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 30 \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            "https://dexcode.ai/api/v1/agent/runs/${RUN_ID}/spec" \
+            --output .dex/run-spec.json
+          unset OIDC_TOKEN
+      # The model and effort DexCode resolved for this run, or nothing at all
+      # when no level chose. Re-checked here because the specification arrives
+      # over the network: these are the only values in it that become
+      # arguments, so they are the only ones that must not be taken on trust.
+      - name: Read the planner model and effort
+        id: model
+        run: |
+          MODEL="$(jq -r '.planner.model // empty' .dex/run-spec.json)"
+          EFFORT="$(jq -r '.planner.effort // empty' .dex/run-spec.json)"
+          if [[ -n "${MODEL}" && ! "${MODEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,119}$ ]]; then
+            echo "The run specification names an unusable model." >&2
+            exit 1
+          fi
+          case "${EFFORT}" in
+            ""|low|medium|high|xhigh|max) ;;
+            *) echo "The run specification names an unusable effort." >&2; exit 1 ;;
+          esac
+          CODEX_ARGS='["--ephemeral"]'
+          if [[ -n "${MODEL}" ]]; then
+            CODEX_ARGS="$(jq -nc --argjson args "${CODEX_ARGS}" --arg model "${MODEL}" \
+              '$args + ["--model", $model]')"
+          fi
+          if [[ -n "${EFFORT}" ]]; then
+            # Codex takes effort as configuration rather than a flag of its own.
+            CODEX_ARGS="$(jq -nc --argjson args "${CODEX_ARGS}" --arg effort "${EFFORT}" \
+              '$args + ["-c", "model_reasoning_effort=" + $effort]')"
+          fi
+          {
+            echo "model=${MODEL}"
+            echo "effort=${EFFORT}"
+            printf 'codex_args=%s\n' "${CODEX_ARGS}"
+            if [[ -n "${MODEL}" ]]; then
+              echo "claude_model_arg=--model ${MODEL}"
+            else
+              echo "claude_model_arg="
+            fi
+          } >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dexcode-plan-context-${{ inputs.run_id }}
+          path: .dex/run-spec.json
+          if-no-files-found: error
+          retention-days: 1
+
+  codex:
+    if: startsWith(inputs.agent_definition, 'codex-')
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.codex.outputs.final-message || steps.codex_access.outputs.result }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: dexcode-plan-context-${{ inputs.run_id }}
+          path: .dex
+      - name: Plan with a platform API key
+        id: codex
+        if: inputs.agent_definition == 'codex-api-planner'
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56
+        with:
+          openai-api-key: ${{ secrets.DEXCODE_OPENAI_API_KEY }}
+          prompt-file: .dex/prompts/dexcode_plan.md
+          permission-profile: :read-only
+          safety-strategy: drop-sudo
+          allow-bot-users: dexcode-ai
+          codex-version: 0.146.1
+          output-schema-file: .dex/planner-result.schema.json
+          codex-args: ${{ needs.prepare.outputs.codex_args }}
+      - name: Install the pinned Codex CLI without credentials
+        if: inputs.agent_definition == 'codex-access-planner'
+        working-directory: ${{ runner.temp }}
+        env:
+          NPM_CONFIG_AUDIT: "false"
+          NPM_CONFIG_FUND: "false"
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/dexcode-empty.npmrc
+        run: |
+          : > "${NPM_CONFIG_USERCONFIG}"
+          npm install --global --ignore-scripts @openai/codex@0.146.1
+          # Codex sandboxes each command with bubblewrap. Its bundled copy
+          # cannot bring up loopback on a GitHub runner — every read-only
+          # command fails with "bwrap: loopback: Failed RTM_NEWADDR" before it
+          # runs — so the planner reads nothing and says so in its plan. The
+          # distribution build works, and Codex prefers it when it is on PATH.
+          sudo apt-get update --quiet
+          sudo apt-get install --yes --no-install-recommends bubblewrap
+          command -v bwrap
+          # Ubuntu 24.04 refuses unprivileged user namespaces by default, which
+          # is what bubblewrap needs to build the sandbox. Installing the
+          # distribution build was not enough on its own: bwrap still could not
+          # configure loopback inside the namespace it is not allowed to make.
+          # The runner is ephemeral and this job holds one credential and a
+          # read-only checkout, so allowing it here buys a working sandbox for
+          # every command the planner runs, which is the stronger position.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Plan with a trusted Codex access token
+        id: codex_access
+        if: inputs.agent_definition == 'codex-access-planner'
+        env:
+          CODEX_ACCESS_TOKEN: ${{ secrets.DEXCODE_CODEX_ACCESS_TOKEN }}
+          # Through the environment rather than the script text, so the value
+          # is data to the shell and never something it could parse.
+          PLANNER_MODEL: ${{ needs.prepare.outputs.model }}
+          PLANNER_EFFORT: ${{ needs.prepare.outputs.effort }}
+        run: |
+          export CODEX_HOME="${RUNNER_TEMP}/dexcode-codex"
+          mkdir -p "${CODEX_HOME}"
+          chmod 700 "${CODEX_HOME}"
+          # Two shapes of ChatGPT credential, and they authenticate
+          # differently. `codex login --with-access-token` wants an Enterprise
+          # agent identity, and refuses anything else with "agent identity JWT
+          # payload is not valid JSON" — which is what a Plus or Pro account
+          # gets, and reads like a corrupted token rather than the wrong kind.
+          #
+          # A whole auth.json is the other shape: the file the CLI writes when
+          # a person signs in, carrying the account id and a refresh token, so
+          # it works for any plan and can refresh itself mid-run. Written
+          # straight to CODEX_HOME, which is exactly where the CLI looks.
+          if [[ "$(printenv CODEX_ACCESS_TOKEN | cut -c1)" == "{" ]]; then
+            (umask 077; printenv CODEX_ACCESS_TOKEN > "${CODEX_HOME}/auth.json")
+          else
+            printenv CODEX_ACCESS_TOKEN | codex login --with-access-token
+          fi
+          unset CODEX_ACCESS_TOKEN
+          codex login status
+          MODEL_ARGS=()
+          if [[ -n "${PLANNER_MODEL}" ]]; then
+            MODEL_ARGS=(--model "${PLANNER_MODEL}")
+          fi
+          if [[ -n "${PLANNER_EFFORT}" ]]; then
+            MODEL_ARGS+=(-c "model_reasoning_effort=${PLANNER_EFFORT}")
+          fi
+          codex exec \
+            "${MODEL_ARGS[@]}" \
+            --sandbox read-only \
+            --output-schema .dex/planner-result.schema.json \
+            --output-last-message "${RUNNER_TEMP}/planner-result.json" \
+            --ephemeral \
+            "$(<.dex/prompts/dexcode_plan.md)"
+          # printf, not cat: the planner's result file has no trailing
+          # newline, which put the delimiter on the same line as the JSON and
+          # lost the whole output to "Matching delimiter not found". The
+          # command substitution strips any trailing newlines and printf adds
+          # back exactly one.
+          {
+            echo 'result<<DEXCODE_RESULT'
+            printf '%s\n' "$(cat "${RUNNER_TEMP}/planner-result.json")"
+            echo 'DEXCODE_RESULT'
+          } >> "${GITHUB_OUTPUT}"
+
+  claude:
+    if: inputs.agent_definition == 'claude-planner'
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.claude.outputs.structured_output }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: dexcode-plan-context-${{ inputs.run_id }}
+          path: .dex
+      - name: Plan with Claude
+        id: claude
+        uses: anthropics/claude-code-action@c038e4dcdedfbbca18dfb17df35a17e40ded4ddc
+        with:
+          github_token: ${{ github.token }}
+          claude_code_oauth_token: ${{ secrets.DEXCODE_CLAUDE_OAUTH_TOKEN }}
+          prompt: Read .dex/prompts/dexcode_plan.md and follow it exactly.
+          claude_args: |
+            --allowedTools Read,Glob,Grep
+            --json-schema '{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["schemaVersion","title","summary","problem","goals","nonGoals","acceptanceCriteria","implementationPlan","verificationPlan","dependencies","risks","questions","ready","readinessReason"],"properties":{"schemaVersion":{"type":"integer","const":1},"title":{"type":"string","minLength":1,"maxLength":300},"summary":{"type":"string","minLength":1,"maxLength":8000},"problem":{"type":"string","minLength":1,"maxLength":8000},"goals":{"$ref":"#/$defs/list"},"nonGoals":{"$ref":"#/$defs/list"},"acceptanceCriteria":{"$ref":"#/$defs/list"},"implementationPlan":{"$ref":"#/$defs/list"},"verificationPlan":{"$ref":"#/$defs/list"},"dependencies":{"$ref":"#/$defs/list"},"risks":{"$ref":"#/$defs/list"},"questions":{"$ref":"#/$defs/list"},"ready":{"type":"boolean"},"readinessReason":{"type":"string","minLength":1,"maxLength":2000}},"$defs":{"list":{"type":"array","maxItems":100,"items":{"type":"string","minLength":1,"maxLength":2000}}}}'
+            ${{ needs.prepare.outputs.claude_model_arg }}
+
+  report:
+    if: always() && (needs.codex.result == 'success' || needs.claude.result == 'success')
+    needs: [codex, claude]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Report the structured plan
+        env:
+          CODEX_RESULT: ${{ needs.codex.outputs.result }}
+          CLAUDE_RESULT: ${{ needs.claude.outputs.result }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [[ -n "${CODEX_RESULT}" ]]; then
+            printf '%s' "${CODEX_RESULT}" > "${RUNNER_TEMP}/planner-result.json"
+          else
+            printf '%s' "${CLAUDE_RESULT}" > "${RUNNER_TEMP}/planner-result.json"
+          fi
+          OIDC_TOKEN="$(
+            curl --fail-with-body --silent --show-error \
+              --retry 2 --retry-all-errors --max-time 30 \
+              -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=dexcode%3Aplanning%3A${RUN_ID}%3Aresult" \
+              | jq -er '.value'
+          )"
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 30 \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary "@${RUNNER_TEMP}/planner-result.json" \
+            "https://dexcode.ai/api/v1/agent/runs/${RUN_ID}/result"
+          unset OIDC_TOKEN
