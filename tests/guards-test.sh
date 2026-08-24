@@ -427,6 +427,35 @@ assert_destructive_blocks "home, reached by descending and climbing back" \
   'rm -rf $HOME/projects/..'
 assert_destructive_blocks "everything beside home" \
   'rm -rf $HOME/../*'
+# The default word is `[^}]*`, so it cannot span an inner `${...}` — one pass
+# over a nested default left a reference behind, and an unresolved word is left
+# alone by design. Re-expanding until it settles resolves the nesting.
+# The harness that runs Claude Code tells it to end PR bodies with
+# "Generated with [Claude Code](https://claude.com/claude-code)", so the
+# markdown link is the likeliest spelling of all — and the bracket broke the
+# literal the pattern was looking for.
+assert_attribution_blocks "attribution as a markdown link in a commit" \
+  'git commit -m "fix: x
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"'
+assert_attribution_blocks "attribution as a markdown link in a PR body" \
+  'gh pr create --body "🤖 Generated with [Claude Code](https://claude.com/claude-code)"'
+assert_attribution_clean "this repo's own trailer" \
+  'git commit -m "fix: x
+
+Co-Authored-By: Dex <noreply@dexcode.ai>"'
+assert_attribution_clean "prose that merely names the tool" \
+  'git commit -m "docs: explain how Claude Code hooks work"'
+
+assert_destructive_blocks "a command word behind a nested default" \
+  '${X:-${X:-rm}} -rf /'
+assert_destructive_blocks "a command word behind three nested defaults" \
+  '${X:-${X:-${X:-rm}}} -rf /'
+assert_destructive_blocks "a target behind a nested default" \
+  'rm -rf ${X:-${X:-${X:-${X:-/}}}}'
+assert_destructive_clean "a nested default that resolves to something scoped" \
+  'rm -rf ${X:-${X:-./build}}'
+
 # `~` and `~+` were covered and `~name` was not, though it is the same
 # expansion reaching another account's home.
 assert_destructive_blocks "another account's home" \
