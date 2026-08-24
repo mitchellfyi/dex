@@ -30,8 +30,10 @@ source "$ROOT/lib/common.sh"
 cat > "$TMP_DIR/context-server.py" <<'PY'
 import json
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+
+from dex_test_http import LocalThreadingHTTPServer
 
 log_path = Path(sys.argv[1])
 port_path = Path(sys.argv[2])
@@ -58,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server = LocalThreadingHTTPServer(("127.0.0.1", 0), Handler)
 port_path.write_text(str(server.server_port), encoding="ascii")
 server.serve_forever()
 PY
@@ -67,9 +69,11 @@ SERVER_A_LOG="$TMP_DIR/server-a.log"
 SERVER_B_LOG="$TMP_DIR/server-b.log"
 SERVER_A_PORT_FILE="$TMP_DIR/server-a.port"
 SERVER_B_PORT_FILE="$TMP_DIR/server-b.port"
-python3 "$TMP_DIR/context-server.py" "$SERVER_A_LOG" "$SERVER_A_PORT_FILE" &
+PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$TMP_DIR/context-server.py" "$SERVER_A_LOG" "$SERVER_A_PORT_FILE" &
 SERVER_A_PID=$!
-python3 "$TMP_DIR/context-server.py" "$SERVER_B_LOG" "$SERVER_B_PORT_FILE" &
+PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$TMP_DIR/context-server.py" "$SERVER_B_LOG" "$SERVER_B_PORT_FILE" &
 SERVER_B_PID=$!
 wait_for_process_files "$SERVER_A_PID" "$SERVER_A_PORT_FILE"
 wait_for_process_files "$SERVER_B_PID" "$SERVER_B_PORT_FILE"

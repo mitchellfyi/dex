@@ -30,8 +30,10 @@ mkdir -p "$TMP_DIR/bin"
 cat > "$TMP_DIR/server.py" <<'PY'
 import json
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+
+from dex_test_http import LocalThreadingHTTPServer
 
 root = Path(sys.argv[1])
 requests_file = root / "requests.jsonl"
@@ -73,11 +75,12 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server = LocalThreadingHTTPServer(("127.0.0.1", 0), Handler)
 port_file.write_text(str(server.server_port), encoding="utf-8")
 server.serve_forever()
 PY
-python3 "$TMP_DIR/server.py" "$TMP_DIR" &
+PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$TMP_DIR/server.py" "$TMP_DIR" &
 SERVER_PID=$!
 wait_for_process_files "$SERVER_PID" "$TMP_DIR/port"
 

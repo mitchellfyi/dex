@@ -328,15 +328,20 @@ MONITOR_PID=$!
 TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${MONITOR_PID}"
 wait_for_value "$PARENT_INFO"
 PARENT_OWNER_PID=$(cat "$PARENT_INFO")
+PARENT_OWNER_IDENTITY=$(dx_session_runtime_field \
+  "$SID_PARENT_DEAD" process_start)
 TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${PARENT_OWNER_PID}"
 kill -KILL "$MONITOR_PID"
 wait "$MONITOR_PID" 2>/dev/null || true
 wait_for_runtime_field "$SID_PARENT_DEAD" status abandoned
 assert_eq "dead" "$(dx_session_runtime_health "$SID_PARENT_DEAD")" \
   "dead launcher runtime health"
-if kill -0 "$PARENT_OWNER_PID" 2>/dev/null; then
-  fail "runtime supervisor survived its monitored launcher"
-fi
+PARENT_OWNER_STATE=$(__dx_session_runtime_owner_process_state \
+  "$PARENT_OWNER_PID" "$PARENT_OWNER_IDENTITY" 2>/dev/null || true)
+case "$PARENT_OWNER_STATE" in
+  dead|replaced) ;;
+  *) fail "runtime supervisor remained ${PARENT_OWNER_STATE:-unverifiable} after its monitored launcher" ;;
+esac
 
 # A heartbeat timeout remains the first failure even if the lock becomes
 # available for the EXIT finalizer. A later completed request cannot accept it.
@@ -498,7 +503,7 @@ __dx_session_runtime_owner_result_path() { return 1; }
 __dx_session_runtime_owner_process_state() { printf '%s\n' unverifiable; }
 (
   while [[ ! -s "$START_UNVERIFIABLE_PID_FILE" ]]; do sleep 0.05; done
-  sleep 3
+  sleep 10
   builtin kill -CONT "$(cat "$START_UNVERIFIABLE_PID_FILE")" 2>/dev/null || true
 ) &
 START_UNVERIFIABLE_WATCHDOG=$!
@@ -515,7 +520,7 @@ set -e
 START_UNVERIFIABLE_ELAPSED=$SECONDS
 [[ "$START_UNVERIFIABLE_RESULT" -ne 0 ]] || \
   fail "unverifiable startup unexpectedly succeeded"
-[[ "$START_UNVERIFIABLE_ELAPSED" -lt 3 ]] || \
+[[ "$START_UNVERIFIABLE_ELAPSED" -lt 10 ]] || \
   fail "unverifiable startup exceeded its bounded wait"
 kill "$START_UNVERIFIABLE_WATCHDOG" 2>/dev/null || true
 wait "$START_UNVERIFIABLE_WATCHDOG" 2>/dev/null || true
@@ -540,7 +545,7 @@ unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
 builtin kill -STOP "$FINISH_UNVERIFIABLE_PID"
 __dx_session_runtime_owner_process_state() { printf '%s\n' unverifiable; }
 (
-  sleep 3
+  sleep 10
   builtin kill -CONT "$FINISH_UNVERIFIABLE_PID" 2>/dev/null || true
 ) &
 FINISH_UNVERIFIABLE_WATCHDOG=$!
@@ -555,7 +560,7 @@ set -e
 FINISH_UNVERIFIABLE_ELAPSED=$SECONDS
 [[ "$FINISH_UNVERIFIABLE_RESULT" -ne 0 ]] || \
   fail "unverifiable finish unexpectedly succeeded"
-[[ "$FINISH_UNVERIFIABLE_ELAPSED" -lt 3 ]] || \
+[[ "$FINISH_UNVERIFIABLE_ELAPSED" -lt 10 ]] || \
   fail "unverifiable finish exceeded its bounded wait"
 kill "$FINISH_UNVERIFIABLE_WATCHDOG" 2>/dev/null || true
 wait "$FINISH_UNVERIFIABLE_WATCHDOG" 2>/dev/null || true

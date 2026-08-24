@@ -96,8 +96,10 @@ start_server() {
   cat > "$server_dir/server.py" <<'PY'
 import json
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+
+from dex_test_http import LocalThreadingHTTPServer
 
 root = Path(sys.argv[1])
 headers_file = root / "headers.jsonl"
@@ -165,11 +167,12 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server = LocalThreadingHTTPServer(("127.0.0.1", 0), Handler)
 port_file.write_text(str(server.server_port), encoding="utf-8")
 server.serve_forever()
 PY
-  python3 "$server_dir/server.py" "$server_dir" &
+  PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 "$server_dir/server.py" "$server_dir" &
   SERVER_PID=$!
   SERVER_PIDS+=("$SERVER_PID")
   wait_for_process_files "$SERVER_PID" "$server_dir/port"

@@ -30,8 +30,10 @@ source "$ROOT/lib/common.sh"
 # A server that answers the profile with whatever status the test asks for.
 cat > "$TMP_DIR/server.py" <<'PYEOF'
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+
+from dex_test_http import LocalThreadingHTTPServer
 
 state = Path(sys.argv[1])
 
@@ -63,13 +65,14 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server = LocalThreadingHTTPServer(("127.0.0.1", 0), Handler)
 (state / "port").write_text(str(server.server_address[1]))
 server.serve_forever()
 PYEOF
 
 printf '200' > "$TMP_DIR/status"
-python3 "$TMP_DIR/server.py" "$TMP_DIR" &
+PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$TMP_DIR/server.py" "$TMP_DIR" &
 SERVER_PID=$!
 wait_for_process_files "$SERVER_PID" "$TMP_DIR/port"
 SERVER_URL="http://127.0.0.1:$(cat "$TMP_DIR/port")"

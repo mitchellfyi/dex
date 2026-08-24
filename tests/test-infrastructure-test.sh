@@ -14,6 +14,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Local HTTP fixtures must not wait for reverse DNS before they can publish
+# their ephemeral port. Hosted macOS runners can otherwise stall at bind time.
+PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+import socket
+from http.server import BaseHTTPRequestHandler
+
+from dex_test_http import LocalThreadingHTTPServer
+
+
+def reject_reverse_dns(host):
+    raise RuntimeError(f"unexpected reverse-DNS lookup for {host}")
+
+
+socket.getfqdn = reject_reverse_dns
+server = LocalThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
+try:
+    if server.server_name != "127.0.0.1":
+        raise SystemExit(f"unexpected fixture server name: {server.server_name}")
+    if not isinstance(server.server_port, int) or server.server_port <= 0:
+        raise SystemExit(f"unexpected fixture server port: {server.server_port}")
+finally:
+    server.server_close()
+PY
+
 # A live fixture that publishes every requested readiness file succeeds.
 ready_file="$TMP_DIR/ready"
 (

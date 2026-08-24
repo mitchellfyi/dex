@@ -35,8 +35,10 @@ cat > "$TMP_DIR/server.py" <<'PY'
 import json
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+
+from dex_test_http import LocalThreadingHTTPServer
 
 root = Path(sys.argv[1])
 origin_requests = root / "origin-requests.jsonl"
@@ -69,7 +71,7 @@ class SinkHandler(BaseHTTPRequestHandler):
         return
 
 
-sink = ThreadingHTTPServer(("127.0.0.1", 0), SinkHandler)
+sink = LocalThreadingHTTPServer(("127.0.0.1", 0), SinkHandler)
 
 
 class OriginHandler(BaseHTTPRequestHandler):
@@ -84,14 +86,15 @@ class OriginHandler(BaseHTTPRequestHandler):
         return
 
 
-origin = ThreadingHTTPServer(("127.0.0.1", 0), OriginHandler)
+origin = LocalThreadingHTTPServer(("127.0.0.1", 0), OriginHandler)
 (root / "origin-port").write_text(str(origin.server_port), encoding="utf-8")
 (root / "sink-port").write_text(str(sink.server_port), encoding="utf-8")
 threading.Thread(target=sink.serve_forever, daemon=True).start()
 origin.serve_forever()
 PY
 
-python3 "$TMP_DIR/server.py" "$TMP_DIR" &
+PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$TMP_DIR/server.py" "$TMP_DIR" &
 SERVER_PID=$!
 wait_for_process_files "$SERVER_PID" "$TMP_DIR/origin-port" "$TMP_DIR/sink-port"
 
