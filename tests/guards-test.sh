@@ -202,7 +202,24 @@ assert_triggers "Rust-style loop with await expression" \
 assert_triggers "brace loop without parenthesized header" \
   'for item in items { await fetch(item) }'
 
+assert_triggers "do-while with await" \
+  'do { await step() } while (more)'
+assert_triggers "do-while across lines" \
+  'do {
+  await step();
+} while (queue.length);'
+
 # --- should stay clean ---
+# Swift spells error handling the same way a do-while starts, and Ruby spells a
+# block that way; only the `while` after the closing brace tells them apart.
+assert_clean "Swift do-catch, not a loop" \
+  'do { let x = try await f() } catch { log(e) }'
+assert_clean "a Ruby each block" \
+  'items.each do |i|
+  await_thing(i)
+end'
+assert_clean "an unclosed do fragment" \
+  'do { await step()'
 assert_clean "batched Promise.all" \
   'const r = await Promise.all(items.map((i) => repo.find(i.id)))'
 assert_clean "collect promises, await after loop" \

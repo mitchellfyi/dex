@@ -1864,7 +1864,7 @@ def has_raw_codex_delegation(text, depth=0, cwd=None):
 
 _LOOP_HEADER_RE = re.compile(
     r'(?<![\w$])(?:(?P<async_prefix>async|await)\s+)?'
-    r'(?P<kind>foreach|for|while)(?:\s+(?P<await_suffix>await)\b)?'
+    r'(?P<kind>foreach|for|while|do)(?:\s+(?P<await_suffix>await)\b)?'
     r'(?![\w$])'
 )
 _AWAIT_TOKEN_RE = re.compile(r'(?<![\w$])await(?![\w$])')
@@ -1985,6 +1985,21 @@ def loop_body_after_header(text, header):
     n = len(text)
     while i < n and text[i].isspace():
         i += 1
+
+    if header.group('kind') == 'do':
+        # `do { … } while (…)` is a loop and awaiting in it serialises the same
+        # way. Swift's `do { try await … } catch` is not a loop and spells its
+        # header identically, as does Ruby's `each do |x|`; only the tail tells
+        # them apart. So this takes the braced form, finds its close, and wants
+        # `while` after it — an unclosed fragment stays unflagged rather than
+        # guessing.
+        if i >= n or text[i] != '{':
+            return None
+        body = matching_brace_body(text, i)
+        close = i + 1 + len(body)
+        if close >= n or not re.match(r'\s*while(?![\w$])', text[close + 1:]):
+            return None
+        return body
 
     if i < n and text[i] == '(':
         i = matching_parenthesized_header_end(text, i)

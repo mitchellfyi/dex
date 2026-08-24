@@ -15,4 +15,4 @@ Prefer one of:
 - **Batch the work** - collect inputs and use a bulk or set-based operation when the API supports it.
 - **Parallelize independent calls** - collect tasks in the loop and await them together after it, using a concurrency limit when the list is large.
 
-Keep the sequential `await` when each iteration depends on the previous one, or when you are deliberately rate-limiting. Add a short comment for intentional sequencing. Async iteration forms and awaits inside nested closures or methods are not flagged.
+Keep the sequential `await` when each iteration depends on the previous one, or when you are deliberately rate-limiting. Add a short comment for intentional sequencing. Async iteration forms and awaits inside nested closures or methods are not flagged. `do { … } while (…)` counts as a loop; Swift's `do { … } catch` and Ruby's `each do |x|` do not, since neither is followed by `while`.
