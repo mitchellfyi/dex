@@ -108,6 +108,27 @@ def parse_guard(filepath):
     if not meta or not meta.get('enabled', True):
         return None
 
+    # Only the exact string `block` denies; everything else is read as a warn.
+    # So `action: Block`, `action: deny` and a plain typo all used to turn a
+    # guard meant to stop a command into one that comments on it, silently.
+    # That is the same failure the fence fix above prevents, reached by a
+    # different road: a block guard quietly becoming a warn guard.
+    #
+    # Case is unambiguous intent and is corrected. Anything else falls back to
+    # warn — guessing at a misspelling could start denying commands a user has
+    # been running all along — but it says so, which is the part that was
+    # missing.
+    raw_action = meta.get('action', 'warn')
+    action = str(raw_action).strip().lower()
+    if action not in ('warn', 'block'):
+        print(
+            f"[guard:{meta.get('name', filepath)}] '{raw_action}' is not a known action; "
+            f"treating it as warn. Use 'warn' or 'block'.",
+            file=sys.stderr,
+        )
+        action = 'warn'
+    meta['action'] = action
+
     meta['message'] = content[fence.end():].strip()
     meta['source'] = filepath
     return meta

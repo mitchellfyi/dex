@@ -41,7 +41,7 @@ Supports **markdown** formatting.
 | `event` | yes | bash, file, commit, all | When to evaluate this guard |
 | `pattern` | yes unless `detector` is set | Python regex | Pattern to match against tool input |
 | `detector` | no | built-in detector id | Use a built-in parser instead of a regex for syntax-sensitive checks |
-| `action` | no | warn, block | Warn returns hook context; block prevents the action. Defaults to `warn` when omitted, so a blocking guard must say `action: block` explicitly |
+| `action` | no | warn, block | Warn returns hook context; block prevents the action. Defaults to `warn` when omitted, so a blocking guard must say `action: block` explicitly. Case is ignored, so `Block` blocks; any other value warns and says on stderr that it was not understood, rather than silently becoming a warn guard |
 | `match` | no | all, path | `path` checks the file path only, for `event: file` guards about a location (default: all) |
 | `case_sensitive` | no | true/false/yes/no | If true, pattern matching is case-sensitive (default: false) |
 | `allow_pattern` | no | Python regex | If this pattern matches, suppress this guard even when `pattern` matches |

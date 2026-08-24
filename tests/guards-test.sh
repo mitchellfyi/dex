@@ -1233,6 +1233,50 @@ else
   fail=$((fail + 1))
 fi
 
+# --- a guard whose action is misspelled ---
+# Only the exact string `block` denied, so `action: Block` or `action: deny`
+# turned a guard meant to stop a command into one that comments on it, with
+# nothing said. Same failure the frontmatter fence fix prevents, reached by a
+# different road. Needs a synthetic guard, so it runs against a copied DEX_DIR.
+action_probe() {
+  local action_line="$1" probe_dir
+  probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dex-guard-action.XXXXXX")"
+  cp -R "$ROOT/hooks" "$probe_dir/hooks"
+  cp -R "$ROOT/lib" "$probe_dir/lib"
+  # The caller passes the bare value and printf supplies the newline. Passing
+  # the newline inside the argument put a literal backslash-n into the
+  # frontmatter, which made the file malformed rather than misspelled — the
+  # test then proved nothing about the action at all.
+  printf -- '---\nname: zz-action-probe\nenabled: true\nevent: bash\npattern: frobnicate\n%s\n---\n\nPROBE BODY\n' \
+    "$action_line" > "$probe_dir/hooks/guards/zz-action-probe.md"
+  set +e
+  ACTION_OUT="$(printf '%s' "$(mkbashpayload 'frobnicate the widget')" \
+    | env DEX_GUARD_EVENT=bash DX_PROVIDER_ENGINE=codex-plugin DEX_DIR="$probe_dir" \
+      python3 "$probe_dir/hooks/guard-handler.py" 2>&1)"
+  set -e
+  rm -rf "$probe_dir"
+}
+
+assert_action() {   # label, action line, expect-block(yes/no), expect-diagnostic(yes/no)
+  action_probe "$2"
+  local blocked=no told=no
+  [[ "${ACTION_OUT}" == *'BLOCKED'* ]] && blocked=yes
+  [[ "${ACTION_OUT}" == *'is not a known action'* ]] && told=yes
+  if [[ "$blocked" == "$3" && "$told" == "$4" ]]; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (%s): blocked=%s want %s, diagnostic=%s want %s\n' "$1" "$blocked" "$3" "$told" "$4" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_action "action: block still blocks"           'action: block' yes no
+assert_action "action: warn still warns"             'action: warn'  no  no
+assert_action "a capitalised Block blocks"           'action: Block' yes no
+assert_action "an unknown action warns and says so"  'action: deny'  no  yes
+assert_action "a misspelled block warns and says so" 'action: bock'  no  yes
+assert_action "an omitted action is a quiet warn"    ''              no  no
+
 printf 'guards-test: %d passed, %d failed\n' "$pass" "$fail"
 if [[ "$fail" -ne 0 ]]; then
   exit 1
