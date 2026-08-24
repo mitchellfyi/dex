@@ -187,7 +187,10 @@ runtime_contract_files=(
   lib/completion.sh
   lib/review.sh
   lib/review-controller.sh
+  lib/review-loop.sh
   lib/review-policy.sh
+  lib/session-catalog.sh
+  lib/session-runtime.sh
 )
 for runtime_contract_file in "${runtime_contract_files[@]}"; do
   cp "$ROOT/$runtime_contract_file" "$runtime_source/$runtime_contract_file"
@@ -206,6 +209,9 @@ assert_eq "$runtime_source_sha" "$runtime_sha" "runtime commit"
 [[ -x "$runtime_dir/research/review-loop/launch.zsh" ]] || fail "sanitized launcher is missing"
 [[ -f "$runtime_dir/research/review-loop/agent-observer.sh" ]] || fail "sanitized observer is missing"
 [[ -f "$runtime_dir/lib/completion.sh" ]] || fail "sanitized completion runtime is missing"
+[[ -f "$runtime_dir/lib/review-loop.sh" ]] || fail "sanitized review loop runtime is missing"
+[[ -f "$runtime_dir/lib/session-catalog.sh" ]] || fail "sanitized session catalog runtime is missing"
+[[ -f "$runtime_dir/lib/session-runtime.sh" ]] || fail "sanitized session lease runtime is missing"
 [[ ! -e "$runtime_dir/research/review-loop/scenarios" ]] || fail "runtime contains scenario truth"
 actual_runtime_roots=$(find "$runtime_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort | tr '\n' ' ')
 # scripts/ is in the runtime because lib/ imports helpers from it. Widening

@@ -41,6 +41,20 @@ __dx_review_nonce() {
   [[ -n "$nonce" ]] || nonce="${EPOCHSECONDS:-$(date +%s)}-$$-${RANDOM}"
   printf '%s\n' "$nonce"
 }
+__dx_review_write_child_provenance() {
+  local parent_session_id="$1" child_session_id="$2" child_kind="$3"
+  dx_session_id_valid "$parent_session_id" || return 1
+  dx_session_id_valid "$child_session_id" || return 1
+  case "$child_kind" in
+    assessment|pass|review) ;;
+    *) return 1 ;;
+  esac
+  [[ "$child_session_id" == "${parent_session_id}-${child_kind}-"* ]] || return 1
+  dx_meta_write "$child_session_id" \
+    "session_role=review-child" \
+    "parent_session_id=$parent_session_id" \
+    "child_kind=$child_kind"
+}
 __dx_review_standalone_session_id() {
   local base_session_id="$1" digest
   digest=$(printf '%s' "$base_session_id" | cksum 2>/dev/null | awk '{print $1}') || digest=""
@@ -711,9 +725,20 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
       assessment_output_file=$(dx_review_result_file "$assessment_session_id")
       assessment_criteria_file=$(dx_review_criteria_file "$assessment_session_id")
       dx_cleanup_session "$assessment_session_id"
+      if ! __dx_review_write_child_provenance \
+        "$session_id" "$assessment_session_id" assessment; then
+        current_review_child_session=""
+        dx_cleanup_session "$assessment_session_id"
+        dx_error "Could not record the risk assessor's session metadata."
+        __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+          "$standalone_review_prompt" "$session_id" "$review_phase" \
+          "Review paused" blocked review_child_provenance_failed
+        return 1
+      fi
       if [[ "$review_criteria_binding" != "standalone" ]] &&
          ! dx_review_copy_criteria "$parent_criteria_file" "$assessment_criteria_file" "$review_criteria_binding"; then
         current_review_child_session=""
+        dx_cleanup_session "$assessment_session_id"
         dx_error "Could not prepare the approved criteria for the risk assessor."
         __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
           "$standalone_review_prompt" "$session_id" "$review_phase" \
@@ -988,6 +1013,13 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
 
     mkdir -p "$DX_LOOP_DIR"
     dx_cleanup_session "$pass_session_id"
+    if ! __dx_review_write_child_provenance "$session_id" "$pass_session_id" pass; then
+      terminal_reason="review_child_provenance_failed"
+      clean_passes=0
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    fi
     if [[ "$review_criteria_binding" != "standalone" ]] &&
        ! dx_review_copy_criteria "$parent_criteria_file" "$pass_criteria_file" "$review_criteria_binding"; then
       terminal_reason="review_criteria_copy_failed"

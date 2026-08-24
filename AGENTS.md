@@ -25,7 +25,7 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks, guard handler, shared shell parser
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (24 modules sourced by common.sh; see the module table below)
+lib/                 Shared shell libraries (26 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (0-6 + prompt-loop)
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
@@ -88,7 +88,8 @@ Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`
 `attribution.sh`, `codex.sh`, `completion.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
 `lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
 `provider.sh`, `review.sh`, `review-controller.sh`, `review-loop.sh`,
-`review-policy.sh`, `rtk.sh`, `run-spec.sh`, `session.sh`, `ui-capture.sh`,
+`review-policy.sh`, `rtk.sh`, `run-spec.sh`, `session-catalog.sh`, `session-runtime.sh`,
+`session.sh`, `ui-capture.sh`,
 `worker.sh`, and `worktree.sh`.
 
 ### Output
@@ -411,6 +412,8 @@ pattern:
 | `review-policy.sh` | Trusted default-branch clean-pass policy resolution and binding | `dx_review_policy_resolve()`, `dx_review_policy_for_tier()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
 | `run-spec.sh` | Structured headless run spec validation, fetch, normalization, and journal prep | `dx_run_spec_normalize()`, `dx_run_spec_fetch()`, `dx_run_spec_prepare_journal()` |
+| `session-catalog.sh` | Read-only, repo-scoped lifecycle inventory and exact selector resolution | `dx_session_catalog_records()`, `dx_session_catalog_record()`, `dx_session_catalog_select()` |
+| `session-runtime.sh` | PID-reuse-safe lifecycle runtime leases and health | `dx_session_runtime_start()`, `dx_session_runtime_heartbeat()`, `dx_session_runtime_finish()` |
 | `session.sh` | Session ID derivation, state file paths | `dx_session_id()`, `dx_provider_state_file()`, `dx_cleanup_session()` |
 | `output.sh` | Formatted user-facing output | `dx_done()`, `dx_ok()`, `dx_warn()`, `dx_error()`, etc. |
 | `ui-capture.sh` | Playwright/UI capture tooling, artifact paths, MCP bootstrap | `dx_install_ui_capture_tooling()`, `dx_ui_capture_run_dir()`, `dx_ui_capture_playwright_ready()` |

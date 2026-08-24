@@ -5,7 +5,8 @@
 #   source "$DEX_DIR/lib/common.sh"
 #
 # Provides: DEX_DIR, DX_STATE_DIR, DX_LOOP_DIR, DX_ARTIFACT_DIR, DX_TOOL_DIR, DX_RUN_ROOT, dx_repo_root()
-# Also sources: lib/lock.sh, lib/git.sh, lib/session.sh, lib/completion.sh, lib/output.sh, lib/worktree.sh,
+# Also sources: lib/lock.sh, lib/git.sh, lib/session.sh, lib/completion.sh,
+# lib/session-runtime.sh, lib/session-catalog.sh, lib/output.sh, lib/worktree.sh,
 # lib/provider.sh, lib/codex.sh, lib/dexcode.sh, lib/ui-capture.sh, lib/rtk.sh,
 # lib/events.sh, lib/review.sh, lib/review-policy.sh, lib/review-controller.sh, lib/review-loop.sh, lib/factory.sh,
 # lib/run-spec.sh, lib/agent-tools.sh, lib/maintenance.sh, lib/project-state.sh,
@@ -135,6 +136,8 @@ __dx_require_lib lock.sh
 __dx_require_lib git.sh
 __dx_require_lib session.sh
 __dx_require_lib completion.sh
+__dx_require_lib session-runtime.sh
+__dx_require_lib session-catalog.sh
 __dx_require_lib output.sh
 __dx_require_lib worktree.sh
 __dx_require_lib provider.sh

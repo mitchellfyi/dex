@@ -64,8 +64,11 @@ review-timeout-test.sh	serial	all	1200	hermetic
 rtk-install-test.sh	fast	all	600	hermetic
 rtk-uninstall-test.sh	fast	all	600	hermetic
 run-spec-test.sh	service	all	900	hermetic
+session-catalog-core-test.sh	fast	all	600	hermetic
 session-end-ownership-test.sh	fast	all	600	hermetic
 session-git-test.sh	fast	all	600	hermetic
+session-runtime-core-test.sh	fast	all	600	hermetic
+session-runtime-portability-test.sh	fast	all	600	hermetic
 standalone-provider-test.sh	slow	all	1200	hermetic
 status-line-test.sh	fast	all	600	hermetic
 test-command-cli-test.sh	fast	all	600	hermetic

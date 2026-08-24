@@ -15,24 +15,121 @@
 # passed to Claude via DEX_SESSION_ID env var so the stop hook resolves
 # to the same unique ID (see the SESSION_ID bootstrap in hooks/phase-loop.sh).
 
-# dx_session_repo_key
-# Derive a filesystem-safe repo key from the main repo root. The basename keeps
-# state files readable; the cksum component makes same-named repos distinct.
-dx_session_repo_key() {
-  local root name slug hash
-  root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-  if [[ "$root" == *"/.dex/worktrees/"* ]]; then
-    root="${root%%/.dex/worktrees/*}"
-  fi
-  [[ -n "$root" ]] || root="${PWD:-unknown}"
+# __dx_session_canonical_git_dir <git-dir|git-common-dir>
+# Resolve Git's administrative path without depending on the spelling of the
+# checkout path. Linked worktrees need the common directory to share state.
+__dx_session_canonical_git_dir() {
+  local mode="${1:-}" option raw_dir
+  case "$mode" in
+    git-dir) option="--absolute-git-dir" ;;
+    git-common-dir) option="--git-common-dir" ;;
+    *) return 1 ;;
+  esac
 
-  name=$(basename "$root")
+  if ! raw_dir=$(git rev-parse --path-format=absolute "$option" 2>/dev/null); then
+    raw_dir=$(git rev-parse "$option" 2>/dev/null) || return 1
+    case "$raw_dir" in
+      /*) ;;
+      *) raw_dir="${PWD:-.}/$raw_dir" ;;
+    esac
+  fi
+  [[ -d "$raw_dir" ]] || return 1
+  (cd "$raw_dir" 2>/dev/null && pwd -P)
+}
+
+__dx_session_canonical_toplevel() {
+  local raw_root
+  if ! raw_root=$(git rev-parse --path-format=absolute --show-toplevel 2>/dev/null); then
+    raw_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+  fi
+  [[ -d "$raw_root" ]] || return 1
+  (cd "$raw_root" 2>/dev/null && pwd -P)
+}
+
+# dx_session_repo_root
+# Print the canonical main-worktree root for the current repository. A linked
+# worktree outside Dex's directory still resolves to the checkout that owns its
+# common Git directory.
+dx_session_repo_root() {
+  local common_dir git_dir current_root candidate_root candidate_common configured_root listed_root inside_worktree
+  common_dir=$(__dx_session_canonical_git_dir git-common-dir) || return 1
+
+  if [[ "${common_dir##*/}" == ".git" ]]; then
+    candidate_root="${common_dir%/.git}"
+    if candidate_common=$(cd "$candidate_root" 2>/dev/null \
+      && __dx_session_canonical_git_dir git-common-dir); then
+      if [[ "$candidate_common" == "$common_dir" ]]; then
+        (cd "$candidate_root" 2>/dev/null && pwd -P)
+        return
+      fi
+    fi
+  fi
+
+  if git_dir=$(__dx_session_canonical_git_dir git-dir) \
+    && current_root=$(__dx_session_canonical_toplevel) \
+    && [[ "$git_dir" == "$common_dir" ]]; then
+    printf '%s\n' "$current_root"
+    return
+  fi
+
+  if ! configured_root=$(git config --path --get core.worktree 2>/dev/null); then
+    configured_root=""
+  fi
+  if [[ -n "$configured_root" && -d "$configured_root" ]]; then
+    candidate_root=$(cd "$configured_root" 2>/dev/null && pwd -P) || return 1
+    candidate_common=$(cd "$candidate_root" 2>/dev/null \
+      && __dx_session_canonical_git_dir git-common-dir) || return 1
+    if [[ "$candidate_common" == "$common_dir" ]]; then
+      printf '%s\n' "$candidate_root"
+      return
+    fi
+  fi
+
+  listed_root=$(git worktree list --porcelain 2>/dev/null \
+    | awk 'NR == 1 && /^worktree / { sub(/^worktree /, ""); print; exit }') || return 1
+  [[ -n "$listed_root" && -d "$listed_root" ]] || return 1
+  candidate_root=$(cd "$listed_root" 2>/dev/null && pwd -P) || return 1
+  inside_worktree=$(git -C "$candidate_root" rev-parse --is-inside-work-tree 2>/dev/null) || return 1
+  [[ "$inside_worktree" == "true" ]] || return 1
+  candidate_common=$(cd "$candidate_root" 2>/dev/null \
+    && __dx_session_canonical_git_dir git-common-dir) || return 1
+  [[ "$candidate_common" == "$common_dir" ]] || return 1
+  printf '%s\n' "$candidate_root"
+}
+
+# dx_session_repo_key
+# Derive a filesystem-safe key from the canonical common Git directory. Normal
+# repositories retain their established root-based digest, while alternate Git
+# directory layouts use the common directory itself as the stable identity.
+dx_session_repo_key() {
+  local common_dir repo_root repo_identity name slug hash
+  if common_dir=$(__dx_session_canonical_git_dir git-common-dir); then
+    if ! repo_root=$(dx_session_repo_root); then
+      repo_root=""
+    fi
+    if [[ -n "$repo_root" && "$common_dir" == "$repo_root/.git" ]]; then
+      repo_identity="$repo_root"
+    else
+      repo_identity="$common_dir"
+    fi
+  else
+    if ! repo_root=$(__dx_session_canonical_toplevel); then
+      repo_root=$(cd "${PWD:-.}" 2>/dev/null && pwd -P) || repo_root="${PWD:-unknown}"
+    fi
+    repo_identity="$repo_root"
+  fi
+
+  if [[ -n "$repo_root" ]]; then
+    name=$(basename "$repo_root")
+  else
+    name=$(basename "$repo_identity")
+  fi
   slug=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')
   [[ -n "$slug" ]] || slug="repo"
 
   hash=""
   if command -v cksum >/dev/null 2>&1; then
-    hash=$(printf '%s' "$root" | cksum 2>/dev/null | awk '{print $1}') || hash=""
+    hash=$(printf '%s' "$repo_identity" | cksum 2>/dev/null | awk '{print $1}') || hash=""
   fi
   [[ -n "$hash" ]] || hash="nohash"
 
@@ -46,30 +143,63 @@ dx_scoped_session_id() {
   printf '%s-%s\n' "$(dx_session_repo_key)" "$raw_id"
 }
 
+# __dx_session_dex_worktree_name <toplevel> <common_dir>
+# Print the directory name only when the checkout is a direct Dex worktree of
+# the repository that owns the common Git directory.
+__dx_session_dex_worktree_name() {
+  local worktree_root="$1" common_dir="$2" parent_dir candidate_root candidate_common
+  parent_dir=$(dirname "$worktree_root")
+  case "$parent_dir" in
+    */.dex/worktrees) ;;
+    *) return 1 ;;
+  esac
+
+  candidate_root="${parent_dir%/.dex/worktrees}"
+  [[ -n "$candidate_root" && -d "$candidate_root" ]] || return 1
+  candidate_common=$(cd "$candidate_root" 2>/dev/null \
+    && __dx_session_canonical_git_dir git-common-dir) || return 1
+  [[ "$candidate_common" == "$common_dir" ]] || return 1
+  basename "$worktree_root"
+}
+
 # dx_session_id [wt_name]
 # Derive a stable session identifier used to key state and loop files.
 #
 # With argument:  "repo-<name>-<hash>-worktree-<wt_name>" — used by dx.sh
 # which knows the name.
 # Without argument: auto-detect from the current git directory:
-#   - If inside a dex worktree (path contains /.dex/worktrees/),
-#     derive from the directory name. This is stable even if the branch
-#     is renamed by the SessionStart hook.
+#   - If inside a linked worktree, derive from its registered Git identity.
+#     Dex-managed worktrees retain the worktree directory name used by dx.sh.
 #   - Otherwise, fall back to a readable branch slug plus a digest of the exact
 #     branch name, so names such as feature/foo and feature-foo cannot collide.
 # shellcheck disable=SC2120  # Intentionally dual-mode: called with args from dx.sh, without from hooks
 dx_session_id() {
-  local raw_id scoped_id
+  local raw_id scoped_id toplevel git_dir common_dir worktree_name worktree_slug worktree_hash
   if [[ $# -ge 1 ]]; then
     raw_id="worktree-${1}"
     scoped_id=$(dx_scoped_session_id "$raw_id")
     printf '%s\n' "$scoped_id"
     return
   fi
-  local toplevel
-  toplevel=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-  if [[ "$toplevel" == *"/.dex/worktrees/"* ]]; then
-    raw_id="worktree-$(basename "$toplevel")"
+  if ! toplevel=$(__dx_session_canonical_toplevel); then
+    toplevel=""
+  fi
+  if git_dir=$(__dx_session_canonical_git_dir git-dir) \
+    && common_dir=$(__dx_session_canonical_git_dir git-common-dir) \
+    && [[ "$git_dir" != "$common_dir" ]]; then
+    if worktree_name=$(__dx_session_dex_worktree_name "$toplevel" "$common_dir"); then
+      raw_id="worktree-${worktree_name}"
+    else
+      worktree_name=$(basename "$git_dir")
+      worktree_slug=$(printf '%s' "$worktree_name" | LC_ALL=C sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//')
+      [[ -n "$worktree_slug" ]] || worktree_slug="worktree"
+      if [[ "$worktree_slug" != "$worktree_name" || ${#worktree_slug} -gt 64 ]]; then
+        worktree_hash=$(printf '%s' "$worktree_name" | cksum 2>/dev/null | awk '{print $1}') || worktree_hash=""
+        [[ -n "$worktree_hash" ]] || worktree_hash="nohash"
+        worktree_slug="$(printf '%.64s' "$worktree_slug")-${worktree_hash}"
+      fi
+      raw_id="worktree-${worktree_slug}"
+    fi
   else
     local branch branch_slug branch_hash
     branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)

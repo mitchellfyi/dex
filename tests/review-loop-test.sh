@@ -423,11 +423,19 @@ run_case() {
           "$verification_hash" "$verification_outcome" "$verification_ref"
       }
 
+      __test_child_provenance() {
+        local expected_kind="$1"
+        [[ "$(dx_meta_read "$DEX_SESSION_ID" session_role)" == "review-child" ]] || return 1
+        [[ "$(dx_meta_read "$DEX_SESSION_ID" parent_session_id)" == "$CASE_SESSION_ID" ]] || return 1
+        [[ "$(dx_meta_read "$DEX_SESSION_ID" child_kind)" == "$expected_kind" ]] || return 1
+      }
+
       __dx_claude() {
         local invocation_args="$*"
         if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-}" == "1" ]]; then
           local assessment_index assessment_criteria_path assessment_binding assessment_policy_record
           local assessment_small assessment_normal assessment_complex assessment_policy_binding
+          __test_child_provenance assessment || return 96
           assessment_index=$(awk -F "\t" '\''$1 == "assessor" { count++ } END { print count + 1 }'\'' "$CASE_CALLS")
           printf "assessor\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
           assessment_policy_record=$(dx_review_policy_resolve "$CASE_REPO") || return 96
@@ -475,6 +483,7 @@ run_case() {
         local pass_index result context_path criteria_path criteria_evidence evidence_path sentinel contamination=0 context_supplied=0 criteria_ok=0 hash apply_fix=0 should_timeout=0
         local expected_pass_binding omit_criteria_evidence=0
         local evidence_checks=pass evidence_verifier=pass evidence_findings=0 evidence_fixes=0 coverage
+        __test_child_provenance pass || return 96
         case "$CASE_PASS_MODE" in
           timeout) should_timeout=1 ;;
           timeout-once)
