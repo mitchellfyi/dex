@@ -204,6 +204,9 @@ perform_completion_action() { # <action> <purpose> <phase> <provider args...>
         dx_completion_write_receipt "$session_id" "$generation" 2>/dev/null || true
       fi
       ;;
+    lost-active)
+      rm -f "$(dx_active_file "$session_id")"
+      ;;
     *)
       printf 'unknown completion fixture action: %s\n' "$action" >&2
       return 2
@@ -665,9 +668,11 @@ touch "$(dx_active_file "$FINALIZE_SESSION")" \
 dx_lifecycle_control_lock_acquire "$FINALIZE_SESSION"
 set +e
 env TEST_FINALIZE_SESSION="$FINALIZE_SESSION" \
+  TEST_FINALIZE_GENERATION="$FINALIZE_GENERATION" \
   DEX_STANDALONE_FINALIZE_LOCK_ATTEMPTS=1 zsh -fc '
   source "$DEX_DIR/dx.sh"
-  __dx_finalize_standalone_pause "$TEST_FINALIZE_SESSION"
+  __dx_finalize_standalone_pause "$TEST_FINALIZE_SESSION" standalone \
+    dxloop-plan 1 "$TEST_FINALIZE_GENERATION"
 '
 FINALIZE_RC=$?
 set -e
@@ -727,7 +732,7 @@ case "$action" in
   legacy|corrupt-legacy)
     bash "$DEX_DIR/hooks/phase-loop.sh" || true
     ;;
-  missing|max|wrong-generation|wrong-context|replay) ;;
+  missing|max|wrong-generation|wrong-context|replay|lost-active) ;;
 esac
 SH
 chmod +x "$TMP_DIR/bin/claude"
@@ -783,6 +788,32 @@ run_expect_failure "$TMP_DIR/dxloop-claude-missing.out" \
   zsh -fc 'source "$DEX_DIR/dx.sh"; cd "$TEST_REPO"; dxloop "exercise missing cleanup"'
 assert_contains "dxloop paused during planning: the provider exited without a completion receipt" \
   "$TMP_DIR/dxloop-claude-missing.out"
+assert_no_live_completion_authority
+assert_no_standalone_runtime_files
+
+: > "$TEST_ROUTE_FILE"
+run_expect_failure "$TMP_DIR/dxloop-claude-plan-lost-active.out" \
+  env TEST_CLAUDE_PLAN_RECEIPT=lost-active DX_PROVIDER_PROFILE=claude-subscription \
+  zsh -fc 'source "$DEX_DIR/dx.sh"; cd "$TEST_REPO"; dxloop "lose planning activation"'
+assert_contains "provider exited without a completion receipt" \
+  "$TMP_DIR/dxloop-claude-plan-lost-active.out"
+assert_not_contains "dxloop complete" "$TMP_DIR/dxloop-claude-plan-lost-active.out"
+assert_eq "1" "$(grep -Fxc claude "$TEST_ROUTE_FILE")" \
+  "lost planning activation provider count"
+assert_no_live_completion_authority
+assert_no_standalone_runtime_files
+
+: > "$TEST_ROUTE_FILE"
+run_expect_failure "$TMP_DIR/dxloop-claude-prompt-lost-active.out" \
+  env TEST_CLAUDE_PLAN_RECEIPT=complete \
+  TEST_CLAUDE_PROMPT_RECEIPT=lost-active \
+  DX_PROVIDER_PROFILE=claude-subscription \
+  zsh -fc 'source "$DEX_DIR/dx.sh"; cd "$TEST_REPO"; dxloop "lose implementation activation"'
+assert_contains "provider exited without a completion receipt" \
+  "$TMP_DIR/dxloop-claude-prompt-lost-active.out"
+assert_not_contains "dxloop complete" "$TMP_DIR/dxloop-claude-prompt-lost-active.out"
+assert_eq "2" "$(grep -Fxc claude "$TEST_ROUTE_FILE")" \
+  "lost implementation activation provider count"
 assert_no_live_completion_authority
 assert_no_standalone_runtime_files
 

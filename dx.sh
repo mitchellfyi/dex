@@ -3044,16 +3044,44 @@ dexter() {
 
 unalias __dx_finalize_standalone_pause 2>/dev/null; unfunction __dx_finalize_standalone_pause 2>/dev/null
 __dx_finalize_standalone_pause() {
-  local session_id="$1" control_snapshot control_action cleanup_rc=0
+  local session_id="$1" completion_mode="$2" completion_purpose="$3"
+  local completion_phase="$4" completion_generation="$5"
+  local control_snapshot control_action cleanup_rc=0 receipt_file
   local finalize_attempts="${DEX_STANDALONE_FINALIZE_LOCK_ATTEMPTS:-400}"
+  [[ "$completion_generation" =~ ^[0-9a-f]{32}$ ]] || return 2
+  dx_completion_context_valid "$completion_mode" "$completion_purpose" \
+    "$completion_phase" || return 2
+  receipt_file=$(dx_completion_receipt_file "$session_id" \
+    "$completion_generation")
   dx_lifecycle_control_lock_acquire "$session_id" "$finalize_attempts" || return 2
   control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
   control_action=$(dx_lifecycle_control_value "$control_snapshot" action)
   if [[ ! -f "$(dx_paused_file "$session_id")" \
     && ! -f "$(dx_pause_state_file "$session_id")" \
     && "$control_action" != "pause" && "$control_action" != "cancel" ]]; then
+    # A successful Stop consumes the exact expectation and receipt, then
+    # retires its launch context. Missing activation alone is not proof that
+    # the completion gate ran.
+    if [[ ! -e "$(dx_completion_expectation_file "$session_id")" \
+      && ! -L "$(dx_completion_expectation_file "$session_id")" \
+      && ! -e "$receipt_file" && ! -L "$receipt_file" \
+      && ! -e "$(dx_loop_config_file "$session_id")" \
+      && ! -L "$(dx_loop_config_file "$session_id")" \
+      && ! -e "$(dx_active_file "$session_id")" \
+      && ! -L "$(dx_active_file "$session_id")" ]]; then
+      dx_lifecycle_control_lock_release "$session_id" || return 2
+      return 1
+    fi
+
+    # The provider returned without completing the strict gate. Revoke the
+    # outstanding generation while the transition decision is still locked.
+    __dx_abandon_completion_state "$session_id" || cleanup_rc=1
+    rm -f "$(dx_active_file "$session_id")" \
+      "$(dx_owner_file "$session_id")" \
+      "$(dx_loop_config_file "$session_id")" 2>/dev/null || cleanup_rc=1
     dx_lifecycle_control_lock_release "$session_id" || return 2
-    return 1
+    [[ "$cleanup_rc" -eq 0 ]] || return 2
+    return 3
   fi
 
   __dx_abandon_completion_state "$session_id" || cleanup_rc=1
@@ -3126,12 +3154,11 @@ __dxloop_run() {
   dx_provider_cleanup_session_state "$session_id"
   rm -f "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")"
 
-  # Persist the original prompt so the Stop hook can re-inject it on each audit
-  # iteration. Context compaction may lose the initial message after several rounds.
+  # The activation helper clears stale state before each launch. Persist the
+  # prompt after activation so an earlier run can never leak its task into this
+  # one.
   local prompt_file
   prompt_file="$(dx_prompt_file "$session_id")"
-  mkdir -p "$(dirname "$prompt_file")"
-  printf '%s\n' "$prompt" > "$prompt_file"
 
   # Show header
   local branch
@@ -3161,29 +3188,21 @@ __dxloop_run() {
   # process handoff after approval so dxloop can continue to implementation.
   local plan_generation plan_config_file
   plan_config_file=$(dx_loop_config_file "$session_id")
-  if ! plan_generation=$(dx_completion_issue "$session_id" standalone dxloop-plan 1); then
-    dx_error "Could not prepare the dxloop planning completion receipt."
+  if ! plan_generation=$(bash "$DEX_DIR/bin/activate-loop.sh" \
+    "$session_id" standalone dxloop-plan 1); then
+    dx_error "Could not activate the dxloop planning audit. Another loop may already own this session."
+    return 1
+  fi
+  mkdir -p "$(dirname "$prompt_file")"
+  if ! __dx_write_state "$prompt_file" "$prompt"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" "$plan_config_file" 2>/dev/null || true
+    dx_error "Could not save the dxloop task for the planning audit."
     return 1
   fi
   local plan_args=("${DX_PLAN_FLAGS[@]}")
   [[ -n "$session_name" ]] && plan_args+=(-n "$session_name")
   plan_args+=(--append-system-prompt "You are in a dxloop planning session. You MUST be in plan mode — if not, call EnterPlanMode immediately. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool if you lose track of the task. After ExitPlanMode is approved, stop this Claude Code session immediately so the dxloop wrapper can launch implementation. Do NOT ask whether to continue and do NOT wait for another user prompt. The Stop hook handles the process handoff back to dxloop. Only after that hook says the planning audit gate has passed, run this exact command: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${plan_generation}\"")
-
-  local plan_audit_file="$DEX_DIR/prompts/phase-audits/1-plan.md"
-  mkdir -p "$DX_LOOP_DIR"
-  if ! touch "$(dx_active_file "$session_id")"; then
-    dx_completion_abandon "$session_id" 2>/dev/null || true
-    dx_error "Could not activate the dxloop planning audit."
-    return 1
-  fi
-  rm -f "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")"
-  if ! __dx_write_state "$plan_config_file" \
-    "1:PHASE_1_COMPLETE:${plan_audit_file}:1:standalone:dxloop-plan:${plan_generation}"; then
-    dx_completion_abandon "$session_id" 2>/dev/null || true
-    rm -f "$(dx_active_file "$session_id")" 2>/dev/null || true
-    dx_error "Could not persist the dxloop planning completion context."
-    return 1
-  fi
 
   dx_info "Phase: Plan (read-only until approved)"
   DEX_SESSION_ID="$session_id" \
@@ -3200,7 +3219,8 @@ $(__dx_provider_prompt)"
 
   local plan_exit=$?
   local plan_status="advance" plan_pause_rc=0
-  __dx_finalize_standalone_pause "$session_id" || plan_pause_rc=$?
+  __dx_finalize_standalone_pause "$session_id" standalone dxloop-plan 1 \
+    "$plan_generation" || plan_pause_rc=$?
   if [[ "$plan_pause_rc" -eq 0 ]]; then
     plan_status="human-pause"
     plan_exit=1
@@ -3211,6 +3231,9 @@ $(__dx_provider_prompt)"
     return 1
   elif [[ $plan_exit -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     plan_status="max-iter"
+    plan_exit=1
+  elif [[ "$plan_pause_rc" -eq 3 ]]; then
+    plan_status="missing-receipt"
     plan_exit=1
   elif [[ $plan_exit -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
     plan_status="missing-receipt"
@@ -3252,28 +3275,25 @@ $(__dx_provider_prompt)"
 
   # ── Session 2: Implement ──
   # Autonomous mode with stop hook audit loop. Resumes the plan session.
-  local impl_generation impl_audit_file
-  impl_audit_file="$DEX_DIR/prompts/phase-audits/prompt-loop.md"
-  if ! impl_generation=$(dx_completion_issue "$session_id" standalone dxloop-prompt prompt-loop); then
+  local impl_generation
+  if ! impl_generation=$(bash "$DEX_DIR/bin/activate-loop.sh" \
+    "$session_id" standalone dxloop-prompt prompt-loop); then
     rm -f "$(dx_prompt_file "$session_id")" 2>/dev/null || true
     dx_provider_cleanup_session_state "$session_id"
-    dx_error "Could not prepare the dxloop implementation completion receipt."
+    dx_error "Could not activate the dxloop implementation audit."
+    return 1
+  fi
+  if ! __dx_write_state "$prompt_file" "$prompt"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" "$plan_config_file" 2>/dev/null || true
+    dx_provider_cleanup_session_state "$session_id"
+    dx_error "Could not save the dxloop task for the implementation audit."
     return 1
   fi
   local impl_args=("${DX_CLAUDE_FLAGS[@]}" --resume)
   [[ -n "$session_name" ]] && impl_args+=(-n "$session_name")
   impl_args+=(--append-system-prompt "You are in a dxloop session. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool before any audit step, or when you lose track of what you are working on. Only after the Stop hook says the implementation audit gate has passed, run this exact command: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${impl_generation}\"")
 
-  if ! touch "$(dx_active_file "$session_id")" \
-    || ! __dx_write_state "$plan_config_file" \
-      "prompt-loop:PROMPT_COMPLETE:${impl_audit_file}:1:standalone:dxloop-prompt:${impl_generation}"; then
-    dx_completion_abandon "$session_id" 2>/dev/null || true
-    rm -f "$(dx_active_file "$session_id")" "$plan_config_file" \
-      "$(dx_prompt_file "$session_id")" 2>/dev/null || true
-    dx_provider_cleanup_session_state "$session_id"
-    dx_error "Could not activate the dxloop implementation audit."
-    return 1
-  fi
   dx_info "Phase: Implement (autonomous)"
   DEX_SESSION_ID="$session_id" \
   DEX_LOOP_ACTIVE=1 \
@@ -3285,7 +3305,8 @@ $(__dx_provider_prompt)"
 
   local exit_code=$?
   local loop_status="advance" loop_pause_rc=0
-  __dx_finalize_standalone_pause "$session_id" || loop_pause_rc=$?
+  __dx_finalize_standalone_pause "$session_id" standalone dxloop-prompt \
+    prompt-loop "$impl_generation" || loop_pause_rc=$?
   if [[ "$loop_pause_rc" -eq 0 ]]; then
     loop_status="human-pause"
     exit_code=1
@@ -3296,6 +3317,9 @@ $(__dx_provider_prompt)"
     return 1
   elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     loop_status="max-iter"
+    exit_code=1
+  elif [[ "$loop_pause_rc" -eq 3 ]]; then
+    loop_status="missing-receipt"
     exit_code=1
   elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
     loop_status="missing-receipt"

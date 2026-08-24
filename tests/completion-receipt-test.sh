@@ -768,6 +768,177 @@ assert_eq "$OTHER_GENERATION" \
   "$(dx_completion_current_generation "$OTHER_SID" lifecycle phase 2)" \
   "other session survives cleanup"
 
+# The shared activation wrapper publishes one canonical context and removes
+# stale prompt/review residue before a new provider can see it.
+ACTIVATE_SID="completion-activate-loop"
+printf '%s\n' "stale task" > "$(dx_prompt_file "$ACTIVATE_SID")"
+printf '%s\n' "stale findings" > "$(dx_findings_file "$ACTIVATE_SID")"
+ACTIVATE_GENERATION=$(bash "$ROOT/bin/activate-loop.sh" \
+  "$ACTIVATE_SID" standalone dxloop-prompt prompt-loop)
+assert_generation "$ACTIVATE_GENERATION" "$LINENO"
+assert_file "$(dx_active_file "$ACTIVATE_SID")"
+assert_no_file "$(dx_prompt_file "$ACTIVATE_SID")"
+assert_no_file "$(dx_findings_file "$ACTIVATE_SID")"
+assert_eq \
+  "$(dx_completion_context_config standalone dxloop-prompt prompt-loop \
+    "$ACTIVATE_GENERATION")" \
+  "$(cat "$(dx_loop_config_file "$ACTIVATE_SID")")" \
+  "shared loop activation writes canonical config"
+if bash "$ROOT/bin/activate-loop.sh" "$ACTIVATE_SID" standalone \
+  dxloop-prompt prompt-loop > "$TMP_DIR/activate-collision.out" 2>&1; then
+  fail "loop activation replaced a live context"
+fi
+if bash "$ROOT/bin/activate-loop.sh" > "$TMP_DIR/activate-args.out" 2>&1; then
+  fail "loop activation wrapper accepted missing arguments"
+fi
+assert_contains "Usage: activate-loop.sh" "$TMP_DIR/activate-args.out"
+dx_cleanup_session "$ACTIVATE_SID"
+
+ACTIVATE_CONTROL_SID="completion-activate-control"
+ln -s /dev/null "$(dx_lifecycle_control_file "$ACTIVATE_CONTROL_SID")"
+if bash "$ROOT/bin/activate-loop.sh" "$ACTIVATE_CONTROL_SID" standalone \
+  dxloop-plan 1 > "$TMP_DIR/activate-control.out" 2>&1; then
+  fail "loop activation accepted an unsafe control path"
+fi
+assert_no_file "$(dx_completion_expectation_file "$ACTIVATE_CONTROL_SID")"
+rm -f "$(dx_lifecycle_control_file "$ACTIVATE_CONTROL_SID")"
+
+ACTIVATE_BUSY_SID="completion-activate-busy"
+ACTIVATE_BUSY_TOKEN=$(dx_phase_busy_begin "$ACTIVATE_BUSY_SID" 3 "live child")
+if bash "$ROOT/bin/activate-loop.sh" "$ACTIVATE_BUSY_SID" standalone \
+  dxloop-plan 1 > "$TMP_DIR/activate-busy.out" 2>&1; then
+  fail "loop activation erased a live review-child fence"
+fi
+assert_eq "$ACTIVATE_BUSY_TOKEN" \
+  "$(dx_phase_busy_token "$ACTIVATE_BUSY_SID" 3)" \
+  "live child fence survives activation collision"
+dx_phase_busy_acknowledge "$ACTIVATE_BUSY_SID" 3 "$ACTIVATE_BUSY_TOKEN"
+dx_phase_busy_finish "$ACTIVATE_BUSY_SID" 3 "$ACTIVATE_BUSY_TOKEN"
+dx_cleanup_session "$ACTIVATE_BUSY_SID"
+
+setup_escalation_context() { # <session> <phase>
+  local escalation_session="$1" escalation_phase="$2" escalation_generation
+  printf '%s\n' "$escalation_phase" > "$(dx_state_file "$escalation_session")"
+  printf '%s\n' inline > "$(dx_handoff_mode_file "$escalation_session")"
+  escalation_generation=$(dx_completion_issue "$escalation_session" \
+    lifecycle phase "$escalation_phase")
+  dx_lifecycle_atomic_write "$(dx_loop_config_file "$escalation_session")" \
+    "$(dx_completion_context_config lifecycle phase "$escalation_phase" \
+      "$escalation_generation")"
+  dx_lifecycle_atomic_write "$(dx_active_file "$escalation_session")" active
+  printf '%s\n' "$escalation_generation"
+}
+
+ESCALATE_SID="completion-agent-escalation"
+ESCALATE_GENERATION=$(setup_escalation_context "$ESCALATE_SID" 2)
+dx_completion_write_receipt "$ESCALATE_SID" "$ESCALATE_GENERATION"
+touch "$(dx_complete_file "$ESCALATE_SID")"
+bash "$ROOT/bin/escalate.sh" "$ESCALATE_SID" "$ESCALATE_GENERATION"
+assert_file "$(dx_paused_file "$ESCALATE_SID")"
+assert_eq "failure-escalation" \
+  "$(dx_pause_state_read "$ESCALATE_SID" reason)" \
+  "agent escalation reason"
+assert_eq "agent-escalation" \
+  "$(dx_pause_state_read "$ESCALATE_SID" source)" \
+  "agent escalation source"
+assert_no_file "$(dx_active_file "$ESCALATE_SID")"
+assert_no_file "$(dx_completion_expectation_file "$ESCALATE_SID")"
+assert_no_file "$(dx_completion_receipt_file "$ESCALATE_SID" \
+  "$ESCALATE_GENERATION")"
+assert_no_file "$(dx_complete_file "$ESCALATE_SID")"
+assert_no_file "$(dx_lifecycle_control_file "$ESCALATE_SID")"
+
+ESCALATE_RESUME_RECORD=$(dx_lifecycle_resume_completion_context "$ESCALATE_SID")
+IFS=$'\t' read -r _ ESCALATE_RESUMED_GENERATION _ _ <<< \
+  "$ESCALATE_RESUME_RECORD"
+assert_generation "$ESCALATE_RESUMED_GENERATION" "$LINENO"
+[[ "$ESCALATE_RESUMED_GENERATION" != "$ESCALATE_GENERATION" ]] || \
+  assert_at "$LINENO"
+assert_no_file "$(dx_paused_file "$ESCALATE_SID")"
+dx_cleanup_session "$ESCALATE_SID"
+
+ESCALATE_STALE_SID="completion-agent-escalation-stale"
+ESCALATE_STALE_OLD=$(setup_escalation_context "$ESCALATE_STALE_SID" 4)
+ESCALATE_STALE_NEW=$(dx_completion_issue "$ESCALATE_STALE_SID" \
+  lifecycle phase 4)
+dx_lifecycle_atomic_write "$(dx_loop_config_file "$ESCALATE_STALE_SID")" \
+  "$(dx_completion_context_config lifecycle phase 4 "$ESCALATE_STALE_NEW")"
+if bash "$ROOT/bin/escalate.sh" "$ESCALATE_STALE_SID" \
+  "$ESCALATE_STALE_OLD" > "$TMP_DIR/escalate-stale.out" 2>&1; then
+  fail "stale generation paused a fresh lifecycle"
+fi
+assert_file "$(dx_active_file "$ESCALATE_STALE_SID")"
+assert_eq "$ESCALATE_STALE_NEW" \
+  "$(dx_completion_current_generation "$ESCALATE_STALE_SID" \
+    lifecycle phase 4)" \
+  "stale escalation preserves fresh authorization"
+dx_cleanup_session "$ESCALATE_STALE_SID"
+
+ESCALATE_BUSY_SID="completion-agent-escalation-busy"
+ESCALATE_BUSY_GENERATION=$(setup_escalation_context "$ESCALATE_BUSY_SID" 3)
+ESCALATE_BUSY_TOKEN=$(dx_phase_busy_begin "$ESCALATE_BUSY_SID" 3 \
+  "review child")
+bash "$ROOT/bin/escalate.sh" "$ESCALATE_BUSY_SID" \
+  "$ESCALATE_BUSY_GENERATION"
+dx_phase_busy_cancel_requested "$ESCALATE_BUSY_SID" 3 || assert_at "$LINENO"
+dx_phase_busy_acknowledge "$ESCALATE_BUSY_SID" 3 "$ESCALATE_BUSY_TOKEN"
+dx_phase_busy_finish "$ESCALATE_BUSY_SID" 3 "$ESCALATE_BUSY_TOKEN"
+dx_cleanup_session "$ESCALATE_BUSY_SID"
+
+ESCALATE_PAUSE_DIR_SID="completion-agent-escalation-pause-dir"
+ESCALATE_PAUSE_DIR_GENERATION=$(setup_escalation_context \
+  "$ESCALATE_PAUSE_DIR_SID" 1)
+mkdir "$(dx_paused_file "$ESCALATE_PAUSE_DIR_SID")"
+if bash "$ROOT/bin/escalate.sh" "$ESCALATE_PAUSE_DIR_SID" \
+  "$ESCALATE_PAUSE_DIR_GENERATION" > "$TMP_DIR/escalate-pause-dir.out" 2>&1; then
+  fail "escalation reported success without publishing a pause marker"
+fi
+assert_no_file "$(dx_active_file "$ESCALATE_PAUSE_DIR_SID")"
+assert_no_file "$(dx_completion_expectation_file "$ESCALATE_PAUSE_DIR_SID")"
+rmdir "$(dx_paused_file "$ESCALATE_PAUSE_DIR_SID")"
+dx_cleanup_session "$ESCALATE_PAUSE_DIR_SID"
+
+ESCALATE_BUSY_DIR_SID="completion-agent-escalation-busy-dir"
+ESCALATE_BUSY_DIR_GENERATION=$(setup_escalation_context \
+  "$ESCALATE_BUSY_DIR_SID" 3)
+mkdir "$(dx_phase_busy_file "$ESCALATE_BUSY_DIR_SID" 3)"
+if bash "$ROOT/bin/escalate.sh" "$ESCALATE_BUSY_DIR_SID" \
+  "$ESCALATE_BUSY_DIR_GENERATION" > "$TMP_DIR/escalate-busy-dir.out" 2>&1; then
+  fail "escalation reported a clean detach with an unknown review-child fence"
+fi
+assert_no_file "$(dx_active_file "$ESCALATE_BUSY_DIR_SID")"
+assert_no_file "$(dx_completion_expectation_file "$ESCALATE_BUSY_DIR_SID")"
+assert_file "$(dx_paused_file "$ESCALATE_BUSY_DIR_SID")"
+rmdir "$(dx_phase_busy_file "$ESCALATE_BUSY_DIR_SID" 3)"
+dx_cleanup_session "$ESCALATE_BUSY_DIR_SID"
+
+ESCALATE_BUSY_LINK_SID="completion-agent-escalation-busy-link"
+ESCALATE_BUSY_LINK_GENERATION=$(setup_escalation_context \
+  "$ESCALATE_BUSY_LINK_SID" 3)
+ln -s /dev/null "$(dx_phase_busy_file "$ESCALATE_BUSY_LINK_SID" 3)"
+if bash "$ROOT/bin/escalate.sh" "$ESCALATE_BUSY_LINK_SID" \
+  "$ESCALATE_BUSY_LINK_GENERATION" > "$TMP_DIR/escalate-busy-link.out" 2>&1; then
+  fail "escalation reported a clean detach with an unsafe review-child fence"
+fi
+assert_no_file "$(dx_active_file "$ESCALATE_BUSY_LINK_SID")"
+assert_no_file "$(dx_completion_expectation_file "$ESCALATE_BUSY_LINK_SID")"
+assert_file "$(dx_paused_file "$ESCALATE_BUSY_LINK_SID")"
+rm -f "$(dx_phase_busy_file "$ESCALATE_BUSY_LINK_SID" 3)"
+dx_cleanup_session "$ESCALATE_BUSY_LINK_SID"
+
+CHILD_RESUME_SID="completion-child-resume"
+CHILD_RESUME_GENERATION=$(dx_completion_loop_activate "$CHILD_RESUME_SID" \
+  child review-pass 3)
+if dx_lifecycle_resume_completion_context "$CHILD_RESUME_SID" \
+  > "$TMP_DIR/child-resume.out" 2>&1; then
+  fail "a review child was resumed as a generic loop"
+fi
+assert_eq "$CHILD_RESUME_GENERATION" \
+  "$(dx_completion_current_generation "$CHILD_RESUME_SID" child \
+    review-pass 3)" \
+  "rejected child resume preserves its generation"
+dx_cleanup_session "$CHILD_RESUME_SID"
+
 # The module is sourced safely by both shells used by Dex.
 bash -c 'source "$1/lib/common.sh"; dx_completion_current_generation "$2" lifecycle phase 2 >/dev/null' \
   _ "$ROOT" "$OTHER_SID"

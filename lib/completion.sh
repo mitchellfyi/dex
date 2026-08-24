@@ -54,6 +54,7 @@ VALID_CONTEXTS = {
     ("standalone", "dxloop-plan", "1"),
     ("standalone", "dxloop-prompt", "prompt-loop"),
     ("standalone", "dxcomplete", "6"),
+    ("child", "review-assessment", "assessment"),
     ("child", "review-pass", "3"),
 }
 LOCKED_OPERATIONS = {
