@@ -301,7 +301,7 @@ dx --no-worktree 999
 dx --no-worktree "fix login bug"
 ```
 
-This runs the same six-phase lifecycle in the current git checkout. Dex does
+This runs the same Phase 0-6 lifecycle in the current git checkout. Dex does
 not create a worktree, but it still prepares the normal lifecycle branch
 (`worktree-ticket-*` or `worktree-task-*`) in the current checkout, using
 the default branch's upstream or remote-tracking ref as the starting point just
@@ -313,7 +313,9 @@ in-place lifecycle.
 
 ## Prompt Loop Mode (`dxloop`)
 
-For ad-hoc tasks that don't need the full phased lifecycle, `dxloop` runs a single prompt in a loop until the AI confirms everything is implemented:
+For ad-hoc tasks that do not need the full ticket lifecycle, `dxloop` plans the
+prompt, then runs its implementation audit until the exact completion receipt
+is accepted:
 
 ```bash
 dxloop Add rate limiting to the /api/users endpoint. Support 100 req/min per API key with Redis backing.
@@ -321,19 +323,21 @@ dxloop Add rate limiting to the /api/users endpoint. Support 100 req/min per API
 
 This uses the same Stop hook infrastructure as `dx`, but:
 - Runs in the **current directory** (no worktree created)
-- Uses a single generic audit prompt (`prompts/phase-audits/prompt-loop.md`)
-- Completion promise is `PROMPT_COMPLETE`
-- Cleans up state files automatically when done
+- Uses a planning context followed by the generic implementation audit in
+  `prompts/phase-audits/prompt-loop.md`
+- Gives each context its own generated completion generation
+- Retires its completion authority when done and fails closed on a pause or
+  missing receipt
 
 The audit prompt extracts requirements from the original prompt and verifies each one on every iteration, continuing until all requirements are implemented and quality review passes.
 
 Override max iterations: `DEX_LOOP_MAX_ITERATIONS=15 dxloop fix the bug`
 
-## Completion Signals
+## Completion Acknowledgements
 
-Each phase has its own completion promise:
+Each phase has a human-readable acknowledgement:
 
-| Phase | Promise |
+| Phase | Acknowledgement |
 |-------|---------|
 | 0 | `PHASE_0_COMPLETE` |
 | 1 | `PHASE_1_COMPLETE` |
@@ -344,7 +348,11 @@ Each phase has its own completion promise:
 | 6 | `DEX_TICKET_COMPLETE` |
 | dxloop | `PROMPT_COMPLETE` |
 
-Claude should only output the promise after the audit criteria are fully met.
+The acknowledgement is useful in logs, but it does not authorize advancement.
+The Stop hook supplies a literal generation-bound receipt command only after
+the current gate is eligible to pass. Claude must run that exact command and
+then output the acknowledgement. Human waivers and jumps use the separate
+control receipt path and are recorded as waived or skipped, not passed.
 
 ## Compaction Resilience
 
