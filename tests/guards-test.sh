@@ -770,6 +770,32 @@ assert_secret_clean "a command substitution, quoted" \
 # shellcheck disable=SC2016
 assert_secret_clean "a command substitution, bare" \
   'AUTH_TOKEN=$(cat /run/secrets/token)'
+# A password in a connection string leaks the same way, and the name in front
+# of it is not part of the tell — the URL is.
+assert_secret_warns "a password in a postgres URL" \
+  'const DATABASE_URL = "postgres://u:p4ssw0rdX@host/db"'
+assert_secret_warns "a password in a mongodb URL" \
+  'const uri = "mongodb+srv://admin:Hunter2Hunter@cluster.mongodb.net"'
+assert_secret_warns "a token in a git remote" \
+  'const repo = "https://mitchell:ghp_16charsOrMore@github.com/x/y.git"'
+# The URL alternative starts before the name one, so it wins as leftmost match.
+# Letting it run to the end of the string swallowed the query, and a placeholder
+# userinfo then exempted a real token sitting after the `?`.
+assert_secret_warns "a real token in the query of an otherwise placeholder URL" \
+  'const R = "https://u:api-password@h/x.git?access_token=r3alT0kenValue"'
+assert_secret_clean "a URL with no userinfo" \
+  'const DATABASE_URL = "postgres://localhost/db"'
+assert_secret_clean "a password read from the environment" \
+  'const DATABASE_URL = "postgres://u:${DB_PASSWORD}@host/db"'
+assert_secret_clean "an angle-bracket placeholder" \
+  'const DATABASE_URL = "postgres://user:<password>@host/db"'
+assert_secret_clean "the literal word password" \
+  'const DATABASE_URL = "postgres://user:password@host/db"'
+assert_secret_clean "a compose file where user and password match" \
+  'const DB = "postgres://orderly:orderly@db:5432/orderly"'
+assert_secret_clean "a descriptive fixture password" \
+  'const R = "https://api-user:api-password@example.test/api"'
+
 # The name list required the internal underscore, so camelCase — which is how
 # most JavaScript and TypeScript spells these — went past untouched.
 assert_secret_warns "a camelCase API key" \
