@@ -6,8 +6,28 @@ _src_dir() {
   echo "$1/src/notifications"
 }
 
+_test_suite_shrank() {
+  # "The tests passed" has to mean they ran. `npm test` exits 0 when it finds
+  # no test files, so deleting the suite read as a pass — and in scenarios
+  # whose seed fails on purpose, deleting the failing test *raised* the score.
+  #
+  # Declared cases rather than files, because emptying a file in place keeps
+  # the file count. One pattern for both sides, spelled without \b: git grep's
+  # ERE does not support it and matches nothing rather than complaining, while
+  # BSD grep on disk honours it — so the two counts would silently disagree.
+  local ws="$1"
+  local case_pattern='(^|[^A-Za-z0-9_])(test|it)\('
+  local before now
+  before=$(cd "$ws" && git grep -hoE "$case_pattern" HEAD -- tests 2>/dev/null | wc -l | tr -d ' ')
+  now=$(grep -rhoE "$case_pattern" "$ws/tests" 2>/dev/null | wc -l | tr -d ' ')
+  [[ "$now" -lt "$before" ]]
+}
+
 _run_npm_test() {
   local ws="$1"
+  if _test_suite_shrank "$ws"; then
+    return 1
+  fi
   (cd "$ws" && npm test >/tmp/dx-long-refactor-test.log 2>&1)
 }
 
