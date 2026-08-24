@@ -316,6 +316,157 @@ if find "$DX_STATE_DIR" -maxdepth 1 -name ".${SID}.runtime.tmp.*" -print -quit |
   fail "runtime writer left a temporary file"
 fi
 
+# Recovery can claim only the exact dead record it inspected. The missing
+# workspace exception belongs to this path alone; ordinary starts still need a
+# caller-selected workspace that exists.
+DELIVERY_WORKSPACE="$TMP_DIR/recovery-delivery-workspace"
+mkdir -p "$DELIVERY_WORKSPACE"
+DELIVERY_SID="$(dx_scoped_session_id worktree-runtime-recovery-delivery)"
+DELIVERY_TOKEN="$(dx_session_runtime_start \
+  "$DELIVERY_SID" codex "$DELIVERY_WORKSPACE" "$$")"
+dx_session_runtime_finish "$DELIVERY_SID" "$DELIVERY_TOKEN" stopped "$$"
+DELIVERY_SNAPSHOT="$(dx_session_runtime_read "$DELIVERY_SID")"
+DELIVERY_FILE="$(dx_session_runtime_file "$DELIVERY_SID")"
+DELIVERY_RECORD_BEFORE="$(<"$DELIVERY_FILE")"
+DELIVERY_RESULT=0
+__dx_session_runtime_recovery_start_secure \
+  "$DELIVERY_SID" "$DELIVERY_SNAPSHOT" "$$" \
+  3</dev/null >/dev/null 2>&1 || DELIVERY_RESULT=$?
+assert_eq "3" "$DELIVERY_RESULT" "read-only recovery token channel result"
+assert_eq "$DELIVERY_RECORD_BEFORE" "$(<"$DELIVERY_FILE")" \
+  "runtime record after failed token delivery"
+assert_eq "stopped" "$(dx_session_runtime_field "$DELIVERY_SID" status)" \
+  "runtime state after failed token delivery"
+assert_eq "dead" "$(runtime_health "$DELIVERY_SID")" \
+  "runtime health after failed token delivery"
+
+RECOVERY_WORKSPACE="$TMP_DIR/recovery-workspace"
+mkdir -p "$RECOVERY_WORKSPACE"
+RECOVERY_SID="$(dx_scoped_session_id worktree-runtime-recovery)"
+RECOVERY_OLD_TOKEN="$(dx_session_runtime_start \
+  "$RECOVERY_SID" codex "$RECOVERY_WORKSPACE" "$$")"
+dx_session_runtime_finish "$RECOVERY_SID" "$RECOVERY_OLD_TOKEN" paused "$$"
+RECOVERY_SNAPSHOT="$(dx_session_runtime_read "$RECOVERY_SID")"
+RECOVERY_FILE="$(dx_session_runtime_file "$RECOVERY_SID")"
+RECOVERY_LOCK_FILE="${RECOVERY_FILE}-lock"
+rmdir "$RECOVERY_WORKSPACE"
+RECOVERY_TOKEN="$(DX_TEST_REAL_PYTHON="$REAL_PYTHON" \
+  DX_TEST_ARGV_LOG="$ARGV_LOG" PATH="$ARGV_BIN:$PATH" \
+  __dx_session_runtime_recovery_start_secure \
+    "$RECOVERY_SID" "$RECOVERY_SNAPSHOT" "$$" 3>&1)"
+[[ "$RECOVERY_TOKEN" =~ ^[0-9a-f]{64}$ ]] || assert_at $LINENO
+[[ "$RECOVERY_TOKEN" != "$RECOVERY_OLD_TOKEN" ]] \
+  || fail "recovery reused the previous lease token"
+assert_not_contains "$RECOVERY_TOKEN" "$ARGV_LOG"
+assert_eq "live" "$(runtime_health "$RECOVERY_SID" "$RECOVERY_TOKEN")" \
+  "recovery lease health"
+assert_eq "$RECOVERY_WORKSPACE" \
+  "$(dx_session_runtime_field "$RECOVERY_SID" workspace)" \
+  "recovery kept the exact missing workspace"
+
+RECOVERY_LIVE_SNAPSHOT="$(dx_session_runtime_read "$RECOVERY_SID")"
+if __dx_session_runtime_recovery_start_secure \
+    "$RECOVERY_SID" "$RECOVERY_LIVE_SNAPSHOT" "$$" 3>/dev/null 2>/dev/null; then
+  fail "recovery replaced a live lease"
+else
+  assert_eq "2" "$?" "live recovery result"
+fi
+
+RECOVERY_WRONG_TOKEN="0${RECOVERY_TOKEN#?}"
+[[ "$RECOVERY_WRONG_TOKEN" != "$RECOVERY_TOKEN" ]] \
+  || RECOVERY_WRONG_TOKEN="1${RECOVERY_TOKEN#?}"
+if __dx_session_runtime_purge \
+    "$RECOVERY_SID" "$RECOVERY_WRONG_TOKEN" "$$" 2>/dev/null; then
+  fail "runtime purge accepted the wrong lease token"
+else
+  assert_eq "2" "$?" "wrong-token purge result"
+fi
+assert_file "$RECOVERY_FILE"
+if __dx_session_runtime_purge \
+    "$RECOVERY_SID" "$RECOVERY_TOKEN" "$(( $$ + 1 ))" 2>/dev/null; then
+  fail "runtime purge accepted the wrong process"
+else
+  assert_eq "2" "$?" "wrong-process purge result"
+fi
+assert_file "$RECOVERY_FILE"
+
+DX_TEST_REAL_PYTHON="$REAL_PYTHON" DX_TEST_ARGV_LOG="$ARGV_LOG" \
+  PATH="$ARGV_BIN:$PATH" __dx_session_runtime_purge \
+    "$RECOVERY_SID" "$RECOVERY_TOKEN" "$$"
+assert_not_contains "$RECOVERY_TOKEN" "$ARGV_LOG"
+assert_no_file "$RECOVERY_FILE"
+assert_file "$RECOVERY_LOCK_FILE"
+assert_eq "legacy-unverifiable" "$(runtime_health "$RECOVERY_SID")" \
+  "purged runtime health"
+
+# A record that changes after selection cannot satisfy the recovery claim.
+STALE_RECOVERY_WORKSPACE="$TMP_DIR/stale-recovery-workspace"
+mkdir -p "$STALE_RECOVERY_WORKSPACE"
+STALE_RECOVERY_SID="$(dx_scoped_session_id worktree-runtime-stale-recovery)"
+STALE_OLD_TOKEN="$(dx_session_runtime_start \
+  "$STALE_RECOVERY_SID" claude "$STALE_RECOVERY_WORKSPACE" "$$")"
+dx_session_runtime_finish \
+  "$STALE_RECOVERY_SID" "$STALE_OLD_TOKEN" stopped "$$"
+STALE_RECOVERY_SNAPSHOT="$(dx_session_runtime_read "$STALE_RECOVERY_SID")"
+STALE_NEW_TOKEN="$(dx_session_runtime_start \
+  "$STALE_RECOVERY_SID" claude "$STALE_RECOVERY_WORKSPACE" "$$")"
+if __dx_session_runtime_recovery_start_secure \
+    "$STALE_RECOVERY_SID" "$STALE_RECOVERY_SNAPSHOT" "$$" \
+    3>/dev/null 2>/dev/null; then
+  fail "recovery accepted a stale runtime snapshot"
+else
+  assert_eq "2" "$?" "stale recovery result"
+fi
+dx_session_runtime_matches "$STALE_RECOVERY_SID" "$STALE_NEW_TOKEN" \
+  || fail "stale recovery disturbed the replacement owner"
+dx_session_runtime_finish \
+  "$STALE_RECOVERY_SID" "$STALE_NEW_TOKEN" stopped "$$"
+
+# Recovery cannot turn missing process evidence into permission to replace the
+# current owner.
+UNVERIFIABLE_RECOVERY_SID="$(dx_scoped_session_id \
+  worktree-runtime-unverifiable-recovery)"
+UNVERIFIABLE_RECOVERY_TOKEN="$(dx_session_runtime_start \
+  "$UNVERIFIABLE_RECOVERY_SID" codex "$WORKSPACE" "$$")"
+UNVERIFIABLE_RECOVERY_SNAPSHOT="$(dx_session_runtime_read \
+  "$UNVERIFIABLE_RECOVERY_SID")"
+mv "$DX_SESSION_RUNTIME_PROC_ROOT/$$/stat" \
+  "$TMP_DIR/unverifiable-recovery-proc-stat"
+if __dx_session_runtime_recovery_start_secure \
+    "$UNVERIFIABLE_RECOVERY_SID" "$UNVERIFIABLE_RECOVERY_SNAPSHOT" "$$" \
+    3>/dev/null 2>/dev/null; then
+  fail "recovery replaced an unverifiable owner"
+else
+  assert_eq "2" "$?" "unverifiable recovery result"
+fi
+mv "$TMP_DIR/unverifiable-recovery-proc-stat" \
+  "$DX_SESSION_RUNTIME_PROC_ROOT/$$/stat"
+dx_session_runtime_matches \
+  "$UNVERIFIABLE_RECOVERY_SID" "$UNVERIFIABLE_RECOVERY_TOKEN" \
+  || fail "rejected recovery disturbed the unverifiable owner"
+dx_session_runtime_finish \
+  "$UNVERIFIABLE_RECOVERY_SID" "$UNVERIFIABLE_RECOVERY_TOKEN" stopped "$$"
+
+# Purge validates the runtime path again under the mutation lock. A substituted
+# path is rejected without deleting its target or the persistent lock.
+PURGE_LINK_SID="$(dx_scoped_session_id worktree-runtime-purge-link)"
+PURGE_LINK_TOKEN="$(dx_session_runtime_start \
+  "$PURGE_LINK_SID" claude "$WORKSPACE" "$$")"
+PURGE_LINK_FILE="$(dx_session_runtime_file "$PURGE_LINK_SID")"
+PURGE_LINK_LOCK="${PURGE_LINK_FILE}-lock"
+PURGE_LINK_TARGET="$TMP_DIR/runtime-purge-link-target"
+mv "$PURGE_LINK_FILE" "$PURGE_LINK_TARGET"
+ln -s "$PURGE_LINK_TARGET" "$PURGE_LINK_FILE"
+if __dx_session_runtime_purge \
+    "$PURGE_LINK_SID" "$PURGE_LINK_TOKEN" "$$" 2>/dev/null; then
+  fail "runtime purge accepted a substituted record path"
+else
+  assert_eq "3" "$?" "substituted purge result"
+fi
+[[ -L "$PURGE_LINK_FILE" ]] || assert_at $LINENO
+assert_file "$PURGE_LINK_TARGET"
+assert_file "$PURGE_LINK_LOCK"
+
 MISSING_SID="$(dx_scoped_session_id worktree-ticket-missing)"
 assert_eq "legacy-unverifiable" "$(runtime_health "$MISSING_SID")" "missing runtime health"
 
@@ -409,5 +560,74 @@ LOCK_MODE="$(dx_session_runtime_file "$LOCK_MODE_SID")-lock"
 printf 'lock\n' > "$LOCK_MODE"
 chmod 644 "$LOCK_MODE"
 run_start_rejected_promptly "$LOCK_MODE_SID" 3 lock-wrong-mode
+
+# Swapping the named state directory at the unlink window cannot redirect the
+# pinned deletion. Purge reports the parent-path change and leaves the
+# replacement path untouched.
+PARENT_SWAP_ORIGINAL_STATE_DIR="$DX_STATE_DIR"
+export DX_STATE_DIR="$TMP_DIR/purge-parent-state"
+mkdir -p "$DX_STATE_DIR"
+PARENT_SWAP_SID="$(dx_scoped_session_id worktree-runtime-purge-parent-swap)"
+PARENT_SWAP_TOKEN="$(dx_session_runtime_start \
+  "$PARENT_SWAP_SID" claude "$WORKSPACE" "$$")"
+PARENT_SWAP_FILE="$(dx_session_runtime_file "$PARENT_SWAP_SID")"
+PARENT_SWAP_LOCK="${PARENT_SWAP_FILE}-lock"
+PARENT_SWAP_MOVED_DIR="$TMP_DIR/purge-parent-state-moved"
+PARENT_SWAP_MARKER="$TMP_DIR/purge-parent-swapped"
+PARENT_SWAP_SITE="$TMP_DIR/purge-parent-site"
+mkdir -p "$PARENT_SWAP_SITE"
+printf '%s\n' \
+  'import os' \
+  '' \
+  '_real_unlink = os.unlink' \
+  '_swapped = False' \
+  '' \
+  'def _swap_parent_then_unlink(file_name, *args, **kwargs):' \
+  '    global _swapped' \
+  '    if (' \
+  '        not _swapped' \
+  '        and file_name == os.environ["DX_TEST_PURGE_RECORD_NAME"]' \
+  '        and kwargs.get("dir_fd") is not None' \
+  '    ):' \
+  '        _swapped = True' \
+  '        parent_dir = os.environ["DX_TEST_PURGE_PARENT"]' \
+  '        moved_dir = os.environ["DX_TEST_PURGE_MOVED_PARENT"]' \
+  '        os.rename(parent_dir, moved_dir)' \
+  '        os.mkdir(parent_dir, 0o700)' \
+  '        replacement = os.open(' \
+  '            os.path.join(parent_dir, file_name),' \
+  '            os.O_WRONLY | os.O_CREAT | os.O_EXCL,' \
+  '            0o600,' \
+  '        )' \
+  '        try:' \
+  '            os.write(replacement, b"replacement\\n")' \
+  '        finally:' \
+  '            os.close(replacement)' \
+  '        with open(' \
+  '            os.environ["DX_TEST_PURGE_SWAP_MARKER"], "w", encoding="utf-8"' \
+  '        ) as marker:' \
+  '            marker.write("swapped\\n")' \
+  '    return _real_unlink(file_name, *args, **kwargs)' \
+  '' \
+  'os.unlink = _swap_parent_then_unlink' \
+  > "$PARENT_SWAP_SITE/sitecustomize.py"
+PARENT_SWAP_RESULT=0
+set +e
+PYTHONPATH="$PARENT_SWAP_SITE" \
+DX_TEST_PURGE_RECORD_NAME="$(basename "$PARENT_SWAP_FILE")" \
+DX_TEST_PURGE_PARENT="$DX_STATE_DIR" \
+DX_TEST_PURGE_MOVED_PARENT="$PARENT_SWAP_MOVED_DIR" \
+DX_TEST_PURGE_SWAP_MARKER="$PARENT_SWAP_MARKER" \
+  __dx_session_runtime_purge \
+    "$PARENT_SWAP_SID" "$PARENT_SWAP_TOKEN" "$$" \
+    >/dev/null 2>&1
+PARENT_SWAP_RESULT=$?
+set -e
+assert_eq "3" "$PARENT_SWAP_RESULT" "replaced parent purge result"
+assert_file "$PARENT_SWAP_MARKER"
+assert_contains "replacement" "$PARENT_SWAP_FILE"
+assert_no_file "$PARENT_SWAP_MOVED_DIR/$(basename "$PARENT_SWAP_FILE")"
+assert_file "$PARENT_SWAP_MOVED_DIR/$(basename "$PARENT_SWAP_LOCK")"
+export DX_STATE_DIR="$PARENT_SWAP_ORIGINAL_STATE_DIR"
 
 printf 'session runtime core tests passed\n'

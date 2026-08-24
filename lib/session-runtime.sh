@@ -166,6 +166,31 @@ def no_duplicate_keys(pairs):
     return result
 
 
+def public_record(record):
+    return {field_name: record[field_name] for field_name in PUBLIC_FIELDS}
+
+
+def validate_public_snapshot(raw_snapshot, expected_session):
+    if not isinstance(raw_snapshot, str):
+        raise RuntimeInputError("runtime recovery snapshot is invalid")
+    try:
+        encoded_snapshot = raw_snapshot.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise RuntimeInputError(f"runtime recovery snapshot is invalid: {exc}")
+    if not encoded_snapshot or len(encoded_snapshot) > MAX_RECORD_BYTES:
+        raise RuntimeInputError("runtime recovery snapshot size is invalid")
+    try:
+        snapshot = json.loads(raw_snapshot, object_pairs_hook=no_duplicate_keys)
+    except (ValueError, RecursionError, RuntimeRecordError) as exc:
+        raise RuntimeInputError(f"runtime recovery snapshot is malformed: {exc}")
+    if not isinstance(snapshot, dict) or set(snapshot) != PUBLIC_FIELDS:
+        raise RuntimeInputError("runtime recovery snapshot fields do not match schema version 2")
+    private_record = dict(snapshot)
+    private_record["token"] = "0" * 64
+    validate_record(private_record, expected_session)
+    return snapshot
+
+
 def stat_fingerprint(metadata):
     return (
         metadata.st_dev,
@@ -186,6 +211,10 @@ def lock_fingerprint(metadata):
         metadata.st_uid,
         metadata.st_nlink,
     )
+
+
+def directory_identity(metadata):
+    return (metadata.st_dev, metadata.st_ino)
 
 
 def validate_private_regular(metadata, subject, allow_empty=False):
@@ -845,6 +874,104 @@ def publish_record(descriptor, lock_file, held_identity, record_file, record, se
     require_record_lock(published, trusted_lock_identity(lock_file))
 
 
+def verify_named_runtime_directory(
+    parent_descriptor, parent_dir, expected_identity
+):
+    try:
+        parent_opened = os.fstat(parent_descriptor)
+        parent_named = os.lstat(parent_dir)
+    except OSError as exc:
+        raise RuntimeRecordError(f"cannot revalidate runtime directory: {exc}")
+    for metadata in (parent_opened, parent_named):
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise RuntimeRecordError("runtime directory is not trusted")
+    if (
+        directory_identity(parent_opened) != expected_identity
+        or directory_identity(parent_named) != expected_identity
+    ):
+        raise RuntimeRecordError("runtime directory path changed during purge")
+
+
+def trusted_purge_record(
+    descriptor, lock_file, held_identity, record_file, expected_record, session_id
+):
+    verify_lock_binding(descriptor, lock_file, held_identity)
+    parent_dir = validate_parent(record_file)
+    record_name = os.path.basename(record_file)
+    if not record_name or os.path.dirname(record_file) != parent_dir:
+        raise RuntimeRecordError("runtime record path is invalid")
+
+    parent_descriptor = None
+    record_descriptor = None
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+    record_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    record_flags |= getattr(os, "O_NOFOLLOW", 0)
+    record_flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        parent_before = os.lstat(parent_dir)
+        parent_descriptor = os.open(parent_dir, directory_flags)
+        parent_opened = os.fstat(parent_descriptor)
+        parent_identity = directory_identity(parent_opened)
+        if parent_identity != directory_identity(parent_before):
+            raise RuntimeRecordError("runtime directory changed while opening")
+        verify_named_runtime_directory(
+            parent_descriptor, parent_dir, parent_identity
+        )
+
+        record_before = os.stat(
+            record_name, dir_fd=parent_descriptor, follow_symlinks=False
+        )
+        validate_private_regular(record_before, "runtime record")
+        record_descriptor = os.open(
+            record_name, record_flags, dir_fd=parent_descriptor
+        )
+        record_opened = os.fstat(record_descriptor)
+        if stat_fingerprint(record_opened) != stat_fingerprint(record_before):
+            raise RuntimeRecordError("runtime record changed while opening for purge")
+
+        observed_record = trusted_read(record_file, session_id)
+        if observed_record != expected_record:
+            raise RuntimeRecordError("runtime record changed before purge")
+        record_named = os.stat(
+            record_name, dir_fd=parent_descriptor, follow_symlinks=False
+        )
+        if stat_fingerprint(record_named) != stat_fingerprint(record_opened):
+            raise RuntimeRecordError("runtime record path changed before purge")
+
+        verify_lock_binding(descriptor, lock_file, held_identity)
+        verify_named_runtime_directory(
+            parent_descriptor, parent_dir, parent_identity
+        )
+        os.unlink(record_name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+        verify_named_runtime_directory(
+            parent_descriptor, parent_dir, parent_identity
+        )
+        verify_lock_binding(descriptor, lock_file, held_identity)
+        try:
+            os.stat(record_name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise RuntimeRecordError("runtime record reappeared during purge")
+        verify_named_runtime_directory(
+            parent_descriptor, parent_dir, parent_identity
+        )
+    except OSError as exc:
+        raise RuntimeRecordError(f"cannot purge runtime record safely: {exc}")
+    finally:
+        if record_descriptor is not None:
+            os.close(record_descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+
+
 def secure_proc_read(file_name):
     open_flags = os.O_RDONLY
     open_flags |= getattr(os, "O_CLOEXEC", 0)
@@ -1172,6 +1299,79 @@ try:
             owner_device,
             owner_inode,
         )
+    elif operation == "recover-start-secure":
+        if len(arguments) != 4:
+            raise RuntimeInputError(
+                "recover-start-secure requires file, session, snapshot, and PID"
+            )
+        record_file, session_id, raw_snapshot, raw_pid = arguments
+        if not SESSION_RE.fullmatch(session_id):
+            raise RuntimeInputError("invalid session ID")
+        expected_snapshot = validate_public_snapshot(raw_snapshot, session_id)
+        owner_pid = parse_pid(raw_pid)
+        lock_descriptor, lock_file, held_identity = acquire_mutation_lock(record_file)
+        lease_token = None
+        try:
+            previous = trusted_read(record_file, session_id, missing_ok=True)
+            if previous is None:
+                fail("runtime record is required for recovery", 2)
+            require_record_lock(previous, held_identity)
+            if public_record(previous) != expected_snapshot:
+                fail("runtime record changed before recovery", 2)
+            if owner_health(previous) != "dead":
+                fail("another process may still own this session", 2)
+            owner_probe = process_probe(owner_pid)
+            if owner_probe["health"] != "live" or owner_probe["identity"] is None:
+                raise RuntimeInputError("cannot establish a stable runtime process identity")
+            now_epoch = max(int(time.time()), previous["heartbeat_at"])
+            lease_token = secrets.token_hex(32)
+            record = {
+                "schema_version": SCHEMA_VERSION,
+                "session_id": session_id,
+                "token": lease_token,
+                "pid": owner_pid,
+                "process_start": owner_probe["identity"],
+                "provider": previous["provider"],
+                "workspace": previous["workspace"],
+                "started_at": now_epoch,
+                "heartbeat_at": now_epoch,
+                "finished_at": None,
+                "status": ACTIVE_STATE,
+                "lock_generation": held_identity["generation"],
+                "lock_device": held_identity["device"],
+                "lock_inode": held_identity["inode"],
+            }
+            publish_record(
+                lock_descriptor, lock_file, held_identity, record_file, record, session_id
+            )
+            token_payload = (lease_token + "\n").encode("ascii")
+            token_offset = 0
+            try:
+                while token_offset < len(token_payload):
+                    written = os.write(3, token_payload[token_offset:])
+                    if written <= 0:
+                        raise OSError("token pipe closed")
+                    token_offset += written
+            except OSError as exc:
+                try:
+                    publish_record(
+                        lock_descriptor,
+                        lock_file,
+                        held_identity,
+                        record_file,
+                        previous,
+                        session_id,
+                    )
+                except RuntimeRecordError as rollback_error:
+                    raise RuntimeRecordError(
+                        "cannot restore the previous runtime record after token "
+                        f"delivery failed: {rollback_error}"
+                    )
+                raise RuntimeInputError(
+                    f"cannot deliver runtime lease token securely: {exc}"
+                )
+        finally:
+            release_mutation_lock(lock_descriptor)
     elif operation in {"start", "start-secure"}:
         if len(arguments) != 5:
             raise RuntimeInputError("start requires file, session, provider, workspace, and PID")
@@ -1234,6 +1434,32 @@ try:
                 )
         else:
             print(lease_token)
+    elif operation == "purge":
+        if len(arguments) != 3:
+            raise RuntimeInputError("purge requires file, session, and PID")
+        record_file, session_id, raw_pid = arguments
+        if not SESSION_RE.fullmatch(session_id):
+            raise RuntimeInputError("invalid session ID")
+        owner_pid = parse_pid(raw_pid)
+        lease_token = token_from_fd()
+        if not TOKEN_RE.fullmatch(lease_token):
+            fail("runtime lease owner did not match", 2)
+        lock_descriptor, lock_file, held_identity = acquire_mutation_lock(record_file)
+        try:
+            record = trusted_read(record_file, session_id)
+            require_record_lock(record, held_identity)
+            if owner_health(record, lease_token, owner_pid) != "live":
+                fail("runtime lease owner did not match", 2)
+            trusted_purge_record(
+                lock_descriptor,
+                lock_file,
+                held_identity,
+                record_file,
+                record,
+                session_id,
+            )
+        finally:
+            release_mutation_lock(lock_descriptor)
     elif operation in {"heartbeat", "finish"}:
         expected_count = 3 if operation == "heartbeat" else 4
         if len(arguments) != expected_count:
@@ -1339,6 +1565,17 @@ __dx_session_runtime_start_secure() {
     "$record_file" "$session_id" "$provider_name" "$workspace_dir" "$owner_pid"
 }
 
+# Recovery starts from a validated public snapshot and writes the new token only
+# to FD 3. It can reclaim a missing workspace because the trusted runtime record,
+# rather than new caller input, supplies that exact path.
+__dx_session_runtime_recovery_start_secure() {
+  [[ $# -eq 3 ]] || return 3
+  local session_id="$1" runtime_snapshot="$2" owner_pid="$3" record_file
+  record_file=$(dx_session_runtime_file "$session_id") || return $?
+  __dx_session_runtime_call recover-start-secure \
+    "$record_file" "$session_id" "$runtime_snapshot" "$owner_pid"
+}
+
 # dx_session_runtime_heartbeat <session_id> <token> [pid]
 dx_session_runtime_heartbeat() {
   [[ $# -ge 2 && $# -le 3 ]] || return 3
@@ -1354,6 +1591,17 @@ dx_session_runtime_finish() {
   local record_file
   record_file=$(dx_session_runtime_file "$session_id") || return $?
   __dx_session_runtime_call finish "$record_file" "$session_id" "$owner_pid" "$terminal_state" 3<<<"$lease_token"
+}
+
+# Token-authenticated runtime removal for the private owner process. The
+# persistent mutation lock stays in place so a future lifecycle cannot bypass
+# the same serialized ownership boundary.
+__dx_session_runtime_purge() {
+  [[ $# -ge 2 && $# -le 3 ]] || return 3
+  local session_id="$1" lease_token="$2" owner_pid="${3:-$$}" record_file
+  record_file=$(dx_session_runtime_file "$session_id") || return $?
+  __dx_session_runtime_call purge \
+    "$record_file" "$session_id" "$owner_pid" 3<<<"$lease_token"
 }
 
 # dx_session_runtime_read <session_id> - print validated compact JSON without its private token.
