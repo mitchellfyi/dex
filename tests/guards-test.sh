@@ -679,6 +679,27 @@ assert_secret_clean "a command substitution, quoted" \
 # shellcheck disable=SC2016
 assert_secret_clean "a command substitution, bare" \
   'AUTH_TOKEN=$(cat /run/secrets/token)'
+# The name list required the internal underscore, so camelCase — which is how
+# most JavaScript and TypeScript spells these — went past untouched.
+assert_secret_warns "a camelCase API key" \
+  'const apiKey = "sk_live_abc12345def"'
+assert_secret_warns "a camelCase auth token" \
+  'const authToken = "ghp_16CharsAtLeast"'
+assert_secret_warns "a camelCase secret key" \
+  'const secretKey = "abcdefgh12345678"'
+assert_secret_warns "a camelCase key with a vendor prefix" \
+  'const stripeApiKey = "sk_test_51H8xQ2eZvKY"'
+assert_secret_warns "an OAuth client secret" \
+  'CLIENT_SECRET = "abc123def456ghi789"'
+assert_secret_warns "an OAuth client secret, camelCase" \
+  'clientSecret: "abc123def456ghi789"'
+# The keyword has to end the identifier, not sit inside a longer one.
+assert_secret_clean "an identifier that continues past the keyword" \
+  'const apiKeyIsMissing = "abcdefgh12345678"'
+assert_secret_clean "a camelCase name read from the environment" \
+  'const apiKey = process.env.API_KEY'
+assert_secret_clean "a camelCase name returned by a call" \
+  'const authToken = getToken(user)'
 set +e
 GUARD_OUT="$(mkpayload 'changed content' | env DEX_REVIEW_ASSESSMENT_ACTIVE=1 DEX_GUARD_EVENT=file python3 "$HANDLER" 2>&1)"
 GUARD_RC=$?
