@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 # A DexCode token reaches exactly one organisation. People work across several
 # from one laptop, so the config holds a connection per organisation and a
 # second login must add to the set rather than replace it.
@@ -70,14 +71,8 @@ python3 "$TMP_DIR/context-server.py" "$SERVER_A_LOG" "$SERVER_A_PORT_FILE" &
 SERVER_A_PID=$!
 python3 "$TMP_DIR/context-server.py" "$SERVER_B_LOG" "$SERVER_B_PORT_FILE" &
 SERVER_B_PID=$!
-for _ in $(seq 1 100); do
-  [[ -s "$SERVER_A_PORT_FILE" && -s "$SERVER_B_PORT_FILE" ]] && break
-  sleep 0.05
-done
-[[ -s "$SERVER_A_PORT_FILE" && -s "$SERVER_B_PORT_FILE" ]] || {
-  printf 'context test servers did not start\n' >&2
-  exit 1
-}
+wait_for_process_files "$SERVER_A_PID" "$SERVER_A_PORT_FILE"
+wait_for_process_files "$SERVER_B_PID" "$SERVER_B_PORT_FILE"
 ORIGIN_A="http://127.0.0.1:$(cat "$SERVER_A_PORT_FILE")"
 ORIGIN_B="http://127.0.0.1:$(cat "$SERVER_B_PORT_FILE")"
 

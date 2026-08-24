@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run every tests/*-test.sh, in parallel, with a per-test timeout.
+# Run every tests/*-test.sh with a per-test timeout.
 #
-# A test whose assertions are wall-clock bounds cannot share the machine with
-# seven others. Those declare themselves with a `# dex-test-lane: serial` line
-# and run one at a time, after the parallel batch has finished — the fact lives
-# with the test, so adding one does not mean editing this runner.
+# Local service fixtures run first in the exclusive `service` lane. Tests whose
+# assertions are wall-clock bounds use the exclusive `serial` lane after the
+# parallel batch. A `# dex-test-lane: <lane>` line near the top of the test
+# keeps its resource requirement with the test itself.
 #
 # Usage:
 #   bash tests/run-all.sh                 # all tests
@@ -14,12 +14,19 @@
 #   DX_TEST_JOBS      concurrent tests (default: CPU count, max 8)
 #   DX_TEST_TIMEOUT   per-test timeout in seconds (default: 1200)
 #   DX_TEST_LOG_DIR   where to keep logs (default: a mktemp dir)
+#   DX_TEST_SUITE_DIR test discovery directory (default: tests/; for runner tests)
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SUITE_DIR="${DX_TEST_SUITE_DIR:-$ROOT/tests}"
 JOBS="${DX_TEST_JOBS:-}"
 TIMEOUT="${DX_TEST_TIMEOUT:-1200}"
 LOG_DIR="${DX_TEST_LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/dex-test-run.XXXXXX")}"
+
+if [[ ! -d "$SUITE_DIR" ]]; then
+  printf 'test suite directory does not exist: %s\n' "$SUITE_DIR" >&2
+  exit 1
+fi
 
 if [[ -z "$JOBS" ]]; then
   JOBS=$( { getconf _NPROCESSORS_ONLN || sysctl -n hw.ncpu || echo 4; } 2>/dev/null )
@@ -39,7 +46,7 @@ if [[ -n "$missing" ]]; then
 fi
 
 tests=""
-for path in "$ROOT"/tests/*-test.sh; do
+for path in "$SUITE_DIR"/*-test.sh; do
   [[ -f "$path" ]] || continue
   name="$(basename "$path")"
   if [[ $# -gt 0 ]]; then
@@ -62,28 +69,32 @@ fi
 
 total="$(printf '%s\n' "$tests" | wc -l | tr -d ' ')"
 
-# Split off the tests that measure elapsed time. The marker is read from the
-# head of the file so a test declares its own lane.
+# Service fixtures get the machine first, one at a time. Timing-sensitive
+# tests also run alone after the parallel batch. Each test declares its lane
+# near the top of its own file.
 parallel_tests=""
+service_tests=""
 serial_tests=""
 while IFS= read -r name; do
   [[ -n "$name" ]] || continue
-  if grep -q '^# dex-test-lane: serial' <<< "$(head -40 "$ROOT/tests/$name")"; then
-    serial_tests="${serial_tests}${name}"$'\n'
-  else
-    parallel_tests="${parallel_tests}${name}"$'\n'
-  fi
+  lane=$(awk 'NR > 40 { exit } /^# dex-test-lane: / { print $3; exit }' "$SUITE_DIR/$name")
+  case "$lane" in
+    service) service_tests="${service_tests}${name}"$'\n' ;;
+    serial) serial_tests="${serial_tests}${name}"$'\n' ;;
+    "") parallel_tests="${parallel_tests}${name}"$'\n' ;;
+    *)
+      printf 'unknown test lane %s in %s\n' "$lane" "$name" >&2
+      exit 1
+      ;;
+  esac
 done <<EOF
 $tests
 EOF
+service_total="$(printf '%s' "$service_tests" | grep -c . || true)"
 serial_total="$(printf '%s' "$serial_tests" | grep -c . || true)"
 
-if [[ "$serial_total" -gt 0 ]]; then
-  printf 'running %s test(s): %s at a time, then %s in a serial lane, %ss timeout\n' \
-    "$total" "$JOBS" "$serial_total" "$TIMEOUT"
-else
-  printf 'running %s test(s), %s at a time, %ss timeout\n' "$total" "$JOBS" "$TIMEOUT"
-fi
+printf 'running %s test(s): %s in the service lane, up to %s parallel, then %s in the serial lane, %ss timeout\n' \
+  "$total" "$service_total" "$JOBS" "$serial_total" "$TIMEOUT"
 
 run_one() {
   local name="$1" start end rc
@@ -91,10 +102,10 @@ run_one() {
   # </dev/null matters: a test that reads stdin would otherwise consume the
   # runner's own test list and silently drop every remaining test.
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$TIMEOUT" bash "$ROOT/tests/$name" >"$LOG_DIR/$name.log" 2>&1 </dev/null
+    timeout "$TIMEOUT" bash "$SUITE_DIR/$name" >"$LOG_DIR/$name.log" 2>&1 </dev/null
     rc=$?
   else
-    perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" bash "$ROOT/tests/$name" \
+    perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" bash "$SUITE_DIR/$name" \
       >"$LOG_DIR/$name.log" 2>&1 </dev/null
     rc=$?
   fi
@@ -106,6 +117,15 @@ run_one() {
   fi
   printf '%s\n' "$rc" > "$LOG_DIR/$name.rc"
 }
+
+# Local HTTP fixtures bind ports and start Python worker threads. Running them
+# alone prevents host resource pressure from turning startup into a race.
+while IFS= read -r name; do
+  [[ -n "$name" ]] || continue
+  run_one "$name" </dev/null
+done <<EOF
+$service_tests
+EOF
 
 # Throttle with `jobs -pr` rather than `wait -n`, which bash 3.2 (the macOS
 # system bash) does not support.

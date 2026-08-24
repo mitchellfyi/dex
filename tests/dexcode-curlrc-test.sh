@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -119,14 +120,7 @@ PY
 
 python3 "$TMP_DIR/server.py" "$TMP_DIR" &
 SERVER_PID=$!
-for _attempt in {1..100}; do
-  [[ -s "$TMP_DIR/origin-port" && -s "$TMP_DIR/sink-port" ]] && break
-  sleep 0.05
-done
-[[ -s "$TMP_DIR/origin-port" && -s "$TMP_DIR/sink-port" ]] || {
-  printf 'curlrc fixture did not start\n' >&2
-  exit 1
-}
+wait_for_process_files "$SERVER_PID" "$TMP_DIR/origin-port" "$TMP_DIR/sink-port"
 
 origin_url="http://127.0.0.1:$(cat "$TMP_DIR/origin-port")"
 cat > "$DEXCODE_CONFIG_FILE" <<JSON
