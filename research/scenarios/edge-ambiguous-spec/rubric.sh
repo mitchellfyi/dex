@@ -411,6 +411,10 @@ rubric_robustness() {
 
   local all_src
   all_src=$(find "$ws" -maxdepth 4 \( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.go" \) ! -path "*/node_modules/*" ! -name "*.test.*" ! -name "*.spec.*" ! -name "*_test.*" 2>/dev/null)
+  # Nothing here to be robust about. Every check below awards points for the
+  # absence of a problem, which costs nothing when there is no code for the
+  # problem to be in — and this scenario starts from an empty workspace.
+  [[ -n "${all_src}" ]] || { echo 0; return; }
 
   # Has sensible defaults
   if [[ -n "${all_src}" ]] && echo "$all_src" | xargs grep -qliE "default|DEFAULT|= 100|= 60|= 1000" 2>/dev/null; then

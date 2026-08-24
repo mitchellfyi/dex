@@ -616,6 +616,10 @@ rubric_robustness() {
 
   local src_files
   src_files=$(find "$ws" -maxdepth 4 -name "*.js" -o -name "*.ts" | grep -v node_modules | grep -vE '\.(test|spec)\.' 2>/dev/null || true)
+  # Nothing here to be robust about. Every check below awards points for the
+  # absence of a problem, which costs nothing when there is no code for the
+  # problem to be in — and this scenario starts from an empty workspace.
+  [[ -n "${src_files}" ]] || { echo 0; return; }
 
   # --- Has password hashing: bcrypt/argon2/scrypt (15 pts) ---
   local has_hashing

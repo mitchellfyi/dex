@@ -827,6 +827,10 @@ rubric_robustness() {
 
   local src_files
   src_files=$(find "$ws" -maxdepth 4 -name "*.js" ! -path "*/node_modules/*" ! -name "*.test.*" ! -name "*.spec.*" 2>/dev/null || true)
+  # Nothing here to be robust about. Every check below awards points for the
+  # absence of a problem, which costs nothing when there is no code for the
+  # problem to be in — and this scenario starts from an empty workspace.
+  [[ -n "${src_files}" ]] || { echo 0; return; }
 
   # --- Handles client disconnection without crash (15 pts) ---
   # Actually test this: connect, join, then abruptly close, then connect again

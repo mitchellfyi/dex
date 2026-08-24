@@ -347,6 +347,10 @@ rubric_robustness() {
 
   local src_files
   src_files=$(find "$ws/validators" -name "*.py" 2>/dev/null)
+  # Nothing here to be robust about. Every check below awards points for the
+  # absence of a problem, which costs nothing when there is no code for the
+  # problem to be in — and this scenario starts from an empty workspace.
+  [[ -n "${src_files}" ]] || { echo 0; return; }
 
   # ── Non-string inputs handled gracefully (20 pts) ──────────────────
   local type_safety

@@ -237,6 +237,10 @@ rubric_robustness() {
   src_content=$(find "$ws" -maxdepth 5 \( -name "*.tsx" -o -name "*.jsx" -o -name "*.ts" -o -name "*.js" \) \
     ! -path "*/node_modules/*" ! -path "*/*.test.*" ! -path "*/*.spec.*" \
     ! -path "*/__tests__/*" -exec cat {} + 2>/dev/null) || true
+  # Nothing here to be robust about. Every check below awards points for the
+  # absence of a problem, which costs nothing when there is no code for the
+  # problem to be in — and this scenario starts from an empty workspace.
+  [[ -n "${src_content}" ]] || { echo 0; return; }
 
   # ── All components are functional — no class components (10 pts) ────
   local has_class_component
