@@ -30,6 +30,7 @@
 #   dx test [dex|project]   Run Dex checks or verify the current project
 #   dx run --spec <file>    Run from a structured headless run spec
 #   dx control <action>     Pause, stop, advance, jump, or resume a lifecycle
+#   dx sessions             Inspect and diagnose lifecycle sessions
 #   dex                   Alias for dx
 #   dexter                Alias for dx
 
@@ -85,6 +86,7 @@ __dx_cli() {
     provider)  dx_provider_command "$@" ;;
     run)       __dx_run_spec_cli "$@" ;;
     control)   bash "$DEX_DIR/bin/control.sh" "$@" ;;
+    sessions)  bash "$DEX_DIR/bin/sessions.sh" "$@" ;;
     research)
       local _dx_has_max_cycles=0 _dx_has_runner=0 _dx_research_help=0 _dx_arg
       local _dx_research_args=("$@")
@@ -151,6 +153,7 @@ __dx_cli() {
       echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
       echo "  dx run --spec-url URL --run-token TOKEN"
       echo "  dx control          Pause, stop, advance, jump, or resume the current lifecycle"
+      echo "  dx sessions         Inspect and diagnose lifecycle sessions"
       echo "  dx research         Run autonomous research orchestrator"
       echo "                        Defaults: --max-cycles 20; SCENARIO_TIMEOUT 3600s (1h) per scenario"
       echo "                        Override timeout: dx research --scenario-timeout 7200"
@@ -2749,7 +2752,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|run|control|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|run|control|sessions|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
