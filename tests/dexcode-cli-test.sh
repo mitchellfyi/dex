@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 set -euo pipefail
 
-# dex-test-lane: serial
-# Asserts the login device-flow poll gives up within 15s of its 1s deadline.
+# The service lane also isolates the login device-flow deadline assertion.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -254,13 +254,7 @@ server.serve_forever()
 PY
   python3 "$server_dir/server.py" "$server_dir" &
   SERVER_PID=$!
-
-  local _attempt
-  for _attempt in {1..100}; do
-    [[ -f "$server_dir/port" ]] && break
-    sleep 0.05
-  done
-  assert_file "$server_dir/port"
+  wait_for_process_files "$SERVER_PID" "$server_dir/port"
   SERVER_URL="http://127.0.0.1:$(cat "$server_dir/port")"
   SERVER_DIR="$server_dir"
 }

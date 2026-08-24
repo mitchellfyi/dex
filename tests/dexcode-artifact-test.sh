@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -172,16 +173,7 @@ server.serve_forever()
 PY
   python3 "$server_dir/server.py" "$server_dir" &
   SERVER_PID=$!
-
-  local _attempt
-  for _attempt in {1..100}; do
-    [[ -s "$server_dir/port" ]] && break
-    sleep 0.05
-  done
-  [[ -s "$server_dir/port" ]] || {
-    printf 'artifact test server did not start\n' >&2
-    exit 1
-  }
+  wait_for_process_files "$SERVER_PID" "$server_dir/port"
   SERVER_URL="http://127.0.0.1:$(cat "$server_dir/port")"
 }
 

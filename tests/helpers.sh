@@ -105,6 +105,64 @@ request_count() {
   wc -l < "$file" | tr -d '[:space:]'
 }
 
+# wait_for_process_files <pid> <file> [file...]
+# Wait for a fixture process to publish non-empty readiness files. A crashed
+# child and a live child that times out are different failures and need
+# different diagnostics.
+wait_for_process_files() {
+  local child_pid="${1:-}" timeout_seconds="${DX_TEST_SERVER_START_TIMEOUT:-15}"
+  local deadline now_epoch all_ready target_file missing_files child_exit
+  shift || true
+
+  if [[ ! "$child_pid" =~ ^[0-9]+$ || $# -eq 0 ]]; then
+    printf 'wait_for_process_files requires a pid and at least one file\n' >&2
+    return 2
+  fi
+  if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'DX_TEST_SERVER_START_TIMEOUT must be a positive integer\n' >&2
+    return 2
+  fi
+
+  deadline=$(( $(date +%s) + timeout_seconds ))
+  while :; do
+    all_ready=1
+    missing_files=""
+    for target_file in "$@"; do
+      if [[ ! -s "$target_file" ]]; then
+        all_ready=0
+        missing_files="${missing_files}${missing_files:+, }${target_file}"
+      fi
+    done
+
+    if [[ "$all_ready" -eq 1 ]]; then
+      if kill -0 "$child_pid" 2>/dev/null; then
+        return 0
+      fi
+      child_exit=0
+      wait "$child_pid" 2>/dev/null || child_exit=$?
+      printf 'fixture process %s exited with status %s after publishing readiness files\n' \
+        "$child_pid" "$child_exit" >&2
+      return 1
+    fi
+
+    if ! kill -0 "$child_pid" 2>/dev/null; then
+      child_exit=0
+      wait "$child_pid" 2>/dev/null || child_exit=$?
+      printf 'fixture process %s exited before publishing readiness files (status %s): %s\n' \
+        "$child_pid" "$child_exit" "$missing_files" >&2
+      return 1
+    fi
+
+    now_epoch=$(date +%s)
+    if [[ "$now_epoch" -ge "$deadline" ]]; then
+      printf 'fixture process %s did not publish readiness files within %ss: %s\n' \
+        "$child_pid" "$timeout_seconds" "$missing_files" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
 # assert_file <path>
 assert_file() {
   if [[ ! -f "$1" ]]; then

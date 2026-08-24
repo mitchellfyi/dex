@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -171,13 +172,7 @@ PY
   python3 "$server_dir/server.py" "$server_dir" &
   SERVER_PID=$!
   SERVER_PIDS+=("$SERVER_PID")
-
-  local _attempt
-  for _attempt in {1..100}; do
-    [[ -f "$server_dir/port" ]] && break
-    sleep 0.05
-  done
-  assert_file "$server_dir/port"
+  wait_for_process_files "$SERVER_PID" "$server_dir/port"
   SERVER_DIR="$server_dir"
   SERVER_URL="http://127.0.0.1:$(cat "$server_dir/port")"
 }

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-lifecycle-terminal-event-test.XXXXXX")"
 SERVER_PID=""
 
@@ -76,14 +79,7 @@ server.serve_forever()
 PY
 python3 "$TMP_DIR/server.py" "$TMP_DIR" &
 SERVER_PID=$!
-for _attempt in {1..100}; do
-  [[ -f "$TMP_DIR/port" ]] && break
-  sleep 0.05
-done
-[[ -f "$TMP_DIR/port" ]] || {
-  printf '%s\n' "server did not start" >&2
-  exit 1
-}
+wait_for_process_files "$SERVER_PID" "$TMP_DIR/port"
 
 export DEX_FACTORY_SYNC=true
 DEX_FACTORY_URL="http://127.0.0.1:$(cat "$TMP_DIR/port")"

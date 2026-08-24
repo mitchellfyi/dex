@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,7 +27,6 @@ export DX_RUN_ROOT="$TMP_DIR/runs"
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
-
 
 start_server() {
   local server_dir="$TMP_DIR/server"
@@ -100,13 +100,7 @@ server.serve_forever()
 PY
   python3 "$server_dir/server.py" "$server_dir" &
   SERVER_PID=$!
-
-  local _attempt
-  for _attempt in {1..100}; do
-    [[ -f "$server_dir/port" ]] && break
-    sleep 0.05
-  done
-  assert_file "$server_dir/port"
+  wait_for_process_files "$SERVER_PID" "$server_dir/port"
   SERVER_URL="http://127.0.0.1:$(cat "$server_dir/port")"
   SERVER_DIR="$server_dir"
 }
@@ -118,6 +112,20 @@ request_count() {
     return 0
   }
   wc -l < "$requests_file" | tr -d ' '
+}
+
+flush_factory_events() {
+  local sync_status
+  # Bash 3.2 can still apply errexit inside nested lock helpers even when the
+  # outer call is in an OR-list. Capture the public result explicitly instead.
+  set +e
+  dx_factory_sync_pending_events "$@"
+  sync_status=$?
+  set -e
+  if [[ "$sync_status" -ne 0 ]]; then
+    printf 'Factory sync returned an unexpected failure for %s\n' "$1" >&2
+    return 1
+  fi
 }
 
 start_server
@@ -163,8 +171,13 @@ export DEX_FACTORY_BATCH_SIZE=25
 
 success_run="$(dx_run_prepare "remote-success" "$ROOT" "test" "factory-sync-test" "issue-47" "dx test")"
 dx_event_emit "$success_run" "run.started" "info" "Remote sync" "" '{"mode":"remote"}'
-assert_file "$(dx_factory_sync_cursor_file "$success_run")"
-assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$success_run")")" "success cursor"
+success_cursor="$(dx_factory_sync_cursor_file "$success_run")"
+if [[ ! -f "$success_cursor" ]]; then
+  printf 'Factory sync did not write its cursor. Status:\n' >&2
+  cat "$(dx_factory_sync_status_file "$success_run")" >&2 2>/dev/null || printf '(no status file)\n' >&2
+  exit 1
+fi
+assert_eq "1" "$(cat "$success_cursor")" "success cursor"
 
 python3 - "$SERVER_DIR/requests.jsonl" "$success_run" <<'PY'
 import json
@@ -193,7 +206,7 @@ dx_event_emit "$backlog_run" "run.completed" "info" "Backlog run completed" "2" 
 export DEX_FACTORY_SYNC=true
 export DEX_FACTORY_BATCH_SIZE=2
 before_backlog_requests="$(request_count)"
-dx_factory_sync_pending_events "$backlog_run"
+flush_factory_events "$backlog_run"
 after_backlog_requests="$(request_count)"
 assert_eq "$((before_backlog_requests + 3))" "$after_backlog_requests" "backlog drained request count"
 assert_eq "5" "$(cat "$(dx_factory_sync_cursor_file "$backlog_run")")" "backlog cursor"
@@ -244,7 +257,7 @@ assert "test-token" not in status["message"], status
 PY
 
 printf '200\n' > "$SERVER_DIR/status"
-dx_factory_sync_pending_events "$failure_run"
+flush_factory_events "$failure_run"
 assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$failure_run")")" "retry cursor"
 
 python3 - "$SERVER_DIR/requests.jsonl" "$failure_run" <<'PY'
@@ -270,7 +283,7 @@ dx_event_emit "$plain_echo_run" "run.started" "info" "Plain token echo" "" '{"mo
 printf '500\n' > "$SERVER_DIR/status"
 printf 'text\n' > "$SERVER_DIR/body-mode"
 export DEX_FACTORY_SYNC=true
-dx_factory_sync_pending_events "$plain_echo_run"
+flush_factory_events "$plain_echo_run"
 python3 - "$(dx_factory_sync_status_file "$plain_echo_run")" <<'PY'
 import json
 import sys
@@ -284,7 +297,7 @@ assert "ghp_forgedcollectortoken1234567890" not in status["message"], status
 PY
 printf '200\n' > "$SERVER_DIR/status"
 printf 'json\n' > "$SERVER_DIR/body-mode"
-dx_factory_sync_pending_events "$plain_echo_run"
+flush_factory_events "$plain_echo_run"
 
 # Factory sync uses lib/lock.sh, which publishes "<epoch>\t<pid>\t<token>".
 # A record it cannot parse counts as no record at all and is only reclaimed
@@ -300,13 +313,12 @@ stale_lock_dir="$(dx_factory_sync_dir "$stale_lock_run")/.lock"
 mkdir -p "$stale_lock_dir"
 write_lock_owner "$stale_lock_dir" 999999
 export DEX_FACTORY_SYNC=true
-dx_factory_sync_pending_events "$stale_lock_run"
+flush_factory_events "$stale_lock_run"
 assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$stale_lock_run")")" "stale-lock cursor"
 [[ ! -d "$stale_lock_dir" ]] || {
   printf 'stale Factory sync lock was not released\n' >&2
   exit 1
 }
-
 age_lock() {
   DX_TEST_LOCK_DIR="$1" python3 - <<'PY'
 import os
@@ -324,13 +336,13 @@ dx_event_emit "$missing_owner_run" "run.started" "info" "Missing lock owner" "" 
 missing_owner_lock="$(dx_factory_sync_dir "$missing_owner_run")/.lock"
 mkdir -p "$missing_owner_lock"
 export DEX_FACTORY_SYNC=true
-DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$missing_owner_run"
+DEX_FACTORY_LOCK_ATTEMPTS=2 flush_factory_events "$missing_owner_run"
 [[ -d "$missing_owner_lock" ]] || {
   printf 'Factory stole a fresh lock before its owner could be written\n' >&2
   exit 1
 }
 age_lock "$missing_owner_lock"
-dx_factory_sync_pending_events "$missing_owner_run"
+flush_factory_events "$missing_owner_run"
 assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$missing_owner_run")")" "missing-owner cursor"
 
 corrupt_owner_run="$(dx_run_prepare "corrupt-lock-owner" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
@@ -341,7 +353,7 @@ mkdir -p "$corrupt_owner_lock"
 printf 'not-a-pid\n' > "$corrupt_owner_lock/owner"
 age_lock "$corrupt_owner_lock"
 export DEX_FACTORY_SYNC=true
-dx_factory_sync_pending_events "$corrupt_owner_run"
+flush_factory_events "$corrupt_owner_run"
 assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$corrupt_owner_run")")" "corrupt-owner cursor"
 
 interrupted_owner_run="$(dx_run_prepare "interrupted-lock-owner" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
@@ -366,7 +378,7 @@ done
 kill "$interrupted_pid" 2>/dev/null || true
 wait "$interrupted_pid" 2>/dev/null || true
 export DEX_FACTORY_SYNC=true
-dx_factory_sync_pending_events "$interrupted_owner_run"
+flush_factory_events "$interrupted_owner_run"
 assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$interrupted_owner_run")")" "interrupted-owner cursor"
 
 live_owner_run="$(dx_run_prepare "live-lock-owner" "$ROOT" "test" "factory-sync-test" "issue-49" "dx test")"
@@ -376,7 +388,7 @@ live_owner_lock="$(dx_factory_sync_dir "$live_owner_run")/.lock"
 mkdir -p "$live_owner_lock"
 write_lock_owner "$live_owner_lock" "$$"
 export DEX_FACTORY_SYNC=true
-DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$live_owner_run"
+DEX_FACTORY_LOCK_ATTEMPTS=2 flush_factory_events "$live_owner_run"
 [[ -d "$live_owner_lock" ]] || {
   printf 'Factory stole a lock owned by a live process\n' >&2
   exit 1
@@ -398,14 +410,14 @@ abandoned_reaper_lock="$(dx_factory_sync_dir "$abandoned_reaper_run")/.lock"
 mkdir -p "$abandoned_reaper_lock" "${abandoned_reaper_lock}.reap"
 write_lock_owner "$abandoned_reaper_lock" 999999
 export DEX_FACTORY_SYNC=true
-DEX_FACTORY_LOCK_ATTEMPTS=2 dx_factory_sync_pending_events "$abandoned_reaper_run"
+DEX_FACTORY_LOCK_ATTEMPTS=2 flush_factory_events "$abandoned_reaper_run"
 [[ -d "$abandoned_reaper_lock" ]] || {
   printf 'Factory reclaimed a lock while another reaper still held the mutex\n' >&2
   exit 1
 }
 assert_no_file "$(dx_factory_sync_cursor_file "$abandoned_reaper_run")"
 age_lock "${abandoned_reaper_lock}.reap"
-dx_factory_sync_pending_events "$abandoned_reaper_run"
+flush_factory_events "$abandoned_reaper_run"
 assert_eq "1" "$(cat "$(dx_factory_sync_cursor_file "$abandoned_reaper_run")")" "abandoned-reaper cursor"
 [[ ! -d "$abandoned_reaper_lock" ]] || {
   printf 'Factory sync stayed wedged behind an abandoned reaper mutex\n' >&2
@@ -459,7 +471,7 @@ dx_event_emit "$torn_run" "run.started" "info" "before the tear" "" '{}'
 printf '{"sequence": 2, "type": "run.tr\n' >> "$(dx_run_events_file "$torn_run")"
 dx_event_emit "$torn_run" "run.completed" "info" "after the tear" "" '{}'
 export DEX_FACTORY_SYNC=true
-dx_factory_sync_pending_events "$torn_run"
+flush_factory_events "$torn_run"
 
 if [[ -f "$(dx_factory_sync_status_file "$torn_run")" ]]; then
   printf 'a torn journal line wedged factory sync\n' >&2
@@ -492,7 +504,7 @@ PY
 # still resends from the beginning rather than skipping events.
 printf '99 5\n' > "$offset_file"
 printf '0\n' > "$(dx_factory_sync_cursor_file "$torn_run")"
-dx_factory_sync_pending_events "$torn_run"
+flush_factory_events "$torn_run"
 python3 - "$(dx_factory_sync_cursor_file "$torn_run")" <<'PY'
 import sys
 from pathlib import Path

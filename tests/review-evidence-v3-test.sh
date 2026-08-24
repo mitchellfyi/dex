@@ -252,9 +252,9 @@ PROOF_DIR="$(dx_review_proof_dir "$SESSION_ID")"
 for iteration in 1 2 3; do
   [[ -f "$PROOF_DIR/$iteration/evidence.json" && ! -L "$PROOF_DIR/$iteration/evidence.json" ]] || assert_at $LINENO
   [[ -f "$PROOF_DIR/$iteration/context.md" && ! -L "$PROOF_DIR/$iteration/context.md" ]] || assert_at $LINENO
-  assert_eq "400" "$(stat -f '%Lp' "$PROOF_DIR/$iteration/evidence.json" 2>/dev/null || stat -c '%a' "$PROOF_DIR/$iteration/evidence.json")" \
+  assert_eq "400" "$(dx_path_mode "$PROOF_DIR/$iteration/evidence.json")" \
     "retained evidence permissions"
-  assert_eq "400" "$(stat -f '%Lp' "$PROOF_DIR/$iteration/context.md" 2>/dev/null || stat -c '%a' "$PROOF_DIR/$iteration/context.md")" \
+  assert_eq "400" "$(dx_path_mode "$PROOF_DIR/$iteration/context.md")" \
     "retained context permissions"
 done
 

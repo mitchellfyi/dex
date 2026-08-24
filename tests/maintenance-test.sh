@@ -19,6 +19,9 @@ export DX_ARTIFACT_DIR="$TMP_DIR/artifacts"
 export DX_TOOL_DIR="$TMP_DIR/tools"
 export DX_RUN_ROOT="$TMP_DIR/runs"
 export PATH="$TMP_DIR/bin:$PATH"
+# GitHub Actions exports its checkout repository. This fixture owns repository
+# discovery through its gh stub, so inherited CI context must not override it.
+unset GH_REPO GITHUB_REPOSITORY
 mkdir -p "$TMP_DIR/bin"
 
 # shellcheck disable=SC1091
@@ -393,7 +396,8 @@ cat > "$TMP_DIR/bin/git" <<'GITSTUB'
   if [[ -n "${DX_MAINTAIN_TOKEN_FILE:-}" && -n "${GIT_ASKPASS:-}" && -x "${GIT_ASKPASS}" ]]; then
     printf 'askpass-user\t%s\n' "$("$GIT_ASKPASS" 'Username for https://github.com: ')"
     printf 'askpass-pass\t%s\n' "$("$GIT_ASKPASS" 'Password for https://github.com: ')"
-    printf 'askpass-mode\t%s\n' "$(stat -f '%Lp' "$DX_MAINTAIN_TOKEN_FILE" 2>/dev/null || echo '?')"
+    printf 'askpass-mode\t%s\n' "$(bash -c 'source "$DEX_DIR/lib/common.sh"; dx_path_mode "$1"' \
+      _ "$DX_MAINTAIN_TOKEN_FILE" 2>/dev/null || echo '?')"
     printf 'askpass-script\t%s\n' "$GIT_ASKPASS"
   fi
 } >> "$DX_TEST_GIT_LOG"

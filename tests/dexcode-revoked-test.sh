@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 # Revoking a lost laptop is worth nothing if that laptop still reports itself
 # as connected. whoami must say so rather than print the last known details.
 set -euo pipefail
@@ -70,7 +71,7 @@ PYEOF
 printf '200' > "$TMP_DIR/status"
 python3 "$TMP_DIR/server.py" "$TMP_DIR" &
 SERVER_PID=$!
-for _ in $(seq 1 50); do [[ -s "$TMP_DIR/port" ]] && break; sleep 0.1; done
+wait_for_process_files "$SERVER_PID" "$TMP_DIR/port"
 SERVER_URL="http://127.0.0.1:$(cat "$TMP_DIR/port")"
 
 cat > "$DEXCODE_CONFIG_FILE" <<JSON

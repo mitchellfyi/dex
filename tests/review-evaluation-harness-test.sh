@@ -184,6 +184,7 @@ cp "$ROOT/research/review-loop/agent-observer.sh" "$runtime_source/research/revi
 runtime_contract_files=(
   dx.sh
   lib/common.sh
+  lib/completion.sh
   lib/review.sh
   lib/review-controller.sh
   lib/review-policy.sh
@@ -204,6 +205,7 @@ assert_eq "$runtime_source_sha" "$runtime_sha" "runtime commit"
 [[ ! -e "$runtime_dir/.git" ]] || fail "runtime must not expose git history"
 [[ -x "$runtime_dir/research/review-loop/launch.zsh" ]] || fail "sanitized launcher is missing"
 [[ -f "$runtime_dir/research/review-loop/agent-observer.sh" ]] || fail "sanitized observer is missing"
+[[ -f "$runtime_dir/lib/completion.sh" ]] || fail "sanitized completion runtime is missing"
 [[ ! -e "$runtime_dir/research/review-loop/scenarios" ]] || fail "runtime contains scenario truth"
 actual_runtime_roots=$(find "$runtime_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort | tr '\n' ' ')
 # scripts/ is in the runtime because lib/ imports helpers from it. Widening

@@ -31,10 +31,10 @@ jobs:
       - name: Run static checks
         run: bash tests/check.sh
 
-  test:
-    name: Tests (${{ matrix.os }})
+  test-fast:
+    name: Fast tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
@@ -51,10 +51,89 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh
-      - name: Configure git identity
-        run: |
-          git config --global user.email "dex-ci@example.test"
-          git config --global user.name "Dex CI"
-          git config --global init.defaultBranch main
-      - name: Run test suite
+      - name: Run fast tests
+        env:
+          DX_TEST_LANES: fast
+          DX_TEST_LOG_DIR: ${{ runner.temp }}/dex-test-logs
         run: bash tests/run-all.sh
+      - name: Upload test logs
+        if: always()
+        # actions/upload-artifact v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fast-test-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/dex-test-logs
+          if-no-files-found: warn
+          retention-days: 7
+
+  test-resource:
+    name: Resource tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install zsh (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+      - name: Run service and serial tests
+        env:
+          DX_TEST_LANES: service,serial
+          DX_TEST_LOG_DIR: ${{ runner.temp }}/dex-test-logs
+        run: bash tests/run-all.sh
+      - name: Upload test logs
+        if: always()
+        # actions/upload-artifact v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: resource-test-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/dex-test-logs
+          if-no-files-found: warn
+          retention-days: 7
+
+  test-slow:
+    name: Slow tests (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        shard: [1, 2]
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install zsh (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+      - name: Run slow-test shard
+        env:
+          DX_TEST_LANES: slow
+          DX_TEST_SHARD: ${{ matrix.shard }}/2
+          DX_TEST_LOG_DIR: ${{ runner.temp }}/dex-test-logs
+        run: bash tests/run-all.sh
+      - name: Upload test logs
+        if: always()
+        # actions/upload-artifact v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slow-test-logs-${{ matrix.os }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/dex-test-logs
+          if-no-files-found: warn
+          retention-days: 7

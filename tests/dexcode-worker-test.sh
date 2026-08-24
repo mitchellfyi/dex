@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dex-test-lane: service
 # The DexCode worker daemon: registration, the poll/start/lease/settle loop,
 # and the credential boundaries between the three token kinds.
 #
@@ -9,6 +10,8 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/helpers.sh
+source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-dexcode-worker-test.XXXXXX")"
 SERVER_PID=""
 
@@ -339,11 +342,7 @@ git -C "$TMP_DIR/repo" commit -qm "initial"
 
 python3 "$TMP_DIR/server.py" "$TMP_DIR" &
 SERVER_PID=$!
-for _attempt in $(seq 1 100); do
-  [[ -f "$TMP_DIR/port" ]] && break
-  sleep 0.05
-done
-[[ -f "$TMP_DIR/port" ]] || { printf 'stub server did not start\n' >&2; exit 1; }
+wait_for_process_files "$SERVER_PID" "$TMP_DIR/port" || exit 1
 SERVER_URL="http://127.0.0.1:$(cat "$TMP_DIR/port")"
 
 # An administrator connection, as `dx login` would leave it.
@@ -413,8 +412,7 @@ register_request="$(requests_for "/api/v1/workers" | head -1)"
 assert_contains "$register_request" "$CLI_TOKEN" "registration uses the CLI token"
 
 # The credential file must not be world-readable: it holds a bearer.
-perms="$(stat -f '%Lp' "$DEXCODE_WORKER_CONFIG_FILE" 2>/dev/null \
-  || stat -c '%a' "$DEXCODE_WORKER_CONFIG_FILE" 2>/dev/null)"
+perms="$(dx_path_mode "$DEXCODE_WORKER_CONFIG_FILE")"
 assert_eq "600" "$perms" "credential file is 0600"
 
 # Re-registering without --rotate keeps the credential already on disk.

@@ -91,11 +91,7 @@ assert_absent() {
 
 
 file_mode() {
-  if stat -f '%Lp' "$1" >/dev/null 2>&1; then
-    stat -f '%Lp' "$1"
-  else
-    stat -c '%a' "$1"
-  fi
+  dx_path_mode "$1"
 }
 
 # A configured hook directory remains untouched. Dex proxies each active hook

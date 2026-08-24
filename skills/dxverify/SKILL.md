@@ -1,100 +1,85 @@
 ---
 name: "dxverify"
-description: "Discover and run the full quality verification pipeline for the current project."
+description: "Run and repair the full quality pipeline for a project. Use before committing or pushing, after implementation, when asked to verify code quality, or when dx test project delegates verification."
 ---
 
 # Skill: dxverify
 
-Run the full quality verification pipeline for the current project.
+Verify the current project against its declared quality contract.
 
-## When to Use
+## 1. Read the project contract first
 
-- Before committing or pushing changes
-- After completing a feature or bug fix
-- When asked to verify code quality
-
-## Steps
-
-### 1. Discover the Toolchain
-
-Identify what quality tools the project uses by checking for these files at the repo root (and in subdirectories for monorepos):
-
-| File | Indicates | Typical Commands |
-|------|-----------|-----------------|
-| `Makefile` | Make targets | Read the file — look for `format`, `lint`, `typecheck`, `test`, `verify`, `ci` targets |
-| `package.json` | Node.js project | Read `scripts` — look for `format`, `lint`, `typecheck`, `test`, `check` scripts |
-| `Cargo.toml` | Rust project | `cargo fmt --check`, `cargo clippy`, `cargo test` |
-| `pyproject.toml` | Python project | Check `[tool.ruff]`, `[tool.black]`, `[tool.pytest]`, `[tool.mypy]` sections |
-| `go.mod` | Go project | `go fmt ./...`, `go vet ./...`, `go test ./...` |
-| `composer.json` | PHP project | Read `scripts` for `lint`, `test`, `analyse` |
-| `.github/workflows/` | CI config | Read CI workflows to understand what checks will run remotely |
-
-For monorepos, check each workspace/package for its own toolchain. Scope checks to the packages that have changes.
-If the change creates a new project, package, or standalone deliverable, treat that new directory as a full workspace even if the parent repo has no matching root-level tooling. Discover and run its local build, lint, type-check, and test commands before reporting success.
-
-### 2. Check What Changed
+Find the Git repository root, then inspect the current change:
 
 ```bash
 git status
 git diff --stat
 ```
 
-Understand the scope. If only one package/app changed in a monorepo, run checks scoped to that package.
+If `.dex/dex.md` exists, read it before discovering commands elsewhere. Treat
+its `## Quality Gates` section as authoritative:
 
-### 3. Run Quality Checks
+- Run every required command or check it names.
+- Do not replace a named gate with an inferred, narrower alternative.
+- Treat a missing command, stale instruction, or un-runnable gate as a failure
+  to resolve or report, not permission to skip it.
 
-Run the discovered checks in this order (fix each before moving to the next):
+If the file or section is absent, discover the complete pipeline from the
+repository instead.
 
-1. **Format** — auto-fix formatting issues
-2. **Lint** — auto-fix where possible, manual fix where not
-3. **Type-check** — fix type errors (if the language has a type checker)
-4. **Code generation** — if the project uses code generation (API clients, DB types, OpenAPI specs), run the generator and check for uncommitted changes
-5. **Test** — run the test suite
+## 2. Discover supporting checks
 
-If the project has a single command that runs all checks (e.g., `make verify`, `npm run ci`, `make check`), prefer that.
+Inspect CI workflows, task runners, package manifests, language configuration,
+and workspace definitions. Use them to fill categories the quality contract
+does not cover, such as formatting, linting, type checking, generated-code
+freshness, builds, tests, and repository-specific validation.
 
-### 4. `.dex/` Sync Check
+For a monorepo, inspect each affected workspace. Treat a newly created package
+or standalone deliverable as a full workspace even when the repository root
+uses a different toolchain.
 
-Before reporting results, verify `.dex/` is in sync with the changes:
+## 3. Run the pipeline
 
-1. Check if any of these changed during implementation:
-   - Package manifests (package.json, Cargo.toml, pyproject.toml, go.mod)
-   - New frameworks, tools, or conventions introduced
-   - Security-sensitive file paths or patterns
-2. If so, confirm the corresponding `.dex/` files were updated (dex.md, rules/, guards/, memory/).
-3. If durable lessons were discovered but not yet promoted, run `/dxsync --dry-run` or call them out as candidate observations for `dx sync`.
-4. If `.dex/` updates are pending, make them now and stage them for commit.
+Run checks in dependency order so one failure does not obscure another:
 
-### 5. Report
+1. Formatting
+2. Linting and static analysis
+3. Type checking
+4. Code generation and generated-file freshness
+5. Build or packaging checks
+6. Tests
 
-Summarize results:
-- Which checks passed
-- Which checks failed (with the error output)
-- Suggested fixes for any failures
-
-## Fix-and-Retry Loop
+Prefer a canonical aggregate command only when it covers every required gate.
+Scope supplemental checks to affected workspaces where appropriate, but never
+scope away a command required by `.dex/dex.md`.
 
 When a check fails:
 
-1. **Diagnose** — read the error output carefully.
-2. **Fix** — make the minimum change to resolve the issue.
-3. **Re-run only the failing check** — not the entire pipeline.
-4. **On 2nd failure of the same check type**: read `prompts/failure-recovery.md` and run the failure analysis. Choose a recovery strategy and follow it. If you switch strategies, the retry count resets for the new strategy.
-5. **Max 3 retries per strategy per check type.** After exhausting 2 strategies (6 total attempts), escalate to the user with:
-   - The check name and error output
-   - The recovery analysis (strategies tried and why each failed)
-   - Recommended next steps
+1. Diagnose the exact failure.
+2. Make the smallest valid fix.
+3. Rerun the failed check.
+4. Continue only after it passes.
 
-Run checks sequentially — fix each before moving to the next:
-- Format failures first (they may fix lint issues).
-- Lint failures second (they may fix type issues).
-- Type errors third.
-- Generated code freshness fourth.
-- Tests last (everything else must pass first).
+On the second failure of the same check type, read
+`prompts/failure-recovery.md`, choose a different recovery strategy, and follow
+it. Try at most three times per strategy and two strategies per check type. If
+both strategies fail, stop and report the command, relevant output, approaches
+tried, and recommended next step.
 
-## Notes
+## 4. Reconcile Dex context
 
-- If linting or formatting fails, fix the issues and re-run.
-- If type checking fails, fix type errors before running tests.
-- If tests fail, investigate and fix before committing.
-- AI agents do not have access to `.env` files — ask the developer to verify environment variables if tests require them.
+Before reporting success, check whether the change introduced a dependency,
+tool, convention, integration, or security-sensitive path that should update
+`.dex/`. Keep `dex.md`, `rules/`, and `guards/` aligned with durable project
+changes. Use `dx sync --dry-run` for repeated lessons that may belong in Dex
+memory.
+
+Do not read or expose secrets to make a gate pass. If verification needs
+credentials that are unavailable, name the blocked command and the required
+human action.
+
+## 5. Report exact results
+
+List every required gate and its result. Include concise failure output and the
+remaining action for any gate that did not pass. Do not report the pipeline as
+successful while a required gate is failed, skipped, or unverified.

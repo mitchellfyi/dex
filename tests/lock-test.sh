@@ -32,6 +32,32 @@ dx_lock_acquire "$lock" holder-a || {
   printf 'could not acquire a free lock\n' >&2
   exit 1
 }
+
+# macOS ships Bash 3.2. In that release, a failing `command` builtin can
+# trigger errexit even when the function that contains it is the condition of
+# an `if`. A routine held-lock result must leave a set-e caller alive.
+cat > "$TMP_DIR/set-e-held-lock.sh" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck disable=SC1091
+source "$DEX_DIR/lib/common.sh"
+if dx_lock_acquire "$DX_TEST_LOCK" holder-set-e-probe; then
+  printf 'a held lock was handed to the set-e probe\n' >&2
+  exit 9
+fi
+printf 'survived\n' > "$DX_TEST_PROOF"
+PROBE
+set +e
+DX_TEST_LOCK="$lock" DX_TEST_PROOF="$TMP_DIR/set-e-proof" \
+  bash "$TMP_DIR/set-e-held-lock.sh"
+probe_status=$?
+set -e
+if [[ "$probe_status" -ne 0 || ! -f "$TMP_DIR/set-e-proof" ]]; then
+  printf 'a held-lock result terminated a Bash set-e caller (exit %s)\n' \
+    "$probe_status" >&2
+  exit 1
+fi
+
 if dx_lock_acquire "$lock" holder-b; then
   printf 'a held lock was handed to a second owner\n' >&2
   exit 1

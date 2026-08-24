@@ -5,7 +5,7 @@
 #   source "$DEX_DIR/lib/common.sh"
 #
 # Provides: DEX_DIR, DX_STATE_DIR, DX_LOOP_DIR, DX_ARTIFACT_DIR, DX_TOOL_DIR, DX_RUN_ROOT, dx_repo_root()
-# Also sources: lib/lock.sh, lib/git.sh, lib/session.sh, lib/output.sh, lib/worktree.sh,
+# Also sources: lib/lock.sh, lib/git.sh, lib/session.sh, lib/completion.sh, lib/output.sh, lib/worktree.sh,
 # lib/provider.sh, lib/codex.sh, lib/dexcode.sh, lib/ui-capture.sh, lib/rtk.sh,
 # lib/events.sh, lib/review.sh, lib/review-policy.sh, lib/review-controller.sh, lib/review-loop.sh, lib/factory.sh,
 # lib/run-spec.sh, lib/agent-tools.sh, lib/maintenance.sh, lib/project-state.sh,
@@ -45,6 +45,41 @@ DX_ZSHRC_SOURCE_PATTERN='dex(-cli)?/dx\.sh|DEX_DIR.*/dx\.sh'
 # integration that is not there, and uninstall claims a removal it did not do.
 # shellcheck disable=SC2034  # consumed by the bin/ scripts above
 DX_ZSHRC_SOURCE_ACTIVE_PATTERN="^[[:space:]]*[^#[:space:]].*(${DX_ZSHRC_SOURCE_PATTERN})"
+
+# __dx_path_metadata <mode|mtime> <path>
+# Python's lstat contract is the same on macOS and Linux. Native stat flags
+# are not: GNU stat accepts BSD's -f flag as a different successful command.
+__dx_path_metadata() {
+  local field="$1" target="$2"
+  python3 - "$field" "$target" <<'PY'
+import os
+import stat
+import sys
+
+field, target = sys.argv[1:]
+try:
+    metadata = os.lstat(target)
+except OSError:
+    raise SystemExit(1)
+
+if field == "mode":
+    print(format(stat.S_IMODE(metadata.st_mode), "o"))
+elif field == "mtime":
+    print(int(metadata.st_mtime))
+else:
+    raise SystemExit(2)
+PY
+}
+
+# dx_path_mode <path> — print the path's octal permission bits.
+dx_path_mode() {
+  __dx_path_metadata mode "$1"
+}
+
+# dx_path_mtime <path> — print the path's modification time as epoch seconds.
+dx_path_mtime() {
+  __dx_path_metadata mtime "$1"
+}
 
 # dx_repo_root — print the *main* repo toplevel or return 1
 # If cwd is inside a dex worktree (.dex/worktrees/<name>/...),
@@ -99,6 +134,7 @@ fi
 __dx_require_lib lock.sh
 __dx_require_lib git.sh
 __dx_require_lib session.sh
+__dx_require_lib completion.sh
 __dx_require_lib output.sh
 __dx_require_lib worktree.sh
 __dx_require_lib provider.sh
