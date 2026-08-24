@@ -86,6 +86,9 @@ if command -v python3 >/dev/null 2>&1; then
   # A name defined twice in one file resolves to the last one, silently, and
   # the shipped files are large enough that nobody notices the first.
   python3 "$ROOT/tests/duplicate-functions.py" || fail "duplicate functions"
+  # A rubric that greps the tree for a word its own seed ships pays every run
+  # the same points, which reads as a dimension that never moves.
+  python3 "$ROOT/tests/rubric-seed-credit.py" || fail "rubric seed credit"
 else
   printf 'SKIP python compile (python3 not installed)\n'
   printf 'SKIP inline python syntax (python3 not installed)\n'
@@ -96,6 +99,7 @@ else
   printf 'SKIP captured stdout (python3 not installed)\n'
   printf 'SKIP pipefail epipe (python3 not installed)\n'
   printf 'SKIP duplicate functions (python3 not installed)\n'
+  printf 'SKIP rubric seed credit (python3 not installed)\n'
 fi
 
 if command -v node >/dev/null 2>&1; then

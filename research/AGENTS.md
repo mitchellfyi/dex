@@ -211,6 +211,16 @@ Key improvements applied to DX:
    - Accept both cents and dollars for prices
    - Handle Map/Array/Object storage patterns
    - Output ONLY a bare integer from each function
+   - Never award points for something the seed already has. `grep -R "activity"
+     "$ws/src"` reads as "did the agent write this", but if the seed ships the
+     word the tree has said yes since before the agent started. Ask the diff:
+     `grep -q "activity" <<< "$(cd "$ws" && git diff HEAD -- src)"`.
+     `tests/rubric-seed-credit.py` enforces this. A *negative* check —
+     `if ! grep -R "as any"` — is the opposite and fine: it asks whether the
+     agent introduced something, and holding on a clean seed is correct.
+   - Make sure the cheap way to satisfy a check is not the destructive one. A
+     dimension that pays for "tests were changed" and "tests pass" pays twice
+     for deleting them, because an empty suite exits 0.
 
 5. Optionally add `rubric-llm.md` for LLM-judged code quality scoring.
 
