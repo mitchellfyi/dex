@@ -25,6 +25,13 @@
 # damage — a second stealer's rmdir fails once the first has republished an
 # owner — and fully closing it needs a different primitive than mkdir.
 
+# Bash 3.2 can apply errexit to a failing `command` builtin even when its
+# containing function is evaluated by `if`. Keep alias/function bypassing, but
+# put the builtin in a subshell so a normal "lock is busy" result stays data.
+__dx_lock_command() {
+  (command "$@")
+}
+
 # dx_lock_path_age_seconds <path> — portable age in seconds, or empty
 #
 # The age decides whether a lock or reaper is stale enough to take, so it has
@@ -63,8 +70,8 @@ __dx_lock_publish_owner() {
   local lock_dir="$1" owner_token="$2" owner_pid="$3" owner_file="$1/owner" tmp
   tmp="${owner_file}.tmp.$owner_pid"
   printf '%s\t%s\t%s\n' "$(date +%s)" "$owner_pid" "$owner_token" > "$tmp" 2>/dev/null || return 1
-  command mv -f "$tmp" "$owner_file" 2>/dev/null || {
-    command rm -f "$tmp" 2>/dev/null || true
+  __dx_lock_command mv -f "$tmp" "$owner_file" 2>/dev/null || {
+    __dx_lock_command rm -f "$tmp" 2>/dev/null || true
     return 1
   }
 }
@@ -81,26 +88,26 @@ dx_lock_acquire() {
   [[ "$caller_pid" =~ ^[0-9]+$ ]] && kill -0 "$caller_pid" 2>/dev/null || return 2
   owner_file="$lock_dir/owner"
   reaper_dir="${lock_dir}.reap"
-  command mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || return 2
+  __dx_lock_command mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || return 2
 
-  if ! command mkdir "$reaper_dir" 2>/dev/null; then
+  if ! __dx_lock_command mkdir "$reaper_dir" 2>/dev/null; then
     reaper_age=$(dx_lock_path_age_seconds "$reaper_dir" 2>/dev/null || true)
     if [[ "$reaper_age" =~ ^[0-9]+$ && "$reaper_age" -ge "$stale_grace" ]]; then
-      command rmdir "$reaper_dir" 2>/dev/null || return 1
-      command mkdir "$reaper_dir" 2>/dev/null || return 1
+      __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || return 1
+      __dx_lock_command mkdir "$reaper_dir" 2>/dev/null || return 1
     else
       return 1
     fi
   fi
 
-  if command mkdir "$lock_dir" 2>/dev/null; then
+  if __dx_lock_command mkdir "$lock_dir" 2>/dev/null; then
     if __dx_lock_publish_owner "$lock_dir" "$owner_token" "$caller_pid"; then
-      command rmdir "$reaper_dir" 2>/dev/null || true
+      __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
       return 0
     fi
-    command rm -f "$owner_file" 2>/dev/null || true
-    command rmdir "$lock_dir" 2>/dev/null || true
-    command rmdir "$reaper_dir" 2>/dev/null || true
+    __dx_lock_command rm -f "$owner_file" 2>/dev/null || true
+    __dx_lock_command rmdir "$lock_dir" 2>/dev/null || true
+    __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
     return 2
   fi
 
@@ -117,36 +124,36 @@ EOF
     # A published owner record is authoritative: if that process is gone the
     # lock is stale now, with no grace period to wait out.
     if __dx_lock_pid_alive "$owner_pid"; then
-      command rmdir "$reaper_dir" 2>/dev/null || true
+      __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
       return 1
     fi
   else
     lock_age=$(dx_lock_path_age_seconds "$lock_dir" 2>/dev/null || true)
     if [[ ! "$lock_age" =~ ^[0-9]+$ || "$lock_age" -lt "$stale_grace" ]]; then
-      command rmdir "$reaper_dir" 2>/dev/null || true
+      __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
       return 1
     fi
   fi
 
-  command rm -f "$owner_file" 2>/dev/null || {
-    command rmdir "$reaper_dir" 2>/dev/null || true
+  __dx_lock_command rm -f "$owner_file" 2>/dev/null || {
+    __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
     return 1
   }
-  command rmdir "$lock_dir" 2>/dev/null || {
-    command rmdir "$reaper_dir" 2>/dev/null || true
+  __dx_lock_command rmdir "$lock_dir" 2>/dev/null || {
+    __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
     return 1
   }
-  command mkdir "$lock_dir" 2>/dev/null || {
-    command rmdir "$reaper_dir" 2>/dev/null || true
+  __dx_lock_command mkdir "$lock_dir" 2>/dev/null || {
+    __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
     return 1
   }
   if __dx_lock_publish_owner "$lock_dir" "$owner_token" "$caller_pid"; then
-    command rmdir "$reaper_dir" 2>/dev/null || true
+    __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
     return 0
   fi
-  command rm -f "$owner_file" 2>/dev/null || true
-  command rmdir "$lock_dir" 2>/dev/null || true
-  command rmdir "$reaper_dir" 2>/dev/null || true
+  __dx_lock_command rm -f "$owner_file" 2>/dev/null || true
+  __dx_lock_command rmdir "$lock_dir" 2>/dev/null || true
+  __dx_lock_command rmdir "$reaper_dir" 2>/dev/null || true
   return 2
 }
 
@@ -158,8 +165,8 @@ dx_lock_release() {
   raw=$(cat "$owner_file" 2>/dev/null || true)
   recorded_token=$(printf '%s\n' "$raw" | awk -F '\t' 'NR == 1 { print $3 }')
   [[ "$recorded_token" == "$owner_token" ]] || return 1
-  command rm -f "$owner_file" 2>/dev/null || return 1
-  command rmdir "$lock_dir" 2>/dev/null || return 1
+  __dx_lock_command rm -f "$owner_file" 2>/dev/null || return 1
+  __dx_lock_command rmdir "$lock_dir" 2>/dev/null || return 1
 }
 
 # dx_lock_with <lock_dir> <owner_token> <timeout_seconds> <command...>
