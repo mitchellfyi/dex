@@ -276,7 +276,14 @@ while true; do
     # Merge to main only when explicitly requested.
     current_branch=""
     current_branch=$(dx_branch)
-    if [[ $MERGE_MAIN -eq 1 && "$current_branch" != "main" && "$current_branch" != "master" ]]; then
+    # dx_branch answers "HEAD" on a detached checkout and "unknown" when
+    # $DEX_DIR is not a repository. Neither is a branch this can merge from or
+    # return to, and both slip past a plain name comparison — after which the
+    # block checks out main, merges something that is not a branch, and then
+    # cannot get back, leaving the loop on main. That is the outcome the abort
+    # below exists to prevent, reached by a different road.
+    if [[ $MERGE_MAIN -eq 1 && "$current_branch" != "main" && "$current_branch" != "master" ]] \
+       && git -C "$DEX_DIR" show-ref --verify --quiet "refs/heads/$current_branch"; then
       (cd "$DEX_DIR" && \
         git checkout main && \
         git merge "$current_branch" --no-ff -m "Merge research: all scenarios 90+ (aggregate $AGG_SCORE)" && \
@@ -326,7 +333,10 @@ while true; do
             if python3 -c "exit(0 if $NEW_SCORE > $AGG_SCORE else 1)" 2>/dev/null; then
               current_branch=""
               current_branch=$(dx_branch)
-              if [[ $MERGE_MAIN -eq 1 && "$current_branch" != "main" && "$current_branch" != "master" ]]; then
+              # Same reason as the merge above: only a real branch can be
+              # merged from and returned to.
+              if [[ $MERGE_MAIN -eq 1 && "$current_branch" != "main" && "$current_branch" != "master" ]] \
+                 && git -C "$DEX_DIR" show-ref --verify --quiet "refs/heads/$current_branch"; then
                 (cd "$DEX_DIR" && \
                   git checkout main && \
                   git merge "$current_branch" --no-ff -m "Merge research improvement: cycle $CYCLE ($AGG_SCORE → $NEW_SCORE)" && \
