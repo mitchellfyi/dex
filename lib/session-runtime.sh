@@ -1173,6 +1173,29 @@ def token_from_fd():
     return token
 
 
+def recovery_snapshot_from_fd(descriptor):
+    chunks = []
+    remaining = MAX_RECORD_BYTES + 1
+    try:
+        while remaining > 0:
+            chunk = os.read(descriptor, min(remaining, 4096))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    except OSError as exc:
+        raise RuntimeInputError(
+            f"runtime recovery snapshot was not provided securely: {exc}"
+        )
+    payload = b"".join(chunks)
+    if not payload or len(payload) > MAX_RECORD_BYTES:
+        raise RuntimeInputError("runtime recovery snapshot size is invalid")
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeInputError(f"runtime recovery snapshot is invalid: {exc}")
+
+
 def validated_public_record(record_file, session_id, missing_ok=False):
     record = trusted_read(record_file, session_id, missing_ok=missing_ok)
     if record is None:
@@ -1216,6 +1239,24 @@ try:
             print("live")
         else:
             print("replaced")
+    elif operation == "owner-runtime-correlation":
+        if len(arguments) != 4:
+            raise RuntimeInputError(
+                "owner-runtime-correlation requires file, session, PID, and identity"
+            )
+        record_file, session_id, raw_pid, expected_identity = arguments
+        if not SESSION_RE.fullmatch(session_id):
+            raise RuntimeInputError("invalid session ID")
+        owner_pid = parse_pid(raw_pid)
+        if not (
+            LINUX_ID_RE.fullmatch(expected_identity)
+            or DARWIN_ID_RE.fullmatch(expected_identity)
+        ):
+            raise RuntimeInputError("runtime owner process identity is invalid")
+        record = validated_public_record(record_file, session_id)
+        if record["pid"] != owner_pid or record["process_start"] != expected_identity:
+            fail("runtime record does not identify this supervisor", 2)
+        print(f'{record["status"]}\t{owner_health(record)}')
     elif operation == "owner-metadata":
         if len(arguments) != 2:
             raise RuntimeInputError("owner-metadata requires root and owner directory")
@@ -1299,14 +1340,26 @@ try:
             owner_device,
             owner_inode,
         )
-    elif operation == "recover-start-secure":
-        if len(arguments) != 4:
+    elif operation == "recovery-context":
+        if len(arguments) != 1:
             raise RuntimeInputError(
-                "recover-start-secure requires file, session, snapshot, and PID"
+                "recovery-context requires a session"
             )
-        record_file, session_id, raw_snapshot, raw_pid = arguments
+        session_id = arguments[0]
         if not SESSION_RE.fullmatch(session_id):
             raise RuntimeInputError("invalid session ID")
+        raw_snapshot = recovery_snapshot_from_fd(3)
+        recovery_snapshot = validate_public_snapshot(raw_snapshot, session_id)
+        print(f'{recovery_snapshot["provider"]}\t{recovery_snapshot["workspace"]}')
+    elif operation == "recover-start-secure":
+        if len(arguments) != 3:
+            raise RuntimeInputError(
+                "recover-start-secure requires file, session, and PID"
+            )
+        record_file, session_id, raw_pid = arguments
+        if not SESSION_RE.fullmatch(session_id):
+            raise RuntimeInputError("invalid session ID")
+        raw_snapshot = recovery_snapshot_from_fd(4)
         expected_snapshot = validate_public_snapshot(raw_snapshot, session_id)
         owner_pid = parse_pid(raw_pid)
         lock_descriptor, lock_file, held_identity = acquire_mutation_lock(record_file)
@@ -1570,27 +1623,32 @@ __dx_session_runtime_start_secure() {
 # rather than new caller input, supplies that exact path.
 __dx_session_runtime_recovery_start_secure() {
   [[ $# -eq 3 ]] || return 3
-  local session_id="$1" runtime_snapshot="$2" owner_pid="$3" record_file
+  local session_id="$1" owner_pid="$3" record_file
   record_file=$(dx_session_runtime_file "$session_id") || return $?
   __dx_session_runtime_call recover-start-secure \
-    "$record_file" "$session_id" "$runtime_snapshot" "$owner_pid"
+    "$record_file" "$session_id" "$owner_pid" 4<<<"$2"
+}
+
+__dx_session_runtime_recovery_context() {
+  [[ $# -eq 2 ]] || return 3
+  __dx_session_runtime_call recovery-context "$1" 3<<<"$2"
 }
 
 # dx_session_runtime_heartbeat <session_id> <token> [pid]
 dx_session_runtime_heartbeat() {
   [[ $# -ge 2 && $# -le 3 ]] || return 3
-  local session_id="$1" lease_token="$2" owner_pid="${3:-$$}" record_file
+  local session_id="$1" owner_pid="${3:-$$}" record_file
   record_file=$(dx_session_runtime_file "$session_id") || return $?
-  __dx_session_runtime_call heartbeat "$record_file" "$session_id" "$owner_pid" 3<<<"$lease_token"
+  __dx_session_runtime_call heartbeat "$record_file" "$session_id" "$owner_pid" 3<<<"$2"
 }
 
 # dx_session_runtime_finish <session_id> <token> <terminal_status> [pid]
 dx_session_runtime_finish() {
   [[ $# -ge 3 && $# -le 4 ]] || return 3
-  local session_id="$1" lease_token="$2" terminal_state="$3" owner_pid="${4:-$$}"
+  local session_id="$1" terminal_state="$3" owner_pid="${4:-$$}"
   local record_file
   record_file=$(dx_session_runtime_file "$session_id") || return $?
-  __dx_session_runtime_call finish "$record_file" "$session_id" "$owner_pid" "$terminal_state" 3<<<"$lease_token"
+  __dx_session_runtime_call finish "$record_file" "$session_id" "$owner_pid" "$terminal_state" 3<<<"$2"
 }
 
 # Token-authenticated runtime removal for the private owner process. The
@@ -1598,10 +1656,10 @@ dx_session_runtime_finish() {
 # the same serialized ownership boundary.
 __dx_session_runtime_purge() {
   [[ $# -ge 2 && $# -le 3 ]] || return 3
-  local session_id="$1" lease_token="$2" owner_pid="${3:-$$}" record_file
+  local session_id="$1" owner_pid="${3:-$$}" record_file
   record_file=$(dx_session_runtime_file "$session_id") || return $?
   __dx_session_runtime_call purge \
-    "$record_file" "$session_id" "$owner_pid" 3<<<"$lease_token"
+    "$record_file" "$session_id" "$owner_pid" 3<<<"$2"
 }
 
 # dx_session_runtime_read <session_id> - print validated compact JSON without its private token.
@@ -1624,10 +1682,10 @@ dx_session_runtime_field() {
 # Health is live, dead, unverifiable, corrupt, or legacy-unverifiable.
 dx_session_runtime_health() {
   [[ $# -ge 1 && $# -le 2 ]] || return 3
-  local session_id="$1" lease_token="${2:-}" record_file
+  local session_id="$1" record_file
   record_file=$(dx_session_runtime_file "$session_id") || return $?
   if [[ $# -eq 2 ]]; then
-    __dx_session_runtime_call health "$record_file" "$session_id" 1 3<<<"$lease_token"
+    __dx_session_runtime_call health "$record_file" "$session_id" 1 3<<<"$2"
   else
     __dx_session_runtime_call health "$record_file" "$session_id" 0
   fi
@@ -1664,6 +1722,14 @@ __dx_session_runtime_owner_process_matches() { # <pid> <stable-identity>
 __dx_session_runtime_owner_process_state() { # <pid> <stable-identity>
   [[ $# -eq 2 && "$1" =~ ^[0-9]+$ ]] || return 3
   __dx_session_runtime_call owner-process-state "$1" "$2"
+}
+
+__dx_session_runtime_owner_runtime_correlation() { # <session> <pid> <stable-identity>
+  [[ $# -eq 3 ]] || return 3
+  local record_file
+  record_file=$(dx_session_runtime_file "$1") || return $?
+  __dx_session_runtime_call owner-runtime-correlation \
+    "$record_file" "$1" "$2" "$3"
 }
 
 __dx_session_runtime_owner_reap_if_dead() { # <pid> <stable-identity>
@@ -1856,7 +1922,7 @@ __dx_session_runtime_owner_result_path() { # <root> <directory> <root-dev> <root
   [[ -e "$2/result" || -L "$2/result" ]] || return 1
   result_record=$(__dx_session_runtime_owner_trusted_read_path \
     "$@" result 512 2>/dev/null) || return $?
-  [[ "$result_record" =~ ^[0-9]+$'\t'[A-Za-z0-9._-]+$'\t'(completed|paused|blocked|failed|stopped|abandoned)$'\t'[A-Za-z0-9._-]+$ ]] \
+  [[ "$result_record" =~ ^[0-9]+$'\t'[A-Za-z0-9._-]+$'\t'(completed|paused|blocked|failed|stopped|abandoned|purged)$'\t'[A-Za-z0-9._-]+$ ]] \
     || return 3
   printf '%s\n' "$result_record"
 }
@@ -1893,14 +1959,13 @@ __dx_session_runtime_owner_cleanup() {
     "$owner_device" "$owner_inode"
 }
 
-# dx_session_runtime_owner_start <session_id> <provider> <workspace>
-# Start a private supervisor as this shell's direct child. On success, the
-# non-exported DX_SESSION_RUNTIME_OWNER_HANDLE and DX_SESSION_RUNTIME_OWNER_PID
-# globals identify it; the lease token remains inside the supervisor.
-dx_session_runtime_owner_start() {
-  [[ $# -eq 3 ]] || return 3
+# Start a private supervisor as this shell's direct child. The recovery mode
+# gets its exact, token-free runtime snapshot over FD 3 instead of argv.
+__dx_session_runtime_owner_start_internal() {
+  [[ $# -eq 5 ]] || return 3
   unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
   local session_id="$1" provider_name="$2" workspace_dir="$3" monitor_pid="$$"
+  local start_mode="$4" recovery_context recovery_extra
   local monitor_identity owner_root owner_directory owner_generation owner_pid owner_identity
   local observed_owner_identity owner_process_state
   local start_timeout elapsed_milliseconds=0 metadata_record metadata_extra
@@ -1910,8 +1975,22 @@ dx_session_runtime_owner_start() {
   local failure_request cleanup_allowed=0
   dx_session_id_valid "$session_id" || return 3
   [[ "$provider_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 3
-  [[ "$workspace_dir" == /* && -d "$workspace_dir" ]] || return 3
-  workspace_dir=$(cd "$workspace_dir" 2>/dev/null && pwd -P) || return 3
+  case "$start_mode" in
+    start)
+      [[ -z "$5" && "$workspace_dir" == /* \
+        && -d "$workspace_dir" ]] || return 3
+      workspace_dir=$(cd "$workspace_dir" 2>/dev/null && pwd -P) || return 3
+      ;;
+    recover)
+      recovery_context=$(__dx_session_runtime_recovery_context \
+        "$session_id" "$5" 2>/dev/null) || return 3
+      IFS=$'\t' read -r provider_name workspace_dir recovery_extra <<EOF
+$recovery_context
+EOF
+      [[ -z "${recovery_extra:-}" && "$workspace_dir" == /* ]] || return 3
+      ;;
+    *) return 3 ;;
+  esac
   monitor_identity=$(dx_session_runtime_process_identity "$monitor_pid" 2>/dev/null || true)
   case "$monitor_identity" in
     linux:*|darwin:*) ;;
@@ -1953,7 +2032,8 @@ EOF
   command bash "$DEX_DIR/bin/session-runtime-owner.sh" \
     "$session_id" "$provider_name" "$workspace_dir" "$monitor_pid" \
     "$monitor_identity" "$owner_directory" "$root_device" "$root_inode" \
-    "$owner_device" "$owner_inode" \
+    "$owner_device" "$owner_inode" "$start_mode" \
+    3<<<"$5" \
     > "$owner_directory/output" 2> "$owner_directory/error" &
   owner_pid=$!
   chmod 600 "$owner_directory/output" "$owner_directory/error" 2>/dev/null || true
@@ -2058,9 +2138,26 @@ EOF
   return "$result_code"
 }
 
-# dx_session_runtime_owner_finish <handle> <terminal_status>
-# Request a terminal record and wait for the supervisor within a bounded time.
-dx_session_runtime_owner_finish() {
+# dx_session_runtime_owner_start <session_id> <provider> <workspace>
+# On success, the non-exported DX_SESSION_RUNTIME_OWNER_HANDLE and
+# DX_SESSION_RUNTIME_OWNER_PID globals identify the supervisor. Its lease token
+# never leaves that process.
+dx_session_runtime_owner_start() {
+  [[ $# -eq 3 ]] || return 3
+  __dx_session_runtime_owner_start_internal "$1" "$2" "$3" start ""
+}
+
+# Recovery uses the exact public record selected by the caller. The supervisor
+# owns the new lease before this function reports success, including when the
+# recorded workspace no longer exists.
+__dx_session_runtime_owner_recovery_start() {
+  [[ $# -eq 2 ]] || return 3
+  __dx_session_runtime_owner_start_internal "$1" "recovery" "/" recover "$2"
+}
+
+# Ask the supervisor for one correlated terminal action and wait within the
+# configured bound. `purged` is private to structural session cleanup.
+__dx_session_runtime_owner_settle() {
   [[ $# -eq 2 ]] || return 3
   local owner_handle="$1" terminal_state="$2" finish_timeout elapsed_milliseconds=0
   local owner_directory owner_session owner_pid owner_identity owner_generation
@@ -2069,9 +2166,9 @@ dx_session_runtime_owner_finish() {
   local result_record="" result_read_result=0 result_code=3 result_generation
   local result_terminal result_detail result_extra owner_wait_result=0
   local runtime_pid runtime_identity runtime_state runtime_health final_result=0 command_request
-  local owner_error owner_process_state cleanup_allowed=0
+  local owner_error owner_process_state cleanup_allowed=0 correlation_record correlation_extra
   case "$terminal_state" in
-    completed|paused|blocked|failed|stopped|abandoned) ;;
+    completed|paused|blocked|failed|stopped|abandoned|purged) ;;
     *) return 3 ;;
   esac
   finish_timeout=$(__dx_session_runtime_owner_timeout \
@@ -2089,11 +2186,7 @@ dx_session_runtime_owner_finish() {
   __dx_session_runtime_owner_descriptor_clear
 
   ready_record=$(__dx_session_runtime_owner_trusted_read \
-    "$owner_handle" ready 512 2>/dev/null) || {
-    __dx_session_runtime_owner_abort \
-      "$owner_handle" "$owner_pid" "$owner_identity" 2>/dev/null || true
-    return 3
-  }
+    "$owner_handle" ready 512 2>/dev/null) || return 3
   IFS=$'\t' read -r ready_label ready_pid ready_session ready_identity \
     ready_generation ready_extra <<EOF
 $ready_record
@@ -2101,14 +2194,21 @@ EOF
   if [[ "$ready_label" != "ready" || "$ready_pid" != "$owner_pid" \
     || "$ready_session" != "$owner_session" || "$ready_identity" != "$owner_identity" \
     || "$ready_generation" != "$owner_generation" || -n "${ready_extra:-}" ]]; then
-    __dx_session_runtime_owner_abort \
-      "$owner_handle" "$owner_pid" "$owner_identity" 2>/dev/null || true
     return 3
   fi
+
+  correlation_record=$(__dx_session_runtime_owner_runtime_correlation \
+    "$owner_session" "$owner_pid" "$owner_identity" 2>/dev/null) || return 3
+  IFS=$'\t' read -r runtime_state runtime_health correlation_extra <<EOF
+$correlation_record
+EOF
+  [[ -z "${correlation_extra:-}" ]] || return 3
 
   result_record=$(__dx_session_runtime_owner_result "$owner_handle" 2>/dev/null) \
     || result_read_result=$?
   if [[ "$result_read_result" -eq 1 ]]; then
+    [[ "$runtime_state" == "running" && "$runtime_health" == "live" ]] \
+      || return 3
     result_record=""
     command_request=$(printf '%s\t%s' "$owner_generation" "$terminal_state")
     if ! __dx_session_runtime_owner_atomic_write \
@@ -2195,13 +2295,21 @@ EOF
     final_result="$owner_wait_result"
   fi
 
-  runtime_pid=$(dx_session_runtime_field "$owner_session" pid 2>/dev/null || true)
-  runtime_identity=$(dx_session_runtime_field "$owner_session" process_start 2>/dev/null || true)
-  runtime_state=$(dx_session_runtime_field "$owner_session" status 2>/dev/null || true)
   runtime_health=$(dx_session_runtime_health "$owner_session" 2>/dev/null || true)
-  if [[ "$runtime_pid" != "$owner_pid" || "$runtime_identity" != "$owner_identity" \
-    || "$runtime_state" != "$terminal_state" || "$runtime_health" != "dead" ]]; then
-    [[ "$final_result" -ne 0 ]] || final_result=3
+  if [[ "$terminal_state" == "purged" ]]; then
+    if [[ -e "$(dx_session_runtime_file "$owner_session")" \
+      || -L "$(dx_session_runtime_file "$owner_session")" \
+      || "$runtime_health" != "legacy-unverifiable" ]]; then
+      [[ "$final_result" -ne 0 ]] || final_result=3
+    fi
+  else
+    runtime_pid=$(dx_session_runtime_field "$owner_session" pid 2>/dev/null || true)
+    runtime_identity=$(dx_session_runtime_field "$owner_session" process_start 2>/dev/null || true)
+    runtime_state=$(dx_session_runtime_field "$owner_session" status 2>/dev/null || true)
+    if [[ "$runtime_pid" != "$owner_pid" || "$runtime_identity" != "$owner_identity" \
+      || "$runtime_state" != "$terminal_state" || "$runtime_health" != "dead" ]]; then
+      [[ "$final_result" -ne 0 ]] || final_result=3
+    fi
   fi
   if [[ "$cleanup_allowed" -eq 1 ]]; then
     __dx_session_runtime_owner_cleanup "$owner_handle" 2>/dev/null || {
@@ -2209,4 +2317,21 @@ EOF
     }
   fi
   return "$final_result"
+}
+
+# dx_session_runtime_owner_finish <handle> <terminal_status>
+# Request a terminal record and wait for the supervisor within a bounded time.
+dx_session_runtime_owner_finish() {
+  [[ $# -eq 2 ]] || return 3
+  case "$2" in
+    completed|paused|blocked|failed|stopped|abandoned) ;;
+    *) return 3 ;;
+  esac
+  __dx_session_runtime_owner_settle "$1" "$2"
+}
+
+# Remove a recovery-owned runtime record without exposing its lease token.
+__dx_session_runtime_owner_purge() {
+  [[ $# -eq 1 ]] || return 3
+  __dx_session_runtime_owner_settle "$1" purged
 }

@@ -60,22 +60,22 @@ runtime_owner_pid() {
 
 assert_token_private() { # <session> <handle> <captured-output>
   local session_id="$1" owner_handle="$2" captured_output="$3"
-  local lease_token owner_pid owner_directory process_args="" process_env=""
-  lease_token=$(runtime_private_token "$session_id")
+  local private_token owner_pid owner_directory process_args="" process_env=""
+  private_token=$(runtime_private_token "$session_id")
   owner_pid=$(runtime_owner_pid "$session_id")
   owner_directory=$(dx_session_runtime_owner_handle_path "$owner_handle")
-  [[ "$lease_token" =~ ^[0-9a-f]{64}$ ]] || assert_at $LINENO
-  assert_not_contains "$lease_token" <(printf '%s\n' "$captured_output")
+  [[ "$private_token" =~ ^[0-9a-f]{64}$ ]] || assert_at $LINENO
+  assert_not_contains "$private_token" <(printf '%s\n' "$captured_output")
 
   process_args=$(ps -o command= -p "$owner_pid" 2>/dev/null || true)
-  assert_not_contains "$lease_token" <(printf '%s\n' "$process_args")
+  assert_not_contains "$private_token" <(printf '%s\n' "$process_args")
   if [[ -r "/proc/${owner_pid}/environ" ]]; then
     process_env=$(tr '\0' '\n' < "/proc/${owner_pid}/environ")
-    assert_not_contains "$lease_token" <(printf '%s\n' "$process_env")
+    assert_not_contains "$private_token" <(printf '%s\n' "$process_env")
   fi
 
   if find "$owner_directory" -type f -maxdepth 1 -print0 2>/dev/null | \
-      xargs -0 grep -Fq "$lease_token" 2>/dev/null; then
+      xargs -0 grep -Fq "$private_token" 2>/dev/null; then
     fail "runtime owner handle exposed its lease token"
   fi
 }
@@ -95,6 +95,36 @@ source "$ROOT/lib/common.sh"
 WORKSPACE="$TMP_DIR/repo"
 mkdir -p "$WORKSPACE"
 
+# Shell locals can inherit an export attribute in Bash. Route embedded-Python
+# calls through a recorder while hostile exported names are present, then make
+# sure real credentials and snapshots never reach argv or the environment.
+REAL_PYTHON=$(command -v python3)
+RUNTIME_CAPTURE_BIN="$TMP_DIR/runtime-capture-bin"
+RUNTIME_CAPTURE_LOG="$TMP_DIR/runtime-capture.log"
+mkdir -p "$RUNTIME_CAPTURE_BIN"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  '{' \
+  '  printf "pid=%s argv" "$$"' \
+  '  printf " <%s>" "$@"' \
+  '  printf "\nenvironment\n"' \
+  '  env' \
+  '} >> "$DX_TEST_RUNTIME_CAPTURE_LOG"' \
+  'exec "$DX_TEST_REAL_PYTHON" "$@"' \
+  > "$RUNTIME_CAPTURE_BIN/python3"
+chmod 700 "$RUNTIME_CAPTURE_BIN/python3"
+export DX_TEST_REAL_PYTHON="$REAL_PYTHON"
+export DX_TEST_RUNTIME_CAPTURE_LOG="$RUNTIME_CAPTURE_LOG"
+export LEASE_TOKEN="hostile-export-lease"
+export RECOVERY_SNAPSHOT="hostile-export-snapshot"
+export token_record="hostile-export-token-record"
+export lease_token="hostile-export-token-local"
+export runtime_snapshot="hostile-export-runtime-snapshot"
+export recovery_snapshot="hostile-export-recovery-snapshot"
+ORIGINAL_PATH="$PATH"
+export PATH="$RUNTIME_CAPTURE_BIN:$PATH"
+
 # The supervisor owns the lease, heartbeats it, and never reveals the token.
 SID_OK="runtime-owner-success"
 dx_session_runtime_owner_start "$SID_OK" claude "$WORKSPACE" \
@@ -107,8 +137,11 @@ assert_file "$OWNER_DIRECTORY/ready"
 assert_eq "$OWNER_PID" "$(runtime_owner_pid "$SID_OK")" "runtime supervisor PID"
 assert_eq "live" "$(dx_session_runtime_health "$SID_OK")" "supervised runtime health"
 assert_eq "running" "$(dx_session_runtime_field "$SID_OK" status)" "supervised runtime status"
+OWNER_PRIVATE_TOKEN=$(runtime_private_token "$SID_OK")
 assert_token_private "$SID_OK" "$OWNER_HANDLE" \
   "$(cat "$TMP_DIR/start.out" "$TMP_DIR/start.err")"
+assert_eq "live" "$(dx_session_runtime_health "$SID_OK" "$OWNER_PRIVATE_TOKEN")" \
+  "token-authenticated supervised runtime health"
 STARTED_AT=$(dx_session_runtime_field "$SID_OK" started_at)
 sleep 1.2
 HEARTBEAT_AT=$(dx_session_runtime_field "$SID_OK" heartbeat_at)
@@ -117,6 +150,280 @@ dx_session_runtime_owner_finish "$OWNER_HANDLE" completed
 assert_eq "completed" "$(dx_session_runtime_field "$SID_OK" status)" "completed supervisor"
 assert_eq "dead" "$(dx_session_runtime_health "$SID_OK")" "completed supervisor health"
 assert_no_file "$OWNER_DIRECTORY"
+
+# Handle fields are untrusted until they match the supervisor's trusted ready
+# record. A forged PID or unreadable ready file must not authorize signalling,
+# waiting, or cleanup of either the claimed process or the real owner.
+SID_FORGED_HANDLE="runtime-owner-forged-handle"
+dx_session_runtime_owner_start "$SID_FORGED_HANDLE" claude "$WORKSPACE"
+FORGED_REAL_HANDLE="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+FORGED_REAL_PID="$DX_SESSION_RUNTIME_OWNER_PID"
+FORGED_OWNER_DIRECTORY=$(dx_session_runtime_owner_handle_path \
+  "$FORGED_REAL_HANDLE")
+unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+IFS=$'\t' read -r FORGED_VERSION FORGED_DIRECTORY FORGED_SESSION \
+  FORGED_PID FORGED_IDENTITY FORGED_GENERATION FORGED_ROOT_DEVICE \
+  FORGED_ROOT_INODE FORGED_DEVICE FORGED_INODE <<EOF
+$FORGED_REAL_HANDLE
+EOF
+assert_eq "$FORGED_REAL_PID" "$FORGED_PID" "parsed owner PID"
+case "$FORGED_IDENTITY" in
+  linux:*|darwin:*) ;;
+  *) fail "parsed owner identity is invalid" ;;
+esac
+FORGED_HANDLE=$(printf '%s\t%s\t%s\t4242\tdarwin:1:1\t%s\t%s\t%s\t%s\t%s' \
+  "$FORGED_VERSION" \
+  "$FORGED_DIRECTORY" "$FORGED_SESSION" "$FORGED_GENERATION" \
+  "$FORGED_ROOT_DEVICE" "$FORGED_ROOT_INODE" "$FORGED_DEVICE" "$FORGED_INODE")
+FORGED_SIGNAL_LOG="$TMP_DIR/forged-handle-signals"
+kill() {
+  printf 'kill %s\n' "$*" >> "$FORGED_SIGNAL_LOG"
+  return 0
+}
+wait() {
+  printf 'wait %s\n' "$*" >> "$FORGED_SIGNAL_LOG"
+  return 0
+}
+FORGED_RESULT=0
+dx_session_runtime_owner_finish "$FORGED_HANDLE" completed \
+  >/dev/null 2>&1 || FORGED_RESULT=$?
+assert_eq "3" "$FORGED_RESULT" "forged-handle finish result"
+assert_no_file "$FORGED_SIGNAL_LOG"
+assert_file "$FORGED_OWNER_DIRECTORY/ready"
+
+mv "$FORGED_OWNER_DIRECTORY/ready" "$FORGED_OWNER_DIRECTORY/ready.saved"
+MISSING_READY_RESULT=0
+dx_session_runtime_owner_finish "$FORGED_REAL_HANDLE" completed \
+  >/dev/null 2>&1 || MISSING_READY_RESULT=$?
+assert_eq "3" "$MISSING_READY_RESULT" "missing-ready finish result"
+assert_no_file "$FORGED_SIGNAL_LOG"
+assert_file "$FORGED_OWNER_DIRECTORY/ready.saved"
+mv "$FORGED_OWNER_DIRECTORY/ready.saved" "$FORGED_OWNER_DIRECTORY/ready"
+unset -f kill wait
+kill -0 "$FORGED_REAL_PID" 2>/dev/null \
+  || fail "forged handle stopped the real supervisor"
+assert_eq "live" "$(dx_session_runtime_health "$SID_FORGED_HANDLE")" \
+  "runtime health after forged handle"
+dx_session_runtime_owner_finish "$FORGED_REAL_HANDLE" stopped
+assert_no_file "$FORGED_OWNER_DIRECTORY"
+
+sleep 30 &
+UNRELATED_OWNER_PID=$!
+TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${UNRELATED_OWNER_PID}"
+UNRELATED_OWNER_IDENTITY=$(dx_session_runtime_process_identity \
+  "$UNRELATED_OWNER_PID")
+FORGED_OWNER_ROOT=$(dx_session_runtime_owner_root)
+FORGED_MATCHING_SESSION="runtime-owner-forged-matching-ready"
+FORGED_MATCHING_DIRECTORY=$(mktemp -d \
+  "$FORGED_OWNER_ROOT/${FORGED_MATCHING_SESSION}.XXXXXX")
+chmod 700 "$FORGED_MATCHING_DIRECTORY"
+FORGED_MATCHING_GENERATION="${FORGED_MATCHING_DIRECTORY##*/}"
+FORGED_MATCHING_METADATA=$(__dx_session_runtime_owner_metadata \
+  "$FORGED_OWNER_ROOT" "$FORGED_MATCHING_DIRECTORY")
+IFS=$'\t' read -r FORGED_MATCHING_ROOT_DEVICE FORGED_MATCHING_ROOT_INODE \
+  FORGED_MATCHING_DEVICE FORGED_MATCHING_INODE <<EOF
+$FORGED_MATCHING_METADATA
+EOF
+printf 'ready\t%s\t%s\t%s\t%s\n' \
+  "$UNRELATED_OWNER_PID" "$FORGED_MATCHING_SESSION" \
+  "$UNRELATED_OWNER_IDENTITY" "$FORGED_MATCHING_GENERATION" \
+  > "$FORGED_MATCHING_DIRECTORY/ready"
+chmod 600 "$FORGED_MATCHING_DIRECTORY/ready"
+FORGED_MATCHING_HANDLE=$(printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+  "$FORGED_MATCHING_DIRECTORY" "$FORGED_MATCHING_SESSION" \
+  "$UNRELATED_OWNER_PID" "$UNRELATED_OWNER_IDENTITY" \
+  "$FORGED_MATCHING_GENERATION" "$FORGED_MATCHING_ROOT_DEVICE" \
+  "$FORGED_MATCHING_ROOT_INODE" "$FORGED_MATCHING_DEVICE" \
+  "$FORGED_MATCHING_INODE")
+FORGED_MATCHING_SIGNAL_LOG="$TMP_DIR/forged-matching-ready-signals"
+kill() {
+  printf 'kill %s\n' "$*" >> "$FORGED_MATCHING_SIGNAL_LOG"
+  return 0
+}
+wait() {
+  printf 'wait %s\n' "$*" >> "$FORGED_MATCHING_SIGNAL_LOG"
+  return 0
+}
+FORGED_MATCHING_RESULT=0
+dx_session_runtime_owner_finish "$FORGED_MATCHING_HANDLE" completed \
+  >/dev/null 2>&1 || FORGED_MATCHING_RESULT=$?
+assert_eq "3" "$FORGED_MATCHING_RESULT" \
+  "forged matching-ready finish result"
+assert_no_file "$FORGED_MATCHING_SIGNAL_LOG"
+assert_file "$FORGED_MATCHING_DIRECTORY/ready"
+assert_no_file "$FORGED_MATCHING_DIRECTORY/command"
+unset -f kill wait
+kill -0 "$UNRELATED_OWNER_PID" 2>/dev/null \
+  || fail "forged matching ready stopped an unrelated process"
+
+# Recovery transfers an exact dead record to a fresh private supervisor. It can
+# close the lease normally for resume work or remove only the runtime record
+# through an authenticated cleanup request, even after the workspace is gone.
+RECOVERY_WORKSPACE="$TMP_DIR/recovery-repo"
+mkdir -p "$RECOVERY_WORKSPACE"
+SID_RECOVERY="runtime-owner-recovery"
+RECOVERY_OLD_TOKEN=$(dx_session_runtime_start \
+  "$SID_RECOVERY" codex "$RECOVERY_WORKSPACE" "$$")
+dx_session_runtime_finish \
+  "$SID_RECOVERY" "$RECOVERY_OLD_TOKEN" paused "$$"
+RECOVERY_PUBLIC_RECORD=$(dx_session_runtime_read "$SID_RECOVERY")
+RECOVERY_RUNTIME_FILE=$(dx_session_runtime_file "$SID_RECOVERY")
+RECOVERY_RUNTIME_LOCK="${RECOVERY_RUNTIME_FILE}-lock"
+rmdir "$RECOVERY_WORKSPACE"
+
+__dx_session_runtime_owner_recovery_start \
+  "$SID_RECOVERY" "$RECOVERY_PUBLIC_RECORD" \
+  > "$TMP_DIR/recovery-start.out" 2> "$TMP_DIR/recovery-start.err"
+RECOVERY_HANDLE="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+RECOVERY_OWNER_PID="$DX_SESSION_RUNTIME_OWNER_PID"
+RECOVERY_OWNER_DIRECTORY=$(dx_session_runtime_owner_handle_path "$RECOVERY_HANDLE")
+unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+assert_eq "$RECOVERY_OWNER_PID" "$(runtime_owner_pid "$SID_RECOVERY")" \
+  "recovery supervisor PID"
+assert_eq "codex" "$(dx_session_runtime_field "$SID_RECOVERY" provider)" \
+  "recovery provider"
+assert_eq "$RECOVERY_WORKSPACE" \
+  "$(dx_session_runtime_field "$SID_RECOVERY" workspace)" \
+  "recovery missing workspace"
+assert_eq "live" "$(dx_session_runtime_health "$SID_RECOVERY")" \
+  "recovery supervisor health"
+RECOVERY_PRIVATE_TOKEN=$(runtime_private_token "$SID_RECOVERY")
+assert_token_private "$SID_RECOVERY" "$RECOVERY_HANDLE" \
+  "$(cat "$TMP_DIR/recovery-start.out" "$TMP_DIR/recovery-start.err")"
+assert_not_contains "$RECOVERY_PUBLIC_RECORD" \
+  <(cat "$TMP_DIR/recovery-start.out" "$TMP_DIR/recovery-start.err")
+dx_session_runtime_owner_finish "$RECOVERY_HANDLE" paused
+assert_eq "paused" "$(dx_session_runtime_field "$SID_RECOVERY" status)" \
+  "recovery supervisor terminal status"
+assert_no_file "$RECOVERY_OWNER_DIRECTORY"
+
+RECOVERY_PURGE_SNAPSHOT=$(dx_session_runtime_read "$SID_RECOVERY")
+__dx_session_runtime_owner_recovery_start \
+  "$SID_RECOVERY" "$RECOVERY_PURGE_SNAPSHOT" \
+  > "$TMP_DIR/recovery-purge-start.out" \
+  2> "$TMP_DIR/recovery-purge-start.err"
+RECOVERY_PURGE_HANDLE="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+RECOVERY_PURGE_DIRECTORY=$(dx_session_runtime_owner_handle_path \
+  "$RECOVERY_PURGE_HANDLE")
+unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+RECOVERY_PURGE_PRIVATE_TOKEN=$(runtime_private_token "$SID_RECOVERY")
+assert_token_private "$SID_RECOVERY" "$RECOVERY_PURGE_HANDLE" \
+  "$(cat "$TMP_DIR/recovery-purge-start.out" \
+    "$TMP_DIR/recovery-purge-start.err")"
+assert_not_contains "$RECOVERY_PURGE_SNAPSHOT" \
+  <(cat "$TMP_DIR/recovery-purge-start.out" \
+    "$TMP_DIR/recovery-purge-start.err")
+__dx_session_runtime_owner_purge "$RECOVERY_PURGE_HANDLE"
+assert_no_file "$RECOVERY_RUNTIME_FILE"
+assert_file "$RECOVERY_RUNTIME_LOCK"
+assert_no_file "$RECOVERY_PURGE_DIRECTORY"
+assert_eq "legacy-unverifiable" "$(dx_session_runtime_health "$SID_RECOVERY")" \
+  "purged recovery health"
+
+SID_EXPORTED_PURGE="runtime-exported-local-purge"
+EXPORTED_PURGE_TOKEN=$(dx_session_runtime_start \
+  "$SID_EXPORTED_PURGE" claude "$WORKSPACE" "$$")
+__dx_session_runtime_purge "$SID_EXPORTED_PURGE" "$EXPORTED_PURGE_TOKEN" "$$"
+
+ZSH_HEARTBEAT_TOKEN=""
+ZSH_PURGE_TOKEN=""
+if command -v zsh >/dev/null 2>&1; then
+  ZSH_TOKEN_FILE="$TMP_DIR/zsh-runtime-tokens"
+  ZSH_DOT_DIR="$TMP_DIR/zsh-dot-dir"
+  mkdir -p "$ZSH_DOT_DIR"
+  ZDOTDIR="$ZSH_DOT_DIR" \
+  DX_TEST_ZSH_WORKSPACE="$WORKSPACE" \
+  DX_TEST_ZSH_TOKEN_FILE="$ZSH_TOKEN_FILE" \
+  zsh -f -c '
+    set -eu
+    source "$DEX_DIR/lib/session.sh"
+    source "$DEX_DIR/lib/session-runtime.sh"
+    heartbeat_token=$(dx_session_runtime_start \
+      runtime-zsh-export-heartbeat claude "$DX_TEST_ZSH_WORKSPACE" "$$")
+    dx_session_runtime_heartbeat \
+      runtime-zsh-export-heartbeat "$heartbeat_token" "$$"
+    dx_session_runtime_health \
+      runtime-zsh-export-heartbeat "$heartbeat_token" >/dev/null
+    dx_session_runtime_finish \
+      runtime-zsh-export-heartbeat "$heartbeat_token" stopped "$$"
+    purge_token=$(dx_session_runtime_start \
+      runtime-zsh-export-purge claude "$DX_TEST_ZSH_WORKSPACE" "$$")
+    __dx_session_runtime_purge \
+      runtime-zsh-export-purge "$purge_token" "$$"
+    printf "%s\n%s\n" "$heartbeat_token" "$purge_token" \
+      > "$DX_TEST_ZSH_TOKEN_FILE"
+  '
+  ZSH_HEARTBEAT_TOKEN=$(sed -n '1p' "$ZSH_TOKEN_FILE")
+  ZSH_PURGE_TOKEN=$(sed -n '2p' "$ZSH_TOKEN_FILE")
+fi
+
+for PRIVATE_VALUE in \
+  "$OWNER_PRIVATE_TOKEN" \
+  "$RECOVERY_OLD_TOKEN" \
+  "$RECOVERY_PRIVATE_TOKEN" \
+  "$RECOVERY_PURGE_PRIVATE_TOKEN" \
+  "$EXPORTED_PURGE_TOKEN" \
+  "$ZSH_HEARTBEAT_TOKEN" \
+  "$ZSH_PURGE_TOKEN" \
+  "$RECOVERY_PUBLIC_RECORD" \
+  "$RECOVERY_PURGE_SNAPSHOT"; do
+  [[ -z "$PRIVATE_VALUE" ]] \
+    || assert_not_contains "$PRIVATE_VALUE" "$RUNTIME_CAPTURE_LOG"
+done
+export PATH="$ORIGINAL_PATH"
+unset LEASE_TOKEN RECOVERY_SNAPSHOT token_record lease_token
+unset runtime_snapshot recovery_snapshot
+unset DX_TEST_REAL_PYTHON DX_TEST_RUNTIME_CAPTURE_LOG
+
+# The supervisor repeats the exact-snapshot check under the runtime lock. A
+# replacement owner therefore survives a recovery attempt made from stale
+# catalog data.
+SID_STALE_RECOVERY="runtime-owner-stale-recovery"
+STALE_RECOVERY_TOKEN=$(dx_session_runtime_start \
+  "$SID_STALE_RECOVERY" claude "$WORKSPACE" "$$")
+dx_session_runtime_finish \
+  "$SID_STALE_RECOVERY" "$STALE_RECOVERY_TOKEN" paused "$$"
+STALE_RECOVERY_SNAPSHOT=$(dx_session_runtime_read "$SID_STALE_RECOVERY")
+STALE_REPLACEMENT_TOKEN=$(dx_session_runtime_start \
+  "$SID_STALE_RECOVERY" claude "$WORKSPACE" "$$")
+STALE_RECOVERY_RESULT=0
+__dx_session_runtime_owner_recovery_start \
+  "$SID_STALE_RECOVERY" "$STALE_RECOVERY_SNAPSHOT" \
+  > "$TMP_DIR/stale-recovery.out" \
+  2> "$TMP_DIR/stale-recovery.err" || STALE_RECOVERY_RESULT=$?
+assert_eq "2" "$STALE_RECOVERY_RESULT" "stale owner recovery result"
+dx_session_runtime_matches "$SID_STALE_RECOVERY" "$STALE_REPLACEMENT_TOKEN" \
+  || fail "stale owner recovery disturbed the replacement lease"
+dx_session_runtime_finish \
+  "$SID_STALE_RECOVERY" "$STALE_REPLACEMENT_TOKEN" stopped "$$"
+
+# Purge is accepted only by a supervisor launched for recovery. Sending that
+# internal action to an ordinary lifecycle supervisor fails closed and leaves
+# a terminal runtime record.
+SID_NORMAL_PURGE="runtime-owner-normal-purge"
+dx_session_runtime_owner_start "$SID_NORMAL_PURGE" claude "$WORKSPACE"
+NORMAL_PURGE_HANDLE="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+NORMAL_PURGE_DIRECTORY=$(dx_session_runtime_owner_handle_path \
+  "$NORMAL_PURGE_HANDLE")
+unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+NORMAL_PURGE_RESULT=0
+__dx_session_runtime_owner_purge "$NORMAL_PURGE_HANDLE" \
+  >/dev/null 2>&1 || NORMAL_PURGE_RESULT=$?
+assert_eq "3" "$NORMAL_PURGE_RESULT" "ordinary owner purge result"
+NORMAL_PURGE_STATE=$(dx_session_runtime_field "$SID_NORMAL_PURGE" status)
+case "$NORMAL_PURGE_STATE" in
+  running)
+    assert_eq "live" "$(dx_session_runtime_health "$SID_NORMAL_PURGE")" \
+      "ordinary owner health after rejected purge"
+    dx_session_runtime_owner_finish "$NORMAL_PURGE_HANDLE" stopped
+    ;;
+  failed)
+    assert_eq "dead" "$(dx_session_runtime_health "$SID_NORMAL_PURGE")" \
+      "ordinary owner health after purge request"
+    ;;
+  *) fail "ordinary owner purge left unexpected state: $NORMAL_PURGE_STATE" ;;
+esac
+assert_no_file "$NORMAL_PURGE_DIRECTORY"
 
 # A reader may observe the create-once hardlink while its private temporary
 # sibling still exists. That is a bounded publication state, not corruption.
@@ -257,9 +564,14 @@ IFS=$'\t' read -r XTRACE_ROOT_DEVICE XTRACE_ROOT_INODE \
 $XTRACE_METADATA
 EOF
 MONITOR_IDENTITY=$(dx_session_runtime_process_identity "$$")
+LEASE_TOKEN="hostile-xtrace-lease" \
+RECOVERY_SNAPSHOT="hostile-xtrace-snapshot" \
+token_record="hostile-xtrace-record" \
+lease_token="hostile-xtrace-local" \
 bash -x "$ROOT/bin/session-runtime-owner.sh" \
   "$SID_XTRACE" claude "$WORKSPACE" "$$" "$MONITOR_IDENTITY" "$XTRACE_DIRECTORY" \
-  "$XTRACE_ROOT_DEVICE" "$XTRACE_ROOT_INODE" "$XTRACE_DEVICE" "$XTRACE_INODE" \
+  "$XTRACE_ROOT_DEVICE" "$XTRACE_ROOT_INODE" "$XTRACE_DEVICE" "$XTRACE_INODE" start \
+  3</dev/null \
   > "$XTRACE_DIRECTORY/output" 2> "$XTRACE_DIRECTORY/error" &
 XTRACE_OWNER_PID=$!
 TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${XTRACE_OWNER_PID}"
@@ -275,6 +587,57 @@ dx_session_runtime_owner_finish "$XTRACE_HANDLE" completed
 TEST_CHILD_PIDS="${TEST_CHILD_PIDS/ ${XTRACE_OWNER_PID}/}"
 assert_eq "completed" "$(dx_session_runtime_field "$SID_XTRACE" status)" \
   "traced supervisor status"
+
+SID_XTRACE_RECOVERY="runtime-owner-xtrace-recovery"
+XTRACE_RECOVERY_TOKEN=$(dx_session_runtime_start \
+  "$SID_XTRACE_RECOVERY" codex "$WORKSPACE" "$$")
+dx_session_runtime_finish \
+  "$SID_XTRACE_RECOVERY" "$XTRACE_RECOVERY_TOKEN" paused "$$"
+XTRACE_RECOVERY_RECORD=$(dx_session_runtime_read "$SID_XTRACE_RECOVERY")
+XTRACE_RECOVERY_DIRECTORY=$(mktemp -d \
+  "$XTRACE_ROOT/${SID_XTRACE_RECOVERY}.XXXXXX")
+chmod 700 "$XTRACE_RECOVERY_DIRECTORY"
+XTRACE_RECOVERY_GENERATION="${XTRACE_RECOVERY_DIRECTORY##*/}"
+XTRACE_RECOVERY_METADATA=$(__dx_session_runtime_owner_metadata \
+  "$XTRACE_ROOT" "$XTRACE_RECOVERY_DIRECTORY")
+IFS=$'\t' read -r XTRACE_RECOVERY_ROOT_DEVICE XTRACE_RECOVERY_ROOT_INODE \
+  XTRACE_RECOVERY_DEVICE XTRACE_RECOVERY_INODE <<EOF
+$XTRACE_RECOVERY_METADATA
+EOF
+LEASE_TOKEN="hostile-xtrace-recovery-lease" \
+RECOVERY_SNAPSHOT="hostile-xtrace-recovery-snapshot" \
+token_record="hostile-xtrace-recovery-record" \
+lease_token="hostile-xtrace-recovery-local" \
+bash -x "$ROOT/bin/session-runtime-owner.sh" \
+  "$SID_XTRACE_RECOVERY" codex "$WORKSPACE" "$$" "$MONITOR_IDENTITY" \
+  "$XTRACE_RECOVERY_DIRECTORY" "$XTRACE_RECOVERY_ROOT_DEVICE" \
+  "$XTRACE_RECOVERY_ROOT_INODE" "$XTRACE_RECOVERY_DEVICE" \
+  "$XTRACE_RECOVERY_INODE" recover \
+  3<<<"$XTRACE_RECOVERY_RECORD" \
+  > "$XTRACE_RECOVERY_DIRECTORY/output" \
+  2> "$XTRACE_RECOVERY_DIRECTORY/error" &
+XTRACE_RECOVERY_OWNER_PID=$!
+TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${XTRACE_RECOVERY_OWNER_PID}"
+wait_for_value "$XTRACE_RECOVERY_DIRECTORY/ready"
+XTRACE_RECOVERY_OWNER_IDENTITY=$(dx_session_runtime_process_identity \
+  "$XTRACE_RECOVERY_OWNER_PID")
+XTRACE_RECOVERY_HANDLE=$(printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+  "$XTRACE_RECOVERY_DIRECTORY" "$SID_XTRACE_RECOVERY" \
+  "$XTRACE_RECOVERY_OWNER_PID" "$XTRACE_RECOVERY_OWNER_IDENTITY" \
+  "$XTRACE_RECOVERY_GENERATION" "$XTRACE_RECOVERY_ROOT_DEVICE" \
+  "$XTRACE_RECOVERY_ROOT_INODE" "$XTRACE_RECOVERY_DEVICE" \
+  "$XTRACE_RECOVERY_INODE")
+assert_token_private "$SID_XTRACE_RECOVERY" "$XTRACE_RECOVERY_HANDLE" \
+  "$(cat "$XTRACE_RECOVERY_DIRECTORY/output" \
+    "$XTRACE_RECOVERY_DIRECTORY/error")"
+assert_not_contains "$XTRACE_RECOVERY_RECORD" \
+  <(cat "$XTRACE_RECOVERY_DIRECTORY/output" \
+    "$XTRACE_RECOVERY_DIRECTORY/error")
+assert_not_contains "$XTRACE_RECOVERY_RECORD" \
+  <(ps -o command= -p "$XTRACE_RECOVERY_OWNER_PID" 2>/dev/null || true)
+__dx_session_runtime_owner_purge "$XTRACE_RECOVERY_HANDLE"
+TEST_CHILD_PIDS="${TEST_CHILD_PIDS/ ${XTRACE_RECOVERY_OWNER_PID}/}"
+assert_no_file "$(dx_session_runtime_file "$SID_XTRACE_RECOVERY")"
 
 # A live lease rejects a second supervisor before either caller can launch work.
 SID_CONCURRENT="runtime-owner-concurrent"
@@ -398,7 +761,8 @@ unset PYTHONPATH
 run_owner_control_attack() { # <fifo|symlink|directory|handle-swap|result-swap>
   set -euo pipefail
   local attack_kind="$1" attack_session owner_handle owner_pid owner_directory
-  local owner_generation real_directory finish_result=0 runtime_health runtime_state
+  local owner_generation real_directory ready_record finish_result=0
+  local runtime_health runtime_state
   # shellcheck source=lib/common.sh
   source "$ROOT/lib/common.sh"
   attack_session="runtime-owner-control-${attack_kind//[^A-Za-z0-9._-]/-}-$$"
@@ -408,6 +772,7 @@ run_owner_control_attack() { # <fifo|symlink|directory|handle-swap|result-swap>
   owner_pid="$DX_SESSION_RUNTIME_OWNER_PID"
   owner_directory=$(dx_session_runtime_owner_handle_path "$owner_handle")
   owner_generation="${owner_directory##*/}"
+  ready_record=$(cat "$owner_directory/ready")
   unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
 
   case "$attack_kind" in
@@ -449,6 +814,23 @@ run_owner_control_attack() { # <fifo|symlink|directory|handle-swap|result-swap>
   dx_session_runtime_owner_finish "$owner_handle" completed \
     >/dev/null 2>&1 || finish_result=$?
   [[ "$finish_result" -ne 0 ]] || return 91
+  case "$attack_kind" in
+    fifo|symlink|directory)
+      rm -rf "$owner_directory/ready"
+      printf '%s\n' "$ready_record" > "$owner_directory/ready"
+      chmod 600 "$owner_directory/ready"
+      DX_SESSION_RUNTIME_OWNER_FINISH_TIMEOUT_MILLISECONDS=5000 \
+        dx_session_runtime_owner_finish "$owner_handle" failed \
+        >/dev/null 2>&1 || return 94
+      ;;
+    handle-swap)
+      mv "$owner_directory" "${owner_directory}.forged"
+      mv "$real_directory" "$owner_directory"
+      DX_SESSION_RUNTIME_OWNER_FINISH_TIMEOUT_MILLISECONDS=5000 \
+        dx_session_runtime_owner_finish "$owner_handle" failed \
+        >/dev/null 2>&1 || return 94
+      ;;
+  esac
   runtime_health=$(dx_session_runtime_health "$attack_session" 2>/dev/null || true)
   runtime_state=$(dx_session_runtime_field "$attack_session" status 2>/dev/null || true)
   [[ "$runtime_health" == "dead" && "$runtime_state" != "running" ]] || return 92
@@ -456,8 +838,11 @@ run_owner_control_attack() { # <fifo|symlink|directory|handle-swap|result-swap>
 }
 export -f run_owner_control_attack
 export ROOT WORKSPACE
-python3 - <<'PY'
+CONTROL_ATTACK_SENTINEL="$TMP_DIR/owner-control-attacks.passed"
+if ! python3 - "$CONTROL_ATTACK_SENTINEL" <<'PY'
+from pathlib import Path
 import subprocess
+import sys
 
 for attack in ("fifo", "symlink", "directory", "handle-swap", "result-swap"):
     try:
@@ -475,7 +860,12 @@ for attack in ("fifo", "symlink", "directory", "handle-swap", "result-swap"):
             f"runtime owner {attack} attack failed ({result.returncode}): "
             f"{result.stdout}{result.stderr}"
         )
+Path(sys.argv[1]).write_text("passed\n", encoding="utf-8")
 PY
+then
+  fail "runtime owner control attack checks did not complete"
+fi
+assert_file "$CONTROL_ATTACK_SENTINEL"
 export -n ROOT WORKSPACE
 unset -f run_owner_control_attack
 

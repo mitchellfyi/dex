@@ -4,8 +4,8 @@
 set +x
 set -euo pipefail
 
-if [[ $# -ne 10 ]]; then
-  printf '%s\n' "dex runtime owner: expected session, provider, workspace, launcher identity, and private owner identity" >&2
+if [[ $# -ne 11 ]]; then
+  printf '%s\n' "dex runtime owner: expected session, launch mode, workspace, launcher identity, and private owner identity" >&2
   exit 3
 fi
 
@@ -20,13 +20,20 @@ OWNER_ROOT_DEVICE="$7"
 OWNER_ROOT_INODE="$8"
 OWNER_DEVICE="$9"
 OWNER_INODE="${10}"
+START_MODE="${11}"
 OWNER_GENERATION="${OWNER_HANDLE##*/}"
 LAUNCH_PARENT_PID="$PPID"
 
 # shellcheck source=lib/common.sh
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
+# Bash preserves an inherited export attribute when a variable is assigned a
+# new value. Clear both the value and that attribute before these names ever
+# hold a private lease or recovery snapshot.
+unset LEASE_TOKEN RECOVERY_SNAPSHOT token_record
+unset lease_token runtime_snapshot recovery_snapshot
 LEASE_TOKEN=""
+RECOVERY_SNAPSHOT=""
 OWNER_FINISHED=0
 OWNER_FINAL_RESULT=3
 HEARTBEAT_ELAPSED_MS=0
@@ -55,11 +62,42 @@ EOF
   [[ "$command_generation" == "$OWNER_GENERATION" && -z "${command_extra:-}" ]] \
     || return 3
   case "$terminal_request" in
-    completed|paused|blocked|failed|stopped|abandoned)
+    completed|paused|blocked|failed|stopped|abandoned|purged)
       printf '%s\t%s\n' "$command_generation" "$terminal_request"
       ;;
     *) return 3 ;;
   esac
+}
+
+owner_purge() { # <generation>
+  local result_generation="$1" purge_result=0 finish_result=0
+  local final_result=0 final_detail="finished"
+  if [[ "$OWNER_FINISHED" -eq 1 ]]; then
+    return "$OWNER_FINAL_RESULT"
+  fi
+  OWNER_FINISHED=1
+  if [[ -z "$LEASE_TOKEN" ]]; then
+    OWNER_FINAL_RESULT=3
+    owner_atomic_write result \
+      "3"$'\t'"$result_generation"$'\t'purged$'\t'lease-not-started \
+      2>/dev/null || true
+    return 3
+  fi
+  __dx_session_runtime_purge "$SESSION_ID" "$LEASE_TOKEN" "$$" \
+    >/dev/null 2>&1 || purge_result=$?
+  if [[ "$purge_result" -ne 0 ]]; then
+    final_result="$purge_result"
+    final_detail="purge-failed"
+    dx_session_runtime_finish "$SESSION_ID" "$LEASE_TOKEN" failed "$$" \
+      >/dev/null 2>&1 || finish_result=$?
+    [[ "$finish_result" -eq 0 ]] || final_detail="purge-and-finish-failed"
+  fi
+  OWNER_FINAL_RESULT="$final_result"
+  if ! owner_atomic_write result \
+      "${final_result}"$'\t'"$result_generation"$'\t'purged$'\t'"$final_detail"; then
+    [[ "$OWNER_FINAL_RESULT" -ne 0 ]] || OWNER_FINAL_RESULT=3
+  fi
+  return "$OWNER_FINAL_RESULT"
 }
 
 owner_monitor_matches() {
@@ -126,7 +164,21 @@ trap 'owner_signal 129' HUP
 
 dx_session_id_valid "$SESSION_ID" || exit 3
 [[ "$PROVIDER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || exit 3
-[[ "$WORKSPACE_DIR" == /* && -d "$WORKSPACE_DIR" ]] || exit 3
+[[ "$WORKSPACE_DIR" == /* ]] || exit 3
+case "$START_MODE" in
+  start)
+    [[ -d "$WORKSPACE_DIR" ]] || exit 3
+    exec 3<&-
+    ;;
+  recover)
+    IFS= read -r RECOVERY_SNAPSHOT <&3 || exit 3
+    if IFS= read -r _ <&3; then
+      exit 3
+    fi
+    exec 3<&-
+    ;;
+  *) exit 3 ;;
+esac
 [[ "$MONITOR_PID" =~ ^[0-9]+$ ]] || exit 3
 [[ "$LAUNCH_PARENT_PID" == "$MONITOR_PID" ]] || exit 3
 case "$MONITOR_IDENTITY" in
@@ -160,15 +212,22 @@ token_read_result=0
 token_record=""
 exec 7< <(
   secure_start_result=0
-  __dx_session_runtime_start_secure \
-    "$SESSION_ID" "$PROVIDER_NAME" "$WORKSPACE_DIR" "$$" \
-    3>&1 1>/dev/null || secure_start_result=$?
+  if [[ "$START_MODE" == "recover" ]]; then
+    __dx_session_runtime_recovery_start_secure \
+      "$SESSION_ID" "$RECOVERY_SNAPSHOT" "$$" \
+      3>&1 1>/dev/null || secure_start_result=$?
+  else
+    __dx_session_runtime_start_secure \
+      "$SESSION_ID" "$PROVIDER_NAME" "$WORKSPACE_DIR" "$$" \
+      3>&1 1>/dev/null || secure_start_result=$?
+  fi
   if [[ "$secure_start_result" -ne 0 ]]; then
     printf 'start-failed\t%s\n' "$secure_start_result"
   fi
 )
 IFS= read -r token_record <&7 || token_read_result=$?
 exec 7<&-
+RECOVERY_SNAPSHOT=""
 if [[ "$token_read_result" -eq 0 && "$token_record" =~ ^[0-9a-f]{64}$ ]]; then
   LEASE_TOKEN="$token_record"
 elif [[ "$token_record" =~ ^start-failed$'\t'([0-9]+)$ ]]; then
@@ -207,7 +266,16 @@ while true; do
     IFS=$'\t' read -r command_generation terminal_request <<EOF
 $command_record
 EOF
-    owner_finish "$terminal_request" finished "$command_generation"
+    if [[ "$terminal_request" == "purged" ]]; then
+      if [[ "$START_MODE" != "recover" ]]; then
+        owner_finish failed invalid-control "$command_generation" 3 \
+          2>/dev/null || true
+        exit 3
+      fi
+      owner_purge "$command_generation"
+    else
+      owner_finish "$terminal_request" finished "$command_generation"
+    fi
     exit $?
   elif [[ "$command_result" -ne 1 ]]; then
     owner_finish failed invalid-control "$OWNER_GENERATION" 3 2>/dev/null || true
