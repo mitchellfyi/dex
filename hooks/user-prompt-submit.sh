@@ -68,8 +68,21 @@ __dx_write_human_control() {
 
 __dx_detach_lifecycle_now() {
   local action="${1:-pause}" reason="${2:-manual-${1:-pause}}"
-  dx_lifecycle_detach "$SESSION_ID" "$reason" "user-prompt"
+  dx_lifecycle_detach "$SESSION_ID" "$reason" "user-prompt" || return 1
   dx_write_watch_pause "$SESSION_ID" "human-${action}" 2>/dev/null || true
+}
+
+__dx_report_detach_failure() {
+  cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Dex received the human control request but could not prove that completion authorization was revoked. It did not report a clean detach. Repair the lifecycle state files and retry the control before resuming automated work."}}
+JSON
+}
+
+__dx_resume_lifecycle_now() {
+  local resume_record _resume_phase _resume_mode _resume_purpose
+  resume_record=$(dx_lifecycle_resume_completion_context "$SESSION_ID") || return 1
+  IFS=$'\t' read -r _resume_phase RESUME_COMPLETION_GENERATION \
+    _resume_mode _resume_purpose <<< "$resume_record"
 }
 
 __dx_prompt_resumes_watchers() {
@@ -124,6 +137,19 @@ fi
 
 LIFECYCLE_ACTIVE=0
 dx_lifecycle_session_active "$SESSION_ID" && LIFECYCLE_ACTIVE=1
+COMPLETION_CONTEXT=$(dx_lifecycle_completion_context_read "$SESSION_ID" 2>/dev/null || true)
+CONTEXT_PHASE=""
+CONTEXT_MODE=""
+CONTEXT_PURPOSE=""
+CONTEXT_HANDOFF=""
+if [[ -n "$COMPLETION_CONTEXT" ]]; then
+  IFS=$'\t' read -r CONTEXT_PHASE _ _ _ CONTEXT_MODE CONTEXT_PURPOSE _ \
+    CONTEXT_HANDOFF <<< "$COMPLETION_CONTEXT"
+fi
+if [[ "$LIFECYCLE_ACTIVE" -ne 1 && -n "$COMPLETION_CONTEXT" \
+  && -f "$(dx_paused_file "$SESSION_ID")" ]]; then
+  LIFECYCLE_ACTIVE=1
+fi
 if [[ "$LIFECYCLE_ACTIVE" -eq 1 ]]; then
   if [[ -z "$OWNER_ID" ]]; then
     if [[ "$HOOK_SESSION_VALID" -ne 1 || "${DEX_LOOP_ACTIVE:-}" != "1" \
@@ -138,6 +164,9 @@ if [[ "$LIFECYCLE_ACTIVE" -eq 1 ]]; then
   fi
 
   CURRENT_PHASE=$(dx_lifecycle_current_phase "$SESSION_ID")
+  if [[ "$CONTEXT_MODE" == "standalone" || -z "$CURRENT_PHASE" ]]; then
+    CURRENT_PHASE="$CONTEXT_PHASE"
+  fi
   CONTROL_FIELDS=$(printf '%s' "$PROMPT" | python3 "$DEX_DIR/scripts/lifecycle-control.py" \
     --phase "$CURRENT_PHASE" --format tsv 2>/dev/null || true)
   CONTROL_ACTION=""
@@ -148,23 +177,37 @@ if [[ "$LIFECYCLE_ACTIVE" -eq 1 ]]; then
     [[ "$CONTROL_TARGET" == "-" ]] && CONTROL_TARGET=""
   fi
 
+  if [[ "$CONTROL_ACTION" == "complete" || "$CONTROL_ACTION" == "jump" ]]; then
+    if [[ "$CONTEXT_MODE" != "lifecycle" || "$CONTEXT_PURPOSE" != "phase" \
+      || "$CONTEXT_HANDOFF" != "inline" ]]; then
+      cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Dex did not apply that phase transition because this session is a standalone loop, not an inline lifecycle. You can pause or stop the loop, or let its own completion contract finish it."}}
+JSON
+      exit 0
+    fi
+  fi
+
   case "$CONTROL_ACTION" in
     resume)
       __dx_write_human_control resume "" "$CONTROL_HASH" || exit 0
-      dx_clear_lifecycle_control "$SESSION_ID"
-      rm -f "$(dx_paused_file "$SESSION_ID")" "$(dx_pause_state_file "$SESSION_ID")" 2>/dev/null || true
-      dx_clear_watch_pause "$SESSION_ID"
-      if [[ -f "$(dx_loop_config_file "$SESSION_ID")" || -f "$(dx_handoff_mode_file "$SESSION_ID")" ]]; then
-        touch "$(dx_active_file "$SESSION_ID")"
+      if ! __dx_resume_lifecycle_now; then
+        cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Dex received the resume request but could not create a fresh completion authorization. The lifecycle remains paused; fix the state-file error and resume again."}}
+JSON
+        exit 0
       fi
-      cat <<'JSON'
-{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Direct human instruction accepted. Dex lifecycle controls resumed for this session. Continue the current phase unless the user's prompt gives a different scope."}}
+      dx_clear_watch_pause "$SESSION_ID"
+      cat <<JSON
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Direct human instruction accepted. Dex lifecycle controls resumed for this session with fresh completion authorization. Continue the current phase unless the user's prompt gives a different scope. When its audit gate passes, run exactly: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${SESSION_ID}\" \"${RESUME_COMPLETION_GENERATION}\""}}
 JSON
       exit 0
       ;;
     pause|cancel)
       __dx_write_human_control "$CONTROL_ACTION" "" "$CONTROL_HASH" || exit 0
-      __dx_detach_lifecycle_now "$CONTROL_ACTION"
+      if ! __dx_detach_lifecycle_now "$CONTROL_ACTION"; then
+        __dx_report_detach_failure
+        exit 0
+      fi
       cat <<JSON
 {"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Direct human ${CONTROL_ACTION} instruction accepted. The latest human request has priority over Dex phase, review, verification, skill, and audit-loop instructions. Dex lifecycle sequencing is disabled for this session; review-wave session isolation and security guards remain active. Commit, push, and PR operations are not phase-blocked. Follow the user's request now; if no other work was requested, stop normally. Do not write Dex completion or readiness markers. The lifecycle can be restarted later with a direct 'resume Dex' instruction or the normal dx resume command."}}
 JSON
@@ -173,7 +216,10 @@ JSON
     complete|jump)
       if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$CONTROL_TARGET"; then
         __dx_write_human_control pause "" "$CONTROL_HASH" || exit 0
-        __dx_detach_lifecycle_now pause review-child-active
+        if ! __dx_detach_lifecycle_now pause review-child-active; then
+          __dx_report_detach_failure
+          exit 0
+        fi
         cat <<'JSON'
 {"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Direct human instruction accepted. Dex detached from Phase 3 immediately. A review child was still marked in flight, so Dex did not jump across it while it could still edit files. The latest human request has priority; stop normally and resume or jump after the review process has ended."}}
 JSON

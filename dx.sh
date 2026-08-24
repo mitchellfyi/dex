@@ -933,13 +933,14 @@ __dx_setup_in_place() {
 
 # dx_session_id is provided by lib/session.sh (sourced via lib/common.sh)
 
-# __dx_build_system_context <wt_name> <step> <session_id> <wt_dir> [workspace_mode] [raw_input]
+# __dx_build_system_context <wt_name> <step> <session_id> <wt_dir> [workspace_mode] [raw_input] [completion_generation]
 # Write a system prompt context file that persists across conversation compaction.
 # Returns the file path on stdout. The file is passed to --append-system-prompt-file
 # so Claude always knows which phase it is in, even after compaction.
 __dx_build_system_context() {
   local wt_name="$1" step="$2" session_id="$3" wt_dir="$4"
   local workspace_mode="${5:-worktree}" raw_input="${6:-}"
+  local completion_generation="${7:-}"
   local ctx_file
   ctx_file=$(dx_context_file "$session_id")
   mkdir -p "$(dirname "$ctx_file")"
@@ -971,20 +972,20 @@ __dx_build_system_context() {
   local phase_label
   phase_label=$(__dx_phase_name "$step")
   local direct_codex_marker_contract=""
-  if [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" ]]; then
+  if [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" \
+    && "$completion_generation" =~ ^[0-9a-f]{32}$ ]]; then
     case "$step" in
-      2)
+      0|1|2)
         direct_codex_marker_contract="
 ## Direct Codex Phase Marker
 
 This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the phase marker for you. After Phase 2 is genuinely
-complete, write this marker before your final response:
+Claude Stop hook to write the completion receipt for you. First satisfy the
+normal Phase ${step} readiness gate, then write this exact receipt before your
+final response:
 
 \`\`\`bash
-source \"${DEX_DIR}/lib/common.sh\"
-SESSION_ID=\"${session_id}\"
-touch \"\$(dx_phase_ready_file \"\$SESSION_ID\" 2)\"
+bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
 \`\`\`
 " ;;
       3|4|5)
@@ -992,13 +993,11 @@ touch \"\$(dx_phase_ready_file \"\$SESSION_ID\" 2)\"
 ## Direct Codex Phase Marker
 
 This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the phase marker for you. After Phase ${step} is
-genuinely complete, write this marker before your final response:
+Claude Stop hook to write the completion receipt for you. After Phase ${step}
+is genuinely complete, write this exact receipt before your final response:
 
 \`\`\`bash
-source \"${DEX_DIR}/lib/common.sh\"
-SESSION_ID=\"${session_id}\"
-touch \"\$(dx_complete_file \"\$SESSION_ID\")\"
+bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
 \`\`\`
 " ;;
       6)
@@ -1007,17 +1006,15 @@ touch \"\$(dx_complete_file \"\$SESSION_ID\")\"
 
 This session is running through the direct Codex provider, so there is no
 Claude Stop hook to write the phase marker for you. If Phase 6 reaches the
-successful completion criteria, write the normal complete marker before your
-final response. If Phase 6 hits a bounded wait or external blocker, write the
-pause marker instead and do not write the complete marker.
+successful completion criteria, write the exact receipt below before your final
+response. If Phase 6 hits a bounded wait or external blocker, write the pause
+marker instead and do not write the completion receipt.
 
 \`\`\`bash
-source \"${DEX_DIR}/lib/common.sh\"
-SESSION_ID=\"${session_id}\"
 # Success only:
-touch \"\$(dx_complete_file \"\$SESSION_ID\")\"
+bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
 # Blocked/paused only:
-touch \"\$(dx_paused_file \"\$SESSION_ID\")\"
+bash \"\$DEX_DIR/bin/control.sh\" pause
 \`\`\`
 " ;;
     esac
@@ -1084,9 +1081,9 @@ criteria consistently before the hook authorizes completion.
 Do NOT try to stop until you have genuinely completed all work for this phase.
 Premature stop attempts will be caught and you will be asked to continue.
 
-Do NOT write any .complete signal files or output completion promise strings
-on your own. The Stop hook controls completion and will provide instructions
-when enough quality passes have been achieved.
+Do not create a bare .complete marker or invent a completion command. Claude
+sessions receive their exact receipt command from the Stop hook after the audit
+gate passes. Direct Codex sessions receive it in the phase contract below.
 
 ${direct_codex_marker_contract}
 
@@ -1188,21 +1185,94 @@ __dx_inline_audit_file() {
   echo "$DEX_DIR/prompts/phase-audits/${basename}.md"
 }
 
+# __dx_inline_completion_config <step> <generation>
+unalias __dx_inline_completion_config 2>/dev/null; unfunction __dx_inline_completion_config 2>/dev/null
+__dx_inline_completion_config() {
+  local step="$1" generation="$2"
+  printf '%s:%s:%s:%s:lifecycle:phase:%s\n' \
+    "$step" "$(__dx_phase_promise "$step")" "$(__dx_inline_audit_file "$step")" \
+    "$(__dx_phase_min_audits "$step")" "$generation"
+}
+
+unalias __dx_abandon_completion_state 2>/dev/null; unfunction __dx_abandon_completion_state 2>/dev/null
+__dx_abandon_completion_state() {
+  local session_id="$1"
+  if dx_completion_abandon "$session_id" 2>/dev/null; then
+    return 0
+  fi
+  __dx_completion_recover_cleanup "$session_id" 2>/dev/null
+}
+
 # __dx_configure_inline_phase <step> <session_id>
 # Prepare the Stop hook to audit the current phase and advance inline.
+# A new launch always gets a new generation, including resume and same-phase
+# retry launches. The printed value is the only generation a direct provider
+# may receive in its phase prompt.
+unalias __dx_configure_inline_phase 2>/dev/null; unfunction __dx_configure_inline_phase 2>/dev/null
 __dx_configure_inline_phase() {
-  local step="$1" session_id="$2" audit_file min_audits promise
-  audit_file=$(__dx_inline_audit_file "$step")
+  local step="$1" session_id="$2" generation config_file state_file current_phase
+  local provider_engine="${DX_PROVIDER_ENGINE:-}" provider_line provider_state
+  config_file=$(dx_loop_config_file "$session_id")
+  state_file=$(dx_state_file "$session_id")
+  provider_state=$(dx_provider_state_file "$session_id")
+  if [[ -f "$provider_state" ]]; then
+    while IFS= read -r provider_line; do
+      case "$provider_line" in
+        engine=*) provider_engine="${provider_line#engine=}" ;;
+      esac
+    done < "$provider_state"
+  fi
   mkdir -p "$DX_LOOP_DIR"
-  touch "$(dx_active_file "$session_id")"
-  printf '%s\n' "inline" > "$(dx_handoff_mode_file "$session_id")"
+  if ! dx_lifecycle_control_lock_acquire "$session_id"; then
+    return 1
+  fi
+  current_phase=$(cat "$state_file" 2>/dev/null || true)
+  if [[ "$current_phase" =~ ^[0-7]$ && "$current_phase" != "$step" ]]; then
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    return 2
+  fi
+  if [[ ! "$current_phase" =~ ^[0-7]$ ]] \
+    && ! dx_lifecycle_atomic_write "$state_file" "$step"; then
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    return 1
+  fi
+  if ! generation=$(dx_completion_issue "$session_id" lifecycle phase "$step"); then
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    return 1
+  fi
+  if ! dx_lifecycle_atomic_write "$config_file" \
+    "$(__dx_inline_completion_config "$step" "$generation")"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    return 1
+  fi
+  if [[ "$provider_engine" == "codex-plugin" ]]; then
+    # Direct Codex has no Stop hook, so file activation would let an unrelated
+    # Claude session claim this lifecycle. The wrapper owns the exact receipt.
+    rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+      2>/dev/null || true
+  elif ! touch "$(dx_active_file "$session_id")"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    return 1
+  fi
+  if ! dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$session_id")" inline; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    return 1
+  fi
   # Clear any ownership claim so the Claude session launched next can claim
   # this loop (relaunch/--resume gets a fresh Claude session id).
   rm -f "$(dx_owner_file "$session_id")" "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" "$(dx_watch_pause_file "$session_id")"
-
-  min_audits=$(__dx_phase_min_audits "$step")
-  promise=$(__dx_phase_promise "$step")
-  __dx_write_state "$(dx_loop_config_file "$session_id")" "${step}:${promise}:${audit_file}:${min_audits}"
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    __dx_abandon_completion_state "$session_id" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" "$config_file" \
+      "$(dx_handoff_mode_file "$session_id")" "$(dx_owner_file "$session_id")" \
+      2>/dev/null || true
+    return 1
+  fi
+  printf '%s\n' "$generation"
 }
 
 unalias __dx_cleanup_completed_workspace 2>/dev/null; unfunction __dx_cleanup_completed_workspace 2>/dev/null
@@ -1405,11 +1475,14 @@ __dx_finish_inline_pause() {
 unalias __dx_codex_direct_phase_handoff 2>/dev/null; unfunction __dx_codex_direct_phase_handoff 2>/dev/null
 __dx_codex_direct_phase_handoff() {
   local session_id="$1" phase="$2" state_file="$3" wt_dir="$4"
-  local provider_state provider_engine="" line complete_file ready_file next_phase criteria_binding=""
+  local controls_only="${5:-0}"
+  local provider_state provider_engine="" line ready_file next_phase criteria_binding=""
   local policy_record="" policy_binding="" policy_small="" policy_normal="" policy_complex="" policy_ref="" policy_oid=""
   local control_action control_target control_expected control_phase control_snapshot control_source
   local control_generation control_from control_recovery control_busy_token
-  local config_file control_config
+  local config_file control_file control_config context_record config_phase config_promise config_audit
+  local config_handoff
+  local config_min config_mode config_purpose config_generation replacement_generation
   provider_state=$(dx_provider_state_file "$session_id")
   [[ -f "$provider_state" ]] || return 1
   while IFS= read -r line; do
@@ -1421,8 +1494,15 @@ __dx_codex_direct_phase_handoff() {
   [[ "$phase" =~ ^[0-6]$ ]] || return 1
 
   config_file=$(dx_loop_config_file "$session_id")
+  control_file=$(dx_lifecycle_control_file "$session_id")
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
   control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  if [[ -z "$control_snapshot" \
+    && ( -e "$control_file" || -L "$control_file" ) ]]; then
+    dx_lifecycle_control_lock_release "$session_id" || true
+    [[ "$controls_only" == "control-only" ]] && return 3
+    return 1
+  fi
   control_action=$(dx_lifecycle_control_value "$control_snapshot" action)
   control_target=$(dx_lifecycle_control_value "$control_snapshot" target_phase)
   control_expected=$(dx_lifecycle_control_value "$control_snapshot" expected_phase)
@@ -1430,11 +1510,12 @@ __dx_codex_direct_phase_handoff() {
   control_generation=$(dx_lifecycle_control_value "$control_snapshot" generation)
   control_phase=$(dx_lifecycle_current_phase "$session_id")
   if [[ "$control_action" == "pause" || "$control_action" == "cancel" ]]; then
-    dx_write_pause_state "$session_id" "manual-${control_action}" "${control_source:-terminal}" 2>/dev/null || true
-    [[ -f "$(dx_phase_busy_file "$session_id" 3)" ]] && dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
-    touch "$(dx_paused_file "$session_id")"
-    rm -f "$(dx_active_file "$session_id")" "$(dx_complete_file "$session_id")" \
-      "$(dx_loop_file "$session_id")" 2>/dev/null || true
+    if ! dx_lifecycle_detach "$session_id" "manual-${control_action}" \
+      "${control_source:-terminal}"; then
+      dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+      dx_warn "Dex could not prove that completion authorization was revoked, so the pause was not reported as cleanly detached."
+      return 1
+    fi
     dx_lifecycle_control_lock_release "$session_id" || true
     return 2
   fi
@@ -1471,28 +1552,36 @@ __dx_codex_direct_phase_handoff() {
       return 1
     fi
     if dx_phase_busy_transition_blocked "$session_id" 3 "$control_from" "$control_target"; then
-      dx_write_pause_state "$session_id" "review-child-active" "${control_source:-terminal}" 2>/dev/null || true
-      dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
-      touch "$(dx_paused_file "$session_id")"
-      rm -f "$(dx_active_file "$session_id")" "$(dx_complete_file "$session_id")" \
-        "$(dx_loop_file "$session_id")" 2>/dev/null || true
+      if ! dx_lifecycle_detach "$session_id" "review-child-active" \
+        "${control_source:-terminal}"; then
+        dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+        dx_warn "Dex could not prove that completion authorization was revoked while detaching from the active review child."
+        return 1
+      fi
       dx_lifecycle_control_lock_release "$session_id" || true
       dx_warn "Dex detached at Phase 3 because a review child is still marked in flight."
       return 2
     fi
 
-    if ! dx_consume_completion_receipt "$session_id"; then
+    if ! __dx_abandon_completion_state "$session_id"; then
       dx_lifecycle_control_lock_release "$session_id" || true
-      dx_warn "Dex could not consume the current phase completion receipt; the human transition remains pending."
+      dx_warn "Dex could not revoke the current phase completion authorization; the human transition remains pending."
       return 1
     fi
     if [[ "$control_recovery" -eq 0 ]]; then
-      control_config="${control_target}:$(__dx_phase_promise "$control_target"):$(__dx_inline_audit_file "$control_target"):$(__dx_phase_min_audits "$control_target")"
-      [[ "$control_target" == "7" ]] && control_config="7:::0"
-      if ! dx_lifecycle_atomic_write "$config_file" "$control_config" \
-        || ! dx_lifecycle_atomic_write "$state_file" "$control_target"; then
+      if ! dx_lifecycle_atomic_write "$state_file" "$control_target"; then
         dx_lifecycle_control_lock_release "$session_id" || true
         dx_warn "Dex could not commit the direct Codex phase transition. The current phase remains authoritative; retry its audit."
+        return 1
+      fi
+    fi
+    if [[ "$control_target" =~ ^[0-6]$ ]]; then
+      if ! replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$control_target") \
+        || ! control_config=$(__dx_inline_completion_config "$control_target" "$replacement_generation") \
+        || ! dx_lifecycle_atomic_write "$config_file" "$control_config"; then
+        dx_completion_abandon "$session_id" 2>/dev/null || true
+        dx_lifecycle_control_lock_release "$session_id" || true
+        dx_warn "Dex changed the authoritative phase but could not prepare its completion authorization. Retry the current phase to recover."
         return 1
       fi
     fi
@@ -1532,67 +1621,150 @@ __dx_codex_direct_phase_handoff() {
     dx_info "Human control moved the direct Codex lifecycle from Phase ${control_from} to Phase ${control_target}."
     return 0
   fi
-  dx_lifecycle_control_lock_release "$session_id" || true
 
-  complete_file=$(dx_complete_file "$session_id")
+  if [[ "$controls_only" == "control-only" ]]; then
+    dx_lifecycle_control_lock_release "$session_id" || true
+    return 1
+  fi
+
+  context_record=$(dx_lifecycle_completion_context_read "$session_id" 2>/dev/null) || {
+    dx_lifecycle_control_lock_release "$session_id" || true
+    return 1
+  }
+  IFS=$'\t' read -r config_phase config_promise config_audit config_min \
+    config_mode config_purpose config_generation config_handoff \
+    <<< "$context_record"
+  : "$config_handoff"
+  : "$config_promise" "$config_audit" "$config_min"
+  if [[ "$config_phase" != "$phase" || "$config_mode" != "lifecycle" \
+    || "$config_purpose" != "phase" \
+    || ! "$config_generation" =~ ^[0-9a-f]{32}$ ]]; then
+    dx_lifecycle_control_lock_release "$session_id" || true
+    return 1
+  fi
+
+  # Bare markers from an older launcher are never phase authorization. Rotate
+  # before returning so a late writer cannot complete the next retry.
+  if [[ -e "$(dx_complete_file "$session_id")" || -L "$(dx_complete_file "$session_id")" ]]; then
+    rm -f "$(dx_complete_file "$session_id")" 2>/dev/null || true
+    replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase" 2>/dev/null || true)
+    if [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]]; then
+      dx_lifecycle_atomic_write "$config_file" \
+        "$(__dx_inline_completion_config "$phase" "$replacement_generation")" 2>/dev/null || true
+    fi
+    dx_lifecycle_control_lock_release "$session_id" || true
+    dx_warn "Legacy completion marker ignored; this phase requires its exact versioned receipt."
+    if [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]]; then
+      dx_info "Retry the phase, then run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${replacement_generation}\""
+    fi
+    return 1
+  fi
+
+  if ! dx_completion_receipt_valid "$session_id" lifecycle phase "$phase" "$config_generation"; then
+    dx_lifecycle_control_lock_release "$session_id" || true
+    return 1
+  fi
+
   ready_file=$(dx_phase_ready_file "$session_id" "$phase")
   case "$phase" in
     0|1|2)
-      [[ -f "$ready_file" ]] || return 1
-      ;;
-    *)
-      [[ -f "$complete_file" ]] || return 1
+      if [[ ! -f "$ready_file" ]]; then
+        replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase" 2>/dev/null || true)
+        if [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]]; then
+          dx_lifecycle_atomic_write "$config_file" \
+            "$(__dx_inline_completion_config "$phase" "$replacement_generation")" 2>/dev/null || true
+        fi
+        dx_lifecycle_control_lock_release "$session_id" || true
+        dx_warn "Phase ${phase} receipt rejected because its readiness gate is not satisfied."
+        if [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]]; then
+          dx_info "Retry the gate, then run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${replacement_generation}\""
+        fi
+        return 1
+      fi
       ;;
   esac
 
   if [[ "$phase" == "1" && ! -e "$(dx_review_criteria_approval_file "$session_id")" ]]; then
     criteria_binding=$(dx_review_criteria_hash "$(dx_review_criteria_file "$session_id")" 2>/dev/null || true)
-    [[ "$criteria_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
-    dx_review_approve_criteria "$session_id" initial "$criteria_binding" >/dev/null || return 1
+    if [[ "$criteria_binding" =~ ^[a-f0-9]{64}$ ]]; then
+      dx_review_approve_criteria "$session_id" initial "$criteria_binding" >/dev/null || criteria_binding=""
+    fi
   fi
   if [[ "$phase" == "1" || "$phase" == "2" || "$phase" == "3" ]]; then
     criteria_binding=$(dx_review_read_criteria_approval "$session_id" 2>/dev/null || true)
-    [[ "$criteria_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
+    if [[ ! "$criteria_binding" =~ ^[a-f0-9]{64}$ ]]; then
+      replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase" 2>/dev/null || true)
+      [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_lifecycle_atomic_write "$config_file" "$(__dx_inline_completion_config "$phase" "$replacement_generation")" 2>/dev/null || true
+      dx_lifecycle_control_lock_release "$session_id" || true
+      dx_warn "Phase ${phase} receipt rejected because its approved review criteria are missing or stale."
+      [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_info "Retry the gate, then run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${replacement_generation}\""
+      return 1
+    fi
   fi
   if [[ "$phase" == "2" || "$phase" == "3" ]]; then
-    policy_record=$(dx_review_policy_resolve "$wt_dir") || return 1
+    policy_record=$(dx_review_policy_resolve "$wt_dir" 2>/dev/null || true)
     IFS=$'\t' read -r policy_small policy_normal policy_complex policy_binding policy_ref policy_oid <<< "$policy_record"
     : "$policy_small" "$policy_normal" "$policy_complex"
-    dx_review_policy_binding_valid "$policy_binding" || return 1
-    dx_review_policy_provenance_valid "$policy_ref" "$policy_oid" || return 1
+    if ! dx_review_policy_binding_valid "$policy_binding" \
+      || ! dx_review_policy_provenance_valid "$policy_ref" "$policy_oid"; then
+      replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase" 2>/dev/null || true)
+      [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_lifecycle_atomic_write "$config_file" "$(__dx_inline_completion_config "$phase" "$replacement_generation")" 2>/dev/null || true
+      dx_lifecycle_control_lock_release "$session_id" || true
+      dx_warn "Phase ${phase} receipt rejected because its review policy binding is invalid."
+      [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_info "Retry the gate, then run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${replacement_generation}\""
+      return 1
+    fi
   fi
 
   if [[ "$phase" == "2" ]] && ! dx_review_selection_valid "$session_id" "$wt_dir" "$criteria_binding" "$policy_binding"; then
+    replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase" 2>/dev/null || true)
+    [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_lifecycle_atomic_write "$config_file" "$(__dx_inline_completion_config "$phase" "$replacement_generation")" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" || true
+    dx_warn "Phase 2 receipt rejected because its review risk selection is missing or stale."
+    [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_info "Retry the gate, then run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${replacement_generation}\""
     return 1
   fi
 
   if [[ "$phase" == "3" ]] && ! dx_review_receipt_valid "$session_id" "$wt_dir" "$criteria_binding" "$policy_binding"; then
+    replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase" 2>/dev/null || true)
+    [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_lifecycle_atomic_write "$config_file" "$(__dx_inline_completion_config "$phase" "$replacement_generation")" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" || true
+    dx_warn "Phase 3 receipt rejected because its review-loop receipt is missing or stale."
+    [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_info "Retry the gate, then run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${replacement_generation}\""
     return 1
   fi
 
-  dx_lifecycle_control_lock_acquire "$session_id" || return 1
   control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
-  if [[ -n "$control_snapshot" ]]; then
+  if [[ -n "$control_snapshot" || -e "$control_file" || -L "$control_file" ]]; then
     dx_lifecycle_control_lock_release "$session_id" || true
     return 1
   fi
   if [[ "$phase" -lt 6 ]]; then
     next_phase=$((phase + 1))
     if dx_phase_busy_transition_blocked "$session_id" 3 "$phase" "$next_phase"; then
-      dx_write_pause_state "$session_id" "review-child-active" "direct-codex" 2>/dev/null || true
-      dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
-      touch "$(dx_paused_file "$session_id")"
+      if ! dx_lifecycle_detach "$session_id" "review-child-active" "direct-codex"; then
+        dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+        dx_warn "Dex could not prove that completion authorization was revoked while pausing for the active review child."
+        return 1
+      fi
       dx_lifecycle_control_lock_release "$session_id" || true
-      return 1
+      return 2
     fi
-    if ! dx_consume_completion_receipt "$session_id"; then
+    if ! dx_consume_completion_receipt "$session_id" lifecycle phase "$phase" "$config_generation"; then
       dx_lifecycle_control_lock_release "$session_id" || true
       dx_warn "Dex could not consume the Phase ${phase} completion receipt; retry that phase's audit."
       return 1
     fi
-    control_config="${next_phase}:$(__dx_phase_promise "$next_phase"):$(__dx_inline_audit_file "$next_phase"):$(__dx_phase_min_audits "$next_phase")"
-    if ! dx_lifecycle_atomic_write "$config_file" "$control_config" \
-      || ! dx_lifecycle_atomic_write "$state_file" "$next_phase"; then
+    if ! dx_lifecycle_atomic_write "$state_file" "$next_phase"; then
+      replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase" 2>/dev/null || true)
+      [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_lifecycle_atomic_write "$config_file" "$(__dx_inline_completion_config "$phase" "$replacement_generation")" 2>/dev/null || true
+      dx_lifecycle_control_lock_release "$session_id" || true
+      return 1
+    fi
+    if ! replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase "$next_phase") \
+      || ! control_config=$(__dx_inline_completion_config "$next_phase" "$replacement_generation") \
+      || ! dx_lifecycle_atomic_write "$config_file" "$control_config"; then
+      dx_completion_abandon "$session_id" 2>/dev/null || true
       dx_lifecycle_control_lock_release "$session_id" || true
       return 1
     fi
@@ -1606,7 +1778,7 @@ __dx_codex_direct_phase_handoff() {
         dx_phase_busy_finish "$session_id" 3 "$control_busy_token" 2>/dev/null || true
       fi
     fi
-    rm -f "$(dx_loop_file "$session_id")" "$complete_file" \
+    rm -f "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" \
       "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" \
       "$(dx_pause_state_file "$session_id")" "$(dx_phase_started_file "$session_id" "$phase")" \
       "$(dx_phase_ready_file "$session_id" "$phase")" 2>/dev/null || true
@@ -1622,18 +1794,19 @@ __dx_codex_direct_phase_handoff() {
     return 0
   fi
 
-  if ! dx_consume_completion_receipt "$session_id"; then
+  if ! dx_consume_completion_receipt "$session_id" lifecycle phase "$phase" "$config_generation"; then
     dx_lifecycle_control_lock_release "$session_id" || true
     dx_warn "Dex could not consume the Phase 6 completion receipt; retry that phase's audit."
     return 1
   fi
-  if ! dx_lifecycle_atomic_write "$config_file" "7:::0" \
-    || ! dx_lifecycle_atomic_write "$state_file" "7"; then
+  if ! dx_lifecycle_atomic_write "$state_file" "7"; then
+    replacement_generation=$(dx_completion_issue "$session_id" lifecycle phase 6 2>/dev/null || true)
+    [[ "$replacement_generation" =~ ^[0-9a-f]{32}$ ]] && dx_lifecycle_atomic_write "$config_file" "$(__dx_inline_completion_config 6 "$replacement_generation")" 2>/dev/null || true
     dx_lifecycle_control_lock_release "$session_id" || true
     return 1
   fi
   __dx_record_inline_phase_result "$session_id" "$phase" "advance" "0"
-  rm -f "$(dx_loop_file "$session_id")" "$complete_file" "$config_file" \
+  rm -f "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" "$config_file" \
     "$(dx_findings_file "$session_id")" "$(dx_paused_file "$session_id")" \
     "$(dx_pause_state_file "$session_id")" "$(dx_phase_started_file "$session_id" "$phase")" \
     "$(dx_phase_ready_file "$session_id" "$phase")" "$(dx_phase_busy_file "$session_id" "$phase")" \
@@ -1689,11 +1862,10 @@ __dx_run_phases_inline() {
 
   __dx_show_header "$wt_name" "$step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
   dx_record_session_branch "$session_id" "$wt_dir"
-  __dx_write_state "$state_file" "$step"
 
   dx_provider_write_session_state "$session_id" 2>/dev/null || true
   local preflight_handoff_status=0
-  __dx_codex_direct_phase_handoff "$session_id" "$step" "$state_file" "$wt_dir" || preflight_handoff_status=$?
+  __dx_codex_direct_phase_handoff "$session_id" "$step" "$state_file" "$wt_dir" control-only || preflight_handoff_status=$?
   if [[ "$preflight_handoff_status" -eq 0 ]]; then
     local preflight_step="$step"
     [[ -f "$state_file" ]] && preflight_step=$(cat "$state_file" 2>/dev/null || echo "$step")
@@ -1715,9 +1887,40 @@ __dx_run_phases_inline() {
     __dx_finish_inline_pause "$session_id" "$step" "$resume_hint" "$wt_name" "$wt_dir" \
       "$default_branch" "$workspace_mode"
     return $?
+  elif [[ "$preflight_handoff_status" -eq 3 ]]; then
+    dx_provider_cleanup_session_state "$session_id"
+    dx_error "Dex found an unreadable or invalid lifecycle control receipt. Repair or remove it before restarting this lifecycle."
+    return 1
   fi
 
-  __dx_configure_inline_phase "$step" "$session_id"
+  local completion_generation configure_status=0
+  completion_generation=$(__dx_configure_inline_phase "$step" "$session_id") || configure_status=$?
+  if [[ "$configure_status" -eq 2 ]]; then
+    local reconciled_step
+    reconciled_step=$(cat "$state_file" 2>/dev/null || true)
+    if [[ "$reconciled_step" =~ ^[0-6]$ ]]; then
+      dx_info "Lifecycle state moved to Phase ${reconciled_step} before launch; using the authoritative phase."
+      __dx_run_phases_inline "$wt_name" "$wt_dir" "$default_branch" "$reconciled_step" \
+        "$state_file" "$times_file" "$resume_hint" "$workspace_mode" "$session_id" "$raw_input"
+      return $?
+    elif [[ "$reconciled_step" == "7" ]]; then
+      dx_provider_cleanup_session_state "$session_id"
+      __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
+      echo ""
+      echo "Ticket lifecycle complete."
+      if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
+        dx_info "Human-controlled completion preserved the lifecycle workspace."
+        return 0
+      fi
+      __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" \
+        "$workspace_mode" "$session_id"
+      return $?
+    fi
+  fi
+  if [[ "$configure_status" -ne 0 ]]; then
+    dx_error "Could not prepare completion authorization for Phase ${step}."
+    return 1
+  fi
 
   if [[ $step -ge 2 ]]; then
     dx_checkpoint_tag "$step" "$wt_dir"
@@ -1729,7 +1932,7 @@ __dx_run_phases_inline() {
   echo "${step}:${phase_start_epoch}" >> "$times_file"
 
   local ctx_file
-  ctx_file=$(__dx_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input")
+  ctx_file=$(__dx_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input" "$completion_generation")
 
   local claude_args=("${DX_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
   [[ $had_times_file -eq 1 ]] && claude_args+=(--resume)
@@ -1744,6 +1947,7 @@ __dx_run_phases_inline() {
   # An unchecked mktemp leaves the path empty, and the watchdog below then
   # polls a file that can never appear, spinning for the whole session.
   if ! _dx_pidfile=$(mktemp "${TMPDIR:-/tmp}/dx-inline.XXXXXX"); then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
     dx_error "Could not create the phase handoff temp file"
     return 1
   fi
@@ -1797,6 +2001,10 @@ __dx_run_phases_inline() {
   local paused_file
   paused_file=$(dx_paused_file "$session_id")
   if [[ -f "$paused_file" ]]; then
+    if ! __dx_abandon_completion_state "$session_id"; then
+      dx_error "Dex paused, but completion authorization could not be safely revoked. Repair the lifecycle state files before resuming."
+      return 1
+    fi
     __dx_finish_inline_pause "$session_id" "$final_step" "$resume_hint" "$wt_name" "$wt_dir" \
       "$default_branch" "$workspace_mode"
     return $?
@@ -1815,6 +2023,7 @@ __dx_run_phases_inline() {
       pause_reason="max audit iterations reached (${iterations}/${max_iterations})"
     fi
 
+    dx_completion_abandon "$session_id" 2>/dev/null || true
     rm -f "$loop_file" "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
     local terminal_data
     terminal_data=$(__dx_terminal_event_data "blocked" "$pause_reason" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
@@ -1860,6 +2069,7 @@ __dx_run_phases_inline() {
     dx_run_write_summary_for_session "$session_id" "failed" "Lifecycle ${terminal_detail} at Phase ${final_step} with code ${exit_code}"
     # The loop is no longer running, so drop its ownership claim. Phase and
     # timing state stay put: that is what --resume reads.
+    dx_completion_abandon "$session_id" 2>/dev/null || true
     rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
       "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" 2>/dev/null
     __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
@@ -1899,6 +2109,7 @@ __dx_run_phases_inline() {
   dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Claude session exited before Dex lifecycle completed" "$final_step" "$terminal_data"
   dx_run_log_append_for_session "$session_id" "warn" "dx" "Claude session exited before lifecycle completed at Phase ${final_step}"
   dx_run_write_summary_for_session "$session_id" "blocked" "Claude session exited at Phase ${final_step}"
+  dx_completion_abandon "$session_id" 2>/dev/null || true
   rm -f \
     "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
     "$(dx_loop_config_file "$session_id")" "$(dx_handoff_mode_file "$session_id")" \
@@ -2713,6 +2924,35 @@ dexter() {
 
 # ─── dxloop — prompt loop (run until done) ─────────────────────────────────
 
+unalias __dx_finalize_standalone_pause 2>/dev/null; unfunction __dx_finalize_standalone_pause 2>/dev/null
+__dx_finalize_standalone_pause() {
+  local session_id="$1" control_snapshot control_action cleanup_rc=0
+  local finalize_attempts="${DEX_STANDALONE_FINALIZE_LOCK_ATTEMPTS:-400}"
+  dx_lifecycle_control_lock_acquire "$session_id" "$finalize_attempts" || return 2
+  control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  control_action=$(dx_lifecycle_control_value "$control_snapshot" action)
+  if [[ ! -f "$(dx_paused_file "$session_id")" \
+    && ! -f "$(dx_pause_state_file "$session_id")" \
+    && "$control_action" != "pause" && "$control_action" != "cancel" ]]; then
+    dx_lifecycle_control_lock_release "$session_id" || return 2
+    return 1
+  fi
+
+  __dx_abandon_completion_state "$session_id" || cleanup_rc=1
+  rm -f "$(dx_loop_file "$session_id")" "$(dx_complete_file "$session_id")" \
+    "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+    "$(dx_loop_config_file "$session_id")" "$(dx_prompt_file "$session_id")" \
+    "$(dx_paused_file "$session_id")" "$(dx_pause_state_file "$session_id")" \
+    "$(dx_lifecycle_control_file "$session_id")" 2>/dev/null || cleanup_rc=1
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_lifecycle_completion_brake "$session_id" pause-cleanup-lock-release \
+      dxloop 2>/dev/null || true
+    return 2
+  fi
+  [[ "$cleanup_rc" -eq 0 ]] || return 2
+  return 0
+}
+
 unalias dxloop 2>/dev/null; unfunction dxloop 2>/dev/null
 dxloop() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
@@ -2791,15 +3031,31 @@ dxloop() {
   # Dangerous skip permissions + EnterPlanMode — read-only without interactive prompts.
   # Plan mode's built-in approval is the quality gate. The Stop hook owns the
   # process handoff after approval so dxloop can continue to implementation.
+  local plan_generation plan_config_file
+  plan_config_file=$(dx_loop_config_file "$session_id")
+  if ! plan_generation=$(dx_completion_issue "$session_id" standalone dxloop-plan 1); then
+    dx_error "Could not prepare the dxloop planning completion receipt."
+    return 1
+  fi
   local plan_args=("${DX_PLAN_FLAGS[@]}")
   [[ -n "$session_name" ]] && plan_args+=(-n "$session_name")
-  plan_args+=(--append-system-prompt "You are in a dxloop planning session. You MUST be in plan mode — if not, call EnterPlanMode immediately. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool if you lose track of the task. After ExitPlanMode is approved, stop this Claude Code session immediately so the dxloop wrapper can launch implementation. Do NOT ask whether to continue and do NOT wait for another user prompt. The Stop hook handles the process handoff back to dxloop.")
+  plan_args+=(--append-system-prompt "You are in a dxloop planning session. You MUST be in plan mode — if not, call EnterPlanMode immediately. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool if you lose track of the task. After ExitPlanMode is approved, stop this Claude Code session immediately so the dxloop wrapper can launch implementation. Do NOT ask whether to continue and do NOT wait for another user prompt. The Stop hook handles the process handoff back to dxloop. Only after that hook says the planning audit gate has passed, run this exact command: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${plan_generation}\"")
 
   local plan_audit_file="$DEX_DIR/prompts/phase-audits/1-plan.md"
   mkdir -p "$DX_LOOP_DIR"
-  touch "$(dx_active_file "$session_id")"
+  if ! touch "$(dx_active_file "$session_id")"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    dx_error "Could not activate the dxloop planning audit."
+    return 1
+  fi
   rm -f "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")"
-  __dx_write_state "$(dx_loop_config_file "$session_id")" "1:PHASE_1_COMPLETE:${plan_audit_file}:1"
+  if ! __dx_write_state "$plan_config_file" \
+    "1:PHASE_1_COMPLETE:${plan_audit_file}:1:standalone:dxloop-plan:${plan_generation}"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" 2>/dev/null || true
+    dx_error "Could not persist the dxloop planning completion context."
+    return 1
+  fi
 
   dx_info "Phase: Plan (read-only until approved)"
   DEX_SESSION_ID="$session_id" \
@@ -2815,23 +3071,37 @@ Gather context, explore the codebase, and create your implementation plan. When 
 $(__dx_provider_prompt)"
 
   local plan_exit=$?
-  local plan_status="advance"
-  if [[ $plan_exit -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
+  local plan_status="advance" plan_pause_rc=0
+  __dx_finalize_standalone_pause "$session_id" || plan_pause_rc=$?
+  if [[ "$plan_pause_rc" -eq 0 ]]; then
+    plan_status="human-pause"
+    plan_exit=1
+  elif [[ "$plan_pause_rc" -eq 2 ]]; then
+    dx_provider_cleanup_session_state "$session_id"
+    echo ""
+    dx_error "dxloop stopped during planning, but Dex could not finish cleaning its loop state. The completion gate remains closed; wait for the active control to finish, then rerun dxloop."
+    return 1
+  elif [[ $plan_exit -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     plan_status="max-iter"
     plan_exit=1
   elif [[ $plan_exit -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
     plan_status="missing-receipt"
     plan_exit=1
   fi
-  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_config_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+    "$(dx_loop_file "$session_id")" 2>/dev/null
+  rm -f "$plan_config_file" 2>/dev/null
   if [[ $plan_exit -ne 0 ]]; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
     rm -f "$(dx_loop_file "$session_id")" \
           "$(dx_complete_file "$session_id")" \
           "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
           "$(dx_prompt_file "$session_id")" 2>/dev/null
     dx_provider_cleanup_session_state "$session_id"
     echo ""
-    if [[ "$plan_status" == "max-iter" ]]; then
+    if [[ "$plan_status" == "human-pause" ]]; then
+      dx_info "dxloop stopped during planning by direct human control. Your edits are untouched; rerun dxloop when you want to continue."
+    elif [[ "$plan_status" == "max-iter" ]]; then
       dx_info "dxloop paused during planning: max audit iterations reached without completion."
     elif [[ "$plan_status" == "missing-receipt" ]]; then
       dx_info "dxloop paused during planning: the provider exited without a completion receipt."
@@ -2843,11 +3113,28 @@ $(__dx_provider_prompt)"
 
   # ── Session 2: Implement ──
   # Autonomous mode with stop hook audit loop. Resumes the plan session.
+  local impl_generation impl_audit_file
+  impl_audit_file="$DEX_DIR/prompts/phase-audits/prompt-loop.md"
+  if ! impl_generation=$(dx_completion_issue "$session_id" standalone dxloop-prompt prompt-loop); then
+    rm -f "$(dx_prompt_file "$session_id")" 2>/dev/null || true
+    dx_provider_cleanup_session_state "$session_id"
+    dx_error "Could not prepare the dxloop implementation completion receipt."
+    return 1
+  fi
   local impl_args=("${DX_CLAUDE_FLAGS[@]}" --resume)
   [[ -n "$session_name" ]] && impl_args+=(-n "$session_name")
-  impl_args+=(--append-system-prompt "You are in a dxloop session. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool before any audit step, or when you lose track of what you are working on.")
+  impl_args+=(--append-system-prompt "You are in a dxloop session. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool before any audit step, or when you lose track of what you are working on. Only after the Stop hook says the implementation audit gate has passed, run this exact command: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${impl_generation}\"")
 
-  touch "$(dx_active_file "$session_id")"
+  if ! touch "$(dx_active_file "$session_id")" \
+    || ! __dx_write_state "$plan_config_file" \
+      "prompt-loop:PROMPT_COMPLETE:${impl_audit_file}:1:standalone:dxloop-prompt:${impl_generation}"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" "$plan_config_file" \
+      "$(dx_prompt_file "$session_id")" 2>/dev/null || true
+    dx_provider_cleanup_session_state "$session_id"
+    dx_error "Could not activate the dxloop implementation audit."
+    return 1
+  fi
   dx_info "Phase: Implement (autonomous)"
   DEX_SESSION_ID="$session_id" \
   DEX_LOOP_ACTIVE=1 \
@@ -2858,8 +3145,17 @@ $(__dx_provider_prompt)"
 $(__dx_provider_prompt)"
 
   local exit_code=$?
-  local loop_status="advance"
-  if [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
+  local loop_status="advance" loop_pause_rc=0
+  __dx_finalize_standalone_pause "$session_id" || loop_pause_rc=$?
+  if [[ "$loop_pause_rc" -eq 0 ]]; then
+    loop_status="human-pause"
+    exit_code=1
+  elif [[ "$loop_pause_rc" -eq 2 ]]; then
+    dx_provider_cleanup_session_state "$session_id"
+    echo ""
+    dx_error "dxloop stopped, but Dex could not finish cleaning its loop state. The completion gate remains closed; wait for the active control to finish, then rerun dxloop."
+    return 1
+  elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     loop_status="max-iter"
     exit_code=1
   elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
@@ -2868,10 +3164,14 @@ $(__dx_provider_prompt)"
   fi
 
   # Clean up state files
+  if [[ $exit_code -ne 0 ]]; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+  fi
   rm -f "$(dx_loop_file "$session_id")" \
         "$(dx_complete_file "$session_id")" \
         "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
-        "$(dx_prompt_file "$session_id")" 2>/dev/null
+        2>/dev/null
+  rm -f "$plan_config_file" "$(dx_prompt_file "$session_id")" 2>/dev/null
   dx_provider_cleanup_session_state "$session_id"
 
   if [[ $exit_code -eq 0 ]]; then
@@ -2879,7 +3179,9 @@ $(__dx_provider_prompt)"
     dx_done "dxloop complete."
   else
     echo ""
-    if [[ "$loop_status" == "max-iter" ]]; then
+    if [[ "$loop_status" == "human-pause" ]]; then
+      dx_info "dxloop stopped by direct human control. Your edits are untouched; rerun dxloop when you want to continue."
+    elif [[ "$loop_status" == "max-iter" ]]; then
       dx_info "dxloop paused: max audit iterations reached without completion."
     elif [[ "$loop_status" == "missing-receipt" ]]; then
       dx_info "dxloop paused: the provider exited without a completion receipt."
@@ -3047,10 +3349,14 @@ dxcomplete() {
 
   # Use a session ID derived from the current location (worktree-aware via dx_session_id)
   local session_id start_dir cleanup_repo_root cleanup_default_branch cleanup_mode="" cleanup_wt_name="" cleanup_wt_dir=""
-  local complete_file paused_file
+  local complete_file paused_file completion_generation completion_config_file
+  local completion_control_file
+  local completion_activation_context="" completion_activation_conflict=0
   session_id=$(dx_session_id)
   complete_file=$(dx_complete_file "$session_id")
   paused_file=$(dx_paused_file "$session_id")
+  completion_config_file=$(dx_loop_config_file "$session_id")
+  completion_control_file=$(dx_lifecycle_control_file "$session_id")
   start_dir=$(pwd)
   cleanup_repo_root=$(dx_repo_root 2>/dev/null || echo "")
   cleanup_default_branch=$(dx_default_branch "$start_dir")
@@ -3061,14 +3367,69 @@ dxcomplete() {
     cleanup_wt_dir="${cleanup_repo_root}/.dex/worktrees/${cleanup_wt_name}"
   fi
 
-  # Activate the prompt-loop variant of the audit loop so the Stop hook
-  # enforces completion criteria. See: hooks/phase-loop.sh prompt-loop branch.
+  # Publish one standalone completion context without taking over a lifecycle
+  # that already owns this checkout. A second dxcomplete launch sees the first
+  # context under the same lock and leaves it alone.
   mkdir -p "$DX_LOOP_DIR"
-  touch "$(dx_active_file "$session_id")"
-  rm -f "$complete_file" "$(dx_loop_file "$session_id")" "$paused_file" "$(dx_watch_pause_file "$session_id")"
+  if ! dx_lifecycle_control_lock_acquire "$session_id"; then
+    dx_error "Could not lock the dxcomplete launch state. Retry after the active lifecycle control finishes."
+    return 1
+  fi
+  completion_activation_context=$(dx_lifecycle_completion_context_read \
+    "$session_id" 2>/dev/null || true)
+  if [[ -n "$completion_activation_context" \
+    || -e "$(dx_active_file "$session_id")" \
+    || -L "$(dx_active_file "$session_id")" \
+    || -e "$completion_config_file" || -L "$completion_config_file" \
+    || -e "$paused_file" || -L "$paused_file" \
+    || -e "$(dx_state_file "$session_id")" \
+    || -L "$(dx_state_file "$session_id")" \
+    || -e "$(dx_handoff_mode_file "$session_id")" \
+    || -L "$(dx_handoff_mode_file "$session_id")" \
+    || -e "$completion_control_file" || -L "$completion_control_file" \
+    || -n "$(dx_lifecycle_control_snapshot_unlocked "$session_id")" ]]; then
+    completion_activation_conflict=1
+  fi
+  if [[ "$completion_activation_conflict" -eq 1 ]]; then
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_error "A Dex lifecycle or standalone loop already owns this checkout. Resume, pause, or finish that run before starting dxcomplete."
+    return 1
+  fi
+  if ! completion_generation=$(dx_completion_issue "$session_id" standalone dxcomplete 6); then
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_error "Could not prepare the dxcomplete completion receipt."
+    return 1
+  fi
+  rm -f "$complete_file" "$(dx_loop_file "$session_id")" \
+    "$(dx_watch_pause_file "$session_id")" "$(dx_owner_file "$session_id")"
+  if ! __dx_write_state "$completion_config_file" \
+    "6:DEX_TICKET_COMPLETE:$DEX_DIR/prompts/phase-audits/6-complete.md:1:standalone:dxcomplete:${completion_generation}"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$completion_config_file" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_error "Could not persist the dxcomplete completion context."
+    return 1
+  fi
+  # Direct Codex has no Stop hook. Its wrapper consumes the exact receipt, so
+  # a file activation would only give an unrelated Claude session authority.
+  if [[ "$provider_agent" != "codex" ]] \
+    && ! dx_lifecycle_atomic_write "$(dx_active_file "$session_id")" active; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$completion_config_file" 2>/dev/null || true
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_error "Could not activate the dxcomplete audit."
+    return 1
+  fi
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_completion_abandon "$session_id" 2>/dev/null || true
+    rm -f "$(dx_active_file "$session_id")" "$completion_config_file" 2>/dev/null || true
+    dx_error "Could not release the dxcomplete launch lock. The audit was not started."
+    return 1
+  fi
 
   local completion_prompt
   completion_prompt="Invoke the Skill tool with skill: \"dxcomplete\". Run the full completion workflow: verify the PR is ready for review, request configured reviewers, post @mention comments, monitor CI and reviews via /loop 5m /dxwatchpr, address CI failures and review comments, and close the ticket when all checks pass and all successfully requested reviewers have approved.
+Only after the Stop hook says the completion audit gate has passed, run this exact command: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
 $(__dx_provider_prompt)"
 
   if [[ "$provider_agent" == "codex" ]]; then
@@ -3077,7 +3438,7 @@ $(__dx_provider_prompt)"
 Direct Codex completion contract:
 - Codex has no Claude Stop hook or /loop scheduler. Perform the bounded watcher cycles synchronously, with at most ${DEX_COMPLETE_MAX_CYCLES:-$DX_COMPLETE_MAX_CYCLES} cycles and the configured ${DEX_COMPLETE_WAIT_MINUTES:-$DX_COMPLETE_WAIT_MINUTES}-minute interval.
 - Do not merge the PR.
-- On success, and only after every completion criterion passes, touch: ${complete_file}
+- On success, and only after every completion criterion passes, run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
 - If the bounded watch window expires or external state blocks completion, touch: ${paused_file}
 - Write exactly one of those receipts. Do not claim completion without the success receipt.
 
@@ -3095,34 +3456,90 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
     "$completion_prompt"
 
   local exit_code=$?
-  local loop_status="advance" receipt_conflict=0
-  if [[ "$provider_agent" == "codex" ]]; then
-    if [[ -f "$complete_file" && -f "$paused_file" ]]; then
-      receipt_conflict=1
-      exit_code=1
-    elif [[ $exit_code -eq 0 && ! -f "$complete_file" && ! -f "$paused_file" ]]; then
+  local loop_status="advance" legacy_receipt=0 completion_cleanup_failed=0
+  local complete_paused=0 completion_decision_locked=0 control_snapshot=""
+
+  # Serialize the wrapper's terminal decision with human controls. Claude may
+  # have consumed its receipt in the Stop hook already; direct Codex consumes
+  # here, but both routes clean accepted intervention state under this lock.
+  if ! dx_lifecycle_control_lock_acquire "$session_id"; then
+    dx_write_pause_state "$session_id" "decision-lock-busy" "dxcomplete" \
+      2>/dev/null || true
+    if ! dx_lifecycle_atomic_write "$paused_file" paused; then
+      rm -f "$(dx_active_file "$session_id")" 2>/dev/null || true
+    fi
+    if ! dx_lifecycle_control_lock_acquire "$session_id" 400; then
+      dx_provider_cleanup_session_state "$session_id"
+      dx_error "dxcomplete could not lock its completion decision. It left the loop paused and did not consume the receipt; retry after the active lifecycle control finishes."
+      return 1
+    fi
+  fi
+  completion_decision_locked=1
+  control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  if [[ -n "$control_snapshot" \
+    || -e "$completion_control_file" || -L "$completion_control_file" \
+    || -f "$paused_file" ]]; then
+    complete_paused=1
+  fi
+
+  # A direct human pause wins even if a provider also wrote a success receipt.
+  # The exact generation is consumed only on the unambiguous success path.
+  if [[ "$complete_paused" -eq 1 ]]; then
+    exit_code=1
+    __dx_abandon_completion_state "$session_id" || completion_cleanup_failed=1
+    rm -f "$completion_control_file" 2>/dev/null \
+      || completion_cleanup_failed=1
+  elif [[ -e "$complete_file" || -L "$complete_file" ]]; then
+    legacy_receipt=1
+    exit_code=1
+    rm -f "$complete_file" 2>/dev/null || true
+    __dx_abandon_completion_state "$session_id" || completion_cleanup_failed=1
+  elif [[ "$provider_agent" == "codex" && $exit_code -eq 0 ]]; then
+    if ! dx_completion_consume "$session_id" standalone dxcomplete 6 "$completion_generation"; then
       loop_status="missing-receipt"
       exit_code=1
+      __dx_abandon_completion_state "$session_id" || completion_cleanup_failed=1
     fi
-  elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
+  elif [[ "$provider_agent" != "codex" && $exit_code -eq 0 ]] && [[ -f "$(dx_loop_file "$session_id")" ]]; then
     loop_status="max-iter"
     exit_code=1
-  elif [[ $exit_code -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
+    __dx_abandon_completion_state "$session_id" || completion_cleanup_failed=1
+  elif [[ "$provider_agent" != "codex" && $exit_code -eq 0 ]] && [[ -f "$(dx_active_file "$session_id")" ]]; then
     loop_status="missing-receipt"
     exit_code=1
+    __dx_abandon_completion_state "$session_id" || completion_cleanup_failed=1
+  elif [[ $exit_code -ne 0 ]]; then
+    __dx_abandon_completion_state "$session_id" || completion_cleanup_failed=1
   fi
-  local complete_paused=0
-  [[ -f "$paused_file" ]] && complete_paused=1
 
-  # Clean up
-  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" "$(dx_loop_file "$session_id")" "$complete_file" "$paused_file" 2>/dev/null
+  # Runtime cleanup belongs to the same decision transaction. Once this lock
+  # is released, a newer human control must be free to publish without an old
+  # wrapper deleting it afterward.
+  if [[ "$completion_cleanup_failed" -eq 0 ]]; then
+    rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+      "$(dx_loop_file "$session_id")" "$completion_config_file" "$complete_file" \
+      "$paused_file" "$(dx_pause_state_file "$session_id")" 2>/dev/null \
+      || completion_cleanup_failed=1
+  fi
+
+  if [[ "$completion_decision_locked" -eq 1 ]] \
+    && ! dx_lifecycle_control_lock_release "$session_id"; then
+    completion_cleanup_failed=1
+    dx_lifecycle_completion_brake "$session_id" decision-lock-release \
+      dxcomplete 2>/dev/null || true
+  fi
+
+  if [[ "$completion_cleanup_failed" -eq 1 ]]; then
+    dx_error "dxcomplete could not prove that completion authorization was revoked. Repair its state files before retrying."
+    exit_code=1
+  fi
   dx_provider_cleanup_session_state "$session_id"
 
-  if [[ $receipt_conflict -eq 1 ]]; then
-    dx_info "dxcomplete rejected the provider result: completion and pause receipts were both present."
-  elif [[ $complete_paused -eq 1 ]]; then
+  if [[ $complete_paused -eq 1 ]]; then
     dx_info "dxcomplete paused before completion; local worktree/branch cleanup was skipped."
     exit_code=1
+  elif [[ $legacy_receipt -eq 1 ]]; then
+    dx_info "dxcomplete ignored a legacy .complete marker; the exact versioned receipt is required."
   elif [[ "$loop_status" == "max-iter" ]]; then
     dx_info "dxcomplete paused: max audit iterations reached without completion."
   elif [[ "$loop_status" == "missing-receipt" ]]; then

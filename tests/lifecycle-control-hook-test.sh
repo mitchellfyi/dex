@@ -48,8 +48,11 @@ payload "Stop Dex and let me take over." | bash "$HOOK" > "$TMP_DIR/stop.out"
 
 # A file-activated bystander cannot manufacture the missing launcher authority.
 touch "$(dx_active_file "$DEX_SESSION_ID")"
-printf '3:PHASE_3_COMPLETE:%s/prompts/phase-audits/3-review-loop.md:1\n' "$ROOT" \
-  > "$(dx_loop_config_file "$DEX_SESSION_ID")"
+INITIAL_GENERATION=$(dx_completion_issue "$DEX_SESSION_ID" lifecycle phase 3)
+printf '3\n' > "$(dx_state_file "$DEX_SESSION_ID")"
+printf 'inline\n' > "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
+printf '3:PHASE_3_COMPLETE:%s/prompts/phase-audits/3-review-loop.md:1:lifecycle:phase:%s\n' \
+  "$ROOT" "$INITIAL_GENERATION" > "$(dx_loop_config_file "$DEX_SESSION_ID")"
 owned_payload "Stop Dex." "claude-bystander" | env DEX_LOOP_ACTIVE=0 bash "$HOOK" > "$TMP_DIR/bystander.out"
 [[ ! -e "$CONTROL_FILE" ]] || assert_at $LINENO
 [[ ! -e "$OWNER_FILE" ]] || assert_at $LINENO
@@ -60,6 +63,10 @@ owned_payload "Please stop now." "$CONTROL_OWNER" | bash "$HOOK" > "$TMP_DIR/sto
 [[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" source)" == "user-prompt" ]] || assert_at $LINENO
 [[ -f "$PAUSED_FILE" ]] || assert_at $LINENO
 [[ "$(cat "$OWNER_FILE")" == "$CONTROL_OWNER" ]] || assert_at $LINENO
+if dx_completion_write_receipt "$DEX_SESSION_ID" "$INITIAL_GENERATION"; then
+  printf 'detached lifecycle retained its old completion generation\n' >&2
+  exit 1
+fi
 grep -q "latest human request has priority" "$TMP_DIR/stop.out"
 grep -q "lifecycle sequencing is disabled" "$TMP_DIR/stop.out"
 grep -q "security guards remain active" "$TMP_DIR/stop.out"
@@ -139,10 +146,80 @@ fi
 
 dx_write_lifecycle_control "$DEX_SESSION_ID" cancel "" user-prompt "$(printf stale | shasum -a 256 | awk '{print $1}')"
 touch "$PAUSED_FILE"
+rm -f "$(dx_active_file "$DEX_SESSION_ID")"
+mkdir "$(dx_active_file "$DEX_SESSION_ID")"
+owned_payload "Resume Dex." "$CONTROL_OWNER" | bash "$HOOK" > "$TMP_DIR/resume-activation-failure.out"
+assert_contains "could not create a fresh completion authorization" \
+  "$TMP_DIR/resume-activation-failure.out"
+[[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "resume" ]] || \
+  assert_at $LINENO
+assert_file "$PAUSED_FILE"
+assert_no_file "$(dx_completion_expectation_file "$DEX_SESSION_ID")"
+assert_file "$(dx_loop_config_file "$DEX_SESSION_ID")"
+assert_file "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
+rmdir "$(dx_active_file "$DEX_SESSION_ID")"
+
 owned_payload "Resume Dex." "$CONTROL_OWNER" | bash "$HOOK" > "$TMP_DIR/resume.out"
 [[ ! -e "$CONTROL_FILE" ]] || assert_at $LINENO
 [[ ! -e "$PAUSED_FILE" ]] || assert_at $LINENO
 grep -q "Dex lifecycle controls resumed" "$TMP_DIR/resume.out"
+RESUME_GENERATION=$(dx_completion_current_generation "$DEX_SESSION_ID" lifecycle phase 3)
+[[ "$RESUME_GENERATION" =~ ^[0-9a-f]{32}$ ]] || assert_at $LINENO
+[[ "$(cut -d: -f5-7 "$(dx_loop_config_file "$DEX_SESSION_ID")")" == "lifecycle:phase:${RESUME_GENERATION}" ]] || assert_at $LINENO
+grep -Fq "bash \\\"\$DEX_DIR/bin/complete-receipt.sh\\\" \\\"$DEX_SESSION_ID\\\" \\\"$RESUME_GENERATION\\\"" "$TMP_DIR/resume.out"
+
+# Prompt-loop resume keeps its standalone purpose even though it has no
+# numeric lifecycle phase and no inline handoff marker.
+dx_completion_cleanup "$DEX_SESSION_ID"
+dx_clear_lifecycle_control "$DEX_SESSION_ID"
+rm -f "$(dx_active_file "$DEX_SESSION_ID")" \
+  "$(dx_handoff_mode_file "$DEX_SESSION_ID")" "$(dx_state_file "$DEX_SESSION_ID")"
+PROMPT_GENERATION=$(dx_completion_issue \
+  "$DEX_SESSION_ID" standalone dxloop-prompt prompt-loop)
+printf 'prompt-loop:PROMPT_COMPLETE:%s/prompts/phase-audits/prompt-loop.md:1:standalone:dxloop-prompt:%s\n' \
+  "$ROOT" "$PROMPT_GENERATION" > "$(dx_loop_config_file "$DEX_SESSION_ID")"
+touch "$PAUSED_FILE"
+printf '%s\n' "$CONTROL_OWNER" > "$OWNER_FILE"
+owned_payload "Resume Dex." "$CONTROL_OWNER" | bash "$HOOK" \
+  > "$TMP_DIR/standalone-prompt-resume.out"
+PROMPT_RESUMED=$(dx_completion_current_generation \
+  "$DEX_SESSION_ID" standalone dxloop-prompt prompt-loop)
+[[ "$PROMPT_RESUMED" =~ ^[0-9a-f]{32}$ \
+  && "$PROMPT_RESUMED" != "$PROMPT_GENERATION" ]] || assert_at $LINENO
+assert_eq "standalone:dxloop-prompt:${PROMPT_RESUMED}" \
+  "$(cut -d: -f5-7 "$(dx_loop_config_file "$DEX_SESSION_ID")")" \
+  "prompt hook preserves standalone context"
+assert_no_file "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
+assert_file "$(dx_active_file "$DEX_SESSION_ID")"
+dx_clear_lifecycle_control "$DEX_SESSION_ID"
+owned_payload "Jump to verification." "$CONTROL_OWNER" | bash "$HOOK" \
+  > "$TMP_DIR/standalone-prompt-jump.out"
+assert_contains "standalone loop, not an inline lifecycle" \
+  "$TMP_DIR/standalone-prompt-jump.out"
+assert_no_file "$CONTROL_FILE"
+assert_eq "standalone:dxloop-prompt:${PROMPT_RESUMED}" \
+  "$(cut -d: -f5-7 "$(dx_loop_config_file "$DEX_SESSION_ID")")" \
+  "prompt hook rejects standalone phase jump"
+
+# A stale completed lifecycle phase must not hide a validated standalone loop
+# from pause/stop controls.
+printf '%s\n' 7 > "$(dx_state_file "$DEX_SESSION_ID")"
+owned_payload "Stop Dex." "$CONTROL_OWNER" | bash "$HOOK" \
+  > "$TMP_DIR/standalone-state7-stop.out"
+assert_eq "cancel" "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" \
+  "state7 standalone human stop"
+assert_file "$(dx_paused_file "$DEX_SESSION_ID")"
+assert_no_file "$(dx_completion_expectation_file "$DEX_SESSION_ID")"
+
+# Restore the inline fixture used by the ownership checks below.
+dx_completion_cleanup "$DEX_SESSION_ID"
+rm -f "$(dx_active_file "$DEX_SESSION_ID")" "$OWNER_FILE"
+printf '%s\n' 3 > "$(dx_state_file "$DEX_SESSION_ID")"
+printf '%s\n' inline > "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
+RESTORED_GENERATION=$(dx_completion_issue "$DEX_SESSION_ID" lifecycle phase 3)
+printf '3:PHASE_3_COMPLETE:%s/prompts/phase-audits/3-review-loop.md:1:lifecycle:phase:%s\n' \
+  "$ROOT" "$RESTORED_GENERATION" > "$(dx_loop_config_file "$DEX_SESSION_ID")"
+touch "$(dx_active_file "$DEX_SESSION_ID")"
 
 dx_clear_lifecycle_control "$DEX_SESSION_ID"
 printf '%s\n' "$CONTROL_OWNER" > "$(dx_owner_file "$DEX_SESSION_ID")"

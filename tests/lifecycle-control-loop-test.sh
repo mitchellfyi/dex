@@ -30,14 +30,94 @@ run_hook() {
   set -e
 }
 
-setup_inline() {
+run_standalone_hook() {
   local sid="$1" phase="$2"
+  set +e
+  OUT=$(printf '{"session_id":"claude-human-control"}' | env \
+    DEX_SESSION_ID="$sid" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE="$phase" \
+    bash "$HOOK" 2>&1)
+  RC=$?
+  set -e
+}
+
+setup_inline() {
+  local sid="$1" phase="$2" generation promise audit_basename min_audits
   touch "$(dx_active_file "$sid")"
   printf '%s\n' inline > "$(dx_handoff_mode_file "$sid")"
   printf '%s\n' "$phase" > "$(dx_state_file "$sid")"
-  printf '%s:PHASE_%s_COMPLETE:%s/prompts/phase-audits/%s-review-loop.md:1\n' \
-    "$phase" "$phase" "$ROOT" "$phase" > "$(dx_loop_config_file "$sid")"
+  generation=$(dx_completion_issue "$sid" lifecycle phase "$phase")
+  promise=$(dx_lifecycle_phase_promise "$phase")
+  audit_basename=$(dx_lifecycle_phase_audit_basename "$phase")
+  min_audits=$(dx_lifecycle_phase_min_audits "$phase")
+  printf '%s:%s:%s/prompts/phase-audits/%s.md:%s:lifecycle:phase:%s\n' \
+    "$phase" "$promise" "$ROOT" "$audit_basename" "$min_audits" \
+    "$generation" > "$(dx_loop_config_file "$sid")"
+  INLINE_GENERATION="$generation"
 }
+
+setup_standalone() {
+  local sid="$1" purpose="$2" phase="$3" generation promise audit_file
+  local config
+  generation=$(dx_completion_issue "$sid" standalone "$purpose" "$phase")
+  case "${purpose}:${phase}" in
+    dxcomplete:6)
+      promise="DEX_TICKET_COMPLETE"
+      audit_file="$ROOT/prompts/phase-audits/6-complete.md"
+      ;;
+    *) return 1 ;;
+  esac
+  config="${phase}:${promise}:${audit_file}:1:standalone:${purpose}:${generation}"
+  printf '%s\n' "$config" > "$(dx_loop_config_file "$sid")"
+  touch "$(dx_active_file "$sid")"
+  dx_completion_write_receipt "$sid" "$generation"
+  STANDALONE_GENERATION="$generation"
+}
+
+# Migrated lifecycle phases accept only the generation embedded in their
+# launch config. A legacy marker is removed, rotates that generation, and
+# receives one concrete replacement command instead of advancing the phase.
+SID="strict-completion-legacy"
+setup_inline "$SID" 4
+STRICT_OLD=$(dx_completion_issue "$SID" lifecycle phase 4)
+printf '%s:PHASE_%s_COMPLETE:%s/prompts/phase-audits/%s-review-loop.md:1:lifecycle:phase:%s\n' \
+  4 4 "$ROOT" 4 "$STRICT_OLD" > "$(dx_loop_config_file "$SID")"
+touch "$(dx_complete_file "$SID")"
+run_hook "$SID" 4
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+[[ "$(cat "$(dx_state_file "$SID")")" == "4" ]] || assert_at $LINENO
+[[ ! -e "$(dx_complete_file "$SID")" ]] || assert_at $LINENO
+STRICT_NEW=$(dx_completion_current_generation "$SID" lifecycle phase 4)
+[[ "$STRICT_NEW" != "$STRICT_OLD" ]] || assert_at $LINENO
+grep -Fq "Legacy completion marker ignored" <<<"$OUT"
+grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$SID\" \"$STRICT_NEW\"" <<<"$OUT"
+
+# Invalid controls are not the same as no control. A standalone receipt stays
+# unconsumed until the malformed path is repaired or removed.
+SID="invalid-control-symlink"
+setup_standalone "$SID" dxcomplete 6
+ln -s /dev/null "$(dx_lifecycle_control_file "$SID")"
+run_standalone_hook "$SID" 6
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+[[ -L "$(dx_lifecycle_control_file "$SID")" ]] || assert_at $LINENO
+dx_completion_receipt_valid \
+  "$SID" standalone dxcomplete 6 "$STANDALONE_GENERATION" || assert_at $LINENO
+grep -q "unreadable or invalid lifecycle control receipt" <<<"$OUT"
+rm -f "$(dx_lifecycle_control_file "$SID")"
+dx_completion_cleanup "$SID"
+rm -f "$(dx_loop_config_file "$SID")" "$(dx_active_file "$SID")"
+
+SID="invalid-control-directory"
+setup_standalone "$SID" dxcomplete 6
+mkdir "$(dx_lifecycle_control_file "$SID")"
+run_standalone_hook "$SID" 6
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+[[ -d "$(dx_lifecycle_control_file "$SID")" ]] || assert_at $LINENO
+dx_completion_receipt_valid \
+  "$SID" standalone dxcomplete 6 "$STANDALONE_GENERATION" || assert_at $LINENO
+grep -q "unreadable or invalid lifecycle control receipt" <<<"$OUT"
+rmdir "$(dx_lifecycle_control_file "$SID")"
+dx_completion_cleanup "$SID"
+rm -f "$(dx_loop_config_file "$SID")" "$(dx_active_file "$SID")"
 
 SID="human-control-cancel"
 setup_inline "$SID" 2
@@ -73,6 +153,30 @@ run_hook "$SID" 2
 [[ ! -e "$(dx_lifecycle_control_file "$SID")" ]] || assert_at $LINENO
 [[ ! -e "$(dx_phase_busy_file "$SID" 3)" ]] || assert_at $LINENO
 grep -q "Phase 4 (Verify & Commit)" <<<"$OUT"
+
+# Phase publication precedes activation. If the active path is unsafe, the
+# target phase remains authoritative, its fresh generation is revoked, and
+# the human control stays available for a retry after the path is repaired.
+SID="human-control-activation-failure"
+setup_inline "$SID" 2
+rm -f "$(dx_active_file "$SID")"
+mkdir "$(dx_active_file "$SID")"
+dx_write_lifecycle_control "$SID" jump 4 terminal "" 2 ""
+run_hook "$SID" 2
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+[[ "$(cat "$(dx_state_file "$SID")")" == "4" ]] || assert_at $LINENO
+assert_file "$(dx_lifecycle_control_file "$SID")"
+assert_no_file "$(dx_completion_expectation_file "$SID")"
+[[ -d "$(dx_active_file "$SID")" ]] || assert_at $LINENO
+[[ ! -d "$(dx_lifecycle_control_lock_dir "$SID")" ]] || assert_at $LINENO
+grep -q "could not reactivate its loop" <<<"$OUT"
+rmdir "$(dx_active_file "$SID")"
+run_hook "$SID" 4
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+assert_no_file "$(dx_lifecycle_control_file "$SID")"
+assert_file "$(dx_active_file "$SID")"
+[[ "$(cut -d: -f1 "$(dx_loop_config_file "$SID")")" == "4" ]] || \
+  assert_at $LINENO
 
 SID="human-control-complete"
 setup_inline "$SID" 6
@@ -114,12 +218,16 @@ run_hook "$SID" 3
 
 SID="human-control-stale"
 setup_inline "$SID" 3
+STALE_GENERATION="$INLINE_GENERATION"
 dx_write_lifecycle_control "$SID" jump 4 user-prompt "$(printf stale | shasum -a 256 | awk '{print $1}')" 2 ""
 run_hook "$SID" 3
 [[ "$RC" -eq 2 ]] || assert_at $LINENO
 [[ "$(cat "$(dx_state_file "$SID")")" == "3" ]] || assert_at $LINENO
 [[ ! -f "$(dx_lifecycle_control_file "$SID")" ]] || assert_at $LINENO
-grep -q "Phase Audit" <<<"$OUT"
+REFRESHED_GENERATION=$(dx_completion_current_generation "$SID" lifecycle phase 3)
+[[ "$REFRESHED_GENERATION" != "$STALE_GENERATION" ]] || assert_at $LINENO
+grep -q "ignored a stale human transition" <<<"$OUT"
+grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$SID\" \"$REFRESHED_GENERATION\"" <<<"$OUT"
 
 SID="human-control-resume-receipt"
 setup_inline "$SID" 2
@@ -132,6 +240,24 @@ run_hook "$SID" 2
 [[ ! -d "$(dx_lifecycle_control_lock_dir "$SID")" ]] || assert_at $LINENO
 [[ ! -f "$(dx_paused_file "$SID")" ]] || assert_at $LINENO
 grep -q "Phase Audit" <<<"$OUT"
+
+SID="human-control-resume-prompt-loop"
+PROMPT_RESUME_OLD=$(dx_completion_issue \
+  "$SID" standalone dxloop-prompt prompt-loop)
+printf 'prompt-loop:PROMPT_COMPLETE:%s/prompts/phase-audits/prompt-loop.md:1:standalone:dxloop-prompt:%s\n' \
+  "$ROOT" "$PROMPT_RESUME_OLD" > "$(dx_loop_config_file "$SID")"
+touch "$(dx_paused_file "$SID")"
+dx_write_pause_state "$SID" "manual-pause" "terminal"
+dx_write_lifecycle_control "$SID" resume "" terminal "" prompt-loop ""
+run_standalone_hook "$SID" prompt-loop
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+[[ ! -f "$(dx_lifecycle_control_file "$SID")" ]] || assert_at $LINENO
+[[ ! -f "$(dx_paused_file "$SID")" ]] || assert_at $LINENO
+[[ ! -f "$(dx_handoff_mode_file "$SID")" ]] || assert_at $LINENO
+PROMPT_RESUME_NEW=$(dx_completion_current_generation \
+  "$SID" standalone dxloop-prompt prompt-loop)
+[[ "$PROMPT_RESUME_NEW" != "$PROMPT_RESUME_OLD" ]] || assert_at $LINENO
+grep -q "Prompt Loop" <<<"$OUT"
 
 SID="human-control-lock-grace"
 mkdir "$(dx_lifecycle_control_lock_dir "$SID")"
@@ -166,7 +292,8 @@ grep -q "Phase Audit" <<<"$OUT"
 for RACE_INDEX in 1 2 3 4 5 6; do
   SID="human-control-race-${RACE_INDEX}"
   setup_inline "$SID" 0
-  touch "$(dx_complete_file "$SID")" "$(dx_phase_ready_file "$SID" 0)"
+  dx_completion_write_receipt "$SID" "$INLINE_GENERATION"
+  touch "$(dx_phase_ready_file "$SID" 0)"
 
   (
     dx_write_lifecycle_control "$SID" jump 4 terminal "" "" ""

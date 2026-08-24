@@ -35,14 +35,14 @@ phase_number() {
 phase_label() { dx_lifecycle_phase_label "$1"; }
 
 activate_recorded_phase() {
-  if [[ "$CURRENT_PHASE" =~ ^[0-6]$ ]]; then
-    dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$SESSION_ID")" "inline" || return 1
-  elif [[ ! -f "$(dx_loop_config_file "$SESSION_ID")" \
-    && ! -f "$(dx_handoff_mode_file "$SESSION_ID")" ]]; then
-    return 1
-  fi
-  rm -f "$(dx_owner_file "$SESSION_ID")" 2>/dev/null || true
-  touch "$(dx_active_file "$SESSION_ID")"
+  local action="$1" target_phase="$2" expected_phase="$3" generation="$4"
+  [[ "$DURABLE_LIFECYCLE" -eq 1 && "$expected_phase" =~ ^[0-6]$ ]] || return 1
+  dx_lifecycle_activate_pending_control "$SESSION_ID" "$action" "$target_phase" \
+    "$expected_phase" "$generation"
+}
+
+resume_recorded_phase() {
+  dx_lifecycle_resume_completion_context "$SESSION_ID"
 }
 
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
@@ -61,7 +61,24 @@ esac
 
 COMMAND="${1:-status}"
 shift 2>/dev/null || true
+COMPLETION_CONTEXT=$(dx_lifecycle_completion_context_read "$SESSION_ID" 2>/dev/null || true)
+CONTEXT_PHASE=""
+CONTEXT_MODE=""
+CONTEXT_PURPOSE=""
+CONTEXT_HANDOFF=""
+if [[ -n "$COMPLETION_CONTEXT" ]]; then
+  IFS=$'\t' read -r CONTEXT_PHASE _ _ _ CONTEXT_MODE CONTEXT_PURPOSE _ \
+    CONTEXT_HANDOFF <<< "$COMPLETION_CONTEXT"
+fi
 CURRENT_PHASE=$(dx_lifecycle_current_phase "$SESSION_ID")
+if [[ "$CONTEXT_MODE" == "standalone" || -z "$CURRENT_PHASE" ]]; then
+  CURRENT_PHASE="$CONTEXT_PHASE"
+fi
+DURABLE_LIFECYCLE=0
+if [[ "$CONTEXT_MODE" == "lifecycle" && "$CONTEXT_PURPOSE" == "phase" \
+  && "$CONTEXT_HANDOFF" == "inline" && "$CURRENT_PHASE" =~ ^[0-6]$ ]]; then
+  DURABLE_LIFECYCLE=1
+fi
 CONTROL_FILE=$(dx_lifecycle_control_file "$SESSION_ID")
 
 if [[ "$COMMAND" == "-h" || "$COMMAND" == "--help" || "$COMMAND" == "help" ]]; then
@@ -113,36 +130,79 @@ case "$COMMAND" in
     ACTION="pause"
     [[ "$COMMAND" == "stop" || "$COMMAND" == "cancel" ]] && ACTION="cancel"
     dx_write_lifecycle_control "$SESSION_ID" "$ACTION" "" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-    dx_lifecycle_detach "$SESSION_ID" "manual-${ACTION}" "terminal"
+    if ! dx_lifecycle_detach "$SESSION_ID" "manual-${ACTION}" "terminal"; then
+      dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry ${COMMAND}."
+      exit 1
+    fi
     dx_done "Dex ${ACTION} accepted for Phase ${CURRENT_PHASE:-unknown}. The workspace and phase state are preserved."
     ;;
   done|complete)
+    [[ "$DURABLE_LIFECYCLE" -eq 1 ]] || {
+      dx_error "Phase completion controls apply only to an inline Dex lifecycle; this is a standalone or untrusted loop context."
+      exit 1
+    }
     [[ "$CURRENT_PHASE" =~ ^[0-6]$ ]] || { dx_error "No resumable lifecycle phase was found."; exit 1; }
     TARGET_PHASE=$((CURRENT_PHASE + 1))
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$TARGET_PHASE"; then
       dx_write_lifecycle_control "$SESSION_ID" pause "" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-      dx_lifecycle_detach "$SESSION_ID" "review-child-active" "terminal"
+      if ! dx_lifecycle_detach "$SESSION_ID" "review-child-active" "terminal"; then
+        dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry the phase change."
+        exit 1
+      fi
       dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. Jump after that process ends."
       exit 0
     fi
-    dx_write_lifecycle_control "$SESSION_ID" complete "$TARGET_PHASE" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-    activate_recorded_phase || { dx_error "Could not reactivate the recorded lifecycle phase."; exit 1; }
-    dx_done "Phase ${CURRENT_PHASE} marked done by human control; transition to Phase ${TARGET_PHASE} is pending."
+    if ! dx_write_lifecycle_control "$SESSION_ID" complete "$TARGET_PHASE" terminal "" \
+      "$CURRENT_PHASE" "$OWNER_SESSION"; then
+      dx_error "Could not publish the human phase completion."
+      exit 1
+    fi
+    CONTROL_GENERATION="$DX_LIFECYCLE_CONTROL_GENERATION"
+    if ! ACTIVATION_RESULT=$(activate_recorded_phase complete "$TARGET_PHASE" \
+      "$CURRENT_PHASE" "$CONTROL_GENERATION"); then
+      dx_error "Could not reactivate the recorded lifecycle phase."
+      exit 1
+    fi
+    if [[ "$ACTIVATION_RESULT" == "applied" ]]; then
+      dx_done "Phase ${CURRENT_PHASE} was marked done and the transition to Phase ${TARGET_PHASE} was applied."
+    else
+      dx_done "Phase ${CURRENT_PHASE} marked done by human control; transition to Phase ${TARGET_PHASE} is pending."
+    fi
     ;;
   jump|phase)
+    [[ "$DURABLE_LIFECYCLE" -eq 1 ]] || {
+      dx_error "Phase jump controls apply only to an inline Dex lifecycle; this is a standalone or untrusted loop context."
+      exit 1
+    }
     if ! TARGET_PHASE=$(phase_number "$1"); then
       dx_error "Unknown phase '$1'. Use 0-6, plan, implement, review, verify, pr, or complete."
       exit 1
     fi
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$TARGET_PHASE"; then
       dx_write_lifecycle_control "$SESSION_ID" pause "" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-      dx_lifecycle_detach "$SESSION_ID" "review-child-active" "terminal"
+      if ! dx_lifecycle_detach "$SESSION_ID" "review-child-active" "terminal"; then
+        dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry the phase change."
+        exit 1
+      fi
       dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. Jump after that process ends."
       exit 0
     fi
-    dx_write_lifecycle_control "$SESSION_ID" jump "$TARGET_PHASE" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-    activate_recorded_phase || { dx_error "Could not reactivate the recorded lifecycle phase."; exit 1; }
-    dx_done "Human-controlled transition to Phase ${TARGET_PHASE} ($(phase_label "$TARGET_PHASE")) is pending."
+    if ! dx_write_lifecycle_control "$SESSION_ID" jump "$TARGET_PHASE" terminal "" \
+      "$CURRENT_PHASE" "$OWNER_SESSION"; then
+      dx_error "Could not publish the human phase jump."
+      exit 1
+    fi
+    CONTROL_GENERATION="$DX_LIFECYCLE_CONTROL_GENERATION"
+    if ! ACTIVATION_RESULT=$(activate_recorded_phase jump "$TARGET_PHASE" \
+      "$CURRENT_PHASE" "$CONTROL_GENERATION"); then
+      dx_error "Could not reactivate the recorded lifecycle phase."
+      exit 1
+    fi
+    if [[ "$ACTIVATION_RESULT" == "applied" ]]; then
+      dx_done "The human-controlled transition to Phase ${TARGET_PHASE} ($(phase_label "$TARGET_PHASE")) was applied."
+    else
+      dx_done "Human-controlled transition to Phase ${TARGET_PHASE} ($(phase_label "$TARGET_PHASE")) is pending."
+    fi
     ;;
   resume)
     if [[ ! -f "$CONTROL_FILE" && ! -f "$(dx_paused_file "$SESSION_ID")" ]]; then
@@ -150,10 +210,14 @@ case "$COMMAND" in
       exit 0
     fi
     dx_write_lifecycle_control "$SESSION_ID" resume "" terminal "" "$CURRENT_PHASE" "$OWNER_SESSION"
-    activate_recorded_phase || { dx_error "Could not reactivate the recorded lifecycle phase."; exit 1; }
-    dx_clear_lifecycle_control "$SESSION_ID"
-    rm -f "$(dx_paused_file "$SESSION_ID")" "$(dx_pause_state_file "$SESSION_ID")" 2>/dev/null || true
+    if ! RESUME_RECORD=$(resume_recorded_phase); then
+      dx_error "Could not create fresh completion authorization for the recorded lifecycle phase."
+      exit 1
+    fi
+    IFS=$'\t' read -r CURRENT_PHASE RESUME_GENERATION CONTEXT_MODE \
+      CONTEXT_PURPOSE <<< "$RESUME_RECORD"
     dx_done "Dex lifecycle controls resumed at Phase ${CURRENT_PHASE:-unknown}."
+    dx_info "When the phase audit gate passes, run exactly: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${SESSION_ID}\" \"${RESUME_GENERATION}\""
     ;;
   *)
     dx_error "Unknown control command: ${COMMAND}"

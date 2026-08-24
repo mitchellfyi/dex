@@ -42,6 +42,17 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 # shellcheck source=lib/common.sh
 source "$ROOT/lib/common.sh"
 
+COMPLETION_WRAPPER="$ROOT/bin/complete-receipt.sh"
+
+assert_wrapper_rejects() {
+  local output_file="$1"
+  shift
+  if bash "$COMPLETION_WRAPPER" "$@" > "$output_file" 2>&1; then
+    printf 'completion wrapper accepted invalid arguments: %s\n' "$*" >&2
+    exit 1
+  fi
+}
+
 assert_generation() {
   [[ "$1" =~ ^[0-9a-f]{32}$ ]] || assert_at "$2"
 }
@@ -161,6 +172,44 @@ resume_stalled_completion_issue() {
 
 SID="completion-core"
 
+# The command placed in provider prompts runs in a clean shell. It carries the
+# launch-bound generation as an argument and does not inherit shell functions
+# or discover whichever generation happens to be current later.
+WRAPPER_SID="completion-wrapper"
+WRAPPER_GENERATION=$(dx_completion_issue "$WRAPPER_SID" standalone dxcomplete 6)
+env -i \
+  HOME="$HOME" \
+  DEX_DIR="$ROOT" \
+  DX_STATE_DIR="$DX_STATE_DIR" \
+  DX_LOOP_DIR="$DX_LOOP_DIR" \
+  DX_ARTIFACT_DIR="$DX_ARTIFACT_DIR" \
+  DX_TOOL_DIR="$DX_TOOL_DIR" \
+  DX_RUN_ROOT="$DX_RUN_ROOT" \
+  PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$COMPLETION_WRAPPER" "$WRAPPER_SID" "$WRAPPER_GENERATION"
+dx_completion_receipt_valid "$WRAPPER_SID" standalone dxcomplete 6 \
+  "$WRAPPER_GENERATION" || assert_at "$LINENO"
+dx_completion_consume "$WRAPPER_SID" standalone dxcomplete 6 \
+  "$WRAPPER_GENERATION"
+
+assert_wrapper_rejects "$TMP_DIR/wrapper-no-args.out"
+assert_wrapper_rejects "$TMP_DIR/wrapper-one-arg.out" "$WRAPPER_SID"
+assert_wrapper_rejects "$TMP_DIR/wrapper-extra-arg.out" \
+  "$WRAPPER_SID" "$WRAPPER_GENERATION" extra
+assert_contains "Usage: complete-receipt.sh" "$TMP_DIR/wrapper-no-args.out"
+
+WRAPPER_UNSAFE_GENERATION=$(dx_completion_issue \
+  "$WRAPPER_SID" standalone dxcomplete 6)
+WRAPPER_SENTINEL="$TMP_DIR/wrapper-argument-was-evaluated"
+assert_wrapper_rejects "$TMP_DIR/wrapper-unsafe-session.out" \
+  'completion-wrapper$(touch '$WRAPPER_SENTINEL')' "$WRAPPER_UNSAFE_GENERATION"
+assert_no_file "$WRAPPER_SENTINEL"
+assert_wrapper_rejects "$TMP_DIR/wrapper-unsafe-generation.out" \
+  "$WRAPPER_SID" not-a-generation
+assert_no_file "$(dx_completion_receipt_file \
+  "$WRAPPER_SID" "$WRAPPER_UNSAFE_GENERATION")"
+dx_completion_abandon "$WRAPPER_SID"
+
 # A valid expectation and receipt round-trip through the strict schema.
 GENERATION_ONE=$(dx_completion_issue "$SID" lifecycle phase 4)
 assert_generation "$GENERATION_ONE" "$LINENO"
@@ -194,9 +243,8 @@ assert_rejected "wrong phase cannot validate" \
 assert_rejected "wrong purpose cannot validate" \
   dx_completion_receipt_valid "$SID" standalone dxcomplete 6 "$GENERATION_ONE"
 
-# The strict form consumes only the matching versioned contract. Until every
-# caller has migrated, the one-argument compatibility form reports successful
-# cleanup while removing stale legacy and versioned state.
+# Consumption requires the full versioned contract. A session id by itself can
+# neither authorize completion nor silently clean up a legacy marker.
 touch "$(dx_complete_file "$SID")"
 dx_consume_completion_receipt "$SID" lifecycle phase 4 "$GENERATION_ONE"
 assert_no_file "$EXPECTATION_FILE"
@@ -205,7 +253,12 @@ assert_no_file "$(dx_complete_file "$SID")"
 assert_rejected "consumed generation cannot be replayed" \
   dx_completion_write_receipt "$SID" "$GENERATION_ONE"
 touch "$(dx_complete_file "$SID")"
-dx_consume_completion_receipt "$SID"
+assert_rejected "one-argument completion consumption" \
+  dx_consume_completion_receipt "$SID"
+assert_rejected "generation-omitting completion consumption" \
+  dx_consume_completion_receipt "$SID" lifecycle phase 4
+assert_file "$(dx_complete_file "$SID")"
+dx_completion_abandon "$SID"
 assert_no_file "$(dx_complete_file "$SID")"
 
 # Authorization readers reject permissive records. ensure may replace a
@@ -347,13 +400,13 @@ assert_no_file "$EXPECTATION_FILE"
 mkdir "$EXPECTATION_FILE"
 assert_rejected "directory expectation" dx_completion_issue "$SID" lifecycle phase 4
 assert_rejected "cleanup refuses expectation directory" dx_completion_cleanup "$SID"
-assert_rejected "compatibility cleanup refuses expectation directory" \
+assert_rejected "short-form consumption rejects expectation directory" \
   dx_consume_completion_receipt "$SID"
 rmdir "$EXPECTATION_FILE"
 
 LEGACY_FILE=$(dx_complete_file "$SID")
 mkdir "$LEGACY_FILE"
-assert_rejected "compatibility cleanup refuses legacy directory" \
+assert_rejected "short-form consumption rejects legacy directory" \
   dx_consume_completion_receipt "$SID"
 rmdir "$LEGACY_FILE"
 

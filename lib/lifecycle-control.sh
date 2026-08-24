@@ -97,9 +97,11 @@ dx_lifecycle_detach() {
   if ! dx_completion_abandon "$session_id" 2>/dev/null; then
     __dx_completion_recover_cleanup "$session_id" 2>/dev/null || revoke_result=1
   fi
-  touch "$(dx_paused_file "$session_id")"
+  if ! dx_lifecycle_atomic_write "$(dx_paused_file "$session_id")" paused; then
+    revoke_result=1
+  fi
   rm -f "$(dx_active_file "$session_id")" \
-    "$(dx_loop_file "$session_id")" 2>/dev/null || true
+    "$(dx_loop_file "$session_id")" 2>/dev/null || revoke_result=1
   if [[ "$revoke_result" -ne 0 ]]; then
     # An unhandled failure under `set -e` must not strand a caller-held control
     # lock. Release is ownership-checked and is a no-op for unlocked callers.
@@ -213,8 +215,17 @@ dx_lifecycle_current_phase() {
 }
 
 dx_lifecycle_session_active() {
-  local session_id="$1" phase
+  local session_id="$1" phase completion_context context_mode
+  local _context_phase _context_promise _context_audit _context_min
+  local _context_purpose _context_generation _context_handoff
   dx_lifecycle_session_id_valid "$session_id" || return 1
+  completion_context=$(dx_lifecycle_completion_context_read "$session_id" 2>/dev/null || true)
+  if [[ -n "$completion_context" ]]; then
+    IFS=$'\t' read -r _context_phase _context_promise _context_audit \
+      _context_min context_mode _context_purpose _context_generation \
+      _context_handoff <<< "$completion_context"
+    [[ "$context_mode" == "standalone" ]] && return 0
+  fi
   phase=$(dx_lifecycle_current_phase "$session_id")
   [[ "$phase" == "7" ]] && return 1
   [[ "${DEX_LOOP_ACTIVE:-}" == "1" || "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]] && return 0
@@ -230,6 +241,7 @@ dx_write_lifecycle_control() {
   local prompt_sha256="${5:-}" expected_phase="${6:-}" owner_session="${7:-}"
   local control_file history_file tmp_file history_tmp_file issued_at generation owner_file
   local published=0 write_status=0
+  export DX_LIFECYCLE_CONTROL_GENERATION=""
   dx_lifecycle_session_id_valid "$session_id" || return 1
   case "$action" in
     pause|cancel|resume) [[ -z "$target_phase" ]] || return 1 ;;
@@ -322,7 +334,58 @@ dx_write_lifecycle_control() {
   [[ -n "$tmp_file" ]] && command rm -f "$tmp_file" 2>/dev/null || true
   [[ -n "$history_tmp_file" ]] && command rm -f "$history_tmp_file" 2>/dev/null || true
   dx_lifecycle_control_lock_release "$session_id" || true
-  [[ "$published" -eq 1 && "$write_status" -eq 0 ]]
+  if [[ "$published" -eq 1 && "$write_status" -eq 0 ]]; then
+    export DX_LIFECYCLE_CONTROL_GENERATION="$generation"
+    return 0
+  fi
+  return 1
+}
+
+# Reactivate only the exact terminal transition that was just published. The
+# Stop hook may win the gap between publication and this call; if it already
+# committed and cleared the transition, leave the completed state untouched.
+dx_lifecycle_activate_pending_control() {
+  local session_id="$1" expected_action="$2" expected_target="$3"
+  local expected_phase="$4" expected_generation="$5" snapshot current_phase
+  local action target source generation receipt_phase activation_result="pending"
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$expected_action" == "complete" || "$expected_action" == "jump" ]] || return 1
+  [[ "$expected_target" =~ ^[0-7]$ && "$expected_phase" =~ ^[0-6]$ \
+    && "$expected_generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] || return 1
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  current_phase=$(dx_lifecycle_current_phase "$session_id")
+
+  if [[ -z "$snapshot" && "$current_phase" == "$expected_target" ]]; then
+    activation_result="applied"
+  else
+    action=$(dx_lifecycle_control_value "$snapshot" action)
+    target=$(dx_lifecycle_control_value "$snapshot" target_phase)
+    source=$(dx_lifecycle_control_value "$snapshot" source)
+    generation=$(dx_lifecycle_control_value "$snapshot" generation)
+    receipt_phase=$(dx_lifecycle_control_value "$snapshot" expected_phase)
+    if [[ "$action" != "$expected_action" || "$target" != "$expected_target" \
+      || "$source" != "terminal" || "$generation" != "$expected_generation" \
+      || "$receipt_phase" != "$expected_phase" \
+      || ( "$current_phase" != "$expected_phase" \
+        && "$current_phase" != "$expected_target" ) ]]; then
+      dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+      return 1
+    fi
+    if ! dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$session_id")" inline \
+      || ! dx_lifecycle_atomic_write "$(dx_active_file "$session_id")" active; then
+      dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+      return 1
+    fi
+    rm -f "$(dx_owner_file "$session_id")" 2>/dev/null || true
+  fi
+
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_lifecycle_completion_brake "$session_id" activation-lock-release \
+      lifecycle-control 2>/dev/null || true
+    return 1
+  fi
+  printf '%s\n' "$activation_result"
 }
 
 __dx_lifecycle_path_mtime() {
@@ -447,6 +510,24 @@ dx_write_pause_state() {
   dx_lifecycle_atomic_write "$pause_file" "reason=${reason}"$'\n'"source=${source}"
 }
 
+# Leave a completion context resumable but inert after a transition-lock
+# failure. Removing activation first prevents a bystander Stop from minting a
+# replacement receipt while authorization is being revoked.
+dx_lifecycle_completion_brake() {
+  local session_id="$1" reason="$2" source="$3" brake_rc=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+    2>/dev/null || brake_rc=1
+  dx_write_pause_state "$session_id" "$reason" "$source" 2>/dev/null \
+    || brake_rc=1
+  dx_lifecycle_atomic_write "$(dx_paused_file "$session_id")" paused 2>/dev/null \
+    || brake_rc=1
+  dx_completion_abandon "$session_id" 2>/dev/null \
+    || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
+    || brake_rc=1
+  return "$brake_rc"
+}
+
 dx_pause_state_read() {
   local session_id="$1" key="$2" pause_file snapshot
   dx_lifecycle_session_id_valid "$session_id" || return 0
@@ -456,18 +537,141 @@ dx_pause_state_read() {
   dx_lifecycle_control_value "$snapshot" "$key"
 }
 
-# Compatibility entry point while callers migrate from the generic marker. The
-# one-argument form still reports successful cleanup so existing phase
-# transitions keep working. Remove it when every caller supplies a context and
-# generation; bare-marker authorization must fail closed after that migration.
-dx_consume_completion_receipt() {
-  local session_id="${1:-}"
+# Read the completion context that may be resumed. The context has to describe
+# one of the exact launch contracts Dex writes; a numeric phase alone is not
+# enough, because standalone loops use some of the same phase numbers.
+dx_lifecycle_completion_context_read() {
+  local session_id="$1" config_file config_line reconstructed
+  local phase promise audit_file min_audits mode purpose generation extra
+  local handoff_file handoff_mode="" state_phase="" expected_promise=""
+  local expected_audit="" expected_min=""
   dx_lifecycle_session_id_valid "$session_id" || return 1
-  if [[ $# -eq 1 ]]; then
-    dx_completion_abandon "$session_id"
-    return $?
+  config_file=$(dx_loop_config_file "$session_id")
+  [[ -f "$config_file" && ! -L "$config_file" ]] || return 1
+  config_line=$(cat "$config_file" 2>/dev/null) || return 1
+  [[ -n "$config_line" && "$config_line" != *$'\n'* \
+    && "$config_line" != *$'\r'* ]] || return 1
+  IFS=: read -r phase promise audit_file min_audits mode purpose generation extra \
+    <<< "$config_line"
+  reconstructed="${phase}:${promise}:${audit_file}:${min_audits}:${mode}:${purpose}:${generation}"
+  [[ "$config_line" == "$reconstructed" && -z "$extra" ]] || return 1
+  dx_completion_context_valid "$mode" "$purpose" "$phase" || return 1
+  [[ "$generation" =~ ^[0-9a-f]{32}$ && "$min_audits" =~ ^[0-9]+$ ]] || return 1
+
+  handoff_file=$(dx_handoff_mode_file "$session_id")
+  if [[ -e "$handoff_file" || -L "$handoff_file" ]]; then
+    [[ -f "$handoff_file" && ! -L "$handoff_file" ]] || return 1
+    handoff_mode=$(cat "$handoff_file" 2>/dev/null) || return 1
+    [[ "$handoff_mode" != *$'\n'* && "$handoff_mode" != *$'\r'* ]] || return 1
   fi
+
+  case "${mode}:${purpose}:${phase}" in
+    lifecycle:phase:[0-6])
+      state_phase=$(cat "$(dx_state_file "$session_id")" 2>/dev/null || true)
+      [[ "$state_phase" == "$phase" ]] || return 1
+      if [[ "$handoff_mode" != "inline" ]]; then
+        [[ -z "$handoff_mode" && -f "$(dx_paused_file "$session_id")" \
+          && ! -L "$(dx_paused_file "$session_id")" ]] || return 1
+      fi
+      # A detach removes the live handoff marker. The validated phase state and
+      # exact lifecycle config retain identity; resume restores inline mode.
+      handoff_mode="inline"
+      expected_promise=$(dx_lifecycle_phase_promise "$phase")
+      expected_audit="$DEX_DIR/prompts/phase-audits/$(dx_lifecycle_phase_audit_basename "$phase").md"
+      expected_min=$(dx_lifecycle_phase_min_audits "$phase")
+      ;;
+    standalone:dxloop-plan:1)
+      [[ -z "$handoff_mode" ]] || return 1
+      expected_promise="PHASE_1_COMPLETE"
+      expected_audit="$DEX_DIR/prompts/phase-audits/1-plan.md"
+      expected_min="1"
+      ;;
+    standalone:dxloop-prompt:prompt-loop)
+      [[ -z "$handoff_mode" ]] || return 1
+      expected_promise="PROMPT_COMPLETE"
+      expected_audit="$DEX_DIR/prompts/phase-audits/prompt-loop.md"
+      expected_min="1"
+      ;;
+    standalone:dxcomplete:6)
+      [[ -z "$handoff_mode" ]] || return 1
+      expected_promise="DEX_TICKET_COMPLETE"
+      expected_audit="$DEX_DIR/prompts/phase-audits/6-complete.md"
+      expected_min="1"
+      ;;
+    *) return 1 ;;
+  esac
+  [[ "$promise" == "$expected_promise" && "$audit_file" == "$expected_audit" \
+    && "$min_audits" == "$expected_min" ]] || return 1
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" "$promise" "$audit_file" "$min_audits" "$mode" "$purpose" \
+    "$generation" "$handoff_mode"
+}
+
+# Rotate and reactivate an exact context while the caller holds the lifecycle
+# control lock. Keeping this operation available in locked form lets the Stop
+# hook apply a pending resume without dropping the transition lock halfway
+# through the state change.
+dx_lifecycle_resume_completion_context_unlocked() {
+  local session_id="$1" context_record phase promise audit_file min_audits
+  local mode purpose old_generation handoff_mode generation config_line
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
+    && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  context_record=$(dx_lifecycle_completion_context_read "$session_id" 2>/dev/null) \
+    || return 1
+  IFS=$'\t' read -r phase promise audit_file min_audits mode purpose \
+    old_generation handoff_mode <<< "$context_record"
+  : "$old_generation" "$handoff_mode"
+  if ! generation=$(dx_completion_issue "$session_id" "$mode" "$purpose" "$phase"); then
+    return 1
+  fi
+  config_line="${phase}:${promise}:${audit_file}:${min_audits}:${mode}:${purpose}:${generation}"
+  if ! dx_lifecycle_atomic_write "$(dx_loop_config_file "$session_id")" "$config_line"; then
+    dx_completion_abandon "$session_id" 2>/dev/null \
+      || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
+      || true
+    return 1
+  fi
+  if [[ "$mode" == "lifecycle" ]] \
+    && ! dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$session_id")" inline; then
+    dx_completion_abandon "$session_id" 2>/dev/null \
+      || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
+      || true
+    return 1
+  fi
+  if ! dx_lifecycle_atomic_write "$(dx_active_file "$session_id")" active; then
+    dx_completion_abandon "$session_id" 2>/dev/null \
+      || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
+      || true
+    return 1
+  fi
+  dx_clear_lifecycle_control_unlocked "$session_id"
+  rm -f "$(dx_paused_file "$session_id")" "$(dx_pause_state_file "$session_id")" \
+    "$(dx_owner_file "$session_id")" 2>/dev/null || true
+  printf '%s\t%s\t%s\t%s\n' "$phase" "$generation" "$mode" "$purpose"
+}
+
+# Rotate the exact existing context and reactivate it. Callers do not infer a
+# lifecycle merely because a standalone loop happens to use Phase 1 or 6.
+dx_lifecycle_resume_completion_context() {
+  local session_id="$1" resume_record resume_rc=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  resume_record=$(dx_lifecycle_resume_completion_context_unlocked "$session_id") \
+    || resume_rc=$?
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_lifecycle_completion_brake "$session_id" resume-lock-release \
+      lifecycle-control 2>/dev/null || true
+    return 1
+  fi
+  [[ "$resume_rc" -eq 0 ]] || return "$resume_rc"
+  printf '%s\n' "$resume_record"
+}
+
+# Completion authorization always names its exact context and generation.
+dx_consume_completion_receipt() {
   [[ $# -eq 5 ]] || return 2
+  dx_lifecycle_session_id_valid "$1" || return 1
   dx_completion_consume "$@"
 }
 

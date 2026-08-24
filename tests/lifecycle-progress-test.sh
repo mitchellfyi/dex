@@ -77,6 +77,7 @@ run_paused_lifecycle() {
 MAX_ITER_SESSION="lifecycle-progress-max-iter"
 MAX_ITER_OUTPUT="$TMP_DIR/max-iter.out"
 run_paused_lifecycle "$MAX_ITER_SESSION" max-iterations "$MAX_ITER_OUTPUT"
+[[ ! -e "$(dx_completion_expectation_file "$MAX_ITER_SESSION")" ]] || assert_at $LINENO
 
 # The terminal header must reflect the persisted Phase 3 state, not the Phase 0
 # value captured before the provider session started.
@@ -112,6 +113,7 @@ PY
 LEGACY_SESSION="lifecycle-progress-legacy-pause"
 LEGACY_OUTPUT="$TMP_DIR/legacy-pause.out"
 run_paused_lifecycle "$LEGACY_SESSION" "" "$LEGACY_OUTPUT"
+[[ ! -e "$(dx_completion_expectation_file "$LEGACY_SESSION")" ]] || assert_at $LINENO
 grep -Fq "Paused at Phase 3: Review (manual intervention requested)" "$LEGACY_OUTPUT"
 
 # Explicit outcomes distinguish gated completion from human-authorized skips
@@ -166,12 +168,18 @@ grep -Fq "✓ Setup  ? Plan  → Implement" "$HISTORICAL_OUTPUT"
 HOOK="$ROOT/hooks/phase-loop.sh"
 
 setup_inline() {
-  local session_id="$1" phase="$2"
+  local session_id="$1" phase="$2" generation promise audit_basename min_audits
   touch "$(dx_active_file "$session_id")"
   printf '%s\n' inline > "$(dx_handoff_mode_file "$session_id")"
   printf '%s\n' "$phase" > "$(dx_state_file "$session_id")"
-  printf '%s:PHASE_%s_COMPLETE:%s/prompts/phase-audits/%s-review-loop.md:1\n' \
-    "$phase" "$phase" "$ROOT" "$phase" > "$(dx_loop_config_file "$session_id")"
+  generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase")
+  promise=$(dx_lifecycle_phase_promise "$phase")
+  audit_basename=$(dx_lifecycle_phase_audit_basename "$phase")
+  min_audits=$(dx_lifecycle_phase_min_audits "$phase")
+  printf '%s:%s:%s/prompts/phase-audits/%s.md:%s:lifecycle:phase:%s\n' \
+    "$phase" "$promise" "$ROOT" "$audit_basename" "$min_audits" \
+    "$generation" > "$(dx_loop_config_file "$session_id")"
+  INLINE_GENERATION="$generation"
 }
 
 run_hook() {
@@ -184,8 +192,8 @@ run_hook() {
   set -e
 }
 
-# A failed phase-state publish must consume the old generic completion marker.
-# Otherwise the following Stop could mistake it for the next phase's signal.
+# A failed phase-state publish must consume the exact old receipt and rotate a
+# retry generation. Otherwise a delayed writer could complete the next phase.
 STALE_SESSION="lifecycle-progress-stale-complete"
 setup_inline "$STALE_SESSION" 4
 STALE_STATE_FILE="$(dx_state_file "$STALE_SESSION")"
@@ -193,12 +201,12 @@ STALE_STATE_TARGET="$TMP_DIR/stale-authoritative-phase"
 printf '%s\n' 4 > "$STALE_STATE_TARGET"
 rm -f "$STALE_STATE_FILE"
 ln -s "$STALE_STATE_TARGET" "$STALE_STATE_FILE"
-touch "$(dx_complete_file "$STALE_SESSION")"
+dx_completion_write_receipt "$STALE_SESSION" "$INLINE_GENERATION"
 
 run_hook "$STALE_SESSION" 4
 [[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
 [[ "$(cat "$STALE_STATE_FILE")" == "4" ]] || assert_at $LINENO
-[[ ! -e "$(dx_complete_file "$STALE_SESSION")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_completion_receipt_file "$STALE_SESSION" "$INLINE_GENERATION")" ]] || assert_at $LINENO
 grep -Fq "consumed completion receipt cannot affect the next phase" <<<"$HOOK_OUTPUT"
 
 run_hook "$STALE_SESSION" 4
@@ -212,7 +220,6 @@ grep -Fq "Phase Audit" <<<"$HOOK_OUTPUT"
 RECOVERY_SESSION="lifecycle-progress-control-recovery"
 setup_inline "$RECOVERY_SESSION" 4
 dx_phase_outcome_record "$RECOVERY_SESSION" 2 completed test-fixture old-phase-2 gates-passed
-touch "$(dx_complete_file "$RECOVERY_SESSION")"
 dx_write_lifecycle_control "$RECOVERY_SESSION" jump 4 terminal "" 2 ""
 run_hook "$RECOVERY_SESSION" 4
 [[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO

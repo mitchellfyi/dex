@@ -109,6 +109,19 @@ write_review_criteria() { # <session-id>
   printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Exercise the lifecycle handoff."],"acceptance_criteria":["The next phase starts only after its gates pass."],"verification_requirements":["Run tests/phase-loop-ownership-test.sh."]}' > "$(dx_review_criteria_file "$1")"
 }
 
+configure_lifecycle_completion() { # <session-id> <phase> <audit-file>
+  local session_id="$1" phase="$2" audit_file="$3" generation
+  generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase")
+  printf '%s:PHASE_%s_COMPLETE:%s:1:lifecycle:phase:%s\n' \
+    "$phase" "$phase" "$audit_file" "$generation" > "$(dx_loop_config_file "$session_id")"
+}
+
+write_lifecycle_completion() { # <session-id> <phase>
+  local generation
+  generation=$(dx_completion_current_generation "$1" lifecycle phase "$2")
+  dx_completion_write_receipt "$1" "$generation"
+}
+
 prepare_review_pass_bindings() { # <session-id> <fingerprint>
   REVIEW_PASS_ID="$1"
   REVIEW_PASS_BINDING=$(dx_review_pass_binding "$REVIEW_PASS_ID" "$2" standalone "$REVIEW_POLICY_BINDING")
@@ -141,28 +154,77 @@ assert_out_empty "bystander gets no injected output"
 assert_file_eq "bystander did not steal the claim" "$DX_LOOP_DIR/$SID.owner" "claude-owner"
 rm -f "$DX_LOOP_DIR/$SID".*
 
-# --- case 2: unclaimed file-activated loop is claimed by first stopper ---
+# --- case 2: file-only activation without a trusted context fails closed ---
 SID="repo-test-2-main"
 touch "$DX_LOOP_DIR/$SID.active"
 set +e
 OUT="$(printf '{"session_id":"claude-first"}' | env DEX_SESSION_ID="$SID" bash "$HOOK" 2>&1)"
 RC=$?
 set -e
-assert_rc "unclaimed loop blocks stop for claimer" 2
-assert_file_eq "claim recorded" "$DX_LOOP_DIR/$SID.owner" "claude-first"
+assert_rc "contextless file activation blocks stop" 2
+assert_out_contains "contextless activation explains recovery" "could not recover a versioned completion context"
+if [[ ! -e "$DX_LOOP_DIR/$SID.active" ]]; then report "contextless activation is inert" 0; else report "contextless activation is inert" 1; fi
+if [[ ! -e "$(dx_completion_expectation_file "$SID")" ]]; then report "contextless activation has no expectation" 0; else report "contextless activation has no expectation" 1; fi
+rm -f "$DX_LOOP_DIR/$SID".*
+
+# A canonical standalone context remains claimable by its first real stopper.
+SID="repo-test-2-valid-main"
+VALID_GENERATION=$(dx_completion_issue "$SID" standalone dxcomplete 6)
+printf '6:DEX_TICKET_COMPLETE:%s/prompts/phase-audits/6-complete.md:1:standalone:dxcomplete:%s\n' \
+  "$ROOT" "$VALID_GENERATION" > "$DX_LOOP_DIR/$SID.config"
+touch "$DX_LOOP_DIR/$SID.active"
+set +e
+OUT="$(printf '{"session_id":"claude-first-valid"}' | env DEX_SESSION_ID="$SID" bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "canonical unclaimed loop blocks stop for audit" 2
+assert_file_eq "canonical loop claim recorded" "$DX_LOOP_DIR/$SID.owner" "claude-first-valid"
+dx_completion_cleanup "$SID"
+rm -f "$DX_LOOP_DIR/$SID".*
+
+# Tuple-shaped config is not enough: the gate prefix and lifecycle identity
+# must match the exact launch contract before file activation is trusted.
+SID="repo-test-2-corrupt-main"
+CORRUPT_GENERATION=$(dx_completion_issue "$SID" standalone dxcomplete 6)
+printf '6:WRONG:%s/prompts/phase-audits/1-plan.md:0:standalone:dxcomplete:%s\n' \
+  "$ROOT" "$CORRUPT_GENERATION" > "$DX_LOOP_DIR/$SID.config"
+touch "$DX_LOOP_DIR/$SID.active"
+set +e
+OUT="$(printf '{"session_id":"claude-corrupt"}' | env DEX_SESSION_ID="$SID" bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "wrong-prefix file activation blocks" 2
+if [[ ! -e "$DX_LOOP_DIR/$SID.active" ]]; then report "wrong-prefix activation is inert" 0; else report "wrong-prefix activation is inert" 1; fi
+if [[ ! -e "$(dx_completion_expectation_file "$SID")" ]]; then report "wrong-prefix expectation revoked" 0; else report "wrong-prefix expectation revoked" 1; fi
+rm -f "$DX_LOOP_DIR/$SID".*
+
+SID="repo-test-2-uncorrelated-main"
+UNCORRELATED_GENERATION=$(dx_completion_issue "$SID" lifecycle phase 2)
+printf '2:PHASE_2_COMPLETE:%s/prompts/phase-audits/2-implement.md:1:lifecycle:phase:%s\n' \
+  "$ROOT" "$UNCORRELATED_GENERATION" > "$DX_LOOP_DIR/$SID.config"
+touch "$DX_LOOP_DIR/$SID.active"
+set +e
+OUT="$(printf '{"session_id":"claude-uncorrelated"}' | env DEX_SESSION_ID="$SID" bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "uncorrelated lifecycle config blocks" 2
+if [[ ! -e "$(dx_completion_expectation_file "$SID")" ]]; then report "uncorrelated lifecycle expectation revoked" 0; else report "uncorrelated lifecycle expectation revoked" 1; fi
+if [[ ! -e "$DX_STATE_DIR/$SID.phase" ]]; then report "uncorrelated config did not invent phase state" 0; else report "uncorrelated config did not invent phase state" 1; fi
 rm -f "$DX_LOOP_DIR/$SID".*
 
 # --- case 3: env-activated session reclaims a stale claim ---
 SID="repo-test-3-main"
 touch "$DX_LOOP_DIR/$SID.active"
 printf '%s\n' "claude-stale" > "$DX_LOOP_DIR/$SID.owner"
+printf '%s\n' "2" > "$DX_STATE_DIR/$SID.phase"
+printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 set +e
 OUT="$(printf '{"session_id":"claude-relaunch"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "env-activated session proceeds" 2
 assert_file_eq "env-activated session reclaims" "$DX_LOOP_DIR/$SID.owner" "claude-relaunch"
-rm -f "$DX_LOOP_DIR/$SID".*
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 # --- case 4: completed review pass never runs the inline phase handoff ---
 SID="repo-test-4-main-pass-1-999"
@@ -244,7 +306,9 @@ for LIMIT_NAME in DEX_LOOP_MAX_ITERATIONS DEX_LOOP_MIN_AUDITS DEX_LOOP_STALL_TIM
   SID="repo-test-8-limit-$LIMIT_INDEX"
   touch "$DX_LOOP_DIR/$SID.active"
   set +e
-  OUT="$(printf '{"session_id":"claude-limit"}' | env DEX_SESSION_ID="$SID" "$LIMIT_NAME=abc" bash "$HOOK" 2>&1)"
+  OUT="$(printf '{"session_id":"claude-limit"}' | env DEX_SESSION_ID="$SID" \
+    DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=prompt-loop \
+    "$LIMIT_NAME=abc" bash "$HOOK" 2>&1)"
   RC=$?
   set -e
   assert_rc "$LIMIT_NAME blocks cleanly" 2
@@ -256,7 +320,9 @@ done
 SID="repo-test-8-limit-overflow"
 touch "$DX_LOOP_DIR/$SID.active"
 set +e
-OUT="$(printf '{"session_id":"claude-limit"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_MAX_ITERATIONS=9999999999999999 bash "$HOOK" 2>&1)"
+OUT="$(printf '{"session_id":"claude-limit"}' | env DEX_SESSION_ID="$SID" \
+  DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=prompt-loop \
+  DEX_LOOP_MAX_ITERATIONS=9999999999999999 bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "oversized loop limit blocks cleanly" 2
@@ -306,10 +372,11 @@ rm -f "$DX_LOOP_DIR/$SID".*
 
 # --- case 6b: Phase 1 preserves approved criteria before implementation ---
 SID="repo-test-6b-main"
-touch "$DX_LOOP_DIR/$SID.active" "$DX_LOOP_DIR/$SID.phase-1.ready" "$DX_LOOP_DIR/$SID.complete"
+touch "$DX_LOOP_DIR/$SID.active" "$DX_LOOP_DIR/$SID.phase-1.ready"
 printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 printf '%s\n' "1" > "$DX_STATE_DIR/$SID.phase"
-printf '%s\n' "1:PHASE_1_COMPLETE:$ROOT/prompts/phase-audits/1-plan.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_lifecycle_completion "$SID" 1 "$ROOT/prompts/phase-audits/1-plan.md"
+write_lifecycle_completion "$SID" 1
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-1-criteria"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=1 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
@@ -319,7 +386,7 @@ assert_out_contains "missing Phase 1 criteria message shown" "approved review cr
 assert_file_eq "missing Phase 1 criteria leaves phase active" "$DX_STATE_DIR/$SID.phase" "1"
 
 write_review_criteria "$SID"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_lifecycle_completion "$SID" 1
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-1-criteria"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=1 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
@@ -333,8 +400,8 @@ else
   report "Phase 1 transition seals approved criteria" 1
 fi
 printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Replace the approved lifecycle handoff."],"acceptance_criteria":["Unapproved replacements must be rejected."],"verification_requirements":["Run tests/phase-loop-ownership-test.sh."]}' > "$(dx_review_criteria_file "$SID")"
-touch "$DX_LOOP_DIR/$SID.phase-2.ready" "$DX_LOOP_DIR/$SID.complete"
-printf '%s\n' "2:PHASE_2_COMPLETE:$ROOT/prompts/phase-audits/2-implement.md:1" > "$DX_LOOP_DIR/$SID.config"
+touch "$DX_LOOP_DIR/$SID.phase-2.ready"
+write_lifecycle_completion "$SID" 2
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-criteria-tamper"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
@@ -346,10 +413,11 @@ rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 # --- case 7: Phase 2 requires approved criteria and a current risk selection ---
 SID="repo-test-7-main"
-touch "$DX_LOOP_DIR/$SID.active" "$DX_LOOP_DIR/$SID.phase-2.ready" "$DX_LOOP_DIR/$SID.complete"
+touch "$DX_LOOP_DIR/$SID.active" "$DX_LOOP_DIR/$SID.phase-2.ready"
 printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 printf '%s\n' "2" > "$DX_STATE_DIR/$SID.phase"
-printf '%s\n' "2:PHASE_2_COMPLETE:$ROOT/prompts/phase-audits/2-implement.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_lifecycle_completion "$SID" 2 "$ROOT/prompts/phase-audits/2-implement.md"
+write_lifecycle_completion "$SID" 2
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
@@ -360,7 +428,7 @@ assert_file_eq "missing Phase 2 criteria leaves phase active" "$DX_STATE_DIR/$SI
 
 write_review_criteria "$SID"
 dx_review_approve_criteria "$SID" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$SID")")" >/dev/null
-touch "$DX_LOOP_DIR/$SID.complete"
+write_lifecycle_completion "$SID" 2
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
@@ -371,7 +439,7 @@ assert_file_eq "missing Phase 2 selection leaves phase active" "$DX_STATE_DIR/$S
 
 printf '%s\n' "candidate change" >> "$REVIEW_REPO/README.md"
 dx_review_write_selection "$SID" normal lifecycle-agent bounded-production-change "$REVIEW_REPO"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_lifecycle_completion "$SID" 2
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
@@ -381,19 +449,19 @@ assert_out_contains "Phase 2 selection emits Phase 3 handoff" "Phase Handoff: Ph
 assert_file_eq "Phase 2 selection advances to Phase 3" "$DX_STATE_DIR/$SID.phase" "3"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
-# --- case 8: a bare Phase 3 completion marker cannot bypass dxreviewloop ---
+# --- case 8: a legacy Phase 3 marker is rejected before review gates run ---
 SID="repo-test-8-main"
 touch "$DX_LOOP_DIR/$SID.active"
 printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
-printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review-loop.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
 touch "$DX_LOOP_DIR/$SID.complete"
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{\"session_id\":\"claude-phase-3-bypass\"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "bare Phase 3 completion is blocked" 2
-assert_out_contains "missing receipt message shown" "review receipt missing or stale"
+assert_out_contains "legacy marker diagnostic shown" "Legacy completion marker ignored"
 assert_out_lacks "missing receipt does not hand off" "Phase Handoff"
 assert_file_eq "missing receipt leaves Phase 3 active" "$DX_STATE_DIR/$SID.phase" "3"
 if [[ ! -f "$DX_LOOP_DIR/$SID.complete" ]]; then
@@ -408,7 +476,7 @@ SID="repo-test-9-main"
 touch "$DX_LOOP_DIR/$SID.active"
 printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
-printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review-loop.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
 write_review_criteria "$SID"
 dx_review_approve_criteria "$SID" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$SID")")" >/dev/null
 dx_review_write_selection "$SID" normal lifecycle-agent bounded-production-change "$REVIEW_REPO"
@@ -434,7 +502,7 @@ for ledger_iteration in 1 2 3 4 5 6; do
 done
 dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO" \
   "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_lifecycle_completion "$SID" 3
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{\"session_id\":\"claude-phase-3-receipt\"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
