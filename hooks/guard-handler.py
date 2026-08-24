@@ -1338,10 +1338,44 @@ def find_search_roots(tokens, command_index):
     return roots or ['.']
 
 
-def find_exec_destructive_command_is_blocked(tokens, command_index, variables=None, cwd=None, depth=0):
+def find_deletes_in_place(tokens, command_index):
+    """Whether this `find` removes what it matches without running `rm`.
+
+    `-delete` reaches the same end as `-exec rm -rf {} +`, which is caught by
+    resolving the nested command. Here there is no nested command to resolve,
+    so the action has to be recognised on its own — `find / -delete` was the
+    one spelling of "empty the disk" that this detector let through.
+
+    A `-delete` inside an `-exec` belongs to that nested command, not to this
+    find, so those spans are skipped rather than scanned.
+    """
+    index = command_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == '$' and index + 1 < len(tokens) and tokens[index + 1] == '(':
+            end_index = command_substitution_end(tokens, index)
+            if end_index is not None:
+                index = end_index + 1
+                continue
+        if token in SHELL_SEPARATORS and token != ';':
+            break
+        if token in {'-exec', '-execdir', '-ok', '-okdir'}:
+            index += 1
+            while index < len(tokens) and tokens[index] not in {';', '+'}:
+                index += 1
+        elif token == '-delete':
+            return True
+        index += 1
+    return False
+
+
+def find_destructive_command_is_blocked(tokens, command_index, variables=None, cwd=None, depth=0):
     if token_basename(tokens[command_index]) != 'find':
         return False
     roots = find_search_roots(tokens, command_index)
+    if find_deletes_in_place(tokens, command_index) and \
+            any(rm_target_is_destructive(root, variables, cwd) for root in roots):
+        return True
     for command_tokens in find_exec_commands(tokens, command_index):
         nested_command_index = skip_wrapper_prefix(command_tokens, 0) if command_tokens else 0
         if nested_command_index < len(command_tokens) and token_basename(command_tokens[nested_command_index]) == 'rm':
@@ -1505,7 +1539,7 @@ def has_destructive_command(text, depth=0):
                 return True
             if xargs_destructive_command_is_blocked(tokens, command_index, index, shell_vars, None, depth):
                 return True
-            if find_exec_destructive_command_is_blocked(tokens, command_index, shell_vars, None, depth):
+            if find_destructive_command_is_blocked(tokens, command_index, shell_vars, None, depth):
                 return True
             for _kind, script, from_file in interpreter_code_payloads(
                 tokens, command_index, index, generated_scripts, shell_vars, os.getcwd()

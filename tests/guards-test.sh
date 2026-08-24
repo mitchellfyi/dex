@@ -382,6 +382,29 @@ assert_destructive_blocks "home, reached by descending and climbing back" \
   'rm -rf $HOME/projects/..'
 assert_destructive_blocks "everything beside home" \
   'rm -rf $HOME/../*'
+# `-exec rm -rf {} +` was caught by resolving the nested command; `-delete`
+# reaches the same end with no nested command to resolve.
+assert_destructive_blocks "find deleting everything under root" \
+  'find / -delete'
+assert_destructive_blocks "find deleting under root with a filter" \
+  'find / -type f -delete'
+assert_destructive_blocks "find deleting under home" \
+  'find $HOME -delete'
+assert_destructive_blocks "find deleting under the working directory" \
+  'find . -delete'
+assert_destructive_blocks "find deleting with no root named" \
+  'find -delete'
+assert_destructive_blocks "find deleting under a climbing path" \
+  'find /etc/.. -delete'
+assert_destructive_blocks "find execdir running rm on root" \
+  'find / -execdir rm -rf {} +'
+assert_destructive_clean "find deleting inside a scoped directory" \
+  'find ./build -delete'
+assert_destructive_clean "routine log rotation" \
+  'find /var/log -mtime +30 -delete'
+# A -delete belongs to the nested command it sits inside, not to the find.
+assert_destructive_clean "the word -delete passed to a nested command" \
+  'find . -exec echo -delete {} +'
 # Climbing and then naming a child is a specific directory, not a root.
 assert_destructive_clean "a sibling of the working directory" \
   'rm -rf ../sibling'
