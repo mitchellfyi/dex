@@ -58,66 +58,73 @@ assert_contains "did not publish readiness files within 1s" "$TMP_DIR/slow.out"
 
 # The service lane is exclusive: it does not overlap parallel or serial work.
 suite_dir="$TMP_DIR/suite"
-event_log="$TMP_DIR/events"
-lane_lock="$TMP_DIR/service.lock"
-mkdir -p "$suite_dir"
+report_dir="$TMP_DIR/report"
+fixture_manifest="$TMP_DIR/manifest.tsv"
+event_log="$report_dir/events"
+mkdir -p "$suite_dir" "$report_dir"
 
 cat > "$suite_dir/a-service-test.sh" <<'SH'
 #!/usr/bin/env bash
 # dex-test-lane: service
 set -euo pipefail
-mkdir "$DX_TEST_LANE_LOCK"
-trap 'rmdir "$DX_TEST_LANE_LOCK"' EXIT
-printf 'service-a-start\n' >> "$DX_TEST_EVENT_LOG"
+mkdir "$DX_TEST_REPORT_DIR/service.lock"
+trap 'rmdir "$DX_TEST_REPORT_DIR/service.lock"' EXIT
+printf 'service-a-start\n' >> "$DX_TEST_REPORT_DIR/events"
 sleep 0.1
-printf 'service-a-end\n' >> "$DX_TEST_EVENT_LOG"
+printf 'service-a-end\n' >> "$DX_TEST_REPORT_DIR/events"
 SH
 
 cat > "$suite_dir/b-service-test.sh" <<'SH'
 #!/usr/bin/env bash
 # dex-test-lane: service
 set -euo pipefail
-mkdir "$DX_TEST_LANE_LOCK"
-trap 'rmdir "$DX_TEST_LANE_LOCK"' EXIT
-printf 'service-b-start\n' >> "$DX_TEST_EVENT_LOG"
+mkdir "$DX_TEST_REPORT_DIR/service.lock"
+trap 'rmdir "$DX_TEST_REPORT_DIR/service.lock"' EXIT
+printf 'service-b-start\n' >> "$DX_TEST_REPORT_DIR/events"
 sleep 0.1
-printf 'service-b-end\n' >> "$DX_TEST_EVENT_LOG"
+printf 'service-b-end\n' >> "$DX_TEST_REPORT_DIR/events"
 SH
 
 cat > "$suite_dir/c-parallel-test.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ -e "$DX_TEST_LANE_LOCK" ]]; then
+if [[ -e "$DX_TEST_REPORT_DIR/service.lock" ]]; then
   printf 'parallel test overlapped the service lane\n' >&2
   exit 1
 fi
-printf 'parallel-start\n' >> "$DX_TEST_EVENT_LOG"
+printf 'parallel-start\n' >> "$DX_TEST_REPORT_DIR/events"
 sleep 0.1
-printf 'parallel-end\n' >> "$DX_TEST_EVENT_LOG"
+printf 'parallel-end\n' >> "$DX_TEST_REPORT_DIR/events"
 SH
 
 cat > "$suite_dir/d-serial-test.sh" <<'SH'
 #!/usr/bin/env bash
 # dex-test-lane: serial
 set -euo pipefail
-if [[ -e "$DX_TEST_LANE_LOCK" ]]; then
+if [[ -e "$DX_TEST_REPORT_DIR/service.lock" ]]; then
   printf 'serial test overlapped the service lane\n' >&2
   exit 1
 fi
-printf 'serial-start\n' >> "$DX_TEST_EVENT_LOG"
+printf 'serial-start\n' >> "$DX_TEST_REPORT_DIR/events"
 sleep 0.1
-printf 'serial-end\n' >> "$DX_TEST_EVENT_LOG"
+printf 'serial-end\n' >> "$DX_TEST_REPORT_DIR/events"
 SH
 
+printf '%s\n' \
+  $'a-service-test.sh\tservice\tall\t10\thermetic' \
+  $'b-service-test.sh\tservice\tall\t10\thermetic' \
+  $'c-parallel-test.sh\tfast\tall\t10\thermetic' \
+  $'d-serial-test.sh\tserial\tall\t10\thermetic' > "$fixture_manifest"
+
 DX_TEST_SUITE_DIR="$suite_dir" \
+DX_TEST_MANIFEST="$fixture_manifest" \
 DX_TEST_LOG_DIR="$TMP_DIR/runner-logs" \
-DX_TEST_EVENT_LOG="$event_log" \
-DX_TEST_LANE_LOCK="$lane_lock" \
+DX_TEST_REPORT_DIR="$report_dir" \
 DX_TEST_JOBS=8 \
 DX_TEST_TIMEOUT=10 \
   bash "$ROOT/tests/run-all.sh" > "$TMP_DIR/runner.out"
 
-assert_contains "2 in the service lane" "$TMP_DIR/runner.out"
+assert_contains "1 fast, 0 slow, 2 service, 1 serial" "$TMP_DIR/runner.out"
 assert_eq "$(cat <<'EOF'
 service-a-start
 service-a-end
