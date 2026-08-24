@@ -106,7 +106,11 @@ rubric_issue_detection() {
     score=$((score + 25))
   fi
 
-  if grep -R "tryOrLog" "$ws/src" >/dev/null 2>&1; then
+  # The memory file says to wrap external calls in tryOrLog, and the seed's
+  # server.js already does it once — so the tree has said yes since before the
+  # agent started. What is being asked is whether the *new* endpoint was
+  # wrapped too, which only the diff can answer.
+  if grep -q "tryOrLog" <<< "$(cd "$ws" && git diff HEAD -- src 2>/dev/null)"; then
     score=$((score + 15))
   fi
 
