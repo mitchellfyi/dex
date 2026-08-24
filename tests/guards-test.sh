@@ -361,6 +361,34 @@ assert_destructive_blocks "backtick substitution resolving to a destructive comm
   '`echo '\''rm -rf /'\''`'
 assert_destructive_blocks "substitution supplying only the command and flags" \
   '$(printf '\''%s'\'' '\''rm -rf'\'') /'
+# `.` was collapsed here and `..` was not, so every ascending spelling read as
+# an ordinary subdirectory path — the one shape this guard deliberately waves
+# through. `/etc/..` is `/`.
+assert_destructive_blocks "root by way of its own parent" \
+  'rm -rf /..'
+assert_destructive_blocks "root by way of a subdirectory's parent" \
+  'rm -rf /etc/..'
+assert_destructive_blocks "root, climbing past it" \
+  'rm -rf /../..'
+assert_destructive_blocks "the parent of home" \
+  'rm -rf $HOME/..'
+assert_destructive_blocks "the parent of home, tilde spelling" \
+  'rm -rf ~/..'
+assert_destructive_blocks "the parent of the working directory" \
+  'rm -rf $PWD/..'
+assert_destructive_blocks "the parent of the working directory, bare" \
+  'rm -rf ..'
+assert_destructive_blocks "home, reached by descending and climbing back" \
+  'rm -rf $HOME/projects/..'
+assert_destructive_blocks "everything beside home" \
+  'rm -rf $HOME/../*'
+# Climbing and then naming a child is a specific directory, not a root.
+assert_destructive_clean "a sibling of the working directory" \
+  'rm -rf ../sibling'
+assert_destructive_clean "a sibling of home" \
+  'rm -rf $HOME/../other'
+assert_destructive_clean "a path that climbs and descends again" \
+  'rm -rf /etc/../var/cache/app'
 assert_destructive_clean "dd to a regular file" \
   'dd if=/dev/zero of=./disk-image.bin bs=1024 count=1'
 assert_destructive_clean "dd to null" \

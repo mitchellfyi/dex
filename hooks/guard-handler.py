@@ -961,6 +961,45 @@ def rm_option_is_force(token):
     return token.startswith('-') and not token.startswith('--') and 'f' in token[1:]
 
 
+def collapse_parent_segments(target):
+    """Resolve `..` the way the filesystem will.
+
+    `.` was already collapsed here and `..` was not, so every ascending
+    spelling read as an ordinary subdirectory path — the one shape the guard
+    deliberately waves through. `rm -rf /etc/..` is `rm -rf /`.
+
+    Above a root this guard protects there is no name to check: `$HOME/..` is
+    /Users on this machine and /home on most others. That directory strictly
+    contains the protected one, so it is folded back onto the root and judged
+    the same. Ascending and then naming a child — `../sibling`,
+    `$HOME/../other` — is a specific directory and is left alone.
+    """
+    segments = target.split('/')
+    if '..' not in segments:
+        return target
+    absolute = segments[0] == ''
+    if absolute:
+        root, rest = '/', segments[1:]
+    elif segments[0] == '..':
+        root, rest = '.', segments      # a bare ../ is relative to the cwd
+    else:
+        root, rest = segments[0], segments[1:]
+
+    kept = []
+    for segment in rest:
+        if segment == '..':
+            if kept:
+                kept.pop()
+        elif segment not in ('', '.'):
+            kept.append(segment)
+
+    if kept:
+        return target                   # names a directory; judged as written
+    if absolute:
+        return '/'                      # root cannot be escaped: /.. is /
+    return root
+
+
 def normalize_rm_target_alias(target):
     wildcard = False
     if target.endswith('/*'):
@@ -968,6 +1007,7 @@ def normalize_rm_target_alias(target):
         target = target[:-2]
     if target.startswith('//'):
         target = '/' + target.lstrip('/')
+    target = collapse_parent_segments(target)
     while len(target) > 1 and target.endswith('/'):
         target = target[:-1]
     while target.endswith('/.'):
