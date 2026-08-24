@@ -316,7 +316,7 @@ dx_write_lifecycle_control() {
 }
 
 __dx_lifecycle_path_mtime() {
-  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null
+  dx_path_mtime "$1"
 }
 
 __dx_lifecycle_control_lock_try() {

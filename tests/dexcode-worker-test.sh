@@ -413,8 +413,7 @@ register_request="$(requests_for "/api/v1/workers" | head -1)"
 assert_contains "$register_request" "$CLI_TOKEN" "registration uses the CLI token"
 
 # The credential file must not be world-readable: it holds a bearer.
-perms="$(stat -f '%Lp' "$DEXCODE_WORKER_CONFIG_FILE" 2>/dev/null \
-  || stat -c '%a' "$DEXCODE_WORKER_CONFIG_FILE" 2>/dev/null)"
+perms="$(dx_path_mode "$DEXCODE_WORKER_CONFIG_FILE")"
 assert_eq "600" "$perms" "credential file is 0600"
 
 # Re-registering without --rotate keeps the credential already on disk.

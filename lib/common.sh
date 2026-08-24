@@ -46,6 +46,41 @@ DX_ZSHRC_SOURCE_PATTERN='dex(-cli)?/dx\.sh|DEX_DIR.*/dx\.sh'
 # shellcheck disable=SC2034  # consumed by the bin/ scripts above
 DX_ZSHRC_SOURCE_ACTIVE_PATTERN="^[[:space:]]*[^#[:space:]].*(${DX_ZSHRC_SOURCE_PATTERN})"
 
+# __dx_path_metadata <mode|mtime> <path>
+# Python's lstat contract is the same on macOS and Linux. Native stat flags
+# are not: GNU stat accepts BSD's -f flag as a different successful command.
+__dx_path_metadata() {
+  local field="$1" target="$2"
+  python3 - "$field" "$target" <<'PY'
+import os
+import stat
+import sys
+
+field, target = sys.argv[1:]
+try:
+    metadata = os.lstat(target)
+except OSError:
+    raise SystemExit(1)
+
+if field == "mode":
+    print(format(stat.S_IMODE(metadata.st_mode), "o"))
+elif field == "mtime":
+    print(int(metadata.st_mtime))
+else:
+    raise SystemExit(2)
+PY
+}
+
+# dx_path_mode <path> — print the path's octal permission bits.
+dx_path_mode() {
+  __dx_path_metadata mode "$1"
+}
+
+# dx_path_mtime <path> — print the path's modification time as epoch seconds.
+dx_path_mtime() {
+  __dx_path_metadata mtime "$1"
+}
+
 # dx_repo_root — print the *main* repo toplevel or return 1
 # If cwd is inside a dex worktree (.dex/worktrees/<name>/...),
 # returns the main repo root, not the worktree root. This prevents dx
