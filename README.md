@@ -57,6 +57,9 @@ repo memory.
 ```text
 dx 1234
   |
+  |-- Phase 0: Setup
+  |     Resolve the task, create or select the workspace, and prepare the branch.
+  |
   |-- Phase 1: Plan
   |     Explore the ticket and codebase, propose an approach, wait for approval.
   |
@@ -77,8 +80,9 @@ dx 1234
 ```
 
 The important piece is the audit loop. When Claude tries to stop, Dex's Stop hook
-checks the phase state and injects the next required audit. Only a passing phase
-can advance. Review waves have their own clean-pass counter: a wave that finds
+checks the phase state and injects the next required audit. Normal gate
+advancement requires the generated, generation-bound receipt for that phase.
+Review waves have their own clean-pass counter: a wave that finds
 and fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
 fresh full-scope review before Phase 4 can start. Before Phase 3, the
 implementation agent selects `small`, `normal`, or `complex`. The default
@@ -95,6 +99,12 @@ default branch's `## Review Policy` table in `.dex/dex.md`. Values must be
 between 1 and 30 and satisfy `small <= normal <= complex`. Dex ignores policy
 edits made only on the candidate branch. `DEX_REVIEW_CLEAN_PASSES` can raise the
 resolved gate for one run but cannot lower it.
+
+Phase names describe the default workflow, not publishing permissions. An agent
+may commit, push, or open and update a PR whenever that helps the work. A direct
+human instruction can pause or stop Dex, mark the current phase done, or jump to
+another phase; Dex records skipped and waived outcomes separately from passed
+gates.
 
 The clean-pass bookkeeping is designed to stop a review loop drifting into a
 false pass — wrong scope, changed criteria, a reused result, a lost finding —
@@ -121,6 +131,9 @@ dxreviewloop               # Resolve risk (or honor an override), then review to
 dxcomplete                 # Resume PR completion for the current branch
 dx provider current        # Show active agent/provider/model resolution
 dx control pause           # Pause, stop, or hand control back to a running lifecycle
+dx sessions list           # List trusted lifecycle sessions in this repository
+dx sessions doctor         # Diagnose inconsistent, dead, or unsafe session state
+dx test                    # Test Dex here, or verify another initialized project
 dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
 ```
@@ -254,9 +267,9 @@ reviews pass.
 
 ## Contributing
 
-Verify changes with `bash tests/check.sh` (shellcheck plus syntax checks) and
-`bash tests/run-all.sh` (the full test suite). Both run in CI on Linux and
-macOS. `dx.sh` is zsh-only; `lib/`, `hooks/`, and `bin/` must stay
+Verify changes with `dx test dex` (static checks followed by the manifest test
+suite). CI runs static checks on Linux and test shards on Linux and macOS.
+`dx.sh` is zsh-only; `lib/`, `hooks/`, and `bin/` must stay
 bash-compatible down to bash 3.2, which is what macOS ships. See
 [AGENTS.md](AGENTS.md) for conventions.
 

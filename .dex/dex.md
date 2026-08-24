@@ -15,12 +15,12 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 | Check | Command | Scope |
 |-------|---------|-------|
 | Lint + syntax | `bash tests/check.sh` | shellcheck, `zsh -n dx.sh`, `bash -n` for lib/hooks/bin/tests, `py_compile`, inline-Python syntax, bare test assertions, zsh reserved names, `node --check` |
-| Test | `bash tests/run-all.sh` | Whole suite, parallel, per-test timeout |
+| Test | `bash tests/run-all.sh` | Manifest-driven suite with declared lanes, platforms, timeouts, and isolation |
 | Test (focused) | `bash tests/<name>-test.sh` | Single surface |
 | Format | N/A | No formatter configured |
 | Typecheck | N/A | Not applicable (shell/Python) |
 | Generate | N/A | No code generation |
-| All | `bash tests/check.sh && bash tests/run-all.sh` | What CI runs |
+| All | `dx test dex` | Static checks followed by the full Dex suite |
 
 ## Review Policy
 
@@ -32,15 +32,15 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 
 ## Project Structure
 ```
-dx.sh                Main shell functions (zsh only, ~3700 lines)
+dx.sh                Main shell functions (zsh only)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
-bin/                 CLI scripts: install, uninstall, init, uninit, config, control, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
+bin/                 CLI scripts: install, uninstall, init, uninit, config, control, sessions, test, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
 docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (8 rules)
-lib/                 Shared shell libraries (common.sh sources the other 23,
-                     including the lock, review, and controller modules)
+lib/                 Shared shell libraries sourced by common.sh, including
+                     completion, lock, review, session catalog/runtime, and controller modules
 prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (0-6, two Phase 3 variants,
                      plus prompt-loop)

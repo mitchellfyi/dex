@@ -25,12 +25,12 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks, guard handler, shared shell parser
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (26 modules sourced by common.sh; see the module table below)
+lib/                 Shared shell libraries sourced by common.sh; see the module table below
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (0-6 + prompt-loop)
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
-dx.sh                Main shell functions (zsh only, ~3700 lines)
+dx.sh                Main shell functions (zsh only)
 settings.json        Hook definitions template
 install.sh           Quick-start installer (delegates to bin/install.sh)
 ```
@@ -250,7 +250,20 @@ Hooks defined in `settings.json`, referenced by paths to Dex scripts:
 
 ### Phase audit loops
 
-When `DEX_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max phase-audit iterations (default 30) are reached. For `dx` lifecycles, the hook advances phases inside the same Claude session by updating phase state/config and injecting the next phase instructions. Phase 1 is gated by `.phase-1.started` / `.phase-1.ready` markers from `dxplan`; the hook does not count plan audit iterations or reveal the completion signal until the approved-plan marker and strict review-criteria artifact exist, then seals the artifact's canonical hash. Phase 3 uses `.phase-3.busy` while `/dxreviewloop` is waiting on a review wave; the hook does not count audit iterations during that wait.
+When `DEX_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit and injects a
+phase-specific audit prompt. Normal gate advancement requires the exact
+generation-bound completion receipt the hook authorized for that session and
+phase; a bare `.complete` marker is not authorization. A direct human `done` or
+`jump` records a waiver or skip instead of claiming the gate passed. The loop
+stops for intervention after its configured audit limit, which defaults to 30.
+For `dx` lifecycles, the hook advances phases inside the same Claude session by
+updating phase state/config and injecting the next phase instructions. Phase 1
+is gated by `.phase-1.started` / `.phase-1.ready` markers from `dxplan`; the
+hook does not count plan audit iterations or expose the receipt command until
+the approved-plan marker and strict review-criteria artifact exist, then seals
+the artifact's canonical hash. Phase 3 uses `.phase-3.busy` while
+`/dxreviewloop` is waiting on a review wave; the hook does not count audit
+iterations during that wait.
 
 The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. The trusted default-branch policy maps that tier to a consecutive-clean requirement; its defaults are 3, 6, and 9, respectively. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and trusted policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. The loop has no routine maximum and pauses on changed or partially covered criteria, residual findings, blockers, churn, invalid results, or provider failure.
 
@@ -272,11 +285,11 @@ formatter; verification is static checks plus the test suite.
 | Check | Command | Notes |
 |-------|---------|-------|
 | Static | `bash tests/check.sh` | `zsh -n` on the zsh files, `bash -n` plus `shellcheck -S warning` on every other shell file the repo ships (`lib/`, `hooks/`, `bin/`, `tests/`, and `research/` including the scenario rubrics), `py_compile`, the embedded-Python, bare-assertion, and zsh-reserved-name checks, `node --check`. Optional tools are skipped with a notice. |
-| Tests | `bash tests/run-all.sh` | Runs every `tests/*-test.sh` in parallel with a per-test timeout, then the serial lane. Filter with `bash tests/run-all.sh review worktree`. |
+| Tests | `bash tests/run-all.sh` | Runs the tests registered in `tests/manifest.tsv` with their declared lane, platform, timeout, and isolation. Filter with `bash tests/run-all.sh review worktree`. |
 | One test | `bash tests/<name>-test.sh` | For iterating on a single surface. |
 
-Both commands run in CI (`.github/workflows/ci.yml`) on Linux and macOS for
-every push to `main` and every pull request.
+CI runs static checks on Linux and the manifest test shards on Linux and macOS
+for every push to `main` and every pull request.
 
 Run `bash tests/check.sh` before committing, and at minimum the tests covering
 the surface you changed. The review-loop suites are slow (10+ minutes each);
@@ -285,18 +298,18 @@ the surface you changed. The review-loop suites are slow (10+ minutes each);
 ### The serial lane
 
 A test whose assertion is a wall-clock bound cannot share the machine with
-seven others. `guards-test` under a full parallel batch took 541s and reported
-29 false positives, because every guard has a 2s evaluation budget and a
-detector that blows it is skipped. Such a test declares itself:
+several others. Put it in the `serial` lane in `tests/manifest.tsv`. A test may
+also document the reason near its shebang:
 
 ```bash
 # dex-test-lane: serial
 # <why this one measures time>
 ```
 
-`tests/run-all.sh` reads that from the head of the file and runs those last,
-one at a time, once the parallel batch has finished. The marker lives with the
-test, so adding one does not mean editing the runner.
+`tests/manifest.tsv` is authoritative. `service` and `serial` tests run
+exclusively; `fast` and `slow` tests may run in parallel. If a legacy
+`# dex-test-lane:` marker is present, the runner verifies that it agrees with
+the manifest instead of using it to select the lane.
 
 Reach for it only when a bound is genuinely about elapsed time. A slow test is
 not a serial test — the lane is not a place to hide flakiness that has another
@@ -371,10 +384,8 @@ leaving the runner with "FAIL(1)" over an empty log.
 
 ### Modularizing large scripts
 
-`dx.sh` is the largest shell file (~3700 lines), ahead of `lib/dexcode.sh`,
-`bin/maintain.sh`, and `lib/review.sh` at roughly 2400-2600 each. When adding
-shared or self-contained logic, prefer extracting it into `lib/` modules. The
-pattern:
+`dx.sh` is the largest shell file. When adding shared or self-contained logic,
+prefer extracting it into `lib/` modules. The pattern:
 
 **When to extract:**
 - Same logic appears in 2+ functions → extract to `lib/`
@@ -473,7 +484,7 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DEX_LOOP_ACTIVE` | Enable phase audit loop | unset |
 | `DEX_LOOP_PHASE` | Current phase (1-6 or "prompt-loop") | unset |
 | `DEX_PHASE_HANDOFF` | Same-session phase handoff marker (`inline` for `dx`) | unset |
-| `DEX_LOOP_PROMISE` | Completion signal string | unset |
+| `DEX_LOOP_PROMISE` | Human-readable completion acknowledgement; the generated receipt command carries authorization | unset |
 | `DEX_LOOP_MAX_ITERATIONS` | Max loop iterations | 30 |
 | `DEX_PHASE_TIMEOUT` | Seconds any one phase may run; `0` disables it | `0` (the session budget covers it) |
 | `DEX_PHASE_<N>_TIMEOUT` | Same, for one phase only (e.g. `DEX_PHASE_2_TIMEOUT=3600`); wins over `DEX_PHASE_TIMEOUT` | unset |

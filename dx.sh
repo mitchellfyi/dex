@@ -2694,7 +2694,7 @@ __dx_show_header() {
 unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/null
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
-    test config provider run control research install uninstall uninit status \
+    test config provider run control sessions research install uninstall uninit status \
     reload help revert log refine
 }
 

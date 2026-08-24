@@ -22,7 +22,12 @@ rewrite can never bypass a guard.
 
 ## Phase Audit Loops
 
-When `DEX_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit, injects a phase-specific audit prompt, and loops until a `.complete` signal file is written or max iterations (default 30) are reached.
+When `DEX_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit and injects a
+phase-specific audit prompt. Normal gate advancement requires the exact
+generation-bound completion receipt authorized for that session and phase. A
+bare `.complete` marker does not authorize advancement. Direct human jumps and
+waivers are recorded separately from passed gates. The loop pauses for
+intervention after its configured audit limit, which defaults to 30.
 
 Phases: Plan → Implement → Review → Verify & Commit → PR → Complete
 
