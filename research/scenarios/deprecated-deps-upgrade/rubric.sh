@@ -51,16 +51,40 @@ rubric_test_quality() {
   local ws="$1"
   local score=30
 
+  # The tests are the safety net that proves src still works after the
+  # migration, so nothing here can be awarded once they are gone. Deleting them
+  # all used to score 90 — ten points above the untouched seed — because `npm
+  # test` finds no test files and exits 0, and the deletions counted as "the
+  # tests were updated".
+  #
+  # Counting declared cases rather than files, because emptying a file is the
+  # same cheat with the file left in place: it keeps the file count, still reads
+  # as "the tests were updated", and still exits 0.
+  #
+  # One pattern for both sides, spelled without \b: git grep's ERE does not
+  # support it and matches nothing rather than complaining, while BSD grep on
+  # disk honours it — so the two counts silently disagreed and the guard never
+  # fired. Written out longhand, both agree, and neither counts `wait(`.
+  local case_pattern='(^|[^A-Za-z0-9_])(test|it)\('
+  local cases_before cases_now
+  cases_before=$(cd "$ws" && git grep -hoE "$case_pattern" HEAD -- tests 2>/dev/null | wc -l | tr -d ' ')
+  cases_now=$(grep -rhoE "$case_pattern" "$ws/tests" 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$cases_now" -lt "$cases_before" ]]; then
+    echo "$score"
+    return 0
+  fi
+
   local changed_tests
   changed_tests=$(cd "$ws" && git diff --name-only HEAD -- tests 2>/dev/null | wc -l | tr -d ' ')
   if [[ "$changed_tests" -gt 0 ]]; then
     score=$((score + 20))
   fi
+  # 50, not 40: the ten points used to come from grepping the tests for
+  # "v5|connect|async|promise", and the seed's own `async () =>` matched every
+  # time. The tests reach the library through src and never name it, so there
+  # was no version of that pattern this scenario could answer.
   if _run_tests "$ws"; then
-    score=$((score + 40))
-  fi
-  if grep -R "v5\\|connect\\|async\\|promise" "$ws/tests" >/dev/null 2>&1; then
-    score=$((score + 10))
+    score=$((score + 50))
   fi
 
   [[ $score -gt 100 ]] && score=100
