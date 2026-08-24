@@ -1,4 +1,4 @@
-# Managed by DexCode template dependabot-guard@1.2.0. Edit the template, not this file.
+# Managed by DexCode template dependabot-guard@1.3.0. Edit the template, not this file.
 #
 # What this does, and deliberately does not do.
 #
@@ -60,10 +60,59 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # DexCode's own files are published by DexCode and verified byte for
+      # byte before a planning run is given its specification. An action pin
+      # inside dexcode_plan.yml is part of that published content, so merging
+      # Dependabot's bump of it changes the checksum, marks the installation
+      # drifted, and every planning run afterwards is refused with a bare 401.
+      #
+      # The pin is DexCode's to move, in a template release. Not this
+      # repository's, and not one dependency at a time.
+      - name: Check whether this touches DexCode's managed files
+        id: managed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          touched="$(gh pr view "${PR_NUMBER}" --json files \
+            --jq '[.files[].path | select(test("^\\.github/workflows/dexcode_|^\\.dex/"))] | join(", ")')"
+          if [ -n "${touched}" ]; then
+            echo "touched=true" >> "${GITHUB_OUTPUT}"
+            echo "paths=${touched}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "touched=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Leave a DexCode-managed file for a template release
+        if: steps.managed.outputs.touched == 'true'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PATHS: ${{ steps.managed.outputs.paths }}
+        run: |
+          set -euo pipefail
+          if ! output="$(gh label create "dexcode:managed-file" \
+                --color "0E8A16" \
+                --description "Changes a DexCode-managed file — update the template instead" 2>&1)"; then
+            case "${output}" in
+              *"already exists"*) : ;;
+              *) echo "::error::Could not create the label: ${output}"; exit 1 ;;
+            esac
+          fi
+          if ! gh pr view "$PR_URL" --json labels --jq '[.labels[].name]' | grep -q "dexcode:managed-file"; then
+            gh pr edit "$PR_URL" --add-label "dexcode:managed-file"
+            gh pr comment "$PR_URL" --body "DexCode will not merge this: it changes \`${PATHS}\`, which DexCode publishes and verifies byte for byte before each planning run. Merging it would mark this repository's installation as drifted and every planning run would then be refused. The pin moves in a DexCode template release instead."
+          fi
+          echo "::notice::Left alone: changes DexCode-managed ${PATHS}"
+
       - name: Enable auto-merge for a patch or minor update
         if: |
+          steps.managed.outputs.touched != 'true' && (
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
-          steps.meta.outputs.update-type == 'version-update:semver-minor'
+          steps.meta.outputs.update-type == 'version-update:semver-minor')
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -95,7 +144,9 @@ jobs:
           echo "$output"
 
       - name: Leave a major update for a person
-        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        if: |
+          steps.managed.outputs.touched != 'true' &&
+          steps.meta.outputs.update-type == 'version-update:semver-major'
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -146,7 +197,7 @@ jobs:
             --author "app/dependabot" \
             --state open \
             --limit 100 \
-            --json number,title,body,labels,autoMergeRequest \
+            --json number,title,body,labels,files,autoMergeRequest \
             > /tmp/dexcode-dependabot.json
 
           # Set when a pull request could not be queued for a reason that is
@@ -173,6 +224,28 @@ jobs:
             fi
             if [ "${labelled}" = "true" ]; then
               echo "#${number}: already labelled for review"
+              continue
+            fi
+
+            # DexCode publishes its own files and verifies them byte for byte
+            # before each planning run, so merging a bump inside one marks the
+            # installation drifted and every run afterwards is refused. Same
+            # rule as the event path above.
+            managed="$(echo "${pr}" | jq -r '[.files[].path | select(test("^\\.github/workflows/dexcode_|^\\.dex/"))] | join(", ")')"
+            if [ -n "${managed}" ]; then
+              if ! echo "${pr}" | jq -e '[.labels[].name] | index("dexcode:managed-file")' >/dev/null; then
+                if ! output="$(gh label create "dexcode:managed-file" \
+                      --color "0E8A16" \
+                      --description "Changes a DexCode-managed file — update the template instead" 2>&1)"; then
+                  case "${output}" in
+                    *"already exists"*) : ;;
+                    *) echo "::error::Could not create the label: ${output}"; exit 1 ;;
+                  esac
+                fi
+                gh pr edit "${number}" --add-label "dexcode:managed-file"
+                gh pr comment "${number}" --body "DexCode will not merge this: it changes \`${managed}\`, which DexCode publishes and verifies byte for byte before each planning run. Merging it would mark this repository's installation as drifted and every planning run would then be refused. The pin moves in a DexCode template release instead."
+              fi
+              echo "#${number}: left alone, changes DexCode-managed ${managed}"
               continue
             fi
 
