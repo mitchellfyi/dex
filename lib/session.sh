@@ -1107,8 +1107,13 @@ dx_record_session_branch() {
 # dx_cleanup_session <session_id>
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
 dx_cleanup_session() {
-  local sid="$1"
+  local sid="$1" completion_revoke_result=0
   dx_session_id_valid "$sid" || return 2
+  if command -v dx_completion_cleanup >/dev/null 2>&1; then
+    if ! dx_completion_cleanup "$sid" 2>/dev/null; then
+      __dx_completion_recover_cleanup "$sid" 2>/dev/null || completion_revoke_result=1
+    fi
+  fi
   if [[ -d "$DX_LOOP_DIR" ]]; then
     dx_review_ledger_reset "$sid" 2>/dev/null || true
     rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
@@ -1121,7 +1126,7 @@ dx_cleanup_session() {
   if [[ -d "$DX_STATE_DIR" ]]; then
     rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null || true
   fi
-  return 0
+  return "$completion_revoke_result"
 }
 
 __dx_review_credit_session_from_path() {

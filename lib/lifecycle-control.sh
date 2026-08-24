@@ -83,19 +83,29 @@ dx_lifecycle_phase_min_audits() {
 # dx_lifecycle_detach <session_id> <reason> <source>
 # The shared detach sequence: record why, ask a running Phase 3 review child
 # to stop, mark the pause, and drop the activation/completion/iteration
-# markers so the loop cannot re-enter. The child-cancel request applies to
-# every detach deliberately — a detaching session must not leave an orphan
-# review wave editing files — including the one historical site that skipped
-# it.
+# markers so the loop cannot re-enter. Completion authorization is abandoned
+# first, so a delayed writer cannot become valid after resume. The child-cancel
+# request applies to every detach deliberately — a detaching session must not
+# leave an orphan review wave editing files — including the one historical site
+# that skipped it.
 dx_lifecycle_detach() {
-  local session_id="$1" reason="$2" detach_source="$3"
+  local session_id="$1" reason="$2" detach_source="$3" revoke_result=0
   dx_write_pause_state "$session_id" "$reason" "$detach_source" 2>/dev/null || true
   if [[ -f "$(dx_phase_busy_file "$session_id" 3)" ]]; then
     dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true
   fi
+  if ! dx_completion_abandon "$session_id" 2>/dev/null; then
+    __dx_completion_recover_cleanup "$session_id" 2>/dev/null || revoke_result=1
+  fi
   touch "$(dx_paused_file "$session_id")"
   rm -f "$(dx_active_file "$session_id")" \
-    "$(dx_complete_file "$session_id")" "$(dx_loop_file "$session_id")" 2>/dev/null || true
+    "$(dx_loop_file "$session_id")" 2>/dev/null || true
+  if [[ "$revoke_result" -ne 0 ]]; then
+    # An unhandled failure under `set -e` must not strand a caller-held control
+    # lock. Release is ownership-checked and is a no-op for unlocked callers.
+    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+  fi
+  return "$revoke_result"
 }
 
 dx_lifecycle_control_file() {
@@ -446,15 +456,19 @@ dx_pause_state_read() {
   dx_lifecycle_control_value "$snapshot" "$key"
 }
 
-# Remove a generic phase completion signal before publishing a new phase. A
-# consumed signal can be safely recreated after a failed publish; carrying it
-# across a phase boundary could falsely complete the next phase.
+# Compatibility entry point while callers migrate from the generic marker. The
+# one-argument form still reports successful cleanup so existing phase
+# transitions keep working. Remove it when every caller supplies a context and
+# generation; bare-marker authorization must fail closed after that migration.
 dx_consume_completion_receipt() {
-  local session_id="$1" complete_file
+  local session_id="${1:-}"
   dx_lifecycle_session_id_valid "$session_id" || return 1
-  complete_file=$(dx_complete_file "$session_id")
-  command rm -f "$complete_file" 2>/dev/null || return 1
-  [[ ! -e "$complete_file" && ! -L "$complete_file" ]]
+  if [[ $# -eq 1 ]]; then
+    dx_completion_abandon "$session_id"
+    return $?
+  fi
+  [[ $# -eq 5 ]] || return 2
+  dx_completion_consume "$@"
 }
 
 # dx_record_human_phase_outcomes <session_id> <current> <target> <action> <generation> <source> [recovery]

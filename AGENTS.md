@@ -25,7 +25,7 @@ bin/                 CLI scripts (install, init, config, status, etc.)
 docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
 hooks/               Claude Code hooks, guard handler, shared shell parser
   guards/            Built-in guard rules (markdown with YAML frontmatter)
-lib/                 Shared shell libraries (23 modules sourced by common.sh; see the module table below)
+lib/                 Shared shell libraries (24 modules sourced by common.sh; see the module table below)
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (0-6 + prompt-loop)
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
@@ -85,7 +85,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 ```
 
 Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`,
-`attribution.sh`, `codex.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
+`attribution.sh`, `codex.sh`, `completion.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
 `lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
 `provider.sh`, `review.sh`, `review-controller.sh`, `review-loop.sh`,
 `review-policy.sh`, `rtk.sh`, `run-spec.sh`, `session.sh`, `ui-capture.sh`,
@@ -396,6 +396,7 @@ pattern:
 | `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap | `dx_bootstrap_agent_tooling()`, `dx_install_safe_official_claude_plugins()`, `dx_install_openai_docs_mcp_servers()` |
 | `attribution.sh` | Commit/PR attribution installation, hook chaining, and restoration | `dx_install_repo_attribution()`, `dx_uninstall_repo_attribution()`, `dx_commit_attribution_message()` |
 | `codex.sh` | Codex CLI skill installation helpers | `dx_install_codex_skills()`, `dx_count_dex_skills()`, `dx_codex_dex_skills_complete()`, `dx_uninstall_codex_skills()` |
+| `completion.sh` | Generation-bound completion expectations, receipts, validation, and cleanup | `dx_completion_issue()`, `dx_completion_write_receipt()`, `dx_completion_consume()` |
 | `dexcode.sh` | DexCode login, org connections, run registration/sync, artifact upload | `dx_dexcode_login()`, `dx_dexcode_command()`, `dx_dexcode_prepare_run_sync()`, `dx_dexcode_upload_artifact()` |
 | `events.sh` | Run IDs, local run directories, JSONL event journals, redacted logs, artifact manifests, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_log_append()`, `dx_run_register_artifact()`, `dx_run_write_summary()` |
 | `factory.sh` | Optional Dex Factory event sync over HTTP | `dx_factory_sync_pending_events()`, `dx_factory_events_endpoint()`, `dx_factory_sync_requested()` |
