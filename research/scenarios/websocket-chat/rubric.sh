@@ -152,16 +152,6 @@ _chat_msg() {
   esac
 }
 
-# Helper: build a leave message given a format index
-_leave_msg() {
-  local fmt="$1"
-  case "$fmt" in
-    1) echo "{\"action\":\"leave\"}" ;;
-    4) echo "{\"command\":\"leave\"}" ;;
-    *) echo "{\"type\":\"leave\"}" ;;
-  esac
-}
-
 # Helper: build a list_rooms message given a format index
 _list_rooms_msg() {
   local fmt="$1"

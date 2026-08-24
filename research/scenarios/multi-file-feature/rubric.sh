@@ -48,53 +48,6 @@ _resolve_class_js() {
 JSEOF
 }
 
-# ── Helper: adaptive addItem that tries multiple calling conventions ────────
-# Handles 3 DX architecture patterns:
-#   A) Cart stores product info directly: addItem({id,name,price,category}, qty) or addItem(id,name,price,qty,cat)
-#   B) Cart fetches from inventory catalog: addItem(productId, qty) after inv.addProduct({id,name,priceInCents,category,stock})
-_add_item_js() {
-  # Args: cart_var, id, name, price_cents, quantity, category
-  # Also uses _inv variable if set (for pattern B)
-  local cart="$1" id="$2" name="$3" price="$4" qty="$5" cat="$6"
-  cat <<JSEOF
-    // Try multiple addItem conventions
-    (function(c) {
-      // Convention 1: addItem({...with qty in object...}, qty) — covers both destructured and separate-param patterns
-      try { c.addItem({id:'${id}',name:'${name}',price:${price},priceInCents:${price},priceCents:${price},quantity:${qty},category:'${cat}'},${qty}); return; } catch(e) {}
-      // Convention 2: addItem(id, name, price, quantity, category) — individual params
-      try { c.addItem('${id}','${name}',${price},${qty},'${cat}'); return; } catch(e) {}
-      // Convention 4: addItem(productId, quantity) — inventory-catalog pattern
-      try { c.addItem('${id}',${qty}); return; } catch(e) {}
-      throw new Error('No addItem convention worked');
-    })(${cart});
-JSEOF
-}
-
-# Helper: set up inventory with a product (for inventory-catalog pattern)
-_setup_inventory_product_js() {
-  # Args: inv_var, id, name, price_cents, category, stock
-  local inv="$1" id="$2" name="$3" price="$4" cat="$5" stock="$6"
-  cat <<JSEOF
-    // Register product in inventory (needed for catalog-pattern carts)
-    (function(inv) {
-      const addProd = inv.addProduct || inv.registerProduct || inv.register;
-      const addStock = inv.addStock || inv.add || inv.setStock || inv.restock;
-      if (addProd) {
-        // Conv A: addProduct({id,name,priceInCents,...,stock}) — object
-        try { addProd.call(inv, {id:'${id}',name:'${name}',priceInCents:${price},price:${price},category:'${cat}',stock:${stock}}); return; } catch(e) {}
-        // Conv B: addProduct(id, name, price, category, stock) — individual params
-        try { addProd.call(inv, '${id}', '${name}', ${price}, '${cat}', ${stock}); return; } catch(e) {}
-        // Conv C: addProduct(id, stock) — just id and quantity
-        try { addProd.call(inv, '${id}', ${stock}); return; } catch(e) {}
-      }
-      // Fallback: just add stock by ID
-      if (addStock) {
-        try { addStock.call(inv, '${id}', ${stock}); return; } catch(e) {}
-      }
-    })(${inv});
-JSEOF
-}
-
 rubric_correctness() {
   local ws="$1"
   local score=0
