@@ -1048,7 +1048,13 @@ def destructive_rm_target(token, depth=0):
         return True
     if target != '/':
         target = target.rstrip('/')
-    return target in {'/', '~', '~+', '$HOME', '${HOME}', '$PWD', '${PWD}', '.', '*'}
+    if target in {'/', '~', '~+', '$HOME', '${HOME}', '$PWD', '${PWD}', '.', '*'}:
+        return True
+    # `~` and `~+` were covered and `~name` was not, though it is the same
+    # expansion reaching another account's home — `rm -rf ~root` deletes
+    # /var/root here and /root on Linux. A `~name/sub` path is a subdirectory
+    # and stays out, the way `$HOME/sub` does.
+    return bool(re.match(r'^~[A-Za-z_][A-Za-z0-9_.-]*(?:/\*)?$', target))
 
 
 def literal_rm_target(token, variables=None, cwd=None):

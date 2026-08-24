@@ -382,6 +382,15 @@ assert_destructive_blocks "home, reached by descending and climbing back" \
   'rm -rf $HOME/projects/..'
 assert_destructive_blocks "everything beside home" \
   'rm -rf $HOME/../*'
+# `~` and `~+` were covered and `~name` was not, though it is the same
+# expansion reaching another account's home.
+assert_destructive_blocks "another account's home" \
+  'rm -rf ~root'
+assert_destructive_blocks "everything in another account's home" \
+  'rm -rf ~root/*'
+assert_destructive_clean "a subdirectory of another account's home" \
+  'rm -rf ~root/Library/Caches'
+
 # `-exec rm -rf {} +` was caught by resolving the nested command; `-delete`
 # reaches the same end with no nested command to resolve.
 assert_destructive_blocks "find deleting everything under root" \
