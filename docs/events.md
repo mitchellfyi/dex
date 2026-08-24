@@ -92,7 +92,7 @@ reading agent transcripts.
 
 | Event | When emitted | Data fields |
 |-------|--------------|-------------|
-| `review.tier.assessed` | After a fresh read-only assessor returns a valid risk decision | `tier`, `source`, `reason_codes` |
+| `review.tier.assessed` | After a fresh read-only assessor returns a valid risk decision | `tier`, `source`, `reason_codes`, `floor`, `floor_reason` |
 | `review.tier.selected` | Before the first review wave | `tier`, `profile`, `required_clean`, `source`, `reason_codes`, `policy_small`, `policy_normal`, `policy_complex` |
 | `review.pass.started` | Immediately before a fresh wave starts | `pass_id`, `tier`, `profile`, `iteration`, `clean_before`, `required_clean`, `scope_fingerprint` |
 | `review.pass.finished` | After the wave result is validated and counters update | `pass_id`, `tier`, `profile`, `iteration`, `result_kind`, `result_reason`, `findings`, `duration_seconds`, `clean_before`, `clean_after`, `scope_changed`, `working_changed`, `provider_exit`, `terminal_reason`, `evidence_hash`, `deterministic_checks`, `verifier`, `coverage`, `evidence_valid`; validated results also include the evidence finding and fix counts |

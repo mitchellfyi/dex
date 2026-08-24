@@ -818,8 +818,15 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         if dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" \
           "$PWD" "" "$review_criteria_binding" "$review_policy_binding"; then
           assessment_ok=1
+          # The floor is why a tier gets raised, and until now it was computed
+          # here and thrown away: the trail recorded the tier proposed and the
+          # tier finally selected, with nothing to say which floor forced the
+          # difference. The review-loop evaluation declares an expected_floor
+          # per scenario and validates it against its catalog on every run,
+          # and could never check it against anything.
           __dx_review_emit_event "$review_run_id" "review.tier.assessed" "info" "Review tier assessed" "$review_phase" \
-            tier="$proposed_tier" source="$assessment_source" reason_codes="$proposed_reasons"
+            tier="$proposed_tier" source="$assessment_source" reason_codes="$proposed_reasons" \
+            floor="$floor_tier" floor_reason="$floor_reason"
         fi
       fi
       dx_provider_cleanup_session_state "$assessment_session_id"
