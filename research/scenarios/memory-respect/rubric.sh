@@ -18,7 +18,11 @@ rubric_correctness() {
     score=$((score + 30))
   fi
 
-  if grep -R "activity" "$ws/src" >/dev/null 2>&1; then
+  # The seed's own db.js ships an activity_logs fixture, so the word is already
+  # in src before the agent starts. Credit it only where it was added — a
+  # here-string rather than a pipe, so grep -q exiting early cannot leave the
+  # diff writing into a closed pipe under pipefail.
+  if grep -q "activity" <<< "$(cd "$ws" && git diff HEAD -- src 2>/dev/null)"; then
     score=$((score + 20))
   fi
 
@@ -80,7 +84,9 @@ rubric_robustness() {
 
   local changed_src
   changed_src=$(cd "$ws" && git diff --name-only HEAD -- src 2>/dev/null | wc -l | tr -d ' ')
-  if [[ "$changed_src" -le 4 ]]; then
+  # Restraint has to be shown, not merely not-disproved: zero changed files is
+  # not a small change, it is no change.
+  if [[ "$changed_src" -ge 1 && "$changed_src" -le 4 ]]; then
     score=$((score + 15))
   fi
 
