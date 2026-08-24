@@ -1,6 +1,10 @@
 # Autonomous Mode (Phase Audit Loops)
 
-Dex runs the ticket lifecycle as a series of phases, each with its own quality-gated audit loop. When Claude tries to stop during a phase, the Stop hook injects a phase-specific audit prompt that critically reviews the work done. The loop continues until the audit is satisfied and the completion signal is detected.
+Dex runs the ticket lifecycle as a series of phases, each with its own
+quality-gated audit loop. When Claude tries to stop during a phase, the Stop
+hook injects a phase-specific audit prompt that critically reviews the work.
+Normal advancement requires the exact generation-bound completion receipt Dex
+authorized for that session and phase.
 
 ## How It Works
 
@@ -22,7 +26,9 @@ Claude tries to stop
   |
   v
 Stop hook (phase-loop.sh) intercepts:
-  - Checks for .complete signal file -> if found, advances inline or exits final session
+  - Applies any direct human pause, stop, waiver, or phase-jump request first
+  - Validates the exact completion context and generated receipt
+  - If the receipt is valid -> consumes it, then advances inline or exits
   - If Phase 1 plan approval marker is missing -> blocks without counting an audit iteration
   - Checks iteration count -> if max reached, pauses for intervention
   - Checks min audit iterations -> if below threshold, blocks WITHOUT completion instructions
@@ -33,7 +39,7 @@ Claude reviews its own work critically (audit loop)
   - Finds issues -> fixes them -> tries to stop -> hook re-injects audit
   - Finds nothing, below min iterations -> tries to stop -> hook blocks, no completion yet
   - Finds nothing, at/above min iterations -> hook provides completion instructions
-  - Writes .complete file + outputs promise -> hook hands off to next phase
+  - Runs the exact receipt command + outputs the acknowledgement -> hook hands off
   |
   v
 Claude continues with the next phase in the same session
@@ -249,16 +255,22 @@ Claude receives it through `claude --model`, while Codex receives it through
 Dex's Codex wrapper as `codex exec --model`.
 
 **From inside an existing Claude Code session** (via `/dxloop` skill):
-The `/dxloop` skill creates an `.active` signal file in `~/.claude/.dex-loops/`. The Stop hook checks for this file as an alternative to the environment variable, since env vars can't be injected into a running process.
+The skill prepares a shell-safe terminal command for the dedicated `dxloop`
+wrapper. It does not claim that it can retrofit hook ownership into the current
+Claude session, and it does not start a nested provider. Run the returned
+command in a terminal to start the loop with its own session ID and generated
+completion context.
 
-```bash
-# The /dxloop skill does this internally:
-touch "$(dx_active_file "$(dx_session_id)")"
-```
+The wrappers create and retire `.active`, `.config`, and completion receipt
+state. Do not create or remove those files by hand.
 
-The `.active` file is cleaned up automatically when the loop completes (`.complete` file found) or reaches max iterations.
-
-**Ownership.** Dex session ids are derived from the repo + worktree/branch path, so two Claude sessions opened in the same checkout resolve the same id. To keep a loop from capturing bystander sessions, the Stop hook records the owning Claude session id (from the hook payload) in an `.owner` file next to `.active`. Env-activated sessions (`DEX_LOOP_ACTIVE=1` with an explicit `DEX_SESSION_ID`) own their loop and (re)claim it on every stop; file-activated sessions claim only when unclaimed and otherwise stay inert. Wrappers clear the claim before each launch so relaunch/`--resume` re-claims cleanly.
+**Ownership.** Dex session ids are derived from the repo + worktree/branch path,
+so two Claude sessions opened in the same checkout resolve the same id. To keep
+a loop from capturing bystander sessions, the Stop hook records the owning
+Claude session id from the hook payload in an `.owner` file. Wrapper-launched
+Claude sessions have an explicit `DEX_SESSION_ID` and reclaim that ownership on
+each stop. Direct Codex runs do not publish an unowned `.active` marker; their
+wrapper validates and consumes the receipt itself.
 
 **Review-wave passes.** Sessions launched with `DEX_REVIEW_PASS_ACTIVE=1`
 (`/dxreviewloop` waves) run under a pass-scoped session id
@@ -398,9 +410,9 @@ startup commands.
 ### Phase Audit Iterations
 
 The Stop-hook audit defaults to 30 iterations per phase. When that limit is
-reached, the hook pauses the current phase and asks the agent to summarize the
-blocker. The `.complete` file is not written, so `dx --resume` continues from
-the same phase after intervention.
+reached, the hook revokes the current completion authorization, pauses the
+current phase, and asks the agent to summarize the blocker. `dx --resume`
+continues from the same phase with a fresh generation after intervention.
 
 Override with:
 
@@ -421,12 +433,31 @@ Even in autonomous mode, Claude stops and escalates to the user for:
 - 3+ failed attempts at the same fix (loop is stuck)
 - Scope changes that affect other tickets
 - Missing credentials/tooling or destructive git operations that require explicit approval
-- Max phase-audit iterations without a completion signal
+- Max phase-audit iterations without an accepted completion receipt
 - Residual review findings, review blockers, or review churn
 
 ### Manual Override
 
 The user can always interrupt by providing input or pressing Ctrl+C. Phase state is saved so `dx 999` or `dx --resume` picks up where it left off.
+
+### Session Diagnostics
+
+The session catalog is read-only. It uses trusted state and runtime leases
+rather than file age to distinguish live, dead, corrupt, and unverifiable
+sessions:
+
+```bash
+dx sessions list
+dx sessions show ticket:999
+dx sessions doctor
+dx sessions list --all
+```
+
+`list`, `show`, and `doctor` default to the current repository and hide internal
+review children. `--include-children` exposes those children for diagnosis.
+Only `list` accepts `--all`, and it can report only repositories recoverable
+from trusted metadata or validated runtime records. These commands do not
+resume, pause, repair, or delete a session.
 
 ### PR-Linked Resumption
 
@@ -443,8 +474,12 @@ This is useful for one-off interventions (e.g., addressing a review comment) wit
 
 Loop state is stored in `~/.claude/.dex-loops/`:
 - `.state` — iteration count (e.g., `repo-myapp-123456789-worktree-ticket-999.state`)
-- `.complete` — completion signal, written by phase audit prompts or `/dxcomplete`
-- `.active` — activation signal for in-session `/dxloop` (alternative to `DEX_LOOP_ACTIVE` env var)
+- `.config` — canonical mode, purpose, phase, and completion generation for the current loop
+- `.completion-expectation` — private expected completion context and generation
+- `.completion-receipt.<generation>` — the exact generated receipt accepted once for that expectation
+- `.completion-lock` — persistent per-session coordination inode for completion issue, consume, and revocation
+- `.complete` — legacy compatibility marker; migrated contexts do not treat it as authorization
+- `.active` — wrapper-managed activation marker for Claude Stop-hook sessions
 - `.prompt` — original freeform task or `dxloop` prompt, re-injected during audits and kept outside the git checkout
 - `.handoff-mode` — marker that this `dx` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
@@ -494,8 +529,10 @@ Loop state is stored in `~/.claude/.dex-loops/`:
   for repeated/alternating churn detection; fingerprints are not passed to
   reviewers or telemetry
 - The session ID is derived from a stable repo key plus the worktree directory name (stable across branch renames and unique across repos)
-- Loop files are cleaned up on completion, by `dxrm`, and by `dxclean`
-- Old files (7+ days) are pruned by `dxclean`
+- Loop files are cleaned up on successful completion and by the workflow's
+  explicit session cleanup paths
+- `dxclean` still prunes an enumerated set of legacy file families older than
+  seven days; age alone is not a session-health verdict
 
 Phase state is stored in `~/.claude/.dex-phases/`:
 - One `.phase` file per worktree, tracking which phase is current (0-6; 7 = ticket complete)
@@ -505,6 +542,13 @@ Phase state is stored in `~/.claude/.dex-phases/`:
 - One `.interventions` file per lifecycle session, recording human control receipts for audit without storing prompt text
 - One `.phase-outcomes` file per lifecycle session — the durable terminal outcome ledger (completed/skipped/waived) behind the progress header symbols
 - One `.human-complete` file per lifecycle session when a human marked the lifecycle done, which preserves the workspace instead of cleaning it up
+- One `.meta` file per lifecycle or declared review child, with trusted
+  workspace and parent/child provenance used by the session catalog
+- One `.run-id` file linking the lifecycle to its durable journal under
+  `~/.dex/runs/`
+- One `.runtime` record while a provider-backed workflow owns the session,
+  plus a persistent `.runtime-lock` inode used to serialize ownership and
+  terminal status updates
 
 UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots, videos, traces, flow scripts, logs, and PR upload manifests stay out of git.
 
@@ -517,7 +561,7 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_LOOP_STALL_TIMEOUT` | `300` | Seconds between audit iterations before a stall is counted |
 | `DEX_LOOP_STALL_ESCALATE` | `3` | Consecutive stalls before the failure-recovery escalation prompt |
 | `DEX_LOOP_MIN_AUDITS` | (per-phase) | Min audit iterations before completion is authorized |
-| `DEX_LOOP_PROMISE` | `DEX_TICKET_COMPLETE` | Completion signal for the current phase |
+| `DEX_LOOP_PROMISE` | `DEX_TICKET_COMPLETE` | Human-readable completion acknowledgement; the generated receipt command carries authorization |
 | `DEX_LOOP_PROMPT` | (from file) | Audit prompt injected on each loop iteration |
 | `DEX_LOOP_PHASE` | (set by wrapper) | Current phase number (0-6) or `prompt-loop`, used to find audit file |
 | `DEX_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
