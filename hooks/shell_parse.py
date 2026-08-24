@@ -32,6 +32,7 @@ __all__ = [
     'DIRECT_SHELL_RUNNERS', 'ENV_OPTION_ARGS', 'EVAL_COMMANDS', 'HEREDOC_RE',
     'INLINE_BACKTICK_SUB_RE', 'INLINE_DOLLAR_SUB_RE', 'NICE_VALUE_OPTIONS',
     'NODE_VALUE_OPTIONS', 'PACKAGE_MANAGER_RUNNERS',
+    'PARAMETER_EXPANSION_ROUNDS',
     'PREFIX_WRAPPER_VALUE_OPTIONS', 'PRINTF_SPECIFIERS',
     'PYTHON_VALUE_OPTIONS', 'RUNNER_SHELL_VALUE_OPTIONS',
     'RUNNER_VALUE_OPTIONS', 'SHELLS', 'SHELL_COMMAND_KEYWORDS',
@@ -312,6 +313,20 @@ def apply_literal_variables(value, variables=None):
     return value
 
 
+PARAMETER_EXPANSION_ROUNDS = 6
+"""How many times to re-expand nested defaults.
+
+The default word is `[^}]*`, which cannot span an inner `${...}` — the nested
+`}` ends the match. So one pass over `${X:-${X:-rm}}` leaves `${X:-rm}`, still
+holding a variable reference, and the caller then treats the word as
+unresolvable and leaves it alone. The shell resolves it to `rm`.
+
+Re-running until the value stops changing resolves any nesting up to this
+bound. Past it the value still holds a reference and falls back to being left
+alone, which is the same answer as before for anything this deep.
+"""
+
+
 def apply_parameter_expansion_defaults(value):
     pattern = re.compile(r'\$\{[A-Za-z_][A-Za-z0-9_]*((?::?[-=+]))([^}]*)\}')
 
@@ -322,7 +337,12 @@ def apply_parameter_expansion_defaults(value):
             return word
         return match.group(0)
 
-    return pattern.sub(replace_parameter, value)
+    for _ in range(PARAMETER_EXPANSION_ROUNDS):
+        replaced = pattern.sub(replace_parameter, value)
+        if replaced == value:
+            break
+        value = replaced
+    return value
 
 
 def resolve_shell_path(path, variables=None, cwd=None):
