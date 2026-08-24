@@ -35,7 +35,13 @@ workspace_dir() { printf '%s/%s\n' "$WORKSPACES_DIR" "$1"; }
 json_write() { printf '%s\n' "$2" > "$1"; }
 
 # One weight only, so the total is whichever value correctness reported.
+# score_scenario reads all six (research/lib/score.sh:86), which shellcheck
+# cannot see from here: it does not follow the source above without -x, and -x
+# earns nothing else on this tree — every other file is already clean under it,
+# and it catches no defect a plain run misses.
+# shellcheck disable=SC2034
 W_CORRECTNESS=100 W_TEST_QUALITY=0 W_ROBUSTNESS=0
+# shellcheck disable=SC2034
 W_VERIFICATION=0 W_ISSUE_DETECTION=0 W_CODE_QUALITY=0
 
 make_scenario() {
