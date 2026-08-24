@@ -15,6 +15,7 @@ export HOME="$TMP_DIR/home"
 export CODEX_HOME="$HOME/.codex"
 export DEX_DIR="$ROOT"
 export DX_TOOL_DIR="$TMP_DIR/tools"
+export DX_RTK_INSTALL_DIR="$DX_TOOL_DIR/rtk/bin"
 mkdir -p "$CODEX_HOME" "$HOME/.local/bin" "$DX_TOOL_DIR/rtk/bin"
 
 # shellcheck disable=SC1091
