@@ -27,6 +27,7 @@
 #   dx login                Connect this CLI to DexCode sync
 #   dx maintain             Run background maintenance or install workflow
 #   dx tools                Check or install Claude/Codex tooling bootstrap
+#   dx test [dex|project]   Run Dex checks or verify the current project
 #   dx run --spec <file>    Run from a structured headless run spec
 #   dx control <action>     Pause, stop, advance, jump, or resume a lifecycle
 #   dex                   Alias for dx
@@ -79,6 +80,7 @@ __dx_cli() {
     worker)    dx_worker_command "$@" ;;
     maintain)  bash "$DEX_DIR/bin/maintain.sh" "$@" ;;
     tools)     bash "$DEX_DIR/bin/tools.sh" "$@" ;;
+    test)      bash "$DEX_DIR/bin/test.sh" "$@" ;;
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
     provider)  dx_provider_command "$@" ;;
     run)       __dx_run_spec_cli "$@" ;;
@@ -143,6 +145,7 @@ __dx_cli() {
       echo "  dx worker           Register this machine and run DexCode-dispatched work"
       echo "  dx maintain         Run background maintenance or install the GitHub workflow"
       echo "  dx tools            Check or install Claude/Codex tooling bootstrap"
+      echo "  dx test             Run Dex checks or verify the current project"
       echo "  dx config           Configure integrations (ticket tracker, Figma, etc.)"
       echo "  dx provider         Configure provider/model execution profiles"
       echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
@@ -2366,7 +2369,7 @@ __dx_show_header() {
 unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/null
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
-    config provider run control research install uninstall uninit status \
+    test config provider run control research install uninstall uninit status \
     reload help revert log refine
 }
 
@@ -2451,7 +2454,7 @@ dx() {
     echo "       dx --from-pr <N>   Resume session linked to a PR"
     echo "       dx refine <N|description>  Refine a ticket before implementation"
     echo ""
-    echo "       dx init|sync|maintain|tools|config|provider|run|research|install|uninstall|uninit|status|reload|help"
+    echo "       dx init|sync|maintain|tools|test|config|provider|run|research|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -2535,7 +2538,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|config|provider|run|control|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|run|control|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
