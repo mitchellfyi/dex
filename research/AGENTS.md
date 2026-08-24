@@ -27,6 +27,9 @@ bash research/loop.sh --skip-llm-judge
 # Score every rubric against its own untouched seed
 bash research/seed-baseline.sh
 bash research/seed-baseline.sh long-refactor-inheritance
+
+# Compare those floors against the scores runs have actually reached
+python3 research/observed-range.py
 ```
 
 ### Reading a seed baseline
@@ -55,6 +58,15 @@ closer together than the numbers make them look.
 
 Run it when changing a rubric or a seed, and check that the floor moved the way
 you intended. A floor that rises means more of the score is being given away.
+
+`observed-range.py` answers the other half from `results/scores.tsv`: what the
+recorded runs did with the rest of the scale. Its last section is the one to
+read — dimensions that have never varied across every run on record. Those add
+a fixed offset to a scenario's total and no information. Several are deliberate,
+because a planning scenario declares `echo 30  # not applicable` for test
+quality; the rest are worth looking at. It is what turned up that
+`memory-respect` had never scored anything but 65 for correctness in six runs,
+20 of which was a string its own seed ships.
 
 It is not in `tests/run-all.sh`: most rubrics run `npm install` or `pip
 install`, and the suite is hermetic.
