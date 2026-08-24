@@ -297,6 +297,51 @@ docs: update'
 assert_sensitive_clean "a source file starting with the same letters as .env" \
   'src/environment.ts
 fix: thing'
+# A template is the one .env file a project is supposed to commit, and this
+# warned on every one of them.
+assert_sensitive_clean "an env template" \
+  '.env.example
+chore: document the settings'
+assert_sensitive_clean "an env sample" \
+  '.env.sample
+chore: thing'
+assert_sensitive_clean "an env template, other spellings" \
+  '.env.template
+chore: thing'
+assert_sensitive_clean "a public key" \
+  'keys/id_rsa.pub
+chore: thing'
+# Files whose whole purpose is holding credentials.
+assert_sensitive_warns "an env file with an underscore suffix" \
+  '.env_production
+fix: thing'
+assert_sensitive_warns "an AWS-style credentials file" \
+  'aws/credentials
+fix: thing'
+assert_sensitive_warns "a netrc" \
+  '.netrc
+fix: thing'
+assert_sensitive_warns "an npmrc" \
+  '.npmrc
+fix: thing'
+assert_sensitive_warns "git credentials" \
+  '.git-credentials
+fix: thing'
+assert_sensitive_warns "a secrets file" \
+  'config/secrets.yml
+fix: thing'
+assert_sensitive_warns "a GCP service account key" \
+  'gcp/service-account-prod.json
+fix: thing'
+assert_sensitive_warns "a Java keystore" \
+  'android/keystore.jks
+fix: thing'
+assert_sensitive_warns "an Apple auth key" \
+  'AuthKey_ABC123.p8
+fix: thing'
+assert_sensitive_warns "an htpasswd file" \
+  'nginx/htpasswd
+fix: thing'
 
 # --- allow_pattern on a detector guard ---
 # It exempts a span, not the command. A command that pairs an exempted form
