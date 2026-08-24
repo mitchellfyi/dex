@@ -1,4 +1,4 @@
-# Managed by DexCode template dependabot-guard@1.3.0. Edit the template, not this file.
+# Managed by DexCode template dependabot-guard@1.3.1. Edit the template, not this file.
 #
 # What this does, and deliberately does not do.
 #
@@ -222,11 +222,6 @@ jobs:
               echo "#${number}: auto-merge already queued"
               continue
             fi
-            if [ "${labelled}" = "true" ]; then
-              echo "#${number}: already labelled for review"
-              continue
-            fi
-
             # DexCode publishes its own files and verifies them byte for byte
             # before each planning run, so merging a bump inside one marks the
             # installation drifted and every run afterwards is refused. Same
@@ -246,6 +241,17 @@ jobs:
                 gh pr comment "${number}" --body "DexCode will not merge this: it changes \`${managed}\`, which DexCode publishes and verifies byte for byte before each planning run. Merging it would mark this repository's installation as drifted and every planning run would then be refused. The pin moves in a DexCode template release instead."
               fi
               echo "#${number}: left alone, changes DexCode-managed ${managed}"
+              continue
+            fi
+
+            # After the managed-file check, not before it. A pull request
+            # already carrying dexcode:major-update short-circuited here and
+            # never got the managed-file label, so the one reason that must
+            # never be reviewed away — merging it breaks every planning run —
+            # was missing from exactly the pull requests a person is most
+            # likely to read and merge anyway.
+            if [ "${labelled}" = "true" ]; then
+              echo "#${number}: already labelled for review"
               continue
             fi
 
