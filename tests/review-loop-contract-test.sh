@@ -215,11 +215,19 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
       print -r -- 3 > "$(dx_state_file "$parent_session")"
       print -r -- "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise human review control.\"],\"acceptance_criteria\":[\"A direct human stop pauses the review loop.\"],\"verification_requirements\":[\"Run tests/review-loop-contract-test.sh.\"]}" > "$(dx_review_criteria_file "$parent_session")"
       dx_review_approve_criteria "$parent_session" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$parent_session")")" >/dev/null
+      dx_session_runtime_owner_start "$parent_session" "$TEST_AGENT_HOST" "$DEX_DIR" || return 98
+      parent_runtime_handle="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+      unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
     fi
     if [[ "$TEST_REVIEW_SCENARIO" == "preflight-cancel" ]]; then
       dx_write_lifecycle_control "$(dx_session_id)" cancel "" terminal "" 3 ""
     fi
-    DEX_REVIEW_TIER=small dxreviewloop
+    review_result=0
+    DEX_REVIEW_TIER=small dxreviewloop || review_result=$?
+    if [[ -n "${parent_runtime_handle:-}" ]]; then
+      dx_session_runtime_owner_finish "$parent_runtime_handle" paused || return 99
+    fi
+    return "$review_result"
   ' > "$output_file" 2>&1
   rc=$?
   set -e

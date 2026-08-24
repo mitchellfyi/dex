@@ -381,6 +381,10 @@ run_case() {
             dx_review_approve_criteria "$lifecycle_session_id" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$lifecycle_session_id")")" >/dev/null
           fi
         fi
+        dx_session_runtime_owner_start "$lifecycle_session_id" claude "$CASE_REPO" \
+          || return 98
+        lifecycle_runtime_handle="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+        unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
       fi
 
       __test_review_criteria_evidence() {
@@ -721,9 +725,16 @@ run_case() {
           }
         fi
         dxreviewloop
+        review_status=$?
       else
         dxreviewloop
+        review_status=$?
       fi
+      if [[ -n "${lifecycle_runtime_handle:-}" ]]; then
+        dx_session_runtime_owner_finish "$lifecycle_runtime_handle" paused \
+          || return 99
+      fi
+      return "$review_status"
     ' > "$CASE_OUTPUT" 2>&1
   CASE_RC=$?
   set -e
@@ -799,6 +810,12 @@ run_concurrent_case() {
         claude() { return 0; }
 
         printf "3\n" >| "$(dx_state_file "$CASE_SESSION_ID")"
+        if [[ "$CASE_ROLE" == "owner" ]]; then
+          dx_session_runtime_owner_start "$CASE_SESSION_ID" claude "$CASE_REPO" \
+            || return 98
+          concurrent_runtime_handle="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+          unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+        fi
 
         __test_concurrent_criteria_evidence() {
           local criteria_path="$1" context_path="$2" criteria_hashes
@@ -866,7 +883,13 @@ run_concurrent_case() {
           return 0
         }
 
-        dxreviewloop
+        concurrent_review_status=0
+        dxreviewloop || concurrent_review_status=$?
+        if [[ -n "${concurrent_runtime_handle:-}" ]]; then
+          dx_session_runtime_owner_finish "$concurrent_runtime_handle" paused \
+            || return 99
+        fi
+        return "$concurrent_review_status"
       ' > "$output_file" 2>&1
   }
 

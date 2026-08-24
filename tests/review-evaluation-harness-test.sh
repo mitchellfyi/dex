@@ -182,6 +182,7 @@ mkdir -p "$runtime_source/research/review-loop"
 cp "$ROOT/research/review-loop/launch.zsh" "$runtime_source/research/review-loop/launch.zsh"
 cp "$ROOT/research/review-loop/agent-observer.sh" "$runtime_source/research/review-loop/agent-observer.sh"
 runtime_contract_files=(
+  bin/session-runtime-owner.sh
   dx.sh
   lib/common.sh
   lib/completion.sh
@@ -212,6 +213,7 @@ assert_eq "$runtime_source_sha" "$runtime_sha" "runtime commit"
 [[ -f "$runtime_dir/lib/review-loop.sh" ]] || fail "sanitized review loop runtime is missing"
 [[ -f "$runtime_dir/lib/session-catalog.sh" ]] || fail "sanitized session catalog runtime is missing"
 [[ -f "$runtime_dir/lib/session-runtime.sh" ]] || fail "sanitized session lease runtime is missing"
+[[ -x "$runtime_dir/bin/session-runtime-owner.sh" ]] || fail "sanitized runtime owner is missing"
 [[ ! -e "$runtime_dir/research/review-loop/scenarios" ]] || fail "runtime contains scenario truth"
 actual_runtime_roots=$(find "$runtime_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort | tr '\n' ' ')
 # scripts/ is in the runtime because lib/ imports helpers from it. Widening

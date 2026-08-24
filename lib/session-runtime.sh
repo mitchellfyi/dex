@@ -57,6 +57,7 @@ SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 LOCK_GENERATION_RE = re.compile(r"^[0-9a-f]{32}$")
 PROVIDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+OWNER_GENERATION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
 BOOT_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -198,6 +199,350 @@ def validate_private_regular(metadata, subject, allow_empty=False):
         raise RuntimeRecordError(f"{subject} permissions must be 0600")
     if not allow_empty and (metadata.st_size <= 0 or metadata.st_size > MAX_RECORD_BYTES):
         raise RuntimeRecordError(f"{subject} size is invalid")
+
+
+def parse_file_id(raw_value, subject, minimum=0):
+    if not isinstance(raw_value, str) or not raw_value.isdigit() or len(raw_value) > 20:
+        raise RuntimeInputError(f"invalid {subject}")
+    parsed_value = int(raw_value, 10)
+    if (
+        parsed_value < minimum
+        or parsed_value > MAX_FILE_ID
+        or str(parsed_value) != raw_value
+    ):
+        raise RuntimeInputError(f"invalid {subject}")
+    return parsed_value
+
+
+def validate_private_directory(metadata, subject):
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeRecordError(f"{subject} is not a directory")
+    if metadata.st_uid != os.geteuid():
+        raise RuntimeRecordError(f"{subject} is owned by another user")
+    if stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise RuntimeRecordError(f"{subject} permissions must be 0700")
+
+
+def open_owner_directories(
+    owner_root,
+    owner_directory,
+    expected_root_device=None,
+    expected_root_inode=None,
+    expected_owner_device=None,
+    expected_owner_inode=None,
+):
+    if (
+        not valid_text(owner_root, 4096)
+        or not valid_text(owner_directory, 4096)
+        or not os.path.isabs(owner_root)
+        or not os.path.isabs(owner_directory)
+    ):
+        raise RuntimeInputError("runtime owner directories must be absolute paths")
+    normalized_root = os.path.abspath(owner_root)
+    normalized_owner = os.path.abspath(owner_directory)
+    if os.path.dirname(normalized_owner) != normalized_root:
+        raise RuntimeInputError("runtime owner directory is outside its private root")
+    owner_name = os.path.basename(normalized_owner)
+    if not OWNER_GENERATION_RE.fullmatch(owner_name):
+        raise RuntimeInputError("runtime owner directory name is invalid")
+
+    directory_flags = os.O_RDONLY
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+    directory_flags |= getattr(os, "O_NONBLOCK", 0)
+    root_descriptor = None
+    owner_descriptor = None
+    try:
+        try:
+            root_descriptor = os.open(normalized_root, directory_flags)
+            root_metadata = os.fstat(root_descriptor)
+            validate_private_directory(root_metadata, "runtime owner root")
+            owner_descriptor = os.open(
+                owner_name, directory_flags, dir_fd=root_descriptor
+            )
+            owner_metadata = os.fstat(owner_descriptor)
+            validate_private_directory(owner_metadata, "runtime owner directory")
+        except OSError as exc:
+            raise RuntimeRecordError(f"cannot open runtime owner directory safely: {exc}")
+
+        expected_values = (
+            expected_root_device,
+            expected_root_inode,
+            expected_owner_device,
+            expected_owner_inode,
+        )
+        if any(value is not None for value in expected_values):
+            if any(value is None for value in expected_values):
+                raise RuntimeInputError("runtime owner directory identity is incomplete")
+            if (root_metadata.st_dev, root_metadata.st_ino) != (
+                expected_root_device,
+                expected_root_inode,
+            ) or (owner_metadata.st_dev, owner_metadata.st_ino) != (
+                expected_owner_device,
+                expected_owner_inode,
+            ):
+                raise RuntimeRecordError("runtime owner directory identity changed")
+        return root_descriptor, owner_descriptor, root_metadata, owner_metadata
+    except Exception:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
+        if root_descriptor is not None:
+            os.close(root_descriptor)
+        raise
+
+
+def owner_directory_metadata(owner_root, owner_directory):
+    root_descriptor, owner_descriptor, root_metadata, owner_metadata = (
+        open_owner_directories(owner_root, owner_directory)
+    )
+    try:
+        return (
+            root_metadata.st_dev,
+            root_metadata.st_ino,
+            owner_metadata.st_dev,
+            owner_metadata.st_ino,
+        )
+    finally:
+        os.close(owner_descriptor)
+        os.close(root_descriptor)
+
+
+def trusted_owner_file_read(
+    owner_root,
+    owner_directory,
+    expected_root_device,
+    expected_root_inode,
+    expected_owner_device,
+    expected_owner_inode,
+    file_name,
+    maximum_bytes,
+):
+    if file_name not in {"ready", "result", "command", "output", "error"}:
+        raise RuntimeInputError("runtime owner file name is invalid")
+    root_descriptor, owner_descriptor, _, _ = open_owner_directories(
+        owner_root,
+        owner_directory,
+        expected_root_device,
+        expected_root_inode,
+        expected_owner_device,
+        expected_owner_inode,
+    )
+    file_descriptor = None
+    try:
+        read_flags = os.O_RDONLY
+        read_flags |= getattr(os, "O_CLOEXEC", 0)
+        read_flags |= getattr(os, "O_NOFOLLOW", 0)
+        read_flags |= getattr(os, "O_NONBLOCK", 0)
+        try:
+            file_descriptor = os.open(file_name, read_flags, dir_fd=owner_descriptor)
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            raise RuntimeRecordError(f"cannot open runtime owner file safely: {exc}")
+        opened = os.fstat(file_descriptor)
+        if opened.st_nlink == 2 and file_name in {"ready", "result"}:
+            temporary_prefix = f".{file_name}.tmp."
+            publication_in_progress = False
+            try:
+                directory_entries = os.listdir(owner_descriptor)
+            except OSError as exc:
+                raise RuntimeRecordError(
+                    f"cannot inspect runtime owner publication: {exc}"
+                )
+            for entry_name in directory_entries:
+                if not entry_name.startswith(temporary_prefix):
+                    continue
+                try:
+                    sibling = os.stat(
+                        entry_name,
+                        dir_fd=owner_descriptor,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise RuntimeRecordError(
+                        f"cannot inspect runtime owner publication: {exc}"
+                    )
+                if (
+                    (sibling.st_dev, sibling.st_ino) == (opened.st_dev, opened.st_ino)
+                    and stat.S_ISREG(sibling.st_mode)
+                    and sibling.st_uid == os.geteuid()
+                    and stat.S_IMODE(sibling.st_mode) == 0o600
+                    and sibling.st_nlink == 2
+                ):
+                    publication_in_progress = True
+                    break
+            if publication_in_progress:
+                raise FileNotFoundError
+            opened = os.fstat(file_descriptor)
+        validate_private_regular(opened, f"runtime owner {file_name}")
+        if opened.st_size > maximum_bytes:
+            raise RuntimeRecordError(f"runtime owner {file_name} is too large")
+        chunks = []
+        remaining = maximum_bytes + 1
+        while remaining > 0:
+            chunk = os.read(file_descriptor, min(remaining, 512))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(file_descriptor)
+        if stat_fingerprint(after) != stat_fingerprint(opened):
+            raise RuntimeRecordError(f"runtime owner {file_name} changed while reading")
+        if len(payload) == 0 or len(payload) > maximum_bytes:
+            raise RuntimeRecordError(f"runtime owner {file_name} size is invalid")
+        return payload
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        os.close(owner_descriptor)
+        os.close(root_descriptor)
+
+
+def trusted_owner_file_write(
+    owner_root,
+    owner_directory,
+    expected_root_device,
+    expected_root_inode,
+    expected_owner_device,
+    expected_owner_inode,
+    file_name,
+    replace_existing,
+    content,
+):
+    if file_name not in {"ready", "result", "command"}:
+        raise RuntimeInputError("runtime owner file name is invalid")
+    if (
+        not isinstance(content, str)
+        or not 0 < len(content) <= 4096
+        or any(
+            (ord(character) < 32 and character != "\t") or ord(character) == 127
+            for character in content
+        )
+    ):
+        raise RuntimeInputError("runtime owner file content is invalid")
+    root_descriptor, owner_descriptor, _, _ = open_owner_directories(
+        owner_root,
+        owner_directory,
+        expected_root_device,
+        expected_root_inode,
+        expected_owner_device,
+        expected_owner_inode,
+    )
+    temporary_name = f".{file_name}.tmp.{secrets.token_hex(16)}"
+    temporary_descriptor = None
+    try:
+        if replace_existing:
+            try:
+                current = os.stat(file_name, dir_fd=owner_descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                current = None
+            except OSError as exc:
+                raise RuntimeRecordError(
+                    f"cannot inspect runtime owner {file_name}: {exc}"
+                )
+            if current is not None:
+                validate_private_regular(
+                    current, f"runtime owner {file_name}", allow_empty=True
+                )
+        write_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        write_flags |= getattr(os, "O_CLOEXEC", 0)
+        write_flags |= getattr(os, "O_NOFOLLOW", 0)
+        temporary_descriptor = os.open(
+            temporary_name, write_flags, 0o600, dir_fd=owner_descriptor
+        )
+        payload = (content + "\n").encode("utf-8")
+        written = 0
+        while written < len(payload):
+            count = os.write(temporary_descriptor, payload[written:])
+            if count <= 0:
+                raise RuntimeRecordError("cannot write runtime owner file")
+            written += count
+        os.fsync(temporary_descriptor)
+        os.close(temporary_descriptor)
+        temporary_descriptor = None
+        if replace_existing:
+            os.replace(
+                temporary_name,
+                file_name,
+                src_dir_fd=owner_descriptor,
+                dst_dir_fd=owner_descriptor,
+            )
+        else:
+            try:
+                os.link(
+                    temporary_name,
+                    file_name,
+                    src_dir_fd=owner_descriptor,
+                    dst_dir_fd=owner_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                raise RuntimeRecordError(
+                    f"runtime owner {file_name} was already published"
+                )
+            os.unlink(temporary_name, dir_fd=owner_descriptor)
+        os.fsync(owner_descriptor)
+    except OSError as exc:
+        raise RuntimeRecordError(f"cannot publish runtime owner {file_name}: {exc}")
+    finally:
+        if temporary_descriptor is not None:
+            os.close(temporary_descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=owner_descriptor)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        os.close(owner_descriptor)
+        os.close(root_descriptor)
+
+
+def trusted_owner_cleanup(
+    owner_root,
+    owner_directory,
+    expected_root_device,
+    expected_root_inode,
+    expected_owner_device,
+    expected_owner_inode,
+):
+    root_descriptor, owner_descriptor, _, _ = open_owner_directories(
+        owner_root,
+        owner_directory,
+        expected_root_device,
+        expected_root_inode,
+        expected_owner_device,
+        expected_owner_inode,
+    )
+    owner_name = os.path.basename(os.path.abspath(owner_directory))
+    try:
+        for file_name in ("ready", "command", "result", "output", "error"):
+            try:
+                metadata = os.stat(
+                    file_name, dir_fd=owner_descriptor, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise RuntimeRecordError(
+                    f"cannot inspect runtime owner cleanup file: {exc}"
+                )
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+                raise RuntimeRecordError("runtime owner cleanup target is not trusted")
+            os.unlink(file_name, dir_fd=owner_descriptor)
+        os.close(owner_descriptor)
+        owner_descriptor = None
+        os.rmdir(owner_name, dir_fd=root_descriptor)
+        os.fsync(root_descriptor)
+    except OSError as exc:
+        raise RuntimeRecordError(f"cannot clean runtime owner directory: {exc}")
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
+        os.close(root_descriptor)
 
 
 def trusted_read(record_file, expected_session, missing_ok=False):
@@ -723,7 +1068,111 @@ try:
             print(probe["diagnostic"])
         else:
             raise SystemExit(1)
-    elif operation == "start":
+    elif operation == "owner-process-state":
+        if len(arguments) != 2:
+            raise RuntimeInputError(
+                "owner-process-state requires one PID and one stable identity"
+            )
+        owner_pid = parse_pid(arguments[0])
+        expected_identity = arguments[1]
+        if not (
+            LINUX_ID_RE.fullmatch(expected_identity)
+            or DARWIN_ID_RE.fullmatch(expected_identity)
+        ):
+            raise RuntimeInputError("runtime owner process identity is invalid")
+        owner_probe = process_probe(owner_pid)
+        if owner_probe["health"] == "dead":
+            print("dead")
+        elif owner_probe["health"] != "live" or owner_probe["identity"] is None:
+            print("unverifiable")
+        elif owner_probe["identity"] == expected_identity:
+            print("live")
+        else:
+            print("replaced")
+    elif operation == "owner-metadata":
+        if len(arguments) != 2:
+            raise RuntimeInputError("owner-metadata requires root and owner directory")
+        metadata_values = owner_directory_metadata(arguments[0], arguments[1])
+        print("\t".join(str(value) for value in metadata_values))
+    elif operation == "owner-read":
+        if len(arguments) != 8:
+            raise RuntimeInputError("owner-read received the wrong number of arguments")
+        (
+            owner_root,
+            owner_directory,
+            raw_root_device,
+            raw_root_inode,
+            raw_owner_device,
+            raw_owner_inode,
+            file_name,
+            raw_maximum_bytes,
+        ) = arguments
+        root_device = parse_file_id(raw_root_device, "runtime owner root device")
+        root_inode = parse_file_id(raw_root_inode, "runtime owner root inode", 1)
+        owner_device = parse_file_id(raw_owner_device, "runtime owner device")
+        owner_inode = parse_file_id(raw_owner_inode, "runtime owner inode", 1)
+        maximum_bytes = parse_file_id(raw_maximum_bytes, "runtime owner read size", 1)
+        if maximum_bytes > 4096:
+            raise RuntimeInputError("runtime owner read size is too large")
+        payload = trusted_owner_file_read(
+            owner_root,
+            owner_directory,
+            root_device,
+            root_inode,
+            owner_device,
+            owner_inode,
+            file_name,
+            maximum_bytes,
+        )
+        sys.stdout.buffer.write(payload)
+    elif operation == "owner-write":
+        if len(arguments) != 9:
+            raise RuntimeInputError("owner-write received the wrong number of arguments")
+        (
+            owner_root,
+            owner_directory,
+            raw_root_device,
+            raw_root_inode,
+            raw_owner_device,
+            raw_owner_inode,
+            file_name,
+            replace_marker,
+            content,
+        ) = arguments
+        root_device = parse_file_id(raw_root_device, "runtime owner root device")
+        root_inode = parse_file_id(raw_root_inode, "runtime owner root inode", 1)
+        owner_device = parse_file_id(raw_owner_device, "runtime owner device")
+        owner_inode = parse_file_id(raw_owner_inode, "runtime owner inode", 1)
+        if replace_marker not in {"replace", "create"}:
+            raise RuntimeInputError("runtime owner write mode is invalid")
+        trusted_owner_file_write(
+            owner_root,
+            owner_directory,
+            root_device,
+            root_inode,
+            owner_device,
+            owner_inode,
+            file_name,
+            replace_marker == "replace",
+            content,
+        )
+    elif operation == "owner-cleanup":
+        if len(arguments) != 6:
+            raise RuntimeInputError("owner-cleanup received the wrong number of arguments")
+        owner_root, owner_directory = arguments[:2]
+        root_device = parse_file_id(arguments[2], "runtime owner root device")
+        root_inode = parse_file_id(arguments[3], "runtime owner root inode", 1)
+        owner_device = parse_file_id(arguments[4], "runtime owner device")
+        owner_inode = parse_file_id(arguments[5], "runtime owner inode", 1)
+        trusted_owner_cleanup(
+            owner_root,
+            owner_directory,
+            root_device,
+            root_inode,
+            owner_device,
+            owner_inode,
+        )
+    elif operation in {"start", "start-secure"}:
         if len(arguments) != 5:
             raise RuntimeInputError("start requires file, session, provider, workspace, and PID")
         record_file, session_id, provider, workspace, raw_pid = arguments
@@ -770,7 +1219,21 @@ try:
             )
         finally:
             release_mutation_lock(lock_descriptor)
-        print(lease_token)
+        if operation == "start-secure":
+            token_payload = (lease_token + "\n").encode("ascii")
+            token_offset = 0
+            try:
+                while token_offset < len(token_payload):
+                    written = os.write(3, token_payload[token_offset:])
+                    if written <= 0:
+                        raise OSError("token pipe closed")
+                    token_offset += written
+            except OSError as exc:
+                raise RuntimeInputError(
+                    f"cannot deliver runtime lease token securely: {exc}"
+                )
+        else:
+            print(lease_token)
     elif operation in {"heartbeat", "finish"}:
         expected_count = 3 if operation == "heartbeat" else 4
         if len(arguments) != expected_count:
@@ -865,6 +1328,17 @@ dx_session_runtime_start() {
   __dx_session_runtime_call start "$record_file" "$session_id" "$provider_name" "$workspace_dir" "$owner_pid"
 }
 
+# Internal supervisor entrypoint. FD 3 must be a private pipe owned by the
+# supervisor; this path deliberately keeps the lease token off stdout.
+__dx_session_runtime_start_secure() {
+  [[ $# -eq 4 ]] || return 3
+  local session_id="$1" provider_name="$2" workspace_dir="$3" owner_pid="$4"
+  local record_file
+  record_file=$(dx_session_runtime_file "$session_id") || return $?
+  __dx_session_runtime_call start-secure \
+    "$record_file" "$session_id" "$provider_name" "$workspace_dir" "$owner_pid"
+}
+
 # dx_session_runtime_heartbeat <session_id> <token> [pid]
 dx_session_runtime_heartbeat() {
   [[ $# -ge 2 && $# -le 3 ]] || return 3
@@ -917,4 +1391,574 @@ dx_session_runtime_matches() {
   local health_value
   health_value=$(dx_session_runtime_health "$1" "$2" 2>/dev/null) || return $?
   [[ "$health_value" == "live" ]]
+}
+
+dx_session_runtime_owner_root() {
+  printf '%s/.runtime-owners\n' "$DX_STATE_DIR"
+}
+
+__dx_session_runtime_owner_timeout() { # <environment-name> <default-ms>
+  local environment_name="$1" default_milliseconds="$2" timeout_milliseconds
+  timeout_milliseconds=$(printenv "$environment_name" 2>/dev/null || true)
+  [[ -n "$timeout_milliseconds" ]] || timeout_milliseconds="$default_milliseconds"
+  case "$timeout_milliseconds" in
+    ""|*[!0-9]*) return 3 ;;
+  esac
+  [[ "$timeout_milliseconds" -ge 50 && "$timeout_milliseconds" -le 60000 ]] || return 3
+  printf '%s\n' "$timeout_milliseconds"
+}
+
+__dx_session_runtime_owner_process_matches() { # <pid> <stable-identity>
+  [[ $# -eq 2 && "$1" =~ ^[0-9]+$ ]] || return 1
+  [[ "$(__dx_session_runtime_owner_process_state "$1" "$2" 2>/dev/null || true)" == "live" ]]
+}
+
+__dx_session_runtime_owner_process_state() { # <pid> <stable-identity>
+  [[ $# -eq 2 && "$1" =~ ^[0-9]+$ ]] || return 3
+  __dx_session_runtime_call owner-process-state "$1" "$2"
+}
+
+__dx_session_runtime_owner_reap_if_dead() { # <pid> <stable-identity>
+  [[ $# -eq 2 ]] || return 3
+  local process_state
+  process_state=$(__dx_session_runtime_owner_process_state "$1" "$2" \
+    2>/dev/null) || return 3
+  [[ "$process_state" == "dead" ]] || return 1
+  wait "$1" 2>/dev/null || true
+}
+
+__dx_session_runtime_owner_stop_process() { # <pid> <stable-identity>
+  [[ $# -eq 2 ]] || return 3
+  local owner_pid="$1" owner_identity="$2" elapsed_milliseconds=0
+  __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" || return 0
+  if __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"; then
+    kill -CONT "$owner_pid" 2>/dev/null || true
+  fi
+  __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" || return 0
+  if __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"; then
+    kill -TERM "$owner_pid" 2>/dev/null || true
+  fi
+  while __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" \
+    && [[ "$elapsed_milliseconds" -lt 1000 ]]; do
+    sleep 0.05
+    elapsed_milliseconds=$((elapsed_milliseconds + 50))
+  done
+  if __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"; then
+    if __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"; then
+      kill -KILL "$owner_pid" 2>/dev/null || true
+    fi
+    elapsed_milliseconds=0
+    while __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" \
+      && [[ "$elapsed_milliseconds" -lt 1000 ]]; do
+      sleep 0.05
+      elapsed_milliseconds=$((elapsed_milliseconds + 50))
+    done
+  fi
+  ! __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"
+}
+
+__dx_session_runtime_owner_abort() { # <opaque-handle> <pid> <stable-identity>
+  [[ $# -eq 3 ]] || return 3
+  local owner_handle="$1" owner_pid="$2" owner_identity="$3"
+  __dx_session_runtime_owner_stop_process "$owner_pid" "$owner_identity" \
+    2>/dev/null || true
+  __dx_session_runtime_owner_reap_if_dead "$owner_pid" "$owner_identity" \
+    2>/dev/null || return 75
+  __dx_session_runtime_owner_cleanup "$owner_handle" 2>/dev/null || return 3
+}
+
+__dx_session_runtime_owner_descriptor_clear() {
+  unset __DX_RUNTIME_OWNER_DIRECTORY __DX_RUNTIME_OWNER_SESSION
+  unset __DX_RUNTIME_OWNER_PID __DX_RUNTIME_OWNER_PROCESS_IDENTITY
+  unset __DX_RUNTIME_OWNER_GENERATION __DX_RUNTIME_OWNER_ROOT_DEVICE
+  unset __DX_RUNTIME_OWNER_ROOT_INODE __DX_RUNTIME_OWNER_DEVICE
+  unset __DX_RUNTIME_OWNER_INODE
+}
+
+__dx_session_runtime_owner_descriptor_parse() { # <opaque-handle>
+  local owner_descriptor="$1" descriptor_version descriptor_extra
+  __dx_session_runtime_owner_descriptor_clear
+  IFS=$'\t' read -r \
+    descriptor_version \
+    __DX_RUNTIME_OWNER_DIRECTORY \
+    __DX_RUNTIME_OWNER_SESSION \
+    __DX_RUNTIME_OWNER_PID \
+    __DX_RUNTIME_OWNER_PROCESS_IDENTITY \
+    __DX_RUNTIME_OWNER_GENERATION \
+    __DX_RUNTIME_OWNER_ROOT_DEVICE \
+    __DX_RUNTIME_OWNER_ROOT_INODE \
+    __DX_RUNTIME_OWNER_DEVICE \
+    __DX_RUNTIME_OWNER_INODE \
+    descriptor_extra <<EOF
+$owner_descriptor
+EOF
+  [[ "$descriptor_version" == "v1" && -z "${descriptor_extra:-}" ]] || return 3
+  [[ "$__DX_RUNTIME_OWNER_DIRECTORY" == /* \
+    && "$__DX_RUNTIME_OWNER_DIRECTORY" != *$'\n'* \
+    && "$__DX_RUNTIME_OWNER_DIRECTORY" != *$'\r'* ]] || return 3
+  dx_session_id_valid "$__DX_RUNTIME_OWNER_SESSION" || return 3
+  [[ "$__DX_RUNTIME_OWNER_PID" =~ ^[0-9]+$ ]] || return 3
+  case "$__DX_RUNTIME_OWNER_PROCESS_IDENTITY" in
+    linux:*|darwin:*) ;;
+    *) return 3 ;;
+  esac
+  [[ "$__DX_RUNTIME_OWNER_GENERATION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$ \
+    && "${__DX_RUNTIME_OWNER_DIRECTORY##*/}" == "$__DX_RUNTIME_OWNER_GENERATION" ]] \
+    || return 3
+  [[ "$__DX_RUNTIME_OWNER_ROOT_DEVICE" =~ ^[0-9]+$ \
+    && "$__DX_RUNTIME_OWNER_ROOT_INODE" =~ ^[0-9]+$ \
+    && "$__DX_RUNTIME_OWNER_DEVICE" =~ ^[0-9]+$ \
+    && "$__DX_RUNTIME_OWNER_INODE" =~ ^[0-9]+$ ]] || return 3
+}
+
+dx_session_runtime_owner_handle_path() { # <opaque-handle>
+  [[ $# -eq 1 ]] || return 3
+  local owner_directory
+  __dx_session_runtime_owner_descriptor_parse "$1" || return $?
+  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
+  __dx_session_runtime_owner_descriptor_clear
+  printf '%s\n' "$owner_directory"
+}
+
+__dx_session_runtime_owner_metadata() { # <root> <directory>
+  [[ $# -eq 2 ]] || return 3
+  __dx_session_runtime_call owner-metadata "$1" "$2"
+}
+
+__dx_session_runtime_owner_trusted_read_path() { # <root> <directory> <root-dev> <root-ino> <owner-dev> <owner-ino> <file> <max>
+  [[ $# -eq 8 ]] || return 3
+  __dx_session_runtime_call owner-read "$@"
+}
+
+__dx_session_runtime_owner_trusted_write_path() { # <root> <directory> <root-dev> <root-ino> <owner-dev> <owner-ino> <file> <mode> <content>
+  [[ $# -eq 9 ]] || return 3
+  __dx_session_runtime_call owner-write "$@"
+}
+
+__dx_session_runtime_owner_trusted_cleanup_path() { # <root> <directory> <root-dev> <root-ino> <owner-dev> <owner-ino>
+  [[ $# -eq 6 ]] || return 3
+  __dx_session_runtime_call owner-cleanup "$@"
+}
+
+__dx_session_runtime_owner_trusted_read() { # <opaque-handle> <file> <max>
+  [[ $# -eq 3 ]] || return 3
+  local owner_descriptor="$1" file_name="$2" maximum_bytes="$3"
+  local owner_root owner_directory root_device root_inode owner_device owner_inode
+  owner_root=$(dx_session_runtime_owner_root) || return 3
+  __dx_session_runtime_owner_descriptor_parse "$owner_descriptor" || return $?
+  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
+  root_device="$__DX_RUNTIME_OWNER_ROOT_DEVICE"
+  root_inode="$__DX_RUNTIME_OWNER_ROOT_INODE"
+  owner_device="$__DX_RUNTIME_OWNER_DEVICE"
+  owner_inode="$__DX_RUNTIME_OWNER_INODE"
+  __dx_session_runtime_owner_descriptor_clear
+  __dx_session_runtime_owner_trusted_read_path \
+    "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+    "$owner_device" "$owner_inode" "$file_name" "$maximum_bytes"
+}
+
+__dx_session_runtime_owner_handle_valid() {
+  [[ $# -eq 1 ]] || return 3
+  local metadata_record metadata_extra root_device root_inode owner_device owner_inode
+  local owner_root owner_directory expected_root_device expected_root_inode
+  local expected_owner_device expected_owner_inode
+  owner_root=$(dx_session_runtime_owner_root) || return 3
+  __dx_session_runtime_owner_descriptor_parse "$1" || return $?
+  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
+  expected_root_device="$__DX_RUNTIME_OWNER_ROOT_DEVICE"
+  expected_root_inode="$__DX_RUNTIME_OWNER_ROOT_INODE"
+  expected_owner_device="$__DX_RUNTIME_OWNER_DEVICE"
+  expected_owner_inode="$__DX_RUNTIME_OWNER_INODE"
+  __dx_session_runtime_owner_descriptor_clear
+  metadata_record=$(__dx_session_runtime_owner_metadata \
+    "$owner_root" "$owner_directory" 2>/dev/null) || return 3
+  IFS=$'\t' read -r root_device root_inode owner_device owner_inode metadata_extra <<EOF
+$metadata_record
+EOF
+  [[ -z "${metadata_extra:-}" \
+    && "$root_device" == "$expected_root_device" \
+    && "$root_inode" == "$expected_root_inode" \
+    && "$owner_device" == "$expected_owner_device" \
+    && "$owner_inode" == "$expected_owner_inode" ]]
+}
+
+__dx_session_runtime_owner_atomic_write() { # <handle> <file-name> <content>
+  local owner_descriptor="$1" file_name="$2" file_content="$3"
+  local owner_root owner_directory root_device root_inode owner_device owner_inode
+  owner_root=$(dx_session_runtime_owner_root) || return 3
+  case "$file_name" in
+    command) ;;
+    *) return 3 ;;
+  esac
+  __dx_session_runtime_owner_descriptor_parse "$owner_descriptor" || return $?
+  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
+  root_device="$__DX_RUNTIME_OWNER_ROOT_DEVICE"
+  root_inode="$__DX_RUNTIME_OWNER_ROOT_INODE"
+  owner_device="$__DX_RUNTIME_OWNER_DEVICE"
+  owner_inode="$__DX_RUNTIME_OWNER_INODE"
+  __dx_session_runtime_owner_descriptor_clear
+  __dx_session_runtime_owner_trusted_write_path \
+    "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+    "$owner_device" "$owner_inode" command replace "$file_content"
+}
+
+__dx_session_runtime_owner_result_path() { # <root> <directory> <root-dev> <root-ino> <owner-dev> <owner-ino>
+  [[ $# -eq 6 ]] || return 3
+  local result_record
+  [[ -e "$2/result" || -L "$2/result" ]] || return 1
+  result_record=$(__dx_session_runtime_owner_trusted_read_path \
+    "$@" result 512 2>/dev/null) || return $?
+  [[ "$result_record" =~ ^[0-9]+$'\t'[A-Za-z0-9._-]+$'\t'(completed|paused|blocked|failed|stopped|abandoned)$'\t'[A-Za-z0-9._-]+$ ]] \
+    || return 3
+  printf '%s\n' "$result_record"
+}
+
+__dx_session_runtime_owner_result() { # <opaque-handle>
+  local owner_descriptor="$1" owner_root owner_directory
+  local root_device root_inode owner_device owner_inode
+  owner_root=$(dx_session_runtime_owner_root) || return 3
+  __dx_session_runtime_owner_descriptor_parse "$owner_descriptor" || return $?
+  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
+  root_device="$__DX_RUNTIME_OWNER_ROOT_DEVICE"
+  root_inode="$__DX_RUNTIME_OWNER_ROOT_INODE"
+  owner_device="$__DX_RUNTIME_OWNER_DEVICE"
+  owner_inode="$__DX_RUNTIME_OWNER_INODE"
+  __dx_session_runtime_owner_descriptor_clear
+  __dx_session_runtime_owner_result_path \
+    "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+    "$owner_device" "$owner_inode"
+}
+
+__dx_session_runtime_owner_cleanup() {
+  local owner_descriptor="$1" owner_root owner_directory
+  local root_device root_inode owner_device owner_inode
+  owner_root=$(dx_session_runtime_owner_root) || return 3
+  __dx_session_runtime_owner_descriptor_parse "$owner_descriptor" || return $?
+  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
+  root_device="$__DX_RUNTIME_OWNER_ROOT_DEVICE"
+  root_inode="$__DX_RUNTIME_OWNER_ROOT_INODE"
+  owner_device="$__DX_RUNTIME_OWNER_DEVICE"
+  owner_inode="$__DX_RUNTIME_OWNER_INODE"
+  __dx_session_runtime_owner_descriptor_clear
+  __dx_session_runtime_owner_trusted_cleanup_path \
+    "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+    "$owner_device" "$owner_inode"
+}
+
+# dx_session_runtime_owner_start <session_id> <provider> <workspace>
+# Start a private supervisor as this shell's direct child. On success, the
+# non-exported DX_SESSION_RUNTIME_OWNER_HANDLE and DX_SESSION_RUNTIME_OWNER_PID
+# globals identify it; the lease token remains inside the supervisor.
+dx_session_runtime_owner_start() {
+  [[ $# -eq 3 ]] || return 3
+  unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+  local session_id="$1" provider_name="$2" workspace_dir="$3" monitor_pid="$$"
+  local monitor_identity owner_root owner_directory owner_generation owner_pid owner_identity
+  local observed_owner_identity owner_process_state
+  local start_timeout elapsed_milliseconds=0 metadata_record metadata_extra
+  local root_device root_inode owner_device owner_inode result_record result_code
+  local ready_record ready_label ready_pid ready_session ready_identity ready_generation ready_extra
+  local runtime_pid runtime_identity runtime_provider runtime_workspace runtime_state runtime_health
+  local failure_request cleanup_allowed=0
+  dx_session_id_valid "$session_id" || return 3
+  [[ "$provider_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 3
+  [[ "$workspace_dir" == /* && -d "$workspace_dir" ]] || return 3
+  workspace_dir=$(cd "$workspace_dir" 2>/dev/null && pwd -P) || return 3
+  monitor_identity=$(dx_session_runtime_process_identity "$monitor_pid" 2>/dev/null || true)
+  case "$monitor_identity" in
+    linux:*|darwin:*) ;;
+    *)
+      printf '%s\n' "dex runtime owner: cannot establish the launcher's stable process identity" >&2
+      return 3
+      ;;
+  esac
+  start_timeout=$(__dx_session_runtime_owner_timeout \
+    DX_SESSION_RUNTIME_OWNER_START_TIMEOUT_MILLISECONDS 5000) || return $?
+  owner_root=$(dx_session_runtime_owner_root) || return 3
+  if [[ -e "$owner_root" || -L "$owner_root" ]]; then
+    [[ -d "$owner_root" && ! -L "$owner_root" ]] || return 3
+  else
+    (umask 077 && mkdir -p "$owner_root") || return 3
+  fi
+  chmod 700 "$owner_root" 2>/dev/null || return 3
+  [[ "$(dx_path_mode "$owner_root" 2>/dev/null || true)" == "700" ]] || return 3
+  owner_directory=$(mktemp -d "$owner_root/${session_id}.XXXXXX") || return 3
+  chmod 700 "$owner_directory" 2>/dev/null || {
+    rmdir "$owner_directory" 2>/dev/null || true
+    return 3
+  }
+  owner_generation="${owner_directory##*/}"
+  metadata_record=$(__dx_session_runtime_owner_metadata \
+    "$owner_root" "$owner_directory" 2>/dev/null) || {
+    rmdir "$owner_directory" 2>/dev/null || true
+    return 3
+  }
+  IFS=$'\t' read -r root_device root_inode owner_device owner_inode metadata_extra <<EOF
+$metadata_record
+EOF
+  if [[ -n "${metadata_extra:-}" || ! "$root_device" =~ ^[0-9]+$ \
+    || ! "$root_inode" =~ ^[0-9]+$ || ! "$owner_device" =~ ^[0-9]+$ \
+    || ! "$owner_inode" =~ ^[0-9]+$ ]]; then
+    rmdir "$owner_directory" 2>/dev/null || true
+    return 3
+  fi
+  command bash "$DEX_DIR/bin/session-runtime-owner.sh" \
+    "$session_id" "$provider_name" "$workspace_dir" "$monitor_pid" \
+    "$monitor_identity" "$owner_directory" "$root_device" "$root_inode" \
+    "$owner_device" "$owner_inode" \
+    > "$owner_directory/output" 2> "$owner_directory/error" &
+  owner_pid=$!
+  chmod 600 "$owner_directory/output" "$owner_directory/error" 2>/dev/null || true
+  owner_identity=$(dx_session_runtime_process_identity "$owner_pid" 2>/dev/null || true)
+
+  while [[ "$elapsed_milliseconds" -lt "$start_timeout" ]]; do
+    ready_record=""
+    if [[ -e "$owner_directory/ready" || -L "$owner_directory/ready" ]]; then
+      ready_record=$(__dx_session_runtime_owner_trusted_read_path \
+        "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+        "$owner_device" "$owner_inode" ready 512 2>/dev/null || true)
+    fi
+    if [[ -n "$ready_record" ]]; then
+      IFS=$'\t' read -r ready_label ready_pid ready_session ready_identity \
+        ready_generation ready_extra <<EOF
+$ready_record
+EOF
+      observed_owner_identity=$(dx_session_runtime_process_identity \
+        "$owner_pid" 2>/dev/null || true)
+      if [[ "$ready_label" == "ready" && "$ready_pid" == "$owner_pid" \
+        && "$ready_session" == "$session_id" && "$ready_identity" == "$owner_identity" \
+        && "$observed_owner_identity" == "$owner_identity" \
+        && "$ready_generation" == "$owner_generation" && -z "${ready_extra:-}" ]]; then
+        runtime_pid=$(dx_session_runtime_field "$session_id" pid 2>/dev/null || true)
+        runtime_identity=$(dx_session_runtime_field "$session_id" process_start 2>/dev/null || true)
+        runtime_provider=$(dx_session_runtime_field "$session_id" provider 2>/dev/null || true)
+        runtime_workspace=$(dx_session_runtime_field "$session_id" workspace 2>/dev/null || true)
+        runtime_state=$(dx_session_runtime_field "$session_id" status 2>/dev/null || true)
+        runtime_health=$(dx_session_runtime_health "$session_id" 2>/dev/null || true)
+        if [[ "$runtime_pid" == "$owner_pid" && "$runtime_identity" == "$owner_identity" \
+          && "$runtime_provider" == "$provider_name" \
+          && "$runtime_workspace" == "$workspace_dir" && "$runtime_state" == "running" \
+          && "$runtime_health" == "live" ]]; then
+          # These are out-parameters for callers in both bash and zsh.
+          # shellcheck disable=SC2034
+          DX_SESSION_RUNTIME_OWNER_HANDLE=$(printf \
+            'v1\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+            "$owner_directory" "$session_id" "$owner_pid" "$owner_identity" \
+            "$owner_generation" "$root_device" "$root_inode" \
+            "$owner_device" "$owner_inode")
+          # shellcheck disable=SC2034
+          DX_SESSION_RUNTIME_OWNER_PID="$owner_pid"
+          return 0
+        fi
+      fi
+      break
+    fi
+    result_record=$(__dx_session_runtime_owner_result_path \
+      "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+      "$owner_device" "$owner_inode" 2>/dev/null || true)
+    if [[ -n "$result_record" ]] || ! kill -0 "$owner_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.05
+    elapsed_milliseconds=$((elapsed_milliseconds + 50))
+  done
+
+  result_record=$(__dx_session_runtime_owner_result_path \
+    "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+    "$owner_device" "$owner_inode" 2>/dev/null || true)
+  result_code="${result_record%%$'\t'*}"
+  [[ "$result_code" =~ ^[0-9]+$ ]] || result_code=3
+  if [[ "$result_code" -eq 2 ]]; then
+    printf '%s\n' "dex runtime: another process may still own this session" >&2
+  else
+    printf '%s\n' "dex runtime owner: supervisor did not start" >&2
+  fi
+  if kill -0 "$owner_pid" 2>/dev/null; then
+    failure_request=$(printf '%s\t%s' "$owner_generation" failed)
+    __dx_session_runtime_owner_trusted_write_path \
+      "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+      "$owner_device" "$owner_inode" command replace \
+      "$failure_request" 2>/dev/null || true
+    case "$owner_identity" in
+      linux:*|darwin:*)
+        __dx_session_runtime_owner_stop_process "$owner_pid" "$owner_identity" \
+          2>/dev/null || true
+        owner_process_state=$(__dx_session_runtime_owner_process_state \
+          "$owner_pid" "$owner_identity" 2>/dev/null || true)
+        if [[ "$owner_process_state" == "dead" ]]; then
+          __dx_session_runtime_owner_reap_if_dead \
+            "$owner_pid" "$owner_identity" 2>/dev/null || true
+          cleanup_allowed=1
+        fi
+        ;;
+    esac
+  else
+    case "$owner_identity" in
+      linux:*|darwin:*)
+        if __dx_session_runtime_owner_reap_if_dead \
+            "$owner_pid" "$owner_identity" 2>/dev/null; then
+          cleanup_allowed=1
+        fi
+        ;;
+    esac
+  fi
+  if [[ "$cleanup_allowed" -eq 1 ]]; then
+    __dx_session_runtime_owner_trusted_cleanup_path \
+      "$owner_root" "$owner_directory" "$root_device" "$root_inode" \
+      "$owner_device" "$owner_inode" 2>/dev/null || true
+  fi
+  return "$result_code"
+}
+
+# dx_session_runtime_owner_finish <handle> <terminal_status>
+# Request a terminal record and wait for the supervisor within a bounded time.
+dx_session_runtime_owner_finish() {
+  [[ $# -eq 2 ]] || return 3
+  local owner_handle="$1" terminal_state="$2" finish_timeout elapsed_milliseconds=0
+  local owner_directory owner_session owner_pid owner_identity owner_generation
+  local root_device root_inode owner_device owner_inode
+  local ready_record ready_label ready_pid ready_session ready_identity ready_generation ready_extra
+  local result_record="" result_read_result=0 result_code=3 result_generation
+  local result_terminal result_detail result_extra owner_wait_result=0
+  local runtime_pid runtime_identity runtime_state runtime_health final_result=0 command_request
+  local owner_error owner_process_state cleanup_allowed=0
+  case "$terminal_state" in
+    completed|paused|blocked|failed|stopped|abandoned) ;;
+    *) return 3 ;;
+  esac
+  finish_timeout=$(__dx_session_runtime_owner_timeout \
+    DX_SESSION_RUNTIME_OWNER_FINISH_TIMEOUT_MILLISECONDS 5000) || return $?
+  __dx_session_runtime_owner_descriptor_parse "$owner_handle" || return $?
+  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
+  owner_session="$__DX_RUNTIME_OWNER_SESSION"
+  owner_pid="$__DX_RUNTIME_OWNER_PID"
+  owner_identity="$__DX_RUNTIME_OWNER_PROCESS_IDENTITY"
+  owner_generation="$__DX_RUNTIME_OWNER_GENERATION"
+  root_device="$__DX_RUNTIME_OWNER_ROOT_DEVICE"
+  root_inode="$__DX_RUNTIME_OWNER_ROOT_INODE"
+  owner_device="$__DX_RUNTIME_OWNER_DEVICE"
+  owner_inode="$__DX_RUNTIME_OWNER_INODE"
+  __dx_session_runtime_owner_descriptor_clear
+
+  ready_record=$(__dx_session_runtime_owner_trusted_read \
+    "$owner_handle" ready 512 2>/dev/null) || {
+    __dx_session_runtime_owner_abort \
+      "$owner_handle" "$owner_pid" "$owner_identity" 2>/dev/null || true
+    return 3
+  }
+  IFS=$'\t' read -r ready_label ready_pid ready_session ready_identity \
+    ready_generation ready_extra <<EOF
+$ready_record
+EOF
+  if [[ "$ready_label" != "ready" || "$ready_pid" != "$owner_pid" \
+    || "$ready_session" != "$owner_session" || "$ready_identity" != "$owner_identity" \
+    || "$ready_generation" != "$owner_generation" || -n "${ready_extra:-}" ]]; then
+    __dx_session_runtime_owner_abort \
+      "$owner_handle" "$owner_pid" "$owner_identity" 2>/dev/null || true
+    return 3
+  fi
+
+  result_record=$(__dx_session_runtime_owner_result "$owner_handle" 2>/dev/null) \
+    || result_read_result=$?
+  if [[ "$result_read_result" -eq 1 ]]; then
+    result_record=""
+    command_request=$(printf '%s\t%s' "$owner_generation" "$terminal_state")
+    if ! __dx_session_runtime_owner_atomic_write \
+        "$owner_handle" command "$command_request"; then
+      __dx_session_runtime_owner_abort \
+        "$owner_handle" "$owner_pid" "$owner_identity" 2>/dev/null || true
+      return 3
+    fi
+  elif [[ "$result_read_result" -ne 0 ]]; then
+    __dx_session_runtime_owner_abort \
+      "$owner_handle" "$owner_pid" "$owner_identity" 2>/dev/null || true
+    return 3
+  fi
+
+  while [[ -z "$result_record" && "$elapsed_milliseconds" -lt "$finish_timeout" ]]; do
+    result_read_result=0
+    result_record=$(__dx_session_runtime_owner_result "$owner_handle" 2>/dev/null) \
+      || result_read_result=$?
+    if [[ "$result_read_result" -eq 0 && -n "$result_record" ]]; then
+      break
+    fi
+    if [[ "$result_read_result" -ne 1 ]]; then
+      final_result=3
+      break
+    fi
+    sleep 0.05
+    elapsed_milliseconds=$((elapsed_milliseconds + 50))
+  done
+
+  if [[ -z "$result_record" ]]; then
+    if [[ "$final_result" -eq 0 ]]; then
+      final_result=75
+      printf '%s\n' "dex runtime owner: supervisor did not finish within the bounded wait" >&2
+    fi
+    __dx_session_runtime_owner_stop_process "$owner_pid" "$owner_identity" \
+      2>/dev/null || true
+    owner_error=$(__dx_session_runtime_owner_trusted_read \
+      "$owner_handle" error 4096 2>/dev/null || true)
+    case "$owner_error" in
+      "dex runtime:"*) printf '%s\n' "$owner_error" >&2 ;;
+    esac
+  else
+    IFS=$'\t' read -r result_code result_generation result_terminal \
+      result_detail result_extra <<EOF
+$result_record
+EOF
+    if [[ ! "$result_code" =~ ^[0-9]+$ || "$result_code" -gt 255 \
+      || "$result_generation" != "$owner_generation" \
+      || "$result_terminal" != "$terminal_state" || -z "$result_detail" \
+      || -n "${result_extra:-}" ]]; then
+      final_result=3
+    elif [[ "$result_code" -ne 0 ]]; then
+      final_result="$result_code"
+    fi
+
+    while __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" \
+      && [[ "$elapsed_milliseconds" -lt "$finish_timeout" ]]; do
+      sleep 0.05
+      elapsed_milliseconds=$((elapsed_milliseconds + 50))
+    done
+    if __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"; then
+      final_result=75
+      __dx_session_runtime_owner_stop_process "$owner_pid" "$owner_identity" \
+        2>/dev/null || true
+    fi
+  fi
+
+  owner_process_state=$(__dx_session_runtime_owner_process_state \
+    "$owner_pid" "$owner_identity" 2>/dev/null || true)
+  if [[ "$owner_process_state" == "live" ]]; then
+    [[ "$final_result" -ne 0 ]] || final_result=75
+    __dx_session_runtime_owner_stop_process "$owner_pid" "$owner_identity" \
+      2>/dev/null || true
+    owner_process_state=$(__dx_session_runtime_owner_process_state \
+      "$owner_pid" "$owner_identity" 2>/dev/null || true)
+  fi
+  if [[ "$owner_process_state" == "dead" ]]; then
+    wait "$owner_pid" 2>/dev/null || owner_wait_result=$?
+    cleanup_allowed=1
+  else
+    owner_wait_result=75
+  fi
+  if [[ "$owner_wait_result" -ne 0 && "$final_result" -eq 0 ]]; then
+    final_result="$owner_wait_result"
+  fi
+
+  runtime_pid=$(dx_session_runtime_field "$owner_session" pid 2>/dev/null || true)
+  runtime_identity=$(dx_session_runtime_field "$owner_session" process_start 2>/dev/null || true)
+  runtime_state=$(dx_session_runtime_field "$owner_session" status 2>/dev/null || true)
+  runtime_health=$(dx_session_runtime_health "$owner_session" 2>/dev/null || true)
+  if [[ "$runtime_pid" != "$owner_pid" || "$runtime_identity" != "$owner_identity" \
+    || "$runtime_state" != "$terminal_state" || "$runtime_health" != "dead" ]]; then
+    [[ "$final_result" -ne 0 ]] || final_result=3
+  fi
+  if [[ "$cleanup_allowed" -eq 1 ]]; then
+    __dx_session_runtime_owner_cleanup "$owner_handle" 2>/dev/null || {
+      [[ "$final_result" -ne 0 ]] || final_result=3
+    }
+  fi
+  return "$final_result"
 }

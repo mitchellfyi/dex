@@ -61,11 +61,36 @@ __dx_review_standalone_session_id() {
   [[ -n "$digest" ]] || digest="nohash"
   printf '%.150s-standalone-%s\n' "$base_session_id" "$digest"
 }
+__dx_review_runtime_correlated() { # <session> <provider> <workspace>
+  local session_id="$1" provider_name="$2" workspace_dir="$3"
+  local canonical_workspace runtime_workspace runtime_provider runtime_state runtime_health
+  canonical_workspace=$(cd "$workspace_dir" 2>/dev/null && pwd -P) || return 1
+  runtime_health=$(dx_session_runtime_health "$session_id" 2>/dev/null || true)
+  [[ "$runtime_health" == "live" ]] || return 1
+  runtime_state=$(dx_session_runtime_field "$session_id" status 2>/dev/null || true)
+  runtime_provider=$(dx_session_runtime_field "$session_id" provider 2>/dev/null || true)
+  runtime_workspace=$(dx_session_runtime_field "$session_id" workspace 2>/dev/null || true)
+  [[ "$runtime_state" == "running" && "$runtime_provider" == "$provider_name" \
+    && "$runtime_workspace" == "$canonical_workspace" ]]
+}
 __dx_review_runtime_cleanup() {
-  local repo_root="$1" lock_token="$2" session_id="$3" invocation_dir="$4" busy_token=""
+  local repo_root="$1" lock_token="$2" session_id="$3" invocation_dir="$4"
+  local runtime_owner_handle="${5:-}" exit_result="${6:-1}" busy_token=""
   if dx_phase_busy_quiesced "$session_id" 3; then
     busy_token=$(dx_phase_busy_token "$session_id" 3)
     dx_phase_busy_finish "$session_id" 3 "$busy_token" 2>/dev/null || true
+  fi
+  if [[ -n "$runtime_owner_handle" ]]; then
+    case "$exit_result" in
+      129|130|143)
+        dx_session_runtime_owner_finish "$runtime_owner_handle" stopped \
+          2>/dev/null || true
+        ;;
+      *)
+        dx_session_runtime_owner_finish "$runtime_owner_handle" blocked \
+          2>/dev/null || true
+        ;;
+    esac
   fi
   dx_review_lock_release "$repo_root" "$lock_token" 2>/dev/null || true
   builtin cd "$invocation_dir" 2>/dev/null || true
@@ -571,12 +596,40 @@ dx_review_loop_run() {
     fi
     return 1
   fi
+
+  local review_runtime_owner_handle="" review_runtime_owner_pid=""
+  if [[ $standalone_review_prompt -eq 0 ]]; then
+    if ! __dx_review_runtime_correlated "$session_id" "$provider_agent" "$repo_root"; then
+      dx_review_lock_release "$repo_root" "$review_lock_token" 2>/dev/null || true
+      touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+      dx_error "Dex cannot verify a live runtime owner for this lifecycle checkout, so review did not start."
+      return 1
+    fi
+  else
+    if ! dx_session_runtime_owner_start "$session_id" "$provider_agent" "$repo_root"; then
+      dx_review_lock_release "$repo_root" "$review_lock_token" 2>/dev/null || true
+      dx_error "Dex could not establish review runtime ownership, so it did not start an assessor or review wave."
+      return 1
+    fi
+    review_runtime_owner_handle="${DX_SESSION_RUNTIME_OWNER_HANDLE:-}"
+    review_runtime_owner_pid="${DX_SESSION_RUNTIME_OWNER_PID:-}"
+    unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+    if [[ -z "$review_runtime_owner_handle" || ! "$review_runtime_owner_pid" =~ ^[0-9]+$ ]]; then
+      if [[ -n "$review_runtime_owner_handle" ]]; then
+        dx_session_runtime_owner_finish "$review_runtime_owner_handle" failed 2>/dev/null || true
+      fi
+      dx_review_lock_release "$repo_root" "$review_lock_token" 2>/dev/null || true
+      dx_error "Dex received an invalid review runtime-owner handle."
+      return 1
+    fi
+  fi
   # zsh localtraps runs after local scope teardown, so the values are quoted
   # into the trap string now rather than expanded when it fires. printf %q is
   # used instead of zsh's ${(q)} so this stays sourceable by bash too.
   local review_cleanup_command
-  review_cleanup_command=$(printf '__dx_review_runtime_cleanup %q %q %q %q' \
-    "$repo_root" "$review_lock_token" "$session_id" "$invocation_dir")
+  review_cleanup_command=$(printf '__dx_review_runtime_cleanup %q %q %q %q %q "$?"' \
+    "$repo_root" "$review_lock_token" "$session_id" "$invocation_dir" \
+    "$review_runtime_owner_handle")
   # shellcheck disable=SC2064  # deliberate: the command is already fully quoted
   trap "$review_cleanup_command" EXIT
   if ! builtin cd "$repo_root"; then
@@ -705,6 +758,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     local assessment_source="lifecycle-assessor"
     [[ $standalone_review_prompt -eq 1 ]] && assessment_source="standalone-assessor"
     local assessment_before="" assessment_after="" assessment_attempt=0 assessment_ok=0 assessment_exit=0 assessment_record=""
+    local assessment_runtime_lost=0
     local assessment_codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
     assessment_before=$(dx_review_scope_fingerprint "$PWD") || {
       dx_error "Could not fingerprint the review scope before assessment."
@@ -763,6 +817,14 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         "$review_policy_small" "$review_policy_normal" "$review_policy_complex" \
         "$review_policy_binding" "$assessment_rubric")
 
+      if ! __dx_review_runtime_correlated \
+          "$session_id" "$provider_agent" "$repo_root"; then
+        assessment_exit=75
+        assessment_runtime_lost=1
+        current_review_child_session=""
+        dx_cleanup_session "$assessment_session_id"
+        break
+      fi
       dx_provider_write_session_state "$assessment_session_id" 2>/dev/null || true
       assessment_exit=0
       if [[ "$provider_agent" == "codex" ]]; then
@@ -864,7 +926,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
 
     if [[ $assessment_ok -ne 1 ]]; then
       local assessment_failure="assessment_invalid"
-      if [[ $assessment_exit -eq 124 ]]; then
+      if [[ $assessment_runtime_lost -eq 1 ]]; then
+        assessment_failure="runtime_owner_lost"
+      elif [[ $assessment_exit -eq 124 ]]; then
         assessment_failure="assessment_timeout"
       elif [[ $assessment_exit -ne 0 ]]; then
         assessment_failure="assessment_provider_error"
@@ -1121,6 +1185,19 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
       fi
     fi
 
+    if ! __dx_review_runtime_correlated \
+        "$session_id" "$provider_agent" "$repo_root"; then
+      if [[ -n "$parent_busy_token" ]]; then
+        dx_phase_busy_finish "$session_id" 3 "$parent_busy_token" 2>/dev/null || true
+        parent_busy_token=""
+      fi
+      terminal_reason="runtime_owner_lost"
+      clean_passes=0
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    fi
+
     local exit_code=0
     if [[ "$provider_agent" == "codex" ]]; then
       local codex_wrapper="$DEX_DIR/bin/dxcodex.sh" codex_message=""
@@ -1217,6 +1294,16 @@ ${message}"
     fi
     pass_finished=$(date +%s)
     pass_duration=$((pass_finished - pass_started))
+
+    if ! __dx_review_runtime_correlated \
+        "$session_id" "$provider_agent" "$repo_root"; then
+      terminal_reason="runtime_owner_lost"
+      clean_passes=0
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    fi
 
     if [[ $review_intervention_requested -eq 1 ]]; then
       dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
@@ -1550,6 +1637,12 @@ ${message}"
     dx_phase_busy_finish "$session_id" 3 "$final_busy_token" 2>/dev/null || true
   fi
 
+  if ! __dx_review_runtime_correlated \
+      "$session_id" "$provider_agent" "$repo_root"; then
+    terminal_reason="runtime_owner_lost"
+    clean_passes=0
+  fi
+
   echo ""
   if [[ $clean_passes -ge $required_clean && -z "$terminal_reason" ]]; then
     if ! __dx_review_criteria_intact "$session_id" "" "$review_criteria_binding"; then
@@ -1566,17 +1659,29 @@ ${message}"
         terminal_reason="receipt_validation_failed"
         clean_passes=0
       else
-        __dx_review_emit_event "$review_run_id" "review.completed" "info" "Review completed" "$review_phase" \
-          tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason=clean_gate_reached
-        dx_done "Review complete: ${clean_passes} consecutive clean passes."
-        echo "  Risk tier: ${review_tier} (${review_profile})"
-        echo "  Iterations: ${review_iteration}"
-        echo "  Findings fixed: ${findings_fixed_total}"
-        echo "  Receipt: $(dx_review_receipt_file "$session_id")"
-        echo "  Result: SUCCESS"
-        echo "  Exit reason: clean_gate_reached"
-        [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" completed clean_gate_reached "$session_id"
-        return 0
+        local review_runtime_finish_result=0
+        if [[ -n "$review_runtime_owner_handle" ]]; then
+          dx_session_runtime_owner_finish "$review_runtime_owner_handle" completed \
+            || review_runtime_finish_result=$?
+          review_runtime_owner_handle=""
+        fi
+        if [[ "$review_runtime_finish_result" -ne 0 ]]; then
+          rm -f "$(dx_review_receipt_file "$session_id")" 2>/dev/null
+          terminal_reason="runtime_finish_failed"
+          clean_passes=0
+        else
+          __dx_review_emit_event "$review_run_id" "review.completed" "info" "Review completed" "$review_phase" \
+            tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason=clean_gate_reached
+          dx_done "Review complete: ${clean_passes} consecutive clean passes."
+          echo "  Risk tier: ${review_tier} (${review_profile})"
+          echo "  Iterations: ${review_iteration}"
+          echo "  Findings fixed: ${findings_fixed_total}"
+          echo "  Receipt: $(dx_review_receipt_file "$session_id")"
+          echo "  Result: SUCCESS"
+          echo "  Exit reason: clean_gate_reached"
+          [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" completed clean_gate_reached "$session_id"
+          return 0
+        fi
       fi
     fi
   fi
@@ -1623,6 +1728,23 @@ ${message}"
   echo "  Exit reason: ${terminal_reason:-unknown}"
   echo "  Intervention: $(__dx_review_pause_intervention "${terminal_reason:-unknown}" "$terminal_detail")"
   [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" blocked "${terminal_reason:-unknown}" "$session_id"
+  if [[ -n "$review_runtime_owner_handle" ]]; then
+    local review_runtime_terminal_state="blocked" review_runtime_terminal_result=0
+    case "$terminal_reason" in
+      human_intervention) review_runtime_terminal_state="paused" ;;
+      provider_error|runtime_owner_lost|runtime_finish_failed)
+        review_runtime_terminal_state="failed"
+        ;;
+    esac
+    dx_session_runtime_owner_finish \
+      "$review_runtime_owner_handle" "$review_runtime_terminal_state" \
+      || review_runtime_terminal_result=$?
+    review_runtime_owner_handle=""
+    if [[ "$review_runtime_terminal_result" -ne 0 ]]; then
+      dx_error "Dex could not close the review runtime lease safely."
+      terminal_exit=1
+    fi
+  fi
   [[ $terminal_exit -eq 0 ]] && terminal_exit=1
   return $terminal_exit
 }

@@ -1822,6 +1822,77 @@ __dx_codex_direct_phase_handoff() {
   return 0
 }
 
+unalias __dx_runtime_set_terminal 2>/dev/null; unfunction __dx_runtime_set_terminal 2>/dev/null
+__dx_runtime_set_terminal() {
+  local terminal_state="$1"
+  [[ -n "${_dx_runtime_owner_handle:-}" ]] || return 0
+  case "$terminal_state" in
+    completed|paused|blocked|failed|stopped|abandoned)
+      _dx_runtime_terminal_state="$terminal_state"
+      ;;
+  esac
+}
+
+unalias __dx_run_with_runtime 2>/dev/null; unfunction __dx_run_with_runtime 2>/dev/null
+__dx_run_with_runtime() {
+  local session_id="$1" workspace_dir="$2" callback_name="$3"
+  shift 3
+  local provider_name owner_start_result=0 callback_result=1 owner_finish_result=0
+  local runtime_cleanup_command=""
+  local _dx_runtime_owner_handle="" _dx_runtime_owner_pid=""
+  local _dx_runtime_terminal_state="failed"
+  setopt localoptions localtraps
+  provider_name=$(__dx_resolved_provider_agent) || return 1
+  dx_session_runtime_owner_start \
+    "$session_id" "$provider_name" "$workspace_dir" || owner_start_result=$?
+  if [[ "$owner_start_result" -ne 0 ]]; then
+    if [[ "$owner_start_result" -eq 2 ]]; then
+      dx_error "Another Dex runtime already owns this checkout. Resume or finish it before starting another provider."
+    else
+      dx_error "Dex could not establish runtime ownership, so it did not start the provider."
+    fi
+    return 1
+  fi
+  _dx_runtime_owner_handle="${DX_SESSION_RUNTIME_OWNER_HANDLE:-}"
+  _dx_runtime_owner_pid="${DX_SESSION_RUNTIME_OWNER_PID:-}"
+  unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+  if [[ -z "$_dx_runtime_owner_handle" || ! "$_dx_runtime_owner_pid" =~ ^[0-9]+$ ]]; then
+    if [[ -n "$_dx_runtime_owner_handle" ]]; then
+      dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" failed 2>/dev/null || true
+    fi
+    dx_error "Dex received an invalid runtime-owner handle, so it did not start the provider."
+    return 1
+  fi
+
+  # EXIT runs after zsh tears down local scope, so bind the fallback handle now.
+  runtime_cleanup_command=$(printf \
+    'dx_session_runtime_owner_finish %q failed >/dev/null 2>&1 || true' \
+    "$_dx_runtime_owner_handle")
+  # shellcheck disable=SC2064  # the handle is already shell-quoted
+  trap "$runtime_cleanup_command" EXIT
+  trap 'dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 130' INT
+  trap 'dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 143' TERM
+  trap 'dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 129' HUP
+
+  "$callback_name" "$@"
+  callback_result=$?
+  if [[ "$callback_result" -eq 129 || "$callback_result" -eq 130 \
+    || "$callback_result" -eq 143 ]]; then
+    _dx_runtime_terminal_state="stopped"
+  fi
+  dx_session_runtime_owner_finish \
+    "$_dx_runtime_owner_handle" "$_dx_runtime_terminal_state" \
+    || owner_finish_result=$?
+  _dx_runtime_owner_handle=""
+  trap - EXIT INT TERM HUP
+
+  if [[ "$owner_finish_result" -ne 0 ]]; then
+    dx_error "Dex could not close the runtime lease safely. The provider result was not accepted as success."
+    return 1
+  fi
+  return "$callback_result"
+}
+
 # __dx_run_phases_inline <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
 #
 # Phase lifecycle entrypoint, and the same-session runner. The shell launches
@@ -1838,7 +1909,7 @@ __dx_run_phases_inline() {
   local state_file="$5" times_file="$6" resume_hint="$7"
   local workspace_mode="${8:-worktree}"
   local session_id="${9:-}" raw_input="${10:-}"
-  local claude_session_name
+  local claude_session_name workspace_cleanup_result=0
   claude_session_name=$(__dx_claude_session_name "$workspace_mode" "$wt_name")
 
   [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
@@ -1879,14 +1950,22 @@ __dx_run_phases_inline() {
       echo "Ticket lifecycle complete."
       if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
         dx_info "Human-controlled completion preserved the lifecycle workspace."
+        __dx_runtime_set_terminal completed
         return 0
       fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
-      return $?
+      workspace_cleanup_result=$?
+      if [[ "$workspace_cleanup_result" -eq 0 ]]; then
+        __dx_runtime_set_terminal completed
+      else
+        __dx_runtime_set_terminal failed
+      fi
+      return "$workspace_cleanup_result"
     fi
     __dx_run_phases_inline "$wt_name" "$wt_dir" "$default_branch" "$preflight_step" "$state_file" "$times_file" "$resume_hint" "$workspace_mode" "$session_id" "$raw_input"
     return $?
   elif [[ "$preflight_handoff_status" -eq 2 ]]; then
+    __dx_runtime_set_terminal paused
     __dx_finish_inline_pause "$session_id" "$step" "$resume_hint" "$wt_name" "$wt_dir" \
       "$default_branch" "$workspace_mode"
     return $?
@@ -1913,11 +1992,18 @@ __dx_run_phases_inline() {
       echo "Ticket lifecycle complete."
       if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
         dx_info "Human-controlled completion preserved the lifecycle workspace."
+        __dx_runtime_set_terminal completed
         return 0
       fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" \
         "$workspace_mode" "$session_id"
-      return $?
+      workspace_cleanup_result=$?
+      if [[ "$workspace_cleanup_result" -eq 0 ]]; then
+        __dx_runtime_set_terminal completed
+      else
+        __dx_runtime_set_terminal failed
+      fi
+      return "$workspace_cleanup_result"
     fi
   fi
   if [[ "$configure_status" -ne 0 ]]; then
@@ -2008,6 +2094,7 @@ __dx_run_phases_inline() {
       dx_error "Dex paused, but completion authorization could not be safely revoked. Repair the lifecycle state files before resuming."
       return 1
     fi
+    __dx_runtime_set_terminal paused
     __dx_finish_inline_pause "$session_id" "$final_step" "$resume_hint" "$wt_name" "$wt_dir" \
       "$default_branch" "$workspace_mode"
     return $?
@@ -2039,6 +2126,7 @@ __dx_run_phases_inline() {
     echo ""
     echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (${pause_reason})"
     echo "Resume with: ${resume_hint}"
+    __dx_runtime_set_terminal blocked
     return 1
   fi
 
@@ -2051,10 +2139,17 @@ __dx_run_phases_inline() {
     echo "Ticket lifecycle complete."
     if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
       dx_info "Human-controlled completion preserved the lifecycle workspace."
+      __dx_runtime_set_terminal completed
       return 0
     fi
     __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
-    return $?
+    workspace_cleanup_result=$?
+    if [[ "$workspace_cleanup_result" -eq 0 ]]; then
+      __dx_runtime_set_terminal completed
+    else
+      __dx_runtime_set_terminal failed
+    fi
+    return "$workspace_cleanup_result"
   fi
 
   if [[ $exit_code -ne 0 ]]; then
@@ -2079,6 +2174,11 @@ __dx_run_phases_inline() {
     echo ""
     echo "Paused at Phase ${final_step}: $(__dx_phase_name "$final_step") (exit ${exit_code})"
     echo "Resume with: ${resume_hint}"
+    if [[ $exit_code -eq 130 || $exit_code -eq 143 ]]; then
+      __dx_runtime_set_terminal stopped
+    else
+      __dx_runtime_set_terminal failed
+    fi
     return "$exit_code"
   fi
 
@@ -2094,14 +2194,22 @@ __dx_run_phases_inline() {
       echo "Ticket lifecycle complete."
       if [[ -f "$(dx_lifecycle_human_complete_file "$session_id")" ]]; then
         dx_info "Human-controlled completion preserved the lifecycle workspace."
+        __dx_runtime_set_terminal completed
         return 0
       fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
-      return $?
+      workspace_cleanup_result=$?
+      if [[ "$workspace_cleanup_result" -eq 0 ]]; then
+        __dx_runtime_set_terminal completed
+      else
+        __dx_runtime_set_terminal failed
+      fi
+      return "$workspace_cleanup_result"
     fi
     __dx_run_phases_inline "$wt_name" "$wt_dir" "$default_branch" "$final_step" "$state_file" "$times_file" "$resume_hint" "$workspace_mode" "$session_id" "$raw_input"
     return $?
   elif [[ "$final_handoff_status" -eq 2 ]]; then
+    __dx_runtime_set_terminal paused
     __dx_finish_inline_pause "$session_id" "$final_step" "$resume_hint" "$wt_name" "$wt_dir" \
       "$default_branch" "$workspace_mode"
     return $?
@@ -2122,6 +2230,7 @@ __dx_run_phases_inline() {
   echo ""
   echo "Claude session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
   echo "Resume with: ${resume_hint}"
+  __dx_runtime_set_terminal blocked
   return 1
 }
 
@@ -2452,7 +2561,9 @@ __dx_run_spec_cli() {
   dx_info "Starting headless Dex run ${run_id}"
   local resume_hint="dx run --spec ${source_label}"
   [[ -n "$spec_url" ]] && resume_hint="dx run --spec-url ${source_label}"
-  __dx_run_phases_inline "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
+  __dx_run_with_runtime "$session_id" "$_dx_wt_dir" __dx_run_phases_inline \
+    "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" \
+    "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
   local run_status=$?
   cd "$original_dir" 2>/dev/null || true
   command rm -rf "$tmp_dir" 2>/dev/null || true
@@ -2836,7 +2947,9 @@ dx() {
     echo "Resuming ${_dx_wt_name} from Phase ${step}: $(__dx_phase_name "$step")..."
 
     cd "$_dx_wt_dir" 2>/dev/null || return 1
-    __dx_run_phases_inline "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "dx --resume" "$_dx_workspace_mode" "$session_id" "$raw_input"
+    __dx_run_with_runtime "$session_id" "$_dx_wt_dir" __dx_run_phases_inline \
+      "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" \
+      "$times_file" "dx --resume" "$_dx_workspace_mode" "$session_id" "$raw_input"
     return $?
   fi
 
@@ -2911,7 +3024,9 @@ dx() {
   local resume_hint="dx ${raw_input}"
   [[ "$_dx_workspace_mode" == "in-place" ]] && resume_hint="dx --no-worktree ${raw_input}"
   cd "$_dx_wt_dir" 2>/dev/null || return 1
-  __dx_run_phases_inline "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
+  __dx_run_with_runtime "$session_id" "$_dx_wt_dir" __dx_run_phases_inline \
+    "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" \
+    "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
   return $?
 }
 
@@ -2995,6 +3110,16 @@ dxloop() {
   # Derive a unique session ID so concurrent dxloops on the same branch don't collide
   local session_id
   session_id=$(dx_unique_session_id)
+
+  __dx_run_with_runtime "$session_id" "$repo_root" __dxloop_run \
+    "$prompt" "$repo_root" "$session_id"
+  return $?
+}
+
+unalias __dxloop_run 2>/dev/null; unfunction __dxloop_run 2>/dev/null
+__dxloop_run() {
+  local prompt="$1" repo_root="$2" session_id="$3"
+  : "$repo_root"
 
   # Remove any loop files that happen to share this unique session ID (harmless
   # no-op in practice since each dxloop gets a fresh ID via dx_unique_session_id).
@@ -3111,6 +3236,17 @@ $(__dx_provider_prompt)"
     else
       dx_info "dxloop interrupted during planning (exit code: $plan_exit)."
     fi
+    case "$plan_status" in
+      human-pause) __dx_runtime_set_terminal paused ;;
+      max-iter|missing-receipt) __dx_runtime_set_terminal blocked ;;
+      *)
+        if [[ $plan_exit -eq 129 || $plan_exit -eq 130 || $plan_exit -eq 143 ]]; then
+          __dx_runtime_set_terminal stopped
+        else
+          __dx_runtime_set_terminal failed
+        fi
+        ;;
+    esac
     return $plan_exit
   fi
 
@@ -3180,6 +3316,7 @@ $(__dx_provider_prompt)"
   if [[ $exit_code -eq 0 ]]; then
     echo ""
     dx_done "dxloop complete."
+    __dx_runtime_set_terminal completed
   else
     echo ""
     if [[ "$loop_status" == "human-pause" ]]; then
@@ -3191,6 +3328,17 @@ $(__dx_provider_prompt)"
     else
       dx_info "dxloop interrupted (exit code: $exit_code)."
     fi
+    case "$loop_status" in
+      human-pause) __dx_runtime_set_terminal paused ;;
+      max-iter|missing-receipt) __dx_runtime_set_terminal blocked ;;
+      *)
+        if [[ $exit_code -eq 129 || $exit_code -eq 130 || $exit_code -eq 143 ]]; then
+          __dx_runtime_set_terminal stopped
+        else
+          __dx_runtime_set_terminal failed
+        fi
+        ;;
+    esac
   fi
 
   return $exit_code
@@ -3350,17 +3498,27 @@ dxcomplete() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
+  local session_id start_dir
+  session_id=$(dx_session_id)
+  start_dir=$(pwd)
+  __dx_run_with_runtime "$session_id" "$start_dir" __dxcomplete_run \
+    "$provider_agent" "$pr_num" "$session_id" "$start_dir"
+  return $?
+}
+
+unalias __dxcomplete_run 2>/dev/null; unfunction __dxcomplete_run 2>/dev/null
+__dxcomplete_run() {
+  local provider_agent="$1" pr_num="$2" session_id="$3" start_dir="$4"
+
   # Use a session ID derived from the current location (worktree-aware via dx_session_id)
-  local session_id start_dir cleanup_repo_root cleanup_default_branch cleanup_mode="" cleanup_wt_name="" cleanup_wt_dir=""
+  local cleanup_repo_root cleanup_default_branch cleanup_mode="" cleanup_wt_name="" cleanup_wt_dir=""
   local complete_file paused_file completion_generation completion_config_file
   local completion_control_file
   local completion_activation_context="" completion_activation_conflict=0
-  session_id=$(dx_session_id)
   complete_file=$(dx_complete_file "$session_id")
   paused_file=$(dx_paused_file "$session_id")
   completion_config_file=$(dx_loop_config_file "$session_id")
   completion_control_file=$(dx_lifecycle_control_file "$session_id")
-  start_dir=$(pwd)
   cleanup_repo_root=$(dx_repo_root 2>/dev/null || echo "")
   cleanup_default_branch=$(dx_default_branch "$start_dir")
   if [[ -n "$cleanup_repo_root" && "$start_dir" == "${cleanup_repo_root}/.dex/worktrees/"* ]]; then
@@ -3554,6 +3712,20 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
     dx_info "dxcomplete finished; no Dex worktree was detected, so the current checkout and branch were left intact."
   fi
 
+  if [[ "$completion_cleanup_failed" -eq 1 ]]; then
+    __dx_runtime_set_terminal failed
+  elif [[ "$complete_paused" -eq 1 ]]; then
+    __dx_runtime_set_terminal paused
+  elif [[ "$legacy_receipt" -eq 1 || "$loop_status" == "max-iter" \
+    || "$loop_status" == "missing-receipt" ]]; then
+    __dx_runtime_set_terminal blocked
+  elif [[ $exit_code -eq 0 ]]; then
+    __dx_runtime_set_terminal completed
+  elif [[ $exit_code -eq 129 || $exit_code -eq 130 || $exit_code -eq 143 ]]; then
+    __dx_runtime_set_terminal stopped
+  else
+    __dx_runtime_set_terminal failed
+  fi
   return $exit_code
 }
 
