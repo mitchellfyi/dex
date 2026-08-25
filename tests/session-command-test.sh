@@ -189,8 +189,8 @@ touch -t 200001010000 "$(dx_state_file "$SID_LEGACY")"
 
 run_sessions "$REPO_A" "$TMP_DIR/help.out" --help
 assert_eq "0" "$COMMAND_RESULT" "help result"
-assert_contains "Usage: dx sessions <list|show|doctor|pause|cancel>" "$TMP_DIR/help.out"
-assert_contains "cooperative pause and cancel requests" "$TMP_DIR/help.out"
+assert_contains "Usage: dx sessions <list|show|doctor|pause|cancel|resume>" "$TMP_DIR/help.out"
+assert_contains "relaunch one dead lifecycle" "$TMP_DIR/help.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/missing-command.out"
 assert_eq "1" "$COMMAND_RESULT" "missing command result"

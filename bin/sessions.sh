@@ -8,9 +8,9 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: dx sessions <list|show|doctor|pause|cancel> [options]
+Usage: dx sessions <list|show|doctor|pause|cancel|resume> [options]
 
-Inspect lifecycle sessions or send cooperative pause and cancel requests.
+Inspect lifecycle sessions, control live runs, or relaunch one dead lifecycle.
 
 Commands:
   list [--all] [--include-children]
@@ -30,6 +30,9 @@ Commands:
 
   cancel <selector>
       Ask one verified live session in the current repository to cancel.
+
+  resume <selector>
+      Relaunch one verified dead lifecycle in the current repository.
 
 Options:
   --all               Search every recoverable repository (list only)
@@ -900,6 +903,49 @@ __dx_sessions_mutate() {
   dx_done "${action_label} request accepted for session ${session_id}."
 }
 
+__dx_sessions_resume() {
+  local selector_value="" argument
+  while [[ $# -gt 0 ]]; do
+    argument="$1"
+    case "$argument" in
+      -h|--help)
+        usage
+        return 0
+        ;;
+      --include-children)
+        dx_error "dx sessions resume does not accept --include-children."
+        return 1
+        ;;
+      -*)
+        dx_error "Unknown dx sessions resume option: $argument"
+        return 1
+        ;;
+      *)
+        if [[ -n "$selector_value" ]]; then
+          dx_error "dx sessions resume accepts one selector."
+          return 1
+        fi
+        selector_value="$argument"
+        ;;
+    esac
+    shift
+  done
+  if [[ -z "$selector_value" ]]; then
+    dx_error "dx sessions resume requires one selector."
+    usage >&2
+    return 1
+  fi
+  if ! command -v zsh >/dev/null 2>&1; then
+    dx_error "zsh is required to relaunch a Dex lifecycle."
+    return 1
+  fi
+
+  # Invoke the private resume entrypoint directly. Routing back through
+  # `dx sessions` would recurse through this Bash dispatcher.
+  zsh -fc 'source "$1"; __dx_sessions_resume_selected "$2"' \
+    dex-sessions-resume "$DEX_DIR/dx.sh" "$selector_value"
+}
+
 main() {
   local command_name="${1:-}"
   case "$command_name" in
@@ -919,6 +965,7 @@ main() {
     show) __dx_sessions_show "$@" ;;
     doctor) __dx_sessions_doctor "$@" ;;
     pause|cancel) __dx_sessions_mutate "$command_name" "$@" ;;
+    resume) __dx_sessions_resume "$@" ;;
     *)
       dx_error "Unknown dx sessions command: $command_name"
       usage >&2

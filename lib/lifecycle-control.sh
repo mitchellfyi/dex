@@ -329,6 +329,90 @@ dx_lifecycle_terminal_failure_rollback() {
   return "$rollback_rc"
 }
 
+# Prepare a dead lifecycle for a new provider without authorizing that provider.
+# The caller owns both the checkout review lock and this session's transition
+# lock. The launcher creates fresh completion authorization immediately before
+# it crosses the provider boundary.
+dx_lifecycle_relaunch_prepare_unlocked() {
+  [[ $# -eq 2 ]] || return 1
+  local session_id="$1" expected_phase="$2" phase="" phase_rc=0 pause_rc=0
+  local pause_record="" pause_record_rc=0 pause_reason="" pause_source=""
+  local control_file busy_file busy_cancel_file busy_quiesced_file busy_token=""
+  local cleanup_file rollback_generation
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$expected_phase" =~ ^[0-7]$ ]] || return 1
+  __dx_lifecycle_control_lock_owned "$session_id" || return 1
+
+  phase=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null) || phase_rc=$?
+  [[ "$phase_rc" -eq 0 && "$phase" == "$expected_phase" ]] || return 1
+
+  control_file=$(dx_lifecycle_control_file "$session_id")
+  [[ ! -e "$control_file" && ! -L "$control_file" ]] || return 1
+
+  dx_lifecycle_pause_context_state "$session_id" || pause_rc=$?
+  [[ "$pause_rc" -ne 2 ]] || return 1
+  pause_record=$(dx_lifecycle_pause_metadata_record "$session_id" \
+    2>/dev/null) || pause_record_rc=$?
+  [[ "$pause_record_rc" -ne 2 ]] || return 1
+  if [[ "$pause_record_rc" -eq 0 ]]; then
+    IFS=$'\t' read -r pause_reason pause_source <<EOF
+$pause_record
+EOF
+    : "$pause_source"
+    case "$pause_reason" in
+      assessment-selection-revocation-failed|receipt_revocation_failed)
+        return 1
+        ;;
+    esac
+  fi
+
+  busy_file=$(dx_phase_busy_file "$session_id" 3)
+  busy_cancel_file=$(dx_phase_busy_cancel_file "$session_id" 3)
+  busy_quiesced_file=$(dx_phase_busy_quiesced_file "$session_id" 3)
+  if [[ -e "$busy_file" || -L "$busy_file" ]]; then
+    dx_phase_busy_quiesced "$session_id" 3 || return 1
+    busy_token=$(dx_phase_busy_token "$session_id" 3)
+    [[ -n "$busy_token" ]] || return 1
+    dx_phase_busy_finish "$session_id" 3 "$busy_token" || return 1
+  elif [[ -e "$busy_cancel_file" || -L "$busy_cancel_file" \
+    || -e "$busy_quiesced_file" || -L "$busy_quiesced_file" ]]; then
+    return 1
+  fi
+
+  if [[ "$phase" == "7" ]]; then
+    __dx_lifecycle_terminal_commit_valid_unlocked "$session_id" && return 1
+    __dx_lifecycle_terminal_failure_pause_valid "$session_id" || return 1
+    dx_lifecycle_terminal_proofs_invalidate_unlocked "$session_id" || return 1
+  else
+    dx_lifecycle_terminal_proofs_invalidate_unlocked "$session_id" || return 1
+  fi
+
+  dx_completion_abandon "$session_id" 2>/dev/null \
+    || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
+    || return 1
+  for cleanup_file in \
+    "$(dx_active_file "$session_id")" \
+    "$(dx_owner_file "$session_id")" \
+    "$(dx_loop_config_file "$session_id")" \
+    "$(dx_handoff_mode_file "$session_id")" \
+    "$(dx_complete_file "$session_id")" \
+    "$(dx_loop_file "$session_id")" \
+    "$(dx_findings_file "$session_id")" \
+    "$(dx_watch_pause_file "$session_id")"; do
+    command rm -f "$cleanup_file" 2>/dev/null || return 1
+    [[ ! -e "$cleanup_file" && ! -L "$cleanup_file" ]] || return 1
+  done
+  if [[ "$phase" == "7" ]]; then
+    dx_lifecycle_atomic_write "$(dx_state_file "$session_id")" 6 || return 1
+    rollback_generation="relaunch-$(date +%s)-$$-${RANDOM}"
+    dx_phase_outcome_record "$session_id" 6 invalidated lifecycle-control \
+      "$rollback_generation" terminal-proof-invalid 2>/dev/null || return 1
+    phase=6
+  fi
+  dx_lifecycle_pause_clear_unlocked "$session_id" || return 1
+  printf '%s\n' "$phase"
+}
+
 __dx_lifecycle_terminal_failure_pause_valid() {
   [[ $# -eq 1 ]] || return 1
   local session_id="$1" metadata_raw="" reason_line source_line

@@ -2041,28 +2041,15 @@ __dx_runtime_set_terminal() {
 }
 
 unalias __dx_run_with_runtime 2>/dev/null; unfunction __dx_run_with_runtime 2>/dev/null
-__dx_run_with_runtime() {
-  local session_id="$1" workspace_dir="$2" callback_name="$3"
+unalias __dx_run_with_runtime_owner_handle 2>/dev/null; unfunction __dx_run_with_runtime_owner_handle 2>/dev/null
+__dx_run_with_runtime_owner_handle() {
+  local owner_handle="$1" owner_pid="$2" callback_name="$3"
   shift 3
-  local provider_name owner_start_result=0 callback_result=1 owner_finish_result=0
+  local callback_result=1 owner_finish_result=0
   local runtime_cleanup_command=""
-  local _dx_runtime_owner_handle="" _dx_runtime_owner_pid=""
+  local _dx_runtime_owner_handle="$owner_handle" _dx_runtime_owner_pid="$owner_pid"
   local _dx_runtime_terminal_state="failed"
   setopt localoptions localtraps
-  provider_name=$(__dx_resolved_provider_agent) || return 1
-  dx_session_runtime_owner_start \
-    "$session_id" "$provider_name" "$workspace_dir" || owner_start_result=$?
-  if [[ "$owner_start_result" -ne 0 ]]; then
-    if [[ "$owner_start_result" -eq 2 ]]; then
-      dx_error "Another Dex runtime already owns this checkout. Resume or finish it before starting another provider."
-    else
-      dx_error "Dex could not establish runtime ownership, so it did not start the provider."
-    fi
-    return 1
-  fi
-  _dx_runtime_owner_handle="${DX_SESSION_RUNTIME_OWNER_HANDLE:-}"
-  _dx_runtime_owner_pid="${DX_SESSION_RUNTIME_OWNER_PID:-}"
-  unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
   if [[ -z "$_dx_runtime_owner_handle" || ! "$_dx_runtime_owner_pid" =~ ^[0-9]+$ ]]; then
     if [[ -n "$_dx_runtime_owner_handle" ]]; then
       dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" failed 2>/dev/null || true
@@ -2087,10 +2074,12 @@ __dx_run_with_runtime() {
     || "$callback_result" -eq 143 ]]; then
     _dx_runtime_terminal_state="stopped"
   fi
-  dx_session_runtime_owner_finish \
-    "$_dx_runtime_owner_handle" "$_dx_runtime_terminal_state" \
-    || owner_finish_result=$?
-  _dx_runtime_owner_handle=""
+  if [[ -n "$_dx_runtime_owner_handle" ]]; then
+    dx_session_runtime_owner_finish \
+      "$_dx_runtime_owner_handle" "$_dx_runtime_terminal_state" \
+      || owner_finish_result=$?
+    _dx_runtime_owner_handle=""
+  fi
   trap - EXIT INT TERM HUP
 
   if [[ "$owner_finish_result" -ne 0 ]]; then
@@ -2098,6 +2087,380 @@ __dx_run_with_runtime() {
     return 1
   fi
   return "$callback_result"
+}
+
+__dx_run_with_runtime() {
+  local session_id="$1" workspace_dir="$2" callback_name="$3"
+  shift 3
+  local provider_name owner_start_result=0 owner_handle="" owner_pid=""
+  provider_name=$(__dx_resolved_provider_agent) || return 1
+  dx_session_runtime_owner_start \
+    "$session_id" "$provider_name" "$workspace_dir" || owner_start_result=$?
+  if [[ "$owner_start_result" -ne 0 ]]; then
+    if [[ "$owner_start_result" -eq 2 ]]; then
+      dx_error "Another Dex runtime already owns this checkout. Resume or finish it before starting another provider."
+    else
+      dx_error "Dex could not establish runtime ownership, so it did not start the provider."
+    fi
+    return 1
+  fi
+  owner_handle="${DX_SESSION_RUNTIME_OWNER_HANDLE:-}"
+  owner_pid="${DX_SESSION_RUNTIME_OWNER_PID:-}"
+  unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+  __dx_run_with_runtime_owner_handle "$owner_handle" "$owner_pid" \
+    "$callback_name" "$@"
+}
+
+unalias __dx_run_with_recovered_runtime 2>/dev/null; unfunction __dx_run_with_recovered_runtime 2>/dev/null
+__dx_run_with_recovered_runtime() {
+  local session_id="$1" runtime_snapshot="$2" callback_name="$3"
+  shift 3
+  local recovery_result=0 owner_handle="" owner_pid=""
+  __dx_session_runtime_owner_recovery_start \
+    "$session_id" "$runtime_snapshot" || recovery_result=$?
+  if [[ "$recovery_result" -ne 0 ]]; then
+    if [[ "$recovery_result" -eq 2 ]]; then
+      dx_error "Another process claimed this session before Dex could relaunch it."
+    else
+      dx_error "Dex could not claim the selected dead runtime safely."
+    fi
+    return 1
+  fi
+  owner_handle="${DX_SESSION_RUNTIME_OWNER_HANDLE:-}"
+  owner_pid="${DX_SESSION_RUNTIME_OWNER_PID:-}"
+  unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+  __dx_run_with_runtime_owner_handle "$owner_handle" "$owner_pid" \
+    "$callback_name" "$@"
+}
+
+unalias __dx_selected_resume_workspace_valid 2>/dev/null; unfunction __dx_selected_resume_workspace_valid 2>/dev/null
+__dx_selected_resume_workspace_valid() {
+  local repo_root="$1" session_id="$2" workspace_dir="$3" workspace_mode="$4"
+  local expected_branch="" current_branch="" resolved_repo="" resolved_workspace=""
+  [[ -d "$workspace_dir" ]] || return 1
+  git -C "$workspace_dir" rev-parse --git-dir >/dev/null 2>&1 || return 1
+  expected_branch=$(dx_session_branch_read "$session_id" 2>/dev/null) || return 1
+  current_branch=$(git -C "$workspace_dir" symbolic-ref --quiet --short HEAD \
+    2>/dev/null) || return 1
+  git -C "$workspace_dir" show-ref --verify --quiet \
+    "refs/heads/${expected_branch}" 2>/dev/null || return 1
+  case "$workspace_mode" in
+    worktree)
+      [[ "$current_branch" == "$expected_branch" ]] || return 1
+      dx_wt_is_registered "$repo_root" "$workspace_dir"
+      ;;
+    in-place)
+      resolved_repo=$(cd "$repo_root" 2>/dev/null && pwd -P) || return 1
+      resolved_workspace=$(cd "$workspace_dir" 2>/dev/null && pwd -P) || return 1
+      [[ "$resolved_repo" == "$resolved_workspace" ]] || return 1
+      if [[ "$current_branch" != "$expected_branch" ]]; then
+        [[ -z "$(git -C "$workspace_dir" status --porcelain 2>/dev/null)" ]] \
+          || return 1
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+unalias __dx_selected_resume_runtime_matches 2>/dev/null; unfunction __dx_selected_resume_runtime_matches 2>/dev/null
+__dx_selected_resume_runtime_matches() {
+  local session_id="$1" provider_name="$2" workspace_dir="$3"
+  local runtime_record="" runtime_health="" expected_owner_pid="${_dx_runtime_owner_pid:-}"
+  [[ "$expected_owner_pid" =~ ^[0-9]+$ ]] || return 1
+  runtime_record=$(dx_session_runtime_read "$session_id" 2>/dev/null) || return 1
+  runtime_health=$(dx_session_runtime_health "$session_id" 2>/dev/null) || return 1
+  python3 - "$session_id" "$provider_name" "$workspace_dir" \
+    "$runtime_health" "$expected_owner_pid" 3<<<"$runtime_record" <<'PY'
+import json
+import os
+import sys
+
+record = json.load(os.fdopen(3))
+if (
+    sys.argv[4] != "live"
+    or record.get("session_id") != sys.argv[1]
+    or record.get("provider") != sys.argv[2]
+    or record.get("status") != "running"
+    or record.get("pid") != int(sys.argv[5])
+    or not isinstance(record.get("workspace"), str)
+    or os.path.realpath(record["workspace"]) != os.path.realpath(sys.argv[3])
+):
+    raise SystemExit(1)
+PY
+}
+
+unalias __dx_selected_resume_catalog_matches 2>/dev/null; unfunction __dx_selected_resume_catalog_matches 2>/dev/null
+__dx_selected_resume_catalog_matches() {
+  local repo_root="$1" session_id="$2" workspace_dir="$3" workspace_name="$4"
+  local workspace_mode="$5" provider_name="$6" selected_phase="$7"
+  local current_record=""
+  current_record=$(dx_session_catalog_record "$session_id" --repo "$repo_root" \
+    2>/dev/null) || return 1
+  python3 - "$session_id" "$workspace_dir" "$workspace_name" \
+    "$workspace_mode" "$provider_name" "$selected_phase" \
+    3<<<"$current_record" <<'PY'
+import json
+import os
+import sys
+
+record = json.load(os.fdopen(3))
+if (
+    record.get("session_id") != sys.argv[1]
+    or record.get("is_child") is not False
+    or record.get("metadata_health") != "valid"
+    or record.get("runtime_health") != "live"
+    or record.get("runtime_status") != "running"
+    or record.get("unsafe_artifacts") != []
+    or record.get("consistency_issues") != []
+    or record.get("workspace_name") != sys.argv[3]
+    or record.get("workspace_mode") != sys.argv[4]
+    or record.get("provider") != sys.argv[5]
+    or str(record.get("phase")) != sys.argv[6]
+    or not isinstance(record.get("workspace"), str)
+    or os.path.realpath(record["workspace"]) != os.path.realpath(sys.argv[2])
+):
+    raise SystemExit(1)
+PY
+}
+
+unalias __dx_selected_resume_after_claim 2>/dev/null; unfunction __dx_selected_resume_after_claim 2>/dev/null
+__dx_selected_resume_after_claim() {
+  local session_id="$1" repo_root="$2" workspace_dir="$3" workspace_name="$4"
+  local workspace_mode="$5" provider_name="$6" selected_phase="$7" raw_input="$8"
+  local review_lock_token="" prepared_phase="" default_branch=""
+  local state_file times_file resume_hint transition_locked=0 review_locked=0
+
+  review_lock_token=$(__dx_review_nonce) || {
+    __dx_runtime_set_terminal blocked
+    return 1
+  }
+  if ! dx_review_lock_acquire "$workspace_dir" "$review_lock_token" "$$"; then
+    __dx_runtime_set_terminal blocked
+    dx_error "Another review or recovery operation already owns this checkout."
+    return 1
+  fi
+  review_locked=1
+  if ! __dx_selected_resume_runtime_matches \
+      "$session_id" "$provider_name" "$workspace_dir" \
+    || ! __dx_selected_resume_catalog_matches "$repo_root" "$session_id" \
+      "$workspace_dir" "$workspace_name" "$workspace_mode" "$provider_name" \
+      "$selected_phase"; then
+    dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+      2>/dev/null || true
+    __dx_runtime_set_terminal blocked
+    dx_error "The selected session changed while Dex was claiming it."
+    return 1
+  fi
+  if ! __dx_selected_resume_workspace_valid \
+      "$repo_root" "$session_id" "$workspace_dir" "$workspace_mode"; then
+    dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+      2>/dev/null || true
+    __dx_runtime_set_terminal blocked
+    dx_error "The selected workspace is missing, unregistered, dirty, or on the wrong lifecycle branch."
+    return 1
+  fi
+  if [[ "$workspace_mode" == "in-place" ]] \
+    && ! __dx_restore_in_place_session_branch "$session_id" "$workspace_name" \
+      "$workspace_dir" "dx sessions resume session:${session_id}"; then
+    dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+      2>/dev/null || true
+    __dx_runtime_set_terminal blocked
+    return 1
+  fi
+  if ! dx_lifecycle_control_lock_acquire "$session_id"; then
+    dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+      2>/dev/null || true
+    __dx_runtime_set_terminal blocked
+    dx_error "Dex could not lock the selected lifecycle for relaunch."
+    return 1
+  fi
+  transition_locked=1
+  prepared_phase=$(dx_lifecycle_relaunch_prepare_unlocked \
+    "$session_id" "$selected_phase" 2>/dev/null) || {
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
+    dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+      2>/dev/null || true
+    __dx_runtime_set_terminal blocked
+    dx_error "The selected lifecycle is not in a safe, resumable state."
+    return 1
+  }
+  if [[ "$selected_phase" != "$prepared_phase" \
+    && "${selected_phase}:${prepared_phase}" != "7:6" ]]; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
+    dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+      2>/dev/null || true
+    __dx_runtime_set_terminal blocked
+    dx_error "The lifecycle phase changed while Dex was claiming the session."
+    return 1
+  fi
+  if ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+    transition_locked=0
+    dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+      2>/dev/null || true
+    __dx_runtime_set_terminal blocked
+    dx_error "Dex could not release the lifecycle transition lock safely."
+    return 1
+  fi
+  transition_locked=0
+  if ! dx_review_lock_release_checked "$workspace_dir" "$review_lock_token"; then
+    review_locked=0
+    __dx_runtime_set_terminal blocked
+    dx_error "Dex could not release the checkout recovery lock safely."
+    return 1
+  fi
+  review_locked=0
+  : "$transition_locked" "$review_locked"
+
+  default_branch=$(dx_default_branch "$workspace_dir") || {
+    __dx_runtime_set_terminal blocked
+    return 1
+  }
+  state_file=$(dx_state_file "$session_id")
+  times_file=$(dx_times_file "$session_id")
+  resume_hint="dx sessions resume session:${session_id}"
+  __dx_run_phases_inline "$workspace_name" "$workspace_dir" "$default_branch" \
+    "$prepared_phase" "$state_file" "$times_file" "$resume_hint" \
+    "$workspace_mode" "$session_id" "$raw_input"
+}
+
+unalias __dx_sessions_resume_selected 2>/dev/null; unfunction __dx_sessions_resume_selected 2>/dev/null
+__dx_sessions_resume_selected() {
+  [[ $# -eq 1 ]] || return 1
+  local selector_value="$1" selected_record="" runtime_snapshot=""
+  local selected_file="" runtime_file="" validated_record="" validation_result=0
+  local session_id workspace_dir workspace_name workspace_mode provider_name
+  local selected_phase raw_input repo_root resolved_provider
+  local -x DX_AGENT_OVERRIDE=""
+  setopt localoptions noxtrace
+
+  repo_root=$(dx_repo_root) || return 1
+  if selected_record=$(dx_session_catalog_select \
+      "$selector_value" --repo "$repo_root"); then
+    :
+  else
+    validation_result=$?
+    if [[ "$validation_result" -eq 1 ]]; then
+      dx_error "No top-level session matches '${selector_value}' in this repository."
+    elif [[ "$validation_result" -ne 2 ]]; then
+      dx_error "Dex could not resolve that session selector safely."
+    fi
+    return 1
+  fi
+  selected_file=$(mktemp "${TMPDIR:-/tmp}/dex-selected-resume.XXXXXX") \
+    || return 1
+  runtime_file=$(mktemp "${TMPDIR:-/tmp}/dex-selected-runtime.XXXXXX") || {
+    command rm -f "$selected_file" 2>/dev/null || true
+    return 1
+  }
+  printf '%s\n' "$selected_record" >| "$selected_file" || {
+    command rm -f "$selected_file" "$runtime_file" 2>/dev/null || true
+    return 1
+  }
+  session_id=$(python3 - "$selected_file" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    record = json.load(source)
+session_id = record.get("session_id")
+if not isinstance(session_id, str) or not re.fullmatch(
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,179}", session_id
+):
+    raise SystemExit(1)
+print(session_id)
+PY
+  ) || validation_result=1
+  if [[ "$validation_result" -ne 0 ]] \
+    || ! dx_session_runtime_read "$session_id" >| "$runtime_file" 2>/dev/null; then
+    command rm -f "$selected_file" "$runtime_file" 2>/dev/null || true
+    dx_error "The selected session has no exact, verifiable runtime snapshot to recover."
+    return 1
+  fi
+  runtime_snapshot=$(<"$runtime_file")
+  validated_record=$(python3 - "$selected_file" "$runtime_file" <<'PY'
+import json
+import os
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    selected = json.load(source)
+with open(sys.argv[2], encoding="utf-8") as source:
+    runtime = json.load(source)
+
+plain = re.compile(r"^[^\t\r\n]+$")
+session_id = selected.get("session_id")
+workspace = selected.get("workspace")
+workspace_name = selected.get("workspace_name")
+workspace_mode = selected.get("workspace_mode")
+provider = selected.get("provider")
+phase = selected.get("phase")
+runtime_status = selected.get("runtime_status")
+if (
+    selected.get("is_child") is not False
+    or selected.get("metadata_health") != "valid"
+    or selected.get("runtime_health") != "dead"
+    or runtime_status not in {"running", "paused", "blocked", "failed", "stopped", "abandoned"}
+    or selected.get("unsafe_artifacts") not in ([], None)
+    or selected.get("consistency_issues") not in ([], None)
+    or selected.get("lifecycle_state") == "completed"
+    or type(phase) is not int
+    or phase < 0
+    or phase > 7
+    or workspace_mode not in {"worktree", "in-place"}
+    or provider not in {"claude", "codex"}
+    or not isinstance(session_id, str)
+    or not isinstance(workspace, str)
+    or not os.path.isabs(workspace)
+    or not isinstance(workspace_name, str)
+    or not plain.fullmatch(session_id)
+    or not plain.fullmatch(workspace)
+    or not plain.fullmatch(workspace_name)
+):
+    raise SystemExit(1)
+if (
+    runtime.get("session_id") != session_id
+    or runtime.get("provider") != provider
+    or runtime.get("status") != runtime_status
+    or not isinstance(runtime.get("workspace"), str)
+    or os.path.realpath(runtime["workspace"]) != os.path.realpath(workspace)
+    or selected.get("runtime_pid") != runtime.get("pid")
+):
+    raise SystemExit(1)
+raw_input = selected.get("ticket") or workspace_name
+if not isinstance(raw_input, str) or not plain.fullmatch(raw_input):
+    raw_input = workspace_name
+print("\t".join((session_id, workspace, workspace_name, workspace_mode, provider, str(phase), raw_input)))
+PY
+  ) || validation_result=1
+  command rm -f "$selected_file" "$runtime_file" 2>/dev/null || validation_result=1
+  if [[ "$validation_result" -ne 0 ]]; then
+    dx_error "The selected session is live, completed, unsafe, inconsistent, or unsupported."
+    return 1
+  fi
+  IFS=$'\t' read -r session_id workspace_dir workspace_name workspace_mode \
+    provider_name selected_phase raw_input <<< "$validated_record"
+
+  if ! __dx_selected_resume_workspace_valid \
+      "$repo_root" "$session_id" "$workspace_dir" "$workspace_mode"; then
+    dx_error "The selected workspace is missing, unregistered, dirty, or on the wrong lifecycle branch."
+    return 1
+  fi
+  DX_AGENT_OVERRIDE="$provider_name"
+  __dx_refresh_provider || return 1
+  resolved_provider=$(__dx_resolved_provider_agent) || return 1
+  if [[ "$resolved_provider" != "$provider_name" ]]; then
+    dx_error "The selected provider cannot be restored by the current Dex configuration."
+    return 1
+  fi
+
+  __dx_run_with_recovered_runtime "$session_id" "$runtime_snapshot" \
+    __dx_selected_resume_after_claim "$session_id" "$repo_root" \
+    "$workspace_dir" "$workspace_name" "$workspace_mode" "$provider_name" \
+    "$selected_phase" "$raw_input"
 }
 
 # __dx_run_phases_inline <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
