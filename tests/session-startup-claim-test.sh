@@ -35,6 +35,27 @@ wait_for_file() {
   assert_file "$target_file"
 }
 
+path_identity() {
+  python3 - "$1" <<'PY'
+import os
+import sys
+
+
+metadata = os.lstat(sys.argv[1])
+print(f"{metadata.st_dev}:{metadata.st_ino}")
+PY
+}
+
+path_link_count() {
+  python3 - "$1" <<'PY'
+import os
+import sys
+
+
+print(os.lstat(sys.argv[1]).st_nlink)
+PY
+}
+
 export HOME="$TMP_DIR/home"
 export DEX_DIR="$ROOT"
 export DX_STATE_DIR="$TMP_DIR/state"
@@ -116,8 +137,8 @@ DEX_SESSION_CLAIM_ATTEMPTS=1 \
   dx_session_claim_acquire root-mode cleanup \
   > "$TMP_DIR/root-mode.out" 2>&1 || ROOT_MODE_RESULT=$?
 assert_eq "2" "$ROOT_MODE_RESULT" "public claim root result"
-assert_eq "755" "$(stat -f '%Lp' "$CLAIM_ROOT" 2>/dev/null \
-  || stat -c '%a' "$CLAIM_ROOT")" "public claim root mode preserved"
+assert_eq "755" "$(dx_path_mode "$CLAIM_ROOT")" \
+  "public claim root mode preserved"
 chmod 700 "$CLAIM_ROOT"
 
 # Unsafe claim leaves fail closed before stale recovery and remain untouched.
@@ -181,8 +202,7 @@ DEX_SESSION_CLAIM_ATTEMPTS=1 \
   dx_session_claim_acquire "$HARDLINK_SID" cleanup \
   >/dev/null 2>&1 || HARDLINK_RESULT=$?
 assert_eq "2" "$HARDLINK_RESULT" "hardlinked claim owner result"
-assert_eq "2" "$(stat -f '%l' "$HARDLINK_VICTIM" 2>/dev/null \
-  || stat -c '%h' "$HARDLINK_VICTIM")" \
+assert_eq "2" "$(path_link_count "$HARDLINK_VICTIM")" \
   "hardlink fixture remains linked through claim owner"
 assert_file "$HARDLINK_CLAIM_DIR/owner"
 rm -f "$HARDLINK_CLAIM_DIR/owner" "$HARDLINK_VICTIM"
@@ -222,8 +242,8 @@ DEX_SESSION_CLAIM_ATTEMPTS=1 \
 assert_eq "2" "$PUBLIC_LEAF_RESULT" "public claim leaf result"
 assert_eq "$PUBLIC_LEAF_RAW" "$(cat "$PUBLIC_LEAF_DIR/owner")" \
   "public claim leaf owner preserved"
-assert_eq "755" "$(stat -f '%Lp' "$PUBLIC_LEAF_DIR" 2>/dev/null \
-  || stat -c '%a' "$PUBLIC_LEAF_DIR")" "public claim leaf mode preserved"
+assert_eq "755" "$(dx_path_mode "$PUBLIC_LEAF_DIR")" \
+  "public claim leaf mode preserved"
 rm -f "$PUBLIC_LEAF_DIR/owner"
 rmdir "$PUBLIC_LEAF_DIR"
 
@@ -335,8 +355,7 @@ RELEASE_FAULT_MARKER="$TMP_DIR/release-finish-failed"
 export RELEASE_FAULT_SID RELEASE_FAULT_DIR RELEASE_FAULT_MARKER
 dx_session_claim_acquire "$RELEASE_FAULT_SID" cleanup
 RELEASE_FAULT_RAW="$(cat "$RELEASE_FAULT_DIR/owner")"
-RELEASE_FAULT_INODE="$(stat -f '%d:%i' "$RELEASE_FAULT_DIR/owner" \
-  2>/dev/null || stat -c '%d:%i' "$RELEASE_FAULT_DIR/owner")"
+RELEASE_FAULT_INODE="$(path_identity "$RELEASE_FAULT_DIR/owner")"
 CLAIM_FILESYSTEM_DEFINITION="$(declare -f __dx_session_claim_filesystem)"
 eval "$(declare -f __dx_session_claim_filesystem | \
   sed '1s/^__dx_session_claim_filesystem /__test_claim_filesystem_original /')"
@@ -358,14 +377,11 @@ assert_file "$RELEASE_FAULT_MARKER"
 assert_eq "$RELEASE_FAULT_RAW" "$(cat "$RELEASE_FAULT_DIR/owner")" \
   "release failure restores exact owner payload"
 assert_eq "$RELEASE_FAULT_INODE" \
-  "$(stat -f '%d:%i' "$RELEASE_FAULT_DIR/owner" 2>/dev/null \
-    || stat -c '%d:%i' "$RELEASE_FAULT_DIR/owner")" \
+  "$(path_identity "$RELEASE_FAULT_DIR/owner")" \
   "release failure restores exact owner inode"
-assert_eq "600" "$(stat -f '%Lp' "$RELEASE_FAULT_DIR/owner" 2>/dev/null \
-  || stat -c '%a' "$RELEASE_FAULT_DIR/owner")" \
+assert_eq "600" "$(dx_path_mode "$RELEASE_FAULT_DIR/owner")" \
   "release failure restores private owner mode"
-assert_eq "1" "$(stat -f '%l' "$RELEASE_FAULT_DIR/owner" 2>/dev/null \
-  || stat -c '%h' "$RELEASE_FAULT_DIR/owner")" \
+assert_eq "1" "$(path_link_count "$RELEASE_FAULT_DIR/owner")" \
   "release failure restores single-link owner"
 assert_eq "$RELEASE_FAULT_SID" "$DX_SESSION_CLAIM_SESSION" \
   "release failure retains local session binding"
@@ -408,11 +424,9 @@ assert_file "$RETIRE_EIO_STAGE_FILE"
   || assert_at $LINENO
 assert_eq "" "${DX_SESSION_CLAIM_TOKEN:-}" \
   "semantic release clears the local token"
-assert_eq "600" "$(stat -f '%Lp' "$RETIRE_EIO_STAGE_FILE" 2>/dev/null \
-  || stat -c '%a' "$RETIRE_EIO_STAGE_FILE")" \
+assert_eq "600" "$(dx_path_mode "$RETIRE_EIO_STAGE_FILE")" \
   "recoverable staging owner remains private"
-assert_eq "1" "$(stat -f '%l' "$RETIRE_EIO_STAGE_FILE" 2>/dev/null \
-  || stat -c '%h' "$RETIRE_EIO_STAGE_FILE")" \
+assert_eq "1" "$(path_link_count "$RETIRE_EIO_STAGE_FILE")" \
   "recoverable staging owner remains single-link"
 
 RETIRE_EIO_SAVED="$TMP_DIR/retire-eio-exact"

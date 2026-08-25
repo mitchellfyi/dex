@@ -431,6 +431,7 @@ printf 'journal\n' > "$DX_RUN_ROOT/run_exhaustive/events.jsonl"
 NEIGHBOR_SID="${EXHAUSTIVE_SID}-neighbor"
 printf '4\n' > "$(dx_state_file "$NEIGHBOR_SID")"
 __dx_session_management_cleanup_exact "$REPO" "$EXHAUSTIVE_SID"
+# shellcheck disable=SC2218  # Sourced above; a later fault seam redefines it.
 __dx_session_management_artifacts assert-final "$EXHAUSTIVE_SID"
 find "$DX_STATE_DIR" "$DX_LOOP_DIR" -maxdepth 1 \
   -name "${EXHAUSTIVE_SID}.*" -print | LC_ALL=C sort \
