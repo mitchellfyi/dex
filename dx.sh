@@ -2048,6 +2048,7 @@ __dx_run_with_runtime_owner_handle() {
   local callback_result=1 owner_finish_result=0
   local runtime_cleanup_command=""
   local _dx_runtime_owner_handle="$owner_handle" _dx_runtime_owner_pid="$owner_pid"
+  local _dx_runtime_signal_code=0
   local _dx_runtime_terminal_state="failed"
   setopt localoptions localtraps
   if [[ -z "$_dx_runtime_owner_handle" || ! "$_dx_runtime_owner_pid" =~ ^[0-9]+$ ]]; then
@@ -2064,12 +2065,15 @@ __dx_run_with_runtime_owner_handle() {
     "$_dx_runtime_owner_handle")
   # shellcheck disable=SC2064  # the handle is already shell-quoted
   trap "$runtime_cleanup_command" EXIT
-  trap 'dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 130' INT
-  trap 'dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 143' TERM
-  trap 'dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 129' HUP
+  trap '_dx_runtime_signal_code=130; dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 130' INT
+  trap '_dx_runtime_signal_code=143; dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 143' TERM
+  trap '_dx_runtime_signal_code=129; dx_session_runtime_owner_finish "$_dx_runtime_owner_handle" stopped >/dev/null 2>&1 || true; _dx_runtime_owner_handle=""; trap - EXIT INT TERM HUP; return 129' HUP
 
   "$callback_name" "$@"
   callback_result=$?
+  if [[ "$_dx_runtime_signal_code" -ne 0 ]]; then
+    callback_result="$_dx_runtime_signal_code"
+  fi
   if [[ "$callback_result" -eq 129 || "$callback_result" -eq 130 \
     || "$callback_result" -eq 143 ]]; then
     _dx_runtime_terminal_state="stopped"

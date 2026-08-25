@@ -153,36 +153,40 @@ chmod 600 "$DX_STATE_DIR/wiring-finish-failure.runtime"
 assert_contains "could not close the runtime lease safely" \
   "$TMP_DIR/finish-failure.output"
 
-# A signal that interrupts orchestration closes the lease instead of leaving a
-# running record behind in the still-open interactive shell.
-SIGNAL_READY="$TMP_DIR/signal.ready"
-export SIGNAL_READY
-TEST_SESSION_ID=wiring-signal zsh -fc '
-  source "$DEX_DIR/dx.sh"
-  __dx_resolved_provider_agent() { print -r -- claude; }
-  __test_wait_for_signal() {
-    print -r -- ready > "$SIGNAL_READY"
-    while true; do :; done
-  }
-  __dx_run_with_runtime \
-    "$TEST_SESSION_ID" "$TEST_REPO" __test_wait_for_signal
-' > "$TMP_DIR/signal.output" 2>&1 &
-SIGNAL_PID=$!
-TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${SIGNAL_PID}"
-wait_for_file "$SIGNAL_READY"
-kill -TERM "$SIGNAL_PID"
-set +e
-wait "$SIGNAL_PID"
-SIGNAL_RESULT=$?
-set -e
-[[ "$SIGNAL_RESULT" -ne 0 ]] || assert_at $LINENO
-TEST_CHILD_PIDS="${TEST_CHILD_PIDS/ ${SIGNAL_PID}/}"
-
+# A TERM delivered after the callback announces readiness must win even when
+# the callback's busy loop would otherwise let zsh report success.
 # shellcheck source=lib/common.sh
 source "$ROOT/lib/common.sh"
-assert_eq "stopped" "$(dx_session_runtime_field wiring-signal status)" \
-  "signalled wrapper status"
-assert_eq "dead" "$(dx_session_runtime_health wiring-signal)" \
-  "signalled wrapper health"
+for signal_attempt in 1 2 3 4 5 6 7 8; do
+  signal_session_id="wiring-signal-${signal_attempt}"
+  SIGNAL_READY="$TMP_DIR/signal-${signal_attempt}.ready"
+  export SIGNAL_READY
+  TEST_SESSION_ID="$signal_session_id" zsh -fc '
+    source "$DEX_DIR/dx.sh"
+    __dx_resolved_provider_agent() { print -r -- claude; }
+    __test_wait_for_signal() {
+      print -r -- ready > "$SIGNAL_READY"
+      while true; do :; done
+    }
+    __dx_run_with_runtime \
+      "$TEST_SESSION_ID" "$TEST_REPO" __test_wait_for_signal
+  ' > "$TMP_DIR/signal-${signal_attempt}.output" 2>&1 &
+  SIGNAL_PID=$!
+  TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${SIGNAL_PID}"
+  wait_for_file "$SIGNAL_READY"
+  kill -TERM "$SIGNAL_PID"
+  set +e
+  wait "$SIGNAL_PID"
+  SIGNAL_RESULT=$?
+  set -e
+  assert_eq "143" "$SIGNAL_RESULT" \
+    "signalled wrapper result attempt ${signal_attempt}"
+  TEST_CHILD_PIDS="${TEST_CHILD_PIDS/ ${SIGNAL_PID}/}"
+
+  assert_eq "stopped" "$(dx_session_runtime_field "$signal_session_id" status)" \
+    "signalled wrapper status attempt ${signal_attempt}"
+  assert_eq "dead" "$(dx_session_runtime_health "$signal_session_id")" \
+    "signalled wrapper health attempt ${signal_attempt}"
+done
 
 printf 'session runtime wiring tests passed\n'
