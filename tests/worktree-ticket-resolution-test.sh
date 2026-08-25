@@ -66,6 +66,32 @@ zsh -fc '
   ! git show-ref --verify --quiet refs/heads/worktree-task-linked
   [[ ! -e "$(dx_meta_file "$linked_session")" ]] || assert_at $LINENO
 
+  quoted_branch="feature/in-place-dollar\$-semi;colon"
+  quoted_session=$(__dx_session_id_for_workspace in-place task-quoted)
+  git branch "$quoted_branch" main
+  git switch -q "$quoted_branch"
+  dx_record_session_branch "$quoted_session" "$TEST_REPO"
+  dx_lifecycle_atomic_write "$(dx_state_file "$quoted_session")" 2
+  git switch -q main
+  printf "dirty\n" >> "$TEST_REPO/file.txt"
+  if __dx_restore_in_place_session_branch \
+      "$quoted_session" task-quoted "$TEST_REPO" "dx --resume" \
+      > "$TEST_REPO/dirty-resume.out" 2>&1; then
+    print -u2 -- "in-place resume switched branches with a dirty checkout"
+    exit 1
+  fi
+  [[ "$(git symbolic-ref --quiet --short HEAD)" == main ]] || assert_at $LINENO
+  grep -Fq "current checkout is on main" "$TEST_REPO/dirty-resume.out"
+  rm -f "$TEST_REPO/dirty-resume.out"
+  git checkout -- file.txt
+  __dx_restore_in_place_session_branch \
+    "$quoted_session" task-quoted "$TEST_REPO" "dx --resume"
+  [[ "$(git symbolic-ref --quiet --short HEAD)" == "$quoted_branch" ]] \
+    || assert_at $LINENO
+  git switch -q main
+  dx_cleanup_session "$quoted_session"
+  git branch -D "$quoted_branch" >/dev/null
+
   git branch worktree-task-inplace main
   inplace_session=$(__dx_session_id_for_workspace in-place task-inplace)
   dx_meta_write "$inplace_session" \
@@ -74,7 +100,9 @@ zsh -fc '
     "wt_dir=$TEST_REPO" \
     "workspace_mode=in-place"
   dx_lifecycle_atomic_write "$(dx_state_file "$inplace_session")" 2
-  printf "worktree-task-inplace\n" > "$(dx_branch_file "$inplace_session")"
+  git switch -q worktree-task-inplace
+  dx_record_session_branch "$inplace_session" "$TEST_REPO"
+  git switch -q main
 
   rmdir "$TEST_REPO/.dex/worktrees"
   dxcd 456 > /dev/null
@@ -92,6 +120,60 @@ zsh -fc '
   fi
   grep -Fq "Refusing to remove active in-place lifecycle branch" "$TEST_REPO/remove-inplace.out"
   git show-ref --verify --quiet refs/heads/worktree-task-inplace
+
+  assert_unsafe_branch_is_protected() {
+    local unsafe_kind="$1" unsafe_branch="worktree-task-unsafe-${1}"
+    local unsafe_name="${unsafe_branch#worktree-}" unsafe_session branch_file
+    local unsafe_target helper_result=0
+    unsafe_session=$(__dx_session_id_for_workspace in-place "$unsafe_name")
+    branch_file=$(dx_branch_file "$unsafe_session")
+    unsafe_target="${branch_file}.target"
+    git branch "$unsafe_branch" main
+    dx_lifecycle_atomic_write "$(dx_state_file "$unsafe_session")" 2
+    case "$unsafe_kind" in
+      missing)
+        ;;
+      symlink)
+        dx_lifecycle_atomic_write "$unsafe_target" "$unsafe_branch"
+        ln -s "$unsafe_target" "$branch_file"
+        ;;
+      hardlink)
+        dx_lifecycle_atomic_write "$unsafe_target" "$unsafe_branch"
+        ln "$unsafe_target" "$branch_file"
+        ;;
+      wrong-mode)
+        printf "%s\n" "$unsafe_branch" > "$branch_file"
+        chmod 644 "$branch_file"
+        ;;
+      malformed)
+        dx_lifecycle_atomic_write "$branch_file" bad..branch
+        ;;
+    esac
+
+    __dx_active_in_place_phase_for_branch "$unsafe_branch" >/dev/null 2>&1 \
+      || helper_result=$?
+    [[ "$helper_result" -eq 2 ]] || {
+      print -u2 -- "unsafe branch helper result for ${unsafe_kind}: ${helper_result}"
+      exit 1
+    }
+    if dxrm "$unsafe_name" \
+        > "$TEST_REPO/remove-unsafe-${unsafe_kind}.out" 2>&1; then
+      print -u2 -- "dxrm removed an in-place branch with ${unsafe_kind} state"
+      exit 1
+    fi
+    grep -Fq "branch state is missing, unsafe, or malformed" \
+      "$TEST_REPO/remove-unsafe-${unsafe_kind}.out"
+    git show-ref --verify --quiet "refs/heads/${unsafe_branch}"
+    chmod 600 "$branch_file" "$unsafe_target" 2>/dev/null || true
+    rm -f "$branch_file" "$unsafe_target" \
+      "$TEST_REPO/remove-unsafe-${unsafe_kind}.out"
+    rm -f "$(dx_state_file "$unsafe_session")"
+    git branch -D "$unsafe_branch" >/dev/null
+  }
+
+  for unsafe_kind in missing symlink hardlink wrong-mode malformed; do
+    assert_unsafe_branch_is_protected "$unsafe_kind"
+  done
 
   mkdir -p "$TEST_REPO/.dex/worktrees"
   git worktree add -q "$TEST_REPO/.dex/worktrees/task-first" -b worktree-task-first main

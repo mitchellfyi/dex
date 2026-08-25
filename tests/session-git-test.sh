@@ -58,6 +58,101 @@ dash_id=$(cd "$session_repo" && dx_session_id)
 [[ "$slash_id" =~ ^repo-[A-Za-z0-9._-]+-[0-9]+-branch-[A-Za-z0-9._-]+-[0-9]+$ ]] || assert_at $LINENO
 [[ "$dash_id" =~ ^repo-[A-Za-z0-9._-]+-[0-9]+-branch-[A-Za-z0-9._-]+-[0-9]+$ ]] || assert_at $LINENO
 
+# Lifecycle branch state is private and must remain bound to the inode that was
+# opened. Missing state is distinct from an unsafe or malformed branch record.
+branch_state_sid=$(cd "$session_repo" && dx_scoped_session_id branch-state)
+branch_state_file=$(dx_branch_file "$branch_state_sid")
+git -C "$session_repo" switch -q feature/foo
+dx_record_session_branch "$branch_state_sid" "$session_repo"
+assert_eq "feature/foo" "$(dx_session_branch_read "$branch_state_sid")" \
+  "trusted lifecycle branch"
+assert_eq "600" "$(dx_path_mode "$branch_state_file")" \
+  "private lifecycle branch mode"
+
+missing_branch_sid=$(cd "$session_repo" && dx_scoped_session_id branch-missing)
+missing_branch_result=0
+dx_session_branch_read "$missing_branch_sid" >/dev/null 2>&1 \
+  || missing_branch_result=$?
+assert_eq "1" "$missing_branch_result" "missing lifecycle branch result"
+
+assert_branch_state_rejected() {
+  local assertion_name="$1" branch_result=0
+  dx_session_branch_read "$branch_state_sid" >/dev/null 2>&1 \
+    || branch_result=$?
+  assert_eq "2" "$branch_result" "$assertion_name"
+}
+
+branch_state_target="$TMP_DIR/branch-state-target"
+printf 'feature/foo\n' > "$branch_state_target"
+chmod 600 "$branch_state_target"
+rm -f "$branch_state_file"
+ln -s "$branch_state_target" "$branch_state_file"
+assert_branch_state_rejected "symlink lifecycle branch result"
+if dx_record_session_branch "$branch_state_sid" "$session_repo" 2>/dev/null; then
+  fail "lifecycle branch writer replaced an unsafe symlink"
+fi
+[[ -L "$branch_state_file" ]] || assert_at $LINENO
+
+rm -f "$branch_state_file" "$branch_state_target"
+printf 'feature/foo\n' > "$branch_state_target"
+chmod 600 "$branch_state_target"
+ln "$branch_state_target" "$branch_state_file"
+assert_branch_state_rejected "hard-linked lifecycle branch result"
+
+rm -f "$branch_state_file" "$branch_state_target"
+printf 'feature/foo\n' > "$branch_state_file"
+chmod 644 "$branch_state_file"
+assert_branch_state_rejected "wrong-mode lifecycle branch result"
+
+printf 'bad..branch\n' > "$branch_state_file"
+chmod 600 "$branch_state_file"
+assert_branch_state_rejected "malformed lifecycle branch result"
+
+printf 'feature/foo\n\n' > "$branch_state_file"
+chmod 600 "$branch_state_file"
+assert_branch_state_rejected "multi-line lifecycle branch result"
+
+for malformed_branch in HEAD -danger '@{-1}'; do
+  printf '%s\n' "$malformed_branch" > "$branch_state_file"
+  chmod 600 "$branch_state_file"
+  assert_branch_state_rejected "unsafe lifecycle branch ref ${malformed_branch}"
+done
+
+dx_record_session_branch "$branch_state_sid" "$session_repo"
+branch_race_site="$TMP_DIR/branch-race-site"
+mkdir -p "$branch_race_site"
+cat > "$branch_race_site/sitecustomize.py" <<'PY'
+import os
+
+
+target = os.environ.get("DX_TEST_REPLACE_BRANCH_STATE", "")
+original_lstat = os.lstat
+target_lstat_count = 0
+
+
+def replacing_lstat(candidate, *args, **kwargs):
+    global target_lstat_count
+    candidate_text = os.fspath(candidate)
+    if target and candidate_text == target:
+        target_lstat_count += 1
+        if target_lstat_count == 2:
+            opened_name = target + ".opened"
+            os.rename(target, opened_name)
+            os.symlink(opened_name, target)
+    return original_lstat(candidate, *args, **kwargs)
+
+
+os.lstat = replacing_lstat
+PY
+branch_race_result=0
+PYTHONPATH="$branch_race_site" \
+DX_TEST_REPLACE_BRANCH_STATE="$branch_state_file" \
+  dx_session_branch_read "$branch_state_sid" >/dev/null 2>&1 \
+  || branch_race_result=$?
+assert_eq "2" "$branch_race_result" "replaced lifecycle branch result"
+[[ -L "$branch_state_file" ]] || assert_at $LINENO
+rm -f "$branch_state_file" "${branch_state_file}.opened"
+
 # A registered Dex worktree shares the main checkout's repo namespace and
 # keeps the established worktree-<directory> session key.
 session_root=$(git -C "$session_repo" rev-parse --path-format=absolute --show-toplevel)

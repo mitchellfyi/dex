@@ -271,6 +271,124 @@ dx_phase_outcomes_file() { echo "${DX_STATE_DIR}/${1}.phase-outcomes"; }
 # dx_branch_file <session_id> — branch last used by this lifecycle session
 dx_branch_file() { echo "${DX_STATE_DIR}/${1}.branch"; }
 
+# Write one current-user 0600 state file by replacing its directory entry.
+# Existing non-regular paths are never followed or replaced.
+dx_session_private_atomic_write() {
+  [[ $# -eq 2 ]] || return 1
+  local target_file="$1" file_content="$2" target_dir temporary_file
+  [[ -n "$target_file" ]] || return 1
+  target_dir=$(dirname "$target_file")
+  mkdir -p "$target_dir" || return 1
+  if [[ ( -e "$target_file" || -L "$target_file" ) \
+    && ( ! -f "$target_file" || -L "$target_file" ) ]]; then
+    return 1
+  fi
+  temporary_file=$(mktemp "${target_file}.tmp.XXXXXX") || return 1
+  chmod 600 "$temporary_file" 2>/dev/null || true
+  # mktemp creates the file; >| also works when an interactive zsh enables
+  # noclobber before sourcing Dex.
+  if ! printf '%s\n' "$file_content" >| "$temporary_file" \
+    || ! command mv -f "$temporary_file" "$target_file"; then
+    command rm -f "$temporary_file" 2>/dev/null || true
+    return 1
+  fi
+}
+
+# Read one current-user 0600 regular file only if the named inode remains the
+# one opened for the full bounded read. Return 1 when absent and 2 when unsafe.
+dx_session_trusted_file_read() {
+  [[ $# -eq 2 ]] || return 2
+  local state_file="$1" maximum_bytes="$2"
+  [[ "$maximum_bytes" =~ ^[1-9][0-9]*$ ]] || return 2
+  [[ -e "$state_file" || -L "$state_file" ]] || return 1
+  python3 - "$state_file" "$maximum_bytes" <<'PY' || return 2
+import os
+import stat
+import sys
+
+target = sys.argv[1]
+maximum = int(sys.argv[2])
+try:
+    before = os.lstat(target)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or before.st_nlink != 1
+        or not 1 <= before.st_size <= maximum
+    ):
+        raise ValueError
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(target, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise ValueError
+        raw = os.read(descriptor, maximum + 1)
+        extra = os.read(descriptor, 1)
+        after = os.fstat(descriptor)
+        if (
+            extra
+            or len(raw) != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        ):
+            raise ValueError
+    finally:
+        os.close(descriptor)
+    named = os.lstat(target)
+    if (
+        not stat.S_ISREG(named.st_mode)
+        or named.st_uid != os.geteuid()
+        or stat.S_IMODE(named.st_mode) != 0o600
+        or named.st_nlink != 1
+        or (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        raise ValueError
+    if not raw.endswith(b"\n") or b"\r" in raw:
+        raise ValueError
+except (OSError, ValueError):
+    raise SystemExit(2)
+sys.stdout.buffer.write(raw)
+PY
+}
+
+# Print the exact saved local branch. Missing state is distinct from an unsafe
+# inode or a value Git cannot use as a local branch ref.
+dx_session_branch_read() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" branch_record="" branch_value="" branch_result=0
+  dx_session_id_valid "$session_id" || return 2
+  branch_record=$(
+    dx_session_trusted_file_read "$(dx_branch_file "$session_id")" 1024 \
+      || exit $?
+    printf '\034'
+  ) || branch_result=$?
+  [[ "$branch_result" -eq 0 ]] || return "$branch_result"
+  [[ "$branch_record" == *$'\034' ]] || return 2
+  branch_record=${branch_record%$'\034'}
+  [[ "$branch_record" == *$'\n' ]] || return 2
+  branch_value=${branch_record%$'\n'}
+  [[ -n "$branch_value" && "$branch_value" != *$'\n'* \
+    && "$branch_value" != *$'\r'* ]] || return 2
+  if ! git check-ref-format "refs/heads/${branch_value}" >/dev/null 2>&1; then
+    return 2
+  fi
+  if ! git check-ref-format --branch "$branch_value" >/dev/null 2>&1; then
+    return 2
+  fi
+  printf '%s\n' "$branch_value"
+}
+
 # dx_meta_file <session_id> — per-session metadata sidecar (ticket id, tracker key,
 # workspace dir/mode, original input). Used to resume a lifecycle by ticket
 # number even when the worktree dir or branch has been renamed.
@@ -1295,18 +1413,21 @@ PY
 # resume safely because the checkout can be moved to a different branch between
 # runs. Worktree sessions record it too for diagnostics.
 dx_record_session_branch() {
-  local session_id="$1" repo_dir="${2:-.}" branch branch_file tmp_file
-  [[ -n "$session_id" ]] || return 0
-  branch=$(git -C "$repo_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-  [[ -n "$branch" && "$branch" != "HEAD" ]] || return 0
-
-  branch_file=$(dx_branch_file "$session_id")
-  mkdir -p "$(dirname "$branch_file")"
-  tmp_file="${branch_file}.tmp.$$"
-  if ! printf '%s\n' "$branch" > "$tmp_file" || ! command mv -f "$tmp_file" "$branch_file"; then
-    command rm -f "$tmp_file" 2>/dev/null
+  local session_id="$1" repo_dir="${2:-.}" branch="" saved_branch=""
+  dx_session_id_valid "$session_id" || return 1
+  branch=$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD \
+    2>/dev/null || true)
+  [[ -n "$branch" ]] || return 0
+  if ! git check-ref-format "refs/heads/${branch}" >/dev/null 2>&1; then
     return 1
   fi
+  if ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+    return 1
+  fi
+  dx_session_private_atomic_write "$(dx_branch_file "$session_id")" "$branch" \
+    || return 1
+  saved_branch=$(dx_session_branch_read "$session_id" 2>/dev/null) || return 1
+  [[ "$saved_branch" == "$branch" ]]
 }
 
 # dx_cleanup_session <session_id>

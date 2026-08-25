@@ -364,89 +364,14 @@ dx_lifecycle_completion_issue_unlocked() {
 }
 
 dx_lifecycle_atomic_write() {
-  local target="$1" content="$2" target_dir tmp_file
-  target_dir=$(dirname "$target")
-  mkdir -p "$target_dir" || return 1
-  if [[ ( -e "$target" || -L "$target" ) && ( ! -f "$target" || -L "$target" ) ]]; then
-    return 1
-  fi
-  tmp_file=$(mktemp "${target}.tmp.XXXXXX") || return 1
-  chmod 600 "$tmp_file" 2>/dev/null || true
-  # >| because mktemp already created the file; a plain > is refused when the
-  # caller's interactive zsh sets noclobber (lib/ runs inside that shell).
-  if ! printf '%s\n' "$content" >| "$tmp_file" || ! command mv -f "$tmp_file" "$target"; then
-    command rm -f "$tmp_file" 2>/dev/null || true
-    return 1
-  fi
+  dx_session_private_atomic_write "$@"
 }
 
 # Read a short lifecycle state file only when it is a current-user 0600 regular
 # file that stayed unchanged throughout the read. Return 1 when absent and 2
 # when an inode exists but cannot be trusted.
 dx_lifecycle_trusted_file_read() {
-  [[ $# -eq 2 ]] || return 2
-  local state_file="$1" maximum="$2"
-  [[ "$maximum" =~ ^[1-9][0-9]*$ ]] || return 2
-  [[ -e "$state_file" || -L "$state_file" ]] || return 1
-  python3 - "$state_file" "$maximum" <<'PY' || return 2
-import os
-import stat
-import sys
-
-target = sys.argv[1]
-maximum = int(sys.argv[2])
-try:
-    before = os.lstat(target)
-    if (
-        not stat.S_ISREG(before.st_mode)
-        or before.st_uid != os.geteuid()
-        or stat.S_IMODE(before.st_mode) != 0o600
-        or before.st_nlink != 1
-        or not 1 <= before.st_size <= maximum
-    ):
-        raise ValueError
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(target, flags)
-    try:
-        opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_uid != os.geteuid()
-            or stat.S_IMODE(opened.st_mode) != 0o600
-            or opened.st_nlink != 1
-            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
-        ):
-            raise ValueError
-        raw = os.read(descriptor, maximum + 1)
-        extra = os.read(descriptor, 1)
-        after = os.fstat(descriptor)
-        if (
-            extra
-            or len(raw) != opened.st_size
-            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
-        ):
-            raise ValueError
-    finally:
-        os.close(descriptor)
-    named = os.lstat(target)
-    if (
-        not stat.S_ISREG(named.st_mode)
-        or named.st_uid != os.geteuid()
-        or stat.S_IMODE(named.st_mode) != 0o600
-        or named.st_nlink != 1
-        or (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-    ):
-        raise ValueError
-    if not raw.endswith(b"\n") or b"\r" in raw:
-        raise ValueError
-except (OSError, ValueError):
-    raise SystemExit(2)
-sys.stdout.buffer.write(raw)
-PY
+  dx_session_trusted_file_read "$@"
 }
 
 # Return the authoritative numeric lifecycle phase from one trusted private

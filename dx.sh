@@ -510,30 +510,49 @@ __dx_session_id_for_workspace() {
   fi
 }
 
+# Persist the branch before lifecycle work continues. A failed private-state
+# write leaves in-place resume without an authoritative branch to restore.
+unalias __dx_record_session_branch 2>/dev/null; unfunction __dx_record_session_branch 2>/dev/null
+__dx_record_session_branch() {
+  local session_id="$1" workspace_dir="$2"
+  if dx_record_session_branch "$session_id" "$workspace_dir"; then
+    return 0
+  fi
+  dx_error "Dex could not safely record the lifecycle branch."
+  dx_info "Repair or remove the unsafe saved branch file, then try again: $(dx_branch_file "$session_id")"
+  return 1
+}
+
 # __dx_active_in_place_phase_for_branch <branch>
 # Prints the active phase number when a worktree-* branch belongs to an
-# in-place lifecycle that is still resumable. Returns non-zero otherwise.
+# in-place lifecycle that is still resumable. Returns 1 when no lifecycle
+# matches and 2 when a matching decision cannot trust its saved branch state.
 __dx_active_in_place_phase_for_branch() {
-  local branch="$1" wt_name phase_val
+  local branch="$1" wt_name phase_val branch_result=0
 
   if [[ "$branch" == worktree-ticket-* ]] || [[ "$branch" == worktree-task-* ]]; then
     wt_name="${branch#worktree-}"
-    if phase_val=$(__dx_active_in_place_phase_for_workspace "$wt_name" "$branch"); then
+    phase_val=$(__dx_active_in_place_phase_for_workspace "$wt_name" "$branch") \
+      || branch_result=$?
+    if [[ "$branch_result" -eq 0 ]]; then
       printf '%s\n' "$phase_val"
       return 0
+    elif [[ "$branch_result" -eq 2 ]]; then
+      return 2
     fi
   fi
 
-  local repo_key phase_path candidate_session candidate_branch_file candidate_branch
+  local repo_key phase_path candidate_session candidate_branch candidate_result
   repo_key=$(dx_session_repo_key)
   [[ -d "$DX_STATE_DIR" ]] || return 1
 
   while IFS= read -r phase_path; do
     [[ -n "$phase_path" && -f "$phase_path" ]] || continue
     candidate_session="$(basename "$phase_path" .phase)"
-    candidate_branch_file=$(dx_branch_file "$candidate_session")
-    [[ -f "$candidate_branch_file" ]] || continue
-    candidate_branch=$(cat "$candidate_branch_file" 2>/dev/null || echo "")
+    candidate_result=0
+    candidate_branch=$(dx_session_branch_read "$candidate_session" 2>/dev/null) \
+      || candidate_result=$?
+    [[ "$candidate_result" -eq 0 ]] || return 2
     [[ "$candidate_branch" == "$branch" ]] || continue
 
     phase_val=$(cat "$phase_path" 2>/dev/null || echo "")
@@ -548,8 +567,10 @@ __dx_active_in_place_phase_for_branch() {
 # __dx_active_in_place_phase_for_workspace <workspace_name> [expected_branch]
 # Prints the active phase number for an in-place lifecycle workspace when its
 # saved branch still exists. If expected_branch is provided, it must match.
+# Returns 2 when saved branch state is missing, unsafe, or malformed.
 __dx_active_in_place_phase_for_workspace() {
-  local wt_name="$1" expected_branch="${2:-}" session_id phase_file phase_val branch_file session_branch=""
+  local wt_name="$1" expected_branch="${2:-}" session_id phase_file phase_val
+  local session_branch="" branch_result=0
 
   session_id=$(__dx_session_id_for_workspace "in-place" "$wt_name")
   phase_file=$(dx_state_file "$session_id")
@@ -558,15 +579,13 @@ __dx_active_in_place_phase_for_workspace() {
   phase_val=$(cat "$phase_file" 2>/dev/null || echo "")
   [[ "$phase_val" =~ ^[0-6]$ ]] || return 1
 
-  branch_file=$(dx_branch_file "$session_id")
-  if [[ -f "$branch_file" ]]; then
-    session_branch=$(cat "$branch_file" 2>/dev/null || echo "")
-    [[ -z "$expected_branch" || -z "$session_branch" || "$session_branch" == "$expected_branch" ]] || return 1
-    [[ -z "$session_branch" ]] || git show-ref --verify --quiet "refs/heads/${session_branch}" 2>/dev/null || return 1
-  else
-    local canonical_branch="worktree-${wt_name}"
-    git show-ref --verify --quiet "refs/heads/${canonical_branch}" 2>/dev/null || return 1
-  fi
+  session_branch=$(dx_session_branch_read "$session_id" 2>/dev/null) \
+    || branch_result=$?
+  [[ "$branch_result" -eq 0 ]] || return 2
+  [[ -z "$expected_branch" || "$session_branch" == "$expected_branch" ]] \
+    || return 1
+  git show-ref --verify --quiet "refs/heads/${session_branch}" \
+    2>/dev/null || return 2
 
   printf '%s\n' "$phase_val"
 }
@@ -717,7 +736,7 @@ __dx_setup_worktree() {
       return 1
     fi
     dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
-    dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir"
+    __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
     dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}"
     [[ $_dx_is_task -eq 0 ]] && dx_meta_write "$_dx_session_id" "ticket_number=${_dx_wt_name#ticket-}"
     return 0
@@ -743,7 +762,7 @@ __dx_setup_worktree() {
           dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
         fi
         _dx_default_branch=$(dx_default_branch "$_dx_wt_dir")
-        dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir"
+        __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
         dx_meta_write "$_dx_session_id" "ticket_number=${ticket_number}"
         dx_info "Resuming existing workspace ${_dx_wt_name} for ticket ${ticket_number}"
         return 0
@@ -775,7 +794,7 @@ __dx_setup_worktree() {
 
   # Share .claude/ config and MCP auth with main repo
   dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
-  dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir"
+  __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
   dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}" "original_branch=worktree-${_dx_wt_name}"
   [[ $_dx_is_task -eq 0 ]] && dx_meta_write "$_dx_session_id" "ticket_number=${_dx_wt_name#ticket-}"
 
@@ -787,18 +806,20 @@ __dx_setup_worktree() {
 # the lifecycle branch recorded for this session.
 __dx_restore_in_place_session_branch() {
   local session_id="$1" wt_name="$2" wt_dir="$3" resume_command="$4"
-  local current_branch has_changes session_branch="" canonical_branch
+  local current_branch has_changes session_branch="" branch_result=0
 
   current_branch=$(git -C "$wt_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
   has_changes=0
   git -C "$wt_dir" status --porcelain 2>/dev/null | head -1 | grep -q . && has_changes=1
 
-  [[ -f "$(dx_branch_file "$session_id")" ]] && session_branch=$(cat "$(dx_branch_file "$session_id")" 2>/dev/null || echo "")
-  canonical_branch="worktree-${wt_name}"
-  if [[ -z "$session_branch" && "$current_branch" != "$canonical_branch" ]] && git -C "$wt_dir" show-ref --verify --quiet "refs/heads/${canonical_branch}" 2>/dev/null; then
-    session_branch="$canonical_branch"
+  session_branch=$(dx_session_branch_read "$session_id" 2>/dev/null) \
+    || branch_result=$?
+  if [[ "$branch_result" -ne 0 ]]; then
+    dx_error "Cannot resume in-place session ${wt_name}: its saved branch state is missing, unsafe, or malformed."
+    dx_info "Repair the private branch record before re-running: ${resume_command}"
+    return 1
   fi
-  if [[ -n "$session_branch" && "$current_branch" != "$session_branch" ]]; then
+  if [[ "$current_branch" != "$session_branch" ]]; then
     if [[ $has_changes -eq 1 ]]; then
       dx_error "Cannot resume in-place session ${wt_name}: current checkout is on ${current_branch}, but the session branch is ${session_branch}, and there are uncommitted changes."
       dx_info "Commit or stash the current changes, switch to ${session_branch}, then re-run: ${resume_command}"
@@ -821,7 +842,7 @@ __dx_restore_in_place_session_branch() {
     dx_warn "Current checkout already has changes; in-place mode will include them in the lifecycle scope."
   fi
 
-  dx_record_session_branch "$session_id" "$wt_dir"
+  __dx_record_session_branch "$session_id" "$wt_dir" || return 1
 }
 
 # __dx_setup_in_place <raw_input>
@@ -885,7 +906,7 @@ __dx_setup_in_place() {
           dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
         fi
         _dx_default_branch=$(dx_default_branch "$_dx_wt_dir")
-        dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir"
+        __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
         dx_meta_write "$_dx_session_id" "ticket_number=${_ticket_number}"
         dx_info "Resuming existing workspace ${_dx_wt_name} for ticket ${_ticket_number}"
         return 0
@@ -936,7 +957,7 @@ __dx_setup_in_place() {
     bash "$DEX_DIR/bin/init.sh" --skip-analysis --skip-config
   fi
 
-  dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir"
+  __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
   dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=in-place" "raw_input=${raw_input}" "original_branch=${branch_name}"
   [[ $_dx_is_task -eq 0 ]] && dx_meta_write "$_dx_session_id" "ticket_number=${_dx_wt_name#ticket-}"
   return 0
@@ -2121,7 +2142,7 @@ __dx_run_phases_inline() {
   [[ -f "$times_file" ]] && had_times_file=1
 
   __dx_show_header "$wt_name" "$step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
-  dx_record_session_branch "$session_id" "$wt_dir"
+  __dx_record_session_branch "$session_id" "$wt_dir" || return 1
 
   dx_provider_write_session_state "$session_id" 2>/dev/null || true
   local preflight_handoff_status=0
@@ -3141,7 +3162,7 @@ dx() {
     if [[ "$_dx_workspace_mode" == "in-place" ]]; then
       __dx_restore_in_place_session_branch "$_dx_session_id" "$_dx_wt_name" "$_dx_wt_dir" "dx --resume" || return 1
     else
-      dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir"
+      __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
     fi
 
     # Reconstruct the original request for resume prompts. Freeform task
@@ -4134,6 +4155,7 @@ dxrm() {
     local renamed_branches=()
     local session_ids=()
     local wt_dir wt_name actual_branch branch active_in_place_phase
+    local active_in_place_result last_session_result
     local last_session_active_in_place=0 sid
 
     if [[ -d "$worktrees_dir" ]]; then
@@ -4165,8 +4187,15 @@ dxrm() {
     while IFS= read -r branch; do
       [[ -z "$branch" ]] && continue
       found=1
-      if active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch"); then
+      active_in_place_result=0
+      active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch") \
+        || active_in_place_result=$?
+      if [[ "$active_in_place_result" -eq 0 ]]; then
         echo "Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dx_phase_name "$active_in_place_phase"))"
+        skipped_active_in_place=1
+        continue
+      elif [[ "$active_in_place_result" -eq 2 ]]; then
+        dx_warn "Skipping branch ${branch}: its lifecycle branch state is missing, unsafe, or malformed."
         skipped_active_in_place=1
         continue
       fi
@@ -4185,7 +4214,11 @@ dxrm() {
 
     git worktree prune 2>/dev/null
 
-    __dx_last_session_active_in_place && last_session_active_in_place=1
+    last_session_result=0
+    __dx_last_session_active_in_place || last_session_result=$?
+    if [[ "$last_session_result" -eq 0 || "$last_session_result" -eq 2 ]]; then
+      last_session_active_in_place=1
+    fi
 
     # Clean up last-session pointer unless it still points at a resumable in-place session.
     if [[ $removal_failed -eq 0 && $last_session_active_in_place -eq 0 ]]; then
@@ -4276,10 +4309,16 @@ dxrm() {
   fi
 
   if [[ $has_dir -eq 0 ]] && [[ $has_branch -eq 1 ]]; then
-    local active_in_place_phase
-    if active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch_name"); then
+    local active_in_place_phase active_in_place_result=0
+    active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch_name") \
+      || active_in_place_result=$?
+    if [[ "$active_in_place_result" -eq 0 ]]; then
       dx_error "Refusing to remove active in-place lifecycle branch ${branch_name} (phase ${active_in_place_phase}/6: $(__dx_phase_name "$active_in_place_phase"))."
       dx_info "Resume it with dx --resume, or finish the lifecycle before cleaning it up."
+      return 1
+    elif [[ "$active_in_place_result" -eq 2 ]]; then
+      dx_error "Refusing to remove in-place lifecycle branch ${branch_name}: its branch state is missing, unsafe, or malformed."
+      dx_info "Repair the private branch record before cleaning up this lifecycle."
       return 1
     fi
   fi
@@ -4506,7 +4545,8 @@ dxclean() {
   cd "$repo_root" || return 1
   local cleaned=0 cleanup_failed=0
   local wt_dir wt_name session_id phase_file phase_val wt_branch branch
-  local active_in_place_phase has_worktree ticket_name old_files old_phase_files
+  local active_in_place_phase active_in_place_result has_worktree ticket_name
+  local old_files old_phase_files
 
   # 1. Prune stale worktrees (no uncommitted changes)
   local worktrees_dir="${repo_root}/.dex/worktrees"
@@ -4574,8 +4614,14 @@ dxclean() {
     if [[ "$branch" != worktree-ticket-* ]] && [[ "$branch" != worktree-task-* ]]; then
       continue
     fi
-    if active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch"); then
+    active_in_place_result=0
+    active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch") \
+      || active_in_place_result=$?
+    if [[ "$active_in_place_result" -eq 0 ]]; then
       echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dx_phase_name "$active_in_place_phase"))"
+      continue
+    elif [[ "$active_in_place_result" -eq 2 ]]; then
+      dx_warn "Skipping branch ${branch}: its lifecycle branch state is missing, unsafe, or malformed."
       continue
     fi
     # Don't delete branches with active worktrees
@@ -4606,8 +4652,14 @@ dxclean() {
   # 3. Prune worktree branches that have no worktree directory
   while IFS= read -r branch; do
     [[ -z "$branch" ]] && continue
-    if active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch"); then
+    active_in_place_result=0
+    active_in_place_phase=$(__dx_active_in_place_phase_for_branch "$branch") \
+      || active_in_place_result=$?
+    if [[ "$active_in_place_result" -eq 0 ]]; then
       echo "  Skipping branch ${branch} (active in-place phase ${active_in_place_phase}/6: $(__dx_phase_name "$active_in_place_phase"))"
+      continue
+    elif [[ "$active_in_place_result" -eq 2 ]]; then
+      dx_warn "Skipping branch ${branch}: its lifecycle branch state is missing, unsafe, or malformed."
       continue
     fi
     ticket_name="${branch#worktree-}"
