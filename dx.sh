@@ -711,14 +711,64 @@ __dx_resolve_existing_workspace_by_ticket() {
   return 0
 }
 
+# Re-open a ticket lookup only after the selected session's startup claim is
+# held. A lookup performed before the claim is only a candidate: cleanup may
+# remove or replace it before this launcher can act on it.
+unalias __dx_pin_ticket_workspace_claim 2>/dev/null; unfunction __dx_pin_ticket_workspace_claim 2>/dev/null
+__dx_pin_ticket_workspace_claim() {
+  local ticket_number="$1" expected_session="$_dx_session_id"
+  local expected_name="$_dx_wt_name" expected_dir="$_dx_wt_dir"
+  local expected_mode="$_dx_workspace_mode" verify_result=0
+
+  if [[ "${DX_SESSION_CLAIM_SESSION:-}" != "$expected_session" ]]; then
+    __dx_startup_claim_release || return 1
+    __dx_startup_claim_acquire "$expected_session" || return 1
+  fi
+  __dx_resolve_existing_workspace_by_ticket "$ticket_number" \
+    || verify_result=$?
+  if [[ "$verify_result" -ne 0 \
+    || "$_dx_session_id" != "$expected_session" \
+    || "$_dx_wt_name" != "$expected_name" \
+    || "$_dx_wt_dir" != "$expected_dir" \
+    || "$_dx_workspace_mode" != "$expected_mode" ]]; then
+    dx_error "The saved ticket workspace changed while Dex was preparing it. Run the command again to use fresh state."
+    return 1
+  fi
+}
+
 # __dx_setup_worktree <raw_input>
 # Sets: _dx_wt_name, _dx_wt_dir, _dx_is_task, _dx_repo_root, _dx_default_branch,
 # _dx_workspace_mode, _dx_session_id.
 # Returns 0 if worktree exists or was created, 1 on error.
 # See: docs/autonomous-mode.md for the full lifecycle that follows worktree creation.
+unalias __dx_startup_claim_acquire 2>/dev/null; unfunction __dx_startup_claim_acquire 2>/dev/null
+__dx_startup_claim_acquire() {
+  local session_id="$1" claim_result=0
+  dx_session_claim_acquire "$session_id" startup || claim_result=$?
+  if [[ "$claim_result" -eq 0 ]]; then
+    return 0
+  elif [[ "$claim_result" -eq 75 ]]; then
+    dx_error "Another startup or cleanup changed this session while Dex was waiting. Run the command again to use fresh state."
+  else
+    dx_error "Dex could not establish the session startup claim safely."
+  fi
+  return 1
+}
+
+unalias __dx_startup_claim_release 2>/dev/null; unfunction __dx_startup_claim_release 2>/dev/null
+__dx_startup_claim_release() {
+  local claimed_session="${DX_SESSION_CLAIM_SESSION:-}"
+  [[ -n "$claimed_session" ]] || return 0
+  if dx_session_claim_release_checked "$claimed_session"; then
+    return 0
+  fi
+  dx_error "Dex could not release the session startup claim safely."
+  return 1
+}
+
 unalias __dx_setup_worktree 2>/dev/null; unfunction __dx_setup_worktree 2>/dev/null
 __dx_setup_worktree() {
-  local raw_input="$1"
+  local raw_input="$1" setup_result=0
 
   _dx_repo_root=$(dx_repo_root) || return 1
   __dx_resolve_workspace_name "$raw_input" || return 1
@@ -727,7 +777,17 @@ __dx_setup_worktree() {
   _dx_default_branch=$(dx_default_branch "$_dx_repo_root")
   _dx_workspace_mode="worktree"
   _dx_session_id=$(__dx_session_id_for_workspace "$_dx_workspace_mode" "$_dx_wt_name")
+  __dx_startup_claim_acquire "$_dx_session_id" || return 1
+  __dx_setup_worktree_claimed "$raw_input" || setup_result=$?
+  if [[ "$setup_result" -ne 0 ]]; then
+    __dx_startup_claim_release || true
+  fi
+  return "$setup_result"
+}
 
+unalias __dx_setup_worktree_claimed 2>/dev/null; unfunction __dx_setup_worktree_claimed 2>/dev/null
+__dx_setup_worktree_claimed() {
+  local raw_input="$1"
   # If worktree exists, ensure links are set up (retroactive fix) and return
   if [[ -d "$_dx_wt_dir" ]]; then
     if ! dx_wt_is_registered "$_dx_repo_root" "$_dx_wt_dir"; then
@@ -753,6 +813,7 @@ __dx_setup_worktree() {
       local resolution_status=0
       __dx_resolve_existing_workspace_by_ticket "$ticket_number" || resolution_status=$?
       if [[ $resolution_status -eq 0 ]]; then
+        __dx_pin_ticket_workspace_claim "$ticket_number" || return 1
         if [[ "$_dx_workspace_mode" == "worktree" ]]; then
           if ! dx_wt_is_registered "$_dx_repo_root" "$_dx_wt_dir"; then
             dx_error "Saved workspace is not a registered Git worktree: $_dx_wt_dir"
@@ -848,8 +909,9 @@ __dx_restore_in_place_session_branch() {
 # __dx_setup_in_place <raw_input>
 # Sets the same workspace variables as __dx_setup_worktree, but points them at
 # the current checkout and creates/switches the normal Dex branch there.
+unalias __dx_setup_in_place 2>/dev/null; unfunction __dx_setup_in_place 2>/dev/null
 __dx_setup_in_place() {
-  local raw_input="$1"
+  local raw_input="$1" setup_result=0
 
   _dx_repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
   if [[ -z "$_dx_repo_root" ]]; then
@@ -865,6 +927,17 @@ __dx_setup_in_place() {
   fi
   _dx_workspace_mode="in-place"
   _dx_session_id=$(__dx_session_id_for_workspace "$_dx_workspace_mode" "$_dx_wt_name")
+  __dx_startup_claim_acquire "$_dx_session_id" || return 1
+  __dx_setup_in_place_claimed "$raw_input" || setup_result=$?
+  if [[ "$setup_result" -ne 0 ]]; then
+    __dx_startup_claim_release || true
+  fi
+  return "$setup_result"
+}
+
+unalias __dx_setup_in_place_claimed 2>/dev/null; unfunction __dx_setup_in_place_claimed 2>/dev/null
+__dx_setup_in_place_claimed() {
+  local raw_input="$1"
   local branch_name="worktree-${_dx_wt_name}"
 
   dx_info "Running lifecycle in current checkout (no worktree): ${_dx_wt_dir}"
@@ -902,6 +975,7 @@ __dx_setup_in_place() {
       local _resolution_status=0
       __dx_resolve_existing_workspace_by_ticket "$_ticket_number" || _resolution_status=$?
       if [[ $_resolution_status -eq 0 ]]; then
+        __dx_pin_ticket_workspace_claim "$_ticket_number" || return 1
         if [[ "$_dx_workspace_mode" == "worktree" ]]; then
           dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
         fi
@@ -2097,10 +2171,14 @@ __dx_run_with_runtime() {
   local session_id="$1" workspace_dir="$2" callback_name="$3"
   shift 3
   local provider_name owner_start_result=0 owner_handle="" owner_pid=""
-  provider_name=$(__dx_resolved_provider_agent) || return 1
+  provider_name=$(__dx_resolved_provider_agent) || {
+    __dx_startup_claim_release || true
+    return 1
+  }
   dx_session_runtime_owner_start \
     "$session_id" "$provider_name" "$workspace_dir" || owner_start_result=$?
   if [[ "$owner_start_result" -ne 0 ]]; then
+    __dx_startup_claim_release || true
     if [[ "$owner_start_result" -eq 2 ]]; then
       dx_error "Another Dex runtime already owns this checkout. Resume or finish it before starting another provider."
     else
@@ -2111,6 +2189,12 @@ __dx_run_with_runtime() {
   owner_handle="${DX_SESSION_RUNTIME_OWNER_HANDLE:-}"
   owner_pid="${DX_SESSION_RUNTIME_OWNER_PID:-}"
   unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+  if ! __dx_startup_claim_release; then
+    dx_session_runtime_owner_finish "$owner_handle" failed \
+      >/dev/null 2>&1 || true
+    dx_error "Dex published runtime ownership but could not commit the startup claim release. The provider did not start."
+    return 1
+  fi
   __dx_run_with_runtime_owner_handle "$owner_handle" "$owner_pid" \
     "$callback_name" "$@"
 }
@@ -3277,12 +3361,18 @@ __dx_run_spec_cli() {
   }
   local session_id
   session_id=$(__dx_session_id_for_workspace "in-place" "$_dx_wt_name")
+  if ! __dx_startup_claim_acquire "$session_id"; then
+    cd "$original_dir" 2>/dev/null || true
+    command rm -rf "$tmp_dir" 2>/dev/null || true
+    return 1
+  fi
 
   local final_spec
   if ! final_spec=$(dx_run_spec_prepare_journal "$normalized_spec" "$session_id" "$repo_dir" "dx run"); then
     error_text="could not prepare local run journal for ${run_id}"
     dx_error "$error_text"
     __dx_run_spec_record_failure "$source_label" "$error_text" "startup" "$repo_dir"
+    __dx_startup_claim_release || true
     cd "$original_dir" 2>/dev/null || true
     command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
@@ -3310,12 +3400,18 @@ __dx_run_spec_cli() {
     dx_done "Run spec startup is valid: ${run_id}"
     dx_info "Repository: ${repo_dir}"
     dx_info "Journal: $(dx_run_dir "$run_id")"
+    if ! __dx_startup_claim_release; then
+      cd "$original_dir" 2>/dev/null || true
+      command rm -rf "$tmp_dir" 2>/dev/null || true
+      return 1
+    fi
     cd "$original_dir" 2>/dev/null || true
     command rm -rf "$tmp_dir" 2>/dev/null || true
     return 0
   fi
 
   __dx_refresh_provider || {
+    __dx_startup_claim_release || true
     cd "$original_dir" 2>/dev/null || true
     command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
@@ -3334,6 +3430,7 @@ __dx_run_spec_cli() {
 
   session_id="$_dx_session_id"
   final_spec=$(dx_run_spec_prepare_journal "$normalized_spec" "$session_id" "$repo_dir" "dx run") || {
+    __dx_startup_claim_release || true
     cd "$original_dir" 2>/dev/null || true
     command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
@@ -3349,6 +3446,7 @@ __dx_run_spec_cli() {
   if [[ -e "$state_file" || -L "$state_file" ]]; then
     step=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null) || {
       dx_error "Dex found an unsafe or malformed authoritative phase file. Repair it before starting the headless run."
+      __dx_startup_claim_release || true
       return 1
     }
   fi
@@ -3736,6 +3834,7 @@ dx() {
   if [[ -e "$state_file" || -L "$state_file" ]]; then
     step=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null) || {
       dx_error "Dex found an unsafe or malformed authoritative phase file. Repair it before starting."
+      __dx_startup_claim_release || true
       return 1
     }
   fi
@@ -3743,6 +3842,7 @@ dx() {
   if [[ $step -gt 6 ]]; then
     if ! dx_lifecycle_terminal_commit_valid "$session_id"; then
       dx_error "Dex found Phase 7 without a valid terminal commit proof. The lifecycle remains inert; repair its state before treating it as complete."
+      __dx_startup_claim_release || true
       return 1
     fi
     echo "Ticket lifecycle already complete for ${_dx_wt_name}."
@@ -3750,6 +3850,9 @@ dx() {
       echo "Local cleanup should already be complete. If files remain, run dxrm ${raw_input}."
     else
       echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
+    fi
+    if ! __dx_startup_claim_release; then
+      return 1
     fi
     return 0
   fi
@@ -3766,7 +3869,10 @@ dx() {
   # ── Phase loop ──
   local resume_hint="dx ${raw_input}"
   [[ "$_dx_workspace_mode" == "in-place" ]] && resume_hint="dx --no-worktree ${raw_input}"
-  cd "$_dx_wt_dir" 2>/dev/null || return 1
+  cd "$_dx_wt_dir" 2>/dev/null || {
+    __dx_startup_claim_release || true
+    return 1
+  }
   __dx_run_with_runtime "$session_id" "$_dx_wt_dir" __dx_run_phases_inline \
     "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" \
     "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"

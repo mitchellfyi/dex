@@ -270,6 +270,860 @@ dx_session_cleanup_journal_state() {
   [[ "$journal_header" == "dex-cleanup-journal-v1"$'\t'"$session_id" ]]
 }
 
+# Startup and destructive cleanup serialize on a private per-session claim.
+# The claim lives below a directory the catalog does not scan, so holding it
+# cannot manufacture or change a lifecycle record.
+dx_session_claim_root() {
+  printf '%s/.session-claims\n' "$DX_LOOP_DIR"
+}
+
+dx_session_claim_lock_dir() {
+  dx_session_id_valid "${1:-}" || return 2
+  printf '%s/%s.lock\n' "$(dx_session_claim_root)" "$1"
+}
+
+# Perform one claim transaction below descriptors opened with O_NOFOLLOW.
+# The token arrives on fd 3: it never appears in argv, the environment, or
+# command output. Successful acquire/inspect operations print only inode
+# bindings for the shell to retain.
+__dx_session_claim_filesystem() { # <operation> <sid> <pid> <binding|->
+  [[ $# -eq 4 ]] || return 2
+  local claim_operation="$1" session_id="$2" owner_pid="$3"
+  local expected_binding="$4"
+  command env -u DX_SESSION_CLAIM_TOKEN python3 - "$claim_operation" \
+    "$DX_LOOP_DIR" "$session_id" "$owner_pid" "$expected_binding" \
+    3<&0 <<'PY' 2>/dev/null
+import errno
+import fcntl
+import hashlib
+import os
+import re
+import stat
+import sys
+import time
+
+
+class ClaimFailure(Exception):
+    def __init__(self, result):
+        self.result = result
+
+
+def reject(result=2):
+    raise ClaimFailure(result)
+
+
+def inode(metadata):
+    return metadata.st_dev, metadata.st_ino
+
+
+def snapshot(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def directory_ok(metadata, expected_mode=None):
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+        return False
+    return expected_mode is None or stat.S_IMODE(metadata.st_mode) == expected_mode
+
+
+def regular_owner_ok(metadata):
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == os.geteuid()
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and metadata.st_nlink == 1
+        and 1 <= metadata.st_size <= 512
+    )
+
+
+def open_directory(parent_fd, name, expected_mode):
+    try:
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        reject()
+    if not directory_ok(named, expected_mode):
+        reject()
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+        opened = os.fstat(descriptor)
+    except OSError:
+        reject()
+    if not directory_ok(opened, expected_mode) or inode(opened) != inode(named):
+        os.close(descriptor)
+        reject()
+    return descriptor
+
+
+def named_directory_is(parent_fd, name, descriptor, expected_mode):
+    try:
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        opened = os.fstat(descriptor)
+    except OSError:
+        return False
+    return (
+        directory_ok(named, expected_mode)
+        and directory_ok(opened, expected_mode)
+        and inode(named) == inode(opened)
+    )
+
+
+def read_token():
+    chunks = []
+    total = 0
+    while total <= 512:
+        part = os.read(3, 513 - total)
+        if not part:
+            break
+        chunks.append(part)
+        total += len(part)
+    raw = b"".join(chunks)
+    if len(raw) > 512 or raw.count(b"\n") != 1 or not raw.endswith(b"\n"):
+        reject()
+    try:
+        value = raw[:-1].decode("ascii")
+    except UnicodeDecodeError:
+        reject()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", value):
+        reject()
+    return value
+
+
+def parse_binding(raw):
+    fields = raw.split(":")
+    if len(fields) != 6 or any(not item.isdigit() for item in fields):
+        reject()
+    return tuple(int(item) for item in fields)
+
+
+def process_is_live(raw_pid):
+    try:
+        os.kill(int(raw_pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def named_owner_record(parent_fd, owner_name):
+    try:
+        named = os.stat(owner_name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        reject()
+    if not regular_owner_ok(named):
+        reject()
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(owner_name, flags, dir_fd=parent_fd)
+        opened = os.fstat(descriptor)
+        if not regular_owner_ok(opened) or snapshot(opened) != snapshot(named):
+            reject()
+        payload = b""
+        while len(payload) <= 512:
+            part = os.read(descriptor, 513 - len(payload))
+            if not part:
+                break
+            payload += part
+        after = os.fstat(descriptor)
+        current = os.stat(owner_name, dir_fd=parent_fd, follow_symlinks=False)
+    except ClaimFailure:
+        raise
+    except OSError:
+        reject()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if (
+        len(payload) > 512
+        or snapshot(after) != snapshot(opened)
+        or snapshot(current) != snapshot(opened)
+    ):
+        reject()
+    if payload.count(b"\n") != 1 or not payload.endswith(b"\n"):
+        reject()
+    try:
+        fields = payload[:-1].decode("ascii").split("\t")
+    except UnicodeDecodeError:
+        reject()
+    if (
+        len(fields) != 3
+        or not re.fullmatch(r"[0-9]+", fields[0])
+        or not re.fullmatch(r"[1-9][0-9]*", fields[1])
+        or not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", fields[2])
+    ):
+        reject()
+    return opened, fields, payload
+
+
+def owner_record(leaf_fd, owner_name="owner"):
+    try:
+        if sorted(os.listdir(leaf_fd)) != [owner_name]:
+            reject()
+    except ClaimFailure:
+        raise
+    except OSError:
+        reject()
+    return named_owner_record(leaf_fd, owner_name)
+
+
+def publish_owner(leaf_fd, raw_pid, token, payload=None):
+    if payload is None:
+        payload = f"{int(time.time())}\t{raw_pid}\t{token}\n".encode("ascii")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open("owner", flags, 0o600, dir_fd=leaf_fd)
+        os.fchmod(descriptor, 0o600)
+        written = 0
+        while written < len(payload):
+            count = os.write(descriptor, payload[written:])
+            if count <= 0:
+                reject()
+            written += count
+        os.fsync(descriptor)
+        metadata = os.fstat(descriptor)
+        if not regular_owner_ok(metadata) or metadata.st_size != len(payload):
+            reject()
+    except ClaimFailure:
+        raise
+    except OSError:
+        reject()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    verified, fields, verified_payload = owner_record(leaf_fd)
+    if verified_payload != payload or fields[1] != raw_pid or fields[2] != token:
+        reject()
+    return verified
+
+
+def binding_text(root_metadata, leaf_metadata, owner_metadata):
+    values = inode(root_metadata) + inode(leaf_metadata) + inode(owner_metadata)
+    return ":".join(str(item) for item in values)
+
+
+def release_prefix(session_id):
+    session_hash = hashlib.sha256(session_id.encode("ascii")).hexdigest()[:24]
+    return f".claim-release-{session_hash}-"
+
+
+def release_staging_name(
+    session_id, root_metadata, leaf_metadata, owner_metadata, owner_payload
+):
+    binding = (
+        inode(root_metadata) + inode(leaf_metadata) + inode(owner_metadata)
+    )
+    return release_staging_name_from_binding(session_id, binding, owner_payload)
+
+
+def release_staging_name_from_binding(session_id, binding, owner_payload):
+    binding_text_value = ":".join(str(item) for item in binding)
+    attestation = hashlib.sha256(
+        b"dex-claim-release-v1\0"
+        + session_id.encode("ascii")
+        + b"\0"
+        + binding_text_value.encode("ascii")
+        + b"\0"
+        + owner_payload
+    ).hexdigest()
+    numbers = "-".join(str(item) for item in binding)
+    return f"{release_prefix(session_id)}{numbers}-{attestation}"
+
+
+def retire_release_staging(root_fd, root_metadata, session_id, expected_name=None):
+    prefix = release_prefix(session_id)
+    try:
+        candidates = sorted(name for name in os.listdir(root_fd) if name.startswith(prefix))
+    except OSError:
+        reject()
+    if not candidates:
+        if expected_name is None:
+            return False
+        reject(1)
+    if len(candidates) != 1:
+        reject()
+    staging_name = candidates[0]
+    if expected_name is not None and staging_name != expected_name:
+        reject()
+    try:
+        os.stat(f"{session_id}.lock", dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        reject()
+    else:
+        reject()
+    suffix = staging_name[len(prefix):]
+    parts = suffix.split("-")
+    if len(parts) != 7 or any(not item.isdigit() for item in parts[:6]):
+        reject()
+    if not re.fullmatch(r"[0-9a-f]{64}", parts[6]):
+        reject()
+    binding = tuple(int(item) for item in parts[:6])
+    if inode(root_metadata) != binding[:2]:
+        reject()
+    staged_owner, _, staged_payload = named_owner_record(root_fd, staging_name)
+    if inode(staged_owner) != binding[4:6]:
+        reject()
+    calculated = release_staging_name_from_binding(
+        session_id, binding, staged_payload
+    )
+    if calculated != staging_name:
+        reject()
+    current = os.stat(staging_name, dir_fd=root_fd, follow_symlinks=False)
+    if snapshot(current) != snapshot(staged_owner):
+        reject()
+    try:
+        os.unlink(staging_name, dir_fd=root_fd)
+    except OSError:
+        reject(1)
+    try:
+        os.stat(staging_name, dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        reject(1)
+    reject(1)
+
+
+def main():
+    if len(sys.argv) != 6:
+        reject()
+    operation, loop_dir, session_id, raw_pid, raw_binding = sys.argv[1:]
+    if operation not in {
+        "acquire",
+        "inspect",
+        "release-detach",
+        "release-finish",
+        "release-restore",
+        "release-retire",
+    }:
+        reject()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", session_id):
+        reject()
+    if not re.fullmatch(r"[1-9][0-9]*", raw_pid):
+        reject()
+    token = read_token()
+    expected = (
+        None
+        if operation in {"acquire", "release-retire"}
+        else parse_binding(raw_binding)
+    )
+
+    try:
+        os.makedirs(loop_dir, mode=0o700, exist_ok=True)
+        loop_named = os.lstat(loop_dir)
+    except OSError:
+        reject()
+    if not directory_ok(loop_named):
+        reject()
+    loop_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    loop_flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        loop_fd = os.open(loop_dir, loop_flags)
+    except OSError:
+        reject()
+    root_fd = -1
+    leaf_fd = -1
+    try:
+        loop_opened = os.fstat(loop_fd)
+        if not directory_ok(loop_opened) or inode(loop_opened) != inode(loop_named):
+            reject()
+        root_name = ".session-claims"
+        try:
+            os.mkdir(root_name, 0o700, dir_fd=loop_fd)
+            root_created = True
+        except FileExistsError:
+            root_created = False
+        except OSError:
+            reject()
+        root_fd = open_directory(loop_fd, root_name, 0o700)
+        if root_created:
+            try:
+                os.fchmod(root_fd, 0o700)
+            except OSError:
+                reject()
+        if not named_directory_is(loop_fd, root_name, root_fd, 0o700):
+            reject()
+        try:
+            lock_flags = fcntl.LOCK_EX
+            if operation == "acquire":
+                lock_flags |= fcntl.LOCK_NB
+            fcntl.flock(root_fd, lock_flags)
+        except OSError as error:
+            if error.errno in (errno.EACCES, errno.EAGAIN):
+                reject(1)
+            reject()
+        if inode(os.lstat(loop_dir)) != inode(os.fstat(loop_fd)):
+            reject()
+        if not named_directory_is(loop_fd, root_name, root_fd, 0o700):
+            reject()
+        root_metadata = os.fstat(root_fd)
+        if expected is not None and inode(root_metadata) != expected[:2]:
+            reject()
+
+        if operation == "release-retire":
+            retire_release_staging(
+                root_fd, root_metadata, session_id, expected_name=raw_binding
+            )
+            return
+        if operation == "acquire":
+            retire_release_staging(root_fd, root_metadata, session_id)
+
+        leaf_name = f"{session_id}.lock"
+        if operation == "acquire":
+            try:
+                os.mkdir(leaf_name, 0o700, dir_fd=root_fd)
+                leaf_created = True
+            except FileExistsError:
+                leaf_created = False
+            except OSError:
+                reject()
+        else:
+            leaf_created = False
+            try:
+                os.stat(leaf_name, dir_fd=root_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                reject(1)
+            except OSError:
+                reject()
+
+        leaf_fd = open_directory(root_fd, leaf_name, 0o700)
+        record_name = (
+            ".owner-releasing"
+            if operation in {"release-finish", "release-restore"}
+            else "owner"
+        )
+        if operation == "acquire" and not leaf_created:
+            try:
+                existing_entries = sorted(os.listdir(leaf_fd))
+            except OSError:
+                reject()
+            if existing_entries == [".owner-releasing"]:
+                record_name = ".owner-releasing"
+        if leaf_created:
+            try:
+                os.fchmod(leaf_fd, 0o700)
+            except OSError:
+                reject()
+        leaf_metadata = os.fstat(leaf_fd)
+        if expected is not None and inode(leaf_metadata) != expected[2:4]:
+            reject()
+        if not named_directory_is(root_fd, leaf_name, leaf_fd, 0o700):
+            reject()
+
+        if leaf_created:
+            try:
+                if os.listdir(leaf_fd):
+                    reject()
+            except ClaimFailure:
+                raise
+            except OSError:
+                reject()
+            owner_metadata = publish_owner(leaf_fd, raw_pid, token)
+        else:
+            owner_metadata, fields, old_payload = owner_record(leaf_fd, record_name)
+            if expected is not None and inode(owner_metadata) != expected[4:6]:
+                reject()
+            if operation == "acquire":
+                if record_name == ".owner-releasing":
+                    if process_is_live(fields[1]):
+                        reject(1)
+                    try:
+                        os.rename(
+                            ".owner-releasing",
+                            "owner",
+                            src_dir_fd=leaf_fd,
+                            dst_dir_fd=leaf_fd,
+                        )
+                    except OSError:
+                        reject()
+                    owner_metadata, fields, old_payload = owner_record(leaf_fd)
+                    record_name = "owner"
+                if process_is_live(fields[1]):
+                    if fields[1] != raw_pid or fields[2] != token:
+                        reject(1)
+                else:
+                    if not named_directory_is(root_fd, leaf_name, leaf_fd, 0o700):
+                        reject()
+                    current = os.stat("owner", dir_fd=leaf_fd, follow_symlinks=False)
+                    if snapshot(current) != snapshot(owner_metadata):
+                        reject()
+                    try:
+                        os.unlink("owner", dir_fd=leaf_fd)
+                    except OSError:
+                        reject()
+                    try:
+                        owner_metadata = publish_owner(leaf_fd, raw_pid, token)
+                    except ClaimFailure:
+                        try:
+                            if not os.listdir(leaf_fd):
+                                publish_owner(leaf_fd, fields[1], fields[2], old_payload)
+                        except (ClaimFailure, OSError):
+                            pass
+                        raise
+            elif fields[1] != raw_pid or fields[2] != token:
+                reject(1)
+
+        if not named_directory_is(root_fd, leaf_name, leaf_fd, 0o700):
+            reject()
+        verified_owner, verified_fields, verified_payload = owner_record(
+            leaf_fd, record_name
+        )
+        if (
+            inode(verified_owner) != inode(owner_metadata)
+            or verified_fields[1] != raw_pid
+            or verified_fields[2] != token
+        ):
+            reject()
+        if not named_directory_is(loop_fd, root_name, root_fd, 0o700):
+            reject()
+        if inode(os.lstat(loop_dir)) != inode(os.fstat(loop_fd)):
+            reject()
+
+        if operation in {"acquire", "inspect"}:
+            output = binding_text(root_metadata, leaf_metadata, verified_owner)
+            os.write(1, (output + "\n").encode("ascii"))
+            return
+
+        if operation == "release-detach":
+            try:
+                os.stat(".owner-releasing", dir_fd=leaf_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                reject()
+            else:
+                reject()
+            current = os.stat("owner", dir_fd=leaf_fd, follow_symlinks=False)
+            if snapshot(current) != snapshot(verified_owner):
+                reject()
+            try:
+                os.rename(
+                    "owner",
+                    ".owner-releasing",
+                    src_dir_fd=leaf_fd,
+                    dst_dir_fd=leaf_fd,
+                )
+            except OSError:
+                reject(1)
+            moved_owner, moved_fields, moved_payload = owner_record(
+                leaf_fd, ".owner-releasing"
+            )
+            if (
+                inode(moved_owner) != inode(verified_owner)
+                or moved_fields != verified_fields
+                or moved_payload != verified_payload
+            ):
+                reject(1)
+            output = binding_text(root_metadata, leaf_metadata, moved_owner)
+            os.write(1, (output + "\n").encode("ascii"))
+            return
+
+        if operation == "release-restore":
+            try:
+                os.stat("owner", dir_fd=leaf_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                reject()
+            else:
+                reject()
+            try:
+                os.rename(
+                    ".owner-releasing",
+                    "owner",
+                    src_dir_fd=leaf_fd,
+                    dst_dir_fd=leaf_fd,
+                )
+            except OSError:
+                reject(1)
+            restored_owner, restored_fields, restored_payload = owner_record(leaf_fd)
+            if (
+                inode(restored_owner) != inode(verified_owner)
+                or restored_fields != verified_fields
+                or restored_payload != verified_payload
+            ):
+                reject(1)
+            output = binding_text(root_metadata, leaf_metadata, restored_owner)
+            os.write(1, (output + "\n").encode("ascii"))
+            return
+
+        staging_name = release_staging_name(
+            session_id,
+            root_metadata,
+            leaf_metadata,
+            verified_owner,
+            verified_payload,
+        )
+        try:
+            os.stat(staging_name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            reject()
+        else:
+            reject()
+        try:
+            os.rename(
+                ".owner-releasing",
+                staging_name,
+                src_dir_fd=leaf_fd,
+                dst_dir_fd=root_fd,
+            )
+            staged_owner = os.stat(
+                staging_name, dir_fd=root_fd, follow_symlinks=False
+            )
+        except OSError:
+            reject(1)
+        if (
+            not regular_owner_ok(staged_owner)
+            or inode(staged_owner) != inode(verified_owner)
+            or staged_owner.st_size != verified_owner.st_size
+        ):
+            reject(1)
+        if not named_directory_is(root_fd, leaf_name, leaf_fd, 0o700):
+            reject(1)
+        try:
+            os.rmdir(leaf_name, dir_fd=root_fd)
+        except OSError:
+            try:
+                os.rename(
+                    staging_name,
+                    "owner",
+                    src_dir_fd=root_fd,
+                    dst_dir_fd=leaf_fd,
+                )
+                restored_owner, restored_fields, restored_payload = owner_record(leaf_fd)
+                if (
+                    inode(restored_owner) != inode(verified_owner)
+                    or restored_fields != verified_fields
+                    or restored_payload != verified_payload
+                ):
+                    reject(1)
+                output = binding_text(root_metadata, leaf_metadata, restored_owner)
+                os.write(1, (output + "\n").encode("ascii"))
+            except (ClaimFailure, OSError):
+                pass
+            reject(1)
+        try:
+            os.stat(leaf_name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            reject(1)
+        else:
+            reject(1)
+        if not named_directory_is(loop_fd, root_name, root_fd, 0o700):
+            reject(1)
+        if inode(os.lstat(loop_dir)) != inode(os.fstat(loop_fd)):
+            reject(1)
+        os.write(1, (staging_name + "\n").encode("ascii"))
+    finally:
+        if leaf_fd >= 0:
+            os.close(leaf_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+        os.close(loop_fd)
+
+
+try:
+    main()
+except ClaimFailure as failure:
+    raise SystemExit(failure.result)
+except Exception:
+    raise SystemExit(2)
+PY
+}
+
+__dx_session_claim_checkpoint() {
+  : "$@"
+}
+
+__dx_session_claim_clear_local() {
+  unset DX_SESSION_CLAIM_SESSION DX_SESSION_CLAIM_TOKEN
+  unset DX_SESSION_CLAIM_PID DX_SESSION_CLAIM_ROLE
+  unset DX_SESSION_CLAIM_BINDING
+}
+
+# dx_session_claim_acquire <session_id> <startup|cleanup>
+#
+# Startup never continues after waiting on another generation. The prior owner
+# may have completed cleanup while this process waited, so the caller must
+# retry as a fresh command instead of reviving cached state.
+dx_session_claim_acquire() {
+  [[ $# -eq 2 ]] || return 2
+  local session_id="$1" claim_role="$2" claim_token claim_binding=""
+  local attempts_raw="${DEX_SESSION_CLAIM_ATTEMPTS:-400}" attempt=0
+  local acquire_result=0 contended=0
+  dx_session_id_valid "$session_id" || return 2
+  case "$claim_role" in startup|cleanup) ;; *) return 2 ;; esac
+  [[ "$attempts_raw" =~ ^[0-9]+$ && "$attempts_raw" -ge 1 \
+    && "$attempts_raw" -le 4000 ]] || attempts_raw=400
+
+  if [[ -n "${DX_SESSION_CLAIM_SESSION:-}" \
+    || -n "${DX_SESSION_CLAIM_TOKEN:-}" \
+    || -n "${DX_SESSION_CLAIM_PID:-}" ]]; then
+    if [[ "${DX_SESSION_CLAIM_SESSION:-}" == "$session_id" \
+      && "${DX_SESSION_CLAIM_PID:-}" == "$$" \
+      && "${DX_SESSION_CLAIM_ROLE:-}" == "$claim_role" ]] \
+      && dx_session_claim_owned "$session_id"; then
+      return 0
+    fi
+    return 2
+  fi
+
+  # Imported empty variables can retain an export attribute. Remove them
+  # before assigning the token so child processes cannot inherit it.
+  __dx_session_claim_clear_local
+  claim_token="$(date +%s)-$$-${RANDOM}-${RANDOM}-${RANDOM}"
+  while [[ "$attempt" -lt "$attempts_raw" ]]; do
+    acquire_result=0
+    claim_binding=$(printf '%s\n' "$claim_token" \
+      | __dx_session_claim_filesystem acquire "$session_id" "$$" -) \
+      || acquire_result=$?
+    if [[ "$acquire_result" -eq 0 ]]; then
+      [[ "$claim_binding" =~ ^[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]] \
+        || return 2
+      DX_SESSION_CLAIM_SESSION="$session_id"
+      DX_SESSION_CLAIM_TOKEN="$claim_token"
+      DX_SESSION_CLAIM_PID="$$"
+      DX_SESSION_CLAIM_ROLE="$claim_role"
+      DX_SESSION_CLAIM_BINDING="$claim_binding"
+      __dx_session_claim_checkpoint "$claim_role" acquired "$session_id" \
+        || {
+          dx_session_claim_release_checked "$session_id" \
+            >/dev/null 2>&1 || true
+          __dx_session_claim_clear_local
+          return 2
+        }
+      # The checkpoint is deliberately overridable by race tests. Revalidate
+      # the bound directory entries before the caller enters its critical
+      # section so a replacement can never inherit this acquisition.
+      dx_session_claim_owned "$session_id" || {
+        dx_session_claim_release_checked "$session_id" \
+          >/dev/null 2>&1 || true
+        __dx_session_claim_clear_local
+        return 2
+      }
+      if [[ "$claim_role" == "startup" && "$contended" -eq 1 ]]; then
+        dx_session_claim_release_checked "$session_id" >/dev/null 2>&1 \
+          || return 2
+        return 75
+      fi
+      return 0
+    fi
+    [[ "$acquire_result" -eq 1 ]] || return 2
+    contended=1
+    __dx_session_claim_checkpoint "$claim_role" contended "$session_id" \
+      || return 2
+    attempt=$((attempt + 1))
+    [[ "$attempt" -lt "$attempts_raw" ]] && sleep 0.05
+  done
+  return 75
+}
+
+dx_session_claim_owned() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" inspected_binding="" inspect_result=0
+  [[ "${DX_SESSION_CLAIM_SESSION:-}" == "$session_id" \
+    && "${DX_SESSION_CLAIM_PID:-}" == "$$" \
+    && -n "${DX_SESSION_CLAIM_TOKEN:-}" \
+    && "${DX_SESSION_CLAIM_BINDING:-}" \
+      =~ ^[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]] || return 1
+  inspected_binding=$(printf '%s\n' "$DX_SESSION_CLAIM_TOKEN" \
+    | __dx_session_claim_filesystem inspect "$session_id" "$$" \
+      "$DX_SESSION_CLAIM_BINDING") || inspect_result=$?
+  [[ "$inspect_result" -eq 0 ]] || return "$inspect_result"
+  [[ "$inspected_binding" == "$DX_SESSION_CLAIM_BINDING" ]] || return 2
+}
+
+__dx_session_claim_release_once() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" detached_binding="" finish_output=""
+  local restored_binding=""
+  local finish_result=0
+  detached_binding=$(printf '%s\n' "$DX_SESSION_CLAIM_TOKEN" \
+    | __dx_session_claim_filesystem release-detach "$session_id" "$$" \
+      "$DX_SESSION_CLAIM_BINDING") || return $?
+  [[ "$detached_binding" == "$DX_SESSION_CLAIM_BINDING" ]] || return 2
+
+  if ! __dx_session_claim_checkpoint "$DX_SESSION_CLAIM_ROLE" \
+    owner-unlinked "$session_id"; then
+    restored_binding=$(printf '%s\n' "$DX_SESSION_CLAIM_TOKEN" \
+      | __dx_session_claim_filesystem release-restore "$session_id" "$$" \
+        "$DX_SESSION_CLAIM_BINDING") || return 1
+    [[ "$restored_binding" == "$DX_SESSION_CLAIM_BINDING" ]] || return 1
+    return 1
+  fi
+
+  finish_output=$(printf '%s\n' "$DX_SESSION_CLAIM_TOKEN" \
+    | __dx_session_claim_filesystem release-finish "$session_id" "$$" \
+      "$DX_SESSION_CLAIM_BINDING") || finish_result=$?
+  if [[ "$finish_result" -eq 0 ]]; then
+    [[ "$finish_output" == .claim-release-* \
+      && "$finish_output" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+    printf '%s\n' "$DX_SESSION_CLAIM_TOKEN" \
+      | __dx_session_claim_filesystem release-retire "$session_id" "$$" \
+        "$finish_output" >/dev/null 2>&1 || true
+    return 0
+  fi
+  if [[ "$finish_output" == "$DX_SESSION_CLAIM_BINDING" ]]; then
+    return "$finish_result"
+  fi
+  restored_binding=$(printf '%s\n' "$DX_SESSION_CLAIM_TOKEN" \
+    | __dx_session_claim_filesystem release-restore "$session_id" "$$" \
+      "$DX_SESSION_CLAIM_BINDING") || return "$finish_result"
+  [[ "$restored_binding" == "$DX_SESSION_CLAIM_BINDING" ]] \
+    || return "$finish_result"
+  return "$finish_result"
+}
+
+dx_session_claim_release_checked() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" release_result=0 owner_result=0
+  local claim_role="${DX_SESSION_CLAIM_ROLE:-}"
+  dx_session_id_valid "$session_id" || return 2
+  dx_session_claim_owned "$session_id" || owner_result=$?
+  [[ "$owner_result" -eq 0 ]] || return "$owner_result"
+  __dx_session_claim_checkpoint "$claim_role" releasing "$session_id" \
+    || return 1
+  __dx_session_claim_release_once "$session_id" || release_result=$?
+  if [[ "$release_result" -eq 0 ]]; then
+    __dx_session_claim_clear_local
+    __dx_session_claim_checkpoint "$claim_role" released "$session_id" \
+      || return 1
+    return 0
+  fi
+
+  owner_result=0
+  dx_session_claim_owned "$session_id" >/dev/null 2>&1 || owner_result=$?
+  if [[ "$owner_result" -ne 0 ]]; then
+    __dx_session_claim_clear_local
+    if [[ "$owner_result" -eq 1 ]]; then
+      __dx_session_claim_checkpoint "$claim_role" released "$session_id" \
+        >/dev/null 2>&1 || true
+    fi
+  fi
+  return "$release_result"
+}
+
 # dx_owner_file <session_id> — Claude session id that owns this loop's state.
 # Session IDs are derived from the repo+worktree/branch path, so an unrelated
 # Claude session opened in the same checkout resolves the same session_id. The

@@ -977,6 +977,25 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
       DX_CLAUDE_FLAGS=()
     }
     dx_session_id() { print -r -- "review-${TEST_PROVIDER}"; }
+    test_review_parent_session=$(__dx_review_standalone_session_id \
+      "review-${TEST_PROVIDER}")
+    functions[__test_review_lock_acquire]="${functions[dx_review_lock_acquire]}"
+    functions[__test_review_runtime_start]="${functions[dx_session_runtime_owner_start]}"
+    dx_review_lock_acquire() {
+      dx_session_claim_owned "$test_review_parent_session" || return 93
+      __test_review_lock_acquire "$@"
+    }
+    dx_session_runtime_owner_start() {
+      [[ "$1" == "$test_review_parent_session" ]] || return 94
+      dx_session_claim_owned "$test_review_parent_session" || return 95
+      __test_review_runtime_start "$@"
+    }
+    __test_review_claim_released() {
+      ! dx_session_claim_owned "$test_review_parent_session" \
+        >/dev/null 2>&1 || return 97
+      [[ ! -e "$(dx_session_claim_lock_dir "$test_review_parent_session")" \
+        && ! -L "$(dx_session_claim_lock_dir "$test_review_parent_session")" ]]
+    }
     dx_provider_write_session_state() { return 0; }
     dx_provider_cleanup_session_state() { return 0; }
     __dx_provider_prompt() { return 0; }
@@ -1022,6 +1041,7 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
 	        "$completion_session" "$completion_generation"
 	    }
 	    __dx_claude() {
+	      __test_review_claim_released || return 97
 	      if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
 	        print -r -- "$*" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
 	        emit_assessment "$@"
@@ -1032,6 +1052,7 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
 	    }
     bash() {
       if [[ "${1:-}" == "$DEX_DIR/bin/dxcodex.sh" ]]; then
+	        __test_review_claim_released || return 97
 	        if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
 	          print -r -- "${*: -1}" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
 	          emit_assessment "$@" > "$DX_CODEX_OUTPUT_LAST_MESSAGE"
@@ -1058,6 +1079,9 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
     cat "$output_file" >&2
     exit 1
   fi
+  local review_parent_session
+  review_parent_session=$(__dx_review_standalone_session_id "review-${provider}")
+  assert_no_file "$(dx_session_claim_lock_dir "$review_parent_session")/owner"
   grep -Fq "Agent:  $(tr '[:lower:]' '[:upper:]' <<< "${expected_route:0:1}")${expected_route:1}" "$output_file"
 
   if [[ "$use_assessor" == "1" ]]; then

@@ -1999,9 +1999,18 @@ __dx_session_management_cleanup_exact() { # <repo-dir> <sid>
   local entries_record payload_stage runtime_stage lock_stage
   dx_session_id_valid "$target_session" || return 3
   repo_dir=$(cd "$requested_repo" 2>/dev/null && dx_session_repo_root) || return 3
-  transaction_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-session-cleanup.XXXXXX") || return 3
+  dx_session_claim_acquire "$target_session" cleanup || return 3
+  transaction_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-session-cleanup.XXXXXX") || {
+    if ! dx_session_claim_release_checked "$target_session"; then
+      dx_error "Dex could not release the session cleanup claim safely."
+    fi
+    return 3
+  }
   chmod 700 "$transaction_dir" 2>/dev/null || {
     __dx_session_management_remove_transaction_dir "$transaction_dir" 2>/dev/null || true
+    if ! dx_session_claim_release_checked "$target_session"; then
+      dx_error "Dex could not release the session cleanup claim safely."
+    fi
     return 3
   }
   records_file="$transaction_dir/records.jsonl"
@@ -2125,5 +2134,8 @@ EOF
   fi
   __dx_session_management_remove_transaction_dir "$transaction_dir" \
     2>/dev/null || true
+  if ! dx_session_claim_release_checked "$target_session"; then
+    cleanup_result=1
+  fi
   return "$cleanup_result"
 }

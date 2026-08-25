@@ -75,6 +75,7 @@ session-runtime-core-test.sh	fast	all	600	hermetic
 session-runtime-owner-test.sh	serial	all	600	hermetic
 session-runtime-portability-test.sh	fast	all	600	hermetic
 session-runtime-wiring-test.sh	fast	all	600	hermetic
+session-startup-claim-test.sh	fast	all	900	hermetic
 standalone-provider-test.sh	slow	all	1200	hermetic
 status-line-test.sh	fast	all	600	hermetic
 test-command-cli-test.sh	fast	all	600	hermetic

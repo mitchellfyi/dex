@@ -770,11 +770,6 @@ dx_review_loop_run() {
       fi
       return 1
     fi
-  elif [[ -e "$parent_criteria_file" || -e "$parent_criteria_approval_file" ]]; then
-    if ! command rm -f "$parent_criteria_file" "$parent_criteria_approval_file"; then
-      dx_error "Could not clear stale criteria state for the standalone review."
-      return 1
-    fi
   fi
 
   local review_policy_record="" review_policy_small="" review_policy_normal=""
@@ -827,10 +822,33 @@ dx_review_loop_run() {
     fi
   fi
 
+  local review_startup_claim=0
+  if [[ $standalone_review_prompt -eq 1 ]]; then
+    if ! dx_session_claim_acquire "$session_id" startup; then
+      dx_error "Another startup or cleanup changed this review session. Run dxreviewloop again to use fresh state."
+      return 1
+    fi
+    review_startup_claim=1
+    if [[ -e "$parent_criteria_file" || -e "$parent_criteria_approval_file" ]] \
+      && ! command rm -f "$parent_criteria_file" \
+        "$parent_criteria_approval_file"; then
+      if ! dx_session_claim_release_checked "$session_id"; then
+        dx_error "Dex could not release the standalone review startup claim safely."
+      fi
+      dx_error "Could not clear stale criteria state for the standalone review."
+      return 1
+    fi
+  fi
+
   local review_lock_token="" review_lock_status=0
   review_lock_token=$(__dx_review_nonce)
   dx_review_lock_acquire "$repo_root" "$review_lock_token" "$$" || review_lock_status=$?
   if [[ $review_lock_status -ne 0 ]]; then
+    if [[ "$review_startup_claim" -eq 1 ]]; then
+      if ! dx_session_claim_release_checked "$session_id"; then
+        dx_error "Dex could not release the standalone review startup claim safely."
+      fi
+    fi
     if [[ $review_lock_status -eq 1 ]]; then
       dx_error "Another review loop already owns this checkout."
       dx_info "Wait for it to finish or interrupt that owner before retrying."
@@ -858,6 +876,9 @@ dx_review_loop_run() {
       if ! dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
         dx_error "Dex could not release the review-loop checkout lock safely."
       fi
+      if ! dx_session_claim_release_checked "$session_id"; then
+        dx_error "Dex could not release the standalone review startup claim safely."
+      fi
       dx_error "Dex could not establish review runtime ownership, so it did not start an assessor or review wave."
       return 1
     fi
@@ -871,9 +892,23 @@ dx_review_loop_run() {
       if ! dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
         dx_error "Dex could not release the review-loop checkout lock safely."
       fi
+      if ! dx_session_claim_release_checked "$session_id"; then
+        dx_error "Dex could not release the standalone review startup claim safely."
+      fi
       dx_error "Dex received an invalid review runtime-owner handle."
       return 1
     fi
+    if ! dx_session_claim_release_checked "$session_id"; then
+      dx_session_runtime_owner_finish "$review_runtime_owner_handle" failed \
+        >/dev/null 2>&1 || true
+      review_runtime_owner_handle=""
+      if ! dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
+        dx_error "Dex could not release the review-loop checkout lock safely."
+      fi
+      dx_error "Dex published review runtime ownership but could not release its startup claim. No assessor or review wave was started."
+      return 1
+    fi
+    review_startup_claim=0
   fi
   # zsh localtraps runs after local scope teardown, so the values are quoted
   # into the trap string now rather than expanded when it fires. printf %q is
