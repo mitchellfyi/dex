@@ -115,7 +115,8 @@ __dx_review_parent_busy_finish() {
   dx_phase_busy_finish "$session_id" 3 "$busy_token"
 }
 __dx_review_parent_busy_begin() {
-  local session_id="$1" label="$2" control_file control_snapshot parent_phase
+  local session_id="$1" label="$2" timeout_seconds="$3"
+  local control_file control_snapshot parent_phase
   local busy_file busy_token="" begin_rc=0 reject_rc=0 pause_context_rc=0
   control_file=$(dx_lifecycle_control_file "$session_id") || return 1
   busy_file=$(dx_phase_busy_file "$session_id" 3) || return 1
@@ -142,7 +143,8 @@ __dx_review_parent_busy_begin() {
     __dx_review_parent_lock_reject "$session_id" 0 || reject_rc=$?
     return "$reject_rc"
   fi
-  busy_token=$(dx_phase_busy_begin "$session_id" 3 "$label") || begin_rc=1
+  busy_token=$(dx_phase_busy_begin "$session_id" 3 "$label" \
+    "$timeout_seconds") || begin_rc=1
   if ! dx_lifecycle_control_lock_release "$session_id"; then
     [[ -z "$busy_token" ]] \
       || __dx_review_parent_busy_finish "$session_id" "$busy_token" \
@@ -363,6 +365,15 @@ __dx_review_pause_intervention() {
     *)
       printf 'Resolve %s, then rerun dxreviewloop.\n' "$reason"
       ;;
+  esac
+}
+
+__dx_review_default_pass_timeout() {
+  case "${1:-}" in
+    light) printf '%s\n' "900" ;;
+    standard) printf '%s\n' "1800" ;;
+    thorough) printf '%s\n' "3600" ;;
+    *) return 1 ;;
   esac
 }
 # __dx_review_record_pause <run_id> <telemetry_session_id> <standalone>
@@ -793,10 +804,13 @@ dx_review_loop_run() {
   # agent sessions.
   local explicit_clean_gate="${DEX_REVIEW_CLEAN_PASSES:-}"
   local requested_tier="${DEX_REVIEW_TIER:-}" requested_profile="${DEX_REVIEW_PROFILE:-${DX_REVIEW_PROFILE:-auto}}"
-  local pass_timeout="${DEX_REVIEW_PASS_TIMEOUT:-900}"
+  local configured_pass_timeout="${DEX_REVIEW_PASS_TIMEOUT:-}"
+  local assessment_timeout="${configured_pass_timeout:-900}"
+  local pass_timeout="$assessment_timeout"
   __dx_review_validate_gates "${explicit_clean_gate:-1}" || return 1
-  if ! dx_review_is_nonnegative_integer "$pass_timeout"; then
-    dx_error "Invalid review pass timeout '${pass_timeout:-<empty>}'. Use whole seconds, or 0 to disable it."
+  if ! dx_review_is_nonnegative_integer "$assessment_timeout" \
+    || [[ ${#assessment_timeout} -gt 15 ]]; then
+    dx_error "Invalid review pass timeout '${assessment_timeout:-<empty>}'. Use a non-negative decimal with at most 15 digits, or 0 to disable it."
     return 1
   fi
   if [[ -n "$requested_tier" ]] && ! dx_review_normalize_tier "$requested_tier" >/dev/null 2>&1; then
@@ -1146,7 +1160,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
       if [[ $standalone_review_prompt -eq 0 ]]; then
         local assessment_busy_status=0
         parent_busy_token=$(__dx_review_parent_busy_begin \
-          "$session_id" "review risk assessment") || assessment_busy_status=$?
+          "$session_id" "review risk assessment" "$assessment_timeout") \
+          || assessment_busy_status=$?
         if [[ "$assessment_busy_status" -ne 0 || -z "$parent_busy_token" ]]; then
           assessment_exit=125
           assessment_intervention=1
@@ -1182,7 +1197,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         DEX_PHASE_HANDOFF="" \
         DEX_DIR="$DEX_DIR" \
         __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-          "$pass_timeout" bash "$assessment_codex_wrapper" exec -- \
+          "$assessment_timeout" bash "$assessment_codex_wrapper" exec -- \
           "$assessment_message" || assessment_exit=$?
       else
         local assessment_args=() assessment_arg=""
@@ -1199,7 +1214,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         DEX_PHASE_HANDOFF="" \
         DEX_DIR="$DEX_DIR" \
         __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-          "$pass_timeout" __dx_claude "${assessment_args[@]}" \
+          "$assessment_timeout" __dx_claude "${assessment_args[@]}" \
           "$assessment_message" >| "$assessment_output_file" || assessment_exit=$?
       fi
       if [[ -z "$review_interrupt_reason" ]]; then
@@ -1385,6 +1400,12 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
     return 1
   }
+  if [[ -z "$configured_pass_timeout" ]]; then
+    pass_timeout=$(__dx_review_default_pass_timeout "$review_profile") || {
+      dx_error "Could not resolve the default review timeout for profile '${review_profile}'."
+      return 1
+    }
+  fi
   # The tier's policy value seeds required_clean and the overrides below only
   # ever raise it, so the gate can never end up under the tier minimum.
   local required_clean="" required_candidate=""
@@ -1503,6 +1524,11 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
 
   if [[ "$review_iteration" -gt 0 || "$clean_passes" -gt 0 ]]; then
     dx_info "Resuming review at ${clean_passes}/${required_clean} consecutive clean passes."
+  fi
+  if [[ "$pass_timeout" -eq 0 ]]; then
+    dx_info "Review wave timeout: disabled."
+  else
+    dx_info "Review wave timeout: $(dx_format_duration "$pass_timeout")."
   fi
 
   echo ""
@@ -1678,7 +1704,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     if [[ $standalone_review_prompt -eq 0 ]]; then
       local busy_write_status=0
       parent_busy_token=$(__dx_review_parent_busy_begin \
-        "$session_id" "independent review wave") || busy_write_status=$?
+        "$session_id" "independent review wave" "$pass_timeout") \
+        || busy_write_status=$?
       if [[ "$busy_write_status" -ne 0 || -z "$parent_busy_token" ]]; then
         if [[ "$busy_write_status" -eq 2 ]]; then
           terminal_reason="human_intervention"
@@ -2169,8 +2196,13 @@ ${message}"
         required_clean=$((10#$transition_required))
         clean_passes=$((10#$transition_clean))
         review_profile=$(dx_review_tier_profile "$review_tier")
+        if [[ -z "$configured_pass_timeout" ]]; then
+          pass_timeout=$(__dx_review_default_pass_timeout "$review_profile") \
+            || terminal_reason="tier_resolution_error"
+        fi
 
-        if [[ "$transition_selection_op" == "refresh" ]]; then
+        if [[ -z "$terminal_reason" \
+          && "$transition_selection_op" == "refresh" ]]; then
           if [[ "$review_tier" != "$old_tier" ]]; then
             selection_source="$transition_candidate_source"
             selection_reasons="$transition_candidate_reasons"
@@ -2180,7 +2212,8 @@ ${message}"
             terminal_reason="selection_write_failed"
             clean_passes=0
           fi
-        elif [[ "$transition_selection_op" == "invalidate" ]]; then
+        elif [[ -z "$terminal_reason" \
+          && "$transition_selection_op" == "invalidate" ]]; then
           rm -f "$(dx_review_selection_file "$session_id")" 2>/dev/null || true
         fi
         if [[ "$transition_receipt_op" == "invalidate" ]]; then

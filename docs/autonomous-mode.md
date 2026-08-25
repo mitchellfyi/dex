@@ -596,7 +596,7 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 | `DEX_REVIEW_TIER` | agent-selected | Canonical explicit risk-tier override: `small`, `normal`, or `complex`; takes precedence over the legacy profile alias |
 | `DEX_REVIEW_PROFILE` | unset | Legacy alias: `light`, `standard`, or `thorough` map to `small`, `normal`, or `complex` |
 | `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Optional higher consecutive `CLEAN` requirement; it cannot lower the selected tier's trusted policy requirement |
-| `DEX_REVIEW_PASS_TIMEOUT` | `900` (15m 0s) | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables the timeout |
+| `DEX_REVIEW_PASS_TIMEOUT` | profile-based | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; defaults are 15 minutes for risk assessment and light waves, 30 minutes for standard waves, and 60 minutes for thorough waves; `0` disables the timeout |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation. A cycle that outruns it hands the lease to the next tick; a watcher that exits hands it over immediately, without waiting out the budget. `0` means no budget, as it does for the phase timeouts |

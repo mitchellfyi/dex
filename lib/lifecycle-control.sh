@@ -1485,31 +1485,129 @@ dx_record_human_phase_outcomes() {
   done
 }
 
-dx_phase_busy_token() {
-  local session_id="$1" phase="$2" busy_file raw token
-  dx_lifecycle_session_id_valid "$session_id" || return 0
-  [[ "$phase" =~ ^[0-6]$ ]] || return 0
+# Print a validated busy record as six newline-delimited fields: version,
+# epoch, token, PID, timeout, and label. Version 1 has an empty timeout field.
+# Its label remains opaque, including tabs that resemble version 2 metadata.
+__dx_phase_busy_record() {
+  local session_id="$1" phase="$2" busy_file raw record_version
+  local epoch token owner_pid timeout_field="" timeout_value="" label rest
+  local token_epoch token_pid token_nonce token_extra
+  dx_lifecycle_session_id_valid "$session_id" || return 2
+  [[ "$phase" =~ ^[0-6]$ ]] || return 2
   busy_file=$(dx_phase_busy_file "$session_id" "$phase")
   raw=$(dx_lifecycle_trusted_file_read "$busy_file" 2048 2>/dev/null) \
-    || return 0
-  raw="${raw#*$'\t'}"
-  token="${raw%%$'\t'*}"
-  if [[ "$token" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
-    printf '%s\n' "$token"
+    || return 2
+
+  if [[ "$raw" == dex-phase-busy-v2$'\t'* ]]; then
+    record_version=2
+    rest="${raw#*$'\t'}"
+    [[ "$rest" == *$'\t'* ]] || return 2
+    epoch="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    [[ "$rest" == *$'\t'* ]] || return 2
+    token="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    [[ "$rest" == *$'\t'* ]] || return 2
+    owner_pid="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    [[ "$rest" == *$'\t'* ]] || return 2
+    timeout_field="${rest%%$'\t'*}"
+    label="${rest#*$'\t'}"
+    [[ "$timeout_field" == timeout=* ]] || return 2
+    timeout_value="${timeout_field#timeout=}"
+    case "$timeout_value" in
+      ""|*[!0-9]*) return 2 ;;
+    esac
+    while [[ ${#timeout_value} -gt 1 && "$timeout_value" == 0* ]]; do
+      timeout_value="${timeout_value#0}"
+    done
+    [[ ${#timeout_value} -le 15 ]] || return 2
+  else
+    record_version=1
+    [[ "$raw" == *$'\t'* ]] || return 2
+    epoch="${raw%%$'\t'*}"
+    rest="${raw#*$'\t'}"
+    [[ "$rest" == *$'\t'* ]] || return 2
+    token="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    [[ "$rest" == *$'\t'* ]] || return 2
+    owner_pid="${rest%%$'\t'*}"
+    label="${rest#*$'\t'}"
   fi
-  # Three guards above already answer "no token" with 0. A busy file that was
-  # truncated or half-written answers the same question, so it must not answer
-  # it differently: every caller assigns the output, and both hooks that do so
-  # run under `set -e`, which would end them over an unreadable marker.
+
+  case "$epoch" in ""|*[!0-9]*) return 2 ;; esac
+  case "$owner_pid" in ""|*[!0-9]*) return 2 ;; esac
+  [[ ${#epoch} -le 15 && ${#owner_pid} -le 15 ]] || return 2
+  [[ "$epoch" == "0" || "$epoch" != 0* ]] || return 2
+  [[ "$owner_pid" != "0" && "$owner_pid" != 0* ]] || return 2
+  token_epoch=""
+  token_pid=""
+  token_nonce=""
+  token_extra=""
+  IFS=- read -r token_epoch token_pid token_nonce token_extra <<EOF
+$token
+EOF
+  case "$token_nonce" in ""|*[!0-9]*) return 2 ;; esac
+  [[ -z "$token_extra" && "$token_epoch" == "$epoch" \
+    && "$token_pid" == "$owner_pid" ]] || return 2
+  [[ ${#token_nonce} -le 15 ]] || return 2
+  [[ "$token_nonce" == "0" || "$token_nonce" != 0* ]] || return 2
+  [[ "$token" == "${token_epoch}-${token_pid}-${token_nonce}" ]] || return 2
+  [[ -n "$label" && "$label" != *$'\n'* && "$label" != *$'\r'* \
+    && ${#label} -le 500 ]] || return 2
+
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "$record_version" "$epoch" "$token" "$owner_pid" \
+    "$timeout_value" "$label"
+}
+
+dx_phase_busy_token() {
+  local session_id="$1" phase="$2" record token
+  record=$(__dx_phase_busy_record "$session_id" "$phase" 2>/dev/null) \
+    || return 0
+  record="${record#*$'\n'}"
+  record="${record#*$'\n'}"
+  token="${record%%$'\n'*}"
+  printf '%s\n' "$token"
+  # A missing or malformed record answers "no authoritative token" with 0.
+  # Callers assign this output under `set -e`, so the empty result is the
+  # fail-closed signal rather than a shell-level error.
   return 0
 }
 
+# dx_phase_busy_timeout <session_id> <phase>
+# Print the timeout bound to the active busy owner. Return 1 for a legacy busy
+# record with no bound timeout and 2 for a malformed bound value.
+dx_phase_busy_timeout() {
+  local session_id="$1" phase="$2" record record_version timeout_value
+  record=$(__dx_phase_busy_record "$session_id" "$phase" 2>/dev/null) \
+    || return 2
+  record_version="${record%%$'\n'*}"
+  [[ "$record_version" == "2" ]] || return 1
+  record="${record#*$'\n'}"
+  record="${record#*$'\n'}"
+  record="${record#*$'\n'}"
+  record="${record#*$'\n'}"
+  timeout_value="${record%%$'\n'*}"
+  printf '%s\n' "$timeout_value"
+}
+
 dx_phase_busy_begin() {
-  local session_id="$1" phase="$2" label="${3:-busy}" epoch token busy_file
+  local session_id="$1" phase="$2" label="${3:-busy}" timeout_value="${4:-}"
+  local epoch token busy_file busy_record
   local cancel_file quiesced_file residue_file residue_rc=0
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$phase" =~ ^[0-6]$ ]] || return 1
   [[ "$label" != *$'\n'* && "$label" != *$'\r'* && ${#label} -le 500 ]] || return 1
+  if [[ -n "$timeout_value" ]]; then
+    case "$timeout_value" in
+      *[!0-9]*) return 1 ;;
+    esac
+    while [[ ${#timeout_value} -gt 1 && "$timeout_value" == 0* ]]; do
+      timeout_value="${timeout_value#0}"
+    done
+    [[ ${#timeout_value} -le 15 ]] || return 1
+  fi
   epoch=$(date +%s)
   token="${epoch}-$$-${RANDOM}"
   busy_file=$(dx_phase_busy_file "$session_id" "$phase")
@@ -1526,7 +1624,12 @@ dx_phase_busy_begin() {
       [[ ! -e "$residue_file" && ! -L "$residue_file" ]] || return 1
     fi
   done
-  dx_lifecycle_atomic_write "$busy_file" "${epoch}"$'\t'"${token}"$'\t'"$$"$'\t'"${label}" || return 1
+  busy_record="${epoch}"$'\t'"${token}"$'\t'"$$"
+  if [[ -n "$timeout_value" ]]; then
+    busy_record="dex-phase-busy-v2"$'\t'"${busy_record}"$'\t'"timeout=${timeout_value}"
+  fi
+  busy_record+=$'\t'"${label}"
+  dx_lifecycle_atomic_write "$busy_file" "$busy_record" || return 1
   printf '%s\n' "$token"
 }
 

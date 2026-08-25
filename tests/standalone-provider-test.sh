@@ -938,23 +938,28 @@ rm -f "$(dx_pause_state_file "$DXCOMPLETE_SESSION_ID")" \
   "$(dx_loop_config_file "$DXCOMPLETE_SESSION_ID")" \
   "$(dx_active_file "$DXCOMPLETE_SESSION_ID")" 2>/dev/null || true
 
-run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-assessor]
+run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-assessor] [timeout]
   local provider="$1" ambient_host="$2" expected_route="$3"
   local use_assessor="${4:-0}"
+  local timeout_override="${5:-}"
   local route_file="$TMP_DIR/review-${provider}.route"
   local output_file="$TMP_DIR/review-${provider}.out"
   local assessment_prompt_file="$TMP_DIR/review-${provider}-assessment.prompt"
+  local timeout_file="$TMP_DIR/review-${provider}.timeout"
   if [[ "$use_assessor" == "1" ]] && git -C "$TEST_REPO" diff --quiet; then
     printf '%s\n' "localized candidate change" >> "$TEST_REPO/README.md"
   fi
   : > "$route_file"
   : > "$assessment_prompt_file"
+  : > "$timeout_file"
 
   if ! TEST_PROVIDER="$provider" \
   TEST_AMBIENT_HOST="$ambient_host" \
   TEST_REVIEW_ROUTE_FILE="$route_file" \
   TEST_REVIEW_ASSESSMENT_PROMPT_FILE="$assessment_prompt_file" \
+  TEST_REVIEW_TIMEOUT_FILE="$timeout_file" \
   TEST_USE_ASSESSOR="$use_assessor" \
+  TEST_TIMEOUT_OVERRIDE="$timeout_override" \
   zsh -fc '
 	    source "$DEX_DIR/dx.sh"
 	    cd "$TEST_REPO"
@@ -965,6 +970,17 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
     else
       export DEX_REVIEW_TIER=small
     fi
+    if [[ -n "$TEST_TIMEOUT_OVERRIDE" ]]; then
+      export DEX_REVIEW_PASS_TIMEOUT="$TEST_TIMEOUT_OVERRIDE"
+    else
+      unset DEX_REVIEW_PASS_TIMEOUT
+    fi
+
+    functions[__test_review_run_with_parent_cancel]="${functions[__dx_review_run_with_parent_cancel]}"
+    __dx_review_run_with_parent_cancel() {
+      print -r -- "$3" >> "$TEST_REVIEW_TIMEOUT_FILE"
+      __test_review_run_with_parent_cancel "$@"
+    }
 
     __dx_refresh_provider() {
       if [[ "$TEST_PROVIDER" == "codex" ]]; then
@@ -1084,6 +1100,15 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
   assert_no_file "$(dx_session_claim_lock_dir "$review_parent_session")/owner"
   grep -Fq "Agent:  $(tr '[:lower:]' '[:upper:]' <<< "${expected_route:0:1}")${expected_route:1}" "$output_file"
 
+  if [[ -n "$timeout_override" ]]; then
+    [[ "$(grep -Fxc "$timeout_override" "$timeout_file")" -eq 1 ]] || {
+      printf 'review provider %s did not use timeout %s for its review wave\n' \
+        "$provider" "$timeout_override" >&2
+      cat "$timeout_file" >&2
+      exit 1
+    }
+  fi
+
   if [[ "$use_assessor" == "1" ]]; then
     grep -Fq "focused verification sources" "$assessment_prompt_file"
     if [[ "$provider" == "codex" ]]; then
@@ -1108,5 +1133,7 @@ run_review_route_case codex claude codex
 run_review_route_case claude codex claude
 run_review_route_case codex claude codex 1
 run_review_route_case claude codex claude 1
+run_review_route_case codex claude codex 0 2400
+run_review_route_case claude codex claude 0 2400
 
 printf 'standalone provider tests passed\n'

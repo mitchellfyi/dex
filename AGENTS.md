@@ -501,7 +501,7 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DX_REVIEW_PROFILE` | Older spelling of `DEX_REVIEW_PROFILE`, still read as a fallback | unset |
 | `DEX_REVIEW_CLEAN_PASSES` | Optional higher clean-wave requirement; cannot lower the selected tier's trusted policy gate | trusted policy (defaults 1/3/6) |
 | `DEX_REVIEW_DISABLE_MCP` | Disable inherited MCP servers in review waves (`0` restores them); read-only assessors always disable them | `1` |
-| `DEX_REVIEW_PASS_TIMEOUT` | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables it | 900 (15m 0s) |
+| `DEX_REVIEW_PASS_TIMEOUT` | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables it | Profile-based: 15m assessment/light, 30m standard, 60m thorough |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | Minimum seconds between repeated Phase 3 busy-gate notices | 120 (2m 0s) |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (45s) |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation; a cycle past it hands over to the next tick, and a watcher that exits hands over at once. `0` means no budget | 120 (2m 0s) |

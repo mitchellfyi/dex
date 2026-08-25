@@ -91,6 +91,30 @@ assert_file_eq() { # <desc> <path> <expected-content>
   if [[ "$(cat "$2" 2>/dev/null)" == "$3" ]]; then report "$1" 0; else report "$1" 1; fi
 }
 
+backdate_versioned_busy_record() { # <busy-file> <age-seconds>
+  local busy_file="$1" age_seconds="$2" raw rest schema epoch token
+  local owner_pid timeout_field label token_nonce backdated_epoch
+  raw=$(cat "$busy_file")
+  schema="${raw%%$'\t'*}"
+  rest="${raw#*$'\t'}"
+  epoch="${rest%%$'\t'*}"
+  rest="${rest#*$'\t'}"
+  token="${rest%%$'\t'*}"
+  rest="${rest#*$'\t'}"
+  owner_pid="${rest%%$'\t'*}"
+  rest="${rest#*$'\t'}"
+  timeout_field="${rest%%$'\t'*}"
+  label="${rest#*$'\t'}"
+  [[ "$schema" == "dex-phase-busy-v2" && "$token" == "$epoch-$owner_pid-"* ]] \
+    || return 1
+  token_nonce="${token##*-}"
+  backdated_epoch=$(( $(date +%s) - age_seconds ))
+  dx_lifecycle_atomic_write "$busy_file" \
+    "${schema}"$'\t'"${backdated_epoch}"$'\t'\
+"${backdated_epoch}-${owner_pid}-${token_nonce}"$'\t'"${owner_pid}"$'\t'\
+"${timeout_field}"$'\t'"${label}"
+}
+
 write_review_context() { # <session-id>
   {
     printf '%s\n\n' "## Scope"
@@ -334,6 +358,172 @@ set -e
 assert_rc "oversized loop limit blocks cleanly" 2
 assert_out_contains "oversized loop limit names the invalid setting" "must be a non-negative decimal with at most 15 digits"
 rm -f "$DX_LOOP_DIR/$SID".*
+
+# Timeout-bearing review fences use a versioned record. Legacy labels remain
+# opaque, even when their first tab-delimited word resembles timeout metadata.
+SID="repo-test-8-versioned-busy-timeout"
+BOUND_BUSY_TOKEN=$(dx_phase_busy_begin \
+  "$SID" 3 "versioned timeout fixture" 2400)
+BOUND_BUSY_RAW=$(cat "$(dx_phase_busy_file "$SID" 3)")
+if [[ "$BOUND_BUSY_RAW" == dex-phase-busy-v2$'\t'* ]]; then
+  report "timeout-bearing busy record is versioned" 0
+else
+  report "timeout-bearing busy record is versioned" 1
+fi
+BOUND_TIMEOUT_RC=0
+BOUND_TIMEOUT=$(dx_phase_busy_timeout "$SID" 3) || BOUND_TIMEOUT_RC=$?
+if [[ "$BOUND_TIMEOUT_RC" -eq 0 && "$BOUND_TIMEOUT" == "2400" ]]; then
+  report "versioned busy record exposes its bound timeout" 0
+else
+  report "versioned busy record exposes its bound timeout" 1
+fi
+if [[ "$(dx_phase_busy_token "$SID" 3)" == "$BOUND_BUSY_TOKEN" ]]; then
+  report "versioned busy record preserves its exact owner token" 0
+else
+  report "versioned busy record preserves its exact owner token" 1
+fi
+rm -f "$DX_LOOP_DIR/$SID".*
+
+SID="repo-test-8-legacy-tabbed-label"
+LEGACY_BUSY_TOKEN=$(dx_phase_busy_begin \
+  "$SID" 3 $'timeout=0\tlegacy label')
+LEGACY_TIMEOUT_RC=0
+LEGACY_TIMEOUT=$(dx_phase_busy_timeout "$SID" 3) || LEGACY_TIMEOUT_RC=$?
+if [[ "$LEGACY_TIMEOUT_RC" -eq 1 && -z "$LEGACY_TIMEOUT" ]]; then
+  report "legacy tabbed label does not become timeout metadata" 0
+else
+  report "legacy tabbed label does not become timeout metadata" 1
+fi
+if [[ "$(dx_phase_busy_token "$SID" 3)" == "$LEGACY_BUSY_TOKEN" ]]; then
+  report "legacy tabbed label preserves its exact owner token" 0
+else
+  report "legacy tabbed label preserves its exact owner token" 1
+fi
+rm -f "$DX_LOOP_DIR/$SID".*
+
+SID="repo-test-8-malformed-busy-timeout"
+MALFORMED_BUSY_RECORDS=(
+  $'1\t1-1-1\ttimeout=0'
+  $'dex-phase-busy-v2\t1\t1-1-1\t1\ttimeout=0'
+  $'dex-phase-busy-v2\t1\t2-1-1\t1\ttimeout=0\twrong epoch'
+  $'dex-phase-busy-v2\t1\t1-2-1\t1\ttimeout=0\twrong pid'
+  $'dex-phase-busy-v2\t1\t1-1-1\t1\ttimeout=bad\tbad timeout'
+)
+MALFORMED_CASE=0
+for MALFORMED_BUSY_RAW in "${MALFORMED_BUSY_RECORDS[@]}"; do
+  MALFORMED_CASE=$((MALFORMED_CASE + 1))
+  dx_lifecycle_atomic_write "$(dx_phase_busy_file "$SID" 3)" \
+    "$MALFORMED_BUSY_RAW"
+  MALFORMED_TIMEOUT_RC=0
+  dx_phase_busy_timeout "$SID" 3 >/dev/null 2>&1 \
+    || MALFORMED_TIMEOUT_RC=$?
+  if [[ "$MALFORMED_TIMEOUT_RC" -eq 2 ]]; then
+    report "malformed busy timeout ${MALFORMED_CASE} fails closed" 0
+  else
+    report "malformed busy timeout ${MALFORMED_CASE} fails closed" 1
+  fi
+  if [[ -z "$(dx_phase_busy_token "$SID" 3)" ]]; then
+    report "malformed busy token ${MALFORMED_CASE} is not authoritative" 0
+  else
+    report "malformed busy token ${MALFORMED_CASE} is not authoritative" 1
+  fi
+  rm -f "$DX_LOOP_DIR/$SID".*
+done
+
+SID="repo-test-8-noncanonical-busy-token"
+for NONCANONICAL_BUSY_TOKEN in "1-1-1-" "1-1-1--"; do
+  dx_lifecycle_atomic_write "$(dx_phase_busy_file "$SID" 3)" \
+    $'dex-phase-busy-v2\t1\t'"${NONCANONICAL_BUSY_TOKEN}"$'\t1\ttimeout=0\tbad token'
+  for BUSY_RECORD_SHELL in bash zsh; do
+    BUSY_PARSE_RC=0
+    BUSY_PARSE_OUT=$(env DEX_DIR="$ROOT" DX_LOOP_DIR="$DX_LOOP_DIR" \
+      DX_STATE_DIR="$DX_STATE_DIR" "$BUSY_RECORD_SHELL" -c '
+        source "$DEX_DIR/lib/common.sh" || exit 99
+        busy_timeout_rc=0
+        dx_phase_busy_timeout "$1" 3 >/dev/null 2>&1 || busy_timeout_rc=$?
+        busy_token=$(dx_phase_busy_token "$1" 3)
+        printf "%s:%s" "$busy_timeout_rc" "$busy_token"
+      ' "$BUSY_RECORD_SHELL" "$SID") || BUSY_PARSE_RC=$?
+    if [[ "$BUSY_PARSE_RC" -eq 0 && "$BUSY_PARSE_OUT" == "2:" ]]; then
+      report "$BUSY_RECORD_SHELL rejects noncanonical token $NONCANONICAL_BUSY_TOKEN" 0
+    else
+      report "$BUSY_RECORD_SHELL rejects noncanonical token $NONCANONICAL_BUSY_TOKEN" 1
+    fi
+  done
+  rm -f "$DX_LOOP_DIR/$SID".*
+done
+
+# The review owner persists its selected timeout in the busy record. The
+# parent Stop hook must use that value instead of the environment inherited
+# when Claude launched.
+SID="repo-test-8-persisted-timeout-waits"
+printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
+printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
+configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
+touch "$DX_LOOP_DIR/$SID.active"
+dx_phase_busy_begin "$SID" 3 "persisted timeout fixture" 2400 >/dev/null
+BUSY_FILE=$(dx_phase_busy_file "$SID" 3)
+backdate_versioned_busy_record "$BUSY_FILE" 901
+set +e
+OUT="$(printf '{"session_id":"claude-timeout-wait"}' | env \
+  DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+  DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=900 \
+  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "persisted timeout keeps a live review wave waiting" 2
+assert_out_contains "persisted timeout reports the selected deadline" "40m 0s"
+assert_out_lacks "stale parent timeout does not pause the wave" "review pass timeout reached"
+if [[ ! -e "$(dx_paused_file "$SID")" ]]; then report "stale parent timeout leaves lifecycle active" 0; else report "stale parent timeout leaves lifecycle active" 1; fi
+dx_completion_cleanup "$SID"
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
+SID="repo-test-8-persisted-timeout-pauses"
+printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
+printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
+configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
+touch "$DX_LOOP_DIR/$SID.active"
+dx_phase_busy_begin "$SID" 3 "persisted timeout fixture" 2400 >/dev/null
+BUSY_FILE=$(dx_phase_busy_file "$SID" 3)
+backdate_versioned_busy_record "$BUSY_FILE" 2401
+set +e
+OUT="$(printf '{"session_id":"claude-timeout-pause"}' | env \
+  DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+  DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=9999 \
+  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "persisted timeout pauses an overdue review wave" 2
+assert_out_contains "persisted timeout pause reports its deadline" "40m 0s"
+assert_out_contains "persisted timeout pause is explicit" "review pass timeout reached"
+if [[ -e "$(dx_paused_file "$SID")" ]]; then report "persisted timeout records a lifecycle pause" 0; else report "persisted timeout records a lifecycle pause" 1; fi
+dx_completion_cleanup "$SID"
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
+SID="repo-test-8-persisted-timeout-disabled"
+printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
+printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
+configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
+touch "$DX_LOOP_DIR/$SID.active"
+dx_phase_busy_begin "$SID" 3 "disabled timeout fixture" 0 >/dev/null
+BUSY_FILE=$(dx_phase_busy_file "$SID" 3)
+backdate_versioned_busy_record "$BUSY_FILE" 10000
+set +e
+OUT="$(printf '{"session_id":"claude-timeout-disabled"}' | env \
+  DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+  DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=1 \
+  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "persisted zero timeout keeps an old review wave waiting" 2
+assert_out_contains "disabled timeout is reported accurately" "timeout is disabled"
+assert_out_lacks "disabled timeout does not pause the wave" "review pass timeout reached"
+if [[ ! -e "$(dx_paused_file "$SID")" ]]; then report "disabled timeout leaves lifecycle active" 0; else report "disabled timeout leaves lifecycle active" 1; fi
+dx_completion_cleanup "$SID"
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 # --- case 6: every centralized review result alias is accepted ---
 VALID_REVIEW_RESULTS=(

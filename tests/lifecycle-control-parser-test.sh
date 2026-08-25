@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
 source "$ROOT/tests/helpers.sh"
 PARSER="$ROOT/scripts/lifecycle-control.py"
+export DEX_DIR="$ROOT"
+# shellcheck source=lib/common.sh
+source "$ROOT/lib/common.sh"
 
 pass=0
 fail=0
@@ -62,6 +65,13 @@ check "ordinary phase mention" 3 "Explain what happens after the review phase." 
 check "ordinary implementation imperative" 2 "Go implement the requested fix." "" ""
 check "ordinary plan imperative" 2 "Move to plan the requested work." "" ""
 check "watcher resume is unrelated" 6 "Resume watcher monitoring." "" ""
+
+[[ "$(__dx_review_default_pass_timeout light)" == "900" ]] || assert_at $LINENO
+[[ "$(__dx_review_default_pass_timeout standard)" == "1800" ]] || assert_at $LINENO
+[[ "$(__dx_review_default_pass_timeout thorough)" == "3600" ]] || assert_at $LINENO
+if __dx_review_default_pass_timeout unsupported >/dev/null 2>&1; then
+  assert_at $LINENO
+fi
 
 check "negation ends at semicolon" 3 "Do not do any more work; stop Dex." cancel ""
 check "never mind is not negation" 3 "Never mind the review, stop Dex." cancel ""

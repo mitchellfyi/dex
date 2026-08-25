@@ -119,6 +119,12 @@ PY
 
     emit_review_contract() {
       local result context_path criteria_evidence checks=pass verifier=pass findings=0
+      local parent_session
+      if [[ "$TEST_REVIEW_SCENARIO" == "timeout-binding" ]]; then
+        parent_session=$(dx_session_id)
+        [[ "$(dx_phase_busy_timeout "$parent_session" 3)" == "2400" ]] \
+          || return 96
+      fi
       print -r -- "$DEX_SESSION_ID" >> "$TEST_REVIEW_CALL_FILE"
       case "$TEST_REVIEW_SCENARIO" in
         blocked)
@@ -227,6 +233,12 @@ PY
       completion_literal=$(__test_completion_literal "$@") || return 96
       read -r TEST_COMPLETION_SESSION TEST_COMPLETION_GENERATION <<< \
         "$completion_literal"
+      if [[ "$TEST_REVIEW_SCENARIO" == "provider-timeout" ]]; then
+        [[ "$(dx_phase_busy_timeout "$(dx_session_id)" 3)" == "1" ]] \
+          || return 96
+        sleep 10
+        return 97
+      fi
       if [[ "$TEST_REVIEW_SCENARIO" == "rotate-hook" ]]; then
         original_generation="$TEST_COMPLETION_GENERATION"
         command bash "$DEX_DIR/bin/complete-receipt.sh" \
@@ -273,13 +285,22 @@ PY
         completion_literal=$(__test_completion_literal "$@") || return 96
         read -r TEST_COMPLETION_SESSION TEST_COMPLETION_GENERATION <<< \
           "$completion_literal"
+        if [[ "$TEST_REVIEW_SCENARIO" == "provider-timeout" ]]; then
+          [[ "$(dx_phase_busy_timeout "$(dx_session_id)" 3)" == "1" ]] \
+            || return 96
+          sleep 10
+          return 97
+        fi
         emit_review_contract
       else
         command bash "$@"
       fi
     }
 
-    if [[ "$TEST_REVIEW_SCENARIO" == "human-cancel" || "$TEST_REVIEW_SCENARIO" == "preflight-cancel" ]]; then
+    if [[ "$TEST_REVIEW_SCENARIO" == "human-cancel" \
+      || "$TEST_REVIEW_SCENARIO" == "preflight-cancel" \
+      || "$TEST_REVIEW_SCENARIO" == "timeout-binding" \
+      || "$TEST_REVIEW_SCENARIO" == "provider-timeout" ]]; then
       mkdir -p "$DX_STATE_DIR" "$DX_LOOP_DIR"
       parent_session=$(dx_session_id)
       print -r -- 3 > "$(dx_state_file "$parent_session")"
@@ -293,7 +314,15 @@ PY
       dx_write_lifecycle_control "$(dx_session_id)" cancel "" terminal "" 3 ""
     fi
     review_result=0
-    DEX_REVIEW_TIER=small dxreviewloop || review_result=$?
+    if [[ "$TEST_REVIEW_SCENARIO" == "timeout-binding" ]]; then
+      DEX_REVIEW_TIER=small DEX_REVIEW_PASS_TIMEOUT=2400 dxreviewloop \
+        || review_result=$?
+    elif [[ "$TEST_REVIEW_SCENARIO" == "provider-timeout" ]]; then
+      DEX_REVIEW_TIER=small DEX_REVIEW_PASS_TIMEOUT=1 dxreviewloop \
+        || review_result=$?
+    else
+      DEX_REVIEW_TIER=small dxreviewloop || review_result=$?
+    fi
     if [[ -n "${parent_runtime_handle:-}" ]]; then
       dx_session_runtime_owner_finish "$parent_runtime_handle" paused || return 99
     fi
@@ -332,6 +361,14 @@ run_case "codex-empty-context" "codex" "missing-context" 1 "context pack missing
 run_case "codex-missing-hash" "codex" "missing-hash" 1 "findings hash missing or invalid"
 run_case "codex-missing-completion" "codex" "missing-completion" 1 "completion receipt missing"
 run_case "codex-valid" "codex" "valid" 0 "Review complete: 1 consecutive clean pass." 1
+run_case "claude-timeout-binding" "claude" "timeout-binding" 0 \
+  "Review complete: 1 consecutive clean pass." 1
+run_case "codex-timeout-binding" "codex" "timeout-binding" 0 \
+  "Review complete: 1 consecutive clean pass." 1
+run_case "claude-provider-timeout" "claude" "provider-timeout" 124 \
+  "Review paused: pass_timeout." 0
+run_case "codex-provider-timeout" "codex" "provider-timeout" 124 \
+  "Review paused: pass_timeout." 0
 run_case "claude-human-cancel" "claude" "human-cancel" 1 "Review paused: human_intervention." 1
 run_case "claude-preflight-cancel" "claude" "preflight-cancel" 1 \
   "Review stopped before its first wave because a direct human control or pause is pending." 0

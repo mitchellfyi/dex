@@ -1398,37 +1398,41 @@ fi
 if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
   PHASE_BUSY_FILE=$(dx_phase_busy_file "$SESSION_ID" 3)
   if [[ -e "$PHASE_BUSY_FILE" || -L "$PHASE_BUSY_FILE" ]]; then
-    if [[ ! -f "$PHASE_BUSY_FILE" || -L "$PHASE_BUSY_FILE" ]] \
-      || [[ -z "$(dx_phase_busy_token "$SESSION_ID" 3)" ]]; then
+    BUSY_RECORD=""
+    BUSY_RECORD_RC=0
+    if [[ ! -f "$PHASE_BUSY_FILE" || -L "$PHASE_BUSY_FILE" ]]; then
+      BUSY_RECORD_RC=2
+    else
+      BUSY_RECORD=$(__dx_phase_busy_record "$SESSION_ID" 3 2>/dev/null) \
+        || BUSY_RECORD_RC=$?
+    fi
+    if [[ "$BUSY_RECORD_RC" -ne 0 ]]; then
       dx_lifecycle_completion_brake "$SESSION_ID" invalid-review-child-fence \
         phase-loop 2>/dev/null || true
       printf '\n%s\n' "Dex found an invalid Phase 3 review-child fence. Completion authorization is closed; repair the review state before resuming." >&2
       exit 2
     fi
+    BUSY_RECORD_VERSION="${BUSY_RECORD%%$'\n'*}"
+    BUSY_RECORD_REST="${BUSY_RECORD#*$'\n'}"
+    BUSY_EPOCH="${BUSY_RECORD_REST%%$'\n'*}"
+    BUSY_RECORD_REST="${BUSY_RECORD_REST#*$'\n'}"
+    BUSY_TOKEN_FIELD="${BUSY_RECORD_REST%%$'\n'*}"
+    BUSY_RECORD_REST="${BUSY_RECORD_REST#*$'\n'}"
+    BUSY_RECORD_REST="${BUSY_RECORD_REST#*$'\n'}"
+    BUSY_TIMEOUT_RAW="${BUSY_RECORD_REST%%$'\n'*}"
+    BUSY_LABEL="${BUSY_RECORD_REST#*$'\n'}"
     PHASE_BUSY_NOTICE_FILE=$(dx_phase_busy_notice_file "$SESSION_ID" 3)
     if dx_phase_busy_quiesced "$SESSION_ID" 3; then
-      BUSY_TOKEN=$(dx_phase_busy_token "$SESSION_ID" 3)
-      dx_phase_busy_finish "$SESSION_ID" 3 "$BUSY_TOKEN" 2>/dev/null || true
+      dx_phase_busy_finish "$SESSION_ID" 3 "$BUSY_TOKEN_FIELD" \
+        2>/dev/null || true
       printf '\n%s\n\n' "--- Dex Phase 3 Gate: review child quiesced ---" >&2
       printf '%s\n' "The matching review owner acknowledged that its child ended. Continue dxreviewloop with the returned result before stopping again." >&2
       exit 2
     fi
-    BUSY_RAW=$(cat "$PHASE_BUSY_FILE" 2>/dev/null || echo "")
-    BUSY_EPOCH="$BUSY_RAW"
-    BUSY_LABEL=""
-    if [[ "$BUSY_RAW" == *$'\t'* ]]; then
-      BUSY_EPOCH="${BUSY_RAW%%$'\t'*}"
-      BUSY_REST="${BUSY_RAW#*$'\t'}"
-      BUSY_TOKEN_FIELD="${BUSY_REST%%$'\t'*}"
-      if [[ "$BUSY_TOKEN_FIELD" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
-        BUSY_REST="${BUSY_REST#*$'\t'}"
-        BUSY_REST="${BUSY_REST#*$'\t'}"
-      fi
-      BUSY_LABEL="$BUSY_REST"
-    fi
-    [[ "$BUSY_EPOCH" =~ ^[0-9]+$ ]] || BUSY_EPOCH=$(date +%s)
     BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))
-    BUSY_TIMEOUT_RAW="${DEX_REVIEW_PASS_TIMEOUT:-900}"
+    if [[ "$BUSY_RECORD_VERSION" == "1" ]]; then
+      BUSY_TIMEOUT_RAW="${DEX_REVIEW_PASS_TIMEOUT:-900}"
+    fi
     if ! BUSY_TIMEOUT=$(dx_normalize_numeric_limit "$BUSY_TIMEOUT_RAW"); then
       dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_TIMEOUT" "$BUSY_TIMEOUT_RAW"
       exit 2
@@ -1499,10 +1503,18 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
       fi
 
       BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))
-      if [[ -n "$BUSY_LABEL" && "$BUSY_LABEL" != "$BUSY_RAW" ]]; then
-        printf '\n--- Dex Phase 3 Gate: still waiting on %s (%s/%s timeout) ---\n\n' "$BUSY_LABEL" "$(dx_format_duration "$BUSY_AGE")" "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
+      if [[ -n "$BUSY_LABEL" ]]; then
+        if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
+          printf '\n--- Dex Phase 3 Gate: still waiting on %s (%s elapsed; timeout disabled) ---\n\n' "$BUSY_LABEL" "$(dx_format_duration "$BUSY_AGE")" >&2
+        else
+          printf '\n--- Dex Phase 3 Gate: still waiting on %s (%s/%s timeout) ---\n\n' "$BUSY_LABEL" "$(dx_format_duration "$BUSY_AGE")" "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
+        fi
       else
-        printf '\n--- Dex Phase 3 Gate: review pass still running (%s/%s timeout) ---\n\n' "$(dx_format_duration "$BUSY_AGE")" "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
+        if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
+          printf '\n--- Dex Phase 3 Gate: review pass still running (%s elapsed; timeout disabled) ---\n\n' "$(dx_format_duration "$BUSY_AGE")" >&2
+        else
+          printf '\n--- Dex Phase 3 Gate: review pass still running (%s/%s timeout) ---\n\n' "$(dx_format_duration "$BUSY_AGE")" "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
+        fi
       fi
     fi
 
@@ -1514,13 +1526,17 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
 
       printf '\n%s\n\n' "--- Dex Phase 3 Gate: review pass in progress ---" >&2
       printf '%s\n' "No audit iteration was counted, and no completion receipt is available while dxreviewloop waits for the review child." >&2
-      if [[ -n "$BUSY_LABEL" && "$BUSY_LABEL" != "$BUSY_RAW" ]]; then
+      if [[ -n "$BUSY_LABEL" ]]; then
         printf '%s\n' "" >&2
         printf 'Current review work: %s\n' "$BUSY_LABEL" >&2
       fi
       printf '%s\n' "" >&2
       printf 'This wait-state notice is throttled to once every %s unless the review pass changes or times out.\n' "$(dx_format_duration "$BUSY_NOTICE_INTERVAL")" >&2
-      printf 'Continue waiting for the current review pass. If this exceeds %s, Dex will pause Phase 3 for intervention. Commit, push, and PR actions remain available, but do not start a later lifecycle phase while this review child can still edit files.\n' "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
+      if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
+        printf '%s\n' "Continue waiting for the current review pass. Its timeout is disabled, so Dex will not pause it based on elapsed time. Commit, push, and PR actions remain available, but do not start a later lifecycle phase while this review child can still edit files." >&2
+      else
+        printf 'Continue waiting for the current review pass. If this exceeds %s, Dex will pause Phase 3 for intervention. Commit, push, and PR actions remain available, but do not start a later lifecycle phase while this review child can still edit files.\n' "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
+      fi
     fi
     exit 2
   fi
