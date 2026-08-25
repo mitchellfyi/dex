@@ -8,9 +8,9 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: dx sessions <list|show|doctor> [options]
+Usage: dx sessions <list|show|doctor|pause|cancel> [options]
 
-Inspect lifecycle sessions without changing them.
+Inspect lifecycle sessions or send cooperative pause and cancel requests.
 
 Commands:
   list [--all] [--include-children]
@@ -24,6 +24,12 @@ Commands:
   doctor [selector] [--include-children]
       Check catalog and runtime structure for one session or every session in
       the current repository.
+
+  pause <selector>
+      Ask one verified live session in the current repository to pause.
+
+  cancel <selector>
+      Ask one verified live session in the current repository to cancel.
 
 Options:
   --all               Search every recoverable repository (list only)
@@ -402,10 +408,14 @@ PY
 }
 
 __dx_sessions_emit_doctor() {
-  local records_file="$1" diagnostics_file diagnostics_result line severity message
+  local records_file="$1" validation_mode="${2:-report}"
+  local diagnostics_file diagnostics_result line severity message
+  [[ "$validation_mode" == "report" || "$validation_mode" == "mutation" ]] \
+    || return 3
   __dx_sessions_ensure_temp_dir || return 1
   diagnostics_file="$SESSIONS_TEMP_DIR/doctor-diagnostics"
-  if python3 - "$records_file" "$DX_LOOP_DIR" > "$diagnostics_file" <<'PY'
+  if python3 - "$records_file" "$DX_LOOP_DIR" "$validation_mode" \
+    > "$diagnostics_file" <<'PY'
 import json
 import os
 import re
@@ -421,6 +431,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as records_file:
 
 provider_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 max_provider_bytes = 16 * 1024
+mutation_mode = sys.argv[3] == "mutation"
 
 
 def fingerprint(metadata):
@@ -534,7 +545,7 @@ for record in records:
         findings.append(("error", "has inconsistent lifecycle records"))
     if metadata_health == "corrupt":
         findings.append(("error", "metadata is corrupt"))
-    elif metadata_health == "missing":
+    elif metadata_health == "missing" and not mutation_mode:
         findings.append(("warn", "has no trusted metadata record"))
     if "phase" in artifacts and record.get("phase") is None:
         findings.append(("error", "phase state is corrupt"))
@@ -564,6 +575,13 @@ for record in records:
         findings.append(("error", "runtime owner stopped while the lease was running"))
     elif runtime_health not in {"live", "dead"}:
         findings.append(("error", "has an unknown runtime health value"))
+    if mutation_mode and (
+        record.get("is_child")
+        or record.get("lifecycle_state") != "active"
+        or runtime_health != "live"
+        or runtime_status != "running"
+    ):
+        findings.append(("error", "is not a verified live top-level session"))
 
     if not findings:
         print(f"ok\t{session_id}: Session structure is healthy")
@@ -741,6 +759,147 @@ __dx_sessions_doctor() {
   __dx_sessions_emit_doctor "$records_file"
 }
 
+__dx_sessions_mutation_target() {
+  local selected_record="$1" mutation_action="$2" session_id
+  local selected_file runtime_before_file runtime_after_file diagnostics_file
+  local runtime_health
+  __dx_sessions_ensure_temp_dir || return 1
+  selected_file="$SESSIONS_TEMP_DIR/${mutation_action}-selected"
+  runtime_before_file="$SESSIONS_TEMP_DIR/${mutation_action}-runtime-before"
+  runtime_after_file="$SESSIONS_TEMP_DIR/${mutation_action}-runtime-after"
+  diagnostics_file="$SESSIONS_TEMP_DIR/${mutation_action}-diagnostics"
+  printf '%s\n' "$selected_record" > "$selected_file"
+
+  if ! session_id=$(python3 - "$selected_file" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as source:
+    record = json.load(source)
+session_id = record.get("session_id")
+if (
+    not isinstance(session_id, str)
+    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,179}", session_id)
+    or record.get("is_child") is not False
+):
+    raise SystemExit(1)
+print(session_id)
+PY
+  ); then
+    dx_error "The selected catalog record is not a valid top-level session."
+    return 1
+  fi
+
+  if ! __dx_sessions_emit_doctor "$selected_file" mutation \
+    > "$diagnostics_file" 2>&1; then
+    dx_error "Session '$session_id' cannot accept a ${mutation_action} request. Run 'dx sessions doctor session:${session_id}' for details."
+    return 1
+  fi
+  if ! dx_session_runtime_read "$session_id" > "$runtime_before_file" 2>/dev/null; then
+    dx_error "Session '$session_id' cannot accept a ${mutation_action} request because its runtime lease is unreadable."
+    return 1
+  fi
+  runtime_health=$(dx_session_runtime_health "$session_id" 2>/dev/null || true)
+  if ! dx_session_runtime_read "$session_id" > "$runtime_after_file" 2>/dev/null; then
+    dx_error "Session '$session_id' cannot accept a ${mutation_action} request because its runtime lease changed."
+    return 1
+  fi
+
+  if ! python3 - "$selected_file" "$runtime_before_file" \
+    "$runtime_after_file" "$runtime_health" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as source:
+    selected = json.load(source)
+with open(sys.argv[2], "r", encoding="utf-8") as source:
+    runtime_before = json.load(source)
+with open(sys.argv[3], "r", encoding="utf-8") as source:
+    runtime_after = json.load(source)
+
+if runtime_before != runtime_after or sys.argv[4] != "live":
+    raise SystemExit(1)
+if selected.get("runtime_health") != "live" or selected.get("runtime_status") != "running":
+    raise SystemExit(1)
+if runtime_after.get("status") != "running":
+    raise SystemExit(1)
+for selected_field, runtime_field in (
+    ("session_id", "session_id"),
+    ("provider", "provider"),
+    ("runtime_pid", "pid"),
+):
+    if selected.get(selected_field) != runtime_after.get(runtime_field):
+        raise SystemExit(1)
+selected_workspace = selected.get("workspace")
+runtime_workspace = runtime_after.get("workspace")
+if (
+    not isinstance(selected_workspace, str)
+    or not isinstance(runtime_workspace, str)
+    or not os.path.isabs(selected_workspace)
+    or not os.path.isabs(runtime_workspace)
+    or os.path.realpath(selected_workspace) != os.path.realpath(runtime_workspace)
+):
+    raise SystemExit(1)
+PY
+  then
+    dx_error "Session '$session_id' cannot accept a ${mutation_action} request because its live runtime no longer matches the selected provider or workspace."
+    return 1
+  fi
+  printf '%s\n' "$session_id"
+}
+
+__dx_sessions_mutate() {
+  local mutation_action="$1" selector_value="" argument selected_record session_id
+  local action_label
+  shift
+  while [[ $# -gt 0 ]]; do
+    argument="$1"
+    case "$argument" in
+      -h|--help)
+        usage
+        return 0
+        ;;
+      --include-children)
+        dx_error "dx sessions ${mutation_action} does not accept --include-children."
+        return 1
+        ;;
+      -*)
+        dx_error "Unknown dx sessions ${mutation_action} option: $argument"
+        return 1
+        ;;
+      *)
+        if [[ -n "$selector_value" ]]; then
+          dx_error "dx sessions ${mutation_action} accepts one selector."
+          return 1
+        fi
+        selector_value="$argument"
+        ;;
+    esac
+    shift
+  done
+  if [[ -z "$selector_value" ]]; then
+    dx_error "dx sessions ${mutation_action} requires one selector."
+    usage >&2
+    return 1
+  fi
+
+  selected_record=$(__dx_sessions_select_current "$selector_value" 0) || return $?
+  session_id=$(__dx_sessions_mutation_target "$selected_record" "$mutation_action") \
+    || return $?
+  if ! bash "$DEX_DIR/bin/control.sh" --session "$session_id" "$mutation_action"; then
+    dx_error "Could not publish the ${mutation_action} request for session '$session_id'."
+    return 1
+  fi
+  case "$mutation_action" in
+    pause) action_label="Pause" ;;
+    cancel) action_label="Cancel" ;;
+    *) return 1 ;;
+  esac
+  dx_done "${action_label} request accepted for session ${session_id}."
+}
+
 main() {
   local command_name="${1:-}"
   case "$command_name" in
@@ -759,6 +918,7 @@ main() {
     list) __dx_sessions_list "$@" ;;
     show) __dx_sessions_show "$@" ;;
     doctor) __dx_sessions_doctor "$@" ;;
+    pause|cancel) __dx_sessions_mutate "$command_name" "$@" ;;
     *)
       dx_error "Unknown dx sessions command: $command_name"
       usage >&2

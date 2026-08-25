@@ -32,6 +32,12 @@ printf '%s\n' '01234567-89ab-cdef-0123-456789abcdef' \
 source "$ROOT/lib/session.sh"
 # shellcheck source=lib/session-runtime.sh
 source "$ROOT/lib/session-runtime.sh"
+# shellcheck source=lib/lock.sh
+source "$ROOT/lib/lock.sh"
+# shellcheck source=lib/completion.sh
+source "$ROOT/lib/completion.sh"
+# shellcheck source=lib/lifecycle-control.sh
+source "$ROOT/lib/lifecycle-control.sh"
 
 new_repo() {
   local repo_dir="$1"
@@ -97,6 +103,7 @@ new_repo "$REPO_B"
 new_repo "$REPO_EMPTY"
 
 SID_LIVE="$(cd "$REPO_A" && dx_scoped_session_id branch-live)"
+SID_CANCEL="$(cd "$REPO_A" && dx_scoped_session_id branch-cancel)"
 SID_DUPLICATE="$(cd "$REPO_A" && dx_scoped_session_id branch-duplicate)"
 SID_DEAD="$(cd "$REPO_A" && dx_scoped_session_id branch-dead)"
 SID_UNVERIFIABLE="$(cd "$REPO_A" && dx_scoped_session_id branch-unverifiable)"
@@ -105,11 +112,13 @@ SID_UNSAFE="$(cd "$REPO_A" && dx_scoped_session_id branch-unsafe)"
 SID_PROVIDER_CORRUPT="$(cd "$REPO_A" && dx_scoped_session_id branch-provider-corrupt)"
 SID_PROVIDER_DUPLICATE="$(cd "$REPO_A" && dx_scoped_session_id branch-provider-duplicate)"
 SID_PROVIDER_MISMATCH="$(cd "$REPO_A" && dx_scoped_session_id branch-provider-mismatch)"
+SID_INCONSISTENT="$(cd "$REPO_A" && dx_scoped_session_id branch-inconsistent)"
 SID_LEGACY="$(cd "$REPO_A" && dx_scoped_session_id branch-legacy)"
 SID_B="$(cd "$REPO_B" && dx_scoped_session_id branch-bravo)"
 CHILD_SID="${SID_LIVE}-pass-20260824T101112Z_123_deadbeef"
 
 write_session "$REPO_A" "$SID_LIVE" 101 live 2
+write_session "$REPO_A" "$SID_CANCEL" 102 cancel 2
 write_session "$REPO_A" "$SID_DUPLICATE" 101 duplicate 1
 write_session "$REPO_A" "$SID_DEAD" 202 dead 3
 write_session "$REPO_A" "$SID_UNVERIFIABLE" 303 unverifiable 4
@@ -118,6 +127,7 @@ write_session "$REPO_A" "$SID_UNSAFE" 405 unsafe 5
 write_session "$REPO_A" "$SID_PROVIDER_CORRUPT" 406 provider-corrupt 5
 write_session "$REPO_A" "$SID_PROVIDER_DUPLICATE" 407 provider-duplicate 5
 write_session "$REPO_A" "$SID_PROVIDER_MISMATCH" 408 provider-mismatch 5
+write_session "$REPO_A" "$SID_INCONSISTENT" 409 inconsistent 5
 write_session "$REPO_A" "$SID_LEGACY" 505 legacy 2
 write_session "$REPO_B" "$SID_B" 606 bravo 1
 
@@ -134,6 +144,9 @@ write_proc_identity "$LIVE_PID" 111111
 LIVE_TOKEN="$(dx_session_runtime_start "$SID_LIVE" codex "$REPO_A" "$LIVE_PID")"
 printf 'engine=codex-plugin\nsession=%s\n' "$SID_LIVE" \
   > "$(dx_provider_state_file "$SID_LIVE")"
+CANCEL_TOKEN="$(dx_session_runtime_start "$SID_CANCEL" claude "$REPO_A" "$LIVE_PID")"
+printf 'engine=claude\nsession=%s\n' "$SID_CANCEL" \
+  > "$(dx_provider_state_file "$SID_CANCEL")"
 PROVIDER_CORRUPT_TOKEN="$(dx_session_runtime_start \
   "$SID_PROVIDER_CORRUPT" codex "$REPO_A" "$LIVE_PID")"
 PROVIDER_DUPLICATE_TOKEN="$(dx_session_runtime_start \
@@ -146,6 +159,11 @@ printf 'engine=codex\nengine=claude\nsession=%s\n' "$SID_PROVIDER_DUPLICATE" \
   > "$(dx_provider_state_file "$SID_PROVIDER_DUPLICATE")"
 printf 'engine=claude\nsession=%s\n' "$SID_PROVIDER_MISMATCH" \
   > "$(dx_provider_state_file "$SID_PROVIDER_MISMATCH")"
+mkdir -p "$REPO_A/.dex/worktrees/inconsistent"
+INCONSISTENT_TOKEN="$(dx_session_runtime_start "$SID_INCONSISTENT" codex \
+  "$REPO_A/.dex/worktrees/inconsistent" "$LIVE_PID")"
+touch "$(dx_active_file "$SID_LIVE")" "$(dx_active_file "$SID_CANCEL")" \
+  "$(dx_active_file "$SID_INCONSISTENT")"
 
 start_fixture_process "$TMP_DIR/dead-process.out"
 DEAD_PID=$FIXTURE_PID
@@ -171,8 +189,8 @@ touch -t 200001010000 "$(dx_state_file "$SID_LEGACY")"
 
 run_sessions "$REPO_A" "$TMP_DIR/help.out" --help
 assert_eq "0" "$COMMAND_RESULT" "help result"
-assert_contains "Usage: dx sessions <list|show|doctor>" "$TMP_DIR/help.out"
-assert_contains "without changing them" "$TMP_DIR/help.out"
+assert_contains "Usage: dx sessions <list|show|doctor|pause|cancel>" "$TMP_DIR/help.out"
+assert_contains "cooperative pause and cancel requests" "$TMP_DIR/help.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/missing-command.out"
 assert_eq "1" "$COMMAND_RESULT" "missing command result"
@@ -195,6 +213,16 @@ assert_contains "Unknown dx sessions show option: --all" "$TMP_DIR/show-all.out"
 run_sessions "$REPO_A" "$TMP_DIR/doctor-extra.out" doctor one two
 assert_eq "1" "$COMMAND_RESULT" "doctor extra selector result"
 assert_contains "accepts at most one selector" "$TMP_DIR/doctor-extra.out"
+run_sessions "$REPO_A" "$TMP_DIR/pause-missing.out" pause
+assert_eq "1" "$COMMAND_RESULT" "pause missing selector result"
+assert_contains "requires one selector" "$TMP_DIR/pause-missing.out"
+run_sessions "$REPO_A" "$TMP_DIR/cancel-extra.out" cancel one two
+assert_eq "1" "$COMMAND_RESULT" "cancel extra selector result"
+assert_contains "accepts one selector" "$TMP_DIR/cancel-extra.out"
+run_sessions "$REPO_A" "$TMP_DIR/pause-children.out" pause \
+  "session:$CHILD_SID" --include-children
+assert_eq "1" "$COMMAND_RESULT" "pause child option result"
+assert_contains "does not accept --include-children" "$TMP_DIR/pause-children.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/list.out" list
 assert_eq "0" "$COMMAND_RESULT" "repository list result"
@@ -293,13 +321,72 @@ assert_contains "$SID_LIVE" "$TMP_DIR/doctor-all.out"
 assert_contains "$SID_DEAD" "$TMP_DIR/doctor-all.out"
 assert_not_contains "$CHILD_SID" "$TMP_DIR/doctor-all.out"
 
+run_sessions "$REPO_A" "$TMP_DIR/pause-ambiguous.out" pause ticket:101
+assert_eq "2" "$COMMAND_RESULT" "pause ambiguous selector result"
+assert_contains "matches 2 sessions" "$TMP_DIR/pause-ambiguous.out"
+run_sessions "$REPO_A" "$TMP_DIR/pause-child-hidden.out" pause "session:$CHILD_SID"
+assert_eq "1" "$COMMAND_RESULT" "pause hidden child result"
+run_sessions "$REPO_A" "$TMP_DIR/pause-other-repo.out" pause "session:$SID_B"
+assert_eq "1" "$COMMAND_RESULT" "pause other repository result"
+assert_no_file "$(dx_lifecycle_control_file "$SID_B")"
+run_sessions "$REPO_A" "$TMP_DIR/cancel-invalid-selector.out" cancel 'session:../bad'
+assert_eq "3" "$COMMAND_RESULT" "cancel invalid selector result"
+
+for rejected_entry in \
+  "$SID_DEAD:dead" \
+  "$SID_UNVERIFIABLE:active-unverifiable" \
+  "$SID_CORRUPT:corrupt" \
+  "$SID_UNSAFE:unsafe" \
+  "$SID_PROVIDER_CORRUPT:provider-corrupt" \
+  "$SID_PROVIDER_DUPLICATE:provider-duplicate" \
+  "$SID_PROVIDER_MISMATCH:provider-mismatch" \
+  "$SID_INCONSISTENT:inconsistent" \
+  "$SID_LEGACY:legacy-unverifiable"; do
+  rejected_session="${rejected_entry%%:*}"
+  rejected_label="${rejected_entry#*:}"
+  run_sessions "$REPO_A" "$TMP_DIR/pause-${rejected_label}.out" \
+    pause "session:$rejected_session"
+  assert_eq "1" "$COMMAND_RESULT" "pause rejects ${rejected_label} session"
+  assert_contains "cannot accept a pause request" \
+    "$TMP_DIR/pause-${rejected_label}.out"
+  assert_no_file "$(dx_lifecycle_control_file "$rejected_session")"
+done
+
+run_sessions "$REPO_A" "$TMP_DIR/pause-live.out" pause "session:$SID_LIVE"
+assert_eq "0" "$COMMAND_RESULT" "pause live session result"
+assert_contains "Pause request accepted for session $SID_LIVE" \
+  "$TMP_DIR/pause-live.out"
+assert_eq "pause" "$(dx_lifecycle_control_read "$SID_LIVE" action)" \
+  "pause exact control action"
+assert_file "$(dx_paused_file "$SID_LIVE")"
+assert_no_file "$(dx_lifecycle_control_file "$SID_CANCEL")"
+assert_eq "live" "$(dx_session_runtime_health "$SID_LIVE")" \
+  "pause keeps runtime lease live"
+kill -0 "$LIVE_PID" 2>/dev/null || fail "pause signalled the provider process"
+
+run_sessions "$REPO_A" "$TMP_DIR/cancel-live.out" cancel workspace:cancel
+assert_eq "0" "$COMMAND_RESULT" "cancel live session result"
+assert_contains "Cancel request accepted for session $SID_CANCEL" \
+  "$TMP_DIR/cancel-live.out"
+assert_not_contains "stopped" "$TMP_DIR/cancel-live.out"
+assert_eq "cancel" "$(dx_lifecycle_control_read "$SID_CANCEL" action)" \
+  "cancel exact control action"
+assert_eq "pause" "$(dx_lifecycle_control_read "$SID_LIVE" action)" \
+  "cancel leaves other control unchanged"
+assert_file "$(dx_paused_file "$SID_CANCEL")"
+assert_eq "live" "$(dx_session_runtime_health "$SID_CANCEL")" \
+  "cancel keeps runtime lease live"
+kill -0 "$LIVE_PID" 2>/dev/null || fail "cancel signalled the provider process"
+
 cat "$TMP_DIR"/*.out > "$TMP_DIR/all-command-output"
 assert_not_contains "$LIVE_TOKEN" "$TMP_DIR/all-command-output"
+assert_not_contains "$CANCEL_TOKEN" "$TMP_DIR/all-command-output"
 assert_not_contains "$DEAD_TOKEN" "$TMP_DIR/all-command-output"
 assert_not_contains "$UNVERIFIABLE_TOKEN" "$TMP_DIR/all-command-output"
 assert_not_contains "$PROVIDER_CORRUPT_TOKEN" "$TMP_DIR/all-command-output"
 assert_not_contains "$PROVIDER_DUPLICATE_TOKEN" "$TMP_DIR/all-command-output"
 assert_not_contains "$PROVIDER_MISMATCH_TOKEN" "$TMP_DIR/all-command-output"
+assert_not_contains "$INCONSISTENT_TOKEN" "$TMP_DIR/all-command-output"
 assert_not_contains "$CORRUPT_SECRET" "$TMP_DIR/all-command-output"
 
 state_snapshot > "$TMP_DIR/state-before"

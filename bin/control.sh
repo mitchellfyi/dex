@@ -45,7 +45,17 @@ resume_recorded_phase() {
   dx_lifecycle_resume_completion_context "$SESSION_ID"
 }
 
-SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+EXACT_SESSION_ID=""
+if [[ "${1:-}" == "--session" ]]; then
+  if [[ $# -lt 2 || -z "${2:-}" ]]; then
+    dx_error "Internal session control requires an exact session ID."
+    exit 1
+  fi
+  EXACT_SESSION_ID="$2"
+  shift 2
+fi
+
+SESSION_ID="${EXACT_SESSION_ID:-${DEX_SESSION_ID:-$(dx_session_id)}}"
 if ! dx_lifecycle_session_id_valid "$SESSION_ID"; then
   dx_error "Invalid Dex session id."
   exit 1
