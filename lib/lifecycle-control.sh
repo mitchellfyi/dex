@@ -90,6 +90,17 @@ dx_lifecycle_phase_min_audits() {
 # that skipped it.
 dx_lifecycle_detach() {
   local session_id="$1" reason="$2" detach_source="$3" revoke_result=0
+  local acquired_here=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  if ! __dx_lifecycle_control_lock_owned "$session_id"; then
+    dx_lifecycle_control_lock_acquire "$session_id" || return 1
+    acquired_here=1
+  fi
+  if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
   dx_write_pause_state "$session_id" "$reason" "$detach_source" 2>/dev/null \
     || revoke_result=1
   if [[ -e "$(dx_phase_busy_file "$session_id" 3)" \
@@ -110,6 +121,9 @@ dx_lifecycle_detach() {
     # lock. Release is ownership-checked and is a no-op for unlocked callers.
     dx_lifecycle_control_lock_release_checked "$session_id" \
       2>/dev/null || true
+  elif [[ "$acquired_here" -eq 1 ]] \
+    && ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+    revoke_result=1
   fi
   return "$revoke_result"
 }
@@ -270,6 +284,16 @@ __dx_lifecycle_control_lock_owned() {
     && "$owner_token" == "$DX_LIFECYCLE_CONTROL_LOCK_TOKEN" ]]
 }
 
+# Lifecycle writers call this only while holding the session transition lock.
+# A malformed journal is also a brake: repair must not race fresh automation.
+__dx_lifecycle_cleanup_barrier_unlocked() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" journal_rc=0
+  __dx_lifecycle_control_lock_owned "$session_id" || return 1
+  dx_session_cleanup_journal_state "$session_id" || journal_rc=$?
+  [[ "$journal_rc" -eq 1 ]]
+}
+
 # Turn a failed terminal transaction back into a resumable, inert Phase 6.
 # The retained config identifies the exact lifecycle context, but its
 # expectation is abandoned; an explicit resume always creates a fresh one.
@@ -281,6 +305,7 @@ dx_lifecycle_terminal_failure_rollback_unlocked() {
   [[ "$reason" =~ ^[A-Za-z0-9._-]+$ \
     && "$rollback_source" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
   __dx_lifecycle_control_lock_owned "$session_id" || return 1
+  __dx_lifecycle_cleanup_barrier_unlocked "$session_id" || return 1
   [[ "$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)" == "7" ]] \
     || return 1
 
@@ -342,6 +367,7 @@ dx_lifecycle_relaunch_prepare_unlocked() {
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$expected_phase" =~ ^[0-7]$ ]] || return 1
   __dx_lifecycle_control_lock_owned "$session_id" || return 1
+  __dx_lifecycle_cleanup_barrier_unlocked "$session_id" || return 1
 
   phase=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null) || phase_rc=$?
   [[ "$phase_rc" -eq 0 && "$phase" == "$expected_phase" ]] || return 1
@@ -653,6 +679,11 @@ dx_write_lifecycle_control() {
   history_file=$(dx_lifecycle_control_history_file "$session_id")
   mkdir -p "$DX_LOOP_DIR" "$DX_STATE_DIR"
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
 
   if [[ -z "$expected_phase" ]]; then
     expected_phase=$(dx_lifecycle_current_phase "$session_id")
@@ -756,6 +787,11 @@ dx_lifecycle_activate_pending_control() {
   [[ "$expected_target" =~ ^[0-7]$ && "$expected_phase" =~ ^[0-6]$ \
     && "$expected_generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] || return 1
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
   control_file=$(dx_lifecycle_control_file "$session_id")
   snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
   current_phase=$(dx_lifecycle_current_phase "$session_id")
@@ -968,10 +1004,27 @@ dx_clear_lifecycle_control() {
 
 dx_write_pause_state() {
   local session_id="$1" reason="$2" source="$3" pause_file
+  local acquired_here=0 pause_rc=0
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$reason" =~ ^[A-Za-z0-9._-]+$ && "$source" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  if ! __dx_lifecycle_control_lock_owned "$session_id"; then
+    dx_lifecycle_control_lock_acquire "$session_id" || return 1
+    acquired_here=1
+  fi
+  if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
+    pause_rc=1
+  fi
   pause_file=$(dx_pause_state_file "$session_id")
-  dx_lifecycle_atomic_write "$pause_file" "reason=${reason}"$'\n'"source=${source}"
+  if [[ "$pause_rc" -eq 0 ]] \
+    && ! dx_lifecycle_atomic_write "$pause_file" \
+      "reason=${reason}"$'\n'"source=${source}"; then
+    pause_rc=1
+  fi
+  if [[ "$acquired_here" -eq 1 ]] \
+    && ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+    pause_rc=1
+  fi
+  return "$pause_rc"
 }
 
 # Leave a completion context resumable but inert after a transition-lock
@@ -1059,6 +1112,11 @@ dx_completion_loop_activate() {
   busy_file=$(dx_phase_busy_file "$session_id" 3)
 
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
   if [[ -e "$active_file" || -L "$active_file" \
     || -e "$config_file" || -L "$config_file" \
     || -e "$expectation_file" || -L "$expectation_file" \
@@ -1146,6 +1204,11 @@ dx_lifecycle_agent_escalate() {
   dx_lifecycle_session_id_valid "$session_id" || return 1
   control_file=$(dx_lifecycle_control_file "$session_id")
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
   if [[ -e "$control_file" || -L "$control_file" ]]; then
     if ! dx_lifecycle_control_lock_release_checked "$session_id"; then
       return 1
@@ -1259,6 +1322,7 @@ dx_lifecycle_resume_completion_context_unlocked() {
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
     && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  __dx_lifecycle_cleanup_barrier_unlocked "$session_id" || return 1
   pause_metadata_record=$(dx_lifecycle_pause_metadata_record "$session_id" \
     2>/dev/null) || pause_metadata_rc=$?
   if [[ "$pause_metadata_rc" -eq 0 ]]; then

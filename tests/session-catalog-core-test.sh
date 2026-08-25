@@ -675,6 +675,25 @@ STANDALONE_REVIEW_RECORD="$(dx_session_catalog_record \
 assert_eq "unknown" "$(json_field "$STANDALONE_REVIEW_RECORD" lifecycle_state)" \
   "selection revocation alone blocks stale runtime completion"
 
+# A durable cleanup journal is visible as a lifecycle brake even if it is the
+# only state left that explains why this session must not resume.
+CLEANUP_JOURNAL_SID="$(cd "$REPO_A" && dx_scoped_session_id branch-cleanup-journal)"
+dx_meta_write "$CLEANUP_JOURNAL_SID" \
+  "ticket_number=cleanup-journal" \
+  "wt_name=cleanup-journal" \
+  "wt_dir=$REPO_A" \
+  "workspace_mode=in-place"
+printf 'dex-cleanup-journal-v1\t%s\n{}\n' "$CLEANUP_JOURNAL_SID" \
+  > "$DX_LOOP_DIR/${CLEANUP_JOURNAL_SID}.cleanup-journal"
+chmod 600 "$DX_LOOP_DIR/${CLEANUP_JOURNAL_SID}.cleanup-journal"
+CLEANUP_JOURNAL_RECORD="$(dx_session_catalog_record \
+  "$CLEANUP_JOURNAL_SID" --repo "$REPO_A")"
+assert_eq "cleanup-in-progress" \
+  "$(json_field "$CLEANUP_JOURNAL_RECORD" lifecycle_state)" \
+  "cleanup journal lifecycle brake"
+assert_contains '"cleanup-journal"' \
+  <(printf '%s\n' "$CLEANUP_JOURNAL_RECORD")
+
 if dx_session_catalog_records --repo "$TMP_DIR/not-a-repo" >/dev/null 2>&1; then
   fail "catalog accepted a non-repository"
 else

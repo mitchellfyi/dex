@@ -29,6 +29,39 @@ cd "$REPO"
 source "$ROOT/lib/common.sh"
 export DEX_SESSION_ID
 DEX_SESSION_ID=$(dx_session_id)
+
+write_cleanup_marker() { # <sid>
+  local marker_sid="$1"
+  printf 'dex-cleanup-journal-v1\t%s\n{}\n' "$marker_sid" \
+    > "$DX_LOOP_DIR/${marker_sid}.cleanup-journal"
+  chmod 600 "$DX_LOOP_DIR/${marker_sid}.cleanup-journal"
+}
+
+# Direct control, pause, and cancel writers share the transition lock with
+# cleanup and cannot publish new lifecycle state after its journal appears.
+CLEANUP_BARRIER_SESSION="$(dx_session_repo_key)-cleanup-control-barrier"
+printf '2\n' > "$(dx_state_file "$CLEANUP_BARRIER_SESSION")"
+printf 'inline\n' > "$(dx_handoff_mode_file "$CLEANUP_BARRIER_SESSION")"
+touch "$(dx_active_file "$CLEANUP_BARRIER_SESSION")"
+write_cleanup_marker "$CLEANUP_BARRIER_SESSION"
+assert_rejected "$LINENO" \
+  dx_write_lifecycle_control "$CLEANUP_BARRIER_SESSION" cancel "" terminal
+assert_no_file "$(dx_lifecycle_control_file "$CLEANUP_BARRIER_SESSION")"
+assert_rejected "$LINENO" \
+  dx_lifecycle_pause "$CLEANUP_BARRIER_SESSION" cleanup-race lifecycle-control
+assert_no_file "$(dx_paused_file "$CLEANUP_BARRIER_SESSION")"
+assert_rejected "$LINENO" \
+  dx_lifecycle_detach "$CLEANUP_BARRIER_SESSION" cleanup-race lifecycle-control
+assert_file "$(dx_active_file "$CLEANUP_BARRIER_SESSION")"
+assert_rejected "$LINENO" env DEX_SESSION_ID="$CLEANUP_BARRIER_SESSION" \
+  bash "$CONTROL" pause > "$TMP_DIR/cleanup-barrier-pause.out" 2>&1
+assert_rejected "$LINENO" env DEX_SESSION_ID="$CLEANUP_BARRIER_SESSION" \
+  bash "$CONTROL" stop > "$TMP_DIR/cleanup-barrier-cancel.out" 2>&1
+rm -f "$DX_LOOP_DIR/${CLEANUP_BARRIER_SESSION}.cleanup-journal" \
+  "$(dx_state_file "$CLEANUP_BARRIER_SESSION")" \
+  "$(dx_handoff_mode_file "$CLEANUP_BARRIER_SESSION")" \
+  "$(dx_active_file "$CLEANUP_BARRIER_SESSION")"
+
 printf '%s\n' 2 > "$(dx_state_file "$DEX_SESSION_ID")"
 printf '%s\n' inline > "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
 INITIAL_GENERATION=$(dx_completion_issue "$DEX_SESSION_ID" lifecycle phase 2)

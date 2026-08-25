@@ -134,6 +134,7 @@ REVIEW_RECEIPT_RE = re.compile(
 )
 
 EXACT_SUFFIXES = [
+    (".cleanup-journal", "cleanup-journal"),
     (".review-receipt.revoked", "review-receipt-revoked"),
     (".review-criteria-approval", "review-criteria-approval"),
     (".review-selection.revoked", "review-selection-revoked"),
@@ -386,6 +387,16 @@ def artifact_owner(name):
 
 
 def artifact_is_unsafe(entry, family, location):
+    if family == "cleanup-journal":
+        if location != "loop":
+            return True
+        try:
+            payload = trusted_read(entry.path, 1024 * 1024, exact_mode=0o600)
+        except (FileNotFoundError, UnsafeStateError, OSError, ValueError):
+            return True
+        session_id = entry.name[: -len(".cleanup-journal")]
+        header = f"dex-cleanup-journal-v1\t{session_id}\n".encode("ascii")
+        return not payload.startswith(header) or len(payload) == len(header)
     if family == "completion-lock":
         if location != "loop":
             return True
@@ -814,6 +825,7 @@ def runtime_details(session_id, families):
         "heartbeat_at": None,
         "finished_at": None,
         "runtime_process_diagnostic": None,
+        "runtime_snapshot": None,
     }
     if "runtime" not in families:
         return empty
@@ -854,6 +866,11 @@ def runtime_details(session_id, families):
         "heartbeat_at": record["heartbeat_at"],
         "finished_at": record["finished_at"],
         "runtime_process_diagnostic": process_diagnostic,
+        "runtime_snapshot": json.dumps(
+            {field_name: value for field_name, value in record.items() if field_name != "token"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     }
 
 
@@ -1022,6 +1039,8 @@ def standalone_review_complete_valid(session_id, families):
 
 
 def lifecycle_state(record, families):
+    if "cleanup-journal" in families:
+        return "cleanup-in-progress"
     runtime_state = record["runtime_status"]
     runtime_health = record["runtime_health"]
     terminal_valid = terminal_commit_valid(record["session_id"], record, families)
@@ -1120,6 +1139,7 @@ def build_records():
             "heartbeat_at": runtime["heartbeat_at"] or metadata.get("updated_at"),
             "finished_at": runtime["finished_at"],
             "runtime_process_diagnostic": runtime["runtime_process_diagnostic"],
+            "runtime_snapshot": runtime["runtime_snapshot"],
             "artifacts": sorted(artifacts["families"]),
             "artifact_locations": {
                 family: sorted(locations)

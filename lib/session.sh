@@ -249,6 +249,27 @@ dx_complete_file() { echo "${DX_LOOP_DIR}/${1}.complete"; }
 # dx_active_file <session_id>  — loop activation signal file path (for in-session /dxloop)
 dx_active_file() { echo "${DX_LOOP_DIR}/${1}.active"; }
 
+# A cleanup journal is a durable transition brake owned by its parent session.
+dx_session_cleanup_journal_file() {
+  dx_session_id_valid "${1:-}" || return 2
+  printf '%s/%s.cleanup-journal\n' "$DX_LOOP_DIR" "$1"
+}
+
+# Return 0 for a trusted versioned marker, 1 when absent, and 2 when unsafe.
+# Full transaction validation stays in session-management; lifecycle writers
+# only need a fail-closed marker they can check while holding the same lock.
+dx_session_cleanup_journal_state() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" journal_file journal_raw journal_header journal_rc=0
+  journal_file=$(dx_session_cleanup_journal_file "$session_id") || return 2
+  journal_raw=$(dx_session_trusted_file_read "$journal_file" 1048576 \
+    2>/dev/null) || journal_rc=$?
+  [[ "$journal_rc" -eq 0 ]] || return "$journal_rc"
+  journal_header="${journal_raw%%$'\n'*}"
+  [[ "$journal_raw" != "$journal_header" ]] || return 2
+  [[ "$journal_header" == "dex-cleanup-journal-v1"$'\t'"$session_id" ]]
+}
+
 # dx_owner_file <session_id> — Claude session id that owns this loop's state.
 # Session IDs are derived from the repo+worktree/branch path, so an unrelated
 # Claude session opened in the same checkout resolves the same session_id. The

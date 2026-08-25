@@ -21,6 +21,13 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
+write_cleanup_marker() { # <sid>
+  local marker_sid="$1"
+  printf 'dex-cleanup-journal-v1\t%s\n{}\n' "$marker_sid" \
+    > "$DX_LOOP_DIR/${marker_sid}.cleanup-journal"
+  chmod 600 "$DX_LOOP_DIR/${marker_sid}.cleanup-journal"
+}
+
 run_hook() {
   local sid="$1" phase="$2"
   set +e
@@ -73,6 +80,28 @@ setup_standalone() {
   dx_completion_write_receipt "$sid" "$generation"
   STANDALONE_GENERATION="$generation"
 }
+
+# Activation and resume use the same cleanup barrier as direct controls.
+SID="cleanup-activation-barrier"
+write_cleanup_marker "$SID"
+assert_rejected "$LINENO" \
+  dx_completion_loop_activate "$SID" standalone dxcomplete 6
+assert_no_file "$(dx_active_file "$SID")"
+rm -f "$DX_LOOP_DIR/${SID}.cleanup-journal"
+
+SID="cleanup-resume-barrier"
+setup_inline "$SID" 2
+rm -f "$(dx_active_file "$SID")" "$(dx_handoff_mode_file "$SID")"
+dx_lifecycle_atomic_write "$(dx_paused_file "$SID")" paused
+dx_write_pause_state "$SID" manual-pause terminal
+write_cleanup_marker "$SID"
+assert_rejected "$LINENO" dx_lifecycle_resume_completion_context "$SID"
+assert_file "$(dx_paused_file "$SID")"
+assert_no_file "$(dx_active_file "$SID")"
+rm -f "$DX_LOOP_DIR/${SID}.cleanup-journal"
+dx_completion_cleanup "$SID"
+rm -f "$(dx_paused_file "$SID")" "$(dx_pause_state_file "$SID")" \
+  "$(dx_loop_config_file "$SID")" "$(dx_state_file "$SID")"
 
 # Migrated lifecycle phases accept only the generation embedded in their
 # launch config. A legacy marker is removed, rotates that generation, and
