@@ -200,7 +200,7 @@ run_public_fixture_resume() { # <pointer> <marker-prefix> <output> [recovery-mod
         return 0
       }
       __dx_selected_resume_runtime_matches() {
-        [[ "$DX_TEST_RECOVERY_MODE" != "post-claim-refusal" ]]
+        [[ "$DX_TEST_RECOVERY_MODE" != "post-claim-refusal" ]] || return 1
       }
       __dx_selected_resume_catalog_matches() { return 0; }
       __dx_review_nonce() { print -r -- fixture-review-lock; }
