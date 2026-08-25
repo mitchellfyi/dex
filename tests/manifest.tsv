@@ -30,6 +30,7 @@ init-reliability-test.sh	fast	all	600	hermetic
 init-uninit-ownership-test.sh	slow	all	1200	hermetic
 install-health-test.sh	slow	all	1200	hermetic
 install-uninstall-test.sh	slow	all	1200	hermetic
+legacy-resume-test.sh	fast	all	600	hermetic
 lifecycle-control-cli-test.sh	fast	all	600	hermetic
 lifecycle-control-hook-test.sh	fast	all	600	hermetic
 lifecycle-control-loop-test.sh	fast	all	600	hermetic

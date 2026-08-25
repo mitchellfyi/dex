@@ -2231,8 +2231,27 @@ unalias __dx_selected_resume_after_claim 2>/dev/null; unfunction __dx_selected_r
 __dx_selected_resume_after_claim() {
   local session_id="$1" repo_root="$2" workspace_dir="$3" workspace_name="$4"
   local workspace_mode="$5" provider_name="$6" selected_phase="$7" raw_input="$8"
+  local legacy_cwd="${9:-0}" expected_canonical_workspace="${10:-}"
   local review_lock_token="" prepared_phase="" default_branch=""
   local state_file times_file resume_hint transition_locked=0 review_locked=0
+  local current_canonical_workspace=""
+
+  [[ "$legacy_cwd" == "0" || "$legacy_cwd" == "1" ]] || {
+    __dx_runtime_set_terminal blocked
+    return 1
+  }
+  if [[ "$legacy_cwd" == "1" ]]; then
+    [[ "$expected_canonical_workspace" == /* ]] || {
+      __dx_runtime_set_terminal blocked
+      return 1
+    }
+    case "$expected_canonical_workspace" in
+      *$'\t'*|*$'\r'*|*$'\n'*)
+        __dx_runtime_set_terminal blocked
+        return 1
+        ;;
+    esac
+  fi
 
   review_lock_token=$(__dx_review_nonce) || {
     __dx_runtime_set_terminal blocked
@@ -2262,6 +2281,24 @@ __dx_selected_resume_after_claim() {
     __dx_runtime_set_terminal blocked
     dx_error "The selected workspace is missing, unregistered, dirty, or on the wrong lifecycle branch."
     return 1
+  fi
+  if [[ "$legacy_cwd" == "1" ]]; then
+    current_canonical_workspace=$(
+      cd "$workspace_dir" 2>/dev/null && pwd -P
+    ) || {
+      dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+        2>/dev/null || true
+      __dx_runtime_set_terminal blocked
+      dx_error "The selected workspace changed while Dex was validating the legacy resume."
+      return 1
+    }
+    if [[ "$current_canonical_workspace" != "$expected_canonical_workspace" ]]; then
+      dx_review_lock_release_checked "$workspace_dir" "$review_lock_token" \
+        2>/dev/null || true
+      __dx_runtime_set_terminal blocked
+      dx_error "The selected workspace changed while Dex was validating the legacy resume."
+      return 1
+    fi
   fi
   if [[ "$workspace_mode" == "in-place" ]] \
     && ! __dx_restore_in_place_session_branch "$session_id" "$workspace_name" \
@@ -2324,21 +2361,100 @@ __dx_selected_resume_after_claim() {
   state_file=$(dx_state_file "$session_id")
   times_file=$(dx_times_file "$session_id")
   resume_hint="dx sessions resume session:${session_id}"
+  if [[ "$legacy_cwd" == "1" ]] \
+    && ! cd "$expected_canonical_workspace" 2>/dev/null; then
+    __dx_runtime_set_terminal blocked
+    dx_error "The validated legacy workspace could not be opened for provider launch."
+    return 1
+  fi
   __dx_run_phases_inline "$workspace_name" "$workspace_dir" "$default_branch" \
     "$prepared_phase" "$state_file" "$times_file" "$resume_hint" \
     "$workspace_mode" "$session_id" "$raw_input"
 }
 
+unalias __dx_selected_resume_legacy_mapping_matches 2>/dev/null; unfunction __dx_selected_resume_legacy_mapping_matches 2>/dev/null
+__dx_selected_resume_legacy_mapping_matches() {
+  [[ $# -eq 6 ]] || return 1
+  local workspace_name="$1" workspace_dir="$2" workspace_mode="$3"
+  local expected_workspace_name="$4" expected_workspace="$5"
+  local expected_workspace_mode="$6" resolved_workspace=""
+  local resolved_expected_workspace=""
+
+  [[ -n "$expected_workspace_name" && -n "$expected_workspace" ]] || return 1
+  [[ "$expected_workspace" == /* ]] || return 1
+  case "$expected_workspace_name$expected_workspace$expected_workspace_mode" in
+    *$'\t'*|*$'\r'*|*$'\n'*) return 1 ;;
+  esac
+  [[ "$expected_workspace_mode" == "worktree" \
+    || "$expected_workspace_mode" == "in-place" ]] || return 1
+  [[ "$workspace_name" == "$expected_workspace_name" \
+    && "$workspace_mode" == "$expected_workspace_mode" ]] || return 1
+  [[ -d "$workspace_dir" && -d "$expected_workspace" ]] || return 1
+  resolved_workspace=$(cd "$workspace_dir" 2>/dev/null && pwd -P) || return 1
+  resolved_expected_workspace=$(
+    cd "$expected_workspace" 2>/dev/null && pwd -P
+  ) || return 1
+  [[ "$resolved_workspace" == "$resolved_expected_workspace" ]]
+}
+
+unalias __dx_selected_resume_completed_catalog_matches 2>/dev/null; unfunction __dx_selected_resume_completed_catalog_matches 2>/dev/null
+__dx_selected_resume_completed_catalog_matches() {
+  [[ $# -eq 7 ]] || return 1
+  local repo_root="$1" session_id="$2" workspace_dir="$3"
+  local workspace_name="$4" workspace_mode="$5" provider_name="$6"
+  local runtime_pid="$7" current_record=""
+  current_record=$(dx_session_catalog_record "$session_id" --repo "$repo_root" \
+    2>/dev/null) || return 1
+  python3 - "$session_id" "$workspace_dir" "$workspace_name" \
+    "$workspace_mode" "$provider_name" "$runtime_pid" \
+    3<<<"$current_record" <<'PY'
+import json
+import os
+import sys
+
+record = json.load(os.fdopen(3))
+if (
+    record.get("session_id") != sys.argv[1]
+    or record.get("is_child") is not False
+    or record.get("metadata_health") != "valid"
+    or record.get("runtime_health") != "dead"
+    or record.get("runtime_status") != "completed"
+    or record.get("lifecycle_state") != "completed"
+    or record.get("phase") != 7
+    or record.get("unsafe_artifacts") != []
+    or record.get("consistency_issues") != []
+    or record.get("workspace_name") != sys.argv[3]
+    or record.get("workspace_mode") != sys.argv[4]
+    or record.get("provider") != sys.argv[5]
+    or record.get("runtime_pid") != int(sys.argv[6])
+    or not isinstance(record.get("workspace"), str)
+    or os.path.realpath(record["workspace"]) != os.path.realpath(sys.argv[2])
+):
+    raise SystemExit(1)
+PY
+}
+
 unalias __dx_sessions_resume_selected 2>/dev/null; unfunction __dx_sessions_resume_selected 2>/dev/null
 __dx_sessions_resume_selected() {
-  [[ $# -eq 1 ]] || return 1
-  local selector_value="$1" selected_record="" runtime_snapshot=""
+  [[ $# -eq 1 || $# -eq 2 || $# -eq 6 ]] || return 1
+  local selector_value="$1" requested_provider="${2:-}"
+  local resume_mode="${3:-}" expected_workspace_name="${4:-}"
+  local expected_workspace="${5:-}" expected_workspace_mode="${6:-}"
+  local selected_record="" runtime_snapshot=""
   local selected_file="" runtime_file="" validated_record="" validation_result=0
   local session_id workspace_dir workspace_name workspace_mode provider_name
-  local selected_phase raw_input repo_root resolved_provider
+  local selected_phase raw_input lifecycle_state runtime_status runtime_pid
+  local repo_root resolved_provider legacy_resume=0 legacy_canonical_workspace=""
   local -x DX_AGENT_OVERRIDE=""
   setopt localoptions noxtrace
 
+  if [[ $# -eq 6 ]]; then
+    [[ "$resume_mode" == "legacy-last-session" ]] || return 1
+    legacy_resume=1
+  fi
+  if [[ -n "$requested_provider" ]]; then
+    requested_provider=$(dx_agent_normalize "$requested_provider") || return 1
+  fi
   repo_root=$(dx_repo_root) || return 1
   if selected_record=$(dx_session_catalog_select \
       "$selector_value" --repo "$repo_root"); then
@@ -2403,14 +2519,16 @@ workspace_mode = selected.get("workspace_mode")
 provider = selected.get("provider")
 phase = selected.get("phase")
 runtime_status = selected.get("runtime_status")
+lifecycle_state = selected.get("lifecycle_state")
 if (
     selected.get("is_child") is not False
     or selected.get("metadata_health") != "valid"
     or selected.get("runtime_health") != "dead"
-    or runtime_status not in {"running", "paused", "blocked", "failed", "stopped", "abandoned"}
+    or runtime_status not in {"running", "paused", "blocked", "failed", "stopped", "abandoned", "completed"}
     or selected.get("unsafe_artifacts") not in ([], None)
     or selected.get("consistency_issues") not in ([], None)
-    or selected.get("lifecycle_state") == "completed"
+    or not isinstance(lifecycle_state, str)
+    or not plain.fullmatch(lifecycle_state)
     or type(phase) is not int
     or phase < 0
     or phase > 7
@@ -2437,7 +2555,18 @@ if (
 raw_input = selected.get("ticket") or workspace_name
 if not isinstance(raw_input, str) or not plain.fullmatch(raw_input):
     raw_input = workspace_name
-print("\t".join((session_id, workspace, workspace_name, workspace_mode, provider, str(phase), raw_input)))
+print("\t".join((
+    session_id,
+    workspace,
+    workspace_name,
+    workspace_mode,
+    provider,
+    str(phase),
+    raw_input,
+    lifecycle_state,
+    runtime_status,
+    str(runtime.get("pid")),
+)))
 PY
   ) || validation_result=1
   command rm -f "$selected_file" "$runtime_file" 2>/dev/null || validation_result=1
@@ -2446,8 +2575,54 @@ PY
     return 1
   fi
   IFS=$'\t' read -r session_id workspace_dir workspace_name workspace_mode \
-    provider_name selected_phase raw_input <<< "$validated_record"
+    provider_name selected_phase raw_input lifecycle_state runtime_status \
+    runtime_pid <<< "$validated_record"
 
+  if [[ "$legacy_resume" -eq 1 ]] \
+    && ! __dx_selected_resume_legacy_mapping_matches \
+      "$workspace_name" "$workspace_dir" "$workspace_mode" \
+      "$expected_workspace_name" "$expected_workspace" \
+      "$expected_workspace_mode"; then
+    dx_error "The saved last-session mapping no longer matches this repository's exact lifecycle record."
+    return 1
+  fi
+  if [[ "$legacy_resume" -eq 1 ]]; then
+    legacy_canonical_workspace=$(
+      cd "$expected_workspace" 2>/dev/null && pwd -P
+    ) || {
+      dx_error "The saved last-session mapping no longer resolves to a trusted workspace."
+      return 1
+    }
+  fi
+
+  if [[ "$lifecycle_state" == "completed" ]]; then
+    if [[ "$legacy_resume" -ne 1 ]]; then
+      dx_error "The selected session is already complete and cannot be relaunched."
+      return 1
+    fi
+    if [[ "$selected_phase" != "7" || "$runtime_status" != "completed" ]] \
+      || ! __dx_selected_resume_workspace_valid \
+        "$repo_root" "$session_id" "$workspace_dir" "$workspace_mode" \
+      || ! dx_lifecycle_terminal_commit_valid "$session_id" \
+      || ! __dx_selected_resume_completed_catalog_matches \
+        "$repo_root" "$session_id" "$workspace_dir" "$workspace_name" \
+        "$workspace_mode" "$provider_name" "$runtime_pid"; then
+      dx_error "Dex could not verify the completed lifecycle and its terminal proof."
+      return 1
+    fi
+    echo "Ticket lifecycle already complete for ${workspace_name}."
+    if [[ "$workspace_mode" == "worktree" ]]; then
+      echo "Local cleanup should already be complete. If files remain, run dxrm ${workspace_name}."
+    else
+      echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
+    fi
+    return 0
+  fi
+
+  if [[ -n "$requested_provider" && "$requested_provider" != "$provider_name" ]]; then
+    dx_error "Session ${session_id} was recorded for ${provider_name}; refusing the requested ${requested_provider} provider override."
+    return 1
+  fi
   if ! __dx_selected_resume_workspace_valid \
       "$repo_root" "$session_id" "$workspace_dir" "$workspace_mode"; then
     dx_error "The selected workspace is missing, unregistered, dirty, or on the wrong lifecycle branch."
@@ -2464,7 +2639,8 @@ PY
   __dx_run_with_recovered_runtime "$session_id" "$runtime_snapshot" \
     __dx_selected_resume_after_claim "$session_id" "$repo_root" \
     "$workspace_dir" "$workspace_name" "$workspace_mode" "$provider_name" \
-    "$selected_phase" "$raw_input"
+    "$selected_phase" "$raw_input" "$legacy_resume" \
+    "$legacy_canonical_workspace"
 }
 
 # __dx_run_phases_inline <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
@@ -3507,85 +3683,10 @@ dx() {
     local last_info
     last_info=$(cat "$last_session_file" 2>/dev/null)
     __dx_parse_last_session "$last_info"
-    if [[ ! -d "$_dx_wt_dir" ]]; then
-      if [[ "$_dx_workspace_mode" == "in-place" ]]; then
-        dx_error "Checkout for in-place session ${_dx_wt_name} no longer exists."
-      else
-        dx_error "Worktree ${_dx_wt_name} no longer exists."
-      fi
-      rm -f "$last_session_file"
-      return 1
-    fi
-
-    # Validate workspace git state
-    if ! git -C "$_dx_wt_dir" rev-parse --git-dir &>/dev/null; then
-      dx_error "Workspace ${_dx_wt_name} has corrupted git state."
-      if [[ "$_dx_workspace_mode" == "worktree" ]]; then
-        dx_info "Run dxrm ${_dx_wt_name} and start fresh."
-      fi
-      return 1
-    fi
-
-    if [[ "$_dx_workspace_mode" == "in-place" ]]; then
-      __dx_restore_in_place_session_branch "$_dx_session_id" "$_dx_wt_name" "$_dx_wt_dir" "dx --resume" || return 1
-    else
-      __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
-    fi
-
-    # Reconstruct the original request for resume prompts. Freeform task
-    # sessions persist the human-readable prompt; ticket sessions fall back to
-    # the stable workspace name.
-    local session_id state_file times_file
-    session_id="$_dx_session_id"
-    state_file=$(dx_state_file "$session_id")
-    times_file=$(dx_times_file "$session_id")
-    local raw_input="$_dx_wt_name"
-    local prompt_file
-    prompt_file=$(dx_prompt_file "$session_id")
-    if [[ -s "$prompt_file" ]]; then
-      raw_input=$(cat "$prompt_file" 2>/dev/null || echo "$raw_input")
-    fi
-    _dx_default_branch=$(dx_default_branch "$_dx_wt_dir")
-
-    # Fall through to the phase loop below. Default to Phase 0 (Setup) for a
-    # brand-new session; existing sessions keep whatever phase state recorded.
-    local step=0
-    if [[ -e "$state_file" || -L "$state_file" ]]; then
-      step=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null) || {
-        dx_error "Dex found an unsafe or malformed authoritative phase file. Repair it before resuming."
-        return 1
-      }
-    fi
-    [[ "$step" =~ ^[0-7]$ ]] || step=0
-
-    if [[ $step -gt 6 ]]; then
-      if ! dx_lifecycle_terminal_commit_valid "$session_id"; then
-        if __dx_lifecycle_terminal_failure_pause_valid "$session_id" \
-          && dx_lifecycle_terminal_failure_rollback "$session_id" \
-            terminal-proof-invalid lifecycle-control; then
-          step=6
-          dx_info "Dex repaired an interrupted terminal transaction and will resume from Phase 6 with fresh authorization."
-        else
-          dx_error "Dex found Phase 7 without a valid terminal commit proof. Use dx control resume only after a trusted terminal-failure pause is present."
-          return 1
-        fi
-      else
-        echo "Ticket lifecycle already complete for ${_dx_wt_name}."
-        if [[ "$_dx_workspace_mode" == "worktree" ]]; then
-          echo "Local cleanup should already be complete. If files remain, run dxrm ${_dx_wt_name}."
-        else
-          echo "This lifecycle ran in the current checkout; local branch cleanup is handled at completion when safe."
-        fi
-        return 0
-      fi
-    fi
-
-    echo "Resuming ${_dx_wt_name} from Phase ${step}: $(__dx_phase_name "$step")..."
-
-    cd "$_dx_wt_dir" 2>/dev/null || return 1
-    __dx_run_with_runtime "$session_id" "$_dx_wt_dir" __dx_run_phases_inline \
-      "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" \
-      "$times_file" "dx --resume" "$_dx_workspace_mode" "$session_id" "$raw_input"
+    local resume_selector="session:${_dx_session_id}"
+    __dx_sessions_resume_selected "$resume_selector" "$dx_agent_flag" \
+      legacy-last-session "$_dx_wt_name" "$_dx_wt_dir" \
+      "$_dx_workspace_mode"
     return $?
   fi
 
