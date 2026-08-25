@@ -940,7 +940,8 @@ REVIEW_EVAL_TEST_STUB_MODE=hang \
 cancel_pid=$!
 cancel_ready=0
 while [[ $(date +%s) -lt $cancel_ready_deadline ]]; do
-  cancel_stub_pid_file=$(find "$cancel_tmp" -name stub-grandchild.pid -print -quit)
+  cancel_stub_pid_file=$(find "$cancel_tmp" -name stub-grandchild.pid -print -quit \
+    2>/dev/null || true)
   if [[ -n "$cancel_stub_pid_file" ]]; then
     cancel_stub_pid=$(cat "$cancel_stub_pid_file" 2>/dev/null || true)
   fi
