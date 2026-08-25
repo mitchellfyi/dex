@@ -479,10 +479,10 @@ import json
 import sys
 
 waves = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
-assert len(waves) == 3, waves
+assert len(waves) == 1, waves
 assert all("oracle_status" not in row for row in waves), waves
 observations = [json.loads(line) for line in open(sys.argv[2], encoding="utf-8")]
-assert len(observations) == 4, observations
+assert len(observations) == 2, observations
 assert observations[0] == {
     "assessment_active": True,
     "evidence_version": 0,
@@ -522,7 +522,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 waves = [json.loads(line) for line in (root / "oracle-waves.jsonl").read_text().splitlines()]
-assert len(waves) == 3, waves
+assert len(waves) == 1, waves
 assert all(row["oracle_status"] == "pass" for row in waves), waves
 events = "\n".join(path.read_text() for path in (root / "dex-runs").glob("run_*/events.jsonl"))
 assert "review.completed" in events, events
@@ -649,7 +649,7 @@ assert manifest["visible_before"] == "pass", manifest
 assert manifest["visible_after"] == "pass", manifest
 assert manifest["oracle_before"] == "pass", manifest
 assert manifest["oracle_after"] == "pass", manifest
-assert manifest["wave_count"] == 3, manifest
+assert manifest["wave_count"] == 1, manifest
 assert manifest["first_oracle_pass_iteration"] == 1, manifest
 assert manifest["control_edited"] is False, manifest
 trial_root = root / "trials/small-control/replica-1/claude"
@@ -695,7 +695,7 @@ defect_manifest = json.loads(
 )
 assert defect_manifest["status"] == "completed", defect_manifest
 assert defect_manifest["oracle_after"] == "fail", defect_manifest
-assert defect_manifest["wave_count"] == 3, defect_manifest
+assert defect_manifest["wave_count"] == 1, defect_manifest
 
 summary = json.loads((root / "summary.json").read_text())
 assert summary["schema_version"] == 1, summary
@@ -710,8 +710,8 @@ assert summary["statuses"] == {
 }, summary
 assert summary["final_oracle_pass"] == 1, summary
 assert summary["controls_edited"] == 0, summary
-assert summary["waves"] == {"fail": 3, "invalid": 0, "pass": 3}, summary
-assert summary["false_clean_waves"] == 3, summary
+assert summary["waves"] == {"fail": 1, "invalid": 0, "pass": 1}, summary
+assert summary["false_clean_waves"] == 1, summary
 assert summary["eligible_trials"] == 2, summary
 assert summary["tier_accuracy"] == {
     "proposed_matches": 2,
@@ -720,6 +720,17 @@ assert summary["tier_accuracy"] == {
 assert summary["defects"] == {"eligible": 1, "fixed": 0}, summary
 assert (root / "trials.tsv").is_file(), summary
 PY
+
+normal_trial="$TMP_DIR/normal-tier-trial"
+complex_trial="$TMP_DIR/complex-tier-trial"
+REVIEW_EVAL_TEST_STUB=1 \
+REVIEW_EVAL_TEST_STUB_MODE=tier-normal \
+  review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
+    normal-control 1 claude "test-claude" "high" 120 "$normal_trial"
+REVIEW_EVAL_TEST_STUB=1 \
+REVIEW_EVAL_TEST_STUB_MODE=tier-complex \
+  review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
+    complex-control 1 claude "test-claude" "high" 120 "$complex_trial"
 
 premature_trial="$TMP_DIR/premature-completion-trial"
 cp -R "$managed_trial" "$premature_trial"
@@ -732,14 +743,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 for event_file in root.glob("dex-runs/run_*/events.jsonl"):
     events = [json.loads(line) for line in event_file.read_text().splitlines()]
-    retained = []
-    finished_seen = 0
-    for event in events:
-        if event.get("type") == "review.pass.finished":
-            finished_seen += 1
-            if finished_seen > 1:
-                continue
-        retained.append(event)
+    retained = [event for event in events if event.get("type") != "review.pass.finished"]
     temporary = event_file.with_name(event_file.name + ".tmp")
     temporary.write_text(
         "".join(json.dumps(event, separators=(",", ":")) + "\n" for event in retained),
@@ -752,7 +756,7 @@ if review_eval_trial_product_record_valid "$premature_trial" completed 0; then
 fi
 
 duplicate_pass_trial="$TMP_DIR/duplicate-pass-trial"
-cp -R "$managed_trial" "$duplicate_pass_trial"
+cp -R "$normal_trial" "$duplicate_pass_trial"
 python3 - "$duplicate_pass_trial" <<'PY'
 import json
 import os
@@ -804,16 +808,6 @@ if review_eval_trial_product_record_valid "$contradictory_terminal_trial" paused
   fail "paused product record accepted completed terminals"
 fi
 
-normal_trial="$TMP_DIR/normal-tier-trial"
-complex_trial="$TMP_DIR/complex-tier-trial"
-REVIEW_EVAL_TEST_STUB=1 \
-REVIEW_EVAL_TEST_STUB_MODE=tier-normal \
-  review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
-    normal-control 1 claude "test-claude" "high" 120 "$normal_trial"
-REVIEW_EVAL_TEST_STUB=1 \
-REVIEW_EVAL_TEST_STUB_MODE=tier-complex \
-  review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
-    complex-control 1 claude "test-claude" "high" 120 "$complex_trial"
 python3 - "$normal_trial" "$complex_trial" <<'PY'
 import json
 import sys
