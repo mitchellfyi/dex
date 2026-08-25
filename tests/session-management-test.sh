@@ -26,20 +26,21 @@ DX_COMMON_MODULES="lock git session completion session-runtime session-catalog e
 # shellcheck source=lib/session-management.sh
 source "$ROOT/lib/session-management.sh"
 
-# Cleanup can fail before any runtime claim is written. Keep that path safe
-# under zsh's default NOMATCH behavior as well as bash.
-EMPTY_CLAIM_DIR="$TMP_DIR/empty-claims"
+# Cleanup can fail before the journal contains any held entry. Keep that path
+# safe under zsh's default NOMATCH behavior as well as bash.
 EMPTY_ZDOT_DIR="$TMP_DIR/empty-zdot"
-mkdir -p "$EMPTY_CLAIM_DIR" "$EMPTY_ZDOT_DIR"
+mkdir -p "$EMPTY_ZDOT_DIR"
 DX_TEST_SESSION_MANAGEMENT="$ROOT/lib/session-management.sh" \
-  DX_TEST_EMPTY_CLAIM_DIR="$EMPTY_CLAIM_DIR" \
   ZDOTDIR="$EMPTY_ZDOT_DIR" \
   zsh -f -c '
     set -eu
     setopt nomatch
     source "$DX_TEST_SESSION_MANAGEMENT"
-    __dx_session_management_settle_claims_failed \
-      "$DX_TEST_EMPTY_CLAIM_DIR"
+    __dx_session_management_journal() {
+      [[ "$1" == "entries" ]] || return 1
+      return 0
+    }
+    __dx_session_management_release_entries journal parent repo
   '
 
 REPO="$TMP_DIR/repo"
@@ -72,6 +73,8 @@ assert_no_file "$(dx_session_runtime_file "$SID")"
 assert_file "$(dx_session_runtime_file "$SID")-lock"
 assert_file "$DX_RUN_ROOT/run_cleanup_happy/summary.json"
 assert_eq "main" "$(git -C "$REPO" branch --show-current)" "preserved branch"
+assert_rejected "cleaned session absent from catalog" \
+  dx_session_catalog_record "$SID" --repo "$REPO"
 
 make_terminal_session() { # <sid> <workspace> [phase]
   local fixture_sid="$1" fixture_workspace="$2" fixture_phase="${3:-3}"
@@ -86,6 +89,50 @@ make_terminal_session() { # <sid> <workspace> [phase]
     "$fixture_sid" codex "$fixture_workspace" "$$")"
   dx_session_runtime_finish "$fixture_sid" "$fixture_token" paused "$$"
 }
+
+# Once the trusted final inventory is validated, unlinking the journal is the
+# semantic commit. Diagnostics and temporary cleanup cannot turn that commit
+# into an unretryable failure after all session evidence is gone.
+FINAL_COMMIT_SID="$(cd "$REPO" && dx_scoped_session_id branch-final-commit)"
+make_terminal_session "$FINAL_COMMIT_SID" "$REPO"
+eval "$(declare -f __dx_session_management_journal | \
+  sed '1s/^__dx_session_management_journal /__test_final_journal_original /')"
+eval "$(declare -f __dx_session_management_remove_transaction_dir | \
+  sed '1s/^__dx_session_management_remove_transaction_dir /__test_final_temp_original /')"
+FINAL_JOURNAL_UNLINKED=0
+FINAL_TEMP_REPORTED_FAILURE=0
+__dx_session_management_journal() {
+  local journal_result=0
+  __test_final_journal_original "$@" || journal_result=$?
+  if [[ "$1" == "remove" && "$3" == "$FINAL_COMMIT_SID" \
+    && "$journal_result" -eq 0 ]]; then
+    FINAL_JOURNAL_UNLINKED=1
+    return 1
+  fi
+  return "$journal_result"
+}
+__dx_session_management_remove_transaction_dir() {
+  local temp_result=0
+  __test_final_temp_original "$@" || temp_result=$?
+  if [[ "$FINAL_JOURNAL_UNLINKED" -eq 1 && "$temp_result" -eq 0 ]]; then
+    FINAL_TEMP_REPORTED_FAILURE=1
+    return 1
+  fi
+  return "$temp_result"
+}
+__dx_session_management_cleanup_exact "$REPO" "$FINAL_COMMIT_SID"
+unset -f __dx_session_management_journal __dx_session_management_remove_transaction_dir
+eval "$(declare -f __test_final_journal_original | \
+  sed '1s/^__test_final_journal_original /__dx_session_management_journal /')"
+eval "$(declare -f __test_final_temp_original | \
+  sed '1s/^__test_final_temp_original /__dx_session_management_remove_transaction_dir /')"
+unset -f __test_final_journal_original __test_final_temp_original
+assert_eq "1" "$FINAL_JOURNAL_UNLINKED" "journal unlink failpoint"
+assert_eq "1" "$FINAL_TEMP_REPORTED_FAILURE" "temporary cleanup failpoint"
+assert_no_file "$DX_LOOP_DIR/${FINAL_COMMIT_SID}.cleanup-journal"
+assert_no_file "$(dx_session_runtime_file "$FINAL_COMMIT_SID")"
+assert_rejected "final commit absent from catalog" \
+  dx_session_catalog_record "$FINAL_COMMIT_SID" --repo "$REPO"
 
 make_review_child() { # <parent> <kind> <hex-suffix> [with-runtime]
   local parent_sid="$1" child_kind="$2" child_suffix="$3"
@@ -130,6 +177,19 @@ assert_no_file "$(dx_session_runtime_file "$RUNTIME_CHILD")"
 assert_file "$(dx_session_runtime_file "$RUNTIME_CHILD")-lock"
 assert_no_file "$(dx_meta_file "$CHILD_PARENT")"
 assert_no_file "$(dx_session_runtime_file "$CHILD_PARENT")"
+
+# Provenance alone does not prove a child process stopped. A child without a
+# runtime needs the parent's exact Phase 3 quiescence or a trusted completion
+# proof before cleanup can accept it.
+ORPHAN_PARENT="$(cd "$REPO" && dx_scoped_session_id branch-cleanup-orphan)"
+make_terminal_session "$ORPHAN_PARENT" "$REPO"
+make_review_child "$ORPHAN_PARENT" assessment \
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0
+ORPHAN_CHILD="$REVIEW_CHILD_SID"
+assert_rejected "provenance-only orphan cleanup" \
+  __dx_session_management_cleanup_exact "$REPO" "$ORPHAN_PARENT"
+assert_file "$(dx_meta_file "$ORPHAN_PARENT")"
+assert_file "$(dx_meta_file "$ORPHAN_CHILD")"
 
 assert_brakes() { # <sid>
   local brake_sid="$1"
@@ -341,6 +401,9 @@ assert_eq "paused" "$(dx_session_runtime_field "$CHILD_CORRUPT_PARENT" status)" 
 # If parent deletion fails, every child payload has already been removed.
 CHILD_FIRST_PARENT="$(cd "$REPO" && dx_scoped_session_id branch-child-first)"
 make_terminal_session "$CHILD_FIRST_PARENT" "$REPO"
+CHILD_FIRST_BUSY="$(dx_phase_busy_begin \
+  "$CHILD_FIRST_PARENT" 3 "review child")"
+dx_phase_busy_acknowledge "$CHILD_FIRST_PARENT" 3 "$CHILD_FIRST_BUSY"
 make_review_child "$CHILD_FIRST_PARENT" pass \
   66666666666666666666666666666666 0
 CHILD_FIRST_SID="$REVIEW_CHILD_SID"
@@ -362,6 +425,80 @@ assert_eq "failed" "$(dx_session_runtime_field "$CHILD_FIRST_PARENT" status)" \
   "child-first parent runtime"
 assert_brakes "$CHILD_FIRST_SID"
 assert_brakes "$CHILD_FIRST_PARENT"
+assert_file "$DX_LOOP_DIR/${CHILD_FIRST_PARENT}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$CHILD_FIRST_PARENT"
+assert_no_file "$DX_LOOP_DIR/${CHILD_FIRST_PARENT}.cleanup-journal"
+assert_rejected "retried child absent from catalog" \
+  dx_session_catalog_record "$CHILD_FIRST_SID" --repo "$REPO"
+assert_rejected "retried parent absent from catalog" \
+  dx_session_catalog_record "$CHILD_FIRST_PARENT" --repo "$REPO"
+
+# A replacement that lands after the journal snapshot but before claim must
+# fail the exact recovery CAS. Cleanup must never refresh that snapshot.
+STALE_CLAIM_SID="$(cd "$REPO" && dx_scoped_session_id branch-stale-claim)"
+make_terminal_session "$STALE_CLAIM_SID" "$REPO"
+eval "$(declare -f __dx_session_management_claim_runtime | \
+  sed '1s/^__dx_session_management_claim_runtime /__test_claim_runtime_original /')"
+STALE_CLAIM_REPLACED=0
+__dx_session_management_claim_runtime() {
+  local stale_token
+  if [[ "$1" == "$STALE_CLAIM_SID" && "$STALE_CLAIM_REPLACED" -eq 0 ]]; then
+    stale_token="$(python3 - "$(dx_session_runtime_file "$1")" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    print(json.load(source)["token"])
+PY
+    )"
+    __dx_session_runtime_purge "$1" "$stale_token" "$$"
+    stale_token="$(dx_session_runtime_start \
+      "$1" stale-generation "$REPO" "$$")"
+    dx_session_runtime_finish "$1" "$stale_token" paused "$$"
+    STALE_CLAIM_REPLACED=1
+  fi
+  __test_claim_runtime_original "$@"
+}
+assert_rejected "stale generation before claim" \
+  __dx_session_management_cleanup_exact "$REPO" "$STALE_CLAIM_SID"
+unset -f __dx_session_management_claim_runtime
+eval "$(declare -f __test_claim_runtime_original | \
+  sed '1s/^__test_claim_runtime_original /__dx_session_management_claim_runtime /')"
+unset -f __test_claim_runtime_original
+assert_eq "1" "$STALE_CLAIM_REPLACED" "stale claim replacement hook"
+assert_eq "stale-generation" \
+  "$(dx_session_runtime_field "$STALE_CLAIM_SID" provider)" \
+  "stale claim replacement preserved"
+assert_file "$(dx_meta_file "$STALE_CLAIM_SID")"
+
+# The recovery owner is durably correlated before the final claimed-stage
+# commit. If that commit fails, cleanup settles the owner and the next call can
+# reclaim the exact terminal snapshot instead of stranding `claiming` forever.
+CLAIM_COMMIT_SID="$(cd "$REPO" && dx_scoped_session_id branch-claim-commit)"
+make_terminal_session "$CLAIM_COMMIT_SID" "$REPO"
+eval "$(declare -f __dx_session_management_journal | \
+  sed '1s/^__dx_session_management_journal /__test_claim_journal_original /')"
+CLAIM_COMMIT_FAILED=0
+__dx_session_management_journal() {
+  if [[ "$1" == "claimed" && "$3" == "$CLAIM_COMMIT_SID" \
+    && "$CLAIM_COMMIT_FAILED" -eq 0 ]]; then
+    CLAIM_COMMIT_FAILED=1
+    return 1
+  fi
+  __test_claim_journal_original "$@"
+}
+assert_rejected "claimed journal commit failure" \
+  __dx_session_management_cleanup_exact "$REPO" "$CLAIM_COMMIT_SID"
+unset -f __dx_session_management_journal
+eval "$(declare -f __test_claim_journal_original | \
+  sed '1s/^__test_claim_journal_original /__dx_session_management_journal /')"
+unset -f __test_claim_journal_original
+assert_eq "1" "$CLAIM_COMMIT_FAILED" "claimed journal failpoint"
+assert_eq "failed" "$(dx_session_runtime_field "$CLAIM_COMMIT_SID" status)" \
+  "claimed journal fallback runtime"
+assert_file "$DX_LOOP_DIR/${CLAIM_COMMIT_SID}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$CLAIM_COMMIT_SID"
+assert_no_file "$DX_LOOP_DIR/${CLAIM_COMMIT_SID}.cleanup-journal"
+assert_no_file "$(dx_session_runtime_file "$CLAIM_COMMIT_SID")"
 
 # Recovery compares the selected public runtime snapshot atomically. Replacing
 # the terminal record in that window refuses cleanup and leaves the replacement.
@@ -465,6 +602,9 @@ assert_file "$(dx_session_runtime_file "$TRANSITION_FAILURE_SID")"
 assert_eq "failed" "$(dx_session_runtime_field "$TRANSITION_FAILURE_SID" status)" \
   "transition release runtime"
 assert_brakes "$TRANSITION_FAILURE_SID"
+assert_no_file "$(dx_lifecycle_control_lock_dir "$TRANSITION_FAILURE_SID")"
+__dx_session_management_cleanup_exact "$REPO" "$TRANSITION_FAILURE_SID"
+assert_no_file "$DX_LOOP_DIR/${TRANSITION_FAILURE_SID}.cleanup-journal"
 
 CHECKOUT_FAILURE_SID="$(cd "$REPO" && dx_scoped_session_id branch-checkout-failure)"
 make_terminal_session "$CHECKOUT_FAILURE_SID" "$REPO"
@@ -490,6 +630,282 @@ assert_file "$(dx_session_runtime_file "$CHECKOUT_FAILURE_SID")"
 assert_eq "failed" "$(dx_session_runtime_field "$CHECKOUT_FAILURE_SID" status)" \
   "checkout release runtime"
 assert_brakes "$CHECKOUT_FAILURE_SID"
+assert_file "$DX_LOOP_DIR/${CHECKOUT_FAILURE_SID}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$CHECKOUT_FAILURE_SID"
+assert_no_file "$DX_LOOP_DIR/${CHECKOUT_FAILURE_SID}.cleanup-journal"
+
+# A release helper can fail without making progress. Cleanup detaches only the
+# exact lock generation it owns, so the canonical lock is free for a retry.
+PERSISTENT_TRANSITION_SID="$(cd "$REPO" && dx_scoped_session_id branch-transition-stuck)"
+make_terminal_session "$PERSISTENT_TRANSITION_SID" "$REPO"
+eval "$(declare -f dx_lifecycle_control_lock_release_checked | \
+  sed '1s/^dx_lifecycle_control_lock_release_checked /__test_stuck_transition_original /')"
+dx_lifecycle_control_lock_release_checked() {
+  if [[ "$1" == "$PERSISTENT_TRANSITION_SID" ]]; then
+    return 1
+  fi
+  __test_stuck_transition_original "$@"
+}
+assert_rejected "persistent transition release failure" \
+  __dx_session_management_cleanup_exact "$REPO" "$PERSISTENT_TRANSITION_SID"
+unset -f dx_lifecycle_control_lock_release_checked
+eval "$(declare -f __test_stuck_transition_original | \
+  sed '1s/^__test_stuck_transition_original /dx_lifecycle_control_lock_release_checked /')"
+unset -f __test_stuck_transition_original
+assert_no_file "$(dx_lifecycle_control_lock_dir "$PERSISTENT_TRANSITION_SID")"
+assert_file "$DX_LOOP_DIR/${PERSISTENT_TRANSITION_SID}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$PERSISTENT_TRANSITION_SID"
+assert_no_file "$DX_LOOP_DIR/${PERSISTENT_TRANSITION_SID}.cleanup-journal"
+
+PERSISTENT_CHECKOUT_SID="$(cd "$REPO" && dx_scoped_session_id branch-checkout-stuck)"
+make_terminal_session "$PERSISTENT_CHECKOUT_SID" "$REPO"
+eval "$(declare -f dx_review_lock_release_checked | \
+  sed '1s/^dx_review_lock_release_checked /__test_stuck_checkout_original /')"
+dx_review_lock_release_checked() {
+  return 1
+}
+assert_rejected "persistent checkout release failure" \
+  __dx_session_management_cleanup_exact "$REPO" "$PERSISTENT_CHECKOUT_SID"
+unset -f dx_review_lock_release_checked
+eval "$(declare -f __test_stuck_checkout_original | \
+  sed '1s/^__test_stuck_checkout_original /dx_review_lock_release_checked /')"
+unset -f __test_stuck_checkout_original
+assert_no_file "$(dx_review_lock_dir "$REPO")"
+assert_file "$DX_LOOP_DIR/${PERSISTENT_CHECKOUT_SID}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$PERSISTENT_CHECKOUT_SID"
+assert_no_file "$DX_LOOP_DIR/${PERSISTENT_CHECKOUT_SID}.cleanup-journal"
+
+# An existing foreign owner is not the same as an absent canonical lock. The
+# detach path rejects it without changing the foreign record.
+FOREIGN_LIFECYCLE_SID="$(cd "$REPO" && dx_scoped_session_id branch-foreign-lifecycle-lock)"
+dx_lifecycle_control_lock_acquire "$FOREIGN_LIFECYCLE_SID"
+FOREIGN_LIFECYCLE_EXPECTED_TOKEN="$DX_LIFECYCLE_CONTROL_LOCK_TOKEN"
+FOREIGN_LIFECYCLE_LOCK="$(dx_lifecycle_control_lock_dir "$FOREIGN_LIFECYCLE_SID")"
+FOREIGN_LIFECYCLE_OWNER="$FOREIGN_LIFECYCLE_LOCK/owner"
+FOREIGN_LIFECYCLE_ORIGINAL="$(<"$FOREIGN_LIFECYCLE_OWNER")"
+FOREIGN_LIFECYCLE_TOKEN="$(date +%s)-$$-9101"
+printf '%s\t%s\t%s\n' "$$" "$(date +%s)" "$FOREIGN_LIFECYCLE_TOKEN" \
+  > "$FOREIGN_LIFECYCLE_OWNER"
+FOREIGN_OWNER_STATE=0
+__dx_session_management_lifecycle_owner_state "$FOREIGN_LIFECYCLE_SID" \
+  "$$" "$FOREIGN_LIFECYCLE_EXPECTED_TOKEN" || FOREIGN_OWNER_STATE=$?
+assert_eq "2" "$FOREIGN_OWNER_STATE" "foreign lifecycle owner state"
+assert_rejected "foreign lifecycle owner detach" \
+  __dx_session_management_detach_lifecycle_lock "$FOREIGN_LIFECYCLE_SID" \
+    "$$" "$FOREIGN_LIFECYCLE_EXPECTED_TOKEN"
+assert_eq "$FOREIGN_LIFECYCLE_TOKEN" \
+  "$(awk -F '\t' 'NR == 1 { print $3 }' "$FOREIGN_LIFECYCLE_OWNER")" \
+  "foreign lifecycle owner preserved"
+printf '%s\n' "$FOREIGN_LIFECYCLE_ORIGINAL" > "$FOREIGN_LIFECYCLE_OWNER"
+__dx_session_management_detach_lifecycle_lock "$FOREIGN_LIFECYCLE_SID" \
+  "$$" "$FOREIGN_LIFECYCLE_EXPECTED_TOKEN"
+assert_no_file "$FOREIGN_LIFECYCLE_LOCK"
+
+FOREIGN_CHECKOUT_TOKEN="$(date +%s)-$$-9201"
+dx_review_lock_acquire "$REPO" "$FOREIGN_CHECKOUT_TOKEN" "$$"
+FOREIGN_CHECKOUT_LOCK="$(dx_review_lock_dir "$REPO")"
+FOREIGN_CHECKOUT_OWNER="$FOREIGN_CHECKOUT_LOCK/owner"
+FOREIGN_CHECKOUT_ORIGINAL="$(<"$FOREIGN_CHECKOUT_OWNER")"
+FOREIGN_CHECKOUT_OTHER_TOKEN="$(date +%s)-$$-9202"
+printf '%s\t%s\t%s\n' "$(date +%s)" "$$" "$FOREIGN_CHECKOUT_OTHER_TOKEN" \
+  > "$FOREIGN_CHECKOUT_OWNER"
+FOREIGN_OWNER_STATE=0
+__dx_session_management_review_owner_state "$REPO" \
+  "$$" "$FOREIGN_CHECKOUT_TOKEN" || FOREIGN_OWNER_STATE=$?
+assert_eq "2" "$FOREIGN_OWNER_STATE" "foreign checkout owner state"
+assert_rejected "foreign checkout owner detach" \
+  __dx_session_management_detach_checkout_lock "$REPO" \
+    "$$" "$FOREIGN_CHECKOUT_TOKEN"
+assert_eq "$FOREIGN_CHECKOUT_OTHER_TOKEN" \
+  "$(awk -F '\t' 'NR == 1 { print $3 }' "$FOREIGN_CHECKOUT_OWNER")" \
+  "foreign checkout owner preserved"
+printf '%s\n' "$FOREIGN_CHECKOUT_ORIGINAL" > "$FOREIGN_CHECKOUT_OWNER"
+__dx_session_management_detach_checkout_lock "$REPO" "$$" "$FOREIGN_CHECKOUT_TOKEN"
+assert_no_file "$FOREIGN_CHECKOUT_LOCK"
+
+# If the canonical directory is swapped after the identity snapshot, detached
+# revalidation restores the foreign directory and leaves the saved owner alone.
+SWAP_LIFECYCLE_SID="$(cd "$REPO" && dx_scoped_session_id branch-swap-lifecycle-lock)"
+dx_lifecycle_control_lock_acquire "$SWAP_LIFECYCLE_SID"
+SWAP_LIFECYCLE_TOKEN="$DX_LIFECYCLE_CONTROL_LOCK_TOKEN"
+SWAP_LIFECYCLE_LOCK="$(dx_lifecycle_control_lock_dir "$SWAP_LIFECYCLE_SID")"
+SWAP_LIFECYCLE_SAVED="${SWAP_LIFECYCLE_LOCK}.test-owned"
+SWAP_LIFECYCLE_FOREIGN="$(date +%s)-$$-9301"
+eval "$(declare -f __dx_session_management_detach_checkpoint | \
+  sed '1s/^__dx_session_management_detach_checkpoint /__test_detach_checkpoint_original /')"
+__dx_session_management_detach_checkpoint() {
+  [[ "$1" == "lifecycle" && "$2" == "$SWAP_LIFECYCLE_LOCK" ]] || return 0
+  command mv "$2" "$SWAP_LIFECYCLE_SAVED"
+  mkdir "$2"
+  chmod 700 "$2"
+  printf '%s\t%s\t%s\n' "$$" "$(date +%s)" "$SWAP_LIFECYCLE_FOREIGN" \
+    > "$2/owner"
+  chmod 600 "$2/owner"
+}
+assert_rejected "post-check lifecycle owner swap" \
+  __dx_session_management_detach_lifecycle_lock "$SWAP_LIFECYCLE_SID" \
+    "$$" "$SWAP_LIFECYCLE_TOKEN"
+unset -f __dx_session_management_detach_checkpoint
+eval "$(declare -f __test_detach_checkpoint_original | \
+  sed '1s/^__test_detach_checkpoint_original /__dx_session_management_detach_checkpoint /')"
+unset -f __test_detach_checkpoint_original
+assert_eq "$SWAP_LIFECYCLE_FOREIGN" \
+  "$(awk -F '\t' 'NR == 1 { print $3 }' "$SWAP_LIFECYCLE_LOCK/owner")" \
+  "swapped lifecycle owner restored"
+assert_file "$SWAP_LIFECYCLE_SAVED/owner"
+command rm -rf -- "$SWAP_LIFECYCLE_LOCK"
+command mv "$SWAP_LIFECYCLE_SAVED" "$SWAP_LIFECYCLE_LOCK"
+__dx_session_management_detach_lifecycle_lock "$SWAP_LIFECYCLE_SID" \
+  "$$" "$SWAP_LIFECYCLE_TOKEN"
+assert_no_file "$SWAP_LIFECYCLE_LOCK"
+
+SWAP_CHECKOUT_TOKEN="$(date +%s)-$$-9401"
+dx_review_lock_acquire "$REPO" "$SWAP_CHECKOUT_TOKEN" "$$"
+SWAP_CHECKOUT_LOCK="$(dx_review_lock_dir "$REPO")"
+SWAP_CHECKOUT_SAVED="${SWAP_CHECKOUT_LOCK}.test-owned"
+SWAP_CHECKOUT_FOREIGN="$(date +%s)-$$-9402"
+eval "$(declare -f __dx_session_management_detach_checkpoint | \
+  sed '1s/^__dx_session_management_detach_checkpoint /__test_detach_checkpoint_original /')"
+__dx_session_management_detach_checkpoint() {
+  [[ "$1" == "checkout" && "$2" == "$SWAP_CHECKOUT_LOCK" ]] || return 0
+  command mv "$2" "$SWAP_CHECKOUT_SAVED"
+  mkdir "$2"
+  chmod 700 "$2"
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$$" "$SWAP_CHECKOUT_FOREIGN" \
+    > "$2/owner"
+  chmod 600 "$2/owner"
+}
+assert_rejected "post-check checkout owner swap" \
+  __dx_session_management_detach_checkout_lock "$REPO" "$$" "$SWAP_CHECKOUT_TOKEN"
+unset -f __dx_session_management_detach_checkpoint
+eval "$(declare -f __test_detach_checkpoint_original | \
+  sed '1s/^__test_detach_checkpoint_original /__dx_session_management_detach_checkpoint /')"
+unset -f __test_detach_checkpoint_original
+assert_eq "$SWAP_CHECKOUT_FOREIGN" \
+  "$(awk -F '\t' 'NR == 1 { print $3 }' "$SWAP_CHECKOUT_LOCK/owner")" \
+  "swapped checkout owner restored"
+assert_file "$SWAP_CHECKOUT_SAVED/owner"
+command rm -rf -- "$SWAP_CHECKOUT_LOCK"
+command mv "$SWAP_CHECKOUT_SAVED" "$SWAP_CHECKOUT_LOCK"
+__dx_session_management_detach_checkout_lock "$REPO" "$$" "$SWAP_CHECKOUT_TOKEN"
+assert_no_file "$SWAP_CHECKOUT_LOCK"
+
+# A missing owner file means "absent" only when the canonical lock path is
+# also absent. Publication windows and malformed canonical objects stay held
+# in the journal and are never detached or deleted.
+CANONICAL_LIFECYCLE_SID="$(cd "$REPO" && dx_scoped_session_id branch-canonical-state)"
+CANONICAL_LIFECYCLE_LOCK="$(dx_lifecycle_control_lock_dir "$CANONICAL_LIFECYCLE_SID")"
+CANONICAL_LIFECYCLE_TOKEN="$(date +%s)-$$-9501"
+CANONICAL_CHECKOUT_LOCK="$(dx_review_lock_dir "$REPO")"
+CANONICAL_CHECKOUT_TOKEN="$(date +%s)-$$-9502"
+eval "$(declare -f __dx_session_management_journal | \
+  sed '1s/^__dx_session_management_journal /__test_canonical_journal_original /')"
+eval "$(declare -f dx_lifecycle_control_lock_release_checked | \
+  sed '1s/^dx_lifecycle_control_lock_release_checked /__test_canonical_lifecycle_release_original /')"
+eval "$(declare -f dx_review_lock_release_checked | \
+  sed '1s/^dx_review_lock_release_checked /__test_canonical_checkout_release_original /')"
+CANONICAL_LIFECYCLE_MARKED_RELEASED=0
+CANONICAL_CHECKOUT_MARKED_RELEASED=0
+__dx_session_management_journal() {
+  case "$1" in
+    entry-lock)
+      printf 'held\t%s\t%s\n' "$$" "$CANONICAL_LIFECYCLE_TOKEN"
+      ;;
+    lock-released)
+      CANONICAL_LIFECYCLE_MARKED_RELEASED=1
+      ;;
+    workspace)
+      printf '%s\n' "$REPO"
+      ;;
+    checkout)
+      printf 'held\t%s\t%s\n' "$$" "$CANONICAL_CHECKOUT_TOKEN"
+      ;;
+    checkout-released)
+      CANONICAL_CHECKOUT_MARKED_RELEASED=1
+      ;;
+    *) return 1 ;;
+  esac
+}
+dx_lifecycle_control_lock_release_checked() { return 1; }
+dx_review_lock_release_checked() { return 1; }
+
+make_untrusted_canonical() { # <kind> <canonical-path>
+  local canonical_kind="$1" canonical_file="$2"
+  case "$canonical_kind" in
+    empty-dir)
+      mkdir "$canonical_file"
+      chmod 700 "$canonical_file"
+      ;;
+    symlink)
+      mkdir "${canonical_file}.test-target"
+      ln -s "${canonical_file}.test-target" "$canonical_file"
+      ;;
+    non-directory)
+      printf 'not a lock\n' > "$canonical_file"
+      chmod 600 "$canonical_file"
+      ;;
+    malformed)
+      mkdir "$canonical_file"
+      chmod 700 "$canonical_file"
+      printf 'malformed owner\n' > "$canonical_file/owner"
+      chmod 600 "$canonical_file/owner"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+remove_untrusted_canonical() { # <canonical-path>
+  local canonical_file="$1"
+  command rm -rf -- "$canonical_file" "${canonical_file}.test-target"
+}
+
+for canonical_kind in empty-dir symlink non-directory malformed; do
+  make_untrusted_canonical "$canonical_kind" "$CANONICAL_LIFECYCLE_LOCK"
+  CANONICAL_OWNER_STATE=0
+  __dx_session_management_lifecycle_owner_state "$CANONICAL_LIFECYCLE_SID" \
+    "$$" "$CANONICAL_LIFECYCLE_TOKEN" || CANONICAL_OWNER_STATE=$?
+  assert_eq "2" "$CANONICAL_OWNER_STATE" \
+    "lifecycle ${canonical_kind} canonical state"
+  CANONICAL_LIFECYCLE_MARKED_RELEASED=0
+  assert_rejected "lifecycle ${canonical_kind} canonical release" \
+    __dx_session_management_entry_release journal parent "$REPO" \
+      "$CANONICAL_LIFECYCLE_SID"
+  assert_eq "0" "$CANONICAL_LIFECYCLE_MARKED_RELEASED" \
+    "lifecycle ${canonical_kind} journal held"
+  [[ -e "$CANONICAL_LIFECYCLE_LOCK" || -L "$CANONICAL_LIFECYCLE_LOCK" ]] \
+    || assert_at "$LINENO"
+  remove_untrusted_canonical "$CANONICAL_LIFECYCLE_LOCK"
+done
+
+for canonical_kind in empty-dir symlink non-directory malformed; do
+  make_untrusted_canonical "$canonical_kind" "$CANONICAL_CHECKOUT_LOCK"
+  CANONICAL_OWNER_STATE=0
+  __dx_session_management_review_owner_state "$REPO" \
+    "$$" "$CANONICAL_CHECKOUT_TOKEN" || CANONICAL_OWNER_STATE=$?
+  assert_eq "2" "$CANONICAL_OWNER_STATE" \
+    "checkout ${canonical_kind} canonical state"
+  CANONICAL_CHECKOUT_MARKED_RELEASED=0
+  assert_rejected "checkout ${canonical_kind} canonical release" \
+    __dx_session_management_checkout_release journal parent "$REPO"
+  assert_eq "0" "$CANONICAL_CHECKOUT_MARKED_RELEASED" \
+    "checkout ${canonical_kind} journal held"
+  [[ -e "$CANONICAL_CHECKOUT_LOCK" || -L "$CANONICAL_CHECKOUT_LOCK" ]] \
+    || assert_at "$LINENO"
+  remove_untrusted_canonical "$CANONICAL_CHECKOUT_LOCK"
+done
+
+unset -f __dx_session_management_journal \
+  dx_lifecycle_control_lock_release_checked dx_review_lock_release_checked
+eval "$(declare -f __test_canonical_journal_original | \
+  sed '1s/^__test_canonical_journal_original /__dx_session_management_journal /')"
+eval "$(declare -f __test_canonical_lifecycle_release_original | \
+  sed '1s/^__test_canonical_lifecycle_release_original /dx_lifecycle_control_lock_release_checked /')"
+eval "$(declare -f __test_canonical_checkout_release_original | \
+  sed '1s/^__test_canonical_checkout_release_original /dx_review_lock_release_checked /')"
+unset -f __test_canonical_journal_original \
+  __test_canonical_lifecycle_release_original \
+  __test_canonical_checkout_release_original \
+  make_untrusted_canonical remove_untrusted_canonical
 
 # Purge failures happen only after both locks are gone and keep the brakes.
 PURGE_FAILURE_SID="$(cd "$REPO" && dx_scoped_session_id branch-purge-failure)"
@@ -512,6 +928,71 @@ assert_eq "failed" "$(dx_session_runtime_field "$PURGE_FAILURE_SID" status)" \
 assert_no_file "$(dx_lifecycle_control_lock_dir "$PURGE_FAILURE_SID")"
 assert_no_file "$(dx_review_lock_dir "$REPO")"
 assert_brakes "$PURGE_FAILURE_SID"
+
+# A payload-removal failure after metadata disappears resumes from the durable
+# journal instead of trying to rediscover the session from the catalog.
+PARTIAL_REMOVE_SID="$(cd "$REPO" && dx_scoped_session_id branch-partial-remove)"
+make_terminal_session "$PARTIAL_REMOVE_SID" "$REPO"
+eval "$(declare -f __dx_session_management_artifacts | \
+  sed '1s/^__dx_session_management_artifacts /__test_artifacts_original /')"
+PARTIAL_REMOVE_FAILED=0
+__dx_session_management_artifacts() {
+  if [[ "$1" == "remove-payload" && "$2" == "$PARTIAL_REMOVE_SID" \
+    && "$PARTIAL_REMOVE_FAILED" -eq 0 ]]; then
+    command rm -f "$(dx_meta_file "$2")"
+    PARTIAL_REMOVE_FAILED=1
+    return 1
+  fi
+  __test_artifacts_original "$@"
+}
+assert_rejected "partial payload removal" \
+  __dx_session_management_cleanup_exact "$REPO" "$PARTIAL_REMOVE_SID"
+unset -f __dx_session_management_artifacts
+eval "$(declare -f __test_artifacts_original | \
+  sed '1s/^__test_artifacts_original /__dx_session_management_artifacts /')"
+unset -f __test_artifacts_original
+assert_eq "1" "$PARTIAL_REMOVE_FAILED" "partial removal hook"
+assert_no_file "$(dx_meta_file "$PARTIAL_REMOVE_SID")"
+assert_file "$DX_LOOP_DIR/${PARTIAL_REMOVE_SID}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$PARTIAL_REMOVE_SID"
+assert_no_file "$DX_LOOP_DIR/${PARTIAL_REMOVE_SID}.cleanup-journal"
+assert_no_file "$(dx_session_runtime_file "$PARTIAL_REMOVE_SID")"
+
+# Each child purge is journaled independently. If child N fails, retry skips
+# the already-purged children and finishes the remaining children and parent.
+MULTI_PURGE_PARENT="$(cd "$REPO" && dx_scoped_session_id branch-multi-purge)"
+make_terminal_session "$MULTI_PURGE_PARENT" "$REPO"
+make_review_child "$MULTI_PURGE_PARENT" pass \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 1
+MULTI_PURGE_CHILD_ONE="$REVIEW_CHILD_SID"
+make_review_child "$MULTI_PURGE_PARENT" pass \
+  cccccccccccccccccccccccccccccccc 1
+MULTI_PURGE_CHILD_TWO="$REVIEW_CHILD_SID"
+eval "$(declare -f __dx_session_runtime_owner_purge | \
+  sed '1s/^__dx_session_runtime_owner_purge /__test_multi_purge_original /')"
+MULTI_PURGE_COUNT=0
+__dx_session_runtime_owner_purge() {
+  MULTI_PURGE_COUNT=$((MULTI_PURGE_COUNT + 1))
+  if [[ "$MULTI_PURGE_COUNT" -eq 2 ]]; then
+    dx_session_runtime_owner_finish "$1" failed >/dev/null 2>&1 || true
+    return 1
+  fi
+  __test_multi_purge_original "$@"
+}
+assert_rejected "N-of-M child purge" \
+  __dx_session_management_cleanup_exact "$REPO" "$MULTI_PURGE_PARENT"
+unset -f __dx_session_runtime_owner_purge
+eval "$(declare -f __test_multi_purge_original | \
+  sed '1s/^__test_multi_purge_original /__dx_session_runtime_owner_purge /')"
+unset -f __test_multi_purge_original
+assert_eq "2" "$MULTI_PURGE_COUNT" "N-of-M purge hook"
+assert_no_file "$(dx_session_runtime_file "$MULTI_PURGE_CHILD_ONE")"
+assert_file "$(dx_session_runtime_file "$MULTI_PURGE_CHILD_TWO")"
+assert_file "$DX_LOOP_DIR/${MULTI_PURGE_PARENT}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$MULTI_PURGE_PARENT"
+assert_no_file "$(dx_session_runtime_file "$MULTI_PURGE_CHILD_TWO")"
+assert_no_file "$(dx_session_runtime_file "$MULTI_PURGE_PARENT")"
+assert_no_file "$DX_LOOP_DIR/${MULTI_PURGE_PARENT}.cleanup-journal"
 
 # A missing recorded worktree is accepted only after the dead-runtime CAS has
 # transferred ownership. Cleanup never touches the worktree ref or run journal.
