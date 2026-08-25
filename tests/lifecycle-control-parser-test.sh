@@ -66,6 +66,17 @@ check "ordinary implementation imperative" 2 "Go implement the requested fix." "
 check "ordinary plan imperative" 2 "Move to plan the requested work." "" ""
 check "watcher resume is unrelated" 6 "Resume watcher monitoring." "" ""
 
+__dx_provider_prompt() { return 0; }
+WAVE_PROMPT=$(__dx_review_wave_message_template \
+  "current change set" "main" "changes" "git diff" \
+  "git diff --stat" "git diff --name-only" "REVIEW_PASS_COMPLETE")
+check "generated review-wave prompt is not human lifecycle control" 3 \
+  "$WAVE_PROMPT" "" ""
+if grep -Ein 'mark[[:space:]]+plan-dependent' \
+  "$ROOT/lib/review-loop.sh" "$ROOT/prompts/phase-audits/3-review.md" \
+  >/dev/null; then
+  assert_at $LINENO
+fi
 [[ "$(__dx_review_default_pass_timeout light)" == "900" ]] || assert_at $LINENO
 [[ "$(__dx_review_default_pass_timeout standard)" == "1800" ]] || assert_at $LINENO
 [[ "$(__dx_review_default_pass_timeout thorough)" == "3600" ]] || assert_at $LINENO

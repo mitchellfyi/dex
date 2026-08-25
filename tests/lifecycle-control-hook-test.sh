@@ -42,6 +42,32 @@ PAUSED_FILE=$(dx_paused_file "$DEX_SESSION_ID")
 OWNER_FILE=$(dx_owner_file "$DEX_SESSION_ID")
 CONTROL_OWNER="claude-owner"
 
+# A generated review-wave prompt is not human lifecycle control. A later human
+# prompt in the same review child must still be honored.
+REVIEW_CHILD_SID="human-control-hook-review-child"
+dx_completion_loop_activate "$REVIEW_CHILD_SID" child review-pass 3 >/dev/null
+__dx_provider_prompt() { return 0; }
+REVIEW_WAVE_PROMPT=$(__dx_review_wave_message_template \
+  "current change set" "main" "changes" "git diff" \
+  "git diff --stat" "git diff --name-only" "REVIEW_PASS_COMPLETE")
+owned_payload "$REVIEW_WAVE_PROMPT" "claude-review-child" | env \
+  DEX_SESSION_ID="$REVIEW_CHILD_SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+  DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" > "$TMP_DIR/review-child.out"
+[[ ! -s "$TMP_DIR/review-child.out" ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_control_file "$REVIEW_CHILD_SID")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_paused_file "$REVIEW_CHILD_SID")" ]] || assert_at $LINENO
+owned_payload "Stop Dex and let me take over." "claude-review-child" | env \
+  DEX_SESSION_ID="$REVIEW_CHILD_SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+  DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" > "$TMP_DIR/review-child-human.out"
+[[ "$(dx_lifecycle_control_read "$REVIEW_CHILD_SID" action)" == "cancel" ]] \
+  || assert_at $LINENO
+[[ -e "$(dx_paused_file "$REVIEW_CHILD_SID")" ]] || assert_at $LINENO
+[[ "$(cat "$(dx_owner_file "$REVIEW_CHILD_SID")")" == "claude-review-child" ]] \
+  || assert_at $LINENO
+grep -q "Direct human cancel instruction accepted" \
+  "$TMP_DIR/review-child-human.out"
+dx_cleanup_session "$REVIEW_CHILD_SID"
+
 # A prompt cannot claim an ownerless lifecycle without a valid hook session.
 payload "Stop Dex and let me take over." | bash "$HOOK" > "$TMP_DIR/stop.out"
 [[ ! -e "$CONTROL_FILE" ]] || assert_at $LINENO

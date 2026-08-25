@@ -662,7 +662,7 @@ Result semantics:
 - Write \`CHURN:reason-code\` if the wave cannot make reliable progress.
 - Write \`ESCALATE:normal:reason-code\` or \`ESCALATE:complex:reason-code\` if the selected tier is too shallow. Escalation is upward-only. \`ESCALATE_THOROUGH:reason\` remains a legacy alias for complex.
 
-When the approved requirements marker is N/A, mark plan-dependent sections as N/A and proceed. Otherwise, the pass-scoped criteria file above is authoritative. Do not infer additional criteria from stale session prompt files, previous conversation turns, session titles, AGENTS instructions, or unrelated ticket context.
+When the approved requirements marker is N/A, treat plan-dependent sections as N/A and proceed. Otherwise, the pass-scoped criteria file above is authoritative. Do not infer additional criteria from stale session prompt files, previous conversation turns, session titles, AGENTS instructions, or unrelated ticket context.
 
 ${scope_boundary}
 
@@ -967,7 +967,7 @@ dx_review_loop_run() {
 
 Review scope: ${scope_name} (${files_changed} files).
 
-No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan-dependent sections as N/A unless explicit criteria are present in the review-pass prompt."
+No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat plan-dependent sections as N/A unless explicit criteria are present in the review-pass prompt."
   fi
 
   local review_phase=""

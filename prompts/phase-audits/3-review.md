@@ -94,7 +94,7 @@ new wave.
 Do not infer acceptance criteria from stale session prompt files, previous
 conversation turns, session titles, AGENTS instructions, or unrelated ticket
 context. If the caller did not explicitly supply criteria for this review
-iteration, mark plan-dependent sections `N/A`.
+iteration, treat plan-dependent sections as `N/A`.
 
 Also write the single findings hash described in `prompts/review-wave.md`. The
 outer loop appends validated non-clean hashes to its stuck-loop history. Do not
