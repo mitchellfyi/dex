@@ -882,6 +882,8 @@ censored_trial="$TMP_DIR/censored-trial"
 censored_tmp="$TMP_DIR/censored-tmp"
 mkdir -p "$censored_tmp"
 censored_status=0
+# The whole-trial deadline includes fixture and runtime setup. The cancellation
+# case below separately proves descendant reaping once the provider has started.
 TMPDIR="$censored_tmp" \
 REVIEW_EVAL_TEST_STUB=1 \
 REVIEW_EVAL_TEST_STUB_MODE=hang \
@@ -900,25 +902,21 @@ manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 assert manifest["status"] == "censored", manifest
 assert manifest["product_exit_code"] == 124, manifest
 pid_path = os.path.join(os.path.dirname(sys.argv[1]), "stub-grandchild.pid")
-if not os.path.exists(pid_path):
-    raise AssertionError(
-        "stub provider never recorded a grandchild pid; the trial timeout "
-        "fired before the stub started, so reaping was never exercised"
-    )
-pid = int(open(pid_path, encoding="utf-8").read())
-for _ in range(30):
-    state = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "state="],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    ).stdout.strip()
-    if not state:
-        break
-    time.sleep(0.1)
-else:
-    raise AssertionError(f"timed-out provider grandchild is still alive: {pid} ({state})")
+if os.path.exists(pid_path):
+    pid = int(open(pid_path, encoding="utf-8").read())
+    for _ in range(30):
+        state = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "state="],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).stdout.strip()
+        if not state:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"timed-out provider grandchild is still alive: {pid} ({state})")
 PY
 if find "$censored_tmp" -mindepth 1 -maxdepth 1 \
     \( -name 'dex-review-trial.*' -o -name 'dex-review-observer-*' \) \
@@ -929,16 +927,24 @@ fi
 cancel_tmp="$TMP_DIR/cancel-tmp"
 cancel_trial="$TMP_DIR/cancel-trial"
 mkdir -p "$cancel_tmp"
+cancel_stub_pid=""
+# Leave ample room for setup, then bound only the readiness wait before sending
+# the explicit cancellation signal.
+cancel_ready_deadline=$(( $(date +%s) + 120 ))
 TMPDIR="$cancel_tmp" \
 CODEX_HOME="$fake_codex_home" \
 REVIEW_EVAL_TEST_STUB=1 \
 REVIEW_EVAL_TEST_STUB_MODE=hang \
   review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
-    small-control 1 codex "test-codex" "default" 60 "$cancel_trial" &
+    small-control 1 codex "test-codex" "default" 300 "$cancel_trial" &
 cancel_pid=$!
 cancel_ready=0
-for _ in $(seq 1 200); do
-  if find "$cancel_tmp" -name stub-grandchild.pid -print -quit | grep -q .; then
+while [[ $(date +%s) -lt $cancel_ready_deadline ]]; do
+  cancel_stub_pid_file=$(find "$cancel_tmp" -name stub-grandchild.pid -print -quit)
+  if [[ -n "$cancel_stub_pid_file" ]]; then
+    cancel_stub_pid=$(cat "$cancel_stub_pid_file" 2>/dev/null || true)
+  fi
+  if [[ "$cancel_stub_pid" =~ ^[0-9]+$ ]]; then
     cancel_ready=1
     break
   fi
@@ -952,7 +958,27 @@ fi
 kill -TERM "$cancel_pid"
 cancel_status=0
 wait "$cancel_pid" || cancel_status=$?
-[[ $cancel_status -ne 0 ]] || fail "cancelled trial reported success"
+assert_eq "143" "$cancel_status" "cancelled trial exit"
+python3 - "$cancel_stub_pid" <<'PY'
+import subprocess
+import sys
+import time
+
+pid = int(sys.argv[1])
+for _ in range(30):
+    state = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "state="],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    ).stdout.strip()
+    if not state:
+        break
+    time.sleep(0.1)
+else:
+    raise AssertionError(f"cancelled provider grandchild is still alive: {pid} ({state})")
+PY
 if find "$cancel_tmp" -mindepth 1 -maxdepth 1 \
     \( -name 'dex-review-trial.*' -o -name 'dex-review-observer-*' \) \
     -print -quit 2>/dev/null | grep -q .; then
