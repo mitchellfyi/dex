@@ -90,6 +90,162 @@ make_terminal_session() { # <sid> <workspace> [phase]
   dx_session_runtime_finish "$fixture_sid" "$fixture_token" paused "$$"
 }
 
+make_completed_session() { # <sid> <workspace>
+  local fixture_sid="$1" fixture_workspace="$2" fixture_token
+  dx_meta_write "$fixture_sid" \
+    "ticket_number=${fixture_sid##*-}" \
+    "wt_name=${fixture_sid##*-}" \
+    "wt_dir=$fixture_workspace" \
+    "workspace_mode=in-place"
+  printf '7\n' > "$(dx_state_file "$fixture_sid")"
+  printf 'version=1\nphase=7\ntransition_token=100-200-300\nauthority=0123456789abcdef0123456789abcdef\n' \
+    > "$DX_STATE_DIR/${fixture_sid}.terminal-commit"
+  chmod 600 "$(dx_state_file "$fixture_sid")" \
+    "$DX_STATE_DIR/${fixture_sid}.terminal-commit"
+  fixture_token="$(dx_session_runtime_start \
+    "$fixture_sid" codex "$fixture_workspace" "$$")"
+  dx_session_runtime_finish "$fixture_sid" "$fixture_token" completed "$$"
+}
+
+# The completed-only path must replace the outside-lock catalog policy with a
+# lock-aware revalidation. Its own control lock makes the catalog state
+# unknown, so the terminal proof is validated directly while that lock is held.
+LOCKED_POLICY_SID="$(cd "$REPO" && dx_scoped_session_id branch-locked-policy)"
+make_completed_session "$LOCKED_POLICY_SID" "$REPO"
+LOCKED_POLICY_SEEN=0
+eval "$(declare -f __dx_lifecycle_terminal_commit_valid_unlocked | \
+  sed '1s/^__dx_lifecycle_terminal_commit_valid_unlocked /__test_terminal_valid_original /')"
+__dx_lifecycle_terminal_commit_valid_unlocked() {
+  if [[ "$1" == "$LOCKED_POLICY_SID" ]]; then
+    __dx_lifecycle_control_lock_owned "$1" || return 1
+    LOCKED_POLICY_SEEN=1
+  fi
+  __test_terminal_valid_original "$@"
+}
+__dx_session_management_cleanup_completed_exact "$REPO" "$LOCKED_POLICY_SID"
+unset -f __dx_lifecycle_terminal_commit_valid_unlocked
+eval "$(declare -f __test_terminal_valid_original | \
+  sed '1s/^__test_terminal_valid_original /__dx_lifecycle_terminal_commit_valid_unlocked /')"
+unset -f __test_terminal_valid_original
+assert_eq "1" "$LOCKED_POLICY_SEEN" "completed policy validates under lock"
+assert_no_file "$(dx_meta_file "$LOCKED_POLICY_SID")"
+assert_no_file "$(dx_session_cleanup_journal_file "$LOCKED_POLICY_SID")"
+
+# Candidate discovery is advisory. A new runtime generation that finishes
+# paused after discovery must be caught by the locked recheck.
+RUNTIME_DRIFT_SID="$(cd "$REPO" && dx_scoped_session_id branch-runtime-drift)"
+make_completed_session "$RUNTIME_DRIFT_SID" "$REPO"
+RUNTIME_DRIFT_PROOF_BEFORE="$(cksum \
+  "$DX_STATE_DIR/${RUNTIME_DRIFT_SID}.terminal-commit")"
+dx_session_catalog_records --repo "$REPO" --include-children \
+  > "$TMP_DIR/runtime-drift-before.jsonl"
+__dx_session_management_completed_candidates \
+  "$REPO" "$TMP_DIR/runtime-drift-before.jsonl" \
+  > "$TMP_DIR/runtime-drift-candidates"
+assert_contains "$RUNTIME_DRIFT_SID" "$TMP_DIR/runtime-drift-candidates"
+RUNTIME_DRIFT_INJECTED=0
+eval "$(declare -f dx_lifecycle_control_lock_acquire | \
+  sed '1s/^dx_lifecycle_control_lock_acquire /__test_control_acquire_original /')"
+dx_lifecycle_control_lock_acquire() {
+  local drift_token
+  __test_control_acquire_original "$@" || return
+  if [[ "$1" == "$RUNTIME_DRIFT_SID" \
+    && "$RUNTIME_DRIFT_INJECTED" -eq 0 ]]; then
+    RUNTIME_DRIFT_INJECTED=1
+    drift_token="$(dx_session_runtime_start \
+      "$RUNTIME_DRIFT_SID" codex "$REPO" "$$")" || return 1
+    dx_session_runtime_finish \
+      "$RUNTIME_DRIFT_SID" "$drift_token" paused "$$" || return 1
+  fi
+}
+assert_rejected "completed-to-paused drift" \
+  __dx_session_management_cleanup_completed_exact "$REPO" "$RUNTIME_DRIFT_SID"
+unset -f dx_lifecycle_control_lock_acquire
+eval "$(declare -f __test_control_acquire_original | \
+  sed '1s/^__test_control_acquire_original /dx_lifecycle_control_lock_acquire /')"
+unset -f __test_control_acquire_original
+assert_eq "1" "$RUNTIME_DRIFT_INJECTED" "runtime drift injected under lock"
+assert_file "$(dx_meta_file "$RUNTIME_DRIFT_SID")"
+assert_file "$(dx_session_runtime_file "$RUNTIME_DRIFT_SID")"
+assert_eq "$RUNTIME_DRIFT_PROOF_BEFORE" \
+  "$(cksum "$DX_STATE_DIR/${RUNTIME_DRIFT_SID}.terminal-commit")" \
+  "runtime drift preserves terminal proof"
+assert_no_file "$(dx_session_cleanup_journal_file "$RUNTIME_DRIFT_SID")"
+assert_no_file "$(dx_lifecycle_control_lock_dir "$RUNTIME_DRIFT_SID")"
+
+# A reserved-prefix artifact that appears after discovery may be a review child
+# whose provenance is incomplete. Revalidation must preserve the whole family.
+CHILD_DRIFT_PARENT="$(cd "$REPO" && dx_scoped_session_id branch-child-drift)"
+make_completed_session "$CHILD_DRIFT_PARENT" "$REPO"
+dx_session_catalog_records --repo "$REPO" --include-children \
+  > "$TMP_DIR/child-drift-before.jsonl"
+__dx_session_management_completed_candidates \
+  "$REPO" "$TMP_DIR/child-drift-before.jsonl" \
+  > "$TMP_DIR/child-drift-candidates"
+assert_contains "$CHILD_DRIFT_PARENT" "$TMP_DIR/child-drift-candidates"
+CHILD_DRIFT_SID="${CHILD_DRIFT_PARENT:0:120}-review-dddddddddddddddddddddddddddddddd"
+CHILD_DRIFT_INJECTED=0
+eval "$(declare -f dx_lifecycle_control_lock_acquire | \
+  sed '1s/^dx_lifecycle_control_lock_acquire /__test_control_acquire_original /')"
+dx_lifecycle_control_lock_acquire() {
+  __test_control_acquire_original "$@" || return
+  if [[ "$1" == "$CHILD_DRIFT_PARENT" \
+    && "$CHILD_DRIFT_INJECTED" -eq 0 ]]; then
+    CHILD_DRIFT_INJECTED=1
+    dx_meta_write "$CHILD_DRIFT_SID" \
+      "ticket_number=child-drift" \
+      "wt_name=child-drift" \
+      "wt_dir=$REPO" \
+      "workspace_mode=in-place" || return 1
+    printf '3\n' > "$(dx_state_file "$CHILD_DRIFT_SID")" || return 1
+    chmod 600 "$(dx_state_file "$CHILD_DRIFT_SID")" || return 1
+  fi
+}
+assert_rejected "reserved-prefix child drift" \
+  __dx_session_management_cleanup_completed_exact "$REPO" "$CHILD_DRIFT_PARENT"
+unset -f dx_lifecycle_control_lock_acquire
+eval "$(declare -f __test_control_acquire_original | \
+  sed '1s/^__test_control_acquire_original /dx_lifecycle_control_lock_acquire /')"
+unset -f __test_control_acquire_original
+assert_eq "1" "$CHILD_DRIFT_INJECTED" "child drift injected under lock"
+assert_file "$(dx_meta_file "$CHILD_DRIFT_PARENT")"
+assert_file "$(dx_meta_file "$CHILD_DRIFT_SID")"
+assert_no_file "$(dx_session_cleanup_journal_file "$CHILD_DRIFT_PARENT")"
+assert_no_file "$(dx_lifecycle_control_lock_dir "$CHILD_DRIFT_PARENT")"
+
+# Completed-only bulk cleanup cannot inherit a broader exact-forget journal.
+# The candidate snapshot excludes journals, so finding one after the claim is
+# a concurrent-policy change and must fail closed.
+JOURNAL_POLICY_SID="$(cd "$REPO" && dx_scoped_session_id branch-journal-policy)"
+make_completed_session "$JOURNAL_POLICY_SID" "$REPO"
+dx_session_catalog_records --repo "$REPO" --include-children \
+  > "$TMP_DIR/journal-policy-before.jsonl"
+__dx_session_management_completed_candidates \
+  "$REPO" "$TMP_DIR/journal-policy-before.jsonl" \
+  > "$TMP_DIR/journal-policy-candidates"
+assert_contains "$JOURNAL_POLICY_SID" "$TMP_DIR/journal-policy-candidates"
+eval "$(declare -f __dx_session_management_claim_pending | \
+  sed '1s/^__dx_session_management_claim_pending /__test_policy_claim_pending_original /')"
+__dx_session_management_claim_pending() {
+  if [[ "$2" == "$JOURNAL_POLICY_SID" ]]; then
+    return 1
+  fi
+  __test_policy_claim_pending_original "$@"
+}
+assert_rejected "seed broader cleanup journal" \
+  __dx_session_management_cleanup_exact "$REPO" "$JOURNAL_POLICY_SID"
+unset -f __dx_session_management_claim_pending
+eval "$(declare -f __test_policy_claim_pending_original | \
+  sed '1s/^__test_policy_claim_pending_original /__dx_session_management_claim_pending /')"
+unset -f __test_policy_claim_pending_original
+assert_file "$DX_LOOP_DIR/${JOURNAL_POLICY_SID}.cleanup-journal"
+assert_rejected "completed cleanup rejects broader journal" \
+  __dx_session_management_cleanup_completed_exact "$REPO" "$JOURNAL_POLICY_SID"
+assert_file "$(dx_meta_file "$JOURNAL_POLICY_SID")"
+assert_file "$DX_LOOP_DIR/${JOURNAL_POLICY_SID}.cleanup-journal"
+__dx_session_management_cleanup_exact "$REPO" "$JOURNAL_POLICY_SID"
+assert_no_file "$DX_LOOP_DIR/${JOURNAL_POLICY_SID}.cleanup-journal"
+
 # Once the trusted final inventory is validated, unlinking the journal is the
 # semantic commit. Diagnostics and temporary cleanup cannot turn that commit
 # into an unretryable failure after all session evidence is gone.

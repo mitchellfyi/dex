@@ -8,9 +8,9 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: dx sessions <list|show|doctor|pause|cancel|resume|forget> [options]
+Usage: dx sessions <list|show|doctor|pause|cancel|resume|forget|cleanup> [options]
 
-Inspect lifecycle sessions, control live runs, or relaunch or forget one dead lifecycle.
+Inspect lifecycle sessions, control live runs, or remove verified session state.
 
 Commands:
   list [--all] [--include-children]
@@ -36,6 +36,9 @@ Commands:
 
   forget <selector>
       Forget one verified dead lifecycle in the current repository.
+
+  cleanup [--dry-run]
+      Remove every verified completed lifecycle in the current repository.
 
 Options:
   --all               Search every recoverable repository (list only)
@@ -1017,6 +1020,93 @@ print(session_id)
   return "$cleanup_result"
 }
 
+__dx_sessions_cleanup_completed() {
+  local argument dry_run=0 repo_root records_file candidates_file
+  local session_id eligible_count=0 cleaned_count=0 failed_count=0
+  while [[ $# -gt 0 ]]; do
+    argument="$1"
+    case "$argument" in
+      -h|--help)
+        usage
+        return 0
+        ;;
+      --dry-run)
+        if [[ "$dry_run" -eq 1 ]]; then
+          dx_error "dx sessions cleanup accepts --dry-run once."
+          return 1
+        fi
+        dry_run=1
+        ;;
+      --all)
+        dx_error "dx sessions cleanup does not accept --all."
+        return 1
+        ;;
+      --include-children)
+        dx_error "dx sessions cleanup does not accept --include-children."
+        return 1
+        ;;
+      -*)
+        dx_error "Unknown dx sessions cleanup option: $argument"
+        return 1
+        ;;
+      *)
+        dx_error "dx sessions cleanup does not accept selectors."
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  if ! repo_root=$(dx_session_repo_root); then
+    dx_error "Run dx sessions cleanup inside a Git repository."
+    return 3
+  fi
+  __dx_sessions_ensure_temp_dir || return 1
+  records_file="$SESSIONS_TEMP_DIR/cleanup-records.jsonl"
+  candidates_file="$SESSIONS_TEMP_DIR/cleanup-candidates"
+  if ! dx_session_catalog_records --repo "$repo_root" --include-children \
+      > "$records_file"; then
+    dx_error "Could not read the lifecycle session catalog."
+    return 3
+  fi
+  if ! __dx_session_management_completed_candidates \
+      "$repo_root" "$records_file" > "$candidates_file"; then
+    dx_error "Could not classify completed lifecycle sessions safely."
+    return 3
+  fi
+
+  while IFS= read -r session_id; do
+    [[ -n "$session_id" ]] || continue
+    eligible_count=$((eligible_count + 1))
+    if [[ "$dry_run" -eq 1 ]]; then
+      dx_info "Eligible completed lifecycle: ${session_id}"
+      continue
+    fi
+    if __dx_session_management_cleanup_completed_exact \
+        "$repo_root" "$session_id"; then
+      cleaned_count=$((cleaned_count + 1))
+      dx_done "Cleaned completed lifecycle session ${session_id}."
+    else
+      failed_count=$((failed_count + 1))
+      dx_warn "Session ${session_id} was not cleaned because its state changed or cleanup could not finish."
+    fi
+  done < "$candidates_file"
+
+  if [[ "$eligible_count" -eq 0 ]]; then
+    dx_info "No completed lifecycle sessions are eligible for cleanup."
+    return 0
+  fi
+  if [[ "$dry_run" -eq 1 ]]; then
+    dx_info "Dry run: ${eligible_count} completed lifecycle session(s) eligible."
+    return 0
+  fi
+  if [[ "$failed_count" -ne 0 ]]; then
+    dx_error "Cleanup finished with ${cleaned_count} session(s) cleaned and ${failed_count} not cleaned."
+    return 1
+  fi
+  dx_done "Cleanup finished: ${cleaned_count} completed lifecycle session(s) cleaned."
+}
+
 main() {
   local command_name="${1:-}"
   case "$command_name" in
@@ -1038,6 +1128,7 @@ main() {
     pause|cancel) __dx_sessions_mutate "$command_name" "$@" ;;
     resume) __dx_sessions_resume "$@" ;;
     forget) __dx_sessions_forget "$@" ;;
+    cleanup) __dx_sessions_cleanup_completed "$@" ;;
     *)
       dx_error "Unknown dx sessions command: $command_name"
       usage >&2

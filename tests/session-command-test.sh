@@ -189,11 +189,13 @@ touch -t 200001010000 "$(dx_state_file "$SID_LEGACY")"
 
 run_sessions "$REPO_A" "$TMP_DIR/help.out" --help
 assert_eq "0" "$COMMAND_RESULT" "help result"
-assert_contains "Usage: dx sessions <list|show|doctor|pause|cancel|resume|forget>" "$TMP_DIR/help.out"
-assert_contains "relaunch or forget one dead lifecycle" "$TMP_DIR/help.out"
+assert_contains "Usage: dx sessions <list|show|doctor|pause|cancel|resume|forget|cleanup>" "$TMP_DIR/help.out"
+assert_contains "remove verified session state" "$TMP_DIR/help.out"
 assert_contains "forget <selector>" "$TMP_DIR/help.out"
 assert_contains "Forget one verified dead lifecycle in the current repository" \
   "$TMP_DIR/help.out"
+assert_contains "cleanup [--dry-run]" "$TMP_DIR/help.out"
+assert_contains "Remove every verified completed lifecycle" "$TMP_DIR/help.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/missing-command.out"
 assert_eq "1" "$COMMAND_RESULT" "missing command result"
@@ -244,6 +246,25 @@ run_sessions "$REPO_A" "$TMP_DIR/forget-all.out" forget \
 assert_eq "1" "$COMMAND_RESULT" "forget all option result"
 assert_contains "Unknown dx sessions forget option: --all" \
   "$TMP_DIR/forget-all.out"
+run_sessions "$REPO_A" "$TMP_DIR/cleanup-duplicate.out" cleanup \
+  --dry-run --dry-run
+assert_eq "1" "$COMMAND_RESULT" "cleanup duplicate dry-run result"
+assert_contains "accepts --dry-run once" "$TMP_DIR/cleanup-duplicate.out"
+run_sessions "$REPO_A" "$TMP_DIR/cleanup-all.out" cleanup --all
+assert_eq "1" "$COMMAND_RESULT" "cleanup all option result"
+assert_contains "does not accept --all" "$TMP_DIR/cleanup-all.out"
+run_sessions "$REPO_A" "$TMP_DIR/cleanup-children.out" cleanup \
+  --include-children
+assert_eq "1" "$COMMAND_RESULT" "cleanup child option result"
+assert_contains "does not accept --include-children" \
+  "$TMP_DIR/cleanup-children.out"
+run_sessions "$REPO_A" "$TMP_DIR/cleanup-selector.out" cleanup "$SID_DEAD"
+assert_eq "1" "$COMMAND_RESULT" "cleanup selector result"
+assert_contains "does not accept selectors" "$TMP_DIR/cleanup-selector.out"
+run_sessions "$REPO_A" "$TMP_DIR/cleanup-age.out" cleanup --older-than=7
+assert_eq "1" "$COMMAND_RESULT" "cleanup age option result"
+assert_contains "Unknown dx sessions cleanup option: --older-than=7" \
+  "$TMP_DIR/cleanup-age.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/list.out" list
 assert_eq "0" "$COMMAND_RESULT" "repository list result"
@@ -270,12 +291,20 @@ assert_contains "$CHILD_SID" "$TMP_DIR/list-all-children.out"
 run_sessions "$TMP_DIR" "$TMP_DIR/list-outside-repo.out" list
 assert_eq "3" "$COMMAND_RESULT" "repository context result"
 assert_contains "use 'dx sessions list --all'" "$TMP_DIR/list-outside-repo.out"
+run_sessions "$TMP_DIR" "$TMP_DIR/cleanup-outside-repo.out" cleanup --dry-run
+assert_eq "3" "$COMMAND_RESULT" "cleanup repository context result"
+assert_contains "Run dx sessions cleanup inside a Git repository" \
+  "$TMP_DIR/cleanup-outside-repo.out"
 run_sessions "$REPO_EMPTY" "$TMP_DIR/list-empty.out" list
 assert_eq "0" "$COMMAND_RESULT" "empty repository list result"
 assert_contains "No lifecycle sessions found" "$TMP_DIR/list-empty.out"
 run_sessions "$REPO_EMPTY" "$TMP_DIR/doctor-empty.out" doctor
 assert_eq "0" "$COMMAND_RESULT" "empty repository doctor result"
 assert_contains "No lifecycle sessions found" "$TMP_DIR/doctor-empty.out"
+run_sessions "$REPO_EMPTY" "$TMP_DIR/cleanup-empty.out" cleanup --dry-run
+assert_eq "0" "$COMMAND_RESULT" "empty repository cleanup result"
+assert_contains "No completed lifecycle sessions are eligible" \
+  "$TMP_DIR/cleanup-empty.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/show-live.out" show "session:$SID_LIVE"
 assert_eq "0" "$COMMAND_RESULT" "show exact session result"

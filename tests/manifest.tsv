@@ -66,6 +66,7 @@ rtk-install-test.sh	fast	all	600	hermetic
 rtk-uninstall-test.sh	fast	all	600	hermetic
 run-spec-test.sh	service	all	900	hermetic
 session-catalog-core-test.sh	fast	all	600	hermetic
+session-cleanup-test.sh	fast	all	600	hermetic
 session-command-test.sh	fast	all	600	hermetic
 session-end-ownership-test.sh	fast	all	600	hermetic
 session-forget-test.sh	fast	all	600	hermetic

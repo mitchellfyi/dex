@@ -212,16 +212,22 @@ fail("unknown inventory operation")
 PY
 }
 
-__dx_session_management_plan() { # <repo-dir> <sid> <records-file>
-  [[ $# -eq 3 ]] || return 3
-  python3 - "$1" "$2" "$3" <<'PY'
+__dx_session_management_plan() { # <repo-dir> <sid> <records-file> [eligibility-policy]
+  [[ $# -ge 3 && $# -le 4 ]] || return 3
+  python3 - "$1" "$2" "$3" "${4:-any-terminal}" <<'PY'
 import json
 import os
 import sys
 
 
-repo_dir, selected_session, records_file = sys.argv[1:]
+repo_dir, selected_session, records_file, eligibility_policy = sys.argv[1:]
 terminal_states = {"completed", "paused", "blocked", "failed", "stopped", "abandoned"}
+if eligibility_policy not in {
+    "any-terminal",
+    "completed-lifecycle",
+    "completed-lifecycle-locked",
+}:
+    raise SystemExit(3)
 try:
     with open(records_file, encoding="utf-8") as source:
         records = [json.loads(line) for line in source if line.strip()]
@@ -231,6 +237,14 @@ matches = [record for record in records if record.get("session_id") == selected_
 if len(matches) != 1:
     raise SystemExit(1)
 record = matches[0]
+artifacts = record.get("artifacts", [])
+if (
+    not isinstance(artifacts, list)
+    or any(not isinstance(artifact, str) for artifact in artifacts)
+    or len(set(artifacts)) != len(artifacts)
+):
+    raise SystemExit(3)
+artifact_set = set(artifacts)
 if (
     record.get("is_child") is not False
     or record.get("metadata_health") != "valid"
@@ -238,10 +252,31 @@ if (
     or record.get("consistency_issues") != []
     or record.get("runtime_health") != "dead"
     or record.get("runtime_status") not in terminal_states
-    or "runtime" not in record.get("artifacts", [])
+    or "runtime" not in artifact_set
     or record.get("workspace_mode") not in {"worktree", "in-place"}
     or not isinstance(record.get("workspace"), str)
     or not os.path.isabs(record["workspace"])
+):
+    raise SystemExit(1)
+if eligibility_policy in {"completed-lifecycle", "completed-lifecycle-locked"} and (
+    type(record.get("schema_version")) is not int
+    or record.get("schema_version") != 1
+    or record.get("phase") != 7
+    or record.get("runtime_status") != "completed"
+    or not {"phase", "runtime", "runtime-lock", "terminal-commit"}.issubset(
+        artifact_set
+    )
+    or "cleanup-journal" in artifact_set
+):
+    raise SystemExit(1)
+if eligibility_policy == "completed-lifecycle" and (
+    record.get("lifecycle_state") != "completed"
+    or "control-lock" in artifact_set
+):
+    raise SystemExit(1)
+if eligibility_policy == "completed-lifecycle-locked" and (
+    record.get("lifecycle_state") != "unknown"
+    or "control-lock" not in artifact_set
 ):
     raise SystemExit(1)
 workspace = record["workspace"]
@@ -276,7 +311,14 @@ for child in children:
     child_session = child.get("session_id")
     child_workspace = child.get("workspace")
     artifacts = child.get("artifacts", [])
-    has_runtime = "runtime" in artifacts
+    if (
+        not isinstance(artifacts, list)
+        or any(not isinstance(artifact, str) for artifact in artifacts)
+        or len(set(artifacts)) != len(artifacts)
+    ):
+        raise SystemExit(3)
+    artifact_set = set(artifacts)
+    has_runtime = "runtime" in artifact_set
     if (
         not isinstance(child_session, str)
         or child.get("child_kind") not in {"assessment", "pass", "review"}
@@ -286,12 +328,14 @@ for child in children:
         or not isinstance(child_workspace, str)
         or not os.path.isabs(child_workspace)
         or os.path.realpath(child_workspace) != os.path.realpath(workspace)
+        or "cleanup-journal" in artifact_set
     ):
         raise SystemExit(1)
     if has_runtime:
         if (
             child.get("runtime_health") != "dead"
             or child.get("runtime_status") not in terminal_states
+            or "runtime-lock" not in artifact_set
         ):
             raise SystemExit(1)
     elif (
@@ -313,6 +357,76 @@ if not isinstance(parent_snapshot, str):
     raise SystemExit(1)
 print(f"parent\t{selected_session}\t{workspace}\t1\t-\t{parent_snapshot}")
 PY
+}
+
+# __dx_session_management_completed_candidates <repo-dir> <records-file>
+# Print the sorted parent session IDs that the completed-only cleanup policy
+# accepts. This reads catalog output only; the destructive path revalidates the
+# same policy after it acquires the session claim and lifecycle control lock.
+__dx_session_management_completed_candidates() {
+  [[ $# -eq 2 ]] || return 3
+  local repo_dir="$1" records_file="$2" candidate_sessions candidate_session
+  local plan_result plan_records plan_role plan_session plan_workspace
+  local plan_runtime plan_kind plan_snapshot candidate_safe
+  repo_dir=$(cd "$repo_dir" 2>/dev/null && dx_session_repo_root) || return 3
+  candidate_sessions=$(python3 - "$records_file" <<'PY'
+import json
+import re
+import sys
+
+
+session_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$")
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        records = [json.loads(line) for line in source if line.strip()]
+except (OSError, ValueError, RecursionError):
+    raise SystemExit(3)
+seen = set()
+candidates = []
+for record in records:
+    if (
+        not isinstance(record, dict)
+        or type(record.get("schema_version")) is not int
+        or record.get("schema_version") != 1
+    ):
+        raise SystemExit(3)
+    session_id = record.get("session_id")
+    if not isinstance(session_id, str) or session_re.fullmatch(session_id) is None:
+        raise SystemExit(3)
+    if session_id in seen or type(record.get("is_child")) is not bool:
+        raise SystemExit(3)
+    seen.add(session_id)
+    if record["is_child"] is False:
+        candidates.append(session_id)
+for session_id in sorted(candidates):
+    print(session_id)
+PY
+  ) || return 3
+  while IFS= read -r candidate_session; do
+    [[ -n "$candidate_session" ]] || continue
+    if plan_records=$(__dx_session_management_plan "$repo_dir" \
+        "$candidate_session" "$records_file" completed-lifecycle); then
+      candidate_safe=1
+      while IFS=$'\t' read -r plan_role plan_session plan_workspace \
+          plan_runtime plan_kind plan_snapshot; do
+        : "$plan_role" "$plan_workspace" "$plan_runtime" "$plan_kind" \
+          "$plan_snapshot"
+        if ! __dx_session_management_artifacts validate "$plan_session" \
+            >/dev/null 2>&1; then
+          candidate_safe=0
+          break
+        fi
+      done <<EOF
+$plan_records
+EOF
+      [[ "$candidate_safe" -eq 0 ]] || printf '%s\n' "$candidate_session"
+    else
+      plan_result=$?
+      [[ "$plan_result" -eq 1 ]] || return "$plan_result"
+    fi
+  done <<EOF
+$candidate_sessions
+EOF
 }
 
 __dx_session_management_journal() { # <operation> <journal> <parent> <repo> [args...]
@@ -1989,14 +2103,23 @@ __dx_session_management_remove_transaction_dir() { # <directory>
   command rm -rf -- "$1"
 }
 
-__dx_session_management_cleanup_exact() { # <repo-dir> <sid>
-  [[ $# -eq 2 ]] || return 3
+__dx_session_management_cleanup_exact() { # <repo-dir> <sid> [eligibility-policy]
+  [[ $# -ge 2 && $# -le 3 ]] || return 3
   local requested_repo="$1" target_session="$2" repo_dir records_file plan_file
   local transaction_dir journal_file journal_state=0 cleanup_result=0
+  local eligibility_policy="${3:-any-terminal}" plan_policy
   local workspace="" proof_record proof_kind proof_one proof_two
   local plan_role plan_session plan_workspace plan_runtime plan_kind plan_snapshot
   local prepare_token="" prepare_held=0 journal_created=0
   local entries_record payload_stage runtime_stage lock_stage
+  case "$eligibility_policy" in
+    any-terminal|completed-lifecycle) ;;
+    *) return 3 ;;
+  esac
+  plan_policy="$eligibility_policy"
+  if [[ "$eligibility_policy" == "completed-lifecycle" ]]; then
+    plan_policy="completed-lifecycle-locked"
+  fi
   dx_session_id_valid "$target_session" || return 3
   repo_dir=$(cd "$requested_repo" 2>/dev/null && dx_session_repo_root) || return 3
   dx_session_claim_acquire "$target_session" cleanup || return 3
@@ -2020,8 +2143,12 @@ __dx_session_management_cleanup_exact() { # <repo-dir> <sid>
     dx_session_cleanup_journal_state "$target_session" || journal_state=$?
     case "$journal_state" in
       0)
-        __dx_session_management_journal validate "$journal_file" \
-          "$target_session" "$repo_dir" || cleanup_result=1
+        if [[ "$eligibility_policy" == "completed-lifecycle" ]]; then
+          cleanup_result=1
+        else
+          __dx_session_management_journal validate "$journal_file" \
+            "$target_session" "$repo_dir" || cleanup_result=1
+        fi
         ;;
       1)
         if dx_lifecycle_control_lock_acquire "$target_session"; then
@@ -2034,7 +2161,15 @@ __dx_session_management_cleanup_exact() { # <repo-dir> <sid>
             ! dx_session_catalog_records --repo "$repo_dir" --include-children \
               > "$records_file" \
             || ! __dx_session_management_plan "$repo_dir" "$target_session" \
-              "$records_file" > "$plan_file"; \
+              "$records_file" "$plan_policy" > "$plan_file"; \
+          }; then
+          cleanup_result=1
+        fi
+        if [[ "$cleanup_result" -eq 0 \
+          && "$eligibility_policy" == "completed-lifecycle" ]] && {
+            ! __dx_lifecycle_control_lock_owned "$target_session" \
+            || ! __dx_lifecycle_terminal_commit_valid_unlocked \
+              "$target_session"; \
           }; then
           cleanup_result=1
         fi
@@ -2138,4 +2273,9 @@ EOF
     cleanup_result=1
   fi
   return "$cleanup_result"
+}
+
+__dx_session_management_cleanup_completed_exact() { # <repo-dir> <sid>
+  [[ $# -eq 2 ]] || return 3
+  __dx_session_management_cleanup_exact "$1" "$2" completed-lifecycle
 }
