@@ -237,20 +237,65 @@ workspace = record["workspace"]
 if "\t" in workspace or "\n" in workspace or "\r" in workspace:
     raise SystemExit(3)
 print(f"parent\t{selected_session}\t{workspace}\t1")
+children = sorted(
+    (
+        candidate
+        for candidate in records
+        if candidate.get("is_child") is True
+        and candidate.get("parent_session_id") == selected_session
+    ),
+    key=lambda candidate: candidate.get("session_id", ""),
+)
+for child in children:
+    child_session = child.get("session_id")
+    child_workspace = child.get("workspace")
+    artifacts = child.get("artifacts", [])
+    has_runtime = "runtime" in artifacts
+    if (
+        not isinstance(child_session, str)
+        or child.get("child_kind") not in {"assessment", "pass", "review"}
+        or child.get("metadata_health") != "valid"
+        or child.get("unsafe_artifacts") != []
+        or child.get("consistency_issues") != []
+        or not isinstance(child_workspace, str)
+        or not os.path.isabs(child_workspace)
+        or os.path.realpath(child_workspace) != os.path.realpath(workspace)
+    ):
+        raise SystemExit(1)
+    if has_runtime:
+        if (
+            child.get("runtime_health") != "dead"
+            or child.get("runtime_status") not in terminal_states
+        ):
+            raise SystemExit(1)
+    elif (
+        child.get("runtime_health") != "legacy-unverifiable"
+        or child.get("runtime_status") is not None
+    ):
+        raise SystemExit(1)
+    if any(character in child_workspace for character in "\t\n\r"):
+        raise SystemExit(3)
+    print(
+        f"child\t{child_session}\t{child_workspace}\t"
+        f"{1 if has_runtime else 0}"
+    )
 PY
 }
 
 __dx_session_management_ensure_brakes() { # <sid>
   [[ $# -eq 1 ]] || return 1
-  local session_id="$1" receipt_revocation selection_revocation
+  local session_id="$1" receipt_revocation selection_revocation brake_result=0
   receipt_revocation=$(dx_review_receipt_revocation_file "$session_id") || return 1
   selection_revocation=$(dx_review_selection_revocation_file "$session_id") || return 1
-  dx_review_revoke_receipt "$session_id" || return 1
-  dx_review_revoke_selection "$session_id" || return 1
-  dx_review_receipt_authorization_absent "$session_id" || return 1
-  dx_review_selection_authorization_absent "$session_id" || return 1
-  [[ -f "$receipt_revocation" && ! -L "$receipt_revocation" \
-    && -f "$selection_revocation" && ! -L "$selection_revocation" ]]
+  dx_review_revoke_receipt "$session_id" || brake_result=1
+  dx_review_revoke_selection "$session_id" || brake_result=1
+  dx_review_receipt_authorization_absent "$session_id" || brake_result=1
+  dx_review_selection_authorization_revoked "$session_id" || brake_result=1
+  [[ -f "$receipt_revocation" && ! -L "$receipt_revocation" ]] \
+    || brake_result=1
+  [[ -f "$selection_revocation" && ! -L "$selection_revocation" ]] \
+    || brake_result=1
+  return "$brake_result"
 }
 
 __dx_session_management_revoke_completion() { # <sid>
@@ -292,6 +337,71 @@ __dx_session_management_settle_failed() { # <handle-file>
     >/dev/null 2>&1 || true
 }
 
+__dx_session_management_claim_runtime() { # <sid> <handle-file>
+  [[ $# -eq 2 ]] || return 1
+  local session_id="$1" handle_file="$2" runtime_snapshot runtime_health
+  local owner_handle
+  runtime_snapshot=$(dx_session_runtime_read "$session_id" 2>/dev/null) \
+    || return 1
+  runtime_health=$(dx_session_runtime_health "$session_id" 2>/dev/null) \
+    || return 1
+  [[ "$runtime_health" == "dead" ]] || return 1
+  __dx_session_runtime_owner_recovery_start \
+    "$session_id" "$runtime_snapshot" >/dev/null 2>&1 || return 1
+  owner_handle="$DX_SESSION_RUNTIME_OWNER_HANDLE"
+  unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
+  if ! printf '%s\n' "$owner_handle" > "$handle_file" \
+    || ! chmod 600 "$handle_file"; then
+    dx_session_runtime_owner_finish "$owner_handle" failed \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
+}
+
+__dx_session_management_settle_claims_failed() { # <claim-dir>
+  [[ $# -eq 1 ]] || return 0
+  local claim_dir="$1" claim_file
+  while IFS= read -r -d '' claim_file; do
+    [[ -f "$claim_file" && ! -L "$claim_file" ]] || continue
+    __dx_session_management_settle_failed "$claim_file"
+  done < <(find "$claim_dir" -maxdepth 1 -type f -name '*.handle' -print0 \
+    2>/dev/null)
+}
+
+__dx_session_management_plan_brakes() { # <plan-file>
+  [[ $# -eq 1 ]] || return 1
+  local plan_file="$1" plan_role plan_session plan_workspace plan_runtime
+  local brake_result=0
+  while IFS=$'\t' read -r \
+      plan_role plan_session plan_workspace plan_runtime; do
+    : "$plan_role" "$plan_workspace" "$plan_runtime"
+    __dx_session_management_ensure_brakes "$plan_session" \
+      || brake_result=1
+  done < "$plan_file"
+  return "$brake_result"
+}
+
+__dx_session_management_remove_one() { # <sid>
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1"
+  __dx_session_management_phase_three_safe "$session_id" || return 1
+  __dx_session_management_ensure_brakes "$session_id" || return 1
+  __dx_session_management_revoke_completion "$session_id" || return 1
+  dx_review_ledger_reset "$session_id" || return 1
+  __dx_session_management_retire_phase_three "$session_id" || return 1
+  __dx_session_management_artifacts remove-payload "$session_id"
+}
+
+__dx_session_management_purge_claim() { # <claim-file>
+  [[ $# -eq 1 ]] || return 1
+  local claim_file="$1" owner_handle
+  [[ -f "$claim_file" && ! -L "$claim_file" ]] || return 0
+  owner_handle=$(<"$claim_file")
+  [[ -n "$owner_handle" ]] || return 1
+  __dx_session_runtime_owner_purge "$owner_handle" || return 1
+  command rm -f "$claim_file"
+}
+
 __dx_session_management_remove_transaction_dir() { # <directory>
   [[ $# -eq 1 && "$1" == /*/dex-session-cleanup.* ]] || return 1
   command rm -rf -- "$1"
@@ -299,11 +409,12 @@ __dx_session_management_remove_transaction_dir() { # <directory>
 
 __dx_session_management_cleanup_exact() { # <repo-dir> <sid>
   [[ $# -eq 2 ]] || return 3
-  local requested_repo="$1" session_id="$2" repo_dir records_file plan_file
-  local transaction_dir handle_file runtime_snapshot runtime_health owner_handle
-  local workspace has_runtime checkout_token="" checkout_held=0 transition_held=0
-  local cleanup_result=0
-  dx_session_id_valid "$session_id" || return 3
+  local requested_repo="$1" target_session="$2" repo_dir records_file plan_file
+  local transaction_dir claim_dir handle_file workspace=""
+  local plan_role plan_session plan_workspace plan_runtime
+  local checkout_token="" checkout_held=0 transition_held=0
+  local transition_session="" cleanup_result=0
+  dx_session_id_valid "$target_session" || return 3
   repo_dir=$(cd "$requested_repo" 2>/dev/null && dx_session_repo_root) || return 3
   transaction_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-session-cleanup.XXXXXX") || return 3
   chmod 700 "$transaction_dir" 2>/dev/null || {
@@ -312,40 +423,37 @@ __dx_session_management_cleanup_exact() { # <repo-dir> <sid>
   }
   records_file="$transaction_dir/records.jsonl"
   plan_file="$transaction_dir/plan.tsv"
-  handle_file="$transaction_dir/${session_id}.handle"
+  claim_dir="$transaction_dir/claims"
+  mkdir "$claim_dir" || {
+    __dx_session_management_remove_transaction_dir "$transaction_dir" 2>/dev/null || true
+    return 3
+  }
+  chmod 700 "$claim_dir" 2>/dev/null || {
+    __dx_session_management_remove_transaction_dir "$transaction_dir" 2>/dev/null || true
+    return 3
+  }
 
   if ! dx_session_catalog_records --repo "$repo_dir" --include-children \
       > "$records_file" \
-    || ! __dx_session_management_plan "$repo_dir" "$session_id" \
-      "$records_file" > "$plan_file" \
-    || ! __dx_session_management_artifacts validate "$session_id"; then
+    || ! __dx_session_management_plan "$repo_dir" "$target_session" \
+      "$records_file" > "$plan_file"; then
     __dx_session_management_remove_transaction_dir "$transaction_dir" 2>/dev/null || true
     return 1
   fi
-  IFS=$'\t' read -r _ session_id workspace has_runtime < "$plan_file"
-  [[ "$has_runtime" == "1" ]] || {
-    __dx_session_management_remove_transaction_dir "$transaction_dir" 2>/dev/null || true
-    return 1
-  }
-
-  runtime_snapshot=$(dx_session_runtime_read "$session_id" 2>/dev/null) \
-    || cleanup_result=1
-  runtime_health=$(dx_session_runtime_health "$session_id" 2>/dev/null || true)
-  [[ "$cleanup_result" -eq 0 && "$runtime_health" == "dead" ]] \
-    || cleanup_result=1
-  if [[ "$cleanup_result" -eq 0 ]] \
-    && __dx_session_runtime_owner_recovery_start \
-      "$session_id" "$runtime_snapshot" >/dev/null 2>&1; then
-    owner_handle="$DX_SESSION_RUNTIME_OWNER_HANDLE"
-    unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
-    if ! printf '%s\n' "$owner_handle" > "$handle_file" \
-      || ! chmod 600 "$handle_file"; then
+  while IFS=$'\t' read -r \
+      plan_role plan_session plan_workspace plan_runtime; do
+    [[ -n "$workspace" ]] || workspace="$plan_workspace"
+    if ! __dx_session_management_artifacts validate "$plan_session"; then
       cleanup_result=1
+      break
     fi
-  else
-    cleanup_result=1
-  fi
-
+    [[ "$plan_runtime" == "1" ]] || continue
+    handle_file="$claim_dir/${plan_session}.handle"
+    if ! __dx_session_management_claim_runtime "$plan_session" "$handle_file"; then
+      cleanup_result=1
+      break
+    fi
+  done < "$plan_file"
   if [[ "$cleanup_result" -eq 0 && -d "$workspace" ]]; then
     checkout_token="cleanup-$$-${RANDOM}-$(date +%s)"
     if dx_review_lock_acquire "$workspace" "$checkout_token" "$$"; then
@@ -355,35 +463,66 @@ __dx_session_management_cleanup_exact() { # <repo-dir> <sid>
     fi
   fi
   if [[ "$cleanup_result" -eq 0 ]]; then
-    if dx_lifecycle_control_lock_acquire "$session_id"; then
+    if dx_lifecycle_control_lock_acquire "$target_session"; then
       transition_held=1
+      transition_session="$target_session"
     else
       cleanup_result=1
     fi
   fi
-  if [[ "$cleanup_result" -eq 0 ]] \
-    && { ! __dx_session_management_phase_three_safe "$session_id" \
-      || ! __dx_session_management_ensure_brakes "$session_id" \
-      || ! __dx_session_management_revoke_completion "$session_id" \
-      || ! dx_review_ledger_reset "$session_id" \
-      || ! __dx_session_management_retire_phase_three "$session_id" \
-      || ! __dx_session_management_artifacts remove-payload "$session_id"; }; then
+  if [[ "$cleanup_result" -eq 0 ]] && {
+      ! __dx_session_management_phase_three_safe "$target_session" \
+      || ! __dx_session_management_ensure_brakes "$target_session" \
+      || ! __dx_session_management_revoke_completion "$target_session"; \
+    }; then
     cleanup_result=1
   fi
-  if [[ "$cleanup_result" -eq 0 ]]; then
-    owner_handle=$(<"$handle_file")
-    if __dx_session_runtime_owner_purge "$owner_handle"; then
-      command rm -f "$handle_file"
-    else
-      cleanup_result=1
-    fi
-  fi
-
   if [[ "$transition_held" -eq 1 ]]; then
-    if ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+    if ! dx_lifecycle_control_lock_release_checked "$transition_session"; then
       cleanup_result=1
     fi
     transition_held=0
+    transition_session=""
+  fi
+
+  if [[ "$cleanup_result" -eq 0 ]]; then
+    while IFS=$'\t' read -r \
+        plan_role plan_session plan_workspace plan_runtime; do
+      : "$plan_workspace" "$plan_runtime"
+      [[ "$plan_role" == "child" ]] || continue
+      if ! dx_lifecycle_control_lock_acquire "$plan_session"; then
+        cleanup_result=1
+        break
+      fi
+      transition_held=1
+      transition_session="$plan_session"
+      if ! __dx_session_management_remove_one "$plan_session"; then
+        cleanup_result=1
+      fi
+      if ! dx_lifecycle_control_lock_release_checked "$plan_session"; then
+        cleanup_result=1
+      fi
+      transition_held=0
+      transition_session=""
+      [[ "$cleanup_result" -eq 0 ]] || break
+    done < "$plan_file"
+  fi
+
+  if [[ "$cleanup_result" -eq 0 ]]; then
+    if dx_lifecycle_control_lock_acquire "$target_session"; then
+      transition_held=1
+      transition_session="$target_session"
+      if ! __dx_session_management_remove_one "$target_session"; then
+        cleanup_result=1
+      fi
+      if ! dx_lifecycle_control_lock_release_checked "$target_session"; then
+        cleanup_result=1
+      fi
+      transition_held=0
+      transition_session=""
+    else
+      cleanup_result=1
+    fi
   fi
   if [[ "$checkout_held" -eq 1 ]]; then
     if ! dx_review_lock_release_checked "$workspace" "$checkout_token"; then
@@ -393,23 +532,43 @@ __dx_session_management_cleanup_exact() { # <repo-dir> <sid>
   fi
 
   if [[ "$cleanup_result" -eq 0 ]]; then
-    if ! __dx_session_management_artifacts remove-brakes "$session_id" \
-      || ! __dx_session_management_artifacts assert-final "$session_id"; then
-      cleanup_result=1
-    fi
+    while IFS=$'\t' read -r \
+        plan_role plan_session plan_workspace plan_runtime; do
+      : "$plan_workspace"
+      [[ "$plan_role" == "child" ]] || continue
+      [[ "$plan_runtime" == "1" ]] || continue
+      __dx_session_management_purge_claim \
+        "$claim_dir/${plan_session}.handle" || cleanup_result=1
+      [[ "$cleanup_result" -eq 0 ]] || break
+    done < "$plan_file"
+  fi
+  if [[ "$cleanup_result" -eq 0 ]]; then
+    __dx_session_management_purge_claim \
+      "$claim_dir/${target_session}.handle" || cleanup_result=1
+  fi
+  if [[ "$cleanup_result" -eq 0 ]]; then
+    while IFS=$'\t' read -r \
+        plan_role plan_session plan_workspace plan_runtime; do
+      : "$plan_role" "$plan_workspace" "$plan_runtime"
+      if ! __dx_session_management_artifacts remove-brakes "$plan_session" \
+        || ! __dx_session_management_artifacts assert-final "$plan_session"; then
+        cleanup_result=1
+        break
+      fi
+    done < "$plan_file"
   fi
   if [[ "$cleanup_result" -ne 0 ]]; then
     if [[ "$transition_held" -eq 1 ]]; then
-      dx_lifecycle_control_lock_release_checked "$session_id" \
+      dx_lifecycle_control_lock_release_checked "$transition_session" \
         >/dev/null 2>&1 || true
     fi
     if [[ "$checkout_held" -eq 1 ]]; then
       dx_review_lock_release_checked "$workspace" "$checkout_token" \
         >/dev/null 2>&1 || true
     fi
-    __dx_session_management_ensure_brakes "$session_id" \
+    __dx_session_management_plan_brakes "$plan_file" \
       >/dev/null 2>&1 || true
-    __dx_session_management_settle_failed "$handle_file"
+    __dx_session_management_settle_claims_failed "$claim_dir"
   fi
   __dx_session_management_remove_transaction_dir "$transaction_dir" \
     2>/dev/null || cleanup_result=1
