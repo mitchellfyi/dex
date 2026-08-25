@@ -3,14 +3,14 @@
 set -euo pipefail
 
 # shellcheck disable=SC2034  # read by lib/common.sh while it is sourced
-DX_COMMON_MODULES="session session-runtime session-catalog output"
+DX_COMMON_MODULES="lock git session completion session-runtime session-catalog output review lifecycle-control session-management"
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: dx sessions <list|show|doctor|pause|cancel|resume> [options]
+Usage: dx sessions <list|show|doctor|pause|cancel|resume|forget> [options]
 
-Inspect lifecycle sessions, control live runs, or relaunch one dead lifecycle.
+Inspect lifecycle sessions, control live runs, or relaunch or forget one dead lifecycle.
 
 Commands:
   list [--all] [--include-children]
@@ -33,6 +33,9 @@ Commands:
 
   resume <selector>
       Relaunch one verified dead lifecycle in the current repository.
+
+  forget <selector>
+      Forget one verified dead lifecycle in the current repository.
 
 Options:
   --all               Search every recoverable repository (list only)
@@ -946,6 +949,74 @@ __dx_sessions_resume() {
     dex-sessions-resume "$DEX_DIR/dx.sh" "$selector_value"
 }
 
+__dx_sessions_forget() {
+  local selector_value="" argument selected_record session_id repo_root
+  local cleanup_result
+  while [[ $# -gt 0 ]]; do
+    argument="$1"
+    case "$argument" in
+      -h|--help)
+        usage
+        return 0
+        ;;
+      --include-children)
+        dx_error "dx sessions forget does not accept --include-children."
+        return 1
+        ;;
+      -*)
+        dx_error "Unknown dx sessions forget option: $argument"
+        return 1
+        ;;
+      *)
+        if [[ -n "$selector_value" ]]; then
+          dx_error "dx sessions forget accepts one selector."
+          return 1
+        fi
+        selector_value="$argument"
+        ;;
+    esac
+    shift
+  done
+  if [[ -z "$selector_value" ]]; then
+    dx_error "dx sessions forget requires one selector."
+    usage >&2
+    return 1
+  fi
+
+  selected_record=$(__dx_sessions_select_current "$selector_value" 0) || return $?
+  if ! session_id=$(printf '%s\n' "$selected_record" | python3 -c '
+import json
+import re
+import sys
+
+record = json.load(sys.stdin)
+session_id = record.get("session_id")
+if (
+    not isinstance(session_id, str)
+    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,179}", session_id) is None
+    or record.get("is_child") is not False
+):
+    raise SystemExit(1)
+print(session_id)
+'); then
+    dx_error "The selected catalog record is not a valid top-level session."
+    return 1
+  fi
+  if ! repo_root=$(dx_session_repo_root); then
+    dx_error "Could not resolve the current repository for session cleanup."
+    return 3
+  fi
+
+  if __dx_session_management_cleanup_exact "$repo_root" "$session_id"; then
+    dx_done "Session ${session_id} was forgotten."
+    return 0
+  else
+    cleanup_result=$?
+  fi
+  dx_error "Session '$session_id' was not forgotten. Its state remains and requires repair."
+  return "$cleanup_result"
+}
+
 main() {
   local command_name="${1:-}"
   case "$command_name" in
@@ -966,6 +1037,7 @@ main() {
     doctor) __dx_sessions_doctor "$@" ;;
     pause|cancel) __dx_sessions_mutate "$command_name" "$@" ;;
     resume) __dx_sessions_resume "$@" ;;
+    forget) __dx_sessions_forget "$@" ;;
     *)
       dx_error "Unknown dx sessions command: $command_name"
       usage >&2

@@ -10,7 +10,8 @@
 # lib/provider.sh, lib/codex.sh, lib/dexcode.sh, lib/ui-capture.sh, lib/rtk.sh,
 # lib/events.sh, lib/review.sh, lib/review-policy.sh, lib/review-controller.sh, lib/review-loop.sh, lib/factory.sh,
 # lib/run-spec.sh, lib/agent-tools.sh, lib/maintenance.sh, lib/project-state.sh,
-# lib/lifecycle-control.sh, lib/attribution.sh, and lib/worker.sh
+# lib/lifecycle-control.sh, lib/session-management.sh, lib/attribution.sh, and
+# lib/worker.sh
 
 if [[ -z "${DEX_DIR:-}" ]]; then
   # Auto-detect from this file's location (lib/common.sh → repo root).
@@ -156,5 +157,6 @@ __dx_require_lib agent-tools.sh
 __dx_require_lib maintenance.sh
 __dx_require_lib project-state.sh
 __dx_require_lib lifecycle-control.sh
+__dx_require_lib session-management.sh
 __dx_require_lib attribution.sh
 __dx_require_lib worker.sh

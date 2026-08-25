@@ -189,8 +189,11 @@ touch -t 200001010000 "$(dx_state_file "$SID_LEGACY")"
 
 run_sessions "$REPO_A" "$TMP_DIR/help.out" --help
 assert_eq "0" "$COMMAND_RESULT" "help result"
-assert_contains "Usage: dx sessions <list|show|doctor|pause|cancel|resume>" "$TMP_DIR/help.out"
-assert_contains "relaunch one dead lifecycle" "$TMP_DIR/help.out"
+assert_contains "Usage: dx sessions <list|show|doctor|pause|cancel|resume|forget>" "$TMP_DIR/help.out"
+assert_contains "relaunch or forget one dead lifecycle" "$TMP_DIR/help.out"
+assert_contains "forget <selector>" "$TMP_DIR/help.out"
+assert_contains "Forget one verified dead lifecycle in the current repository" \
+  "$TMP_DIR/help.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/missing-command.out"
 assert_eq "1" "$COMMAND_RESULT" "missing command result"
@@ -223,6 +226,24 @@ run_sessions "$REPO_A" "$TMP_DIR/pause-children.out" pause \
   "session:$CHILD_SID" --include-children
 assert_eq "1" "$COMMAND_RESULT" "pause child option result"
 assert_contains "does not accept --include-children" "$TMP_DIR/pause-children.out"
+run_sessions "$REPO_A" "$TMP_DIR/forget-missing.out" forget
+assert_eq "1" "$COMMAND_RESULT" "forget missing selector result"
+assert_contains "dx sessions forget requires one selector" \
+  "$TMP_DIR/forget-missing.out"
+run_sessions "$REPO_A" "$TMP_DIR/forget-extra.out" forget one two
+assert_eq "1" "$COMMAND_RESULT" "forget extra selector result"
+assert_contains "dx sessions forget accepts one selector" \
+  "$TMP_DIR/forget-extra.out"
+run_sessions "$REPO_A" "$TMP_DIR/forget-children.out" forget \
+  "session:$CHILD_SID" --include-children
+assert_eq "1" "$COMMAND_RESULT" "forget child option result"
+assert_contains "dx sessions forget does not accept --include-children" \
+  "$TMP_DIR/forget-children.out"
+run_sessions "$REPO_A" "$TMP_DIR/forget-all.out" forget \
+  "session:$SID_DEAD" --all
+assert_eq "1" "$COMMAND_RESULT" "forget all option result"
+assert_contains "Unknown dx sessions forget option: --all" \
+  "$TMP_DIR/forget-all.out"
 
 run_sessions "$REPO_A" "$TMP_DIR/list.out" list
 assert_eq "0" "$COMMAND_RESULT" "repository list result"
