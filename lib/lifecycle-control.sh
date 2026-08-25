@@ -108,7 +108,8 @@ dx_lifecycle_detach() {
   if [[ "$revoke_result" -ne 0 ]]; then
     # An unhandled failure under `set -e` must not strand a caller-held control
     # lock. Release is ownership-checked and is a no-op for unlocked callers.
-    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
   fi
   return "$revoke_result"
 }
@@ -124,6 +125,8 @@ dx_lifecycle_pause() {
     && ! dx_lifecycle_control_lock_release "$session_id"; then
     dx_lifecycle_completion_brake "$session_id" "${reason}-lock-release" \
       "$pause_source" 2>/dev/null || true
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
     pause_rc=1
   fi
   return "$pause_rc"
@@ -149,6 +152,217 @@ dx_lifecycle_human_complete_file() {
   printf '%s/%s.human-complete\n' "$DX_STATE_DIR" "$1"
 }
 
+dx_lifecycle_human_complete_valid() {
+  [[ $# -eq 1 ]] || return 1
+  local completion_raw=""
+  completion_raw=$(dx_lifecycle_trusted_file_read \
+    "$(dx_lifecycle_human_complete_file "$1")" 64) || return 1
+  [[ "$completion_raw" == "human-complete" ]]
+}
+
+dx_lifecycle_terminal_commit_file() {
+  dx_lifecycle_session_id_valid "$1" || return 1
+  printf '%s/%s.terminal-commit\n' "$DX_STATE_DIR" "$1"
+}
+
+dx_lifecycle_terminal_commit_publish_unlocked() {
+  [[ $# -eq 2 ]] || return 1
+  local session_id="$1" authority="$2" transition_token
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
+    && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  transition_token="$DX_LIFECYCLE_CONTROL_LOCK_TOKEN"
+  [[ "$transition_token" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] || return 1
+  [[ "$authority" =~ ^([0-9a-f]{32}|[0-9]+-[0-9]+-[0-9]+)$ ]] || return 1
+  [[ "$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)" == "7" ]] \
+    || return 1
+  dx_lifecycle_atomic_write "$(dx_lifecycle_terminal_commit_file "$session_id")" \
+    "version=1"$'\n'"phase=7"$'\n'"transition_token=${transition_token}"$'\n'"authority=${authority}"
+}
+
+__dx_lifecycle_terminal_commit_valid_unlocked() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" terminal_raw="" line_one line_two line_three line_four
+  local remaining terminal_file human_file live_file
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
+    && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  terminal_file=$(dx_lifecycle_terminal_commit_file "$session_id")
+  terminal_raw=$(dx_lifecycle_trusted_file_read "$terminal_file" 512) || return 1
+  line_one="${terminal_raw%%$'\n'*}"
+  remaining="${terminal_raw#*$'\n'}"
+  [[ "$remaining" != "$terminal_raw" ]] || return 1
+  line_two="${remaining%%$'\n'*}"
+  remaining="${remaining#*$'\n'}"
+  line_three="${remaining%%$'\n'*}"
+  line_four="${remaining#*$'\n'}"
+  [[ "$line_one" == "version=1" && "$line_two" == "phase=7" \
+    && "$line_three" =~ ^transition_token=[0-9]+-[0-9]+-[0-9]+$ \
+    && "$line_four" =~ ^authority=([0-9a-f]{32}|[0-9]+-[0-9]+-[0-9]+)$ \
+    && "$line_four" != *$'\n'* ]] || return 1
+  [[ "$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)" == "7" ]] \
+    || return 1
+
+  for live_file in \
+    "$(dx_lifecycle_control_file "$session_id")" \
+    "$(dx_paused_file "$session_id")" \
+    "$(dx_pause_state_file "$session_id")" \
+    "$(dx_active_file "$session_id")" \
+    "$(dx_owner_file "$session_id")" \
+    "$(dx_loop_config_file "$session_id")" \
+    "$(dx_handoff_mode_file "$session_id")" \
+    "$(dx_completion_expectation_file "$session_id")" \
+    "$(dx_phase_busy_file "$session_id" 3)" \
+    "$(dx_phase_busy_cancel_file "$session_id" 3)" \
+    "$(dx_phase_busy_quiesced_file "$session_id" 3)"; do
+    [[ ! -e "$live_file" && ! -L "$live_file" ]] || return 1
+  done
+  human_file=$(dx_lifecycle_human_complete_file "$session_id")
+  if [[ -e "$human_file" || -L "$human_file" ]]; then
+    dx_lifecycle_human_complete_valid "$session_id" || return 1
+  fi
+}
+
+# A terminal proof becomes authoritative only after its publishing transition
+# lock was released. Reacquiring the same session lock linearizes validation
+# with later pause, resume, and human-control writes.
+dx_lifecycle_terminal_commit_valid() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" validation_rc=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  __dx_lifecycle_terminal_commit_valid_unlocked "$session_id" || validation_rc=1
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
+    return 1
+  fi
+  return "$validation_rc"
+}
+
+# A terminal proof belongs only to the completed lifecycle generation. Every
+# new Phase 0-6 authorization retires both terminal artifacts before it mints a
+# receipt, while the transition lock excludes a concurrent completion commit.
+dx_lifecycle_terminal_proofs_invalidate_unlocked() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" terminal_file human_file
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
+    && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  terminal_file=$(dx_lifecycle_terminal_commit_file "$session_id")
+  human_file=$(dx_lifecycle_human_complete_file "$session_id")
+  command rm -f "$terminal_file" "$human_file" 2>/dev/null || return 1
+  [[ ! -e "$terminal_file" && ! -L "$terminal_file" \
+    && ! -e "$human_file" && ! -L "$human_file" ]]
+}
+
+__dx_lifecycle_control_lock_owned() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" owner_file owner_raw owner_pid owner_token
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
+    && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  owner_file="$(dx_lifecycle_control_lock_dir "$session_id")/owner"
+  [[ -f "$owner_file" && ! -L "$owner_file" ]] || return 1
+  owner_raw=$(cat "$owner_file" 2>/dev/null) || return 1
+  owner_pid="${owner_raw%%$'\t'*}"
+  owner_token="${owner_raw##*$'\t'}"
+  [[ "$owner_pid" == "$$" \
+    && "$owner_token" == "$DX_LIFECYCLE_CONTROL_LOCK_TOKEN" ]]
+}
+
+# Turn a failed terminal transaction back into a resumable, inert Phase 6.
+# The retained config identifies the exact lifecycle context, but its
+# expectation is abandoned; an explicit resume always creates a fresh one.
+dx_lifecycle_terminal_failure_rollback_unlocked() {
+  [[ $# -eq 3 ]] || return 1
+  local session_id="$1" reason="$2" rollback_source="$3"
+  local generation="" config_line="" rollback_rc=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$reason" =~ ^[A-Za-z0-9._-]+$ \
+    && "$rollback_source" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  __dx_lifecycle_control_lock_owned "$session_id" || return 1
+  [[ "$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)" == "7" ]] \
+    || return 1
+
+  dx_lifecycle_terminal_proofs_invalidate_unlocked "$session_id" \
+    || rollback_rc=1
+  dx_lifecycle_atomic_write "$(dx_state_file "$session_id")" 6 \
+    || rollback_rc=1
+  generation=$(dx_lifecycle_completion_issue_unlocked \
+    "$session_id" lifecycle phase 6 2>/dev/null || true)
+  if [[ "$generation" =~ ^[0-9a-f]{32}$ ]]; then
+    config_line=$(dx_completion_context_config lifecycle phase 6 "$generation" \
+      2>/dev/null || true)
+  fi
+  if [[ -z "$config_line" ]] \
+    || ! dx_lifecycle_atomic_write "$(dx_loop_config_file "$session_id")" \
+      "$config_line"; then
+    rollback_rc=1
+  fi
+  dx_completion_abandon "$session_id" 2>/dev/null \
+    || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
+    || rollback_rc=1
+  dx_clear_lifecycle_control_unlocked "$session_id"
+  rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
+    "$(dx_handoff_mode_file "$session_id")" 2>/dev/null || rollback_rc=1
+  dx_phase_outcome_record "$session_id" 6 invalidated "$rollback_source" \
+    "rollback-$(date +%s)-$$-${RANDOM}" "$reason" 2>/dev/null \
+    || rollback_rc=1
+  dx_write_pause_state "$session_id" "$reason" "$rollback_source" \
+    2>/dev/null || rollback_rc=1
+  dx_lifecycle_atomic_write "$(dx_paused_file "$session_id")" paused \
+    2>/dev/null || rollback_rc=1
+  return "$rollback_rc"
+}
+
+dx_lifecycle_terminal_failure_rollback() {
+  [[ $# -eq 3 ]] || return 1
+  local session_id="$1" reason="$2" rollback_source="$3" rollback_rc=0
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  dx_lifecycle_terminal_failure_rollback_unlocked \
+    "$session_id" "$reason" "$rollback_source" || rollback_rc=1
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
+    rollback_rc=1
+  fi
+  return "$rollback_rc"
+}
+
+__dx_lifecycle_terminal_failure_pause_valid() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" metadata_raw="" reason_line source_line
+  dx_lifecycle_pause_context_state "$session_id" || return 1
+  metadata_raw=$(dx_lifecycle_trusted_file_read \
+    "$(dx_pause_state_file "$session_id")" 1024) || return 1
+  reason_line="${metadata_raw%%$'\n'*}"
+  source_line="${metadata_raw#*$'\n'}"
+  case "${reason_line#reason=}" in
+    completion-commit-failed|terminal-proof-failed|terminal-proof-missing|\
+    terminal-proof-invalid|\
+    completion-lock-release|human-terminal-proof-failed|\
+    human-terminal-commit-failed) ;;
+    *) return 1 ;;
+  esac
+  [[ "$source_line" =~ ^source=(phase-loop|direct-codex|lifecycle-control)$ ]]
+}
+
+# Issue completion state while it is serialized with lifecycle transitions.
+# Standalone and child contexts have no terminal proof to retire; lifecycle
+# phases must prove old completion state is gone before any new generation is
+# observable.
+dx_lifecycle_completion_issue_unlocked() {
+  [[ $# -eq 4 ]] || return 1
+  local session_id="$1" mode="$2" purpose="$3" phase="$4"
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
+    && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  if [[ "${mode}:${purpose}:${phase}" == lifecycle:phase:[0-6] ]]; then
+    dx_lifecycle_terminal_proofs_invalidate_unlocked "$session_id" || return 1
+  fi
+  dx_completion_issue "$session_id" "$mode" "$purpose" "$phase"
+}
+
 dx_lifecycle_atomic_write() {
   local target="$1" content="$2" target_dir tmp_file
   target_dir=$(dirname "$target")
@@ -166,17 +380,160 @@ dx_lifecycle_atomic_write() {
   fi
 }
 
+# Read a short lifecycle state file only when it is a current-user 0600 regular
+# file that stayed unchanged throughout the read. Return 1 when absent and 2
+# when an inode exists but cannot be trusted.
+dx_lifecycle_trusted_file_read() {
+  [[ $# -eq 2 ]] || return 2
+  local state_file="$1" maximum="$2"
+  [[ "$maximum" =~ ^[1-9][0-9]*$ ]] || return 2
+  [[ -e "$state_file" || -L "$state_file" ]] || return 1
+  python3 - "$state_file" "$maximum" <<'PY' || return 2
+import os
+import stat
+import sys
+
+target = sys.argv[1]
+maximum = int(sys.argv[2])
+try:
+    before = os.lstat(target)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or before.st_nlink != 1
+        or not 1 <= before.st_size <= maximum
+    ):
+        raise ValueError
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(target, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise ValueError
+        raw = os.read(descriptor, maximum + 1)
+        extra = os.read(descriptor, 1)
+        after = os.fstat(descriptor)
+        if (
+            extra
+            or len(raw) != opened.st_size
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        ):
+            raise ValueError
+    finally:
+        os.close(descriptor)
+    named = os.lstat(target)
+    if (
+        not stat.S_ISREG(named.st_mode)
+        or named.st_uid != os.geteuid()
+        or stat.S_IMODE(named.st_mode) != 0o600
+        or named.st_nlink != 1
+        or (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        raise ValueError
+    if not raw.endswith(b"\n") or b"\r" in raw:
+        raise ValueError
+except (OSError, ValueError):
+    raise SystemExit(2)
+sys.stdout.buffer.write(raw)
+PY
+}
+
+# Return the authoritative numeric lifecycle phase from one trusted private
+# file. Missing state is distinct from an unsafe or malformed inode so callers
+# can initialize only the former.
+dx_lifecycle_phase_state() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" phase_raw="" phase_rc=0
+  dx_lifecycle_session_id_valid "$session_id" || return 2
+  phase_raw=$(dx_lifecycle_trusted_file_read \
+    "$(dx_state_file "$session_id")" 32) || phase_rc=$?
+  [[ "$phase_rc" -eq 0 ]] || return "$phase_rc"
+  [[ "$phase_raw" =~ ^[0-7]$ ]] || return 2
+  printf '%s\n' "$phase_raw"
+}
+
+# Return 0 for the one trusted paused marker, 1 when absent, and 2 for any
+# malformed, unsafe, or unreadable marker.
+dx_lifecycle_paused_state() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" paused_raw="" paused_rc=0
+  dx_lifecycle_session_id_valid "$session_id" || return 2
+  paused_raw=$(dx_lifecycle_trusted_file_read \
+    "$(dx_paused_file "$session_id")" 32) || paused_rc=$?
+  [[ "$paused_rc" -eq 0 ]] || return "$paused_rc"
+  [[ "$paused_raw" == "paused" ]] || return 2
+}
+
+dx_lifecycle_pause_metadata_record() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" metadata_raw="" metadata_rc=0
+  local reason="" source=""
+  dx_lifecycle_session_id_valid "$session_id" || return 2
+  metadata_raw=$(dx_lifecycle_trusted_file_read \
+    "$(dx_pause_state_file "$session_id")" 1024) || metadata_rc=$?
+  [[ "$metadata_rc" -eq 0 ]] || return "$metadata_rc"
+  [[ "$metadata_raw" == *$'\n'* ]] || return 2
+  reason="${metadata_raw%%$'\n'*}"
+  source="${metadata_raw#*$'\n'}"
+  [[ "$reason" =~ ^reason=[A-Za-z0-9._-]+$ \
+    && "$source" =~ ^source=[A-Za-z0-9._-]+$ \
+    && "$source" != *$'\n'* ]] || return 2
+  printf '%s\t%s\n' "${reason#reason=}" "${source#source=}"
+}
+
+dx_lifecycle_pause_metadata_state() {
+  [[ $# -eq 1 ]] || return 2
+  dx_lifecycle_pause_metadata_record "$1" >/dev/null
+}
+
+# A valid marker or pause record is enough to make automation inert. Any
+# unsafe inode in either path turns the whole pause context into an error.
+dx_lifecycle_pause_context_state() {
+  [[ $# -eq 1 ]] || return 2
+  local session_id="$1" marker_rc=0 metadata_rc=0
+  dx_lifecycle_paused_state "$session_id" || marker_rc=$?
+  dx_lifecycle_pause_metadata_state "$session_id" || metadata_rc=$?
+  [[ "$marker_rc" -ne 2 && "$metadata_rc" -ne 2 ]] || return 2
+  [[ "$marker_rc" -eq 0 || "$metadata_rc" -eq 0 ]] && return 0
+  return 1
+}
+
+# Consume a validated pause only while the lifecycle transition lock is held.
+# Marker-only and metadata-only pauses are both valid historical forms; an
+# unsafe inode in either location blocks resume instead of being overwritten.
+dx_lifecycle_pause_clear_unlocked() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" pause_rc=0 paused_file pause_state_file
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
+    && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
+  dx_lifecycle_pause_context_state "$session_id" || pause_rc=$?
+  [[ "$pause_rc" -ne 2 ]] || return 1
+  paused_file=$(dx_paused_file "$session_id")
+  pause_state_file=$(dx_pause_state_file "$session_id")
+  command rm -f "$paused_file" "$pause_state_file" 2>/dev/null || return 1
+  [[ ! -e "$paused_file" && ! -L "$paused_file" \
+    && ! -e "$pause_state_file" && ! -L "$pause_state_file" ]]
+}
+
 dx_lifecycle_control_snapshot_unlocked() {
-  local session_id="$1" control_file size
+  local session_id="$1" control_file snapshot
   dx_lifecycle_session_id_valid "$session_id" || return 0
   control_file=$(dx_lifecycle_control_file "$session_id")
-  [[ -f "$control_file" && ! -L "$control_file" ]] || return 0
-  # tr always succeeds, so the fallback has to come from the read itself:
-  # an unreadable control file must look oversized, not empty.
-  size=$(wc -c < "$control_file" 2>/dev/null || printf '4097')
-  size=$(printf '%s' "$size" | tr -d '[:space:]')
-  [[ "$size" =~ ^[0-9]+$ && "$size" -le 4096 ]] || return 0
-  cat "$control_file" 2>/dev/null || true
+  snapshot=$(dx_lifecycle_trusted_file_read "$control_file" 4096 \
+    2>/dev/null) || return 0
+  printf '%s\n' "$snapshot"
 }
 
 dx_lifecycle_control_snapshot() {
@@ -184,7 +541,13 @@ dx_lifecycle_control_snapshot() {
   dx_lifecycle_session_id_valid "$session_id" || return 0
   dx_lifecycle_control_lock_acquire "$session_id" || return 0
   snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
-  dx_lifecycle_control_lock_release "$session_id" || true
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_lifecycle_completion_brake "$session_id" control-read-lock-release \
+      lifecycle-control 2>/dev/null || true
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
+    return 1
+  fi
   printf '%s\n' "$snapshot"
 }
 
@@ -202,22 +565,26 @@ dx_lifecycle_control_read() {
 }
 
 dx_lifecycle_current_phase() {
-  local session_id="$1" phase="" config_file
+  local session_id="$1" phase="" phase_rc=0 config_file context_record=""
   dx_lifecycle_session_id_valid "$session_id" || return 0
 
-  phase=$(cat "$(dx_state_file "$session_id")" 2>/dev/null || true)
-  if [[ "$phase" =~ ^[0-7]$ ]]; then
+  phase=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null) || phase_rc=$?
+  if [[ "$phase_rc" -eq 0 ]]; then
     printf '%s\n' "$phase"
     return 0
   fi
+  # Never fall back from an existing unsafe phase inode to a stale config or
+  # launch-time environment value.
+  [[ "$phase_rc" -ne 2 ]] || return 0
 
   config_file=$(dx_loop_config_file "$session_id")
-  if [[ -f "$config_file" && ! -L "$config_file" ]]; then
-    phase=$(cut -d: -f1 "$config_file" 2>/dev/null || true)
-    if [[ "$phase" =~ ^[0-7]$ ]]; then
-      printf '%s\n' "$phase"
-      return 0
-    fi
+  if [[ -e "$config_file" || -L "$config_file" ]]; then
+    context_record=$(dx_lifecycle_completion_context_read "$session_id" \
+      2>/dev/null || true)
+    [[ -n "$context_record" ]] || return 0
+    phase="${context_record%%$'\t'*}"
+    printf '%s\n' "$phase"
+    return 0
   fi
 
   phase="${DEX_LOOP_PHASE:-}"
@@ -249,8 +616,9 @@ dx_lifecycle_session_active() {
   [[ "$phase" == "7" ]] && return 1
   [[ "${DEX_LOOP_ACTIVE:-}" == "1" || "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]] && return 0
   [[ -f "$(dx_active_file "$session_id")" || -f "$(dx_handoff_mode_file "$session_id")" ]] && return 0
-  [[ "$phase" =~ ^[0-6]$ && -f "$(dx_paused_file "$session_id")" \
-    && ! -L "$(dx_paused_file "$session_id")" ]] && return 0
+  [[ "$phase" =~ ^[0-6]$ \
+    && ( -e "$(dx_paused_file "$session_id")" \
+      || -L "$(dx_paused_file "$session_id")" ) ]] && return 0
   [[ -f "$(dx_loop_config_file "$session_id")" ]] || return 1
   [[ "$phase" =~ ^[0-6]$ ]]
 }
@@ -352,7 +720,13 @@ dx_write_lifecycle_control() {
 
   [[ -n "$tmp_file" ]] && command rm -f "$tmp_file" 2>/dev/null || true
   [[ -n "$history_tmp_file" ]] && command rm -f "$history_tmp_file" 2>/dev/null || true
-  dx_lifecycle_control_lock_release "$session_id" || true
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    dx_lifecycle_completion_brake "$session_id" control-write-lock-release \
+      lifecycle-control 2>/dev/null || true
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
+    write_status=1
+  fi
   if [[ "$published" -eq 1 && "$write_status" -eq 0 ]]; then
     export DX_LIFECYCLE_CONTROL_GENERATION="$generation"
     return 0
@@ -366,16 +740,25 @@ dx_write_lifecycle_control() {
 dx_lifecycle_activate_pending_control() {
   local session_id="$1" expected_action="$2" expected_target="$3"
   local expected_phase="$4" expected_generation="$5" snapshot current_phase
+  local control_file
   local action target source generation receipt_phase activation_result="pending"
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$expected_action" == "complete" || "$expected_action" == "jump" ]] || return 1
   [[ "$expected_target" =~ ^[0-7]$ && "$expected_phase" =~ ^[0-6]$ \
     && "$expected_generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] || return 1
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  control_file=$(dx_lifecycle_control_file "$session_id")
   snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
   current_phase=$(dx_lifecycle_current_phase "$session_id")
 
-  if [[ -z "$snapshot" && "$current_phase" == "$expected_target" ]]; then
+  if [[ -z "$snapshot" && ! -e "$control_file" && ! -L "$control_file" \
+    && "$current_phase" == "$expected_target" ]]; then
+    if [[ "$expected_target" == "7" ]] \
+      && ! __dx_lifecycle_terminal_commit_valid_unlocked "$session_id"; then
+      dx_lifecycle_control_lock_release_checked "$session_id" \
+        2>/dev/null || true
+      return 1
+    fi
     activation_result="applied"
   else
     action=$(dx_lifecycle_control_value "$snapshot" action)
@@ -388,12 +771,16 @@ dx_lifecycle_activate_pending_control() {
       || "$receipt_phase" != "$expected_phase" \
       || ( "$current_phase" != "$expected_phase" \
         && "$current_phase" != "$expected_target" ) ]]; then
-      dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+      dx_lifecycle_control_lock_release_checked "$session_id" \
+        2>/dev/null || true
       return 1
     fi
     if ! dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$session_id")" inline \
       || ! dx_lifecycle_atomic_write "$(dx_active_file "$session_id")" active; then
-      dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+      dx_lifecycle_completion_brake "$session_id" activation-publish-failed \
+        lifecycle-control 2>/dev/null || true
+      dx_lifecycle_control_lock_release_checked "$session_id" \
+        2>/dev/null || true
       return 1
     fi
     rm -f "$(dx_owner_file "$session_id")" 2>/dev/null || true
@@ -402,6 +789,8 @@ dx_lifecycle_activate_pending_control() {
   if ! dx_lifecycle_control_lock_release "$session_id"; then
     dx_lifecycle_completion_brake "$session_id" activation-lock-release \
       lifecycle-control 2>/dev/null || true
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
     return 1
   fi
   printf '%s\n' "$activation_result"
@@ -491,6 +880,7 @@ dx_lifecycle_control_lock_acquire() {
 
 dx_lifecycle_control_lock_release() {
   local session_id="$1" lock_dir owner_file owner_raw owner_pid owner_token
+  local releasing_owner
   dx_lifecycle_session_id_valid "$session_id" || return 1
   lock_dir=$(dx_lifecycle_control_lock_dir "$session_id")
   owner_file="$lock_dir/owner"
@@ -501,10 +891,52 @@ dx_lifecycle_control_lock_release() {
   owner_pid="${owner_raw%%$'\t'*}"
   owner_token="${owner_raw##*$'\t'}"
   [[ "$owner_pid" == "$$" && "$owner_token" == "$DX_LIFECYCLE_CONTROL_LOCK_TOKEN" ]] || return 1
-  rm -f "$owner_file" 2>/dev/null || return 1
-  rmdir "$lock_dir" 2>/dev/null || return 1
+  # Move the verified owner aside before removing the directory. If the
+  # directory is unexpectedly non-empty, restore that exact owner so the
+  # caller can still roll back under the same lock generation.
+  releasing_owner="${lock_dir}.releasing.${DX_LIFECYCLE_CONTROL_LOCK_TOKEN}"
+  [[ ! -e "$releasing_owner" && ! -L "$releasing_owner" ]] || return 1
+  command mv "$owner_file" "$releasing_owner" 2>/dev/null || return 1
+  if ! rmdir "$lock_dir" 2>/dev/null; then
+    if [[ -d "$lock_dir" && ! -e "$owner_file" && ! -L "$owner_file" ]] \
+      && command mv "$releasing_owner" "$owner_file" 2>/dev/null; then
+      return 1
+    fi
+    DX_LIFECYCLE_CONTROL_LOCK_SESSION=""
+    DX_LIFECYCLE_CONTROL_LOCK_TOKEN=""
+    return 1
+  fi
   DX_LIFECYCLE_CONTROL_LOCK_SESSION=""
   DX_LIFECYCLE_CONTROL_LOCK_TOKEN=""
+  rm -f "$releasing_owner" 2>/dev/null || true
+  return 0
+}
+
+# A failed release may restore the exact owner so its caller can roll back.
+# Once rollback or braking is complete, this helper makes one checked retry
+# and prevents a transient directory failure from stranding the live PID.
+dx_lifecycle_control_lock_release_retained() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1"
+  if [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" != "$session_id" ]]; then
+    return 0
+  fi
+  dx_lifecycle_control_lock_release "$session_id"
+}
+
+# Rejection and rollback paths still return failure when their first unlock
+# fails, even if this retry safely removes a restored owner. That distinction
+# keeps callers from reporting success while avoiding a lock tied forever to
+# the current interactive shell.
+dx_lifecycle_control_lock_release_checked() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1"
+  if dx_lifecycle_control_lock_release "$session_id"; then
+    return 0
+  fi
+  dx_lifecycle_control_lock_release_retained "$session_id" \
+    2>/dev/null || true
+  return 1
 }
 
 dx_clear_lifecycle_control_unlocked() {
@@ -517,8 +949,12 @@ dx_clear_lifecycle_control() {
   local session_id="$1"
   dx_lifecycle_session_id_valid "$session_id" || return 0
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
-  dx_clear_lifecycle_control_unlocked "$session_id"
-  dx_lifecycle_control_lock_release "$session_id" || true
+  dx_clear_lifecycle_control_unlocked "$session_id" || {
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
+    return 1
+  }
+  dx_lifecycle_control_lock_release_checked "$session_id"
 }
 
 dx_write_pause_state() {
@@ -625,7 +1061,9 @@ dx_completion_loop_activate() {
     || -L "$(dx_state_file "$session_id")" \
     || -e "$(dx_handoff_mode_file "$session_id")" \
     || -L "$(dx_handoff_mode_file "$session_id")" ]]; then
-    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    if ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+      return 1
+    fi
     return 2
   fi
 
@@ -633,13 +1071,16 @@ dx_completion_loop_activate() {
   # matching quiescence acknowledgement makes it safe to retire that fence.
   if [[ -e "$busy_file" || -L "$busy_file" ]]; then
     if ! dx_phase_busy_quiesced "$session_id" 3; then
-      dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+      if ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+        return 1
+      fi
       return 2
     fi
     busy_token=$(dx_phase_busy_token "$session_id" 3)
     if [[ -z "$busy_token" ]] \
       || ! dx_phase_busy_finish "$session_id" 3 "$busy_token"; then
-      dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+      dx_lifecycle_control_lock_release_checked "$session_id" \
+        2>/dev/null || true
       return 1
     fi
   fi
@@ -649,11 +1090,13 @@ dx_completion_loop_activate() {
     "$(dx_phase_busy_notice_file "$session_id" 3)" \
     "$(dx_phase_busy_cancel_file "$session_id" 3)" \
     "$(dx_phase_busy_quiesced_file "$session_id" 3)" 2>/dev/null; then
-    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
     return 1
   fi
 
-  generation=$(dx_completion_issue "$session_id" "$mode" "$purpose" "$phase") \
+  generation=$(dx_lifecycle_completion_issue_unlocked \
+    "$session_id" "$mode" "$purpose" "$phase") \
     || activation_rc=1
   if [[ "$activation_rc" -eq 0 ]]; then
     config=$(dx_completion_context_config "$mode" "$purpose" "$phase" \
@@ -671,12 +1114,15 @@ dx_completion_loop_activate() {
     dx_completion_abandon "$session_id" 2>/dev/null \
       || __dx_completion_recover_cleanup "$session_id" 2>/dev/null || true
     rm -f "$active_file" "$config_file" 2>/dev/null || true
-    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
     return 1
   fi
   if ! dx_lifecycle_control_lock_release "$session_id"; then
     dx_lifecycle_completion_brake "$session_id" activation-lock-release \
       "$purpose" 2>/dev/null || true
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
     return 1
   fi
   printf '%s\n' "$generation"
@@ -692,12 +1138,15 @@ dx_lifecycle_agent_escalate() {
   control_file=$(dx_lifecycle_control_file "$session_id")
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
   if [[ -e "$control_file" || -L "$control_file" ]]; then
-    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    if ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+      return 1
+    fi
     return 2
   fi
   context_record=$(dx_lifecycle_completion_context_read "$session_id" \
     2>/dev/null) || {
-    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
     return 1
   }
   IFS=$'\t' read -r context_phase _ _ _ context_mode context_purpose \
@@ -713,7 +1162,8 @@ dx_lifecycle_agent_escalate() {
       || escalate_rc=1
   fi
   if [[ "$escalate_rc" -ne 0 ]]; then
-    dx_lifecycle_control_lock_release "$session_id" 2>/dev/null || true
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
     return 1
   fi
   dx_lifecycle_detach "$session_id" failure-escalation agent-escalation \
@@ -722,6 +1172,8 @@ dx_lifecycle_agent_escalate() {
     && ! dx_lifecycle_control_lock_release "$session_id"; then
     dx_lifecycle_completion_brake "$session_id" \
       failure-escalation-lock-release agent-escalation 2>/dev/null || true
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
     escalate_rc=1
   fi
   return "$escalate_rc"
@@ -733,11 +1185,10 @@ dx_lifecycle_agent_escalate() {
 dx_lifecycle_completion_context_read() {
   local session_id="$1" config_file config_line reconstructed expected_config
   local phase promise audit_file min_audits mode purpose generation extra
-  local handoff_file handoff_mode="" state_phase=""
+  local handoff_file handoff_mode="" handoff_rc=0 state_phase=""
   dx_lifecycle_session_id_valid "$session_id" || return 1
   config_file=$(dx_loop_config_file "$session_id")
-  [[ -f "$config_file" && ! -L "$config_file" ]] || return 1
-  config_line=$(cat "$config_file" 2>/dev/null) || return 1
+  config_line=$(dx_lifecycle_trusted_file_read "$config_file" 4096) || return 1
   [[ -n "$config_line" && "$config_line" != *$'\n'* \
     && "$config_line" != *$'\r'* ]] || return 1
   IFS=: read -r phase promise audit_file min_audits mode purpose generation extra \
@@ -750,18 +1201,19 @@ dx_lifecycle_completion_context_read() {
 
   handoff_file=$(dx_handoff_mode_file "$session_id")
   if [[ -e "$handoff_file" || -L "$handoff_file" ]]; then
-    [[ -f "$handoff_file" && ! -L "$handoff_file" ]] || return 1
-    handoff_mode=$(cat "$handoff_file" 2>/dev/null) || return 1
+    handoff_mode=$(dx_lifecycle_trusted_file_read "$handoff_file" 32) \
+      || handoff_rc=$?
+    [[ "$handoff_rc" -eq 0 ]] || return 1
     [[ "$handoff_mode" != *$'\n'* && "$handoff_mode" != *$'\r'* ]] || return 1
   fi
 
   case "${mode}:${purpose}:${phase}" in
     lifecycle:phase:[0-6])
-      state_phase=$(cat "$(dx_state_file "$session_id")" 2>/dev/null || true)
+      state_phase=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)
       [[ "$state_phase" == "$phase" ]] || return 1
       if [[ "$handoff_mode" != "inline" ]]; then
-        [[ -z "$handoff_mode" && -f "$(dx_paused_file "$session_id")" \
-          && ! -L "$(dx_paused_file "$session_id")" ]] || return 1
+        [[ -z "$handoff_mode" ]] || return 1
+        dx_lifecycle_pause_context_state "$session_id" || return 1
       fi
       # A detach removes the live handoff marker. The validated phase state and
       # exact lifecycle config retain identity; resume restores inline mode.
@@ -793,16 +1245,60 @@ dx_lifecycle_completion_context_read() {
 dx_lifecycle_resume_completion_context_unlocked() {
   local session_id="$1" context_record phase promise audit_file min_audits
   local mode purpose old_generation handoff_mode generation config_line
+  local recorded_phase="" pause_metadata_record="" pause_metadata_rc=0
+  local pause_reason="" pause_source="" busy_file busy_token=""
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
     && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
-  context_record=$(dx_lifecycle_completion_context_read "$session_id" 2>/dev/null) \
-    || return 1
+  pause_metadata_record=$(dx_lifecycle_pause_metadata_record "$session_id" \
+    2>/dev/null) || pause_metadata_rc=$?
+  if [[ "$pause_metadata_rc" -eq 0 ]]; then
+    IFS=$'\t' read -r pause_reason pause_source <<EOF
+$pause_metadata_record
+EOF
+    : "$pause_source"
+    # This brake means the old risk selection could not be invalidated. A
+    # generic resume must not clear it and silently reuse that selection.
+    case "$pause_reason" in
+      assessment-selection-revocation-failed|receipt_revocation_failed)
+        return 1
+        ;;
+    esac
+  fi
+  if ! context_record=$(dx_lifecycle_completion_context_read "$session_id" \
+    2>/dev/null); then
+    recorded_phase=$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)
+    if [[ "$recorded_phase" != "7" ]] \
+      || ! __dx_lifecycle_terminal_failure_pause_valid "$session_id" \
+      || ! dx_lifecycle_terminal_failure_rollback_unlocked "$session_id" \
+        terminal-proof-invalid lifecycle-control; then
+      return 1
+    fi
+    context_record=$(dx_lifecycle_completion_context_read "$session_id" \
+      2>/dev/null) || return 1
+  fi
   IFS=$'\t' read -r phase promise audit_file min_audits mode purpose \
     old_generation handoff_mode <<< "$context_record"
   : "$old_generation" "$handoff_mode"
   [[ "$mode" == "lifecycle" || "$mode" == "standalone" ]] || return 1
-  if ! generation=$(dx_completion_issue "$session_id" "$mode" "$purpose" "$phase"); then
+
+  # A Phase 3 child fence survives detach until the exact child acknowledges
+  # quiescence. Resume may retire that proven fence, but must never launch a
+  # fresh generation while an unquiesced or malformed child marker remains.
+  busy_file=$(dx_phase_busy_file "$session_id" 3)
+  if [[ -e "$busy_file" || -L "$busy_file" ]]; then
+    dx_phase_busy_quiesced "$session_id" 3 || return 1
+    busy_token=$(dx_phase_busy_token "$session_id" 3)
+    [[ -n "$busy_token" ]] || return 1
+    dx_phase_busy_finish "$session_id" 3 "$busy_token" || return 1
+  fi
+  if ! dx_lifecycle_pause_clear_unlocked "$session_id"; then
+    return 1
+  fi
+  if ! generation=$(dx_lifecycle_completion_issue_unlocked \
+    "$session_id" "$mode" "$purpose" "$phase"); then
+    dx_lifecycle_completion_brake "$session_id" resume-issue-failed \
+      lifecycle-control 2>/dev/null || true
     return 1
   fi
   config_line="${phase}:${promise}:${audit_file}:${min_audits}:${mode}:${purpose}:${generation}"
@@ -810,6 +1306,8 @@ dx_lifecycle_resume_completion_context_unlocked() {
     dx_completion_abandon "$session_id" 2>/dev/null \
       || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
       || true
+    dx_lifecycle_completion_brake "$session_id" resume-config-failed \
+      lifecycle-control 2>/dev/null || true
     return 1
   fi
   if [[ "$mode" == "lifecycle" ]] \
@@ -817,17 +1315,20 @@ dx_lifecycle_resume_completion_context_unlocked() {
     dx_completion_abandon "$session_id" 2>/dev/null \
       || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
       || true
+    dx_lifecycle_completion_brake "$session_id" resume-handoff-failed \
+      lifecycle-control 2>/dev/null || true
     return 1
   fi
   if ! dx_lifecycle_atomic_write "$(dx_active_file "$session_id")" active; then
     dx_completion_abandon "$session_id" 2>/dev/null \
       || __dx_completion_recover_cleanup "$session_id" 2>/dev/null \
       || true
+    dx_lifecycle_completion_brake "$session_id" resume-activation-failed \
+      lifecycle-control 2>/dev/null || true
     return 1
   fi
   dx_clear_lifecycle_control_unlocked "$session_id"
-  rm -f "$(dx_paused_file "$session_id")" "$(dx_pause_state_file "$session_id")" \
-    "$(dx_owner_file "$session_id")" 2>/dev/null || true
+  rm -f "$(dx_owner_file "$session_id")" 2>/dev/null || true
   printf '%s\t%s\t%s\t%s\n' "$phase" "$generation" "$mode" "$purpose"
 }
 
@@ -842,6 +1343,8 @@ dx_lifecycle_resume_completion_context() {
   if ! dx_lifecycle_control_lock_release "$session_id"; then
     dx_lifecycle_completion_brake "$session_id" resume-lock-release \
       lifecycle-control 2>/dev/null || true
+    dx_lifecycle_control_lock_release_retained "$session_id" \
+      2>/dev/null || true
     return 1
   fi
   [[ "$resume_rc" -eq 0 ]] || return "$resume_rc"
@@ -914,8 +1417,8 @@ dx_phase_busy_token() {
   dx_lifecycle_session_id_valid "$session_id" || return 0
   [[ "$phase" =~ ^[0-6]$ ]] || return 0
   busy_file=$(dx_phase_busy_file "$session_id" "$phase")
-  [[ -f "$busy_file" && ! -L "$busy_file" ]] || return 0
-  raw=$(cat "$busy_file" 2>/dev/null || true)
+  raw=$(dx_lifecycle_trusted_file_read "$busy_file" 2048 2>/dev/null) \
+    || return 0
   raw="${raw#*$'\t'}"
   token="${raw%%$'\t'*}"
   if [[ "$token" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
@@ -930,23 +1433,40 @@ dx_phase_busy_token() {
 
 dx_phase_busy_begin() {
   local session_id="$1" phase="$2" label="${3:-busy}" epoch token busy_file
+  local cancel_file quiesced_file residue_file residue_rc=0
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$phase" =~ ^[0-6]$ ]] || return 1
   [[ "$label" != *$'\n'* && "$label" != *$'\r'* && ${#label} -le 500 ]] || return 1
   epoch=$(date +%s)
   token="${epoch}-$$-${RANDOM}"
   busy_file=$(dx_phase_busy_file "$session_id" "$phase")
-  rm -f "$(dx_phase_busy_cancel_file "$session_id" "$phase")" \
-    "$(dx_phase_busy_quiesced_file "$session_id" "$phase")" 2>/dev/null || true
+  cancel_file=$(dx_phase_busy_cancel_file "$session_id" "$phase")
+  quiesced_file=$(dx_phase_busy_quiesced_file "$session_id" "$phase")
+  [[ ! -e "$busy_file" && ! -L "$busy_file" ]] || return 1
+  for residue_file in "$cancel_file" "$quiesced_file"; do
+    if [[ -e "$residue_file" || -L "$residue_file" ]]; then
+      residue_rc=0
+      dx_lifecycle_trusted_file_read "$residue_file" 2048 \
+        >/dev/null 2>&1 || residue_rc=$?
+      [[ "$residue_rc" -eq 0 ]] || return 1
+      rm -f "$residue_file" 2>/dev/null || return 1
+      [[ ! -e "$residue_file" && ! -L "$residue_file" ]] || return 1
+    fi
+  done
   dx_lifecycle_atomic_write "$busy_file" "${epoch}"$'\t'"${token}"$'\t'"$$"$'\t'"${label}" || return 1
   printf '%s\n' "$token"
 }
 
 dx_phase_busy_request_cancel() {
-  local session_id="$1" phase="$2" token cancel_file
+  local session_id="$1" phase="$2" token cancel_file cancel_rc=0
   token=$(dx_phase_busy_token "$session_id" "$phase")
   [[ -n "$token" ]] || return 1
   cancel_file=$(dx_phase_busy_cancel_file "$session_id" "$phase")
+  if [[ -e "$cancel_file" || -L "$cancel_file" ]]; then
+    dx_lifecycle_trusted_file_read "$cancel_file" 2048 \
+      >/dev/null 2>&1 || cancel_rc=$?
+    [[ "$cancel_rc" -eq 0 ]] || return 1
+  fi
   dx_lifecycle_atomic_write "$cancel_file" "$token"
 }
 
@@ -954,15 +1474,22 @@ dx_phase_busy_cancel_requested() {
   local session_id="$1" phase="$2" token requested
   token=$(dx_phase_busy_token "$session_id" "$phase")
   [[ -n "$token" ]] || return 1
-  requested=$(cat "$(dx_phase_busy_cancel_file "$session_id" "$phase")" 2>/dev/null || true)
+  requested=$(dx_lifecycle_trusted_file_read \
+    "$(dx_phase_busy_cancel_file "$session_id" "$phase")" 2048 \
+    2>/dev/null) || return 1
   [[ "$requested" == "$token" ]]
 }
 
 dx_phase_busy_acknowledge() {
-  local session_id="$1" phase="$2" token="$3" current ack_file
+  local session_id="$1" phase="$2" token="$3" current ack_file ack_rc=0
   current=$(dx_phase_busy_token "$session_id" "$phase")
   [[ -n "$token" && "$current" == "$token" ]] || return 1
   ack_file=$(dx_phase_busy_quiesced_file "$session_id" "$phase")
+  if [[ -e "$ack_file" || -L "$ack_file" ]]; then
+    dx_lifecycle_trusted_file_read "$ack_file" 2048 \
+      >/dev/null 2>&1 || ack_rc=$?
+    [[ "$ack_rc" -eq 0 ]] || return 1
+  fi
   dx_lifecycle_atomic_write "$ack_file" "$token"
 }
 
@@ -971,8 +1498,8 @@ dx_phase_busy_quiesced() {
   token=$(dx_phase_busy_token "$session_id" "$phase")
   [[ -n "$token" ]] || return 1
   ack_file=$(dx_phase_busy_quiesced_file "$session_id" "$phase")
-  [[ -f "$ack_file" && ! -L "$ack_file" ]] || return 1
-  acknowledged=$(cat "$ack_file" 2>/dev/null || true)
+  acknowledged=$(dx_lifecycle_trusted_file_read "$ack_file" 2048 \
+    2>/dev/null) || return 1
   [[ "$acknowledged" == "$token" ]]
 }
 
@@ -984,7 +1511,14 @@ dx_phase_busy_finish() {
   rm -f "$(dx_phase_busy_file "$session_id" "$phase")" \
     "$(dx_phase_busy_notice_file "$session_id" "$phase")" \
     "$(dx_phase_busy_cancel_file "$session_id" "$phase")" \
-    "$(dx_phase_busy_quiesced_file "$session_id" "$phase")" 2>/dev/null || true
+    "$(dx_phase_busy_quiesced_file "$session_id" "$phase")" \
+    2>/dev/null || return 1
+  [[ ! -e "$(dx_phase_busy_file "$session_id" "$phase")" \
+    && ! -L "$(dx_phase_busy_file "$session_id" "$phase")" \
+    && ! -e "$(dx_phase_busy_cancel_file "$session_id" "$phase")" \
+    && ! -L "$(dx_phase_busy_cancel_file "$session_id" "$phase")" \
+    && ! -e "$(dx_phase_busy_quiesced_file "$session_id" "$phase")" \
+    && ! -L "$(dx_phase_busy_quiesced_file "$session_id" "$phase")" ]]
 }
 
 dx_phase_transition_crosses() {
@@ -1001,8 +1535,9 @@ dx_phase_transition_crosses() {
 dx_phase_busy_transition_blocked() {
   local session_id="$1" phase="$2" current="$3" target="$4" busy_file
   busy_file=$(dx_phase_busy_file "$session_id" "$phase")
-  [[ -f "$busy_file" && ! -L "$busy_file" ]] || return 1
+  [[ -e "$busy_file" || -L "$busy_file" ]] || return 1
   dx_phase_transition_crosses "$current" "$target" "$phase" || return 1
+  [[ -f "$busy_file" && ! -L "$busy_file" ]] || return 0
   dx_phase_busy_quiesced "$session_id" "$phase" && return 1
   return 0
 }

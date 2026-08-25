@@ -112,7 +112,13 @@ If during implementation you discover:
 - Don't keep expanding scope after a verification failure. Once any test, typecheck, build, lint, or smoke command fails, stop adding features and spend the remaining budget on that failing command until it passes. Fix the root cause in production code, tests, or config; then rerun the same command before moving on.
 - Don't leave a configured test runner with zero tests. As soon as you add a test script or test framework, add at least one executable smoke or regression test against the public surface and run it before expanding optional endpoints, helpers, or documentation.
 
-When stopping for scope changes, do NOT output a completion promise (e.g., `PHASE_2_COMPLETE`). Simply halt and wait for user input. The phase audit loop will detect that the completion signal file was not written and keep the session alive. Once the user provides direction, resume implementation from where you left off.
+When stopping for scope changes, do not output a completion promise (for
+example, `PHASE_2_COMPLETE`), write a completion receipt, or create the Phase 2
+ready marker. Halt and wait for user input. If a non-interactive run cannot get
+that input after two materially different recovery strategies, use only the
+exact generation-bound escalation command supplied for the current launch or
+audit. It pauses the run without claiming completion. Once the user provides
+direction and resumes the phase, continue from the approved scope.
 
 Update the ticket via the configured tracker (see dex.md § Integrations) with the scope change details. If no tracker is configured, inform the user in conversation.
 
@@ -223,7 +229,7 @@ dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIE
 ```
 
 The tier selects the trusted clean-wave policy from the committed default
-branch. The defaults are 3 for `small`, 6 for `normal`, and 9 for `complex`;
+branch. The defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`;
 repositories may configure monotonic values from 1 through 30 in `.dex/dex.md`
 `## Review Policy`. The persisted selection is bound to that resolved policy.
 Candidate-branch edits cannot lower the active gate, and

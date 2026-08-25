@@ -80,6 +80,8 @@ if [[ "$CONTEXT_MODE" == "lifecycle" && "$CONTEXT_PURPOSE" == "phase" \
   DURABLE_LIFECYCLE=1
 fi
 CONTROL_FILE=$(dx_lifecycle_control_file "$SESSION_ID")
+PAUSE_CONTEXT_RC=0
+dx_lifecycle_pause_context_state "$SESSION_ID" || PAUSE_CONTEXT_RC=$?
 
 if [[ "$COMMAND" == "-h" || "$COMMAND" == "--help" || "$COMMAND" == "help" ]]; then
   [[ $# -eq 0 ]] || { dx_error "Usage: dx control help"; exit 1; }
@@ -106,12 +108,22 @@ OWNER_SESSION=""
 
 case "$COMMAND" in
   status)
-    if [[ -z "$CURRENT_PHASE" && ! -f "$CONTROL_FILE" ]]; then
+    if [[ "$PAUSE_CONTEXT_RC" -eq 2 ]]; then
+      dx_error "Dex found an unsafe or malformed pause state for this checkout. Repair it before resuming."
+      exit 1
+    fi
+    if [[ -z "$CURRENT_PHASE" && ! -e "$CONTROL_FILE" \
+      && ! -L "$CONTROL_FILE" && "$PAUSE_CONTEXT_RC" -eq 1 ]]; then
       dx_info "No Dex lifecycle state was found for this checkout."
       exit 0
     fi
     [[ -n "$CURRENT_PHASE" ]] && printf 'Phase: %s (%s)\n' "$CURRENT_PHASE" "$(phase_label "$CURRENT_PHASE")"
     CONTROL_SNAPSHOT=$(dx_lifecycle_control_snapshot "$SESSION_ID")
+    if [[ -z "$CONTROL_SNAPSHOT" \
+      && ( -e "$CONTROL_FILE" || -L "$CONTROL_FILE" ) ]]; then
+      dx_error "Dex found an unsafe or unreadable human-control receipt. Repair it before changing lifecycle state."
+      exit 1
+    fi
     CONTROL_ACTION=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" action)
     CONTROL_TARGET=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" target_phase)
     if [[ -n "$CONTROL_ACTION" ]]; then
@@ -121,7 +133,7 @@ case "$COMMAND" in
     else
       printf 'Human control: none\n'
     fi
-    if [[ -f "$(dx_paused_file "$SESSION_ID")" ]]; then
+    if [[ "$PAUSE_CONTEXT_RC" -eq 0 ]]; then
       PAUSE_REASON=$(dx_pause_state_read "$SESSION_ID" reason)
       printf 'Lifecycle: paused%s\n' "${PAUSE_REASON:+ (${PAUSE_REASON})}"
     fi
@@ -205,7 +217,12 @@ case "$COMMAND" in
     fi
     ;;
   resume)
-    if [[ ! -f "$CONTROL_FILE" && ! -f "$(dx_paused_file "$SESSION_ID")" ]]; then
+    if [[ "$PAUSE_CONTEXT_RC" -eq 2 ]]; then
+      dx_error "Dex found an unsafe or malformed pause state. Repair it before resuming."
+      exit 1
+    fi
+    if [[ ! -e "$CONTROL_FILE" && ! -L "$CONTROL_FILE" \
+      && "$PAUSE_CONTEXT_RC" -eq 1 ]]; then
       dx_info "Dex is not paused for this checkout."
       exit 0
     fi

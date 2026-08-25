@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -38,6 +39,27 @@ printf '%s\n' "claude-owner" > "$(dx_owner_file "$DEX_SESSION_ID")"
 
 bash "$CONTROL" status > "$TMP_DIR/status.out"
 grep -q "Phase: 2 (Implement)" "$TMP_DIR/status.out"
+
+for unsafe_control_kind in symlink fifo directory wrong-mode; do
+  case "$unsafe_control_kind" in
+    symlink) ln -s /dev/null "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ;;
+    fifo) mkfifo "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ;;
+    directory) mkdir "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ;;
+    wrong-mode)
+      printf 'version=1\n' > "$(dx_lifecycle_control_file "$DEX_SESSION_ID")"
+      chmod 0644 "$(dx_lifecycle_control_file "$DEX_SESSION_ID")"
+      ;;
+  esac
+  assert_rejected "$LINENO" bash "$CONTROL" status \
+    > "$TMP_DIR/unsafe-control-${unsafe_control_kind}.out" 2>&1
+  assert_contains "unsafe or unreadable human-control receipt" \
+    "$TMP_DIR/unsafe-control-${unsafe_control_kind}.out"
+  if [[ -d "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]]; then
+    rmdir "$(dx_lifecycle_control_file "$DEX_SESSION_ID")"
+  else
+    rm -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")"
+  fi
+done
 
 set +e
 bash "$CONTROL" pause unexpected > "$TMP_DIR/extra-arg.out" 2>&1
@@ -97,7 +119,7 @@ bash "$CONTROL" "done" > "$TMP_DIR/durable-done.out"
 
 dx_clear_lifecycle_control "$DEX_SESSION_ID"
 rm -f "$(dx_active_file "$DEX_SESSION_ID")" "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
-touch "$(dx_paused_file "$DEX_SESSION_ID")"
+dx_lifecycle_atomic_write "$(dx_paused_file "$DEX_SESSION_ID")" paused
 bash "$CONTROL" resume > "$TMP_DIR/durable-resume.out"
 [[ ! -f "$(dx_paused_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 [[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
@@ -106,6 +128,60 @@ DURABLE_GENERATION=$(dx_completion_current_generation "$DEX_SESSION_ID" lifecycl
 [[ "$DURABLE_GENERATION" =~ ^[0-9a-f]{32}$ ]] || assert_at $LINENO
 [[ "$DURABLE_GENERATION" != "$RESUME_GENERATION" ]] || assert_at $LINENO
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$DEX_SESSION_ID\" \"$DURABLE_GENERATION\"" "$TMP_DIR/durable-resume.out"
+
+# A durable metadata record is independently sufficient to hold the pause.
+# Status must surface it and resume must consume it under the transition lock.
+bash "$CONTROL" pause > "$TMP_DIR/metadata-pause.out"
+dx_clear_lifecycle_control "$DEX_SESSION_ID"
+rm -f "$(dx_paused_file "$DEX_SESSION_ID")"
+bash "$CONTROL" status > "$TMP_DIR/metadata-status.out"
+assert_contains "Lifecycle: paused (manual-pause)" "$TMP_DIR/metadata-status.out"
+bash "$CONTROL" resume > "$TMP_DIR/metadata-resume.out"
+assert_no_file "$(dx_paused_file "$DEX_SESSION_ID")"
+assert_no_file "$(dx_pause_state_file "$DEX_SESSION_ID")"
+
+# An unsafe metadata inode is an error, not an absent pause that automation may
+# overwrite. Both the diagnostic and mutating surfaces stay closed.
+printf 'reason=manual-pause\nsource=terminal\n' \
+  > "$(dx_pause_state_file "$DEX_SESSION_ID")"
+chmod 0644 "$(dx_pause_state_file "$DEX_SESSION_ID")"
+assert_rejected "$LINENO" bash "$CONTROL" status \
+  > "$TMP_DIR/unsafe-pause-status.out" 2>&1
+assert_contains "unsafe or malformed pause state" \
+  "$TMP_DIR/unsafe-pause-status.out"
+assert_rejected "$LINENO" bash "$CONTROL" resume \
+  > "$TMP_DIR/unsafe-pause-resume.out" 2>&1
+assert_contains "unsafe or malformed pause state" \
+  "$TMP_DIR/unsafe-pause-resume.out"
+rm -f "$(dx_pause_state_file "$DEX_SESSION_ID")"
+
+# If a review selection could not be invalidated, ordinary resume cannot
+# clear the brake and silently reuse that selection.
+SELECTION_BRAKE_SESSION="$(dx_session_repo_key)-selection-brake"
+dx_lifecycle_atomic_write "$(dx_state_file "$SELECTION_BRAKE_SESSION")" 3
+SELECTION_BRAKE_GENERATION=$(dx_completion_issue \
+  "$SELECTION_BRAKE_SESSION" lifecycle phase 3)
+printf '3:PHASE_3_COMPLETE:%s/prompts/phase-audits/3-review-loop.md:1:lifecycle:phase:%s\n' \
+  "$ROOT" "$SELECTION_BRAKE_GENERATION" \
+  > "$(dx_loop_config_file "$SELECTION_BRAKE_SESSION")"
+dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$SELECTION_BRAKE_SESSION")" inline
+dx_lifecycle_pause "$SELECTION_BRAKE_SESSION" \
+  assessment-selection-revocation-failed review-loop
+assert_rejected "$LINENO" env DEX_SESSION_ID="$SELECTION_BRAKE_SESSION" \
+  bash "$CONTROL" resume > "$TMP_DIR/selection-brake-resume.out" 2>&1
+assert_file "$(dx_paused_file "$SELECTION_BRAKE_SESSION")"
+assert_eq "assessment-selection-revocation-failed" \
+  "$(dx_pause_state_read "$SELECTION_BRAKE_SESSION" reason)" \
+  "selection revocation failure stays non-resumable"
+assert_no_file "$(dx_completion_expectation_file "$SELECTION_BRAKE_SESSION")"
+dx_lifecycle_atomic_write "$(dx_state_file "$SELECTION_BRAKE_SESSION")" 7
+assert_rejected "$LINENO" env DEX_SESSION_ID="$SELECTION_BRAKE_SESSION" \
+  bash "$CONTROL" resume > "$TMP_DIR/selection-brake-phase7-resume.out" 2>&1
+assert_eq "7" "$(dx_lifecycle_current_phase "$SELECTION_BRAKE_SESSION")" \
+  "selection revocation failure cannot use terminal-failure rollback"
+assert_file "$(dx_paused_file "$SELECTION_BRAKE_SESSION")"
+assert_no_file "$(dx_lifecycle_terminal_commit_file "$SELECTION_BRAKE_SESSION")"
+assert_no_file "$(dx_completion_expectation_file "$SELECTION_BRAKE_SESSION")"
 
 bash "$CONTROL" "done" > "$TMP_DIR/done.out"
 [[ "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" == "complete" ]] || assert_at $LINENO
@@ -192,7 +268,7 @@ STANDALONE_GENERATION=$(dx_completion_issue \
   "$STANDALONE_SESSION_ID" standalone dxloop-prompt prompt-loop)
 printf 'prompt-loop:PROMPT_COMPLETE:%s/prompts/phase-audits/prompt-loop.md:1:standalone:dxloop-prompt:%s\n' \
   "$ROOT" "$STANDALONE_GENERATION" > "$STANDALONE_CONFIG"
-touch "$(dx_paused_file "$STANDALONE_SESSION_ID")"
+dx_lifecycle_atomic_write "$(dx_paused_file "$STANDALONE_SESSION_ID")" paused
 DEX_SESSION_ID="$STANDALONE_SESSION_ID" bash "$CONTROL" resume \
   > "$TMP_DIR/standalone-prompt-resume.out"
 STANDALONE_RESUMED=$(dx_completion_current_generation \
@@ -212,7 +288,7 @@ RESUME_RELEASE_GENERATION=$(dx_completion_issue \
 printf '6:DEX_TICKET_COMPLETE:%s/prompts/phase-audits/6-complete.md:1:standalone:dxcomplete:%s\n' \
   "$ROOT" "$RESUME_RELEASE_GENERATION" \
   > "$(dx_loop_config_file "$RESUME_RELEASE_SESSION")"
-touch "$(dx_paused_file "$RESUME_RELEASE_SESSION")"
+dx_lifecycle_atomic_write "$(dx_paused_file "$RESUME_RELEASE_SESSION")" paused
 set +e
 (
   dx_lifecycle_control_lock_release() { return 1; }
@@ -230,6 +306,38 @@ rm -f "$(dx_paused_file "$RESUME_RELEASE_SESSION")" \
   "$(dx_pause_state_file "$RESUME_RELEASE_SESSION")" \
   "$(dx_loop_config_file "$RESUME_RELEASE_SESSION")"
 
+# Resume cannot cross a live Phase 3 child fence. The pause remains intact and
+# no generation is minted until the exact child token acknowledges quiescence;
+# that acknowledgement is then retired in the same resume transaction.
+BUSY_RESUME_SESSION="$(dx_session_repo_key)-busy-resume"
+dx_lifecycle_atomic_write "$(dx_state_file "$BUSY_RESUME_SESSION")" 3
+dx_lifecycle_control_lock_acquire "$BUSY_RESUME_SESSION"
+BUSY_RESUME_GENERATION=$(dx_lifecycle_completion_issue_unlocked \
+  "$BUSY_RESUME_SESSION" lifecycle phase 3)
+dx_lifecycle_atomic_write "$(dx_loop_config_file "$BUSY_RESUME_SESSION")" \
+  "$(dx_completion_context_config lifecycle phase 3 "$BUSY_RESUME_GENERATION")"
+dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$BUSY_RESUME_SESSION")" inline
+dx_lifecycle_atomic_write "$(dx_active_file "$BUSY_RESUME_SESSION")" active
+dx_lifecycle_control_lock_release "$BUSY_RESUME_SESSION"
+BUSY_RESUME_TOKEN=$(dx_phase_busy_begin "$BUSY_RESUME_SESSION" 3 review-pass)
+dx_lifecycle_pause "$BUSY_RESUME_SESSION" manual-pause lifecycle-control
+assert_rejected "$LINENO" env DEX_SESSION_ID="$BUSY_RESUME_SESSION" \
+  bash "$CONTROL" resume > "$TMP_DIR/busy-resume-rejected.out" 2>&1
+assert_file "$(dx_paused_file "$BUSY_RESUME_SESSION")"
+assert_file "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_completion_expectation_file "$BUSY_RESUME_SESSION")"
+dx_phase_busy_acknowledge "$BUSY_RESUME_SESSION" 3 "$BUSY_RESUME_TOKEN"
+DEX_SESSION_ID="$BUSY_RESUME_SESSION" bash "$CONTROL" resume \
+  > "$TMP_DIR/busy-resume-accepted.out"
+BUSY_RESUMED_GENERATION=$(dx_completion_current_generation \
+  "$BUSY_RESUME_SESSION" lifecycle phase 3)
+[[ "$BUSY_RESUMED_GENERATION" =~ ^[0-9a-f]{32}$ \
+  && "$BUSY_RESUMED_GENERATION" != "$BUSY_RESUME_GENERATION" ]] || assert_at $LINENO
+assert_no_file "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_phase_busy_cancel_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_phase_busy_quiesced_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_paused_file "$BUSY_RESUME_SESSION")"
+
 # If the Stop hook applies a terminal transition before the CLI can reactivate
 # it, the activation helper reports the committed result without resurrecting
 # the completed loop.
@@ -245,17 +353,77 @@ touch "$(dx_active_file "$ACTIVATION_RACE_SESSION")"
 dx_write_lifecycle_control "$ACTIVATION_RACE_SESSION" complete 7 terminal "" 6 ""
 ACTIVATION_RACE_CONTROL="$DX_LIFECYCLE_CONTROL_GENERATION"
 dx_completion_abandon "$ACTIVATION_RACE_SESSION"
-printf '7\n' > "$(dx_state_file "$ACTIVATION_RACE_SESSION")"
+dx_lifecycle_atomic_write "$(dx_state_file "$ACTIVATION_RACE_SESSION")" 7
 dx_clear_lifecycle_control "$ACTIVATION_RACE_SESSION"
 rm -f "$(dx_active_file "$ACTIVATION_RACE_SESSION")" \
   "$(dx_handoff_mode_file "$ACTIVATION_RACE_SESSION")" \
   "$(dx_loop_config_file "$ACTIVATION_RACE_SESSION")"
+dx_lifecycle_control_lock_acquire "$ACTIVATION_RACE_SESSION"
+dx_lifecycle_terminal_commit_publish_unlocked "$ACTIVATION_RACE_SESSION" \
+  "$ACTIVATION_RACE_CONTROL"
+dx_lifecycle_control_lock_release "$ACTIVATION_RACE_SESSION"
 assert_eq "applied" \
   "$(dx_lifecycle_activate_pending_control "$ACTIVATION_RACE_SESSION" \
     complete 7 6 "$ACTIVATION_RACE_CONTROL")" \
   "already-applied terminal transition"
 assert_no_file "$(dx_active_file "$ACTIVATION_RACE_SESSION")"
 assert_no_file "$(dx_handoff_mode_file "$ACTIVATION_RACE_SESSION")"
+
+# A terminal lifecycle cannot be complete while any Phase 3 child fence or
+# sidecar remains, even when that path is an unsafe inode.
+for terminal_busy_path in \
+  "$(dx_phase_busy_file "$ACTIVATION_RACE_SESSION" 3)" \
+  "$(dx_phase_busy_cancel_file "$ACTIVATION_RACE_SESSION" 3)" \
+  "$(dx_phase_busy_quiesced_file "$ACTIVATION_RACE_SESSION" 3)"; do
+  mkdir "$terminal_busy_path"
+  if dx_lifecycle_terminal_commit_valid "$ACTIVATION_RACE_SESSION"; then
+    printf 'terminal proof accepted Phase 3 child-fence residue: %s\n' \
+      "$terminal_busy_path" >&2
+    exit 1
+  fi
+  rmdir "$terminal_busy_path"
+done
+dx_lifecycle_terminal_commit_valid "$ACTIVATION_RACE_SESSION" || assert_at $LINENO
+
+# A crash after Phase 7 publication but before its proof is recoverable only
+# from Dex's trusted terminal-failure pause. Resume rolls back to Phase 6 and
+# creates a fresh, exact authorization instead of accepting the partial 7.
+TERMINAL_REPAIR_SESSION="$(dx_session_repo_key)-terminal-repair"
+dx_lifecycle_atomic_write "$(dx_state_file "$TERMINAL_REPAIR_SESSION")" 7
+dx_write_pause_state "$TERMINAL_REPAIR_SESSION" terminal-proof-missing phase-loop
+dx_lifecycle_atomic_write "$(dx_paused_file "$TERMINAL_REPAIR_SESSION")" paused
+DEX_SESSION_ID="$TERMINAL_REPAIR_SESSION" bash "$CONTROL" resume \
+  > "$TMP_DIR/terminal-repair.out"
+assert_eq "6" "$(dx_lifecycle_phase_state "$TERMINAL_REPAIR_SESSION")" \
+  "terminal repair returns to Phase 6"
+TERMINAL_REPAIR_GENERATION=$(dx_completion_current_generation \
+  "$TERMINAL_REPAIR_SESSION" lifecycle phase 6)
+[[ "$TERMINAL_REPAIR_GENERATION" =~ ^[0-9a-f]{32}$ ]] || assert_at $LINENO
+assert_no_file "$(dx_lifecycle_terminal_commit_file "$TERMINAL_REPAIR_SESSION")"
+assert_no_file "$(dx_paused_file "$TERMINAL_REPAIR_SESSION")"
+assert_contains "resumed at Phase 6" "$TMP_DIR/terminal-repair.out"
+
+# A fresh lifecycle generation always erases an older terminal proof. Returning
+# to Phase 7 without a new proof must therefore remain incomplete.
+TERMINAL_REPLAY_SESSION="$(dx_session_repo_key)-terminal-replay"
+dx_lifecycle_atomic_write "$(dx_state_file "$TERMINAL_REPLAY_SESSION")" 7
+dx_lifecycle_control_lock_acquire "$TERMINAL_REPLAY_SESSION"
+dx_lifecycle_terminal_commit_publish_unlocked "$TERMINAL_REPLAY_SESSION" \
+  0123456789abcdef0123456789abcdef
+dx_lifecycle_control_lock_release "$TERMINAL_REPLAY_SESSION"
+dx_lifecycle_terminal_commit_valid "$TERMINAL_REPLAY_SESSION" || assert_at $LINENO
+dx_lifecycle_control_lock_acquire "$TERMINAL_REPLAY_SESSION"
+dx_lifecycle_atomic_write "$(dx_state_file "$TERMINAL_REPLAY_SESSION")" 4
+dx_lifecycle_completion_issue_unlocked \
+  "$TERMINAL_REPLAY_SESSION" lifecycle phase 4 >/dev/null
+assert_no_file "$(dx_lifecycle_terminal_commit_file "$TERMINAL_REPLAY_SESSION")"
+dx_lifecycle_control_lock_release "$TERMINAL_REPLAY_SESSION"
+dx_completion_abandon "$TERMINAL_REPLAY_SESSION"
+dx_lifecycle_atomic_write "$(dx_state_file "$TERMINAL_REPLAY_SESSION")" 7
+if dx_lifecycle_terminal_commit_valid "$TERMINAL_REPLAY_SESSION"; then
+  printf 'stale terminal proof authorized a later Phase 7\n' >&2
+  exit 1
+fi
 
 set +e
 DEX_SESSION_ID="foreign-session" bash "$CONTROL" status > "$TMP_DIR/foreign.out" 2>&1

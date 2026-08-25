@@ -101,8 +101,8 @@ reading agent transcripts.
 | `review.paused` | Review needs intervention | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, normalized `reason` |
 
 Tier selection is `small`/`normal`/`complex`, mapping to `light`/`standard`/
-`thorough` review. The default consecutive clean-wave requirements are 3 for
-`small`, 6 for `normal`, and 9 for `complex`. Repositories can configure these
+`thorough` review. The default consecutive clean-wave requirements are 1 for
+`small`, 3 for `normal`, and 6 for `complex`. Repositories can configure these
 requirements in the `## Review Policy` table in `.dex/dex.md` on the committed
 default branch. Values must be monotonic integers from 1 through 30. Dex binds
 the resolved trusted policy to the selection, review state, pass evidence,

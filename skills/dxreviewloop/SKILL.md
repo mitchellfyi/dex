@@ -26,9 +26,9 @@ depth and selects the trusted clean-wave policy. The default policy is:
 
 | Risk tier | Review profile | Required consecutive `CLEAN` waves |
 |-----------|----------------|-------------------------------------|
-| `small` | `light` | 3 |
-| `normal` | `standard` | 6 |
-| `complex` | `thorough` | 9 |
+| `small` | `light` | 1 |
+| `normal` | `standard` | 3 |
+| `complex` | `thorough` | 6 |
 
 Use `prompts/review-risk-assessment.md` as the source of truth. Its first
 matching rule wins:
@@ -132,7 +132,7 @@ Every wave must:
 5. Batch-fix verified findings that are safe and in scope.
 6. Re-run affected checks and targeted review.
 7. Write one result signal, exactly one lowercase 16-character findings hash,
-   and the pass completion marker, then stop.
+   and the exact generation-bound receipt supplied for that pass, then stop.
 
 Waves run with `DEX_REVIEW_PASS_ACTIVE=1`, a pass-scoped `DEX_SESSION_ID`, and
 an empty `DEX_PHASE_HANDOFF`. They must never receive or write the lifecycle
@@ -146,7 +146,8 @@ The wrapper accepts a wave only when both criteria copies retain the expected
 binding, evidence version 3 contains the exact ordered hash, outcome, and
 substantive context reference for every supplied criteria item, its policy and
 pass bindings match the current immutable inputs, its result is valid, its
-findings hash is valid, and its completion marker exists. It attests the
+findings hash is valid, and its exact pass receipt matches the current
+generation. It attests the
 manifest, context, result, profile, and findings fingerprint together before
 crediting the pass. Counted clean evidence and context are retained as private,
 read-only proof copies so ledger and receipt validation can reopen each pass and

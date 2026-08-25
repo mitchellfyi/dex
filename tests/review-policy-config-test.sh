@@ -72,7 +72,7 @@ assert_eq "5" "$tier_required" "trusted tier lookup"
 assert_eq "$binding" "$tier_binding" "trusted tier binding"
 assert_eq "5" "$(dx_review_policy_for_tier "$repo" normal "$binding" | cut -f1)" \
   "expected binding lookup"
-if dx_review_policy_for_tier "$repo" normal "$(dx_review_policy_binding 3 6 9)" >/dev/null 2>&1; then
+if dx_review_policy_for_tier "$repo" normal "$(dx_review_policy_binding 1 3 6)" >/dev/null 2>&1; then
   fail "tier lookup accepted a different policy binding"
 fi
 
@@ -89,7 +89,7 @@ git -C "$missing" config user.email "dex-test@example.com"
 printf '%s\n' '# Project context' > "$missing/README.md"
 git -C "$missing" add README.md
 git -C "$missing" commit -qm "test: omit review policy"
-assert_eq $'3\t6\t9' "$(dx_review_policy_resolve "$missing" | cut -f1-3)" \
+assert_eq $'1\t3\t6' "$(dx_review_policy_resolve "$missing" | cut -f1-3)" \
   "missing policy uses recommended defaults"
 
 invalid="$TMP_DIR/invalid"
@@ -120,10 +120,10 @@ IFS=$'\t' read -r unborn_small unborn_normal unborn_complex unborn_binding \
   unborn_ref unborn_oid <<EOF
 $(dx_review_policy_resolve "$unborn")
 EOF
-assert_eq "3" "$unborn_small" "unborn built-in small gate"
-assert_eq "6" "$unborn_normal" "unborn built-in normal gate"
-assert_eq "9" "$unborn_complex" "unborn built-in complex gate"
-assert_eq "$(dx_review_policy_binding 3 6 9)" "$unborn_binding" \
+assert_eq "1" "$unborn_small" "unborn built-in small gate"
+assert_eq "3" "$unborn_normal" "unborn built-in normal gate"
+assert_eq "6" "$unborn_complex" "unborn built-in complex gate"
+assert_eq "$(dx_review_policy_binding 1 3 6)" "$unborn_binding" \
   "unborn built-in policy binding"
 assert_eq "built-in-defaults" "$unborn_ref" "unborn policy provenance ref"
 assert_eq "unborn" "$unborn_oid" "unborn policy provenance commit"

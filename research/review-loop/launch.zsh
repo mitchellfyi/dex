@@ -142,13 +142,45 @@ dx_review_parse_assessment_file() {
 }
 
 if [[ "$controller_test_stub" == "1" ]]; then
+  __review_eval_stub_generation() {
+    local record_kind="$1"
+    shift
+    python3 - "$record_kind" "$@" <<'PY'
+import re
+import sys
+
+kind = sys.argv[1]
+values = sys.argv[2:]
+if kind == "assessment":
+    pattern = re.compile(r'"completion_generation":"([0-9a-f]{32})"')
+elif kind == "pass":
+    pattern = re.compile(
+        r'bash "\$DEX_DIR/bin/complete-receipt\.sh" '
+        r'"([A-Za-z0-9][A-Za-z0-9._-]{0,179})" "([0-9a-f]{32})"'
+    )
+else:
+    raise SystemExit(2)
+
+matches = []
+for value in values:
+    matches.extend(pattern.findall(value))
+if len(matches) != 1:
+    raise SystemExit(1)
+match = matches[0]
+if isinstance(match, tuple):
+    print("\t".join(match))
+else:
+    print(match)
+PY
+  }
   claude() { return 0 }
   __dx_refresh_provider() {
     DX_PROVIDER_ENGINE=claude
     DX_CLAUDE_FLAGS=(--dangerously-skip-permissions --permission-mode bypassPermissions)
   }
   __dx_claude() {
-    local stub_context stub_result stub_evidence stub_findings stub_complete stub_hash
+    local stub_context stub_result stub_evidence stub_findings stub_hash
+    local stub_completion_record stub_completion_session stub_generation
     local stub_branch stub_child_pid stub_remote stub_generic_branch=false
     local stub_generic_layout=false stub_prior_capture=false stub_assessment_active=false
     local stub_policy_binding_valid=false stub_pass_binding_valid=false stub_evidence_version=0
@@ -180,22 +212,23 @@ if [[ "$controller_test_stub" == "1" ]]; then
     print -r -- "{\"assessment_active\":${stub_assessment_active},\"evidence_version\":${stub_evidence_version},\"generic_branch\":${stub_generic_branch},\"generic_layout\":${stub_generic_layout},\"pass_binding_valid\":${stub_pass_binding_valid},\"policy_binding_valid\":${stub_policy_binding_valid},\"prior_capture_visible\":${stub_prior_capture}}" \
       >> "$controller_capture/provider-observations.jsonl"
     if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
+      stub_generation=$(__review_eval_stub_generation assessment "$@") || return 2
       case "$controller_test_stub_mode" in
         fail-assessment) return 2 ;;
         timeout-assessment) return 124 ;;
         tier-normal)
-          print -r -- '{"tier":"normal","reason_codes":"bounded-production-change"}'
+          print -r -- "{\"tier\":\"normal\",\"reason_codes\":\"bounded-production-change\",\"completion_generation\":\"${stub_generation}\"}"
           ;;
         tier-complex)
-          print -r -- '{"tier":"complex","reason_codes":"cross-module,public-contract"}'
+          print -r -- "{\"tier\":\"complex\",\"reason_codes\":\"cross-module,public-contract\",\"completion_generation\":\"${stub_generation}\"}"
           ;;
         mutate-runtime)
           chmod u+w "$controller_runtime/prompts/review-risk-assessment.md"
           print -r -- '# evaluation mutation' >> "$controller_runtime/prompts/review-risk-assessment.md"
-          print -r -- '{"tier":"small","reason_codes":"localized-change,focused-verification"}'
+          print -r -- "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\",\"completion_generation\":\"${stub_generation}\"}"
           ;;
         *)
-          print -r -- '{"tier":"small","reason_codes":"localized-change,focused-verification"}'
+          print -r -- "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\",\"completion_generation\":\"${stub_generation}\"}"
           ;;
       esac
       return 0
@@ -211,13 +244,17 @@ if [[ "$controller_test_stub" == "1" ]]; then
     stub_result=$(dx_review_result_file "$DEX_SESSION_ID")
     stub_evidence=$(dx_review_evidence_file "$DEX_SESSION_ID")
     stub_findings=$(dx_findings_file "$DEX_SESSION_ID")
-    stub_complete=$(dx_complete_file "$DEX_SESSION_ID")
+    stub_completion_record=$(__review_eval_stub_generation pass "$@") || return 2
+    IFS=$'\t' read -r stub_completion_session stub_generation <<< \
+      "$stub_completion_record"
+    [[ "$stub_completion_session" == "$DEX_SESSION_ID" ]] || return 2
     stub_hash=$(dx_review_empty_findings_hash)
     __dx_write_state "$stub_context" $'# Stub review context\n\n## Scope\nThe current candidate diff was inspected in full.\n\n## Acceptance Criteria\nCriteria binding: standalone\nNo external criteria were supplied.\n\n## Deterministic Checks\nThe fixture check passed.\n\n## Review Coverage\nCorrectness, security, contracts, tests, and architecture were covered.\n\n## Verification\nThe candidate remained unchanged and verification passed.'
     __dx_write_state "$stub_result" "CLEAN"
     __dx_write_state "$stub_findings" "$stub_hash"
     __dx_write_state "$stub_evidence" "{\"version\":3,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT}\",\"criteria_binding\":\"standalone\",\"policy_binding\":\"${DEX_REVIEW_POLICY_BINDING}\",\"pass_binding\":\"${DEX_REVIEW_PASS_BINDING}\",\"criteria_evidence\":{\"objectives\":[],\"acceptance_criteria\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\",\"frontend\",\"devops\",\"performance\",\"observability\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}"
-    touch "$stub_complete"
+    bash "$DEX_DIR/bin/complete-receipt.sh" "$stub_completion_session" \
+      "$stub_generation"
     print -r -- "${DEX_LOOP_PROMISE:-PHASE_3_COMPLETE}"
   }
 fi

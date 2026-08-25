@@ -9,6 +9,7 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-worktree-integrity-test.XXXXXX")"
 cleanup() {
   git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-61" >/dev/null 2>&1 || true
   git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-62" >/dev/null 2>&1 || true
+  git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-63" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -39,6 +40,28 @@ grep -q "is not a registered Git worktree" "$TMP_DIR/plain.out"
 
 git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dex/worktrees/ticket-61" -b worktree-ticket-61 HEAD
 git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dex/worktrees/ticket-62" -b worktree-ticket-62 HEAD
+git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dex/worktrees/ticket-63" -b worktree-ticket-63 HEAD
+
+# Listing must fail closed on unsafe phase inodes and on Phase 7 without the
+# terminal transaction proof. Neither state may be presented as complete.
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+set -e
+cd "$TEST_REPO"
+unsafe_session=$(dx_session_id ticket-61)
+unsafe_phase=$(dx_state_file "$unsafe_session")
+dx_lifecycle_atomic_write "${unsafe_phase}.target" 3
+ln -s "${unsafe_phase}.target" "$unsafe_phase"
+unproved_session=$(dx_session_id ticket-62)
+dx_lifecycle_atomic_write "$(dx_state_file "$unproved_session")" 7
+proved_session=$(dx_session_id ticket-63)
+dx_lifecycle_atomic_write "$(dx_state_file "$proved_session")" 7
+dx_lifecycle_control_lock_acquire "$proved_session"
+dx_lifecycle_terminal_commit_publish_unlocked "$proved_session" \
+  0123456789abcdef0123456789abcdef
+dx_lifecycle_control_lock_release "$proved_session"
+dx_lifecycle_terminal_commit_valid "$proved_session"
+'
 
 zsh -fc '
 source "$DEX_DIR/dx.sh"
@@ -56,6 +79,12 @@ if grep -Eq '^(wt_name|wt_status|branch|session_id|phase_file|phase_num|name|act
   exit 1
 fi
 grep -q "Multiple worktrees match 'ticket'" "$TMP_DIR/list-clean.out"
+grep -q "ticket-61.*\[blocked: unsafe phase state\]" "$TMP_DIR/list-clean.out"
+grep -q "ticket-62.*\[blocked: terminal commit not verified\]" "$TMP_DIR/list-clean.out"
+grep -q "ticket-63.*\[complete\]" "$TMP_DIR/list-clean.out"
+[[ -d "$TEST_REPO/.dex/worktrees/ticket-61" ]] || assert_at $LINENO
+[[ -d "$TEST_REPO/.dex/worktrees/ticket-62" ]] || assert_at $LINENO
+[[ -d "$TEST_REPO/.dex/worktrees/ticket-63" ]] || assert_at $LINENO
 if grep -q "Deleting orphan branch:" "$TMP_DIR/list-clean.out"; then
   printf 'dxclean treated a linked-worktree branch as orphaned\n' >&2
   exit 1

@@ -18,6 +18,33 @@ export DEXCODE_SYNC=0
 export DEX_FACTORY_SYNC=false
 mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR" "$DX_RUN_ROOT"
 
+ATOMIC_FAILURE_ENV="$TMP_DIR/atomic-failure-env.sh"
+cat > "$ATOMIC_FAILURE_ENV" <<'SH'
+#!/usr/bin/env bash
+
+__dx_test_fail_phase_publish() {
+  if [[ -n "${DX_TEST_REPLACE_PHASE_BEFORE_SYNC:-}" \
+    && "${PHASE_STATE_FILE:-}" == "$DX_TEST_REPLACE_PHASE_BEFORE_SYNC" \
+    && "$BASH_COMMAND" == "dx_sync_inline_phase_from_state" ]]; then
+    trap - DEBUG
+    mv "$DX_TEST_REPLACE_PHASE_BEFORE_SYNC" \
+      "${DX_TEST_REPLACE_PHASE_BEFORE_SYNC}.target"
+    ln -s "${DX_TEST_REPLACE_PHASE_BEFORE_SYNC}.target" \
+      "$DX_TEST_REPLACE_PHASE_BEFORE_SYNC"
+    return 0
+  fi
+  if [[ -n "${DX_TEST_FAIL_ATOMIC_TARGET:-}" \
+    && "${PHASE_STATE_FILE:-}" == "$DX_TEST_FAIL_ATOMIC_TARGET" \
+    && "$BASH_COMMAND" == 'dx_lifecycle_atomic_write "$PHASE_STATE_FILE" "$NEXT_PHASE"' ]]; then
+    trap - DEBUG
+    rm -f "$DX_TEST_FAIL_ATOMIC_TARGET"
+    mkdir "$DX_TEST_FAIL_ATOMIC_TARGET"
+  fi
+}
+trap __dx_test_fail_phase_publish DEBUG
+SH
+chmod 600 "$ATOMIC_FAILURE_ENV"
+
 TEST_REPO="$TMP_DIR/repo"
 git init -q -b main "$TEST_REPO"
 git -C "$TEST_REPO" config user.email test@example.com
@@ -44,14 +71,14 @@ run_paused_lifecycle() {
           dx_phase_outcome_record "$TEST_SESSION_ID" "$phase" completed test-fixture \
             "fixture-${phase}-1" gates-passed
         done
-        printf "%s\n" 3 > "$(dx_state_file "$TEST_SESSION_ID")"
+        dx_lifecycle_atomic_write "$(dx_state_file "$TEST_SESSION_ID")" 3
         if [[ -n "$TEST_PAUSE_REASON" ]]; then
           dx_write_pause_state "$TEST_SESSION_ID" "$TEST_PAUSE_REASON" phase-loop
           [[ "$TEST_PAUSE_REASON" == "max-iterations" ]] \
             && printf "%s\n" "30:fixture" > "$(dx_loop_file "$TEST_SESSION_ID")"
-          touch "$(dx_paused_file "$TEST_SESSION_ID")"
+          dx_lifecycle_atomic_write "$(dx_paused_file "$TEST_SESSION_ID")" paused
         else
-          : > "$(dx_paused_file "$TEST_SESSION_ID")"
+          dx_lifecycle_atomic_write "$(dx_paused_file "$TEST_SESSION_ID")" paused
         fi
       }
 
@@ -143,7 +170,7 @@ DISPLAY_SESSION="$DISPLAY_SESSION" TEST_REPO="$TEST_REPO" zsh -fc '
 grep -Fq "✓ Setup  ◇ Plan  ↷ Implement  ? Review  → Verify & Commit" "$DISPLAY_OUTPUT"
 grep -Fq "↷ skipped by human" "$DISPLAY_OUTPUT"
 grep -Fq "◇ marked done by human" "$DISPLAY_OUTPUT"
-grep -Fq "? terminal receipt missing" "$DISPLAY_OUTPUT"
+grep -Fq "? outcome not recorded" "$DISPLAY_OUTPUT"
 
 # Historical sessions can outlive their compact phase TSV. Reconcile only a
 # validated phase.completed run event; unrelated journal or PR evidence never
@@ -169,16 +196,15 @@ HOOK="$ROOT/hooks/phase-loop.sh"
 
 setup_inline() {
   local session_id="$1" phase="$2" generation promise audit_basename min_audits
-  touch "$(dx_active_file "$session_id")"
-  printf '%s\n' inline > "$(dx_handoff_mode_file "$session_id")"
-  printf '%s\n' "$phase" > "$(dx_state_file "$session_id")"
+  dx_lifecycle_atomic_write "$(dx_active_file "$session_id")" active
+  dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$session_id")" inline
+  dx_lifecycle_atomic_write "$(dx_state_file "$session_id")" "$phase"
   generation=$(dx_completion_issue "$session_id" lifecycle phase "$phase")
   promise=$(dx_lifecycle_phase_promise "$phase")
   audit_basename=$(dx_lifecycle_phase_audit_basename "$phase")
   min_audits=$(dx_lifecycle_phase_min_audits "$phase")
-  printf '%s:%s:%s/prompts/phase-audits/%s.md:%s:lifecycle:phase:%s\n' \
-    "$phase" "$promise" "$ROOT" "$audit_basename" "$min_audits" \
-    "$generation" > "$(dx_loop_config_file "$session_id")"
+  dx_lifecycle_atomic_write "$(dx_loop_config_file "$session_id")" \
+    "${phase}:${promise}:${ROOT}/prompts/phase-audits/${audit_basename}.md:${min_audits}:lifecycle:phase:${generation}"
   INLINE_GENERATION="$generation"
 }
 
@@ -187,28 +213,49 @@ run_hook() {
   set +e
   HOOK_OUTPUT=$(printf '{"session_id":"claude-progress-test"}' | env \
     DEX_SESSION_ID="$session_id" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE="$phase" \
-    DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)
+    DEX_PHASE_HANDOFF=inline \
+    DX_TEST_FAIL_ATOMIC_TARGET="${DX_TEST_FAIL_ATOMIC_TARGET:-}" \
+    DX_TEST_REPLACE_PHASE_BEFORE_SYNC="${DX_TEST_REPLACE_PHASE_BEFORE_SYNC:-}" \
+    BASH_ENV="$ATOMIC_FAILURE_ENV" bash "$HOOK" 2>&1)
   HOOK_STATUS=$?
   set -e
 }
+
+# A phase inode replaced after initial recovery but before the audit gate must
+# close authorization. The hook may not trust the original snapshot or follow
+# the replacement symlink into a phase transition.
+UNSAFE_SYNC_SESSION="lifecycle-progress-unsafe-sync"
+setup_inline "$UNSAFE_SYNC_SESSION" 4
+UNSAFE_SYNC_STATE_FILE="$(dx_state_file "$UNSAFE_SYNC_SESSION")"
+DX_TEST_REPLACE_PHASE_BEFORE_SYNC="$UNSAFE_SYNC_STATE_FILE"
+run_hook "$UNSAFE_SYNC_SESSION" 4
+DX_TEST_REPLACE_PHASE_BEFORE_SYNC=""
+[[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
+[[ -L "$UNSAFE_SYNC_STATE_FILE" ]] || assert_at $LINENO
+[[ ! -e "$(dx_completion_expectation_file "$UNSAFE_SYNC_SESSION")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_active_file "$UNSAFE_SYNC_SESSION")" ]] || assert_at $LINENO
+grep -Fq "could not safely reconcile the authoritative lifecycle phase" \
+  <<<"$HOOK_OUTPUT"
 
 # A failed phase-state publish must consume the exact old receipt and rotate a
 # retry generation. Otherwise a delayed writer could complete the next phase.
 STALE_SESSION="lifecycle-progress-stale-complete"
 setup_inline "$STALE_SESSION" 4
 STALE_STATE_FILE="$(dx_state_file "$STALE_SESSION")"
-STALE_STATE_TARGET="$TMP_DIR/stale-authoritative-phase"
-printf '%s\n' 4 > "$STALE_STATE_TARGET"
-rm -f "$STALE_STATE_FILE"
-ln -s "$STALE_STATE_TARGET" "$STALE_STATE_FILE"
 dx_completion_write_receipt "$STALE_SESSION" "$INLINE_GENERATION"
 
+DX_TEST_FAIL_ATOMIC_TARGET="$STALE_STATE_FILE"
 run_hook "$STALE_SESSION" 4
-[[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
-[[ "$(cat "$STALE_STATE_FILE")" == "4" ]] || assert_at $LINENO
+DX_TEST_FAIL_ATOMIC_TARGET=""
+[[ "$HOOK_STATUS" -eq 2 ]] \
+  || fail "expected failed handoff to exit 2, got ${HOOK_STATUS}; hook output: ${HOOK_OUTPUT}"
+[[ -d "$STALE_STATE_FILE" ]] || assert_at $LINENO
 [[ ! -e "$(dx_completion_receipt_file "$STALE_SESSION" "$INLINE_GENERATION")" ]] || assert_at $LINENO
-grep -Fq "consumed completion receipt cannot affect the next phase" <<<"$HOOK_OUTPUT"
+grep -Fq "consumed completion receipt cannot affect the next phase" <<<"$HOOK_OUTPUT" \
+  || fail "expected failed-handoff diagnostic; hook output: ${HOOK_OUTPUT}"
 
+rmdir "$STALE_STATE_FILE"
+dx_lifecycle_atomic_write "$STALE_STATE_FILE" 4
 run_hook "$STALE_SESSION" 4
 [[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO
 [[ "$(cat "$STALE_STATE_FILE")" == "4" ]] || assert_at $LINENO

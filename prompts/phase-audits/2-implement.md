@@ -135,7 +135,7 @@ dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIE
 ```
 
 The tier selects the trusted clean-wave policy from the committed default
-branch. The defaults are 3 for `small`, 6 for `normal`, and 9 for `complex`;
+branch. The defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`;
 repositories may configure monotonic values from 1 through 30 in `.dex/dex.md`
 `## Review Policy`. The persisted selection is bound to that resolved policy.
 Candidate-branch edits cannot lower the active gate, and
@@ -164,9 +164,10 @@ ALL of these must be true before you stop:
 - The Phase 1 review-criteria artifact still validates and includes every
   approved requirement, including any plan change the user approved in Phase 2
 
-Before writing the completion signal in a terminal `dx` lifecycle, write the
-Phase 2 ready marker. Do this only after every completion criterion above is
-true, including the current-scope review-risk selection:
+Before asking the Stop hook for the exact generation-bound completion command
+in a terminal `dx` lifecycle, write the Phase 2 ready marker. Do this only after
+every completion criterion above is true, including the current-scope
+review-risk selection:
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1

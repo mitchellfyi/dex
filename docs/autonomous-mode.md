@@ -63,7 +63,7 @@ The review audit (Phase 3) is risk-selected. After the final Phase 2 in-scope
 change, the implementation agent applies the ordered rubric and records the
 highest matching tier with bounded reason codes. `small` maps to a `light`
 profile, `normal` maps to `standard`, and `complex` maps to `thorough`. The
-default consecutive clean-wave requirements are 3, 6, and 9. Trust boundaries;
+default consecutive clean-wave requirements are 1, 3, and 6. Trust boundaries;
 authentication, authorization, permissions, secrets, payments, or destructive
 behavior; persistence, schemas, or migrations; public API, CLI, configuration,
 or compatibility contracts; concurrency or process lifecycle; hooks, guards,
@@ -79,9 +79,9 @@ default branch's `.dex/dex.md`:
 
 | Setting | Value |
 |---------|-------|
-| small_clean_passes | 3 |
-| normal_clean_passes | 6 |
-| complex_clean_passes | 9 |
+| small_clean_passes | 1 |
+| normal_clean_passes | 3 |
+| complex_clean_passes | 6 |
 ```
 
 All three rows are required when the section is present. Values must be
@@ -637,7 +637,7 @@ Check that `DEX_LOOP_ACTIVE=1` is set in the environment. The `dx` command sets 
 ### High API costs
 
 Choose the review tier that matches the actual risk. The default clean-wave
-requirements are 3 for `small`, 6 for `normal`, and 9 for `complex`; the trusted
+requirements are 1 for `small`, 3 for `normal`, and 6 for `complex`; the trusted
 `## Review Policy` table may configure them within the validated bounds. Do not
 lower the tier for security, contract, migration, concurrency, shell/hook, or
 broad dependency changes. `DEX_LOOP_MAX_ITERATIONS` controls phase-audit

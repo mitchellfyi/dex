@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -7,6 +8,7 @@ source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-session-catalog-core.XXXXXX")"
 
 cleanup() {
+  chmod -R u+w "$TMP_DIR" 2>/dev/null || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -70,7 +72,11 @@ SID_RUNTIME_ONLY="$(cd "$REPO_A" && dx_scoped_session_id worktree-runtime-only)"
 SID_EXTERNAL="$(cd "$REPO_A" && dx_scoped_session_id worktree-external)"
 SID_ALIAS="$(cd "$REPO_A" && dx_scoped_session_id branch-provider-alias)"
 SID_LEGIT_PASS="$(cd "$REPO_A" && dx_scoped_session_id worktree-legit-pass-1-2-3)"
-CHILD_A="${SID_A}-pass-20260824T101112Z_123_deadbeef"
+CHILD_A="$(__dx_review_child_session_id \
+  "$SID_A" pass 20260824T101112Z_123_deadbeef)"
+LONG_PARENT="$(cd "$REPO_A" && dx_session_repo_key)-$(printf 'p%.0s' {1..140})"
+LONG_CHILD="$(__dx_review_child_session_id \
+  "$LONG_PARENT" assessment 20260824T121314Z_456_feedface)"
 
 dx_meta_write "$SID_A" \
   "ticket_number=101" \
@@ -110,6 +116,21 @@ printf '{}\n' > "$(dx_review_state_file "$CHILD_A")"
 printf '3\n' > "$(dx_state_file "$CHILD_A")"
 __dx_review_write_child_provenance "$SID_A" "$CHILD_A" pass
 
+dx_meta_write "$LONG_PARENT" \
+  "ticket_number=long-parent" \
+  "wt_name=long-parent" \
+  "wt_dir=$REPO_A" \
+  "workspace_mode=in-place"
+printf '3\n' > "$(dx_state_file "$LONG_PARENT")"
+printf '{}\n' > "$(dx_review_state_file "$LONG_CHILD")"
+printf '3\n' > "$(dx_state_file "$LONG_CHILD")"
+touch "$DX_LOOP_DIR/${LONG_CHILD}.active"
+printf 'version=1\nsession_id=%s\nmode=child\npurpose=review-assessment\nphase=assessment\ngeneration=%s\nissued_at=1787598000\n' \
+  "$LONG_CHILD" 0123456789abcdef0123456789abcdef \
+  > "$DX_LOOP_DIR/${LONG_CHILD}.completion-expectation"
+chmod 600 "$DX_LOOP_DIR/${LONG_CHILD}.completion-expectation"
+__dx_review_write_child_provenance "$LONG_PARENT" "$LONG_CHILD" assessment
+
 TOKEN="$(dx_session_runtime_start "$SID_A" codex "$REPO_A/.dex/worktrees/ticket-101" "$$")"
 [[ -n "$TOKEN" ]] || assert_at $LINENO
 RUNTIME_ONLY_TOKEN="$(dx_session_runtime_start "$SID_RUNTIME_ONLY" claude "$REPO_A" "$$")"
@@ -118,11 +139,12 @@ EXTERNAL_TOKEN="$(dx_session_runtime_start "$SID_EXTERNAL" claude "$REPO_B" "$$"
 
 RECORDS_FILE="$TMP_DIR/records.jsonl"
 dx_session_catalog_records --repo "$REPO_A" > "$RECORDS_FILE"
-assert_eq "4" "$(wc -l < "$RECORDS_FILE" | tr -d '[:space:]')" "top-level record count"
+assert_eq "5" "$(wc -l < "$RECORDS_FILE" | tr -d '[:space:]')" "top-level record count"
 assert_not_contains "$SID_B" "$RECORDS_FILE"
 assert_not_contains "$SID_EXTERNAL" "$RECORDS_FILE"
 assert_not_contains "$SID_ALIAS" "$RECORDS_FILE"
 assert_not_contains "$CHILD_A" "$RECORDS_FILE"
+assert_not_contains "$LONG_CHILD" "$RECORDS_FILE"
 assert_contains "$SID_LEGIT_PASS" "$RECORDS_FILE"
 assert_not_contains "$TOKEN" "$RECORDS_FILE"
 assert_not_contains "$RUNTIME_ONLY_TOKEN" "$RECORDS_FILE"
@@ -178,16 +200,23 @@ else
 fi
 
 dx_session_catalog_records --repo "$REPO_A/.dex/worktrees/ticket-101" > "$TMP_DIR/worktree-records.jsonl"
-assert_eq "4" "$(wc -l < "$TMP_DIR/worktree-records.jsonl" | tr -d '[:space:]')" "worktree-scoped count"
+assert_eq "5" "$(wc -l < "$TMP_DIR/worktree-records.jsonl" | tr -d '[:space:]')" "worktree-scoped count"
 assert_contains "$SID_A" "$TMP_DIR/worktree-records.jsonl"
 
 dx_session_catalog_records --repo "$REPO_A" --include-children > "$TMP_DIR/with-children.jsonl"
-assert_eq "5" "$(wc -l < "$TMP_DIR/with-children.jsonl" | tr -d '[:space:]')" "child-inclusive count"
+assert_eq "7" "$(wc -l < "$TMP_DIR/with-children.jsonl" | tr -d '[:space:]')" "child-inclusive count"
 assert_contains "$CHILD_A" "$TMP_DIR/with-children.jsonl"
 CHILD_RECORD="$(dx_session_catalog_record "$CHILD_A" --repo "$REPO_A")"
 assert_eq "true" "$(json_field "$CHILD_RECORD" is_child)" "child classification"
 assert_eq "pass" "$(json_field "$CHILD_RECORD" child_kind)" "child kind"
 assert_eq "$SID_A" "$(json_field "$CHILD_RECORD" parent_session_id)" "child parent"
+LONG_CHILD_RECORD="$(dx_session_catalog_record "$LONG_CHILD" --repo "$REPO_A")"
+assert_eq "true" "$(json_field "$LONG_CHILD_RECORD" is_child)" \
+  "bounded assessment child classification"
+assert_eq "assessment" "$(json_field "$LONG_CHILD_RECORD" child_kind)" \
+  "bounded assessment child kind"
+assert_eq "$LONG_PARENT" "$(json_field "$LONG_CHILD_RECORD" parent_session_id)" \
+  "bounded assessment child keeps full parent linkage"
 if dx_session_catalog_record "$(cd "$REPO_A" && dx_scoped_session_id worktree-missing)" \
   --repo "$REPO_A" >/dev/null 2>&1; then
   fail "catalog record lookup accepted a missing session"
@@ -348,6 +377,199 @@ NESTED_RECORD="$(dx_session_catalog_record "$NESTED_SID" --repo "$NESTED_REPO")"
 assert_eq "nested" "$(json_field "$NESTED_RECORD" ticket)" "nested repository catalog"
 dx_session_catalog_records --repo "$NESTED_REPO" > "$TMP_DIR/nested-records.jsonl"
 assert_not_contains "$PARENT_PHASE_ONLY" "$TMP_DIR/nested-records.jsonl"
+
+# Phase 7 is only completed after its exact terminal transaction is present.
+new_terminal_session() {
+  local suffix="$1" terminal_session
+  terminal_session="$(cd "$REPO_A" && dx_scoped_session_id "worktree-${suffix}")"
+  dx_meta_write "$terminal_session" \
+    "ticket_number=${suffix}" \
+    "wt_name=${suffix}" \
+    "wt_dir=$REPO_A" \
+    "workspace_mode=in-place"
+  printf '7\n' > "$(dx_state_file "$terminal_session")"
+  printf '%s\n' "$terminal_session"
+}
+
+write_terminal_proof() {
+  local terminal_session="$1" transition_token="${2:-100-200-300}"
+  local authority="${3:-0123456789abcdef0123456789abcdef}"
+  printf 'version=1\nphase=7\ntransition_token=%s\nauthority=%s\n' \
+    "$transition_token" "$authority" \
+    > "$DX_STATE_DIR/${terminal_session}.terminal-commit"
+  chmod 600 "$DX_STATE_DIR/${terminal_session}.terminal-commit"
+}
+
+TERMINAL_VALID_SID="$(new_terminal_session terminal-valid)"
+write_terminal_proof "$TERMINAL_VALID_SID"
+TERMINAL_VALID_RECORD="$(dx_session_catalog_record "$TERMINAL_VALID_SID" --repo "$REPO_A")"
+assert_eq "completed" "$(json_field "$TERMINAL_VALID_RECORD" lifecycle_state)" \
+  "valid terminal proof classification"
+assert_contains '"terminal-commit"' <(printf '%s\n' "$TERMINAL_VALID_RECORD")
+
+for terminal_busy_suffix in busy busy-cancel busy-quiesced; do
+  terminal_busy_path="$DX_LOOP_DIR/${TERMINAL_VALID_SID}.phase-3.${terminal_busy_suffix}"
+  mkdir "$terminal_busy_path"
+  TERMINAL_BUSY_RECORD="$(dx_session_catalog_record \
+    "$TERMINAL_VALID_SID" --repo "$REPO_A")"
+  assert_eq "unknown" \
+    "$(json_field "$TERMINAL_BUSY_RECORD" lifecycle_state)" \
+    "terminal proof rejects Phase 3 ${terminal_busy_suffix} residue"
+  rmdir "$terminal_busy_path"
+done
+
+TERMINAL_MISSING_SID="$(new_terminal_session terminal-missing)"
+TERMINAL_MISSING_RECORD="$(dx_session_catalog_record "$TERMINAL_MISSING_SID" --repo "$REPO_A")"
+assert_eq "unknown" "$(json_field "$TERMINAL_MISSING_RECORD" lifecycle_state)" \
+  "missing terminal proof classification"
+
+TERMINAL_UNSAFE_SID="$(new_terminal_session terminal-unsafe)"
+write_terminal_proof "$TERMINAL_UNSAFE_SID"
+chmod 644 "$DX_STATE_DIR/${TERMINAL_UNSAFE_SID}.terminal-commit"
+TERMINAL_UNSAFE_RECORD="$(dx_session_catalog_record "$TERMINAL_UNSAFE_SID" --repo "$REPO_A")"
+assert_eq "unknown" "$(json_field "$TERMINAL_UNSAFE_RECORD" lifecycle_state)" \
+  "unsafe terminal proof classification"
+
+TERMINAL_WRONG_SID="$(new_terminal_session terminal-wrong-token)"
+write_terminal_proof "$TERMINAL_WRONG_SID" wrong-token
+TERMINAL_WRONG_RECORD="$(dx_session_catalog_record "$TERMINAL_WRONG_SID" --repo "$REPO_A")"
+assert_eq "unknown" "$(json_field "$TERMINAL_WRONG_RECORD" lifecycle_state)" \
+  "wrong terminal token classification"
+
+TERMINAL_RUNTIME_SID="$(new_terminal_session terminal-runtime-stale)"
+TERMINAL_RUNTIME_TOKEN="$(dx_session_runtime_start \
+  "$TERMINAL_RUNTIME_SID" codex "$REPO_A" "$$")"
+dx_session_runtime_finish "$TERMINAL_RUNTIME_SID" "$TERMINAL_RUNTIME_TOKEN" \
+  completed "$$"
+TERMINAL_RUNTIME_RECORD="$(dx_session_catalog_record "$TERMINAL_RUNTIME_SID" --repo "$REPO_A")"
+assert_eq "completed" "$(json_field "$TERMINAL_RUNTIME_RECORD" runtime_status)" \
+  "stale completed runtime fixture"
+assert_eq "unknown" "$(json_field "$TERMINAL_RUNTIME_RECORD" lifecycle_state)" \
+  "runtime completion requires terminal proof"
+
+# Terminal artifacts identify a lifecycle even if its phase file is missing or
+# unsafe. They cannot fall through to the runtime-only standalone completion
+# rule and turn an incomplete terminal transaction green.
+TERMINAL_PHASELESS_SID="$(new_terminal_session terminal-phaseless)"
+write_terminal_proof "$TERMINAL_PHASELESS_SID"
+TERMINAL_PHASELESS_TOKEN="$(dx_session_runtime_start \
+  "$TERMINAL_PHASELESS_SID" codex "$REPO_A" "$$")"
+dx_session_runtime_finish "$TERMINAL_PHASELESS_SID" \
+  "$TERMINAL_PHASELESS_TOKEN" completed "$$"
+rm -f "$(dx_state_file "$TERMINAL_PHASELESS_SID")"
+TERMINAL_PHASELESS_RECORD="$(dx_session_catalog_record \
+  "$TERMINAL_PHASELESS_SID" --repo "$REPO_A")"
+assert_eq "unknown" \
+  "$(json_field "$TERMINAL_PHASELESS_RECORD" lifecycle_state)" \
+  "terminal artifact with missing phase blocks runtime completion"
+
+TERMINAL_UNSAFE_PHASE_SID="$(new_terminal_session terminal-unsafe-phase)"
+write_terminal_proof "$TERMINAL_UNSAFE_PHASE_SID"
+TERMINAL_UNSAFE_PHASE_TOKEN="$(dx_session_runtime_start \
+  "$TERMINAL_UNSAFE_PHASE_SID" codex "$REPO_A" "$$")"
+dx_session_runtime_finish "$TERMINAL_UNSAFE_PHASE_SID" \
+  "$TERMINAL_UNSAFE_PHASE_TOKEN" completed "$$"
+chmod 0666 "$(dx_state_file "$TERMINAL_UNSAFE_PHASE_SID")"
+TERMINAL_UNSAFE_PHASE_RECORD="$(dx_session_catalog_record \
+  "$TERMINAL_UNSAFE_PHASE_SID" --repo "$REPO_A")"
+assert_eq "unknown" \
+  "$(json_field "$TERMINAL_UNSAFE_PHASE_RECORD" lifecycle_state)" \
+  "terminal artifact with unsafe phase blocks runtime completion"
+
+TERMINAL_HUMAN_ONLY_SID="$(new_terminal_session terminal-human-only)"
+TERMINAL_HUMAN_ONLY_TOKEN="$(dx_session_runtime_start \
+  "$TERMINAL_HUMAN_ONLY_SID" codex "$REPO_A" "$$")"
+dx_session_runtime_finish "$TERMINAL_HUMAN_ONLY_SID" \
+  "$TERMINAL_HUMAN_ONLY_TOKEN" completed "$$"
+rm -f "$(dx_state_file "$TERMINAL_HUMAN_ONLY_SID")"
+printf 'human-complete\n' \
+  > "$DX_STATE_DIR/${TERMINAL_HUMAN_ONLY_SID}.human-complete"
+chmod 600 "$DX_STATE_DIR/${TERMINAL_HUMAN_ONLY_SID}.human-complete"
+TERMINAL_HUMAN_ONLY_RECORD="$(dx_session_catalog_record \
+  "$TERMINAL_HUMAN_ONLY_SID" --repo "$REPO_A")"
+assert_eq "unknown" \
+  "$(json_field "$TERMINAL_HUMAN_ONLY_RECORD" lifecycle_state)" \
+  "human terminal artifact cannot authorize runtime completion"
+
+# Standalone review runtime completion is not enough by itself. The catalog
+# requires the unrevoked clean receipt and rejects any durable brake.
+STANDALONE_REVIEW_SID="$(cd "$REPO_A" && dx_scoped_session_id standalone-review-runtime)"
+dx_meta_write "$STANDALONE_REVIEW_SID" \
+  "ticket_number=standalone-review" \
+  "wt_name=standalone-review" \
+  "wt_dir=$REPO_A" \
+  "workspace_mode=in-place"
+STANDALONE_REVIEW_TOKEN="$(dx_session_runtime_start \
+  "$STANDALONE_REVIEW_SID" claude "$REPO_A" "$$")"
+dx_session_runtime_finish "$STANDALONE_REVIEW_SID" \
+  "$STANDALONE_REVIEW_TOKEN" completed "$$"
+STANDALONE_REVIEW_POLICY="$(DEX_DIR="$ROOT" DX_STATE_DIR="$DX_STATE_DIR" \
+  DX_LOOP_DIR="$DX_LOOP_DIR" bash -c \
+  'source "$DEX_DIR/lib/common.sh"; dx_review_policy_resolve "$1" | cut -f4' \
+  _ "$REPO_A")"
+DEX_DIR="$ROOT" DX_STATE_DIR="$DX_STATE_DIR" DX_LOOP_DIR="$DX_LOOP_DIR" \
+  bash -c '
+    source "$DEX_DIR/lib/common.sh"
+    source "$DEX_DIR/tests/review-proof-fixture.sh"
+    session_id="$1"
+    repo_dir="$2"
+    policy_binding="$3"
+    fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || exit 91
+    evidence_file="$4/evidence.json"
+    context_file="$4/context.md"
+    dx_review_write_selection "$session_id" small environment \
+      operator-override "$repo_dir" 1 standalone "$policy_binding" || exit 92
+    dx_test_write_clean_review_proof "$session_id" catalog-clean light \
+      "$fingerprint" standalone "$policy_binding" "$evidence_file" \
+      "$context_file" || exit 93
+    dx_review_ledger_append "$session_id" 1 catalog-clean light \
+      "$fingerprint" standalone "$policy_binding" "$evidence_file" \
+      "$context_file" || exit 94
+  ' _ "$STANDALONE_REVIEW_SID" "$REPO_A" "$STANDALONE_REVIEW_POLICY" \
+    "$TMP_DIR/standalone-review-proof"
+STANDALONE_REVIEW_RECORD="$(dx_session_catalog_record \
+  "$STANDALONE_REVIEW_SID" --repo "$REPO_A")"
+assert_eq "unknown" "$(json_field "$STANDALONE_REVIEW_RECORD" lifecycle_state)" \
+  "standalone runtime needs review receipt"
+DEX_DIR="$ROOT" DX_STATE_DIR="$DX_STATE_DIR" DX_LOOP_DIR="$DX_LOOP_DIR" \
+  bash -c '
+    source "$DEX_DIR/lib/common.sh"
+    dx_review_write_receipt "$1" small 1 1 "$2" standalone "$3"
+  ' _ "$STANDALONE_REVIEW_SID" "$REPO_A" "$STANDALONE_REVIEW_POLICY"
+DEX_DIR="$ROOT" DX_STATE_DIR="$DX_STATE_DIR" DX_LOOP_DIR="$DX_LOOP_DIR" \
+  bash -c '
+    source "$DEX_DIR/lib/common.sh"
+    dx_review_receipt_valid "$1" "$2" standalone "$3"
+  ' _ "$STANDALONE_REVIEW_SID" "$REPO_A" "$STANDALONE_REVIEW_POLICY" \
+  || fail "standalone clean receipt fixture is invalid"
+STANDALONE_REVIEW_RECORD="$(dx_session_catalog_record \
+  "$STANDALONE_REVIEW_SID" --repo "$REPO_A")"
+assert_eq "completed" "$(json_field "$STANDALONE_REVIEW_RECORD" lifecycle_state)" \
+  "standalone clean receipt completes runtime"
+chmod u+w "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-proofs" \
+  "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-proofs/1" \
+  "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-proofs/1/evidence.json"
+rm -f "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-proofs/1/evidence.json"
+STANDALONE_REVIEW_RECORD="$(dx_session_catalog_record \
+  "$STANDALONE_REVIEW_SID" --repo "$REPO_A")"
+assert_eq "unknown" "$(json_field "$STANDALONE_REVIEW_RECORD" lifecycle_state)" \
+  "standalone completion reopens retained review proof"
+printf 'revoked\n' > "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-receipt.revoked"
+chmod 600 "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-receipt.revoked"
+STANDALONE_REVIEW_RECORD="$(dx_session_catalog_record \
+  "$STANDALONE_REVIEW_SID" --repo "$REPO_A")"
+assert_eq "unknown" "$(json_field "$STANDALONE_REVIEW_RECORD" lifecycle_state)" \
+  "revoked standalone receipt is not complete"
+rm -f "$(dx_review_selection_file "$STANDALONE_REVIEW_SID")" \
+  "$(dx_review_receipt_file "$STANDALONE_REVIEW_SID")" \
+  "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-receipt.revoked"
+printf 'revoked\n' \
+  > "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-selection.revoked"
+chmod 600 "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-selection.revoked"
+STANDALONE_REVIEW_RECORD="$(dx_session_catalog_record \
+  "$STANDALONE_REVIEW_SID" --repo "$REPO_A")"
+assert_eq "unknown" "$(json_field "$STANDALONE_REVIEW_RECORD" lifecycle_state)" \
+  "selection revocation alone blocks stale runtime completion"
 
 if dx_session_catalog_records --repo "$TMP_DIR/not-a-repo" >/dev/null 2>&1; then
   fail "catalog accepted a non-repository"

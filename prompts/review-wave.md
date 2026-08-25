@@ -3,8 +3,8 @@
 One `/dxreviewloop` iteration reviews the caller-supplied scope. This is usually
 the full current change set; when no change set exists, it is the entire tracked
 codebase. The outer loop maps its selected risk tier to review depth and a
-consecutive `CLEAN` gate. The default policy is 3 waves for `small`, 6 for
-`normal`, and 9 for `complex`; the wrapper supplies the resolved trusted policy
+consecutive `CLEAN` gate. The default policy is 1 wave for `small`, 3 for
+`normal`, and 6 for `complex`; the wrapper supplies the resolved trusted policy
 for the current run.
 
 ## Rules

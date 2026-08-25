@@ -51,9 +51,9 @@ EOF
 
 __dx_session_catalog_call() {
   local operation="$1" repo_keys="$2" repo_root="$3" include_children="$4"
-  local selector_value="${5:-}"
+  local selector_value="${5:-}" dex_runtime_dir="${DEX_DIR:-}"
   python3 - "$operation" "$DX_STATE_DIR" "$DX_LOOP_DIR" "$repo_keys" "$repo_root" \
-    "$include_children" "$selector_value" <<'PY'
+    "$include_children" "$selector_value" "$dex_runtime_dir" <<'PY'
 import ctypes
 import ctypes.util
 import errno
@@ -66,14 +66,23 @@ import sys
 import time
 
 
-operation, state_dir, loop_dir, repo_keys_raw, repo_root, include_raw, selector = sys.argv[1:]
+(
+    operation,
+    state_dir,
+    loop_dir,
+    repo_keys_raw,
+    repo_root,
+    include_raw,
+    selector,
+    dex_runtime_dir,
+) = sys.argv[1:]
 repo_keys = repo_keys_raw.split(",")
 repo_key = repo_keys[0] if repo_keys else ""
 include_children = include_raw == "1"
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$")
 CHILD_RE = re.compile(
     r"^(.*)-(pass|assessment|review)-"
-    r"(?:[0-9]{8}T[0-9]{6}Z_[0-9]+_[0-9a-f]{8}|[0-9]+-[0-9]+-[0-9]+)$"
+    r"([0-9a-f]{32}|[0-9]{8}T[0-9]{6}Z_[0-9]+_[0-9a-f]{8}|[0-9]+-[0-9]+-[0-9]+)$"
 )
 TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 LOCK_GENERATION_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -113,9 +122,21 @@ MAX_PROC_BYTES = 4096
 READ_ATTEMPTS = 8
 READ_RETRY_SECONDS = 0.005
 LOCK_PREFIX = b"dex-runtime-lock-v1 "
+TERMINAL_PROOF_RE = re.compile(
+    rb"version=1\nphase=7\n"
+    rb"transition_token=[0-9]+-[0-9]+-[0-9]+\n"
+    rb"authority=(?:[0-9a-f]{32}|[0-9]+-[0-9]+-[0-9]+)\n"
+)
+REVIEW_RECEIPT_RE = re.compile(
+    rb"5\t(?:small\tlight|normal\tstandard|complex\tthorough)\t"
+    rb"([1-9][0-9]{0,14})\t\1\t[0-9a-f]{64}\t[0-9a-f]{64}\t"
+    rb"(?:standalone|[0-9a-f]{64})\t[0-9a-f]{64}\n"
+)
 
 EXACT_SUFFIXES = [
+    (".review-receipt.revoked", "review-receipt-revoked"),
     (".review-criteria-approval", "review-criteria-approval"),
+    (".review-selection.revoked", "review-selection-revoked"),
     (".completion-expectation", "completion-expectation"),
     (".review-criteria.json", "review-criteria"),
     (".review-evidence.json", "review-evidence"),
@@ -132,6 +153,7 @@ EXACT_SUFFIXES = [
     (".pause-state", "pause-state"),
     (".watch-pause", "watch-pause"),
     (".human-complete", "human-complete"),
+    (".terminal-commit", "terminal-commit"),
     (".interventions", "interventions"),
     (".completion-lock", "completion-lock"),
     (".runtime-lock", "runtime-lock"),
@@ -256,6 +278,12 @@ def trusted_read(target_file, max_bytes, exact_mode=None, return_metadata=False)
             after = os.fstat(descriptor)
             if fingerprint(after) != fingerprint(opened):
                 raise TransientReadError("changed while reading")
+            try:
+                named = os.lstat(target_file)
+            except FileNotFoundError as exc:
+                raise TransientReadError(str(exc))
+            if fingerprint(named) != fingerprint(after):
+                raise TransientReadError("path changed while reading")
             if len(payload) > max_bytes:
                 raise UnsafeStateError("too large")
             if return_metadata:
@@ -435,7 +463,7 @@ def parse_phase(session_id, families):
         return None
     phase_file = os.path.join(state_dir, f"{session_id}.phase")
     try:
-        raw_phase = trusted_read(phase_file, 64).decode("ascii").strip()
+        raw_phase = trusted_read(phase_file, 64, exact_mode=0o600).decode("ascii").strip()
     except (FileNotFoundError, UnsafeStateError, UnicodeDecodeError):
         return None
     if not re.fullmatch(r"[0-7]", raw_phase):
@@ -811,9 +839,140 @@ def workspace_is_registered_here(workspace):
     return workspace is not None and os.path.realpath(workspace) in ALLOWED_WORKSPACES
 
 
+def terminal_commit_valid(session_id, record, families):
+    if record["phase"] != 7 or "terminal-commit" not in families:
+        return False
+    live_families = {
+        "active",
+        "owner",
+        "config",
+        "handoff-mode",
+        "control",
+        "control-lock",
+        "paused",
+        "pause-state",
+        "completion-expectation",
+        "phase-busy",
+        "phase-busy-cancel",
+        "phase-busy-quiesced",
+    }
+    if families.intersection(live_families):
+        return False
+    terminal_file = os.path.join(state_dir, f"{session_id}.terminal-commit")
+    try:
+        payload = trusted_read(terminal_file, 512, exact_mode=0o600)
+    except (FileNotFoundError, UnsafeStateError):
+        return False
+    if TERMINAL_PROOF_RE.fullmatch(payload) is None:
+        return False
+    if "human-complete" in families:
+        human_file = os.path.join(state_dir, f"{session_id}.human-complete")
+        try:
+            human_payload = trusted_read(human_file, 64, exact_mode=0o600)
+        except (FileNotFoundError, UnsafeStateError):
+            return False
+        if human_payload != b"human-complete\n":
+            return False
+    return True
+
+
+def standalone_review_complete_valid(session_id, families):
+    review_families = {
+        "review-receipt",
+        "review-selection",
+        "review-selection-revoked",
+        "review-ledger",
+        "review-proofs",
+        "review-criteria",
+        "review-criteria-approval",
+    }
+    if not families.intersection(review_families):
+        return None
+    brake_families = {
+        "review-receipt-revoked",
+        "review-selection-revoked",
+        "review-state",
+        "paused",
+        "pause-state",
+        "control",
+        "control-lock",
+        "active",
+        "owner",
+        "config",
+        "handoff-mode",
+        "completion-expectation",
+    }
+    if "review-receipt" not in families or families.intersection(brake_families):
+        return False
+    receipt_file = os.path.join(loop_dir, f"{session_id}.review-receipt")
+    try:
+        payload = trusted_read(receipt_file, 4096, exact_mode=0o600)
+    except (FileNotFoundError, UnsafeStateError):
+        return False
+    if REVIEW_RECEIPT_RE.fullmatch(payload) is None:
+        return False
+    try:
+        fields = payload[:-1].decode("ascii").split("\t")
+    except UnicodeDecodeError:
+        return False
+    if len(fields) != 9 or fields[7] != "standalone":
+        return False
+    if not os.path.isabs(dex_runtime_dir):
+        return False
+    validator = os.path.join(dex_runtime_dir, "lib", "common.sh")
+    if not os.path.isfile(validator):
+        return False
+    child_env = os.environ.copy()
+    child_env.update(
+        {
+            "DEX_DIR": dex_runtime_dir,
+            "DX_STATE_DIR": state_dir,
+            "DX_LOOP_DIR": loop_dir,
+            "DEX_FACTORY_SYNC": "0",
+        }
+    )
+    try:
+        checked = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1" >/dev/null 2>&1 || exit 1; '
+                'dx_review_receipt_valid "$2" "$3" "$4" "$5"',
+                "_",
+                validator,
+                session_id,
+                repo_root,
+                fields[7],
+                fields[8],
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=child_env,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return checked.returncode == 0
+
+
 def lifecycle_state(record, families):
     runtime_state = record["runtime_status"]
     runtime_health = record["runtime_health"]
+    terminal_valid = terminal_commit_valid(record["session_id"], record, families)
+    has_terminal_lifecycle_artifact = bool(
+        families.intersection({"terminal-commit", "human-complete"})
+    )
+    if runtime_state == "completed":
+        if record["phase"] == 7 or has_terminal_lifecycle_artifact:
+            return "completed" if terminal_valid else "unknown"
+        review_complete = standalone_review_complete_valid(
+            record["session_id"], families
+        )
+        if review_complete is not None:
+            return "completed" if review_complete else "unknown"
+        return "completed"
     if runtime_state in TERMINAL_STATES:
         return runtime_state
     if runtime_state == "running":
@@ -823,7 +982,7 @@ def lifecycle_state(record, families):
             return "active-unverifiable"
         return "interrupted"
     if record["phase"] == 7:
-        return "completed"
+        return "completed" if terminal_valid else "unknown"
     if "paused" in families or "pause-state" in families:
         return "paused"
     if "active" in families:
@@ -843,9 +1002,12 @@ def build_records():
             child_match
             and metadata_health == "valid"
             and metadata.get("session_role") == "review-child"
-            and metadata.get("parent_session_id") == child_match.group(1)
             and metadata.get("child_kind") == child_match.group(2)
             and metadata.get("parent_session_id") in grouped
+            and session_id.startswith(
+                f"{metadata.get('parent_session_id', '')[:120]}-"
+                f"{metadata.get('child_kind', '')}-"
+            )
         )
         parent_session = metadata.get("parent_session_id") if is_explicit_child else None
         child_kind = metadata.get("child_kind") if is_explicit_child else None

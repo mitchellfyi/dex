@@ -36,15 +36,16 @@ print(text(data.get("prompt", "")), end="")
 }
 
 __dx_complete_phase_active() {
-  local phase config_raw config_phase
+  local phase completion_context config_phase
 
   [[ "${DEX_LOOP_PHASE:-}" == "6" ]] && return 0
 
-  phase=$(cat "$(dx_state_file "$SESSION_ID")" 2>/dev/null || echo "")
+  phase=$(dx_lifecycle_current_phase "$SESSION_ID")
   [[ "$phase" == "6" ]] && return 0
 
-  config_raw=$(cat "$(dx_loop_config_file "$SESSION_ID")" 2>/dev/null || echo "")
-  config_phase="${config_raw%%:*}"
+  completion_context=$(dx_lifecycle_completion_context_read "$SESSION_ID" \
+    2>/dev/null || true)
+  config_phase="${completion_context%%$'\t'*}"
   [[ "$config_phase" == "6" ]] && return 0
 
   if [[ "${DEX_LOOP_ACTIVE:-}" == "1" || -f "$(dx_active_file "$SESSION_ID")" ]]; then

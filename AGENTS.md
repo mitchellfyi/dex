@@ -265,7 +265,7 @@ the artifact's canonical hash. Phase 3 uses `.phase-3.busy` while
 `/dxreviewloop` is waiting on a review wave; the hook does not count audit
 iterations during that wait.
 
-The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. The trusted default-branch policy maps that tier to a consecutive-clean requirement; its defaults are 3, 6, and 9, respectively. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and trusted policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. The loop has no routine maximum and pauses on changed or partially covered criteria, residual findings, blockers, churn, invalid results, or provider failure.
+The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. The trusted default-branch policy maps that tier to a consecutive-clean requirement; its defaults are 1, 3, and 6, respectively. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and trusted policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. The loop has no routine maximum and pauses on changed or partially covered criteria, residual findings, blockers, churn, invalid results, or provider failure.
 
 ### Session IDs
 
@@ -498,7 +498,7 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 | `DEX_REVIEW_TIER` | Canonical explicit review-risk override (`small`, `normal`, or `complex`); takes precedence over `DEX_REVIEW_PROFILE` | agent-selected |
 | `DEX_REVIEW_PROFILE` | Legacy review-depth alias (`light`, `standard`, or `thorough`) | unset |
 | `DX_REVIEW_PROFILE` | Older spelling of `DEX_REVIEW_PROFILE`, still read as a fallback | unset |
-| `DEX_REVIEW_CLEAN_PASSES` | Optional higher clean-wave requirement; cannot lower the selected tier's trusted policy gate | trusted policy (defaults 3/6/9) |
+| `DEX_REVIEW_CLEAN_PASSES` | Optional higher clean-wave requirement; cannot lower the selected tier's trusted policy gate | trusted policy (defaults 1/3/6) |
 | `DEX_REVIEW_DISABLE_MCP` | Disable inherited MCP servers in review waves (`0` restores them); read-only assessors always disable them | `1` |
 | `DEX_REVIEW_PASS_TIMEOUT` | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables it | 900 (15m 0s) |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | Minimum seconds between repeated Phase 3 busy-gate notices | 120 (2m 0s) |

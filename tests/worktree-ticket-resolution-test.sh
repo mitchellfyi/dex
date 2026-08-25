@@ -73,7 +73,7 @@ zsh -fc '
     "wt_name=task-inplace" \
     "wt_dir=$TEST_REPO" \
     "workspace_mode=in-place"
-  printf "2\n" > "$(dx_state_file "$inplace_session")"
+  dx_lifecycle_atomic_write "$(dx_state_file "$inplace_session")" 2
   printf "worktree-task-inplace\n" > "$(dx_branch_file "$inplace_session")"
 
   rmdir "$TEST_REPO/.dex/worktrees"

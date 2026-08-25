@@ -165,7 +165,8 @@ Stop and escalate to the user immediately if:
 - A secrets scan failed
 - Architectural disagreement that needs human judgement
 
-For the bounded-timeout pause, print this notice and stop without writing the completion signal:
+For the bounded-timeout pause, print this notice and stop without writing a
+completion receipt:
 
 ```
 Autonomous PR monitoring paused after 3 idle 5-minute cycles.
@@ -174,13 +175,13 @@ Run /dxcomplete manually when the PR is ready and you want Dex to complete the t
 The PR was not merged.
 ```
 
-Then touch the pause marker so the wrapper can end the session cleanly:
+Then run the exact generation-bound escalation command printed with the current
+launch or audit. It pauses and detaches this run, revokes completion
+authorization, and creates no completion receipt. Do not touch a pause marker,
+write a control file, or discover a generation yourself.
 
-```bash
-touch "$(dx_paused_file "$SESSION_ID")"
-```
-
-For hard escalations, print the escalation reason with cited file:line evidence, touch the same pause marker, and stop without writing the completion signal.
+For hard escalations, print the reason with cited `file:line` evidence, run that
+same exact escalation command, and stop without writing a completion receipt.
 
 ---
 
@@ -192,11 +193,14 @@ Cycle pauses with escalation when:
 - `CYCLE >= DEX_COMPLETE_MAX_CYCLES` (default 3) and checks/approvals are not green
 - Hard escalation (see Case D)
 
-Only Case A may write `.complete`. Timeout and hard escalation paths must stop without writing `.complete`; the user can run `/dxwatchpr` manually for another one-off pass or `/dxcomplete` to resume completion.
+Only Case A may run the exact generation-bound completion command supplied by
+the Stop hook. Timeout and hard escalation paths must use the exact escalation
+command instead. The user can run `/dxwatchpr` manually for another one-off pass
+or `/dxcomplete` to resume completion.
 
 ---
 
-## Completion criteria (must all be true to write `.complete`)
+## Completion criteria (must all be true before writing the exact receipt)
 
 - The PR is no longer a draft (`gh pr view --json isDraft -q .isDraft` returns `false`)
 - All `request` reviewers have been requested at least once

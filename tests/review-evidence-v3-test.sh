@@ -33,15 +33,15 @@ printf 'base\n' > "$REPO/app.txt"
 git -C "$REPO" add app.txt
 git -C "$REPO" commit -qm "test: initialize evidence fixture"
 
-SESSION_ID="evidence-v3-parent"
+SESSION_ID="$(cd "$REPO" && dx_session_id)"
 PASS_ID="evidence-v3-pass-1"
 CRITERIA_FILE="$(dx_review_criteria_file "$SESSION_ID")"
 printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Keep review credit pass-bound."],"acceptance_criteria":["Every requirement has auditable evidence."],"verification_requirements":["Run the focused evidence test."]}' > "$CRITERIA_FILE"
 CRITERIA_BINDING="$(dx_review_criteria_hash "$CRITERIA_FILE")"
 dx_review_approve_criteria "$SESSION_ID" initial "$CRITERIA_BINDING" >/dev/null
 SCOPE_FINGERPRINT="$(dx_review_scope_fingerprint "$REPO")"
-POLICY_BINDING="$(printf '%s' 'review-policy-v1:small=3,normal=6,complex=9' | shasum -a 256 | awk '{print $1}')"
-OTHER_POLICY_BINDING="$(printf '%s' 'review-policy-v1:small=4,normal=7,complex=10' | shasum -a 256 | awk '{print $1}')"
+POLICY_BINDING="$(dx_review_policy_binding 1 3 6)"
+OTHER_POLICY_BINDING="$(dx_review_policy_binding 2 4 7)"
 PASS_BINDING="$(dx_review_pass_binding "$PASS_ID" "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$POLICY_BINDING")"
 
 [[ "$PASS_BINDING" =~ ^[a-f0-9]{64}$ ]] || {
@@ -319,6 +319,45 @@ assert_rejected "receipt rejects a different policy" \
   dx_review_read_receipt "$SESSION_ID" "$REPO" "$CRITERIA_BINDING" "$OTHER_POLICY_BINDING"
 assert_rejected "receipt validation requires an explicit policy binding" \
   dx_review_receipt_valid "$SESSION_ID" "$REPO" "$CRITERIA_BINDING"
+
+# If neither the revocation marker nor the receipt inode can be invalidated,
+# the lifecycle pause must remain non-resumable. Clearing that brake would make
+# the old review receipt valid again without another independent review.
+set +e
+DEX_DIR="$ROOT" DX_STATE_DIR="$DX_STATE_DIR" DX_LOOP_DIR="$DX_LOOP_DIR" \
+  bash -c '
+    source "$DEX_DIR/lib/common.sh"
+    dx_review_write_atomic() { return 1; }
+    __dx_review_invalidate_private_record() { return 1; }
+    dx_review_revoke_receipt "$1"
+  ' _ "$SESSION_ID"
+REVOKE_FAILURE_RC=$?
+set -e
+[[ "$REVOKE_FAILURE_RC" -ne 0 ]] || assert_at $LINENO
+dx_review_receipt_valid "$SESSION_ID" "$REPO" \
+  "$CRITERIA_BINDING" "$POLICY_BINDING"
+dx_lifecycle_atomic_write "$(dx_state_file "$SESSION_ID")" 3
+REVOKE_FAILURE_GENERATION=$(dx_completion_issue \
+  "$SESSION_ID" lifecycle phase 3)
+dx_lifecycle_atomic_write "$(dx_loop_config_file "$SESSION_ID")" \
+  "3:PHASE_3_COMPLETE:${ROOT}/prompts/phase-audits/3-review-loop.md:1:lifecycle:phase:${REVOKE_FAILURE_GENERATION}"
+dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$SESSION_ID")" inline
+dx_lifecycle_pause "$SESSION_ID" receipt_revocation_failed review-loop
+assert_rejected "unproven receipt revocation cannot be resumed" \
+  bash -c 'cd "$1" && DEX_SESSION_ID="$2" bash "$3/bin/control.sh" resume' \
+    _ "$REPO" "$SESSION_ID" "$ROOT"
+dx_lifecycle_pause_context_state "$SESSION_ID"
+assert_eq "receipt_revocation_failed" \
+  "$(dx_pause_state_read "$SESSION_ID" reason)" \
+  "receipt revocation failure brake"
+dx_lifecycle_control_lock_acquire "$SESSION_ID"
+dx_lifecycle_pause_clear_unlocked "$SESSION_ID"
+dx_lifecycle_control_lock_release "$SESSION_ID"
+dx_review_receipt_valid "$SESSION_ID" "$REPO" \
+  "$CRITERIA_BINDING" "$POLICY_BINDING"
+rm -f "$(dx_state_file "$SESSION_ID")" \
+  "$(dx_loop_config_file "$SESSION_ID")" \
+  "$(dx_handoff_mode_file "$SESSION_ID")"
 
 cp "$(dx_review_receipt_file "$SESSION_ID")" "$TMP_DIR/receipt-v5"
 printf '4\tsmall\t3\t3\t%s\t%s\t%s\t%s\n' \

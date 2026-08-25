@@ -14,14 +14,30 @@ unset DX_COMMON_MODULES
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 
 CONTROL_SNAPSHOT=$(dx_lifecycle_control_snapshot_unlocked "$SESSION_ID")
+CONTROL_FILE=$(dx_lifecycle_control_file "$SESSION_ID")
+if [[ -z "$CONTROL_SNAPSHOT" \
+  && ( -e "$CONTROL_FILE" || -L "$CONTROL_FILE" ) ]]; then
+  echo "Dex blocked | unsafe human-control state"
+  exit 0
+fi
 CONTROL_ACTION=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" action)
 if [[ "$CONTROL_ACTION" == "pause" || "$CONTROL_ACTION" == "cancel" ]]; then
   [[ "$CONTROL_ACTION" == "pause" ]] && CONTROL_LABEL="paused" || CONTROL_LABEL="stopped"
   echo "Dex ${CONTROL_LABEL} by human | phase sequencing detached"
   exit 0
 fi
-if [[ -f "$(dx_paused_file "$SESSION_ID")" && ! -L "$(dx_paused_file "$SESSION_ID")" ]]; then
-  PAUSE_REASON=$(dx_pause_state_read "$SESSION_ID" reason)
+PAUSE_CONTEXT_RC=0
+dx_lifecycle_pause_context_state "$SESSION_ID" || PAUSE_CONTEXT_RC=$?
+if [[ "$PAUSE_CONTEXT_RC" -eq 2 ]]; then
+  echo "Dex blocked | unsafe pause state"
+  exit 0
+fi
+if [[ "$PAUSE_CONTEXT_RC" -eq 0 ]]; then
+  PAUSE_METADATA=$(dx_lifecycle_trusted_file_read \
+    "$(dx_pause_state_file "$SESSION_ID")" 1024 2>/dev/null || true)
+  PAUSE_REASON="${PAUSE_METADATA%%$'\n'*}"
+  PAUSE_REASON="${PAUSE_REASON#reason=}"
+  [[ "$PAUSE_REASON" == "$PAUSE_METADATA" ]] && PAUSE_REASON=""
   echo "Dex paused${PAUSE_REASON:+ | ${PAUSE_REASON}} | phase sequencing detached"
   exit 0
 fi
@@ -29,8 +45,11 @@ fi
 # Phase info
 PHASE="?"
 PHASE_FILE=$(dx_state_file "$SESSION_ID")
-if [[ -f "$PHASE_FILE" ]]; then
-  PHASE=$(cat "$PHASE_FILE" 2>/dev/null || echo "?")
+if [[ -e "$PHASE_FILE" || -L "$PHASE_FILE" ]]; then
+  if ! PHASE=$(dx_lifecycle_phase_state "$SESSION_ID" 2>/dev/null); then
+    echo "Dex blocked | unsafe phase state"
+    exit 0
+  fi
 fi
 
 # Audit loop iteration
@@ -65,7 +84,11 @@ if [[ -f "$TIMES_FILE" ]]; then
 fi
 
 if [[ "$PHASE" =~ ^[0-9]+$ ]] && [[ "$PHASE" -gt 6 ]]; then
-  echo "Lifecycle complete${ELAPSED}"
+  if dx_lifecycle_terminal_commit_valid "$SESSION_ID"; then
+    echo "Lifecycle complete${ELAPSED}"
+  else
+    echo "Dex blocked | terminal commit incomplete${ELAPSED}"
+  fi
 else
   echo "Phase ${PHASE}/6${ITER}${ELAPSED}"
 fi

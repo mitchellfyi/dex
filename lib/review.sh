@@ -129,10 +129,15 @@ dx_review_selection_reason_codes_valid() {
 }
 
 dx_review_parse_assessment_file() {
-  local assessment_file="$1" parsed tier reason_codes
+  local assessment_file="$1" expected_generation="${2:-}" parsed tier reason_codes
+  [[ $# -eq 1 || $# -eq 2 ]] || return 2
+  if [[ $# -eq 2 && ! "$expected_generation" =~ ^[0-9a-f]{32}$ ]]; then
+    return 1
+  fi
   [[ -f "$assessment_file" ]] || return 1
-  parsed=$(python3 - "$assessment_file" <<'PY'
+  parsed=$(python3 - "$assessment_file" "$expected_generation" <<'PY'
 import json
+import re
 import sys
 
 try:
@@ -141,12 +146,24 @@ try:
 except (OSError, UnicodeError, json.JSONDecodeError):
     raise SystemExit(1)
 
-if not isinstance(payload, dict) or set(payload) != {"tier", "reason_codes"}:
+expected_generation = sys.argv[2]
+expected_keys = {"tier", "reason_codes"}
+if expected_generation:
+    expected_keys.add("completion_generation")
+if not isinstance(payload, dict) or set(payload) != expected_keys:
     raise SystemExit(1)
 tier = payload["tier"]
 reason_codes = payload["reason_codes"]
 if not isinstance(tier, str) or not isinstance(reason_codes, str):
     raise SystemExit(1)
+if expected_generation:
+    generation = payload["completion_generation"]
+    if (
+        not isinstance(generation, str)
+        or not re.fullmatch(r"[0-9a-f]{32}", generation)
+        or generation != expected_generation
+    ):
+        raise SystemExit(1)
 if "\t" in tier or "\n" in tier or "\t" in reason_codes or "\n" in reason_codes:
     raise SystemExit(1)
 print(f"{tier}\t{reason_codes}")
@@ -1351,10 +1368,111 @@ dx_review_write_atomic() {
   fi
 }
 
+dx_review_selection_revocation_file() {
+  [[ $# -eq 1 ]] || return 1
+  printf '%s.revoked\n' "$(dx_review_selection_file "$1")"
+}
+
+# Return success only when a path cannot contain a trusted private record.
+# Schema-invalid but otherwise trusted files still count as live here: callers
+# use this helper while revoking authorization, so uncertainty must stay inert.
+__dx_review_private_record_authorization_absent() {
+  [[ $# -eq 2 ]] || return 1
+  local record_file="$1" maximum="$2"
+  [[ -e "$record_file" || -L "$record_file" ]] || return 0
+  ! __dx_review_read_private_record "$record_file" "$maximum" \
+    >/dev/null 2>&1
+}
+
+# Remove one trusted private record, falling back to a verified mode change
+# when its directory cannot be updated. Unsafe inodes are already rejected by
+# the reader and are left in place for explicit repair.
+__dx_review_invalidate_private_record() {
+  [[ $# -eq 1 ]] || return 1
+  local record_file="$1"
+  python3 - "$record_file" <<'PY'
+import os
+import stat
+import sys
+
+target = sys.argv[1]
+try:
+    before = os.lstat(target)
+except FileNotFoundError:
+    raise SystemExit(0)
+except OSError:
+    raise SystemExit(1)
+
+if (
+    not stat.S_ISREG(before.st_mode)
+    or before.st_uid != os.geteuid()
+    or stat.S_IMODE(before.st_mode) != 0o600
+):
+    raise SystemExit(0)
+
+flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+if hasattr(os, "O_NOFOLLOW"):
+    flags |= os.O_NOFOLLOW
+try:
+    descriptor = os.open(target, flags)
+except OSError:
+    raise SystemExit(1)
+try:
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+    ):
+        raise SystemExit(1)
+    try:
+        os.unlink(target)
+    except OSError:
+        os.fchmod(descriptor, 0)
+        invalidated = os.fstat(descriptor)
+        if stat.S_IMODE(invalidated.st_mode) == 0o600:
+            raise SystemExit(1)
+finally:
+    os.close(descriptor)
+PY
+}
+
+dx_review_selection_authorization_absent() {
+  [[ $# -eq 1 ]] || return 1
+  local selection_file
+  selection_file=$(dx_review_selection_file "$1") || return 1
+  __dx_review_private_record_authorization_absent "$selection_file" 4096
+}
+
+dx_review_selection_authorization_revoked() {
+  [[ $# -eq 1 ]] || return 1
+  local revocation_file
+  revocation_file=$(dx_review_selection_revocation_file "$1") || return 1
+  if [[ -e "$revocation_file" || -L "$revocation_file" ]]; then
+    return 0
+  fi
+  dx_review_selection_authorization_absent "$1"
+}
+
+dx_review_revoke_selection() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" selection_file revocation_file
+  selection_file=$(dx_review_selection_file "$session_id") || return 1
+  revocation_file=$(dx_review_selection_revocation_file "$session_id") \
+    || return 1
+  dx_review_write_atomic "$revocation_file" revoked 2>/dev/null || true
+  if [[ ! -e "$revocation_file" && ! -L "$revocation_file" ]]; then
+    __dx_review_invalidate_private_record "$selection_file" \
+      2>/dev/null || return 1
+  fi
+  dx_review_selection_authorization_revoked "$session_id"
+}
+
 dx_review_write_selection() {
   local session_id="$1" requested_tier="$2" source="$3" reason_codes="$4" repo_dir="${5:-$PWD}"
   local required_clean="${6:-}" tier tier_min fingerprint selection_file floor_record floor_tier floor_reason tier_rank floor_rank
   local expected_binding="${7:-}" expected_policy_binding="${8:-}" criteria_binding policy_record policy_binding
+  local revocation_file
   [[ -n "$session_id" && "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_selection_reason_codes_valid "$tier" "$source" "$reason_codes" || return 1
@@ -1377,6 +1495,8 @@ EOF
   [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   selection_file=$(dx_review_selection_file "$session_id") || return 1
+  revocation_file=$(dx_review_selection_revocation_file "$session_id") \
+    || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   case "$source" in
     lifecycle-agent|lifecycle-assessor)
@@ -1386,7 +1506,10 @@ EOF
       [[ "$criteria_binding" == "standalone" ]] || return 1
       ;;
   esac
-  dx_review_write_atomic "$selection_file" "4"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"
+  dx_review_write_atomic "$selection_file" "4"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}" \
+    || return 1
+  rm -f "$revocation_file" 2>/dev/null || return 1
+  [[ ! -e "$revocation_file" && ! -L "$revocation_file" ]]
 }
 
 dx_review_read_selection() {
@@ -1395,8 +1518,10 @@ dx_review_read_selection() {
   local floor_record floor_tier floor_reason tier_rank floor_rank
   local current_binding policy_record current_policy_binding
   selection_file=$(dx_review_selection_file "$session_id") || return 1
-  [[ -f "$selection_file" ]] || return 1
-  raw=$(cat "$selection_file" 2>/dev/null) || return 1
+  [[ ! -e "$(dx_review_selection_revocation_file "$session_id")" \
+    && ! -L "$(dx_review_selection_revocation_file "$session_id")" ]] \
+    || return 1
+  raw=$(__dx_review_read_private_record "$selection_file" 4096) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
   IFS=$'\t' read -r version tier source reason_codes required_clean fingerprint criteria_binding policy_binding extra <<EOF
 $raw
@@ -1867,7 +1992,7 @@ dx_review_ledger_append() {
   fi
 
   if ! __dx_review_retain_proof "$session_id" "$iteration" "$evidence_file" "$context_file"; then
-    command rmdir "$proof_dir" 2>/dev/null || true
+    rmdir "$proof_dir" 2>/dev/null || :
     return 1
   fi
   if ! dx_review_evidence_valid "$proof_pass_dir/evidence.json" CLEAN "$profile" "$fingerprint" \
@@ -2198,11 +2323,16 @@ EOF
 dx_review_receipt_valid() {
   [[ $# -eq 4 ]] || return 1
   local session_id="$1" repo_dir="$2" expected_binding="$3" expected_policy_binding="$4" receipt selection
+  local pause_context_rc=0 review_state_file
   local receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding receipt_tier_min
   local receipt_policy_binding
   local selection_tier selection_source selection_reasons selection_required selection_fingerprint selection_binding selection_policy_binding
-  [[ ! -f "$(dx_paused_file "$session_id")" ]] || return 1
-  [[ ! -f "$(dx_review_state_file "$session_id")" ]] || return 1
+  [[ ! -e "$(dx_review_receipt_revocation_file "$session_id")" \
+    && ! -L "$(dx_review_receipt_revocation_file "$session_id")" ]] || return 1
+  dx_lifecycle_pause_context_state "$session_id" || pause_context_rc=$?
+  [[ "$pause_context_rc" -eq 1 ]] || return 1
+  review_state_file=$(dx_review_state_file "$session_id") || return 1
+  [[ ! -e "$review_state_file" && ! -L "$review_state_file" ]] || return 1
   receipt=$(dx_review_read_receipt "$session_id" "$repo_dir" "$expected_binding" "$expected_policy_binding") || return 1
   selection=$(dx_review_read_selection "$session_id" "$repo_dir" "$expected_binding" "$expected_policy_binding") || return 1
   IFS=$'\t' read -r receipt_tier receipt_required receipt_clean receipt_fingerprint receipt_ledger_hash receipt_binding receipt_policy_binding <<EOF
@@ -2227,6 +2357,40 @@ EOF
      "$receipt_fingerprint" == "$selection_fingerprint" && \
      "$receipt_binding" == "$selection_binding" && \
      "$receipt_policy_binding" == "$expected_policy_binding" ]]
+}
+
+dx_review_receipt_revocation_file() {
+  [[ $# -eq 1 ]] || return 1
+  printf '%s.revoked\n' "$(dx_review_receipt_file "$1")"
+}
+
+# Return success only when the receipt path cannot contain a trusted private
+# record. This is deliberately stricter than schema validation: review start
+# must not clear its revocation marker while any old authorizing inode remains.
+dx_review_receipt_authorization_absent() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" receipt_file
+  dx_session_id_valid "$session_id" || return 1
+  receipt_file=$(dx_review_receipt_file "$session_id") || return 1
+  __dx_review_private_record_authorization_absent "$receipt_file" 4096
+}
+
+# Revoke a parent review receipt even when its directory no longer permits
+# unlinking. The reader accepts only current-user 0600 regular files, so a
+# verified mode change is a durable fail-closed fallback until the receipt can
+# be removed during repair.
+dx_review_revoke_receipt() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" receipt_file revocation_file revocation_written=0
+  dx_session_id_valid "$session_id" || return 1
+  receipt_file=$(dx_review_receipt_file "$session_id") || return 1
+  revocation_file=$(dx_review_receipt_revocation_file "$session_id") || return 1
+  dx_review_write_atomic "$revocation_file" revoked 2>/dev/null \
+    && revocation_written=1
+  if __dx_review_invalidate_private_record "$receipt_file" 2>/dev/null; then
+    return 0
+  fi
+  [[ "$revocation_written" -eq 1 ]]
 }
 
 dx_review_read_findings_hash() {

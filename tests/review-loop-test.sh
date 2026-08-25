@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # dex-test-lane: serial
-# One case asserts the review pass timeout is bounded at 8s. It is also the
-# longest test in the suite, so running it alone costs no wall clock either.
+# The pass-timeout case uses an external watchdog, so scheduler pressure cannot
+# turn a stalled child into an unbounded test run.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -15,6 +16,16 @@ cleanup() {
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
+
+terminate_test_process_tree() {
+  local root_pid="$1" signal="$2" child
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 0
+  while IFS= read -r child; do
+    [[ "$child" =~ ^[0-9]+$ ]] || continue
+    terminate_test_process_tree "$child" "$signal"
+  done < <(pgrep -P "$root_pid" 2>/dev/null || true)
+  kill "-$signal" "$root_pid" 2>/dev/null || true
+}
 
 
 assert_success() {
@@ -39,6 +50,10 @@ show_case_output() {
   if [[ -n "${CASE_OUTPUT:-}" && -f "$CASE_OUTPUT" ]]; then
     printf 'output for %s:\n' "${CASE_NAME:-unknown}" >&2
     sed -n '1,240p' "$CASE_OUTPUT" >&2
+  fi
+  if [[ -n "${CASE_CALLS:-}" && -s "$CASE_CALLS" ]]; then
+    printf 'provider calls for %s:\n' "${CASE_NAME:-unknown}" >&2
+    sed -n '1,120p' "$CASE_CALLS" >&2
   fi
 }
 
@@ -187,6 +202,7 @@ for event in finished:
         assert data["evidence_hash"] in {"none"} or re.fullmatch(r"[a-f0-9]{64}", data["evidence_hash"]), data
 terminal_type = "run.completed" if expected_status == "completed" else "run.blocked"
 assert event_types.count(terminal_type) == 1, event_types
+assert event_types[-1] == terminal_type, event_types
 summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 assert summary["status"] == expected_status, summary
 PY
@@ -241,7 +257,8 @@ run_case() {
   local name="$1" tier="$2" results="$3" assessor_tier="${4:-}"
   local lifecycle_mode="${5:-standalone}" setup_mode="${6:-}" profile="${7:-}"
   local pass_mode="${8:-}" invocation_mode="${9:-single}" session_mode="${10:-derived}"
-  local pass_timeout="${11:-}" clean_override="${12:-}" started_epoch
+  local pass_timeout="${11:-}" clean_override="${12:-}"
+  local case_pid="" watchdog_pid="" watchdog_marker=""
 
   CASE_NAME="$name"
   CASE_DIR="$TMP_DIR/$name"
@@ -291,8 +308,8 @@ run_case() {
   : > "$CASE_CALLS"
   : > "$CASE_SENTINELS"
 
-  started_epoch=$(date +%s)
   set +e
+  (
   DEX_DIR="$ROOT" \
   HOME="$CASE_HOME" \
   DX_STATE_DIR="$CASE_STATE_DIR" \
@@ -300,6 +317,7 @@ run_case() {
   DX_ARTIFACT_DIR="$CASE_DIR/artifacts" \
   DX_TOOL_DIR="$CASE_DIR/tools" \
   DX_RUN_ROOT="$CASE_DIR/runs" \
+  CASE_ROOT="$CASE_DIR" \
   CASE_REPO="$CASE_REPO" \
   CASE_PROOF_DIR="$CASE_DIR" \
   CASE_SESSION_ID="$CASE_SESSION_ID" \
@@ -322,6 +340,12 @@ run_case() {
       source "$DEX_DIR/dx.sh"
       source "$DEX_DIR/tests/review-proof-fixture.sh"
       cd "$CASE_REPO"
+
+      if [[ "$CASE_PASS_MODE" == "runtime-finish-after-publish-fail" ]]; then
+        CASE_SESSION_ID=$(dx_scoped_session_id "$CASE_SESSION_ID")
+        printf "%s\n" "$CASE_SESSION_ID" \
+          >| "$CASE_ROOT/actual-session-id"
+      fi
 
       unset DEX_LOOP_ACTIVE DEX_PHASE_HANDOFF DEX_LOOP_PHASE DEX_LOOP_PROMISE \
         DEX_SESSION_ID \
@@ -374,7 +398,24 @@ run_case() {
         lifecycle_phase=3
         [[ "$CASE_SETUP_MODE" == "phase-2" ]] && lifecycle_phase=2
         lifecycle_session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
-        printf "%s\n" "$lifecycle_phase" >| "$(dx_state_file "$lifecycle_session_id")"
+        lifecycle_phase_file=$(dx_state_file "$lifecycle_session_id")
+        printf "%s\n" "$lifecycle_phase" >| "$lifecycle_phase_file"
+        case "$CASE_SETUP_MODE" in
+          unsafe-phase-symlink)
+            mv "$lifecycle_phase_file" "${lifecycle_phase_file}.target"
+            ln -s "${lifecycle_phase_file}.target" "$lifecycle_phase_file"
+            ;;
+          unsafe-phase-directory)
+            rm -f "$lifecycle_phase_file"
+            mkdir "$lifecycle_phase_file"
+            ;;
+          unsafe-phase-mode)
+            chmod 644 "$lifecycle_phase_file"
+            ;;
+          unsafe-phase-content)
+            printf "%s\n" malformed >| "$lifecycle_phase_file"
+            ;;
+        esac
         if [[ "$CASE_SETUP_MODE" != "missing-criteria" ]]; then
           printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise the adaptive review loop.\"],\"acceptance_criteria\":[\"Independent clean waves satisfy the selected gate.\"],\"verification_requirements\":[\"Run tests/review-loop-test.sh.\"]}" >| "$(dx_review_criteria_file "$lifecycle_session_id")"
           if [[ "$CASE_SETUP_MODE" != "missing-seal" ]]; then
@@ -434,11 +475,56 @@ run_case() {
         [[ "$(dx_meta_read "$DEX_SESSION_ID" child_kind)" == "$expected_kind" ]] || return 1
       }
 
+      __test_assessment_generation() {
+        python3 - "$@" <<\PY
+import re
+import sys
+
+quote = chr(34)
+pattern = re.compile(
+    re.escape(quote + "completion_generation" + quote + ":" + quote)
+    + "([0-9a-f]{32})" + re.escape(quote)
+)
+matches = []
+for value in sys.argv[1:]:
+    matches.extend(pattern.findall(value))
+if len(matches) != 1:
+    print(f"assessment-generation-error\texpected-one\tfound-{len(matches)}")
+    raise SystemExit(1)
+print(matches[0])
+PY
+      }
+
+      __test_pass_completion_literal() {
+        python3 - "$@" <<\PY
+import re
+import sys
+
+quote = chr(34)
+pattern = re.compile(
+    "bash " + re.escape(quote + "$DEX_DIR/bin/complete-receipt.sh" + quote)
+    + " " + re.escape(quote) + "([A-Za-z0-9][A-Za-z0-9._-]{0,179})" + re.escape(quote)
+    + " " + re.escape(quote) + "([0-9a-f]{32})" + re.escape(quote)
+)
+matches = []
+for value in sys.argv[1:]:
+    matches.extend(pattern.findall(value))
+if len(matches) != 1:
+    print(f"completion-command-error\texpected-one\tfound-{len(matches)}")
+    for value in sys.argv[1:]:
+        if "complete-receipt.sh" in value:
+            print(f"completion-command-arg\t{value!r}")
+    raise SystemExit(1)
+print(f"{matches[0][0]}\t{matches[0][1]}")
+PY
+      }
+
       __dx_claude() {
         local invocation_args="$*"
         if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-}" == "1" ]]; then
           local assessment_index assessment_criteria_path assessment_binding assessment_policy_record
           local assessment_small assessment_normal assessment_complex assessment_policy_binding
+          local assessment_generation
           __test_child_provenance assessment || return 96
           assessment_index=$(awk -F "\t" '\''$1 == "assessor" { count++ } END { print count + 1 }'\'' "$CASE_CALLS")
           printf "assessor\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
@@ -469,15 +555,27 @@ run_case() {
             return 96
           fi
           printf "%s\n" "$assessment_criteria_path" >> "$CASE_SENTINELS"
+          assessment_generation=$(__test_assessment_generation "$@") || return 96
+          if [[ "$CASE_SETUP_MODE" == "assessment-control-reject" ]]; then
+            local control_epoch control_generation control_payload
+            control_epoch=$(date +%s)
+            control_generation="${control_epoch}-$$-${RANDOM}"
+            control_payload=$(printf "version=1\naction=pause\ntarget_phase=\nexpected_phase=3\nissued_at=%s\ngeneration=%s\nsource=terminal\nowner_session=\nprompt_sha256=" \
+              "$control_epoch" "$control_generation")
+            dx_lifecycle_atomic_write \
+              "$(dx_lifecycle_control_file "$CASE_SESSION_ID")" \
+              "$control_payload" \
+              || return 96
+          fi
           if [[ -n "$CASE_ASSESSOR_TIER" ]]; then
             if [[ "$CASE_ASSESSOR_TIER" == "mutate" || \
                   "$CASE_ASSESSOR_TIER" == "mutate-once" && "$assessment_index" -eq 1 ]]; then
               printf "assessor-mutation-%s\n" "$assessment_index" >> "$CASE_REPO/app.txt"
-              printf "%s\n" "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\"}"
+              printf "%s\n" "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\",\"completion_generation\":\"${assessment_generation}\"}"
             else
               local selected_tier="$CASE_ASSESSOR_TIER"
               [[ "$selected_tier" == "mutate-once" ]] && selected_tier="small"
-              printf "{\"tier\":\"%s\",\"reason_codes\":\"localized-change,focused-verification\"}\n" "$selected_tier"
+              printf "{\"tier\":\"%s\",\"reason_codes\":\"localized-change,focused-verification\",\"completion_generation\":\"%s\"}\n" "$selected_tier" "$assessment_generation"
             fi
             return 0
           fi
@@ -485,9 +583,13 @@ run_case() {
         fi
 
         local pass_index result context_path criteria_path criteria_evidence evidence_path sentinel contamination=0 context_supplied=0 criteria_ok=0 hash apply_fix=0 should_timeout=0
-        local expected_pass_binding omit_criteria_evidence=0
+        local expected_pass_binding omit_criteria_evidence=0 completion_literal
+        local completion_session completion_generation
         local evidence_checks=pass evidence_verifier=pass evidence_findings=0 evidence_fixes=0 coverage
-        __test_child_provenance pass || return 96
+        __test_child_provenance pass || {
+          printf "fixture-error\tchild-provenance\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
+          return 96
+        }
         case "$CASE_PASS_MODE" in
           timeout) should_timeout=1 ;;
           timeout-once)
@@ -520,6 +622,7 @@ run_case() {
            [[ "$invocation_args" != *"${DEX_REVIEW_PASS_ID}"* || \
               "$invocation_args" != *"${DEX_REVIEW_POLICY_BINDING}"* || \
               "$invocation_args" != *"${DEX_REVIEW_PASS_BINDING}"* ]]; then
+          printf "fixture-error\tpass-binding\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
           return 96
         fi
 
@@ -649,7 +752,25 @@ run_case() {
           "$evidence_checks" "$coverage" "$evidence_verifier" "$evidence_findings" "$evidence_fixes" >| "$evidence_path"
 
         printf "%s\n" "$result" >| "$(dx_review_result_file "$DEX_SESSION_ID")"
-        touch "$(dx_complete_file "$DEX_SESSION_ID")"
+        completion_literal=$(__test_pass_completion_literal "$@") || {
+          printf "%s\n" "$completion_literal" >> "$CASE_CALLS"
+          return 96
+        }
+        IFS=$'\''\t'\'' read -r completion_session completion_generation <<< \
+          "$completion_literal"
+        [[ "$completion_session" == "$DEX_SESSION_ID" ]] || return 96
+        bash "$DEX_DIR/bin/complete-receipt.sh" "$completion_session" \
+          "$completion_generation"
+        case "$CASE_PASS_MODE" in
+          delete-parent-busy)
+            rm -f "$(dx_phase_busy_file "$CASE_SESSION_ID" 3)"
+            ;;
+          replace-parent-busy)
+            rm -f "$(dx_phase_busy_file "$CASE_SESSION_ID" 3)"
+            dx_phase_busy_begin "$CASE_SESSION_ID" 3 \
+              "replacement review owner" >/dev/null || return 96
+            ;;
+        esac
         case "$CASE_PASS_MODE" in
           parent-criteria-tamper)
             printf "%s\n" "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Tampered parent requirements.\"],\"acceptance_criteria\":[\"The parent hash changes.\"],\"verification_requirements\":[\"Pause review.\"]}" >| "$(dx_review_criteria_file "$CASE_SESSION_ID")"
@@ -709,7 +830,123 @@ run_case() {
           ;;
       esac
 
-      if [[ "$CASE_INVOCATION_MODE" == "twice" ]]; then
+      if [[ "$CASE_SETUP_MODE" == "assessment-control-reject" ]]; then
+        # Model the rejection path whose checked unlock could not complete.
+        # The ownership variables remain set, but that is never evidence that
+        # the acceptance helper succeeded.
+        __dx_review_parent_lock_reject() { return 1; }
+      fi
+
+      if [[ "$CASE_SETUP_MODE" == "assessment-unlock-once" ]]; then
+        __dx_review_parent_acceptance_unlock() {
+          local unlock_session_id="$1"
+          if [[ ! -e "$CASE_ROOT/assessment-unlock-failed" ]]; then
+            : >| "$CASE_ROOT/assessment-unlock-failed"
+            dx_lifecycle_control_lock_release "$unlock_session_id" \
+              || return 1
+            dx_lifecycle_completion_brake "$unlock_session_id" \
+              review-acceptance-lock-release review-loop \
+              2>/dev/null || true
+            return 1
+          fi
+          dx_lifecycle_control_lock_release "$unlock_session_id"
+        }
+      fi
+
+      if [[ "$CASE_SETUP_MODE" == "assessment-unlock-revoke-fail" ]]; then
+        __dx_review_parent_acceptance_unlock() {
+          local unlock_session_id="$1"
+          dx_lifecycle_control_lock_release "$unlock_session_id" \
+            || return 1
+          dx_lifecycle_completion_brake "$unlock_session_id" \
+            review-acceptance-lock-release review-loop \
+            2>/dev/null || true
+          return 1
+        }
+        dx_review_revoke_selection() { return 1; }
+      fi
+
+      case "$CASE_PASS_MODE" in
+        unlock-start-once) acceptance_unlock_failure_call=1 ;;
+        unlock-pass-once) acceptance_unlock_failure_call=2 ;;
+        unlock-final-once) acceptance_unlock_failure_call=3 ;;
+        *) acceptance_unlock_failure_call=0 ;;
+      esac
+      if [[ "$acceptance_unlock_failure_call" -gt 0 ]]; then
+        __dx_review_parent_acceptance_unlock() {
+          local unlock_session_id="$1" unlock_count=0
+          unlock_count=$(cat "$CASE_ROOT/acceptance-unlock-count" \
+            2>/dev/null || printf "0")
+          unlock_count=$((unlock_count + 1))
+          printf "%s\n" "$unlock_count" \
+            >| "$CASE_ROOT/acceptance-unlock-count"
+          if [[ "$unlock_count" -eq "$acceptance_unlock_failure_call" \
+            && ! -e "$CASE_ROOT/acceptance-unlock-failed" ]]; then
+            : >| "$CASE_ROOT/acceptance-unlock-failed"
+            dx_lifecycle_completion_brake "$unlock_session_id" \
+              review-acceptance-lock-release review-loop \
+              2>/dev/null || true
+            return 1
+          fi
+          dx_lifecycle_control_lock_release "$unlock_session_id"
+        }
+      fi
+
+      if [[ "$CASE_PASS_MODE" == "runtime-finish-after-publish-fail" ]]; then
+        functions -c dx_session_runtime_owner_finish \
+          __test_dx_session_runtime_owner_finish
+        dx_session_runtime_owner_finish() {
+          local finish_handle="$1" finish_state="$2"
+          if [[ "$finish_state" == "completed" \
+            && ! -e "$CASE_ROOT/runtime-finish-published" ]]; then
+            __test_dx_session_runtime_owner_finish "$@" || return $?
+            if [[ ! -d "$(dx_lifecycle_control_lock_dir "$CASE_SESSION_ID")" \
+              || ! -e "$(dx_review_receipt_revocation_file "$CASE_SESSION_ID")" ]]; then
+              : >| "$CASE_ROOT/runtime-finish-exposed-completion"
+            fi
+            dx_session_catalog_record "$CASE_SESSION_ID" \
+              --repo "$CASE_REPO" \
+              >| "$CASE_ROOT/runtime-finish-catalog.json" \
+              2>| "$CASE_ROOT/runtime-finish-catalog.error" \
+              || : >| "$CASE_ROOT/runtime-finish-catalog-failed"
+            : >| "$CASE_ROOT/runtime-finish-published"
+            return 1
+          fi
+          __test_dx_session_runtime_owner_finish "$@"
+        }
+      fi
+
+      if [[ "$CASE_PASS_MODE" == "checkout-release-latch" ]]; then
+        functions -c dx_review_lock_release_checked \
+          __test_dx_review_lock_release_checked
+        dx_review_lock_release_checked() {
+          if [[ ! -e "$CASE_ROOT/checkout-release-latched" ]]; then
+            __test_dx_review_lock_release_checked "$@" || return $?
+            : >| "$CASE_ROOT/checkout-release-latched"
+            review_interrupt_reason=user_interrupt
+            review_interrupt_exit=130
+            return 0
+          fi
+          __test_dx_review_lock_release_checked "$@"
+        }
+      fi
+
+      if [[ "$CASE_INVOCATION_MODE" == "resume-between" ]]; then
+        dxreviewloop
+        first_status=$?
+        printf "invocation\tfirst\t%s\n" "$first_status" >> "$CASE_CALLS"
+        dx_lifecycle_control_lock_acquire "$CASE_SESSION_ID" || return 99
+        dx_lifecycle_pause_clear_unlocked "$CASE_SESSION_ID" || return 99
+        dx_lifecycle_control_lock_release "$CASE_SESSION_ID" || return 99
+        if [[ "$CASE_PASS_MODE" == "timeout-once" ]]; then
+          # Keep the one-second deadline scoped to the intentional first
+          # timeout. Resumed healthy waves still have a finite test budget,
+          # but should not race scheduler load.
+          export DEX_REVIEW_PASS_TIMEOUT=10
+        fi
+        dxreviewloop
+        review_status=$?
+      elif [[ "$CASE_INVOCATION_MODE" == "twice" ]]; then
         dxreviewloop
         first_status=$?
         printf "invocation\tfirst\t%s\n" "$first_status" >> "$CASE_CALLS"
@@ -735,10 +972,34 @@ run_case() {
           || return 99
       fi
       return "$review_status"
-    ' > "$CASE_OUTPUT" 2>&1
+    '
+  ) > "$CASE_OUTPUT" 2>&1 &
+  case_pid=$!
+  if [[ "$name" == "pass-timeout" ]]; then
+    watchdog_marker="$CASE_DIR/watchdog-fired"
+    (
+      /bin/sleep 12
+      if kill -0 "$case_pid" 2>/dev/null; then
+        : > "$watchdog_marker"
+        terminate_test_process_tree "$case_pid" TERM
+        /bin/sleep 1
+        if kill -0 "$case_pid" 2>/dev/null; then
+          terminate_test_process_tree "$case_pid" KILL
+        fi
+      fi
+    ) &
+    watchdog_pid=$!
+  fi
+  wait "$case_pid"
   CASE_RC=$?
+  if [[ -n "$watchdog_pid" ]]; then
+    kill -TERM "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+  fi
   set -e
-  CASE_ELAPSED_SECONDS=$(( $(date +%s) - started_epoch ))
+  if [[ -s "$CASE_DIR/actual-session-id" ]]; then
+    CASE_SESSION_ID=$(cat "$CASE_DIR/actual-session-id")
+  fi
 }
 
 run_concurrent_case() {
@@ -836,6 +1097,26 @@ run_concurrent_case() {
             "$acceptance_hash" "$objective_hash" "$verification_hash"
         }
 
+        __test_concurrent_completion_literal() {
+          python3 - "$@" <<\PY
+import re
+import sys
+
+quote = chr(34)
+pattern = re.compile(
+    "bash " + re.escape(quote + "$DEX_DIR/bin/complete-receipt.sh" + quote)
+    + " " + re.escape(quote) + "([A-Za-z0-9][A-Za-z0-9._-]{0,179})" + re.escape(quote)
+    + " " + re.escape(quote) + "([0-9a-f]{32})" + re.escape(quote)
+)
+matches = []
+for value in sys.argv[1:]:
+    matches.extend(pattern.findall(value))
+if len(matches) != 1:
+    raise SystemExit(1)
+print(f"{matches[0][0]}\t{matches[0][1]}")
+PY
+        }
+
         __dx_claude() {
           if [[ "$CASE_ROLE" == "contender" ]]; then
             printf "contender-pass\t%s\n" "${DEX_SESSION_ID:-missing}" >> "$CASE_CALLS"
@@ -843,6 +1124,7 @@ run_concurrent_case() {
           fi
 
           local pass_index context_path criteria_path criteria_evidence evidence_path expected_pass_binding
+          local completion_literal completion_session completion_generation
           pass_index=$(awk -F "\t" '\''$1 == "owner-pass" { count++ } END { print count + 1 }'\'' "$CASE_CALLS")
           if [[ "$pass_index" -eq 1 ]]; then
             touch "$CASE_OWNER_READY"
@@ -878,7 +1160,16 @@ run_concurrent_case() {
             "$DEX_REVIEW_POLICY_BINDING" "$DEX_REVIEW_PASS_BINDING" "$criteria_evidence" >| "$evidence_path"
           dx_review_empty_findings_hash >| "$(dx_findings_file "$DEX_SESSION_ID")"
           printf "CLEAN\n" >| "$(dx_review_result_file "$DEX_SESSION_ID")"
-          touch "$(dx_complete_file "$DEX_SESSION_ID")"
+          completion_literal=$(__test_concurrent_completion_literal "$@") \
+            || {
+              printf "%s\n" "$completion_literal" >> "$CASE_CALLS"
+              return 96
+            }
+          IFS=$'\''\t'\'' read -r completion_session completion_generation <<< \
+            "$completion_literal"
+          [[ "$completion_session" == "$DEX_SESSION_ID" ]] || return 96
+          bash "$DEX_DIR/bin/complete-receipt.sh" "$completion_session" \
+            "$completion_generation"
           printf "owner-pass\t%s\n" "$DEX_SESSION_ID" >> "$CASE_CALLS"
           return 0
         }
@@ -936,18 +1227,160 @@ run_concurrent_case() {
   assert_eq "$state_before" "$state_after" "concurrent owner review state preserved"
   assert_eq "$selection_before" "$selection_after" "concurrent owner selection preserved"
   assert_success "concurrent owner"
-  assert_eq "3" "$(awk -F '\t' '$1 == "owner-pass" { count++ } END { print count + 0 }' "$CASE_CALLS")" \
+  assert_eq "1" "$(awk -F '\t' '$1 == "owner-pass" { count++ } END { print count + 0 }' "$CASE_CALLS")" \
     "concurrent owner pass count"
-  assert_receipt "small" "3" "concurrent owner"
+  assert_receipt "small" "1" "concurrent owner"
 }
 
-run_case "small-gate" "small" $'CLEAN\nCLEAN\nCLEAN'
+run_case "small-gate" "small" "CLEAN"
 assert_success "small gate"
-assert_eq "3" "$(call_count pass)" "small gate pass count"
+assert_eq "1" "$(call_count pass)" "small gate pass count"
 assert_no_assessor "small gate explicit tier"
-assert_fresh_passes "3" "small gate"
-assert_receipt "small" "3" "small gate"
-assert_standalone_telemetry "completed" "3" "small gate"
+assert_fresh_passes "1" "small gate"
+assert_receipt "small" "1" "small gate"
+assert_standalone_telemetry "completed" "1" "small gate"
+SMALL_GATE_CASE_NAME="$CASE_NAME"
+SMALL_GATE_CASE_DIR="$CASE_DIR"
+SMALL_GATE_CASE_REPO="$CASE_REPO"
+SMALL_GATE_CASE_HOME="$CASE_HOME"
+SMALL_GATE_CASE_STATE_DIR="$CASE_STATE_DIR"
+SMALL_GATE_CASE_LOOP_DIR="$CASE_LOOP_DIR"
+SMALL_GATE_CASE_SESSION_ID="$CASE_SESSION_ID"
+SMALL_GATE_CASE_OUTPUT="$CASE_OUTPUT"
+SMALL_GATE_CASE_CALLS="$CASE_CALLS"
+
+run_case "runtime-finish-after-publish-fail" "small" "CLEAN" "" \
+  "standalone" "one-pass-policy" "" \
+  "runtime-finish-after-publish-fail"
+assert_failure "runtime finish post-publication failure"
+assert_eq "1" "$(call_count pass)" \
+  "runtime finish post-publication failure pass count"
+assert_file "$CASE_DIR/runtime-finish-published"
+assert_no_file "$CASE_DIR/runtime-finish-exposed-completion"
+if [[ -e "$CASE_DIR/runtime-finish-catalog-failed" ]]; then
+  printf 'runtime finish catalog lookup failed:\n' >&2
+  sed -n '1,120p' "$CASE_DIR/runtime-finish-catalog.error" >&2
+fi
+assert_no_file "$CASE_DIR/runtime-finish-catalog-failed"
+python3 - "$CASE_DIR/runtime-finish-catalog.json" <<'PY'
+import json
+import sys
+
+record = json.loads(open(sys.argv[1], encoding="utf-8").read())
+assert record["runtime_status"] == "completed", record
+assert record["lifecycle_state"] != "completed", record
+PY
+assert_no_receipt "runtime finish post-publication failure"
+RUNTIME_FINISH_STATE=$(DEX_DIR="$ROOT" HOME="$CASE_HOME" \
+  DX_STATE_DIR="$CASE_STATE_DIR" DX_LOOP_DIR="$CASE_LOOP_DIR" \
+  bash -c 'source "$DEX_DIR/lib/common.sh"; dx_session_runtime_field "$1" status' \
+  _ "$CASE_SESSION_ID")
+assert_eq "completed" "$RUNTIME_FINISH_STATE" \
+  "runtime finish post-publication failure durable runtime state"
+
+for checkout_release_mode in standalone lifecycle; do
+  run_case "${checkout_release_mode}-checkout-release-signal" "small" \
+    "CLEAN" "" "$checkout_release_mode" "one-pass-policy" "" \
+    "checkout-release-latch"
+  assert_failure "${checkout_release_mode} checkout release signal"
+  assert_eq "1" "$(call_count pass)" \
+    "${checkout_release_mode} checkout release signal pass count"
+  assert_file "$CASE_DIR/checkout-release-latched"
+  assert_not_contains "Result: SUCCESS" "$CASE_OUTPUT"
+  assert_no_receipt "${checkout_release_mode} checkout release signal"
+done
+CASE_NAME="$SMALL_GATE_CASE_NAME"
+CASE_DIR="$SMALL_GATE_CASE_DIR"
+CASE_REPO="$SMALL_GATE_CASE_REPO"
+CASE_HOME="$SMALL_GATE_CASE_HOME"
+CASE_STATE_DIR="$SMALL_GATE_CASE_STATE_DIR"
+CASE_LOOP_DIR="$SMALL_GATE_CASE_LOOP_DIR"
+CASE_SESSION_ID="$SMALL_GATE_CASE_SESSION_ID"
+CASE_OUTPUT="$SMALL_GATE_CASE_OUTPUT"
+CASE_CALLS="$SMALL_GATE_CASE_CALLS"
+
+# A fast child can publish its atomic result after the poller's file check but
+# before the process-state check. Reaping that child must read the newly
+# published result instead of misclassifying a clean provider exit as an error.
+CHILD_RESULT_RACE_DIR="$TMP_DIR/child-result-race"
+mkdir -p "$CHILD_RESULT_RACE_DIR"
+DEX_DIR="$ROOT" DX_STATE_DIR="$CHILD_RESULT_RACE_DIR/state" \
+  DX_LOOP_DIR="$CHILD_RESULT_RACE_DIR/loops" bash -c '
+    source "$DEX_DIR/lib/common.sh"
+    mkdir -p "$DX_STATE_DIR" "$DX_LOOP_DIR"
+    dx_run_with_timeout() {
+      shift
+      "$@"
+    }
+    ps() { printf "%s\n" Z; }
+    busy_token=$(dx_phase_busy_begin review-child-result-race 3 \
+      "result publication race") || exit 91
+    __dx_review_run_with_parent_cancel review-child-result-race \
+      "$busy_token" 5 sh -c "sleep 0.05; exit 0" || exit 92
+  '
+
+# A revocation marker is preferred, but a failed marker write still falls
+# back to verified record invalidation. If neither path can be proved, the
+# helper must fail while the old selection remains visibly live.
+SELECTION_REVOKE_POLICY=$(DEX_DIR="$ROOT" bash -c \
+  'source "$DEX_DIR/lib/common.sh"; dx_review_policy_resolve "$1" | cut -f4' \
+  _ "$CASE_REPO")
+SELECTION_REVOKE_SID="selection-revoke-fallback"
+DEX_DIR="$ROOT" DX_LOOP_DIR="$CASE_LOOP_DIR" bash -c '
+  source "$DEX_DIR/lib/common.sh"
+  dx_review_write_selection "$1" small environment operator-override \
+    "$2" "" standalone "$3" || exit 91
+  revocation_file=$(dx_review_selection_revocation_file "$1")
+  dx_review_write_atomic() {
+    [[ "$1" != "$revocation_file" ]] || return 1
+    return 92
+  }
+  dx_review_revoke_selection "$1" || exit 93
+  dx_review_selection_authorization_revoked "$1" || exit 94
+  ! dx_review_selection_valid "$1" "$2" standalone "$3" || exit 95
+' _ "$SELECTION_REVOKE_SID" "$CASE_REPO" "$SELECTION_REVOKE_POLICY"
+
+SELECTION_REVOKE_SID="selection-revoke-unproven"
+DEX_DIR="$ROOT" DX_LOOP_DIR="$CASE_LOOP_DIR" bash -c '
+  source "$DEX_DIR/lib/common.sh"
+  dx_review_write_selection "$1" small environment operator-override \
+    "$2" "" standalone "$3" || exit 91
+  dx_review_write_atomic() { return 1; }
+  __dx_review_invalidate_private_record() { return 1; }
+  ! dx_review_revoke_selection "$1" || exit 92
+  dx_review_selection_valid "$1" "$2" standalone "$3" || exit 93
+' _ "$SELECTION_REVOKE_SID" "$CASE_REPO" "$SELECTION_REVOKE_POLICY"
+rm -f "$CASE_LOOP_DIR/${SELECTION_REVOKE_SID}.review-selection" \
+  "$CASE_LOOP_DIR/${SELECTION_REVOKE_SID}.review-selection.revoked"
+
+# A valid receipt is inert whenever any durable pause exists, or when the
+# in-progress review-state path is present but unsafe.
+SMALL_RECEIPT_BINDING=$(cut -f8 \
+  "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-receipt")
+SMALL_RECEIPT_POLICY=$(cut -f9 \
+  "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-receipt")
+assert_receipt_rejected() {
+  local label="$1"
+  if DEX_DIR="$ROOT" HOME="$CASE_HOME" DX_STATE_DIR="$CASE_STATE_DIR" \
+    DX_LOOP_DIR="$CASE_LOOP_DIR" DX_RUN_ROOT="$CASE_DIR/runs" \
+    bash -c 'source "$DEX_DIR/lib/common.sh"; dx_review_receipt_valid "$1" "$2" "$3" "$4"' \
+      _ "$CASE_SESSION_ID" "$CASE_REPO" "$SMALL_RECEIPT_BINDING" \
+      "$SMALL_RECEIPT_POLICY"; then
+    printf '%s: unsafe state left the review receipt valid\n' "$label" >&2
+    exit 1
+  fi
+}
+printf 'reason=manual-pause\nsource=terminal\n' \
+  > "$CASE_LOOP_DIR/${CASE_SESSION_ID}.pause-state"
+chmod 600 "$CASE_LOOP_DIR/${CASE_SESSION_ID}.pause-state"
+assert_receipt_rejected "metadata-only pause"
+rm -f "$CASE_LOOP_DIR/${CASE_SESSION_ID}.pause-state"
+mkdir "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-state"
+assert_receipt_rejected "review-state directory"
+rmdir "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-state"
+ln -s /dev/null "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-state"
+assert_receipt_rejected "review-state symlink"
+rm -f "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-state"
 
 run_case "trusted-one-pass-policy" "small" "CLEAN" "" \
   "standalone" "one-pass-policy"
@@ -956,32 +1389,43 @@ assert_eq "1" "$(call_count pass)" "trusted one-pass policy pass count"
 assert_no_assessor "trusted one-pass policy explicit tier"
 assert_receipt "small" "1" "trusted one-pass policy"
 
-run_case "unborn-default-policy" "small" $'CLEAN\nCLEAN\nCLEAN' "" \
+run_case "unborn-default-policy" "small" "CLEAN" "" \
   "standalone" "unborn"
 assert_success "unborn default policy"
-assert_eq "3" "$(call_count pass)" "unborn default policy pass count"
+assert_eq "1" "$(call_count pass)" "unborn default policy pass count"
 assert_no_assessor "unborn default policy explicit tier"
-assert_receipt "small" "3" "unborn default policy"
+assert_receipt "small" "1" "unborn default policy"
 
-run_case "standalone-assessor" "" $'CLEAN\nCLEAN\nCLEAN' "small"
+run_case "standalone-assessor" "" "CLEAN" "small"
 assert_success "standalone assessor"
 assert_eq "1" "$(call_count assessor)" "standalone assessor call count"
-assert_eq "3" "$(call_count pass)" "standalone assessor pass count"
-assert_fresh_passes "3" "standalone assessor"
-assert_receipt "small" "3" "standalone assessor"
+assert_eq "1" "$(call_count pass)" "standalone assessor pass count"
+assert_fresh_passes "1" "standalone assessor"
+assert_receipt "small" "1" "standalone assessor"
 
-run_case "explicit-lifecycle-session" "small" $'CLEAN\nCLEAN\nCLEAN' "" \
+run_case "explicit-lifecycle-session" "small" "CLEAN" "" \
   "lifecycle" "" "" "" "single" "explicit"
 assert_success "explicit lifecycle session"
-assert_eq "3" "$(call_count pass)" "explicit lifecycle session pass count"
+assert_eq "1" "$(call_count pass)" "explicit lifecycle session pass count"
 assert_no_assessor "explicit lifecycle session"
-assert_fresh_passes "3" "explicit lifecycle session"
-assert_receipt "small" "3" "explicit lifecycle session"
+assert_fresh_passes "1" "explicit lifecycle session"
+assert_receipt "small" "1" "explicit lifecycle session"
 if [[ -e "$CASE_LOOP_DIR/${CASE_DERIVED_SESSION_ID}.review-receipt" ]]; then
   printf 'explicit lifecycle session: derived session unexpectedly received the receipt\n' >&2
   show_case_output
   exit 1
 fi
+
+for unsafe_phase_kind in symlink directory mode content; do
+  run_case "unsafe-lifecycle-phase-${unsafe_phase_kind}" "small" "CLEAN" "" \
+    "lifecycle" "unsafe-phase-${unsafe_phase_kind}"
+  assert_failure "unsafe lifecycle phase ${unsafe_phase_kind}"
+  assert_eq "0" "$(call_count pass)" \
+    "unsafe lifecycle phase ${unsafe_phase_kind} starts no waves"
+  assert_no_assessor "unsafe lifecycle phase ${unsafe_phase_kind}"
+  assert_no_receipt "unsafe lifecycle phase ${unsafe_phase_kind}"
+  assert_contains "unsafe or malformed" "$CASE_OUTPUT"
+done
 
 run_case "missing-lifecycle-criteria" "small" "CLEAN" "" \
   "lifecycle" "missing-criteria"
@@ -1027,11 +1471,11 @@ assert_failure "phase 2 lifecycle rejected"
 assert_eq "0" "$(call_count pass)" "phase 2 lifecycle starts no waves"
 assert_no_receipt "phase 2 lifecycle rejected"
 
-run_case "stale-lifecycle-env" "small" $'CLEAN\nCLEAN\nCLEAN' "" \
+run_case "stale-lifecycle-env" "small" "CLEAN" "" \
   "stale-env"
 assert_success "stale lifecycle environment uses standalone isolation"
-assert_eq "3" "$(call_count pass)" "stale lifecycle environment pass count"
-assert_receipt "small" "3" "stale lifecycle environment"
+assert_eq "1" "$(call_count pass)" "stale lifecycle environment pass count"
+assert_receipt "small" "1" "stale lifecycle environment"
 
 run_case "invalid-assessor" "" "CLEAN" "invalid"
 assert_failure "invalid standalone assessor"
@@ -1040,6 +1484,67 @@ assert_eq "0" "$(call_count pass)" "invalid assessor starts no waves"
 assert_no_receipt "invalid assessor"
 assert_standalone_telemetry "blocked" "0" "invalid assessor"
 
+run_case "assessment-control-reject" "" "CLEAN" "small" \
+  "lifecycle" "assessment-control-reject"
+assert_failure "assessment control rejection"
+assert_eq "1" "$(call_count assessor)" \
+  "assessment control rejection assessor count"
+assert_eq "0" "$(call_count pass)" \
+  "assessment control rejection starts no waves"
+assert_no_file "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-selection"
+assert_no_receipt "assessment control rejection"
+
+run_case "assessment-unlock-reassessment" "" "CLEAN" \
+  "small" "lifecycle" "assessment-unlock-once" "" "" \
+  "resume-between"
+assert_success "assessment unlock failure reassesses after resume"
+assert_eq "1" "$(awk -F '\t' '
+  $1 == "invocation" && $2 == "first" { after_resume = 1; next }
+  $1 == "assessor" && !after_resume { count++ }
+  END { print count + 0 }
+' "$CASE_CALLS")" "assessment unlock failure first invocation assessor count"
+assert_eq "1" "$(awk -F '\t' '
+  $1 == "invocation" && $2 == "first" { after_resume = 1; next }
+  $1 == "assessor" && after_resume { count++ }
+  END { print count + 0 }
+' "$CASE_CALLS")" "assessment unlock failure resumed assessor count"
+assert_eq "1" "$(call_count pass)" \
+  "assessment unlock failure clean pass count"
+assert_receipt "small" "1" "assessment unlock failure reassessment"
+
+run_case "assessment-unlock-revoke-fail" "" "CLEAN" "small" \
+  "lifecycle" "assessment-unlock-revoke-fail"
+assert_failure "assessment unlock and selection revocation failure"
+assert_eq "1" "$(call_count assessor)" \
+  "assessment unlock and selection revocation failure assessor count"
+assert_eq "0" "$(call_count pass)" \
+  "assessment unlock and selection revocation failure starts no waves"
+ASSESSMENT_REVOKE_PAUSE=$(DEX_DIR="$ROOT" HOME="$CASE_HOME" \
+  DX_STATE_DIR="$CASE_STATE_DIR" DX_LOOP_DIR="$CASE_LOOP_DIR" \
+  bash -c 'source "$DEX_DIR/lib/common.sh"; dx_lifecycle_pause_metadata_record "$1"' \
+  _ "$CASE_SESSION_ID")
+assert_eq $'assessment-selection-revocation-failed\treview-loop' \
+  "$ASSESSMENT_REVOKE_PAUSE" \
+  "selection revocation failure remains non-resumable"
+assert_file "$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-selection"
+assert_no_receipt "assessment unlock and selection revocation failure"
+
+for acceptance_failure_stage in start pass final; do
+  run_case "standalone-${acceptance_failure_stage}-unlock-retry" small \
+    $'CLEAN\nCLEAN' "" standalone one-pass-policy "" \
+    "unlock-${acceptance_failure_stage}-once" twice
+  assert_success "standalone ${acceptance_failure_stage} unlock retry"
+  assert_eq "1" "$(awk -F '\t' \
+    '$1 == "invocation" && $2 == "first" && $3 != "0" { count++ } \
+     END { print count + 0 }' "$CASE_CALLS")" \
+    "standalone ${acceptance_failure_stage} first invocation failed"
+  assert_no_file "$CASE_LOOP_DIR/${CASE_SESSION_ID}.control-lock"
+  assert_no_file "$CASE_LOOP_DIR/${CASE_SESSION_ID}.paused"
+  assert_no_file "$CASE_LOOP_DIR/${CASE_SESSION_ID}.pause-state"
+  assert_receipt small 1 \
+    "standalone ${acceptance_failure_stage} rerun"
+done
+
 run_case "mutating-assessor" "" "CLEAN" "mutate"
 assert_failure "mutating standalone assessor"
 assert_eq "1" "$(call_count assessor)" "mutating assessor call count"
@@ -1047,7 +1552,7 @@ assert_eq "0" "$(call_count pass)" "mutating assessor starts no waves"
 assert_no_receipt "mutating assessor"
 
 run_case "mutating-lifecycle-assessor-retry" "" "BLOCKED:verification-unavailable" \
-  "mutate-once" "lifecycle" "" "" "" "twice"
+  "mutate-once" "lifecycle" "" "" "" "resume-between"
 assert_failure "mutating lifecycle assessor retry"
 assert_eq "2" "$(call_count assessor)" "mutating lifecycle assessor retry count"
 assert_eq "1" "$(call_count pass)" "mutating lifecycle assessor retry pass count"
@@ -1063,35 +1568,35 @@ assert_no_assessor "corrupt resumable state"
 assert_no_receipt "corrupt resumable state"
 
 run_case "resume-explicit-tier" "small" $'CLEAN\nCLEAN' "" \
-  "lifecycle" "resume-state"
+  "lifecycle" "resume-state" "" "" "single" "derived" "" "3"
 assert_success "matching state with explicit tier"
 assert_eq "2" "$(call_count pass)" "matching state with explicit tier pass count"
 assert_no_assessor "matching state with explicit tier"
 assert_receipt "small" "3" "matching state with explicit tier"
 
 run_case "resume-explicit-profile" "" $'CLEAN\nCLEAN' "" \
-  "lifecycle" "resume-state" "light"
+  "lifecycle" "resume-state" "light" "" "single" "derived" "" "3"
 assert_success "matching state with explicit profile"
 assert_eq "2" "$(call_count pass)" "matching state with explicit profile pass count"
 assert_no_assessor "matching state with explicit profile"
 assert_receipt "small" "3" "matching state with explicit profile"
 
 run_case "resume-changed-criteria" "small" $'CLEAN\nCLEAN\nCLEAN' "" \
-  "lifecycle" "resume-criteria-change"
+  "lifecycle" "resume-criteria-change" "" "" "single" "derived" "" "3"
 assert_success "changed criteria reset resumable credit"
 assert_eq "3" "$(call_count pass)" "changed criteria fresh pass count"
 assert_no_assessor "changed criteria explicit tier"
 assert_receipt "small" "3" "changed criteria reset resumable credit"
 
 run_case "resume-pass-timeout" "small" "" "" \
-  "lifecycle" "resume-state" "" "timeout" "single" "derived" "1"
+  "lifecycle" "resume-state" "" "timeout" "single" "derived" "1" "3"
 assert_failure "resumable review pass timeout"
 assert_eq "1" "$(call_count pass-start)" "resumable review pass timeout launch count"
 assert_no_receipt "resumable review pass timeout"
 assert_retained_credit "1" "resumable review pass timeout"
 
 run_case "resume-after-pass-timeout" "small" $'CLEAN\nCLEAN' "" \
-  "lifecycle" "resume-state" "" "timeout-once" "twice" "derived" "1"
+  "lifecycle" "resume-state" "" "timeout-once" "resume-between" "derived" "1" "3"
 assert_success "resume after review pass timeout"
 assert_eq "1" "$(call_count pass-start)" "resume after timeout launch count"
 assert_eq "2" "$(call_count pass)" "resume after timeout clean pass count"
@@ -1112,11 +1617,11 @@ assert_failure "false fix"
 assert_eq "1" "$(call_count pass)" "false fix pass count"
 assert_no_receipt "false fix"
 
-run_case "committed-fix" "small" $'FINDINGS_FIXED_COMMIT:1\nCLEAN\nCLEAN\nCLEAN' "" \
+run_case "committed-fix" "small" $'FINDINGS_FIXED_COMMIT:1\nCLEAN' "" \
   "standalone" "committed-change"
 assert_success "committed fix"
-assert_eq "4" "$(call_count pass)" "committed fix pass count"
-assert_receipt "small" "3" "committed fix"
+assert_eq "2" "$(call_count pass)" "committed fix pass count"
+assert_receipt "small" "1" "committed fix"
 
 run_case "committed-fix-changed-boundary" "small" "FINDINGS_FIXED_COMMIT_BOUNDARY:1" "" \
   "standalone" "committed-change"
@@ -1139,38 +1644,39 @@ assert_failure "repeated findings churn"
 assert_eq "3" "$(call_count pass)" "repeated findings churn pass count"
 assert_no_receipt "repeated findings churn"
 
-run_case "normal-gate" "normal" $'CLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN'
+run_case "normal-gate" "normal" $'CLEAN\nCLEAN\nCLEAN'
 assert_success "normal gate"
-assert_eq "6" "$(call_count pass)" "normal gate pass count"
+assert_eq "3" "$(call_count pass)" "normal gate pass count"
 assert_no_assessor "normal gate explicit tier"
-assert_receipt "normal" "6" "normal gate"
+assert_receipt "normal" "3" "normal gate"
 
-run_case "complex-gate" "complex" $'CLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN'
+run_case "complex-gate" "complex" $'CLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN'
 assert_success "complex gate"
-assert_eq "9" "$(call_count pass)" "complex gate pass count"
+assert_eq "6" "$(call_count pass)" "complex gate pass count"
 assert_no_assessor "complex gate explicit tier"
-assert_receipt "complex" "9" "complex gate"
+assert_receipt "complex" "6" "complex gate"
 
-run_case "fix-reset" "small" $'CLEAN\nCLEAN\nFINDINGS_FIXED:1\nCLEAN\nCLEAN\nCLEAN'
+run_case "fix-reset" "small" $'CLEAN\nCLEAN\nFINDINGS_FIXED:1\nCLEAN\nCLEAN\nCLEAN' "" \
+  "standalone" "" "" "" "single" "derived" "" "3"
 assert_success "fix reset"
 assert_eq "6" "$(call_count pass)" "fix reset pass count"
 assert_no_assessor "fix reset explicit tier"
 assert_receipt "small" "3" "fix reset"
 assert_standalone_telemetry "completed" "6" "fix reset telemetry"
 
-run_case "scope-refresh-codebase" "small" $'FINDINGS_FIXED_CLEAR_SCOPE:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
+run_case "scope-refresh-codebase" "small" $'FINDINGS_FIXED_CLEAR_SCOPE:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
   "standalone" "" "" "expect-codebase"
 assert_success "scope refresh from changes to codebase"
-assert_eq "10" "$(call_count pass)" "scope refresh to codebase pass count"
-assert_eq "9" "$(call_count scope-refresh-codebase)" "scope refresh to codebase prompt count"
-assert_receipt "complex" "9" "scope refresh from changes to codebase"
+assert_eq "7" "$(call_count pass)" "scope refresh to codebase pass count"
+assert_eq "6" "$(call_count scope-refresh-codebase)" "scope refresh to codebase prompt count"
+assert_receipt "complex" "6" "scope refresh from changes to codebase"
 
-run_case "scope-refresh-changes" "complex" $'FINDINGS_FIXED_ADD_UNTRACKED:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
+run_case "scope-refresh-changes" "complex" $'FINDINGS_FIXED_ADD_UNTRACKED:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
   "standalone" "clean-codebase" "" "expect-changes"
 assert_success "scope refresh from codebase to changes"
-assert_eq "10" "$(call_count pass)" "scope refresh to changes pass count"
-assert_eq "9" "$(call_count scope-refresh-changes)" "scope refresh to changes prompt count"
-assert_receipt "complex" "9" "scope refresh from codebase to changes"
+assert_eq "7" "$(call_count pass)" "scope refresh to changes pass count"
+assert_eq "6" "$(call_count scope-refresh-changes)" "scope refresh to changes prompt count"
+assert_receipt "complex" "6" "scope refresh from codebase to changes"
 
 run_case "findings-stop" "small" "FINDINGS:1"
 assert_failure "findings stop"
@@ -1199,8 +1705,8 @@ if ! grep -R -q '"reason":"pass_timeout"' "$CASE_DIR/runs" 2>/dev/null; then
   show_case_output
   exit 1
 fi
-if [[ "$CASE_ELAPSED_SECONDS" -gt 8 ]]; then
-  printf 'review pass timeout: expected bounded runtime, took %ss\n' "$CASE_ELAPSED_SECONDS" >&2
+if [[ -e "$CASE_DIR/watchdog-fired" ]]; then
+  printf 'review pass timeout: external 12s watchdog terminated a stalled case\n' >&2
   show_case_output
   exit 1
 fi
@@ -1240,31 +1746,45 @@ then
   exit 1
 fi
 
+run_case "missing-child-fence" "small" "CLEAN" "" \
+  "lifecycle" "one-pass-policy" "" "delete-parent-busy"
+assert_failure "missing child fence"
+assert_eq "1" "$(call_count pass)" "missing child fence pass count"
+assert_no_receipt "missing child fence"
+grep -q 'review_child_fence_lost' "$CASE_OUTPUT" || assert_at $LINENO
+
+run_case "replaced-child-fence" "small" "CLEAN" "" \
+  "lifecycle" "one-pass-policy" "" "replace-parent-busy"
+assert_failure "replaced child fence"
+assert_eq "1" "$(call_count pass)" "replaced child fence pass count"
+assert_no_receipt "replaced child fence"
+grep -q 'review_child_fence_lost' "$CASE_OUTPUT" || assert_at $LINENO
+
 run_case "churn-stop" "small" "CHURN:repeated-fingerprint"
 assert_failure "churn stop"
 assert_eq "1" "$(call_count pass)" "churn stop pass count"
 assert_no_assessor "churn stop explicit tier"
 assert_no_receipt "churn stop"
 
-run_case "no-outer-max" "small" $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN\nCLEAN\nCLEAN'
+run_case "no-outer-max" "small" $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN'
 assert_success "no default max"
-assert_eq "8" "$(call_count pass)" "no default max pass count"
+assert_eq "6" "$(call_count pass)" "no default max pass count"
 assert_no_assessor "no default max explicit tier"
-assert_receipt "small" "3" "no default max"
+assert_receipt "small" "1" "no default max"
 
-run_case "upward-escalation" "small" $'CLEAN\nCLEAN\nESCALATE:normal:cross-module\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN'
+run_case "upward-escalation" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN\nCLEAN'
 assert_success "upward escalation"
-assert_eq "9" "$(call_count pass)" "upward escalation pass count"
+assert_eq "4" "$(call_count pass)" "upward escalation pass count"
 assert_no_assessor "upward escalation explicit tier"
-assert_receipt "normal" "6" "upward escalation"
-assert_standalone_telemetry "completed" "9" "upward escalation telemetry"
+assert_receipt "normal" "3" "upward escalation"
+assert_standalone_telemetry "completed" "4" "upward escalation telemetry"
 
-run_case "escalation-raises-override" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
-  "standalone" "" "" "" "single" "derived" "" "3"
+run_case "escalation-raises-override" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN\nCLEAN' "" \
+  "standalone" "" "" "" "single" "derived" "" "1"
 assert_success "escalation raises explicit gate to tier floor"
-assert_eq "7" "$(call_count pass)" "escalation raised gate pass count"
+assert_eq "4" "$(call_count pass)" "escalation raised gate pass count"
 assert_no_assessor "escalation raised gate explicit tier"
-assert_receipt "normal" "6" "escalation raised gate"
+assert_receipt "normal" "3" "escalation raised gate"
 
 run_concurrent_case
 

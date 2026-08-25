@@ -41,15 +41,38 @@ __dx_review_nonce() {
   [[ -n "$nonce" ]] || nonce="${EPOCHSECONDS:-$(date +%s)}-$$-${RANDOM}"
   printf '%s\n' "$nonce"
 }
+__dx_review_child_session_id() {
+  local parent_session_id="$1" child_kind="$2" nonce="$3"
+  dx_session_id_valid "$parent_session_id" || return 1
+  case "$child_kind" in
+    assessment|pass|review) ;;
+    *) return 1 ;;
+  esac
+  [[ -n "$nonce" && "$nonce" != *$'\n'* && "$nonce" != *$'\r'* ]] || return 1
+  python3 - "$parent_session_id" "$child_kind" "$nonce" <<'PY'
+import hashlib
+import sys
+
+parent, kind, nonce = sys.argv[1:]
+digest = hashlib.sha256(
+    parent.encode("ascii") + b"\0" + kind.encode("ascii") + b"\0" + nonce.encode("utf-8")
+).hexdigest()[:32]
+print(f"{parent[:120]}-{kind}-{digest}")
+PY
+}
 __dx_review_write_child_provenance() {
   local parent_session_id="$1" child_session_id="$2" child_kind="$3"
+  local child_prefix child_suffix
   dx_session_id_valid "$parent_session_id" || return 1
   dx_session_id_valid "$child_session_id" || return 1
   case "$child_kind" in
     assessment|pass|review) ;;
     *) return 1 ;;
   esac
-  [[ "$child_session_id" == "${parent_session_id}-${child_kind}-"* ]] || return 1
+  child_prefix=$(printf '%.120s-%s-' "$parent_session_id" "$child_kind")
+  [[ "$child_session_id" == "${child_prefix}"* ]] || return 1
+  child_suffix="${child_session_id#"$child_prefix"}"
+  [[ "$child_suffix" =~ ^[0-9a-f]{32}$ ]] || return 1
   dx_meta_write "$child_session_id" \
     "session_role=review-child" \
     "parent_session_id=$parent_session_id" \
@@ -73,6 +96,194 @@ __dx_review_runtime_correlated() { # <session> <provider> <workspace>
   [[ "$runtime_state" == "running" && "$runtime_provider" == "$provider_name" \
     && "$runtime_workspace" == "$canonical_workspace" ]]
 }
+__dx_review_parent_lock_reject() {
+  local session_id="$1" standalone="${2:-0}"
+  if dx_lifecycle_control_lock_release "$session_id"; then
+    return 2
+  fi
+  dx_lifecycle_completion_brake "$session_id" review-control-lock-release \
+    review-loop 2>/dev/null || true
+  __dx_review_parent_acceptance_release_retained "$session_id" \
+    "$standalone" \
+    2>/dev/null || true
+  return 1
+}
+__dx_review_parent_busy_finish() {
+  local session_id="$1" busy_token="$2"
+  [[ -n "$busy_token" ]] || return 1
+  dx_phase_busy_acknowledge "$session_id" 3 "$busy_token" || return 1
+  dx_phase_busy_finish "$session_id" 3 "$busy_token"
+}
+__dx_review_parent_busy_begin() {
+  local session_id="$1" label="$2" control_file control_snapshot parent_phase
+  local busy_file busy_token="" begin_rc=0 reject_rc=0 pause_context_rc=0
+  control_file=$(dx_lifecycle_control_file "$session_id") || return 1
+  busy_file=$(dx_phase_busy_file "$session_id" 3) || return 1
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  parent_phase=$(dx_lifecycle_current_phase "$session_id")
+  dx_lifecycle_pause_context_state "$session_id" || pause_context_rc=$?
+  if [[ "$pause_context_rc" -eq 2 ]]; then
+    if ! dx_lifecycle_control_lock_release "$session_id"; then
+      dx_lifecycle_completion_brake "$session_id" review-control-lock-release \
+        review-loop 2>/dev/null || true
+      __dx_review_parent_acceptance_release_retained "$session_id" 0 \
+        2>/dev/null || true
+    fi
+    return 1
+  fi
+  if [[ -n "$control_snapshot" || -e "$control_file" || -L "$control_file" \
+    || "$parent_phase" != "3" || "$pause_context_rc" -eq 0 ]]; then
+    __dx_review_parent_lock_reject "$session_id" 0 \
+      || reject_rc=$?
+    return "$reject_rc"
+  fi
+  if [[ -e "$busy_file" || -L "$busy_file" ]]; then
+    __dx_review_parent_lock_reject "$session_id" 0 || reject_rc=$?
+    return "$reject_rc"
+  fi
+  busy_token=$(dx_phase_busy_begin "$session_id" 3 "$label") || begin_rc=1
+  if ! dx_lifecycle_control_lock_release "$session_id"; then
+    [[ -z "$busy_token" ]] \
+      || __dx_review_parent_busy_finish "$session_id" "$busy_token" \
+        2>/dev/null || true
+    dx_lifecycle_completion_brake "$session_id" review-busy-lock-release \
+      review-loop 2>/dev/null || true
+    __dx_review_parent_acceptance_release_retained "$session_id" 0 \
+      2>/dev/null || true
+    return 1
+  fi
+  [[ "$begin_rc" -eq 0 && -n "$busy_token" ]] || return 1
+  printf '%s\n' "$busy_token"
+}
+__dx_review_run_with_parent_cancel() {
+  local session_id="$1" busy_token="$2" timeout_seconds="$3"
+  local result_dir result_file result_tmp child_pid child_rc=0 child_state=""
+  local current_busy_token=""
+  shift 3
+  if [[ -z "$busy_token" ]]; then
+    dx_run_with_timeout "$timeout_seconds" "$@"
+    return
+  fi
+  result_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-review-child.XXXXXX") || return 1
+  result_file="$result_dir/result"
+  result_tmp="$result_dir/result.tmp"
+  (
+    local provider_rc=0
+    dx_run_with_timeout "$timeout_seconds" "$@" || provider_rc=$?
+    if printf '%s\n' "$provider_rc" >| "$result_tmp"; then
+      command mv -f "$result_tmp" "$result_file"
+    fi
+  ) &
+  child_pid=$!
+  while [[ ! -f "$result_file" ]]; do
+    current_busy_token=$(dx_phase_busy_token "$session_id" 3)
+    if [[ "$current_busy_token" != "$busy_token" ]]; then
+      kill -TERM "$child_pid" 2>/dev/null || true
+      wait "$child_pid" 2>/dev/null || true
+      command rm -rf "$result_dir" 2>/dev/null || true
+      return 126
+    fi
+    if dx_phase_busy_cancel_requested "$session_id" 3; then
+      kill -TERM "$child_pid" 2>/dev/null || true
+      wait "$child_pid" 2>/dev/null || true
+      command rm -rf "$result_dir" 2>/dev/null || true
+      return 125
+    fi
+    child_state=$(ps -o stat= -p "$child_pid" 2>/dev/null | tr -d '[:space:]')
+    if [[ -z "$child_state" || "$child_state" == Z* ]]; then
+      wait "$child_pid" 2>/dev/null || child_rc=$?
+      # The child publishes with an atomic rename immediately before it exits.
+      # It can become a zombie between the loop's file check and this process
+      # check, so look once more before treating a clean exit as a missing
+      # result publication.
+      if [[ -f "$result_file" ]]; then
+        child_rc=$(cat "$result_file" 2>/dev/null || printf '%s\n' 1)
+        command rm -rf "$result_dir" 2>/dev/null || true
+        [[ "$child_rc" =~ ^[0-9]+$ && "$child_rc" -le 255 ]] || return 1
+        return "$child_rc"
+      fi
+      command rm -rf "$result_dir" 2>/dev/null || true
+      [[ "$child_rc" -ne 0 ]] && return "$child_rc"
+      return 1
+    fi
+    sleep 0.1
+  done
+  wait "$child_pid" 2>/dev/null || true
+  child_rc=$(cat "$result_file" 2>/dev/null || printf '%s\n' 1)
+  command rm -rf "$result_dir" 2>/dev/null || true
+  [[ "$child_rc" =~ ^[0-9]+$ && "$child_rc" -le 255 ]] || return 1
+  return "$child_rc"
+}
+__dx_review_parent_acceptance_lock() {
+  local session_id="$1" standalone="$2" control_file control_snapshot parent_phase
+  local reject_rc=0 pause_context_rc=1
+  control_file=$(dx_lifecycle_control_file "$session_id") || return 1
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  if [[ -n "$control_snapshot" || -e "$control_file" || -L "$control_file" ]]; then
+    __dx_review_parent_lock_reject "$session_id" || reject_rc=$?
+    return "$reject_rc"
+  fi
+  dx_lifecycle_pause_context_state "$session_id" || pause_context_rc=$?
+  if [[ "$pause_context_rc" -eq 2 ]]; then
+    if ! dx_lifecycle_control_lock_release "$session_id"; then
+      dx_lifecycle_completion_brake "$session_id" review-control-lock-release \
+        review-loop 2>/dev/null || true
+      __dx_review_parent_acceptance_release_retained "$session_id" \
+        "$standalone" \
+        2>/dev/null || true
+    fi
+    return 1
+  elif [[ "$pause_context_rc" -eq 0 ]]; then
+    __dx_review_parent_lock_reject "$session_id" "$standalone" \
+      || reject_rc=$?
+    return "$reject_rc"
+  fi
+  if [[ "$standalone" != "1" ]]; then
+    parent_phase=$(dx_lifecycle_current_phase "$session_id")
+    if [[ "$parent_phase" != "3" ]] \
+      || dx_phase_busy_cancel_requested "$session_id" 3; then
+      __dx_review_parent_lock_reject "$session_id" "$standalone" \
+        || reject_rc=$?
+      return "$reject_rc"
+    fi
+  fi
+  # Success deliberately returns with the transition lock held. The caller
+  # consumes the exact child generation before releasing it.
+  return 0
+}
+__dx_review_parent_acceptance_unlock() {
+  local session_id="$1"
+  if dx_lifecycle_control_lock_release "$session_id"; then
+    return 0
+  fi
+  dx_lifecycle_completion_brake "$session_id" review-acceptance-lock-release \
+    review-loop 2>/dev/null || true
+  return 1
+}
+
+# A failed release can leave this process holding the restored lock owner.
+# Callers still fail their transaction, but a second checked release prevents
+# a one-shot filesystem error from stranding human control behind our PID.
+__dx_review_parent_acceptance_release_retained() {
+  local session_id="$1" standalone="${2:-0}" release_rc=0
+  local pause_record=""
+  if [[ "$standalone" == "1" \
+    && "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" ]]; then
+    pause_record=$(dx_lifecycle_pause_metadata_record "$session_id" \
+      2>/dev/null || true)
+    if [[ "$pause_record" == \
+      $'review-acceptance-lock-release\treview-loop' ]]; then
+      dx_lifecycle_pause_clear_unlocked "$session_id" || release_rc=1
+    else
+      release_rc=1
+    fi
+  fi
+  dx_lifecycle_control_lock_release_retained "$session_id" \
+    || release_rc=1
+  return "$release_rc"
+}
 __dx_review_runtime_cleanup() {
   local repo_root="$1" lock_token="$2" session_id="$3" invocation_dir="$4"
   local runtime_owner_handle="${5:-}" exit_result="${6:-1}" busy_token=""
@@ -92,7 +303,8 @@ __dx_review_runtime_cleanup() {
         ;;
     esac
   fi
-  dx_review_lock_release "$repo_root" "$lock_token" 2>/dev/null || true
+  dx_review_lock_release_checked "$repo_root" "$lock_token" \
+    2>/dev/null || true
   builtin cd "$invocation_dir" 2>/dev/null || true
 }
 __dx_review_finish_standalone_run() {
@@ -116,9 +328,11 @@ __dx_review_finish_standalone_run() {
       summary_status="failed"
       ;;
   esac
+  dx_run_write_summary_safe "$run_id" "$summary_status" "Standalone review ${run_status}: ${reason}"
+  # Summary publication can emit an artifact event. Close the event stream
+  # only after that work so run.completed/run.blocked/run.failed stays final.
   __dx_review_emit_event "$run_id" "$event_type" "$severity" "Standalone review ${run_status}" "" \
     command=dxreviewloop reason="$reason"
-  dx_run_write_summary_safe "$run_id" "$summary_status" "Standalone review ${run_status}: ${reason}"
   [[ -n "$provider_session_id" ]] && dx_provider_cleanup_session_state "$provider_session_id" 2>/dev/null || true
   [[ -n "$telemetry_session_id" ]] && command rm -f "$(dx_run_id_file "$telemetry_session_id")" 2>/dev/null || true
 }
@@ -154,9 +368,9 @@ __dx_review_pause_intervention() {
 # __dx_review_record_pause <run_id> <telemetry_session_id> <standalone>
 #   <session_id> <review_phase> <message> <run_status> <reason> [event fields ...]
 #
-# Record a paused review: emit the event, then close the run the way this
-# invocation needs closing — a standalone run finishes its own telemetry, a
-# lifecycle run leaves the marker its Stop hook reads.
+# Record a paused review. Standalone runs close their telemetry; lifecycle runs
+# detach under the transition lock so completion authorization and any review
+# child fence are handled together.
 #
 # Exactly one of those two has to happen at every pause. Written out by hand at
 # each site, one of the seven had already drifted: review_criteria_copy_failed
@@ -165,20 +379,33 @@ __dx_review_pause_intervention() {
 # lifecycle run has, so it was right by accident rather than by construction —
 # and would have become wrong the first time a standalone review carried one.
 #
-# Returns 0. Callers do their own `return 1`, so the pause and the control flow
-# stay visible at the call site rather than hiding in here.
 __dx_review_record_pause() {
   local run_id="$1" telemetry_session_id="$2" standalone="$3" session_id="$4"
   local review_phase="$5" message="$6" run_status="$7" reason="$8"
   shift 8
+  if [[ "$standalone" == "1" ]]; then
+    __dx_review_emit_event "$run_id" "review.paused" "warn" "$message" \
+      "$review_phase" reason="$reason" "$@"
+    __dx_review_finish_standalone_run "$run_id" "$telemetry_session_id" "$run_status" "$reason" "$session_id"
+    return 0
+  fi
+  if ! dx_lifecycle_pause "$session_id" "$reason" review-loop; then
+    __dx_review_emit_event "$run_id" "review.pause_failed" "error" \
+      "Review could not publish a safe pause" "$review_phase" reason="$reason"
+    return 1
+  fi
   __dx_review_emit_event "$run_id" "review.paused" "warn" "$message" "$review_phase" \
     reason="$reason" "$@"
-  if [[ "$standalone" == "1" ]]; then
-    __dx_review_finish_standalone_run "$run_id" "$telemetry_session_id" "$run_status" "$reason" "$session_id"
-  else
-    touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
-  fi
   return 0
+}
+
+__dx_review_preflight_pause() {
+  local session_id="$1" reason="$2"
+  if dx_lifecycle_pause "$session_id" "$reason" review-loop; then
+    return 0
+  fi
+  dx_error "Dex could not publish a safe lifecycle pause. Completion authorization remains closed; repair the session state before resuming."
+  return 1
 }
 
 __dx_review_handle_interrupt() {
@@ -198,7 +425,7 @@ __dx_review_handle_interrupt() {
 }
 # __dx_review_assessment_message <scope_name> <files_changed> <context_file>
 #   <criteria_block> <provider_agent> <policy_small> <policy_normal>
-#   <policy_complex> <policy_binding> <rubric>
+#   <policy_complex> <policy_binding> <rubric> <completion_generation>
 #
 # The prompt the read-only risk assessor is given. Pure text assembly, kept out
 # of the retry loop so the loop reads as what it does — launch, check the
@@ -206,7 +433,8 @@ __dx_review_handle_interrupt() {
 __dx_review_assessment_message() {
   local scope_name="$1" files_changed="$2" context_file="$3" criteria_block="$4"
   local provider_agent="$5" policy_small="$6" policy_normal="$7" policy_complex="$8"
-  local policy_binding="$9" rubric="${10}"
+  local policy_binding="$9" rubric="${10}" completion_generation="${11}"
+  [[ "$completion_generation" =~ ^[0-9a-f]{32}$ ]] || return 1
 
   printf '%s\n' "Select the review risk tier for the current checkout before any review wave starts.
 
@@ -225,7 +453,7 @@ Choose the tier up front; its mapped streak is the deterministic requirement.
 ${rubric}
 
 Return exactly one JSON object and no prose or markdown:
-\`{\"tier\":\"<small|normal|complex>\",\"reason_codes\":\"<comma-separated-reason-codes>\"}\`
+\`{\"tier\":\"<small|normal|complex>\",\"reason_codes\":\"<comma-separated-reason-codes>\",\"completion_generation\":\"${completion_generation}\"}\`
 
 Do not run a review wave, edit files, change git state, install tooling, commit,
 push, create a PR, or write review state. The wrapper records a valid decision.
@@ -399,7 +627,7 @@ ${scope_source_detail}
 
 Use this review context pack path: \`__REVIEW_CONTEXT_FILE__\`
 Use this machine-readable evidence path: \`__PASS_EVIDENCE_FILE__\`
-Use this per-pass completion path only after the review result signal and findings hash are written: \`__PASS_COMPLETE_FILE__\`
+Only after the review result, evidence, context, and findings hash are written, run this exact generation-bound command: \`__PASS_COMPLETION_COMMAND__\`
 The immutable scope fingerprint for this pass is: \`__SCOPE_FINGERPRINT__\`
 
 Independent pass ID: __REVIEW_PASS_ID__
@@ -429,7 +657,7 @@ ${scope_boundary}
 
 This is an independent pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. Judge only the current checkout and the scope supplied above.
 
-After writing the review result signal, evidence JSON, and findings hash, touch the per-pass completion path above, output \`${review_promise}\`, and then stop. That completion file only exits this one review-wave pass; it does not make a non-CLEAN result count as clean.
+After writing the review result signal, evidence JSON, context pack, and findings hash, run the exact command above, output \`${review_promise}\`, and then stop. That receipt only exits this review-wave pass; it does not make a non-CLEAN result count as clean.
 $(__dx_provider_prompt)"
 }
 
@@ -479,6 +707,7 @@ dx_review_loop_run() {
     return 1
   fi
   local base_session_id="" session_id="" lifecycle_state_file="" persisted_phase=""
+  local lifecycle_phase_rc=0
   if [[ -n "${DEX_SESSION_ID:-}" ]]; then
     base_session_id="$DEX_SESSION_ID"
   else
@@ -497,15 +726,21 @@ dx_review_loop_run() {
   # variables can remain set after a phase handoff, so they cannot safely
   # authorize Phase 3 on their own.
   lifecycle_state_file=$(dx_state_file "$base_session_id")
-  if [[ -f "$lifecycle_state_file" ]]; then
-    persisted_phase=$(cat "$lifecycle_state_file" 2>/dev/null || true)
+  if [[ -e "$lifecycle_state_file" || -L "$lifecycle_state_file" ]]; then
+    persisted_phase=$(dx_lifecycle_phase_state "$base_session_id" 2>/dev/null) \
+      || lifecycle_phase_rc=$?
+    if [[ "$lifecycle_phase_rc" -ne 0 ]]; then
+      dx_error "The lifecycle phase state is unsafe or malformed. Repair it before starting dxreviewloop."
+      return 1
+    fi
     if [[ "$persisted_phase" != "3" ]]; then
       dx_error "dxreviewloop is only available to an active lifecycle in Phase 3; persisted phase is '${persisted_phase:-unknown}'."
       return 1
     fi
     standalone_review_prompt=0
     session_id="$base_session_id"
-  elif [[ -f "$(dx_active_file "$base_session_id")" ]]; then
+  elif [[ -e "$(dx_active_file "$base_session_id")" \
+    || -L "$(dx_active_file "$base_session_id")" ]]; then
     dx_error "Another active Dex loop owns this session; finish or pause it before starting dxreviewloop."
     return 1
   else
@@ -529,7 +764,10 @@ dx_review_loop_run() {
     review_criteria_binding=$(dx_review_read_criteria_approval "$session_id" 2>/dev/null || true)
     if [[ ! "$review_criteria_binding" =~ ^[a-f0-9]{64}$ ]]; then
       dx_error "Lifecycle review requires the sealed approved criteria artifact from Phase 1."
-      touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+      if ! __dx_review_preflight_pause "$session_id" \
+        review-criteria-missing; then
+        return 1
+      fi
       return 1
     fi
   elif [[ -e "$parent_criteria_file" || -e "$parent_criteria_approval_file" ]]; then
@@ -547,7 +785,12 @@ dx_review_loop_run() {
   if ! dx_review_policy_provenance_valid "$review_policy_ref" "$review_policy_oid" || \
      ! dx_review_policy_binding_valid "$review_policy_binding"; then
     dx_error "The default branch has an invalid review policy. Fix the Review Policy table in .dex/dex.md."
-    [[ $standalone_review_prompt -eq 0 ]] && touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+    if [[ $standalone_review_prompt -eq 0 ]]; then
+      if ! __dx_review_preflight_pause "$session_id" \
+        review-policy-invalid; then
+        return 1
+      fi
+    fi
     return 1
   fi
 
@@ -600,14 +843,21 @@ dx_review_loop_run() {
   local review_runtime_owner_handle="" review_runtime_owner_pid=""
   if [[ $standalone_review_prompt -eq 0 ]]; then
     if ! __dx_review_runtime_correlated "$session_id" "$provider_agent" "$repo_root"; then
-      dx_review_lock_release "$repo_root" "$review_lock_token" 2>/dev/null || true
-      touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+      if ! dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
+        dx_error "Dex could not release the review-loop checkout lock safely."
+      fi
+      if ! __dx_review_preflight_pause "$session_id" runtime-owner-lost \
+        ; then
+        return 1
+      fi
       dx_error "Dex cannot verify a live runtime owner for this lifecycle checkout, so review did not start."
       return 1
     fi
   else
     if ! dx_session_runtime_owner_start "$session_id" "$provider_agent" "$repo_root"; then
-      dx_review_lock_release "$repo_root" "$review_lock_token" 2>/dev/null || true
+      if ! dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
+        dx_error "Dex could not release the review-loop checkout lock safely."
+      fi
       dx_error "Dex could not establish review runtime ownership, so it did not start an assessor or review wave."
       return 1
     fi
@@ -618,7 +868,9 @@ dx_review_loop_run() {
       if [[ -n "$review_runtime_owner_handle" ]]; then
         dx_session_runtime_owner_finish "$review_runtime_owner_handle" failed 2>/dev/null || true
       fi
-      dx_review_lock_release "$repo_root" "$review_lock_token" 2>/dev/null || true
+      if ! dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
+        dx_error "Dex could not release the review-loop checkout lock safely."
+      fi
       dx_error "Dex received an invalid review runtime-owner handle."
       return 1
     fi
@@ -691,9 +943,20 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
   fi
 
   local current_review_child_session="" parent_busy_token=""
-  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" user_interrupt "$parent_busy_token"; return 130' INT
-  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" terminated "$parent_busy_token"; return 143' TERM
-  trap '__dx_review_handle_interrupt "$review_run_id" "$telemetry_session_id" "$standalone_review_prompt" "$session_id" "$current_review_child_session" "$review_phase" hangup "$parent_busy_token"; return 129' HUP
+  local review_interrupt_reason="" review_interrupt_exit=0
+  local review_int_trap review_term_trap review_hup_trap
+  # Signal handlers only latch intent. Cleanup and pause publication happen at
+  # checkpoints where no transition lock is held and every provider child has
+  # been synchronously reaped.
+  review_int_trap='review_interrupt_reason=user_interrupt; review_interrupt_exit=130; if [[ -n "$parent_busy_token" ]]; then dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true; fi'
+  review_term_trap='review_interrupt_reason=terminated; review_interrupt_exit=143; if [[ -n "$parent_busy_token" ]]; then dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true; fi'
+  review_hup_trap='review_interrupt_reason=hangup; review_interrupt_exit=129; if [[ -n "$parent_busy_token" ]]; then dx_phase_busy_request_cancel "$session_id" 3 2>/dev/null || true; fi'
+  # shellcheck disable=SC2064  # install the locally assembled handler now
+  trap "$review_int_trap" INT
+  # shellcheck disable=SC2064  # install the locally assembled handler now
+  trap "$review_term_trap" TERM
+  # shellcheck disable=SC2064  # install the locally assembled handler now
+  trap "$review_hup_trap" HUP
 
   local review_empty_mcp="$DX_LOOP_DIR/empty-mcp.json"
   local assessment_mcp_flags=() review_mcp_flags=()
@@ -758,7 +1021,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     local assessment_source="lifecycle-assessor"
     [[ $standalone_review_prompt -eq 1 ]] && assessment_source="standalone-assessor"
     local assessment_before="" assessment_after="" assessment_attempt=0 assessment_ok=0 assessment_exit=0 assessment_record=""
-    local assessment_runtime_lost=0
+    local assessment_runtime_lost=0 assessment_intervention=0
+    local assessment_acceptance_unlock_failed=0
+    local assessment_selection_revocation_failed=0
     local assessment_codex_wrapper="$DEX_DIR/bin/dxcodex.sh"
     assessment_before=$(dx_review_scope_fingerprint "$PWD") || {
       dx_error "Could not fingerprint the review scope before assessment."
@@ -771,8 +1036,13 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     for assessment_attempt in 1 2; do
       local assessment_nonce="" assessment_session_id="" assessment_message="" assessment_session_name=""
       local assessment_context_file="" assessment_output_file="" assessment_criteria_file="" assessment_criteria_block=""
+      local assessment_generation="" assessment_config=""
       assessment_nonce=$(__dx_review_nonce)
-      assessment_session_id="${session_id}-assessment-${assessment_nonce}"
+      assessment_session_id=$(__dx_review_child_session_id \
+        "$session_id" assessment "$assessment_nonce") || {
+        assessment_exit=1
+        break
+      }
       current_review_child_session="$assessment_session_id"
       assessment_session_name="dxreview-assessment-${assessment_nonce}"
       assessment_context_file=$(dx_review_context_file "$assessment_session_id")
@@ -811,11 +1081,24 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         dx_cleanup_session "$assessment_session_id"
         break
       fi
+      assessment_generation=$(dx_completion_issue "$assessment_session_id" \
+        child review-assessment assessment 2>/dev/null || true)
+      assessment_config=$(dx_completion_context_config child review-assessment \
+        assessment "$assessment_generation" 2>/dev/null || true)
+      if [[ ! "$assessment_generation" =~ ^[0-9a-f]{32}$ \
+        || -z "$assessment_config" ]] \
+        || ! dx_lifecycle_atomic_write \
+          "$(dx_loop_config_file "$assessment_session_id")" "$assessment_config"; then
+        assessment_exit=1
+        current_review_child_session=""
+        dx_cleanup_session "$assessment_session_id"
+        break
+      fi
       assessment_message=$(__dx_review_assessment_message \
         "$scope_name" "$files_changed" "$assessment_context_file" \
         "$assessment_criteria_block" "$provider_agent" \
         "$review_policy_small" "$review_policy_normal" "$review_policy_complex" \
-        "$review_policy_binding" "$assessment_rubric")
+        "$review_policy_binding" "$assessment_rubric" "$assessment_generation")
 
       if ! __dx_review_runtime_correlated \
           "$session_id" "$provider_agent" "$repo_root"; then
@@ -824,6 +1107,31 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         current_review_child_session=""
         dx_cleanup_session "$assessment_session_id"
         break
+      fi
+      if [[ $standalone_review_prompt -eq 0 ]]; then
+        local assessment_busy_status=0
+        parent_busy_token=$(__dx_review_parent_busy_begin \
+          "$session_id" "review risk assessment") || assessment_busy_status=$?
+        if [[ "$assessment_busy_status" -ne 0 || -z "$parent_busy_token" ]]; then
+          assessment_exit=125
+          assessment_intervention=1
+          current_review_child_session=""
+          dx_cleanup_session "$assessment_session_id"
+          break
+        fi
+      fi
+      if [[ -n "$review_interrupt_reason" ]]; then
+        if [[ -n "$parent_busy_token" ]] \
+          && __dx_review_parent_busy_finish "$session_id" \
+            "$parent_busy_token" 2>/dev/null; then
+          parent_busy_token=""
+        fi
+        current_review_child_session=""
+        dx_cleanup_session "$assessment_session_id" 2>/dev/null || true
+        __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+          "$standalone_review_prompt" "$session_id" "$review_phase" \
+          "Review interrupted" blocked "$review_interrupt_reason" || true
+        return "$review_interrupt_exit"
       fi
       dx_provider_write_session_state "$assessment_session_id" 2>/dev/null || true
       assessment_exit=0
@@ -838,7 +1146,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         DX_CODEX_OUTPUT_LAST_MESSAGE="$assessment_output_file" \
         DEX_PHASE_HANDOFF="" \
         DEX_DIR="$DEX_DIR" \
-        dx_run_with_timeout "$pass_timeout" bash "$assessment_codex_wrapper" exec -- "$assessment_message" || assessment_exit=$?
+        __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
+          "$pass_timeout" bash "$assessment_codex_wrapper" exec -- \
+          "$assessment_message" || assessment_exit=$?
       else
         local assessment_args=() assessment_arg=""
         for assessment_arg in "${DX_CLAUDE_FLAGS[@]}"; do
@@ -853,7 +1163,38 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         DEX_REVIEW_CRITERIA_FILE="$assessment_criteria_file" \
         DEX_PHASE_HANDOFF="" \
         DEX_DIR="$DEX_DIR" \
-        dx_run_with_timeout "$pass_timeout" __dx_claude "${assessment_args[@]}" "$assessment_message" >| "$assessment_output_file" || assessment_exit=$?
+        __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
+          "$pass_timeout" __dx_claude "${assessment_args[@]}" \
+          "$assessment_message" >| "$assessment_output_file" || assessment_exit=$?
+      fi
+      if [[ -z "$review_interrupt_reason" ]]; then
+        case "$assessment_exit" in
+          129) review_interrupt_reason=hangup; review_interrupt_exit=129 ;;
+          130) review_interrupt_reason=user_interrupt; review_interrupt_exit=130 ;;
+          143) review_interrupt_reason=terminated; review_interrupt_exit=143 ;;
+        esac
+      fi
+      if [[ -n "$parent_busy_token" ]]; then
+        if dx_phase_busy_cancel_requested "$session_id" 3; then
+          assessment_intervention=1
+          assessment_exit=125
+        fi
+        if __dx_review_parent_busy_finish "$session_id" \
+          "$parent_busy_token" 2>/dev/null; then
+          parent_busy_token=""
+        else
+          assessment_exit=1
+        fi
+      fi
+      if [[ -n "$review_interrupt_reason" ]]; then
+        dx_provider_cleanup_session_state "$assessment_session_id" \
+          2>/dev/null || true
+        dx_cleanup_session "$assessment_session_id" 2>/dev/null || true
+        current_review_child_session=""
+        __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+          "$standalone_review_prompt" "$session_id" "$review_phase" \
+          "Review interrupted" blocked "$review_interrupt_reason" || true
+        return "$review_interrupt_exit"
       fi
       assessment_after=$(dx_review_scope_fingerprint "$PWD" 2>/dev/null || true)
 
@@ -882,7 +1223,27 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
         return 1
       fi
 
-      if [[ $assessment_exit -eq 0 ]] && assessment_record=$(dx_review_parse_assessment_file "$assessment_output_file" 2>/dev/null); then
+      local assessment_acceptance_status=1 assessment_contract_ok=0
+      if [[ $assessment_exit -eq 0 ]] \
+        && assessment_record=$(dx_review_parse_assessment_file \
+          "$assessment_output_file" "$assessment_generation" 2>/dev/null); then
+        if __dx_review_parent_acceptance_lock "$session_id" \
+          "$standalone_review_prompt"; then
+          assessment_acceptance_status=0
+        else
+          assessment_acceptance_status=$?
+        fi
+      fi
+      if [[ "$assessment_acceptance_status" -eq 0 \
+        && -n "$review_interrupt_reason" ]]; then
+        assessment_acceptance_status=2
+      fi
+      if [[ "$assessment_acceptance_status" -eq 0 ]] \
+        && dx_completion_write_receipt "$assessment_session_id" \
+          "$assessment_generation" 2>/dev/null \
+        && dx_completion_consume "$assessment_session_id" child \
+          review-assessment assessment "$assessment_generation" 2>/dev/null; then
+        assessment_contract_ok=1
         IFS=$'\t' read -r review_tier selection_reasons <<< "$assessment_record"
         selection_source="$assessment_source"
         local proposed_tier="$review_tier" proposed_reasons="$selection_reasons"
@@ -916,24 +1277,66 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
             floor="$floor_tier" floor_reason="$floor_reason"
         fi
       fi
+      if [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" ]] \
+        && ! __dx_review_parent_acceptance_unlock "$session_id"; then
+        if ! dx_review_revoke_selection "$session_id" 2>/dev/null \
+          || ! dx_review_selection_authorization_revoked "$session_id" \
+            2>/dev/null \
+          || dx_review_selection_valid "$session_id" "$PWD" \
+            "$review_criteria_binding" "$review_policy_binding" \
+            2>/dev/null; then
+          assessment_selection_revocation_failed=1
+        fi
+        __dx_review_parent_acceptance_release_retained "$session_id" \
+          "$standalone_review_prompt" \
+          2>/dev/null || true
+        assessment_contract_ok=0
+        assessment_ok=0
+        assessment_exit=1
+        assessment_acceptance_unlock_failed=1
+      fi
+      if [[ -n "$review_interrupt_reason" ]]; then
+        dx_provider_cleanup_session_state "$assessment_session_id" \
+          2>/dev/null || true
+        dx_cleanup_session "$assessment_session_id" 2>/dev/null || true
+        current_review_child_session=""
+        __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+          "$standalone_review_prompt" "$session_id" "$review_phase" \
+          "Review interrupted" blocked "$review_interrupt_reason" || true
+        return "$review_interrupt_exit"
+      fi
+      if [[ "$assessment_acceptance_status" -eq 2 ]]; then
+        assessment_intervention=1
+        assessment_exit=125
+      fi
+      [[ "$assessment_contract_ok" -eq 1 ]] || assessment_ok=0
       dx_provider_cleanup_session_state "$assessment_session_id"
       dx_cleanup_session "$assessment_session_id"
       current_review_child_session=""
       dx_provider_write_session_state "$session_id" 2>/dev/null || true
       [[ $assessment_ok -eq 1 ]] && break
+      [[ $assessment_intervention -eq 1 ]] && break
+      [[ $assessment_acceptance_unlock_failed -eq 1 ]] && break
+      [[ $assessment_selection_revocation_failed -eq 1 ]] && break
       [[ $assessment_attempt -eq 1 ]] && dx_warn "The risk assessor did not return a valid decision; retrying once in a fresh session."
     done
 
     if [[ $assessment_ok -ne 1 ]]; then
       local assessment_failure="assessment_invalid"
-      if [[ $assessment_runtime_lost -eq 1 ]]; then
+      if [[ $assessment_intervention -eq 1 ]]; then
+        assessment_failure="human_intervention"
+      elif [[ $assessment_runtime_lost -eq 1 ]]; then
         assessment_failure="runtime_owner_lost"
+      elif [[ $assessment_selection_revocation_failed -eq 1 ]]; then
+        assessment_failure="assessment-selection-revocation-failed"
+      elif [[ $assessment_acceptance_unlock_failed -eq 1 ]]; then
+        assessment_failure="review-acceptance-lock-release"
       elif [[ $assessment_exit -eq 124 ]]; then
         assessment_failure="assessment_timeout"
       elif [[ $assessment_exit -ne 0 ]]; then
         assessment_failure="assessment_provider_error"
       fi
-      dx_error "The review risk assessor could not complete after two attempts (${assessment_failure})."
+      dx_error "The review risk assessor could not complete (${assessment_failure})."
       __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
         "$standalone_review_prompt" "$session_id" "$review_phase" \
         "Review paused" blocked "$assessment_failure" \
@@ -975,34 +1378,96 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     policy_small_int="$review_policy_small" policy_normal_int="$review_policy_normal" policy_complex_int="$review_policy_complex"
 
   local review_promise
-  review_promise="$(__dx_review_phase_promise)"
-  rm -f "$(dx_review_receipt_file "$session_id")" "$(dx_paused_file "$session_id")" 2>/dev/null
-
+  local review_start_lock_rc=0 review_start_cleanup_rc=0
   local clean_passes=0 review_iteration=0 findings_fixed_total=0
-  local state_record="" state_tier="" state_required="" state_iteration="" state_clean="" state_fingerprint="" state_binding="" state_policy_binding=""
-  if state_record=$(dx_review_read_state "$session_id" "$PWD" "$review_criteria_binding" "$review_policy_binding" 2>/dev/null); then
-    IFS=$'\t' read -r state_tier state_required state_iteration state_clean state_fingerprint state_binding state_policy_binding <<< "$state_record"
-    if [[ "$state_tier" == "$review_tier" && "$state_required" == "$required_clean" ]] && \
-       [[ "$state_binding" == "$review_criteria_binding" && "$state_policy_binding" == "$review_policy_binding" ]] && \
-       dx_review_ledger_valid "$session_id" "$state_clean" "$state_fingerprint" \
-         "$review_criteria_binding" "$review_policy_binding" "$review_profile"; then
-      review_iteration=$((10#$state_iteration))
-      clean_passes=$((10#$state_clean))
-      dx_info "Resuming review at ${clean_passes}/${required_clean} consecutive clean passes."
-    else
-      rm -f "$(dx_review_state_file "$session_id")" "$(dx_findings_file "$session_id")" 2>/dev/null
-      dx_review_ledger_reset "$session_id" 2>/dev/null || true
+  local state_record="" state_tier="" state_required="" state_iteration=""
+  local state_clean="" state_fingerprint="" state_binding="" state_policy_binding=""
+  local review_revocation_file
+  review_promise="$(__dx_review_phase_promise)"
+  review_revocation_file=$(dx_review_receipt_revocation_file "$session_id")
+  __dx_review_parent_acceptance_lock "$session_id" \
+    "$standalone_review_prompt" || review_start_lock_rc=$?
+  if [[ "$review_start_lock_rc" -eq 0 ]]; then
+    if ! dx_review_revoke_receipt "$session_id" \
+      || ! dx_review_receipt_authorization_absent "$session_id"; then
+      review_start_cleanup_rc=1
     fi
-  else
-    rm -f "$(dx_review_state_file "$session_id")" "$(dx_findings_file "$session_id")" 2>/dev/null
-    dx_review_ledger_reset "$session_id" 2>/dev/null || true
+    if [[ "$review_start_cleanup_rc" -eq 0 \
+      && "$standalone_review_prompt" -eq 1 ]]; then
+      rm -f "$(dx_paused_file "$session_id")" \
+        "$(dx_pause_state_file "$session_id")" 2>/dev/null \
+        || review_start_cleanup_rc=1
+    fi
+    if [[ "$review_start_cleanup_rc" -eq 0 ]]; then
+      if state_record=$(dx_review_read_state "$session_id" "$PWD" \
+        "$review_criteria_binding" "$review_policy_binding" 2>/dev/null); then
+        IFS=$'\t' read -r state_tier state_required state_iteration state_clean \
+          state_fingerprint state_binding state_policy_binding <<< "$state_record"
+        if [[ "$state_tier" == "$review_tier" \
+          && "$state_required" == "$required_clean" \
+          && "$state_binding" == "$review_criteria_binding" \
+          && "$state_policy_binding" == "$review_policy_binding" ]] \
+          && dx_review_ledger_valid "$session_id" "$state_clean" \
+            "$state_fingerprint" "$review_criteria_binding" \
+            "$review_policy_binding" "$review_profile"; then
+          review_iteration=$((10#$state_iteration))
+          clean_passes=$((10#$state_clean))
+        else
+          rm -f "$(dx_review_state_file "$session_id")" \
+            "$(dx_findings_file "$session_id")" 2>/dev/null \
+            || review_start_cleanup_rc=1
+          dx_review_ledger_reset "$session_id" 2>/dev/null \
+            || review_start_cleanup_rc=1
+        fi
+      else
+        rm -f "$(dx_review_state_file "$session_id")" \
+          "$(dx_findings_file "$session_id")" 2>/dev/null \
+          || review_start_cleanup_rc=1
+        dx_review_ledger_reset "$session_id" 2>/dev/null \
+          || review_start_cleanup_rc=1
+      fi
+    fi
+    if [[ "$review_start_cleanup_rc" -eq 0 ]] \
+      && ! dx_review_write_state "$session_id" "$review_tier" \
+        "$required_clean" "$review_iteration" "$clean_passes" "$PWD" \
+        "$review_criteria_binding" "$review_policy_binding"; then
+      review_start_cleanup_rc=1
+    fi
+    if [[ "$review_start_cleanup_rc" -eq 0 ]]; then
+      if ! rm -f "$review_revocation_file" 2>/dev/null \
+        || [[ -e "$review_revocation_file" || -L "$review_revocation_file" ]] \
+        || ! dx_review_receipt_authorization_absent "$session_id"; then
+        dx_review_revoke_receipt "$session_id" 2>/dev/null || true
+        review_start_cleanup_rc=1
+      fi
+    fi
+    if ! __dx_review_parent_acceptance_unlock "$session_id"; then
+      review_start_cleanup_rc=1
+      __dx_review_parent_acceptance_release_retained "$session_id" \
+        "$standalone_review_prompt" \
+        2>/dev/null || true
+    fi
+  fi
+  if [[ "$review_start_lock_rc" -ne 0 || "$review_start_cleanup_rc" -ne 0 ]]; then
+    if [[ "$review_start_lock_rc" -eq 2 ]]; then
+      dx_info "Review stopped before its first wave because a direct human control or pause is pending."
+    else
+      dx_error "Review could not establish a safe start state. Completion authorization remains closed."
+    fi
+    [[ "$standalone_review_prompt" -eq 1 ]] \
+      && __dx_review_finish_standalone_run "$review_run_id" \
+        "$telemetry_session_id" blocked review_start_conflict "$session_id"
+    return 1
+  fi
+  if [[ -n "$review_interrupt_reason" ]]; then
+    __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+      "$standalone_review_prompt" "$session_id" "$review_phase" \
+      "Review interrupted" blocked "$review_interrupt_reason" || true
+    return "$review_interrupt_exit"
   fi
 
-  if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" \
-    "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
-    dx_error "Could not initialize review state."
-    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed state_write_failed "$session_id"
-    return 1
+  if [[ "$review_iteration" -gt 0 || "$clean_passes" -gt 0 ]]; then
+    dx_info "Resuming review at ${clean_passes}/${required_clean} consecutive clean passes."
   fi
 
   echo ""
@@ -1064,14 +1529,19 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
 
     local pass_nonce="" pass_session_id="" pass_session_name=""
     pass_nonce=$(__dx_review_nonce)
-    pass_session_id="${session_id}-pass-${pass_nonce}"
+    pass_session_id=$(__dx_review_child_session_id \
+      "$session_id" pass "$pass_nonce") || {
+      terminal_reason="review_child_session_id_failed"
+      clean_passes=0
+      break
+    }
     current_review_child_session="$pass_session_id"
     pass_session_name="dxreview-wave-${pass_nonce}"
-    local review_context_file="" pass_criteria_file="" pass_evidence_file="" pass_complete_file="" pass_result_file="" pass_findings_file=""
+    local review_context_file="" pass_criteria_file="" pass_evidence_file="" pass_result_file="" pass_findings_file=""
+    local pass_generation="" pass_completion_command=""
     review_context_file=$(dx_review_context_file "$pass_session_id")
     pass_criteria_file=$(dx_review_criteria_file "$pass_session_id")
     pass_evidence_file=$(dx_review_evidence_file "$pass_session_id")
-    pass_complete_file=$(dx_complete_file "$pass_session_id")
     pass_result_file=$(dx_review_result_file "$pass_session_id")
     pass_findings_file=$(dx_findings_file "$pass_session_id")
 
@@ -1092,10 +1562,28 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
       current_review_child_session=""
       break
     fi
-    touch "$(dx_active_file "$pass_session_id")"
-    [[ $standalone_review_prompt -eq 1 ]] && __dx_write_state "$(dx_prompt_file "$pass_session_id")" "$standalone_prompt_content"
+    pass_generation=$(dx_completion_loop_activate "$pass_session_id" \
+      child review-pass 3 2>/dev/null || true)
+    if [[ ! "$pass_generation" =~ ^[0-9a-f]{32}$ ]]; then
+      terminal_reason="completion_activation_failed"
+      clean_passes=0
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    fi
+    pass_completion_command=$(printf \
+      'bash "$DEX_DIR/bin/complete-receipt.sh" "%s" "%s"' \
+      "$pass_session_id" "$pass_generation")
+    if [[ $standalone_review_prompt -eq 1 ]] \
+      && ! __dx_write_state "$(dx_prompt_file "$pass_session_id")" \
+        "$standalone_prompt_content"; then
+      terminal_reason="prompt_state_write_failed"
+      clean_passes=0
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    fi
     dx_provider_write_session_state "$pass_session_id" 2>/dev/null || true
-    __dx_write_state "$(dx_loop_config_file "$pass_session_id")" "3:${review_promise}:${audit_file}:1"
 
     local message="${message_template//__REVIEW_PROFILE__/$review_profile}"
     local criteria_block=""
@@ -1108,7 +1596,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
     }
     message="${message//__REVIEW_CONTEXT_FILE__/$review_context_file}"
     message="${message//__PASS_EVIDENCE_FILE__/$pass_evidence_file}"
-    message="${message//__PASS_COMPLETE_FILE__/$pass_complete_file}"
+    message="${message//__PASS_COMPLETION_COMMAND__/$pass_completion_command}"
     message="${message//__REVIEW_CRITERIA_BLOCK__/$criteria_block}"
     message="${message//__REVIEW_CRITERIA_BINDING__/$review_criteria_binding}"
 
@@ -1153,43 +1641,42 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Mark plan
 
     parent_busy_token=""
     if [[ $standalone_review_prompt -eq 0 ]]; then
-      local review_control_snapshot="" review_control_action="" review_parent_phase="" busy_write_status=0
-      if ! dx_lifecycle_control_lock_acquire "$session_id"; then
-        terminal_reason="control_transition_busy"
-        terminal_preserve_credit=1
-        dx_cleanup_session "$pass_session_id"
-        current_review_child_session=""
-        break
-      fi
-      review_control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
-      review_control_action=$(dx_lifecycle_control_value "$review_control_snapshot" action)
-      review_parent_phase=$(dx_lifecycle_current_phase "$session_id")
-      if [[ "$review_control_action" == "pause" || "$review_control_action" == "cancel" \
-        || "$review_control_action" == "complete" || "$review_control_action" == "jump" \
-        || "$review_parent_phase" != "3" ]]; then
-        dx_lifecycle_control_lock_release "$session_id" || true
-        terminal_reason="human_intervention"
-        terminal_preserve_credit=1
-        dx_cleanup_session "$pass_session_id"
-        current_review_child_session=""
-        break
-      fi
-      parent_busy_token=$(dx_phase_busy_begin "$session_id" 3 "independent review wave") || busy_write_status=$?
-      dx_lifecycle_control_lock_release "$session_id" || true
+      local busy_write_status=0
+      parent_busy_token=$(__dx_review_parent_busy_begin \
+        "$session_id" "independent review wave") || busy_write_status=$?
       if [[ "$busy_write_status" -ne 0 || -z "$parent_busy_token" ]]; then
-        terminal_reason="busy_marker_write_failed"
+        if [[ "$busy_write_status" -eq 2 ]]; then
+          terminal_reason="human_intervention"
+        else
+          terminal_reason="busy_marker_write_failed"
+        fi
         terminal_preserve_credit=1
         dx_cleanup_session "$pass_session_id"
         current_review_child_session=""
         break
       fi
     fi
+    if [[ -n "$review_interrupt_reason" ]]; then
+      if [[ -n "$parent_busy_token" ]] \
+        && __dx_review_parent_busy_finish "$session_id" \
+          "$parent_busy_token" 2>/dev/null; then
+        parent_busy_token=""
+      fi
+      current_review_child_session=""
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+        "$standalone_review_prompt" "$session_id" "$review_phase" \
+        "Review interrupted" blocked "$review_interrupt_reason" || true
+      return "$review_interrupt_exit"
+    fi
 
     if ! __dx_review_runtime_correlated \
         "$session_id" "$provider_agent" "$repo_root"; then
       if [[ -n "$parent_busy_token" ]]; then
-        dx_phase_busy_finish "$session_id" 3 "$parent_busy_token" 2>/dev/null || true
-        parent_busy_token=""
+        if __dx_review_parent_busy_finish "$session_id" \
+          "$parent_busy_token" 2>/dev/null; then
+          parent_busy_token=""
+        fi
       fi
       terminal_reason="runtime_owner_lost"
       clean_passes=0
@@ -1231,9 +1718,6 @@ Set its policy_binding field to:
 Set its pass_binding field to:
   ${pass_binding}
 
-Then touch:
-  ${pass_complete_file}
-
 Allowed results: CLEAN, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, CHURN:reason, ESCALATE:normal:reason, ESCALATE:complex:reason, ESCALATE_THOROUGH:reason.
 
 ${message}"
@@ -1254,7 +1738,9 @@ ${message}"
       DEX_REVIEW_PASS_ID="$pass_nonce" \
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
       DEX_DIR="$DEX_DIR" \
-      dx_run_with_timeout "$pass_timeout" bash "$codex_wrapper" exec -- "$codex_message" || exit_code=$?
+      __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
+        "$pass_timeout" bash "$codex_wrapper" exec -- "$codex_message" \
+        || exit_code=$?
     else
       local claude_args=("${DX_CLAUDE_FLAGS[@]}" "${review_mcp_flags[@]}" -n "$pass_session_name")
       DEX_SESSION_ID="$pass_session_id" \
@@ -1273,10 +1759,21 @@ ${message}"
       DEX_REVIEW_PASS_ID="$pass_nonce" \
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
       DEX_DIR="$DEX_DIR" \
-      dx_run_with_timeout "$pass_timeout" __dx_claude "${claude_args[@]}" "$message" || exit_code=$?
+      __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
+        "$pass_timeout" __dx_claude "${claude_args[@]}" "$message" \
+        || exit_code=$?
     fi
 
-    local review_intervention_requested=0 review_control_snapshot="" review_control_action=""
+    if [[ -z "$review_interrupt_reason" ]]; then
+      case "$exit_code" in
+        129) review_interrupt_reason=hangup; review_interrupt_exit=129 ;;
+        130) review_interrupt_reason=user_interrupt; review_interrupt_exit=130 ;;
+        143) review_interrupt_reason=terminated; review_interrupt_exit=143 ;;
+      esac
+    fi
+
+    local review_intervention_requested=0 review_child_fence_lost=0
+    local review_control_snapshot="" review_control_action=""
     if [[ -n "$parent_busy_token" ]]; then
       dx_phase_busy_cancel_requested "$session_id" 3 && review_intervention_requested=1
       review_control_snapshot=$(dx_lifecycle_control_snapshot "$session_id")
@@ -1287,13 +1784,40 @@ ${message}"
 
       # The provider call above is synchronous. Reaching this point is the
       # review owner's acknowledgement that the child process has ended.
-      if dx_phase_busy_acknowledge "$session_id" 3 "$parent_busy_token"; then
-        dx_phase_busy_finish "$session_id" 3 "$parent_busy_token" 2>/dev/null || true
+      if __dx_review_parent_busy_finish "$session_id" \
+        "$parent_busy_token" 2>/dev/null; then
         parent_busy_token=""
+      else
+        review_child_fence_lost=1
       fi
     fi
     pass_finished=$(date +%s)
     pass_duration=$((pass_finished - pass_started))
+
+    if [[ -n "$review_interrupt_reason" ]]; then
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      current_review_child_session=""
+      __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+        "$standalone_review_prompt" "$session_id" "$review_phase" \
+        "Review interrupted" blocked "$review_interrupt_reason" || true
+      return "$review_interrupt_exit"
+    fi
+
+    if [[ $review_child_fence_lost -eq 1 ]]; then
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      current_review_child_session=""
+      terminal_reason="review_child_fence_lost"
+      clean_passes=0
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "error" \
+        "Review child ownership was lost before acceptance" "$review_phase" \
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" \
+        iteration_int="$review_iteration" duration_seconds_int="$pass_duration" \
+        clean_before_int="$clean_before" clean_after_int=0 \
+        provider_exit_int="$exit_code" terminal_reason=review_child_fence_lost
+      break
+    fi
 
     if ! __dx_review_runtime_correlated \
         "$session_id" "$provider_agent" "$repo_root"; then
@@ -1322,6 +1846,7 @@ ${message}"
     fi
 
     local result="" findings_hash="" evidence_hash="" evidence_summary="" result_reason="invalid" criteria_intact=1
+    local accepted_pass_generation=""
     local evidence_checks="not-recorded" evidence_verifier="not-recorded" evidence_coverage="none" evidence_valid_json=false
     local evidence_findings=0 evidence_fixes=0 context_valid=0 evidence_valid=0 completion_valid=0 review_contract_error=""
     [[ -f "$pass_result_file" ]] && result=$(cat "$pass_result_file" 2>/dev/null || true)
@@ -1341,10 +1866,20 @@ ${message}"
     fi
     result_reason=$(dx_review_result_reason "$result" 2>/dev/null || printf '%s\n' "invalid")
     [[ -n "$evidence_hash" ]] || evidence_hash="none"
-    [[ -f "$pass_complete_file" ]] && completion_valid=1
+    accepted_pass_generation=$(dx_completion_current_generation \
+      "$pass_session_id" child review-pass 3 2>/dev/null || true)
+    if [[ "$accepted_pass_generation" =~ ^[0-9a-f]{32}$ ]] \
+      && dx_completion_receipt_valid "$pass_session_id" child review-pass 3 \
+        "$accepted_pass_generation" 2>/dev/null; then
+      completion_valid=1
+    fi
+    __dx_review_criteria_intact "$session_id" "$pass_session_id" \
+      "$review_criteria_binding" || criteria_intact=0
     if dx_review_result_valid "$result"; then
       if [[ $completion_valid -ne 1 ]]; then
         review_contract_error="completion receipt missing"
+      elif [[ $criteria_intact -ne 1 ]]; then
+        review_contract_error="approved review criteria changed"
       elif [[ $context_valid -ne 1 ]]; then
         review_contract_error="context pack missing or empty"
       elif [[ $evidence_valid -ne 1 ]]; then
@@ -1356,7 +1891,52 @@ ${message}"
         review_contract_error="pass attestation missing or invalid"
       fi
     fi
-    __dx_review_criteria_intact "$session_id" "$pass_session_id" "$review_criteria_binding" || criteria_intact=0
+    local pass_acceptance_status=0
+    if dx_review_result_valid "$result" && [[ -z "$review_contract_error" ]]; then
+      __dx_review_parent_acceptance_lock "$session_id" \
+        "$standalone_review_prompt" || pass_acceptance_status=$?
+      if [[ "$pass_acceptance_status" -eq 0 ]]; then
+        if [[ -n "$review_interrupt_reason" ]]; then
+          review_intervention_requested=1
+        elif ! dx_completion_consume "$pass_session_id" child review-pass 3 \
+          "$accepted_pass_generation" 2>/dev/null; then
+          review_contract_error="completion receipt could not be consumed"
+        fi
+        if ! __dx_review_parent_acceptance_unlock "$session_id"; then
+          review_contract_error="completion decision lock could not be released"
+          __dx_review_parent_acceptance_release_retained "$session_id" \
+            "$standalone_review_prompt" \
+            2>/dev/null || true
+        fi
+      elif [[ "$pass_acceptance_status" -eq 2 ]]; then
+        review_intervention_requested=1
+      else
+        review_contract_error="completion decision lock unavailable"
+      fi
+    fi
+    if [[ -n "$review_interrupt_reason" ]]; then
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      current_review_child_session=""
+      __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
+        "$standalone_review_prompt" "$session_id" "$review_phase" \
+        "Review interrupted" blocked "$review_interrupt_reason" || true
+      return "$review_interrupt_exit"
+    fi
+    if [[ $review_intervention_requested -eq 1 ]]; then
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      current_review_child_session=""
+      terminal_reason="human_intervention"
+      terminal_preserve_credit=1
+      __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" \
+        "Review pass stopped by human intervention" "$review_phase" \
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" \
+        iteration_int="$review_iteration" duration_seconds_int="$pass_duration" \
+        clean_before_int="$clean_before" clean_after_int="$clean_passes" \
+        provider_exit_int="$exit_code" terminal_reason=human_intervention
+      break
+    fi
     dx_provider_cleanup_session_state "$pass_session_id"
     current_review_child_session=""
     dx_provider_write_session_state "$session_id" 2>/dev/null || true
@@ -1405,6 +1985,7 @@ ${message}"
     if [[ -n "$review_contract_error" ]]; then
       case "$review_contract_error" in
         "completion receipt missing") terminal_reason="completion_receipt_missing" ;;
+        "completion receipt could not be consumed"|"completion decision lock could not be released"|"completion decision lock unavailable") terminal_reason="completion_receipt_invalid" ;;
         "context pack missing or empty") terminal_reason="context_pack_missing" ;;
         "evidence manifest missing or invalid") terminal_reason="evidence_manifest_invalid" ;;
         "pass attestation missing or invalid") terminal_reason="pass_attestation_invalid" ;;
@@ -1629,12 +2210,21 @@ ${message}"
     [[ -n "$terminal_reason" ]] && break
   done
 
-  local final_busy_token
-  current_review_child_session=""
-  trap - INT TERM HUP
-  if dx_phase_busy_quiesced "$session_id" 3; then
+  local final_busy_token="" final_busy_file=""
+  if [[ -n "$current_review_child_session" ]]; then
+    terminal_reason="review_child_cleanup_incomplete"
+    clean_passes=0
+  fi
+  final_busy_file=$(dx_phase_busy_file "$session_id" 3)
+  if [[ -e "$final_busy_file" || -L "$final_busy_file" ]] \
+    && dx_phase_busy_quiesced "$session_id" 3; then
     final_busy_token=$(dx_phase_busy_token "$session_id" 3)
-    dx_phase_busy_finish "$session_id" 3 "$final_busy_token" 2>/dev/null || true
+    dx_phase_busy_finish "$session_id" 3 "$final_busy_token" \
+      2>/dev/null || true
+  fi
+  if [[ -e "$final_busy_file" || -L "$final_busy_file" ]]; then
+    [[ -n "$terminal_reason" ]] || terminal_reason="review_child_fence_active"
+    clean_passes=0
   fi
 
   if ! __dx_review_runtime_correlated \
@@ -1642,48 +2232,273 @@ ${message}"
     terminal_reason="runtime_owner_lost"
     clean_passes=0
   fi
+  if [[ -n "$review_interrupt_reason" ]]; then
+    terminal_reason="$review_interrupt_reason"
+    terminal_exit="$review_interrupt_exit"
+    terminal_preserve_credit=1
+  fi
 
   echo ""
+  local final_acceptance_rc=0 final_commit_rc=0 review_success_committed=0
+  local review_runtime_finish_result=0 standalone_runtime_committed=0
+  local second_acceptance_rc=0
   if [[ $clean_passes -ge $required_clean && -z "$terminal_reason" ]]; then
-    if ! __dx_review_criteria_intact "$session_id" "" "$review_criteria_binding"; then
-      terminal_reason="review_criteria_changed"
-      clean_passes=0
-    elif ! dx_review_write_receipt "$session_id" "$review_tier" "$required_clean" "$clean_passes" \
-      "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
-      terminal_reason="receipt_write_failed"
-      clean_passes=0
-    else
-      rm -f "$(dx_review_state_file "$session_id")" "$parent_findings_file" "$(dx_paused_file "$session_id")" 2>/dev/null
-      if ! dx_review_receipt_valid "$session_id" "$PWD" "$review_criteria_binding" "$review_policy_binding"; then
-        rm -f "$(dx_review_receipt_file "$session_id")" 2>/dev/null
-        terminal_reason="receipt_validation_failed"
-        clean_passes=0
-      else
-        local review_runtime_finish_result=0
-        if [[ -n "$review_runtime_owner_handle" ]]; then
-          dx_session_runtime_owner_finish "$review_runtime_owner_handle" completed \
-            || review_runtime_finish_result=$?
-          review_runtime_owner_handle=""
-        fi
-        if [[ "$review_runtime_finish_result" -ne 0 ]]; then
-          rm -f "$(dx_review_receipt_file "$session_id")" 2>/dev/null
+    __dx_review_parent_acceptance_lock "$session_id" \
+      "$standalone_review_prompt" || final_acceptance_rc=$?
+    if [[ "$final_acceptance_rc" -eq 0 ]]; then
+      if [[ -n "$review_interrupt_reason" ]]; then
+        terminal_reason="$review_interrupt_reason"
+        terminal_exit="$review_interrupt_exit"
+        terminal_preserve_credit=1
+        final_commit_rc=1
+      elif [[ -e "$final_busy_file" || -L "$final_busy_file" ]]; then
+        terminal_reason="review_child_fence_active"
+        final_commit_rc=1
+      elif ! __dx_review_criteria_intact "$session_id" "" \
+        "$review_criteria_binding"; then
+        terminal_reason="review_criteria_changed"
+        final_commit_rc=1
+      elif [[ "$standalone_review_prompt" -eq 1 ]]; then
+        # A completed standalone runtime is irreversible. Keep its review
+        # receipt revoked while the runtime terminal record and the first
+        # checked unlock are still fallible; the second lock transaction below
+        # is the only place that can publish external success.
+        if ! dx_review_revoke_receipt "$session_id" \
+          || ! dx_review_receipt_authorization_absent "$session_id"; then
+          terminal_reason="receipt_revocation_failed"
+          final_commit_rc=1
+        elif ! rm -f "$(dx_review_state_file "$session_id")" \
+          "$parent_findings_file" 2>/dev/null; then
+          terminal_reason="review_state_cleanup_failed"
+          final_commit_rc=1
+        elif [[ -z "$review_runtime_owner_handle" ]]; then
           terminal_reason="runtime_finish_failed"
-          clean_passes=0
+          final_commit_rc=1
         else
-          __dx_review_emit_event "$review_run_id" "review.completed" "info" "Review completed" "$review_phase" \
-            tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason=clean_gate_reached
-          dx_done "Review complete: ${clean_passes} consecutive clean passes."
-          echo "  Risk tier: ${review_tier} (${review_profile})"
-          echo "  Iterations: ${review_iteration}"
-          echo "  Findings fixed: ${findings_fixed_total}"
-          echo "  Receipt: $(dx_review_receipt_file "$session_id")"
-          echo "  Result: SUCCESS"
-          echo "  Exit reason: clean_gate_reached"
-          [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" completed clean_gate_reached "$session_id"
-          return 0
+          dx_session_runtime_owner_finish \
+            "$review_runtime_owner_handle" completed \
+            || review_runtime_finish_result=$?
+          if [[ "$review_runtime_finish_result" -eq 0 ]]; then
+            review_runtime_owner_handle=""
+            standalone_runtime_committed=1
+          else
+            terminal_reason="runtime_finish_failed"
+            final_commit_rc=1
+          fi
+        fi
+      else
+        if ! dx_review_write_receipt "$session_id" "$review_tier" \
+          "$required_clean" "$clean_passes" "$PWD" \
+          "$review_criteria_binding" "$review_policy_binding"; then
+          terminal_reason="receipt_write_failed"
+          final_commit_rc=1
+        elif ! rm -f "$(dx_review_state_file "$session_id")" \
+          "$parent_findings_file" 2>/dev/null; then
+          terminal_reason="review_state_cleanup_failed"
+          final_commit_rc=1
+        elif ! dx_review_receipt_valid "$session_id" "$PWD" \
+          "$review_criteria_binding" "$review_policy_binding"; then
+          terminal_reason="receipt_validation_failed"
+          final_commit_rc=1
         fi
       fi
+      if [[ -n "$review_interrupt_reason" ]]; then
+        terminal_reason="$review_interrupt_reason"
+        terminal_exit="$review_interrupt_exit"
+        terminal_preserve_credit=1
+        final_commit_rc=1
+        review_success_committed=0
+      fi
+      if [[ "$final_commit_rc" -eq 0 && -n "$review_interrupt_reason" ]]; then
+        terminal_reason="$review_interrupt_reason"
+        terminal_exit="$review_interrupt_exit"
+        terminal_preserve_credit=1
+        final_commit_rc=1
+      fi
+      if [[ "$final_commit_rc" -eq 0 \
+        && "$standalone_review_prompt" -ne 1 ]]; then
+        if dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
+          review_lock_token=""
+          # Signals before this mask have already latched in the handler. A
+          # signal after it loses to the final acceptance transaction.
+          trap '' INT TERM HUP
+          if [[ -n "$review_interrupt_reason" ]]; then
+            terminal_reason="$review_interrupt_reason"
+            terminal_exit="$review_interrupt_exit"
+            terminal_preserve_credit=1
+            final_commit_rc=1
+          fi
+        else
+          terminal_reason="review_checkout_lock_release_failed"
+          final_commit_rc=1
+        fi
+      fi
+      if [[ "$final_commit_rc" -ne 0 ]]; then
+        if ! dx_review_revoke_receipt "$session_id" \
+          || ! dx_review_receipt_authorization_absent "$session_id"; then
+          terminal_reason="receipt_revocation_failed"
+        fi
+        if [[ "$terminal_reason" != "$review_interrupt_reason" \
+          || -z "$review_interrupt_reason" ]]; then
+          clean_passes=0
+        fi
+      fi
+      if ! __dx_review_parent_acceptance_unlock "$session_id"; then
+        terminal_reason="completion_decision_lock_release_failed"
+        final_commit_rc=1
+        review_success_committed=0
+        if ! dx_review_revoke_receipt "$session_id" \
+          || ! dx_review_receipt_authorization_absent "$session_id"; then
+          terminal_reason="receipt_revocation_failed"
+        fi
+        __dx_review_parent_acceptance_release_retained "$session_id" \
+          "$standalone_review_prompt" \
+          2>/dev/null || true
+      elif [[ "$final_commit_rc" -eq 0 \
+        && "$standalone_review_prompt" -eq 1 ]]; then
+        if [[ "$standalone_runtime_committed" -ne 1 ]]; then
+          terminal_reason="runtime_finish_failed"
+          final_commit_rc=1
+        else
+          __dx_review_parent_acceptance_lock "$session_id" 1 \
+            || second_acceptance_rc=$?
+          if [[ "$second_acceptance_rc" -eq 0 ]]; then
+            if [[ -n "$review_interrupt_reason" ]]; then
+              terminal_reason="$review_interrupt_reason"
+              terminal_exit="$review_interrupt_exit"
+              terminal_preserve_credit=1
+              final_commit_rc=1
+            elif [[ -e "$final_busy_file" || -L "$final_busy_file" ]]; then
+              terminal_reason="review_child_fence_active"
+              final_commit_rc=1
+            elif ! __dx_review_criteria_intact "$session_id" "" \
+              "$review_criteria_binding"; then
+              terminal_reason="review_criteria_changed"
+              final_commit_rc=1
+            elif ! rm -f "$review_revocation_file" 2>/dev/null \
+              || [[ -e "$review_revocation_file" \
+                || -L "$review_revocation_file" ]] \
+              || ! dx_review_receipt_authorization_absent "$session_id"; then
+              terminal_reason="receipt_write_failed"
+              final_commit_rc=1
+            elif ! dx_review_write_receipt "$session_id" "$review_tier" \
+              "$required_clean" "$clean_passes" "$PWD" \
+              "$review_criteria_binding" "$review_policy_binding"; then
+              terminal_reason="receipt_write_failed"
+              final_commit_rc=1
+            elif ! dx_review_receipt_valid "$session_id" "$PWD" \
+              "$review_criteria_binding" "$review_policy_binding"; then
+              terminal_reason="receipt_validation_failed"
+              final_commit_rc=1
+            fi
+            if [[ -n "$review_interrupt_reason" ]]; then
+              terminal_reason="$review_interrupt_reason"
+              terminal_exit="$review_interrupt_exit"
+              terminal_preserve_credit=1
+              final_commit_rc=1
+            fi
+            if [[ "$final_commit_rc" -eq 0 ]]; then
+              if dx_review_lock_release_checked "$repo_root" \
+                "$review_lock_token"; then
+                review_lock_token=""
+                # The checked checkout unlock is the last fallible operation
+                # before the receipt commit. Honor anything latched during it,
+                # then mask later signals so the transition unlock can commit.
+                trap '' INT TERM HUP
+                if [[ -n "$review_interrupt_reason" ]]; then
+                  terminal_reason="$review_interrupt_reason"
+                  terminal_exit="$review_interrupt_exit"
+                  terminal_preserve_credit=1
+                  final_commit_rc=1
+                fi
+              else
+                terminal_reason="review_checkout_lock_release_failed"
+                final_commit_rc=1
+              fi
+            fi
+            if [[ "$final_commit_rc" -ne 0 ]]; then
+              if ! dx_review_revoke_receipt "$session_id" \
+                || ! dx_review_receipt_authorization_absent "$session_id"; then
+                terminal_reason="receipt_revocation_failed"
+              fi
+              if [[ "$terminal_reason" != "$review_interrupt_reason" \
+                || -z "$review_interrupt_reason" ]]; then
+                clean_passes=0
+              fi
+            fi
+            if ! __dx_review_parent_acceptance_unlock "$session_id"; then
+              terminal_reason="completion_decision_lock_release_failed"
+              final_commit_rc=1
+              review_success_committed=0
+              if ! dx_review_revoke_receipt "$session_id" \
+                || ! dx_review_receipt_authorization_absent "$session_id"; then
+                terminal_reason="receipt_revocation_failed"
+              fi
+              __dx_review_parent_acceptance_release_retained "$session_id" 1 \
+                2>/dev/null || true
+            elif [[ "$final_commit_rc" -eq 0 ]]; then
+              review_success_committed=1
+            fi
+          elif [[ "$second_acceptance_rc" -eq 2 ]]; then
+            terminal_reason="human_intervention"
+            terminal_preserve_credit=1
+            final_commit_rc=1
+          else
+            terminal_reason="completion_decision_lock_unavailable"
+            clean_passes=0
+            final_commit_rc=1
+          fi
+        fi
+      elif [[ "$final_commit_rc" -eq 0 ]]; then
+        # Lifecycle review has no standalone runtime lease. The checked unlock
+        # is its receipt-commit point.
+        review_success_committed=1
+      fi
+      if [[ "$review_success_committed" -eq 1 ]]; then
+        trap - INT TERM HUP
+      else
+        # shellcheck disable=SC2064  # restore the locally assembled handler now
+        trap "$review_int_trap" INT
+        # shellcheck disable=SC2064  # restore the locally assembled handler now
+        trap "$review_term_trap" TERM
+        # shellcheck disable=SC2064  # restore the locally assembled handler now
+        trap "$review_hup_trap" HUP
+      fi
+    elif [[ "$final_acceptance_rc" -eq 2 ]]; then
+      terminal_reason="human_intervention"
+      terminal_preserve_credit=1
+    else
+      terminal_reason="completion_decision_lock_unavailable"
+      clean_passes=0
     fi
+  fi
+
+  if [[ "$review_success_committed" -eq 1 ]]; then
+    local clean_pass_noun="passes"
+    [[ "$clean_passes" -eq 1 ]] && clean_pass_noun="pass"
+    trap - INT TERM HUP
+    if [[ -n "$review_lock_token" ]]; then
+      dx_error "Review reached its clean gate without releasing the checkout lock, so completion was not reported."
+      return 1
+    fi
+    __dx_review_emit_event "$review_run_id" "review.completed" "info" \
+      "Review completed" "$review_phase" tier="$review_tier" \
+      profile="$review_profile" required_clean_int="$required_clean" \
+      clean_passes_int="$clean_passes" iterations_int="$review_iteration" \
+      findings_fixed_int="$findings_fixed_total" \
+      total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" \
+      reason=clean_gate_reached
+    dx_done "Review complete: ${clean_passes} consecutive clean ${clean_pass_noun}."
+    echo "  Risk tier: ${review_tier} (${review_profile})"
+    echo "  Iterations: ${review_iteration}"
+    echo "  Findings fixed: ${findings_fixed_total}"
+    echo "  Receipt: $(dx_review_receipt_file "$session_id")"
+    echo "  Result: SUCCESS"
+    echo "  Exit reason: clean_gate_reached"
+    [[ $standalone_review_prompt -eq 1 ]] \
+      && __dx_review_finish_standalone_run "$review_run_id" \
+        "$telemetry_session_id" completed clean_gate_reached "$session_id"
+    return 0
   fi
 
   if [[ $terminal_preserve_credit -eq 1 ]]; then
@@ -1711,9 +2526,22 @@ ${message}"
       rm -f "$(dx_review_state_file "$session_id")" 2>/dev/null || true
       ;;
   esac
-  if [[ $standalone_review_prompt -eq 0 ]]; then
-    touch "$(dx_paused_file "$session_id")" 2>/dev/null || true
+  if [[ -n "$review_interrupt_reason" ]]; then
+    terminal_reason="$review_interrupt_reason"
+    terminal_exit="$review_interrupt_exit"
+    terminal_preserve_credit=1
   fi
+  if [[ $standalone_review_prompt -eq 0 ]] \
+    && ! dx_lifecycle_pause "$session_id" \
+      "${terminal_reason:-review-failed}" review-loop; then
+    __dx_review_emit_event "$review_run_id" "review.pause_failed" "error" \
+      "Review could not publish a safe pause" "$review_phase" \
+      reason="${terminal_reason:-unknown}"
+    dx_error "Review stopped (${terminal_reason:-unknown}), but Dex could not publish a safe lifecycle pause. Completion authorization remains closed; repair the session state before resuming."
+    trap - INT TERM HUP
+    return 1
+  fi
+  trap - INT TERM HUP
   __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" \
     tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason="${terminal_reason:-unknown}"
   if [[ "$terminal_reason" == "blocked" && -n "$terminal_detail" ]]; then
@@ -1746,5 +2574,10 @@ ${message}"
     fi
   fi
   [[ $terminal_exit -eq 0 ]] && terminal_exit=1
+  if [[ -n "$review_lock_token" ]] \
+    && ! dx_review_lock_release_checked "$repo_root" "$review_lock_token"; then
+    dx_error "Dex could not release the review-loop checkout lock safely."
+    terminal_exit=1
+  fi
   return $terminal_exit
 }

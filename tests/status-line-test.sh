@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Tests for bin/status-line.sh. It runs on every TUI render, so it loads only
 # the lib modules it needs; these cases exercise each branch to catch a helper
@@ -76,16 +77,25 @@ check "elapsed minutes" "2m"
 # Past the last phase.
 printf '7\n' > "$(dx_state_file "$DEX_SESSION_ID")"
 run_status_line
-check "lifecycle complete" "Lifecycle complete"
+check "unproven lifecycle terminal" "terminal commit incomplete"
 printf '3\n' > "$(dx_state_file "$DEX_SESSION_ID")"
 
 # Paused by the pause marker, with a reason.
-touch "$(dx_paused_file "$DEX_SESSION_ID")"
-dx_pause_state_write "$DEX_SESSION_ID" "unresolved_findings" "review" 2>/dev/null || \
-  printf 'reason=unresolved_findings\n' > "$(dx_pause_state_file "$DEX_SESSION_ID")"
+dx_lifecycle_atomic_write "$(dx_paused_file "$DEX_SESSION_ID")" paused
+dx_write_pause_state "$DEX_SESSION_ID" unresolved_findings review
 run_status_line
 check "paused marker" "Dex paused"
 rm -f "$(dx_paused_file "$DEX_SESSION_ID")"
+
+# Pause metadata on its own is a durable brake. An unsafe inode is surfaced as
+# blocked instead of being mistaken for an active phase.
+run_status_line
+check "metadata-only pause" "Dex paused"
+rm -f "$(dx_pause_state_file "$DEX_SESSION_ID")"
+mkdir "$(dx_pause_state_file "$DEX_SESSION_ID")"
+run_status_line
+check "unsafe pause" "Dex blocked | unsafe pause state"
+rmdir "$(dx_pause_state_file "$DEX_SESSION_ID")"
 
 # Paused by a human control action.
 dx_write_lifecycle_control "$DEX_SESSION_ID" pause "operator" 2>/dev/null || \

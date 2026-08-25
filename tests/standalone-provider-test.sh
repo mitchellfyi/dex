@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -34,7 +35,7 @@ wait_for_test_file() {
     [[ -f "$target" ]] && return 0
     sleep 0.01
   done
-  assert_file "$target"
+  return 1
 }
 
 export HOME="$TMP_DIR/home"
@@ -103,6 +104,28 @@ print(f"{matches[0][0]}\t{matches[0][1]}")
 PY
 }
 
+extract_assessment_generation() {
+  python3 - "$@" <<'PY'
+import json
+import re
+import sys
+
+matches = []
+for value in sys.argv[1:]:
+    for candidate in re.findall(r'\{[^\n]*"completion_generation"[^\n]*\}', value):
+        try:
+            record = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        generation = record.get("completion_generation")
+        if isinstance(generation, str) and re.fullmatch(r"[0-9a-f]{32}", generation):
+            matches.append(generation)
+if len(matches) != 1:
+    raise SystemExit(1)
+print(matches[0])
+PY
+}
+
 assert_completion_context() { # <session> <generation> <purpose> <phase>
   local session_id="$1" generation="$2" expected_purpose="$3" expected_phase="$4"
   local config_file config_raw config_phase config_promise config_audit config_min
@@ -151,7 +174,8 @@ perform_completion_action() { # <action> <purpose> <phase> <provider args...>
     complete) ;;
     paused)
       remove_exact_receipt "$session_id" "$generation"
-      touch "$(dx_paused_file "$session_id")"
+      dx_write_pause_state "$session_id" provider-paused test-provider
+      dx_lifecycle_atomic_write "$(dx_paused_file "$session_id")" paused
       ;;
     human-pause)
       remove_exact_receipt "$session_id" "$generation"
@@ -165,7 +189,8 @@ perform_completion_action() { # <action> <purpose> <phase> <provider args...>
         "$expected_phase" ""
       ;;
     both)
-      touch "$(dx_paused_file "$session_id")"
+      dx_write_pause_state "$session_id" provider-paused test-provider
+      dx_lifecycle_atomic_write "$(dx_paused_file "$session_id")" paused
       ;;
     missing)
       remove_exact_receipt "$session_id" "$generation"
@@ -423,15 +448,23 @@ rm -f "$TEST_DECISION_LOCK_ATTEMPT" "$TEST_DECISION_LOCK_RELEASE" \
     zsh -fc '
       source "$DEX_DIR/dx.sh"
       TEST_CONTROL_LOCK_CALLS=0
+      functions[__test_real_control_lock_acquire]="${functions[dx_lifecycle_control_lock_acquire]}"
+      functions[__test_real_control_lock_release]="${functions[dx_lifecycle_control_lock_release]}"
       dx_lifecycle_control_lock_acquire() {
         TEST_CONTROL_LOCK_CALLS=$((TEST_CONTROL_LOCK_CALLS + 1))
-        [[ "$TEST_CONTROL_LOCK_CALLS" -eq 1 ]] && return 0
+        if [[ "$TEST_CONTROL_LOCK_CALLS" -eq 1 ]]; then
+          __test_real_control_lock_acquire "$@"
+          return $?
+        fi
         touch "$TEST_DECISION_LOCK_ATTEMPT"
         while [[ ! -f "$TEST_DECISION_LOCK_RELEASE" ]]; do
           sleep 0.01
         done
+        __test_real_control_lock_acquire "$@"
       }
-      dx_lifecycle_control_lock_release() { return 0; }
+      dx_lifecycle_control_lock_release() {
+        __test_real_control_lock_release "$@"
+      }
       dx_completion_consume() {
         touch "$TEST_CONSUME_ATTEMPT"
         return 97
@@ -443,7 +476,11 @@ rm -f "$TEST_DECISION_LOCK_ATTEMPT" "$TEST_DECISION_LOCK_RELEASE" \
 ) &
 CONTROL_RACE_PID=$!
 TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${CONTROL_RACE_PID}"
-wait_for_test_file "$TEST_DECISION_LOCK_ATTEMPT"
+if ! wait_for_test_file "$TEST_DECISION_LOCK_ATTEMPT"; then
+  printf '%s\n' "direct dxcomplete never reached its post-provider decision lock" >&2
+  sed -n '1,160p' "$TMP_DIR/dxcomplete-control-race.out" >&2 || true
+  exit 1
+fi
 assert_no_file "$TEST_CONSUME_ATTEMPT"
 assert_no_file "$TMP_DIR/dxcomplete-control-race.rc"
 dx_write_lifecycle_control "$DXCOMPLETE_SESSION_ID" pause "" terminal "" 6 ""
@@ -625,11 +662,18 @@ run_expect_failure "$TMP_DIR/dxcomplete-control-release-failure.out" \
   env TEST_CODEX_RECEIPT=complete DX_PROVIDER_PROFILE=codex-subscription \
   zsh -fc '
     source "$DEX_DIR/dx.sh"
+    functions[__test_real_control_lock_acquire]="${functions[dx_lifecycle_control_lock_acquire]}"
+    functions[__test_real_control_lock_release]="${functions[dx_lifecycle_control_lock_release]}"
     TEST_CONTROL_RELEASE_CALLS=0
-    dx_lifecycle_control_lock_acquire() { return 0; }
+    dx_lifecycle_control_lock_acquire() {
+      __test_real_control_lock_acquire "$@"
+    }
     dx_lifecycle_control_lock_release() {
       TEST_CONTROL_RELEASE_CALLS=$((TEST_CONTROL_RELEASE_CALLS + 1))
-      [[ "$TEST_CONTROL_RELEASE_CALLS" -eq 1 ]] || return 1
+      if [[ "$TEST_CONTROL_RELEASE_CALLS" -eq 2 ]]; then
+        return 1
+      fi
+      __test_real_control_lock_release "$@"
     }
     cd "$TEST_REPO"
     dxcomplete
@@ -912,8 +956,9 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
   TEST_REVIEW_ASSESSMENT_PROMPT_FILE="$assessment_prompt_file" \
   TEST_USE_ASSESSOR="$use_assessor" \
   zsh -fc '
-    source "$DEX_DIR/dx.sh"
-    cd "$TEST_REPO"
+	    source "$DEX_DIR/dx.sh"
+	    cd "$TEST_REPO"
+	    source "$TEST_PROVIDER_HELPER"
 
     if [[ "$TEST_USE_ASSESSOR" == "1" ]]; then
       unset DEX_REVIEW_TIER
@@ -938,8 +983,18 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
     claude() { return 0; }
     codex() { return 0; }
 
-    emit_contract() {
-      print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
+	    emit_assessment() {
+	      local generation
+	      generation=$(extract_assessment_generation "$@") || return 96
+	      print -r -- "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\",\"completion_generation\":\"${generation}\"}"
+	    }
+	    emit_contract() {
+	      local completion_literal completion_session completion_generation
+	      completion_literal=$(extract_completion_literal "$@") || return 96
+	      completion_session=$(print -r -- "$completion_literal" | command cut -f1)
+	      completion_generation=$(print -r -- "$completion_literal" | command cut -f2)
+	      [[ "$completion_session" == "$DEX_SESSION_ID" ]] || return 96
+	      print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
       {
         print -r -- "## Scope"
         print -r -- ""
@@ -961,29 +1016,29 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
         print -r -- ""
         print -r -- "The fixture verifier confirmed the selected provider route."
       } > "$(dx_review_context_file "$DEX_SESSION_ID")"
-      print -r -- "{\"version\":3,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"criteria_binding\":\"standalone\",\"policy_binding\":\"${DEX_REVIEW_POLICY_BINDING:-}\",\"pass_binding\":\"${DEX_REVIEW_PASS_BINDING:-}\",\"criteria_evidence\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
-      dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
-      touch "$(dx_complete_file "$DEX_SESSION_ID")"
-    }
-    __dx_claude() {
-      if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
-        print -r -- "$*" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
-        print -r -- "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\"}"
-        return 0
-      fi
-      print -r -- claude >> "$TEST_REVIEW_ROUTE_FILE"
-      emit_contract
-    }
+	      print -r -- "{\"version\":3,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"criteria_binding\":\"standalone\",\"policy_binding\":\"${DEX_REVIEW_POLICY_BINDING:-}\",\"pass_binding\":\"${DEX_REVIEW_PASS_BINDING:-}\",\"criteria_evidence\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
+	      dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
+	      command bash "$DEX_DIR/bin/complete-receipt.sh" \
+	        "$completion_session" "$completion_generation"
+	    }
+	    __dx_claude() {
+	      if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
+	        print -r -- "$*" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
+	        emit_assessment "$@"
+	        return 0
+	      fi
+	      print -r -- claude >> "$TEST_REVIEW_ROUTE_FILE"
+	      emit_contract "$@"
+	    }
     bash() {
       if [[ "${1:-}" == "$DEX_DIR/bin/dxcodex.sh" ]]; then
-        if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
-          print -r -- "${*: -1}" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
-          print -r -- "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\"}" \
-            > "$DX_CODEX_OUTPUT_LAST_MESSAGE"
-          return 0
-        fi
-        print -r -- codex >> "$TEST_REVIEW_ROUTE_FILE"
-        emit_contract
+	        if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
+	          print -r -- "${*: -1}" > "$TEST_REVIEW_ASSESSMENT_PROMPT_FILE"
+	          emit_assessment "$@" > "$DX_CODEX_OUTPUT_LAST_MESSAGE"
+	          return 0
+	        fi
+	        print -r -- codex >> "$TEST_REVIEW_ROUTE_FILE"
+	        emit_contract "$@"
       else
         command bash "$@"
       fi
@@ -996,9 +1051,9 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
     exit 1
   fi
 
-  if [[ "$(grep -Fxc "$expected_route" "$route_file")" -ne 3 ]] || \
+  if [[ "$(grep -Fxc "$expected_route" "$route_file")" -ne 1 ]] || \
      grep -Fvxq "$expected_route" "$route_file"; then
-    printf 'review provider %s did not use route %s for all three waves\n' \
+    printf 'review provider %s did not use route %s for its review wave\n' \
       "$provider" "$expected_route" >&2
     cat "$output_file" >&2
     exit 1

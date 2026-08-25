@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -7,7 +8,22 @@ source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-loop-contract-test.XXXXXX")"
 export HOME="$TMP_DIR/home"
 export DX_RUN_ROOT="$TMP_DIR/runs"
-mkdir -p "$HOME" "$DX_RUN_ROOT"
+POLICY_REPO="$TMP_DIR/repo"
+mkdir -p "$HOME" "$DX_RUN_ROOT" "$POLICY_REPO/.dex"
+git init -q -b main "$POLICY_REPO"
+git -C "$POLICY_REPO" config user.name "Dex Test"
+git -C "$POLICY_REPO" config user.email "dex-test@example.com"
+{
+  printf '%s\n' '## Review Policy'
+  printf '%s\n' '| Setting | Value |'
+  printf '%s\n' '|---------|-------|'
+  printf '%s\n' '| small_clean_passes | 1 |'
+  printf '%s\n' '| normal_clean_passes | 3 |'
+  printf '%s\n' '| complex_clean_passes | 6 |'
+} > "$POLICY_REPO/.dex/dex.md"
+git -C "$POLICY_REPO" add .dex/dex.md
+git -C "$POLICY_REPO" commit -qm "test: initialize review policy fixture"
+git -C "$POLICY_REPO" update-ref refs/remotes/origin/main HEAD
 
 cleanup() {
   chmod -R u+w "$TMP_DIR" 2>/dev/null || true
@@ -26,13 +42,14 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
   DX_LOOP_DIR="$TMP_DIR/$name-loops" \
   DX_RUN_ROOT="$TMP_DIR/$name-runs" \
   DX_STATE_DIR="$TMP_DIR/$name-phases" \
+  TEST_REPO="$POLICY_REPO" \
   TEST_EXPECTED_RUN_ROOT="$TMP_DIR/$name-runs" \
   TEST_AGENT_HOST="$host" \
   TEST_REVIEW_SCENARIO="$scenario" \
   TEST_REVIEW_CALL_FILE="$call_file" \
   zsh -fc '
     source "$DEX_DIR/dx.sh"
-    cd "$DEX_DIR"
+    cd "$TEST_REPO"
     [[ "$(dx_run_root)" == "$TEST_EXPECTED_RUN_ROOT" ]] || return 97
 
     __dx_refresh_provider() {
@@ -51,6 +68,24 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
     __dx_provider_prompt() { return 0; }
     claude() { return 0; }
     codex() { return 0; }
+
+    __test_completion_literal() {
+      python3 - "$@" <<\PY
+import re
+import sys
+
+pattern = re.compile(
+    r"bash \"\$DEX_DIR/bin/complete-receipt\.sh\" "
+    r"\"([A-Za-z0-9][A-Za-z0-9._-]{0,179})\" \"([0-9a-f]{32})\""
+)
+matches = []
+for value in sys.argv[1:]:
+    matches.extend(pattern.findall(value))
+if len(matches) != 1:
+    raise SystemExit(1)
+print(f"{matches[0][0]} {matches[0][1]}")
+PY
+    }
 
     __test_contract_criteria_evidence() {
       local result="$1" context_path="$2" criteria_path criteria_hashes
@@ -147,7 +182,10 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
       esac
 
       if [[ "$TEST_REVIEW_SCENARIO" != "missing-completion" ]]; then
-        touch "$(dx_complete_file "$DEX_SESSION_ID")"
+        [[ "${TEST_COMPLETION_SESSION:-}" == "$DEX_SESSION_ID" \
+          && "${TEST_COMPLETION_GENERATION:-}" =~ ^[0-9a-f]{32}$ ]] || return 96
+        bash "$DEX_DIR/bin/complete-receipt.sh" "$TEST_COMPLETION_SESSION" \
+          "$TEST_COMPLETION_GENERATION"
       fi
 
       if [[ "$TEST_REVIEW_SCENARIO" == "human-cancel" ]]; then
@@ -184,9 +222,37 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
     }
 
     __dx_claude() {
+      local completion_literal hook_output="" hook_rc=0 original_generation=""
       assert_review_criteria_prompt "$@" || return 96
+      completion_literal=$(__test_completion_literal "$@") || return 96
+      read -r TEST_COMPLETION_SESSION TEST_COMPLETION_GENERATION <<< \
+        "$completion_literal"
+      if [[ "$TEST_REVIEW_SCENARIO" == "rotate-hook" ]]; then
+        original_generation="$TEST_COMPLETION_GENERATION"
+        command bash "$DEX_DIR/bin/complete-receipt.sh" \
+          "$TEST_COMPLETION_SESSION" "$original_generation" || return 96
+        hook_output=$(print -r -- "{\"session_id\":\"${DEX_SESSION_ID}\"}" | \
+          command env DEX_DIR="$DEX_DIR" DEX_SESSION_ID="$DEX_SESSION_ID" \
+            DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 \
+            DEX_REVIEW_PROFILE="${DEX_REVIEW_PROFILE}" \
+            DEX_REVIEW_SCOPE_FINGERPRINT="${DEX_REVIEW_SCOPE_FINGERPRINT}" \
+            DEX_REVIEW_CRITERIA_BINDING="${DEX_REVIEW_CRITERIA_BINDING}" \
+            DEX_REVIEW_CRITERIA_FILE="${DEX_REVIEW_CRITERIA_FILE}" \
+            DEX_REVIEW_POLICY_BINDING="${DEX_REVIEW_POLICY_BINDING}" \
+            DEX_REVIEW_PASS_ID="${DEX_REVIEW_PASS_ID}" \
+            DEX_REVIEW_PASS_BINDING="${DEX_REVIEW_PASS_BINDING}" \
+            DEX_PHASE_HANDOFF="" bash "$DEX_DIR/hooks/phase-loop.sh" 2>&1) \
+          || hook_rc=$?
+        [[ "$hook_rc" -eq 2 ]] || return 96
+        completion_literal=$(__test_completion_literal "$hook_output") || return 96
+        read -r TEST_COMPLETION_SESSION TEST_COMPLETION_GENERATION <<< \
+          "$completion_literal"
+        [[ "$TEST_COMPLETION_SESSION" == "$DEX_SESSION_ID" \
+          && "$TEST_COMPLETION_GENERATION" != "$original_generation" ]] || return 96
+      fi
       emit_review_contract
-      if [[ "$TEST_REVIEW_SCENARIO" == "valid-hook" ]]; then
+      if [[ "$TEST_REVIEW_SCENARIO" == "valid-hook" \
+        || "$TEST_REVIEW_SCENARIO" == "rotate-hook" ]]; then
         print -r -- "{\"session_id\":\"${DEX_SESSION_ID}\"}" | \
           command env DEX_DIR="$DEX_DIR" DEX_SESSION_ID="$DEX_SESSION_ID" \
             DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 \
@@ -202,7 +268,11 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
     }
     bash() {
       if [[ "${1:-}" == "$DEX_DIR/bin/dxcodex.sh" ]]; then
+        local completion_literal
         assert_review_criteria_prompt "$@" || return 96
+        completion_literal=$(__test_completion_literal "$@") || return 96
+        read -r TEST_COMPLETION_SESSION TEST_COMPLETION_GENERATION <<< \
+          "$completion_literal"
         emit_review_contract
       else
         command bash "$@"
@@ -215,7 +285,7 @@ run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-
       print -r -- 3 > "$(dx_state_file "$parent_session")"
       print -r -- "{\"version\":1,\"source\":\"approved-plan\",\"objectives\":[\"Exercise human review control.\"],\"acceptance_criteria\":[\"A direct human stop pauses the review loop.\"],\"verification_requirements\":[\"Run tests/review-loop-contract-test.sh.\"]}" > "$(dx_review_criteria_file "$parent_session")"
       dx_review_approve_criteria "$parent_session" initial "$(dx_review_criteria_hash "$(dx_review_criteria_file "$parent_session")")" >/dev/null
-      dx_session_runtime_owner_start "$parent_session" "$TEST_AGENT_HOST" "$DEX_DIR" || return 98
+      dx_session_runtime_owner_start "$parent_session" "$TEST_AGENT_HOST" "$TEST_REPO" || return 98
       parent_runtime_handle="$DX_SESSION_RUNTIME_OWNER_HANDLE"
       unset DX_SESSION_RUNTIME_OWNER_HANDLE DX_SESSION_RUNTIME_OWNER_PID
     fi
@@ -256,13 +326,15 @@ run_case "claude-multiple-hashes" "claude" "multiple-hashes" 1 "findings hash mi
 run_case "claude-missing-completion" "claude" "missing-completion" 1 "completion receipt missing"
 run_case "claude-missing-evidence" "claude" "missing-evidence" 1 "evidence manifest missing or invalid"
 run_case "claude-blocked" "claude" "blocked" 1 "dxreviewloop blocked: review-tool-unavailable"
-run_case "claude-valid-hook" "claude" "valid-hook" 0 "Review complete: 3 consecutive clean passes." 3
+run_case "claude-valid-hook" "claude" "valid-hook" 0 "Review complete: 1 consecutive clean pass." 1
+run_case "claude-rotated-hook" "claude" "rotate-hook" 0 "Review complete: 1 consecutive clean pass." 1
 run_case "codex-empty-context" "codex" "missing-context" 1 "context pack missing or empty"
 run_case "codex-missing-hash" "codex" "missing-hash" 1 "findings hash missing or invalid"
 run_case "codex-missing-completion" "codex" "missing-completion" 1 "completion receipt missing"
-run_case "codex-valid" "codex" "valid" 0 "Review complete: 3 consecutive clean passes." 3
+run_case "codex-valid" "codex" "valid" 0 "Review complete: 1 consecutive clean pass." 1
 run_case "claude-human-cancel" "claude" "human-cancel" 1 "Review paused: human_intervention." 1
-run_case "claude-preflight-cancel" "claude" "preflight-cancel" 1 "Review paused: human_intervention." 0
+run_case "claude-preflight-cancel" "claude" "preflight-cancel" 1 \
+  "Review stopped before its first wave because a direct human control or pause is pending." 0
 
 # Signal cleanup runs only after the supervised child has stopped. Its matching
 # quiescence acknowledgement must release the parent Phase 3 barrier.

@@ -175,7 +175,19 @@ Cycles: <cycle_count>
 
 ### 9. Signal Completion and Local Cleanup
 
-After all verification passes and the summary is printed, stop. The Stop hook authorizes completion via the standard `.complete` mechanism — emit `DEX_TICKET_COMPLETE` only when the hook tells you to. The shell wrapper removes the local Dex worktree and local lifecycle branch after successful completion.
+After all verification passes and the summary is printed, stop. Once the audit
+threshold is met, the Stop hook supplies one exact generation-bound completion
+command. Run that literal command only after every completion criterion passes;
+never create a bare `.complete` file or look up a generation at completion
+time. Emit `DEX_TICKET_COMPLETE` only when the hook instructs you to. The shell
+wrapper removes the local Dex worktree and local lifecycle branch after
+successful completion.
+
+On a bounded timeout or hard escalation, run the exact generation-bound
+escalation command supplied for the current launch or audit. That command
+pauses and detaches the run while revoking its completion authorization. It
+does not create a completion receipt. Never substitute a raw pause marker or a
+generic lifecycle control command.
 
 If the 3-cycle watch window expires before checks and approvals are green, print:
 

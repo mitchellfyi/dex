@@ -62,7 +62,7 @@ fingerprints, clean counts, or telemetry. Fifth, only a wave that found zero
 verified findings and applied zero fixes writes `CLEAN`; any fix forces
 `FINDINGS_FIXED:N` and resets the outer clean-pass counter. Sixth, the Phase 2
 implementation agent selects `small`, `normal`, or `complex` review risk for the
-final scope, requiring 3, 6, or 9 consecutive clean waves.
+final scope, requiring 1, 3, or 6 consecutive clean waves.
 
 Evidence:
 - Commit `4742c3f feat(review): add specialist review wave loop` body lists
@@ -71,7 +71,7 @@ Evidence:
 - `prompts/review-wave.md` Step 1 requires context pack first; Step 2 requires
   deterministic checks before semantic review; Step 7 defines `CLEAN` result
   semantics.
-- `lib/review.sh` owns tier normalization, 3/6/9 gates, scope-bound selection,
+- `lib/review.sh` owns tier normalization, 1/3/6 gates, scope-bound selection,
   resumable state, success receipts, result validation, deterministic churn
   detection, and typed telemetry payload construction.
 - `prompts/review-risk-assessment.md` owns the ordered deterministic tier rubric;
@@ -100,7 +100,7 @@ Future agent behavior:
 - When a wave applies any fix, write `FINDINGS_FIXED:N`; never write `CLEAN`
   after applying a fix.
 - Select the highest matching risk tier after the final Phase 2 in-scope change:
-  `small` requires 3 clean waves, `normal` 6, and `complex` 9. Risk may escalate
+  `small` requires 1 clean wave, `normal` 3, and `complex` 6. Risk may escalate
   but never downgrade.
 - Keep Phase 2 selection mandatory in the normal lifecycle. A legacy or resumed
   lifecycle with no valid current-scope selection may recover through a fresh

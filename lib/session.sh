@@ -608,10 +608,10 @@ dx_kill_process_tree() {
 # can still identify those children. Linux exposes both through /proc. macOS
 # ships lsof, which can resolve the inherited descriptor after reparenting.
 __dx_timeout_token_pids() {
-  local token_file="$1"
+  local token_file="$1" candidates="${2:-}"
   [[ -f "$token_file" ]] || return 0
 
-  python3 - "$token_file" <<'PY'
+  DX_TIMEOUT_PID_CANDIDATES="$candidates" python3 - "$token_file" <<'PY'
 import os
 import re
 import shutil
@@ -627,6 +627,15 @@ except OSError:
 if not re.fullmatch(rb"[A-Za-z0-9._-]{16,160}", token):
     raise SystemExit(0)
 marker = b"DX_TIMEOUT_PROCESS_TOKEN=" + token
+candidate_values = os.environ.get("DX_TIMEOUT_PID_CANDIDATES", "").split()
+candidates = set()
+for value in candidate_values:
+    try:
+        candidate = int(value)
+    except ValueError:
+        raise SystemExit(0)
+    if candidate > 0:
+        candidates.add(candidate)
 
 
 def linux_processes(token_path):
@@ -636,7 +645,11 @@ def linux_processes(token_path):
         token_stat = token_path.stat()
     except OSError:
         return matches
-    for entry in proc.iterdir():
+    if candidates:
+        entries = tuple(proc / str(process_id) for process_id in candidates)
+    else:
+        entries = proc.iterdir()
+    for entry in entries:
         if not entry.name.isdigit():
             continue
         try:
@@ -672,9 +685,11 @@ def lsof_processes(token_path):
     if not lsof or not Path(lsof).is_file():
         return set()
     try:
-        output = subprocess.check_output(
-            [lsof, "-t", "--", str(token_path)], stderr=subprocess.DEVNULL
-        )
+        command = [lsof]
+        if candidates:
+            command.extend(["-a", "-p", ",".join(str(pid) for pid in sorted(candidates)), "-d", "9"])
+        command.extend(["-t", "--", str(token_path)])
+        output = subprocess.check_output(command, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.CalledProcessError):
         return set()
     matches = set()
@@ -696,14 +711,30 @@ for process_id in sorted(matches):
 PY
 }
 
-# __dx_timeout_signal_processes <token_file> <root_pid> <signal>
-__dx_timeout_signal_processes() {
-  local token_file="$1" root_pid="${2:-}" signal="${3:-TERM}" pids pid
+# Enumerate a still-owned command root before signalling it. Each candidate is
+# revalidated against the invocation token, so a concurrent exit or PID reuse
+# cannot turn this ancestry snapshot into authority over another process.
+__dx_timeout_process_tree_pids() {
+  local root_pid="${1:-}" child
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 0
+  printf '%s\n' "$root_pid"
+  if command -v pgrep >/dev/null 2>&1; then
+    while IFS= read -r child; do
+      [[ "$child" =~ ^[0-9]+$ ]] || continue
+      __dx_timeout_process_tree_pids "$child"
+    done < <(pgrep -P "$root_pid" 2>/dev/null || true)
+  else
+    while IFS= read -r child; do
+      [[ "$child" =~ ^[0-9]+$ ]] || continue
+      __dx_timeout_process_tree_pids "$child"
+    done < <(ps -eo pid=,ppid= 2>/dev/null | awk -v parent="$root_pid" '$2 == parent { print $1 }')
+  fi
+}
 
-  # Capture token-bearing processes before the root is signalled. The PID list
-  # remains useful even if descendants are reparented during the PPID walk.
-  pids=$(__dx_timeout_token_pids "$token_file" 2>/dev/null || true)
-  [[ -n "$root_pid" ]] && dx_kill_process_tree "$root_pid" "$signal"
+# __dx_timeout_signal_pid_list <pids> <root_pid> <signal>
+__dx_timeout_signal_pid_list() {
+  local pids="$1" root_pid="${2:-}" signal="${3:-TERM}" pid
+  [[ -n "$root_pid" ]] && kill "-$signal" "$root_pid" 2>/dev/null || true
   while IFS= read -r pid; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     kill "-$signal" "$pid" 2>/dev/null || true
@@ -712,22 +743,49 @@ $pids
 EOF
 }
 
-# __dx_timeout_processes_alive <token_file> — whether supervised work remains
-__dx_timeout_processes_alive() {
-  local token_file="$1" pids
+# __dx_timeout_signal_processes <token_file> <root_pid> <signal>
+__dx_timeout_signal_processes() {
+  local token_file="$1" root_pid="${2:-}" signal="${3:-TERM}" pids
+
+  # Capture token-bearing processes before the root is signalled. The PID list
+  # remains useful after descendants are reparented and avoids another costly
+  # lsof scan during the TERM grace period on macOS.
   pids=$(__dx_timeout_token_pids "$token_file" 2>/dev/null || true)
-  [[ -n "$pids" ]]
+  __dx_timeout_signal_pid_list "$pids" "$root_pid" "$signal"
+}
+
+__dx_timeout_pid_list_alive() {
+  local pids="$1" pid process_state
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    process_state=$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    [[ -n "$process_state" && "$process_state" != Z* ]] && return 0
+  done <<EOF
+$pids
+EOF
+  return 1
 }
 
 # __dx_timeout_terminate_processes <token_file> [root_pid]
 __dx_timeout_terminate_processes() {
-  local token_file="$1" root_pid="${2:-}"
+  local token_file="$1" root_pid="${2:-}" candidates="" pids fresh_pids
 
-  __dx_timeout_signal_processes "$token_file" "$root_pid" TERM
-  if __dx_timeout_processes_alive "$token_file"; then
+  if [[ -n "$root_pid" ]]; then
+    candidates=$(__dx_timeout_process_tree_pids "$root_pid" 2>/dev/null || true)
+  fi
+  pids=$(__dx_timeout_token_pids "$token_file" "$candidates" \
+    2>/dev/null || true)
+  __dx_timeout_signal_pid_list "$pids" "$root_pid" TERM
+  if __dx_timeout_pid_list_alive "$pids"; then
     sleep 2 2>/dev/null || true
-    if __dx_timeout_processes_alive "$token_file"; then
-      __dx_timeout_signal_processes "$token_file" "$root_pid" KILL
+    if __dx_timeout_pid_list_alive "$pids"; then
+      # The original list is safe for deciding whether to spend the grace
+      # period, but not for signalling afterward: an exited PID may already
+      # belong to another process. Rescan the invocation token and signal only
+      # processes that still carry it. Do not reuse root_pid here either.
+      fresh_pids=$(__dx_timeout_token_pids "$token_file" "$pids" \
+        2>/dev/null || true)
+      __dx_timeout_signal_pid_list "$fresh_pids" "" KILL
     fi
   fi
 }
@@ -751,6 +809,7 @@ __dx_timeout_abort() {
   __dx_timeout_stop_watchdog "$watchdog_pid"
   __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
   [[ -n "$cmd_pid" ]] && wait "$cmd_pid" 2>/dev/null || true
+  __dx_timeout_signal_processes "$token_file" "" KILL
   __dx_timeout_remove_state "$temp_dir" "$marker_file" "$token_file"
   exit "$exit_status"
 }
@@ -823,6 +882,7 @@ __dx_run_with_timeout_core() {
     return 124
   fi
   __dx_timeout_terminate_processes "$token_file"
+  __dx_timeout_signal_processes "$token_file" "" KILL
   __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
   return "$cmd_status"
 }
@@ -974,6 +1034,17 @@ dx_review_lock_release() {
   dx_lock_release "$lock_dir" "$owner_token"
 }
 
+# Release a checkout lock without losing the first failure signal. The shared
+# lock primitive restores the verified owner when directory removal fails, so
+# this retry can safely clean a transient failure without stealing a peer's
+# lock.
+dx_review_lock_release_checked() {
+  local repo_dir="$1" owner_token="$2" lock_dir
+  [[ -n "$owner_token" ]] || return 0
+  lock_dir=$(dx_review_lock_dir "$repo_dir" 2>/dev/null) || return 1
+  dx_lock_release_checked "$lock_dir" "$owner_token"
+}
+
 # dx_complete_state_file <session_id> — Phase 6 cycle bookkeeping ("cycle_count:last_check_epoch")
 # Survives interrupts so resuming Phase 6 picks up the same cycle counter.
 dx_complete_state_file() { echo "${DX_LOOP_DIR}/${1}.complete-state"; }
@@ -1066,7 +1137,7 @@ dx_phase_outcome_record() {
   dx_session_id_valid "$session_id" || return 1
   [[ "$phase" =~ ^[0-6]$ ]] || return 1
   case "$outcome" in
-    completed|skipped|waived) ;;
+    completed|skipped|waived|invalidated) ;;
     *) return 1 ;;
   esac
   [[ "$source" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
@@ -1137,6 +1208,10 @@ dx_phase_outcome_latest() {
     printf '%s\n' "$outcome"
     return 0
   fi
+  # An explicit invalidation is a durable rollback fence. Do not fall back to
+  # an older successful phase log after a terminal transaction returned the
+  # lifecycle to Phase 6.
+  [[ "$outcome" == "invalidated" ]] && return 0
 
   log_file=$(dx_log_file "$session_id")
   if [[ -f "$log_file" && ! -L "$log_file" ]]; then
@@ -1246,7 +1321,7 @@ dx_cleanup_session() {
   fi
   if [[ -d "$DX_LOOP_DIR" ]]; then
     dx_review_ledger_reset "$sid" 2>/dev/null || true
-    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_selection_file "$sid")" "$(dx_review_receipt_file "$sid")" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
+    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_selection_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-selection.revoked" "$(dx_review_receipt_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-receipt.revoked" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
     rm -f "${DX_LOOP_DIR}/${sid}.control-lock/owner" 2>/dev/null || true
     rmdir "${DX_LOOP_DIR}/${sid}.control-lock" 2>/dev/null || true
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" -o -name "${sid}.phase-*.busy-cancel" -o -name "${sid}.phase-*.busy-quiesced" \) -exec rm -f {} + 2>/dev/null || true
@@ -1254,7 +1329,7 @@ dx_cleanup_session() {
   # `&&` here would make a missing state directory the function's exit status,
   # which contradicts the promise above and would abort a `set -e` caller.
   if [[ -d "$DX_STATE_DIR" ]]; then
-    rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" 2>/dev/null || true
+    rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" "${DX_STATE_DIR}/${sid}.terminal-commit" 2>/dev/null || true
   fi
   return "$completion_revoke_result"
 }

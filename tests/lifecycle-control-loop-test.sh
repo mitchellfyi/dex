@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -231,7 +232,7 @@ grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$SID\" \"$REFRESHED_GENER
 
 SID="human-control-resume-receipt"
 setup_inline "$SID" 2
-touch "$(dx_paused_file "$SID")"
+dx_lifecycle_atomic_write "$(dx_paused_file "$SID")" paused
 dx_write_pause_state "$SID" "manual-pause" "terminal"
 dx_write_lifecycle_control "$SID" resume "" terminal "" 2 ""
 run_hook "$SID" 2
@@ -246,7 +247,7 @@ PROMPT_RESUME_OLD=$(dx_completion_issue \
   "$SID" standalone dxloop-prompt prompt-loop)
 printf 'prompt-loop:PROMPT_COMPLETE:%s/prompts/phase-audits/prompt-loop.md:1:standalone:dxloop-prompt:%s\n' \
   "$ROOT" "$PROMPT_RESUME_OLD" > "$(dx_loop_config_file "$SID")"
-touch "$(dx_paused_file "$SID")"
+dx_lifecycle_atomic_write "$(dx_paused_file "$SID")" paused
 dx_write_pause_state "$SID" "manual-pause" "terminal"
 dx_write_lifecycle_control "$SID" resume "" terminal "" prompt-loop ""
 run_standalone_hook "$SID" prompt-loop

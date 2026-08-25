@@ -131,7 +131,11 @@ Run /dxverify to execute the full quality verification pipeline:
 4. Code generation — if applicable, run generators and check for uncommitted changes
 5. Test — run the full test suite
 
-If any check fails, fix and re-run within the budget from `prompts/failure-recovery.md`: 3 retries per strategy, 2 strategies (6 attempts), then ACCEPT_WITH_DEBT or ESCALATE.
+If any check fails, fix and re-run within the budget from
+`prompts/failure-recovery.md`: 3 retries per strategy, 2 materially different
+strategies (6 attempts). If it still fails, run the exact generation-bound
+escalation command printed with this audit. Do not accept debt, relax a
+criterion, or claim completion.
 
 All checks must pass before proceeding to Step 7.
 

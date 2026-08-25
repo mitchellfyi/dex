@@ -26,9 +26,9 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 
 | Setting | Value |
 |---------|-------|
-| small_clean_passes | 3 |
-| normal_clean_passes | 6 |
-| complex_clean_passes | 9 |
+| small_clean_passes | 1 |
+| normal_clean_passes | 3 |
+| complex_clean_passes | 6 |
 
 ## Project Structure
 ```

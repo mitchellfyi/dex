@@ -86,7 +86,7 @@ Review waves have their own clean-pass counter: a wave that finds
 and fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
 fresh full-scope review before Phase 4 can start. Before Phase 3, the
 implementation agent selects `small`, `normal`, or `complex`. The default
-policy requires 3, 6, or 9 clean waves, respectively. A standalone
+policy requires 1, 3, or 6 clean waves, respectively. A standalone
 `dxreviewloop` without an explicit tier/profile override starts with a read-only
 risk assessor. Every counted wave runs in a fresh context without prior review
 conclusions or telemetry.

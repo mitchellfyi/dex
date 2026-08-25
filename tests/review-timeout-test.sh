@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # dex-test-lane: serial
 # Asserts the review pass timeout terminates its process tree within 8s.
@@ -31,11 +32,18 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 source "$ROOT/lib/common.sh"
 
 TIMEOUT_TERMINATE_COUNT_FILE="$TMP_DIR/terminate-calls"
+TIMEOUT_SCAN_COUNT_FILE="$TMP_DIR/token-scan-calls"
 timeout_terminate_definition=$(declare -f __dx_timeout_terminate_processes)
 eval "${timeout_terminate_definition/__dx_timeout_terminate_processes/__dx_timeout_terminate_processes_impl}"
 __dx_timeout_terminate_processes() {
   printf 'call\n' >> "$TIMEOUT_TERMINATE_COUNT_FILE"
   __dx_timeout_terminate_processes_impl "$@"
+}
+timeout_scan_definition=$(declare -f __dx_timeout_token_pids)
+eval "${timeout_scan_definition/__dx_timeout_token_pids/__dx_timeout_token_pids_impl}"
+__dx_timeout_token_pids() {
+  printf 'scan\n' >> "$TIMEOUT_SCAN_COUNT_FILE"
+  __dx_timeout_token_pids_impl "$@"
 }
 
 
@@ -93,6 +101,8 @@ set -e
 timeout_elapsed=$(( $(date +%s) - started_epoch ))
 assert_eq "124" "$timeout_status" "timeout status"
 assert_eq "1" "$(wc -l < "$TIMEOUT_TERMINATE_COUNT_FILE" | tr -d ' ')" "timeout full termination passes"
+assert_eq "3" "$(wc -l < "$TIMEOUT_SCAN_COUNT_FILE" | tr -d ' ')" \
+  "timeout token scans"
 wait_for_file "$timeout_pid_file" "timeout cleanup"
 assert_process_gone "$(cat "$timeout_pid_file")" "timeout cleanup"
 if [[ $timeout_elapsed -gt 8 ]]; then
@@ -107,8 +117,42 @@ dx_run_with_timeout 5 spawn_background_and_exit "$normal_pid_file" 37
 normal_status=$?
 set -e
 assert_eq "37" "$normal_status" "normal command status"
+normal_cumulative_scans=$(wc -l < "$TIMEOUT_SCAN_COUNT_FILE" | tr -d ' ')
+if [[ "$normal_cumulative_scans" -lt 5 || "$normal_cumulative_scans" -gt 6 ]]; then
+  printf 'normal exit cleanup: expected 5-6 cumulative token scans, got %s\n' \
+    "$normal_cumulative_scans" >&2
+  exit 1
+fi
 wait_for_file "$normal_pid_file" "normal exit cleanup"
 assert_process_gone "$(cat "$normal_pid_file")" "normal exit cleanup"
+
+# The grace-period KILL must use a fresh token scan. Reusing the TERM list can
+# target an unrelated process if a child exits and its PID is recycled.
+stale_pid_probe="$TMP_DIR/stale-pid-signals"
+stale_pid_scan_counter="$TMP_DIR/stale-pid-scans"
+printf '0\n' > "$stale_pid_scan_counter"
+(
+  __dx_timeout_token_pids() {
+    probe_scan=$(cat "$stale_pid_scan_counter")
+    probe_scan=$((probe_scan + 1))
+    printf '%s\n' "$probe_scan" > "$stale_pid_scan_counter"
+    if [[ "$probe_scan" -eq 1 ]]; then
+      printf '%s\n' 4242
+    else
+      printf '%s\n' 4343
+    fi
+  }
+  __dx_timeout_pid_list_alive() { return 0; }
+  __dx_timeout_signal_pid_list() {
+    printf '%s\t%s\t%s\n' "$3" "${2:-none}" "$1" >> "$stale_pid_probe"
+  }
+  sleep() { return 0; }
+  __dx_timeout_terminate_processes unused-token 4242
+)
+assert_eq $'TERM\t4242\t4242' "$(sed -n '1p' "$stale_pid_probe")" \
+  "TERM uses the captured root"
+assert_eq $'KILL\tnone\t4343' "$(sed -n '2p' "$stale_pid_probe")" \
+  "KILL uses only the fresh token scan"
 
 run_signal_case() {
   local signal="$1" expected_status="$2" label="$3"

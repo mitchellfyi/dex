@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -15,6 +16,49 @@ cleanup() {
 }
 trap cleanup EXIT
 
+REVIEW_POLICY_REPO="$TMP_DIR/review-policy-repo"
+mkdir -p "$REVIEW_POLICY_REPO/.dex"
+git init -q -b main "$REVIEW_POLICY_REPO"
+git -C "$REVIEW_POLICY_REPO" config user.name "Dex Test"
+git -C "$REVIEW_POLICY_REPO" config user.email "dex-test@example.com"
+{
+  printf '%s\n' '## Review Policy'
+  printf '%s\n' '| Setting | Value |'
+  printf '%s\n' '|---------|-------|'
+  printf '%s\n' '| small_clean_passes | 1 |'
+  printf '%s\n' '| normal_clean_passes | 3 |'
+  printf '%s\n' '| complex_clean_passes | 6 |'
+} > "$REVIEW_POLICY_REPO/.dex/dex.md"
+git -C "$REVIEW_POLICY_REPO" add .dex/dex.md
+git -C "$REVIEW_POLICY_REPO" commit -qm "test: initialize review policy fixture"
+git -C "$REVIEW_POLICY_REPO" update-ref refs/remotes/origin/main HEAD
+
+TEST_COMPLETION_PARSER="$TMP_DIR/parse-completion.py"
+cat > "$TEST_COMPLETION_PARSER" <<'PY'
+import re
+import sys
+
+if len(sys.argv) > 1 and sys.argv[1] == "--assessment":
+    matches = []
+    for value in sys.argv[2:]:
+        matches.extend(re.findall(r'"completion_generation":"([0-9a-f]{32})"', value))
+    if len(matches) != 1:
+        raise SystemExit(1)
+    print(matches[0])
+    raise SystemExit(0)
+
+pattern = re.compile(
+    r'bash "\$DEX_DIR/bin/complete-receipt\.sh" '
+    r'"([A-Za-z0-9][A-Za-z0-9._-]{0,179})" "([0-9a-f]{32})"'
+)
+matches = []
+for value in sys.argv[1:]:
+    matches.extend(pattern.findall(value))
+if len(matches) != 1:
+    raise SystemExit(1)
+print(f"{matches[0][0]}\t{matches[0][1]}")
+PY
+export TEST_COMPLETION_PARSER
 
 zsh "$ROOT/dx.sh" --help > "$TMP_DIR/zsh-help.out"
 assert_contains "Dex" "$TMP_DIR/zsh-help.out"
@@ -60,10 +104,11 @@ DEX_DIR="$ROOT" zsh -fc '
 DEX_DIR="$ROOT" \
 DX_LOOP_DIR="$TMP_DIR/review-loop" \
 TEST_EXPECTED_RUN_ROOT="$TMP_DIR/review-runs" \
+TEST_REVIEW_REPO="$REVIEW_POLICY_REPO" \
 REVIEW_CALL_FILE="$TMP_DIR/review-calls.out" \
 zsh -fc '
   source "$DEX_DIR/dx.sh"
-  cd "$DEX_DIR"
+  cd "$TEST_REVIEW_REPO"
   [[ "$(dx_run_root)" == "$TEST_EXPECTED_RUN_ROOT" ]] || return 97
   __dx_refresh_provider() {
     DX_PROVIDER_ENGINE=claude
@@ -76,6 +121,17 @@ zsh -fc '
   __dx_provider_prompt() { return 0; }
   claude() { return 0; }
   __dx_claude() {
+    local completion_literal completion_session completion_generation
+    if [[ "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == "1" ]]; then
+      completion_generation=$(python3 "$TEST_COMPLETION_PARSER" \
+        --assessment "$@") || return 96
+      print -r -- "{\"tier\":\"complex\",\"reason_codes\":\"cross-module,public-contract\",\"completion_generation\":\"${completion_generation}\"}"
+      return 0
+    fi
+    completion_literal=$(python3 "$TEST_COMPLETION_PARSER" "$@") || return 96
+    completion_session=$(print -r -- "$completion_literal" | command cut -f1)
+    completion_generation=$(print -r -- "$completion_literal" | command cut -f2)
+    [[ "$completion_session" == "$DEX_SESSION_ID" ]] || return 96
     print -r -- "${DEX_LOOP_PROMISE:-<empty>}" >> "$REVIEW_CALL_FILE"
     {
       print -r -- "## Scope"
@@ -101,7 +157,8 @@ zsh -fc '
     print -r -- "{\"version\":3,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT:-}\",\"criteria_binding\":\"standalone\",\"policy_binding\":\"${DEX_REVIEW_POLICY_BINDING:-}\",\"pass_binding\":\"${DEX_REVIEW_PASS_BINDING:-}\",\"criteria_evidence\":{\"acceptance_criteria\":[],\"objectives\":[],\"verification_requirements\":[]},\"deterministic_checks\":\"pass\",\"coverage\":[\"correctness\",\"security\",\"contracts\",\"tests\",\"architecture\",\"frontend\",\"devops\",\"performance\",\"observability\"],\"verifier\":\"pass\",\"verified_findings\":0,\"fixes_applied\":0}" > "$(dx_review_evidence_file "$DEX_SESSION_ID")"
     dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
     print -r -- CLEAN > "$(dx_review_result_file "$DEX_SESSION_ID")"
-    touch "$(dx_complete_file "$DEX_SESSION_ID")"
+    command bash "$DEX_DIR/bin/complete-receipt.sh" \
+      "$completion_session" "$completion_generation"
   }
 
   if DEX_REVIEW_CLEAN_PASSES=0 dxreviewloop; then
@@ -112,9 +169,9 @@ zsh -fc '
   DEX_REVIEW_PROFILE=thorough dxreviewloop
 ' > "$TMP_DIR/review-profile-validation.out" 2>&1
 assert_contains "Invalid clean-pass requirement '0'." "$TMP_DIR/review-profile-validation.out"
-assert_contains "Review complete: 9 consecutive clean passes." "$TMP_DIR/review-profile-validation.out"
-if [[ "$(wc -l < "$TMP_DIR/review-calls.out" | tr -d ' ')" -ne 9 ]]; then
-  printf 'expected nine review-wave calls with missing shell globals\n' >&2
+assert_contains "Review complete: 6 consecutive clean passes." "$TMP_DIR/review-profile-validation.out"
+if [[ "$(wc -l < "$TMP_DIR/review-calls.out" | tr -d ' ')" -ne 6 ]]; then
+  printf 'expected six review-wave calls with missing shell globals\n' >&2
   exit 1
 fi
 if grep -Fvxq "PHASE_3_COMPLETE" "$TMP_DIR/review-calls.out"; then

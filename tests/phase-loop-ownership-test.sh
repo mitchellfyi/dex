@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Tests for the Stop-hook ownership guard and review-pass isolation in
 # hooks/phase-loop.sh:
@@ -127,6 +128,15 @@ prepare_review_pass_bindings() { # <session-id> <fingerprint>
   REVIEW_PASS_BINDING=$(dx_review_pass_binding "$REVIEW_PASS_ID" "$2" standalone "$REVIEW_POLICY_BINDING")
 }
 
+configure_review_pass_completion() { # <session-id>
+  REVIEW_PASS_GENERATION=$(dx_completion_loop_activate \
+    "$1" child review-pass 3)
+}
+
+write_review_pass_completion() { # <session-id>
+  dx_completion_write_receipt "$1" "$REVIEW_PASS_GENERATION"
+}
+
 write_review_evidence() { # <session-id> <result> <fingerprint>
   local session_id="$1" result="$2" fingerprint="$3" checks=pass verifier=pass
   case "$result" in
@@ -228,15 +238,13 @@ rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 # --- case 4: completed review pass never runs the inline phase handoff ---
 SID="repo-test-4-main-pass-1-999"
-touch "$DX_LOOP_DIR/$SID.active"
-printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
+configure_review_pass_completion "$SID"
 printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
-printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
 printf '%s\n' "CLEAN" > "$DX_LOOP_DIR/$SID.review-result"
 write_review_context "$SID"
 write_review_evidence "$SID" CLEAN "$REVIEW_SCOPE_FINGERPRINT"
 printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_review_pass_completion "$SID"
 set +e
 OUT="$(printf '{"session_id":"claude-wave"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
 RC=$?
@@ -248,17 +256,17 @@ assert_file_eq "phase state not advanced by review pass" "$DX_STATE_DIR/$SID.pha
 # The launching wrapper harvests the pass findings hash into the parent
 # session stuck-loop history after the wave exits, so the hook must leave it.
 assert_file_eq "findings hash preserved for wrapper harvest" "$DX_LOOP_DIR/$SID.findings" "0123456789abcdef"
-if [[ -f "$DX_LOOP_DIR/$SID.complete" ]]; then report "completion receipt preserved for wrapper harvest" 0; else report "completion receipt preserved for wrapper harvest" 1; fi
+if [[ -f "$(dx_completion_receipt_file "$SID" "$REVIEW_PASS_GENERATION")" ]]; then report "completion receipt preserved for wrapper harvest" 0; else report "completion receipt preserved for wrapper harvest" 1; fi
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 # --- case 5: review pass with invalid result is held open ---
 SID="repo-test-5-main-pass-2-999"
-touch "$DX_LOOP_DIR/$SID.active"
-printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_review_pass_completion "$SID"
+prepare_review_pass_bindings "$SID" "$REVIEW_SCOPE_FINGERPRINT"
 printf '%s\n' "not-a-result" > "$DX_LOOP_DIR/$SID.review-result"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_review_pass_completion "$SID"
 set +e
-OUT="$(printf '{"session_id":"claude-wave2"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" 2>&1)"
+OUT="$(printf '{"session_id":"claude-wave2"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "invalid result blocks review pass stop" 2
@@ -267,12 +275,11 @@ rm -f "$DX_LOOP_DIR/$SID".*
 
 # --- case 6: a review pass cannot complete without a substantive context pack ---
 SID="repo-test-6-main-pass-3-999"
-touch "$DX_LOOP_DIR/$SID.active"
-printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_review_pass_completion "$SID"
 printf '%s\n' "CLEAN" > "$DX_LOOP_DIR/$SID.review-result"
 printf '%s\n' "   " > "$DX_LOOP_DIR/$SID.review-context"
 printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_review_pass_completion "$SID"
 prepare_review_pass_bindings "$SID" "$REVIEW_SCOPE_FINGERPRINT"
 set +e
 OUT="$(printf '{"session_id":"claude-wave3"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
@@ -284,13 +291,12 @@ rm -f "$DX_LOOP_DIR/$SID".*
 
 # --- case 7: a review pass must write exactly one valid findings hash ---
 SID="repo-test-7-main-pass-4-999"
-touch "$DX_LOOP_DIR/$SID.active"
-printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_review_pass_completion "$SID"
 printf '%s\n' "CLEAN" > "$DX_LOOP_DIR/$SID.review-result"
 write_review_context "$SID"
 write_review_evidence "$SID" CLEAN "$REVIEW_SCOPE_FINGERPRINT"
 printf '%s\n%s\n' "0123456789abcdef" "fedcba9876543210" > "$DX_LOOP_DIR/$SID.findings"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_review_pass_completion "$SID"
 set +e
 OUT="$(printf '{"session_id":"claude-wave4"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
 RC=$?
@@ -340,13 +346,12 @@ case_number=0
 for review_result in "${VALID_REVIEW_RESULTS[@]}"; do
   case_number=$((case_number + 1))
   SID="repo-test-6-${case_number}-main-pass"
-  touch "$DX_LOOP_DIR/$SID.active"
-  printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
+  configure_review_pass_completion "$SID"
   printf '%s\n' "$review_result" > "$DX_LOOP_DIR/$SID.review-result"
   write_review_context "$SID"
   write_review_evidence "$SID" "$review_result" "$REVIEW_SCOPE_FINGERPRINT"
   printf '%s\n' "0123456789abcdef" > "$DX_LOOP_DIR/$SID.findings"
-  touch "$DX_LOOP_DIR/$SID.complete"
+  write_review_pass_completion "$SID"
   set +e
   OUT="$(printf '{\"session_id\":\"claude-wave-alias-%s\"}' "$case_number" | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
   RC=$?
@@ -358,12 +363,12 @@ done
 
 # FINDINGS_FIXED and FINDINGS must report at least one finding.
 SID="repo-test-6-zero-main-pass"
-touch "$DX_LOOP_DIR/$SID.active"
-printf '%s\n' "3:PHASE_3_COMPLETE:$ROOT/prompts/phase-audits/3-review.md:1" > "$DX_LOOP_DIR/$SID.config"
+configure_review_pass_completion "$SID"
+prepare_review_pass_bindings "$SID" "$REVIEW_SCOPE_FINGERPRINT"
 printf '%s\n' "FINDINGS_FIXED:0" > "$DX_LOOP_DIR/$SID.review-result"
-touch "$DX_LOOP_DIR/$SID.complete"
+write_review_pass_completion "$SID"
 set +e
-OUT="$(printf '{\"session_id\":\"claude-wave-zero\"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 bash "$HOOK" 2>&1)"
+OUT="$(printf '{\"session_id\":\"claude-wave-zero\"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_REVIEW_PASS_ACTIVE=1 DEX_REVIEW_PROFILE=light DEX_REVIEW_SCOPE_FINGERPRINT="$REVIEW_SCOPE_FINGERPRINT" DEX_REVIEW_POLICY_BINDING="$REVIEW_POLICY_BINDING" DEX_REVIEW_PASS_ID="$REVIEW_PASS_ID" DEX_REVIEW_PASS_BINDING="$REVIEW_PASS_BINDING" bash "$HOOK" 2>&1)"
 RC=$?
 set -e
 assert_rc "zero-finding result is rejected" 2
@@ -483,13 +488,13 @@ dx_review_write_selection "$SID" normal lifecycle-agent bounded-production-chang
 RECEIPT_FINGERPRINT=$(dx_review_scope_fingerprint "$REVIEW_REPO")
 RECEIPT_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SID")
 RECEIPT_POLICY_BINDING=$(dx_review_policy_resolve "$REVIEW_REPO" | cut -f4)
-if dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO" \
+if dx_review_write_receipt "$SID" normal 3 3 "$REVIEW_REPO" \
   "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"; then
   report "receipt cannot be minted without clean-pass ledger" 1
 else
   report "receipt cannot be minted without clean-pass ledger" 0
 fi
-for ledger_iteration in 1 2 3 4 5 6; do
+for ledger_iteration in 1 2 3; do
   receipt_pass_id="phase-clean-${ledger_iteration}"
   receipt_evidence="$TMP_DIR/phase-clean-${ledger_iteration}.evidence.json"
   receipt_context="$TMP_DIR/phase-clean-${ledger_iteration}.context.md"
@@ -500,7 +505,7 @@ for ledger_iteration in 1 2 3 4 5 6; do
     "$RECEIPT_FINGERPRINT" "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING" \
     "$receipt_evidence" "$receipt_context"
 done
-dx_review_write_receipt "$SID" normal 6 6 "$REVIEW_REPO" \
+dx_review_write_receipt "$SID" normal 3 3 "$REVIEW_REPO" \
   "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"
 write_lifecycle_completion "$SID" 3
 set +e
@@ -515,6 +520,114 @@ if [[ ! -e "$(dx_review_proof_dir "$SID")" && ! -L "$(dx_review_proof_dir "$SID"
 else
   report "Phase 3 handoff removes retained proof bundles" 1
 fi
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
+# --- case 10: a finalizer rollback wins before Phase 3 acceptance ---
+SID="repo-test-10-main"
+touch "$DX_LOOP_DIR/$SID.active"
+printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
+printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
+configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
+write_review_criteria "$SID"
+dx_review_approve_criteria "$SID" initial \
+  "$(dx_review_criteria_hash "$(dx_review_criteria_file "$SID")")" >/dev/null
+dx_review_write_selection "$SID" normal lifecycle-agent \
+  bounded-production-change "$REVIEW_REPO"
+RECEIPT_FINGERPRINT=$(dx_review_scope_fingerprint "$REVIEW_REPO")
+RECEIPT_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SID")
+RECEIPT_POLICY_BINDING=$(dx_review_policy_resolve "$REVIEW_REPO" | cut -f4)
+for ledger_iteration in 1 2 3; do
+  receipt_pass_id="phase-race-clean-${ledger_iteration}"
+  receipt_evidence="$TMP_DIR/phase-race-clean-${ledger_iteration}.evidence.json"
+  receipt_context="$TMP_DIR/phase-race-clean-${ledger_iteration}.context.md"
+  dx_test_write_clean_review_proof "$SID" "$receipt_pass_id" standard \
+    "$RECEIPT_FINGERPRINT" "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING" \
+    "$receipt_evidence" "$receipt_context"
+  dx_review_ledger_append "$SID" "$ledger_iteration" "$receipt_pass_id" standard \
+    "$RECEIPT_FINGERPRINT" "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING" \
+    "$receipt_evidence" "$receipt_context"
+done
+dx_review_write_receipt "$SID" normal 3 3 "$REVIEW_REPO" \
+  "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"
+write_lifecycle_completion "$SID" 3
+
+# Pause the hook immediately before its second top-level transition-lock call.
+# The first is preflight; the second is the late acceptance lock. A DEBUG trap
+# installed only in this child process identifies that named call without
+# depending on retries or unrelated lock activity inside validation helpers.
+RACE_BASH_ENV="$TMP_DIR/phase-3-race-bash-env"
+RACE_BARRIER="$TMP_DIR/phase-3-race-lock-waiting"
+RACE_RELEASE="$TMP_DIR/phase-3-race-release"
+RACE_LOCK_COUNT="$TMP_DIR/phase-3-race-lock-count"
+RACE_OUT="$TMP_DIR/phase-3-race.out"
+RACE_RC_FILE="$TMP_DIR/phase-3-race.rc"
+cat > "$RACE_BASH_ENV" <<'SH'
+#!/usr/bin/env bash
+
+__dx_test_phase3_acceptance_barrier() {
+  [[ "${1:-}" == 'dx_lifecycle_control_lock_acquire "$SESSION_ID"' ]] \
+    || return 0
+  count=$(cat "${DX_TEST_LOCK_COUNT:?}" 2>/dev/null || printf '0')
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$DX_TEST_LOCK_COUNT"
+  if [[ "$count" -eq 2 ]]; then
+    : > "${DX_TEST_LOCK_BARRIER:?}"
+    while [[ ! -e "${DX_TEST_LOCK_RELEASE:?}" ]]; do
+      /bin/sleep 0.01
+    done
+  fi
+}
+
+trap '__dx_test_phase3_acceptance_barrier "$BASH_COMMAND"' DEBUG
+SH
+(
+  set +e
+  cd "$REVIEW_REPO" || exit 98
+  printf '{"session_id":"claude-phase-3-race"}' | env \
+    BASH_ENV="$RACE_BASH_ENV" DX_TEST_LOCK_BARRIER="$RACE_BARRIER" \
+    DX_TEST_LOCK_RELEASE="$RACE_RELEASE" \
+    DX_TEST_LOCK_COUNT="$RACE_LOCK_COUNT" \
+    DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+    DEX_PHASE_HANDOFF=inline bash "$HOOK" > "$RACE_OUT" 2>&1
+  race_rc=$?
+  printf '%s\n' "$race_rc" > "$RACE_RC_FILE"
+) &
+RACE_PID=$!
+for _attempt in $(seq 1 100); do
+  [[ -e "$RACE_BARRIER" || -e "$RACE_RC_FILE" ]] && break
+  /bin/sleep 0.05
+done
+if [[ -e "$RACE_BARRIER" && ! -e "$RACE_RC_FILE" ]]; then
+  report "Phase 3 hook reached the acceptance lock" 0
+else
+  report "Phase 3 hook reached the acceptance lock" 1
+fi
+if [[ "$(cat "$RACE_LOCK_COUNT" 2>/dev/null || true)" == "2" ]]; then
+  report "Phase 3 barrier targets the late acceptance lock" 0
+else
+  report "Phase 3 barrier targets the late acceptance lock" 1
+fi
+dx_lifecycle_control_lock_acquire "$SID"
+dx_review_revoke_receipt "$SID"
+if ! dx_review_receipt_valid "$SID" "$REVIEW_REPO" \
+  "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"; then
+  report "finalizer rollback invalidates the temporary receipt" 0
+else
+  report "finalizer rollback invalidates the temporary receipt" 1
+fi
+dx_lifecycle_control_lock_release "$SID"
+touch "$RACE_RELEASE"
+wait "$RACE_PID" 2>/dev/null || true
+OUT=$(cat "$RACE_OUT" 2>/dev/null || true)
+RC=$(cat "$RACE_RC_FILE" 2>/dev/null || printf '99')
+assert_rc "revoked Phase 3 receipt blocks the handoff" 2
+assert_out_contains "revoked receipt is rejected inside the lock" \
+  "review receipt became stale before the transition committed"
+assert_out_lacks "revoked receipt emits no Phase 4 handoff" "Phase Handoff"
+assert_file_eq "revoked receipt leaves Phase 3 authoritative" \
+  "$DX_STATE_DIR/$SID.phase" "3"
+chmod -R u+w "$(dx_review_proof_dir "$SID")" 2>/dev/null || true
+rm -rf "$(dx_review_proof_dir "$SID")"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
 printf 'phase-loop-ownership-test: %d passed, %d failed\n' "$pass" "$fail"

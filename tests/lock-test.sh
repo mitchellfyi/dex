@@ -77,6 +77,39 @@ dx_lock_release "$lock" holder-a || {
   exit 1
 }
 
+# A one-shot directory-removal fault restores the exact owner, then the
+# checked release retries it without stranding this live process. The caller
+# still receives failure from the first release and cannot report a clean
+# transition.
+real_rmdir=$(command -v rmdir)
+mkdir -p "$TMP_DIR/fault-bin"
+cat > "$TMP_DIR/fault-bin/rmdir" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1" == "$DX_TEST_RELEASE_LOCK" \
+  && ! -f "$DX_TEST_RELEASE_FAULT_USED" ]]; then
+  touch "$DX_TEST_RELEASE_FAULT_USED"
+  exit 1
+fi
+exec "$DX_TEST_REAL_RMDIR" "$@"
+SH
+chmod +x "$TMP_DIR/fault-bin/rmdir"
+old_path="$PATH"
+export DX_TEST_RELEASE_LOCK="$lock"
+export DX_TEST_RELEASE_FAULT_USED="$TMP_DIR/release-fault-used"
+export DX_TEST_REAL_RMDIR="$real_rmdir"
+export PATH="$TMP_DIR/fault-bin:$PATH"
+dx_lock_acquire "$lock" transient-release
+if dx_lock_release_checked "$lock" transient-release; then
+  printf 'checked release erased its first filesystem failure\n' >&2
+  exit 1
+fi
+if [[ -d "$lock" || ! -f "$DX_TEST_RELEASE_FAULT_USED" ]]; then
+  printf 'checked release left the transiently failed lock behind\n' >&2
+  exit 1
+fi
+export PATH="$old_path"
+unset DX_TEST_RELEASE_LOCK DX_TEST_RELEASE_FAULT_USED DX_TEST_REAL_RMDIR
+
 # A lock whose owner process is gone is reclaimed once past the grace period.
 dead_pid=$(bash -c 'echo $$')
 while kill -0 "$dead_pid" 2>/dev/null; do

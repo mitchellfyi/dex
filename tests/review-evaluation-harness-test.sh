@@ -182,6 +182,7 @@ mkdir -p "$runtime_source/research/review-loop"
 cp "$ROOT/research/review-loop/launch.zsh" "$runtime_source/research/review-loop/launch.zsh"
 cp "$ROOT/research/review-loop/agent-observer.sh" "$runtime_source/research/review-loop/agent-observer.sh"
 runtime_contract_files=(
+  bin/complete-receipt.sh
   bin/session-runtime-owner.sh
   dx.sh
   lib/common.sh
@@ -209,6 +210,7 @@ assert_eq "$runtime_source_sha" "$runtime_sha" "runtime commit"
 [[ ! -e "$runtime_dir/.git" ]] || fail "runtime must not expose git history"
 [[ -x "$runtime_dir/research/review-loop/launch.zsh" ]] || fail "sanitized launcher is missing"
 [[ -f "$runtime_dir/research/review-loop/agent-observer.sh" ]] || fail "sanitized observer is missing"
+[[ -x "$runtime_dir/bin/complete-receipt.sh" ]] || fail "sanitized completion writer is missing"
 [[ -f "$runtime_dir/lib/completion.sh" ]] || fail "sanitized completion runtime is missing"
 [[ -f "$runtime_dir/lib/review-loop.sh" ]] || fail "sanitized review loop runtime is missing"
 [[ -f "$runtime_dir/lib/session-catalog.sh" ]] || fail "sanitized session catalog runtime is missing"
@@ -818,8 +820,8 @@ import sys
 from pathlib import Path
 
 for root_text, expected_tier, expected_waves in (
-    (sys.argv[1], "normal", 6),
-    (sys.argv[2], "complex", 9),
+    (sys.argv[1], "normal", 3),
+    (sys.argv[2], "complex", 6),
 ):
     root = Path(root_text)
     manifest = json.loads((root / "manifest.json").read_text())

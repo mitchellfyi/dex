@@ -201,9 +201,9 @@ git -C "$REPO" commit -qm "test: initialize review fixture"
 base_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
 IFS=$'\t' read -r policy_small policy_normal policy_complex policy_binding \
   policy_ref policy_oid < <(dx_review_policy_resolve "$REPO")
-assert_eq "3" "$policy_small" "trusted small policy"
-assert_eq "6" "$policy_normal" "trusted normal policy"
-assert_eq "9" "$policy_complex" "trusted complex policy"
+assert_eq "1" "$policy_small" "trusted small policy"
+assert_eq "3" "$policy_normal" "trusted normal policy"
+assert_eq "6" "$policy_complex" "trusted complex policy"
 [[ "$policy_binding" =~ ^[a-f0-9]{64}$ ]] || {
   printf 'trusted policy binding is not a full lowercase SHA-256 digest\n' >&2
   exit 1
@@ -313,9 +313,9 @@ assert_eq "$unstaged_fingerprint" "$(dx_review_scope_fingerprint "$REPO")" \
   "staging identical content preserves scope fingerprint"
 dx_review_receipt_valid "$publish_receipt_session" "$REPO" standalone "$policy_binding"
 publish_state_session="publish-state-stability"
-dx_review_write_selection "$publish_state_session" small environment operator-override \
-  "$REPO" "$policy_small" standalone "$policy_binding"
-dx_review_write_state "$publish_state_session" small "$policy_small" 2 1 \
+dx_review_write_selection "$publish_state_session" normal environment operator-override \
+  "$REPO" "$policy_normal" standalone "$policy_binding"
+dx_review_write_state "$publish_state_session" normal "$policy_normal" 2 1 \
   "$REPO" standalone "$policy_binding"
 git -C "$REPO" commit -qm "test: publish identical review content"
 assert_eq "$unstaged_fingerprint" "$(dx_review_scope_fingerprint "$REPO")" \
@@ -324,8 +324,8 @@ dx_review_receipt_valid "$publish_receipt_session" "$REPO" standalone "$policy_b
 IFS=$'\t' read -r publish_state_tier publish_state_required publish_state_iteration \
   publish_state_clean _ _ publish_state_policy < <(dx_review_read_state \
     "$publish_state_session" "$REPO" standalone "$policy_binding")
-assert_eq "small" "$publish_state_tier" "commit preserves review state tier"
-assert_eq "$policy_small" "$publish_state_required" "commit preserves review state gate"
+assert_eq "normal" "$publish_state_tier" "commit preserves review state tier"
+assert_eq "$policy_normal" "$publish_state_required" "commit preserves review state gate"
 assert_eq "2" "$publish_state_iteration" "commit preserves review state iteration"
 assert_eq "1" "$publish_state_clean" "commit preserves review clean credit"
 assert_eq "$policy_binding" "$publish_state_policy" "commit preserves review policy binding"

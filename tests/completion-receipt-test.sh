@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -856,6 +857,31 @@ assert_generation "$ESCALATE_RESUMED_GENERATION" "$LINENO"
   assert_at "$LINENO"
 assert_no_file "$(dx_paused_file "$ESCALATE_SID")"
 dx_cleanup_session "$ESCALATE_SID"
+
+ESCALATE_RELEASE_SID="completion-agent-escalation-release"
+ESCALATE_RELEASE_GENERATION=$(setup_escalation_context \
+  "$ESCALATE_RELEASE_SID" 2)
+set +e
+(
+  eval "$(declare -f dx_lifecycle_control_lock_release | \
+    sed '1s/^dx_lifecycle_control_lock_release /__test_release_original /')"
+  escalation_release_calls=0
+  dx_lifecycle_control_lock_release() {
+    escalation_release_calls=$((escalation_release_calls + 1))
+    [[ "$escalation_release_calls" -ne 1 ]] || return 1
+    __test_release_original "$@"
+  }
+  dx_lifecycle_agent_escalate "$ESCALATE_RELEASE_SID" \
+    "$ESCALATE_RELEASE_GENERATION"
+)
+ESCALATE_RELEASE_RC=$?
+set -e
+[[ "$ESCALATE_RELEASE_RC" -ne 0 ]] || assert_at "$LINENO"
+assert_file "$(dx_paused_file "$ESCALATE_RELEASE_SID")"
+assert_no_file "$(dx_active_file "$ESCALATE_RELEASE_SID")"
+assert_no_file "$(dx_completion_expectation_file "$ESCALATE_RELEASE_SID")"
+assert_no_file "$(dx_lifecycle_control_lock_dir "$ESCALATE_RELEASE_SID")"
+dx_cleanup_session "$ESCALATE_RELEASE_SID"
 
 ESCALATE_STALE_SID="completion-agent-escalation-stale"
 ESCALATE_STALE_OLD=$(setup_escalation_context "$ESCALATE_STALE_SID" 4)

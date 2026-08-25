@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -130,7 +131,7 @@ dx_completion_write_receipt "$session_id" "$generation"
 receipt_fingerprint="$(dx_review_scope_fingerprint "$TMP_DIR/repo")"
 policy_record="$(dx_review_policy_resolve "$TMP_DIR/repo")"
 receipt_policy_binding="$(printf "%s\n" "$policy_record" | cut -f4)"
-for ledger_iteration in {1..9}; do
+for ledger_iteration in {1..6}; do
   pass_id="direct-clean-${ledger_iteration}"
   evidence_file="$TMP_DIR/direct-clean-${ledger_iteration}.evidence.json"
   context_file="$TMP_DIR/direct-clean-${ledger_iteration}.context.md"
@@ -141,7 +142,7 @@ for ledger_iteration in {1..9}; do
     "$receipt_fingerprint" "$approved_criteria_hash" "$receipt_policy_binding" \
     "$evidence_file" "$context_file"
 done
-if ! dx_review_write_receipt "$session_id" complex 9 9 "$TMP_DIR/repo" \
+if ! dx_review_write_receipt "$session_id" complex 6 6 "$TMP_DIR/repo" \
   "$approved_criteria_hash" "$receipt_policy_binding"; then
   printf "%s\n" "could not write the Phase 3 receipt fixture" >&2
   exit 1
@@ -401,6 +402,121 @@ __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 6 "$state_f
 [[ "$(dx_phase_outcome_latest "$session_id" 6)" == "completed" ]] || assert_at $LINENO
 '
 
+# The terminal proof is not a success signal until the publishing transition
+# lock is released. A one-shot release fault must roll the phase back, revoke
+# the consumed generation, and leave an explicit resume path without emitting
+# terminal telemetry.
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+set -e
+
+session_id="codex-terminal-release-failure"
+state_file="$(dx_state_file "$session_id")"
+provider_file="$(dx_provider_state_file "$session_id")"
+printf "engine=codex-plugin\nsession=%s\n" "$session_id" > "$provider_file"
+printf "6\n" > "$state_file"
+generation=$(__dx_configure_inline_phase 6 "$session_id")
+dx_completion_write_receipt "$session_id" "$generation"
+functions[__test_real_control_lock_release]="${functions[dx_lifecycle_control_lock_release]}"
+release_calls=0
+dx_lifecycle_control_lock_release() {
+  release_calls=$((release_calls + 1))
+  if [[ "$release_calls" -eq 1 ]]; then
+    return 1
+  fi
+  __test_real_control_lock_release "$@"
+}
+dx_event_emit_for_session() {
+  [[ "${2:-}" != "run.completed" ]] || touch "$TMP_DIR/terminal-release-completed"
+  return 0
+}
+
+set +e
+__dx_codex_direct_phase_handoff "$session_id" 6 "$state_file" "$TMP_DIR/repo" \
+  > "$TMP_DIR/terminal-release.out" 2>&1
+handoff_status=$?
+set -e
+[[ "$handoff_status" -ne 0 ]] || assert_at $LINENO
+[[ "$(dx_lifecycle_phase_state "$session_id")" == "6" ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_terminal_commit_file "$session_id")" \
+  && ! -L "$(dx_lifecycle_terminal_commit_file "$session_id")" ]] || assert_at $LINENO
+dx_lifecycle_pause_context_state "$session_id" || assert_at $LINENO
+[[ "$(dx_pause_state_read "$session_id" reason)" == "completion-lock-release" ]] \
+  || assert_at $LINENO
+[[ ! -e "$(dx_completion_expectation_file "$session_id")" \
+  && ! -L "$(dx_completion_expectation_file "$session_id")" ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_control_lock_dir "$session_id")" \
+  && ! -L "$(dx_lifecycle_control_lock_dir "$session_id")" ]] || assert_at $LINENO
+[[ ! -e "$TMP_DIR/terminal-release-completed" ]] || assert_at $LINENO
+
+resume_record=$(dx_lifecycle_resume_completion_context "$session_id")
+IFS=$'"'"'\t'"'"' read -r resume_phase resume_generation resume_mode resume_purpose \
+  <<< "$resume_record"
+[[ "$resume_phase" == "6" && "$resume_mode" == "lifecycle" \
+  && "$resume_purpose" == "phase" ]] || assert_at $LINENO
+[[ "$resume_generation" =~ ^[0-9a-f]{32}$ \
+  && "$resume_generation" != "$generation" ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_terminal_commit_file "$session_id")" ]] || assert_at $LINENO
+'
+
+# Exercise terminal-proof retirement through real lifecycle entry points, not
+# only the low-level issuance helper. A proof from an earlier Phase 7 must be
+# physically gone before configuration, a backward human transition, or
+# session reinitialization can mint new authorization.
+zsh -fc '
+source "$DEX_DIR/dx.sh"
+set -e
+
+seed_terminal_proof() {
+  local seed_session="$1" seed_authority="0123456789abcdef0123456789abcdef"
+  dx_lifecycle_atomic_write "$(dx_state_file "$seed_session")" 7
+  dx_lifecycle_control_lock_acquire "$seed_session"
+  dx_lifecycle_terminal_commit_publish_unlocked "$seed_session" "$seed_authority"
+  dx_lifecycle_control_lock_release "$seed_session"
+  dx_lifecycle_terminal_commit_valid "$seed_session" || assert_at $LINENO
+}
+
+configure_session="codex-terminal-replay-configure"
+seed_terminal_proof "$configure_session"
+dx_lifecycle_atomic_write "$(dx_state_file "$configure_session")" 4
+configure_generation=$(__dx_configure_inline_phase 4 "$configure_session")
+[[ "$configure_generation" =~ ^[0-9a-f]{32}$ ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_terminal_commit_file "$configure_session")" \
+  && ! -L "$(dx_lifecycle_terminal_commit_file "$configure_session")" ]] || assert_at $LINENO
+dx_completion_abandon "$configure_session"
+
+backward_session="codex-terminal-replay-backward"
+seed_terminal_proof "$backward_session"
+dx_lifecycle_atomic_write "$(dx_state_file "$backward_session")" 5
+printf "engine=codex-plugin\nsession=%s\n" "$backward_session" \
+  > "$(dx_provider_state_file "$backward_session")"
+dx_write_lifecycle_control "$backward_session" jump 4 terminal "" 5 ""
+__dx_codex_direct_phase_handoff "$backward_session" 5 \
+  "$(dx_state_file "$backward_session")" "$TMP_DIR/repo"
+[[ "$(dx_lifecycle_phase_state "$backward_session")" == "4" ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_terminal_commit_file "$backward_session")" \
+  && ! -L "$(dx_lifecycle_terminal_commit_file "$backward_session")" ]] || assert_at $LINENO
+[[ "$(dx_completion_current_generation "$backward_session" lifecycle phase 4)" \
+  =~ ^[0-9a-f]{32}$ ]] || assert_at $LINENO
+dx_completion_abandon "$backward_session"
+
+reinit_session="codex-terminal-replay-reinit"
+seed_terminal_proof "$reinit_session"
+dx_cleanup_session "$reinit_session"
+[[ ! -e "$(dx_lifecycle_terminal_commit_file "$reinit_session")" \
+  && ! -L "$(dx_lifecycle_terminal_commit_file "$reinit_session")" ]] || assert_at $LINENO
+dx_lifecycle_atomic_write "$(dx_state_file "$reinit_session")" 0
+reinit_generation=$(__dx_configure_inline_phase 0 "$reinit_session")
+[[ "$reinit_generation" =~ ^[0-9a-f]{32}$ ]] || assert_at $LINENO
+[[ ! -e "$(dx_lifecycle_terminal_commit_file "$reinit_session")" ]] || assert_at $LINENO
+dx_completion_abandon "$reinit_session"
+dx_lifecycle_atomic_write "$(dx_state_file "$reinit_session")" 7
+if dx_lifecycle_terminal_commit_valid "$reinit_session"; then
+  printf "%s\n" "a cleaned terminal proof authorized a reinitialized lifecycle" >&2
+  exit 1
+fi
+'
+
 zsh -fc '
 source "$DEX_DIR/dx.sh"
 set -e
@@ -409,7 +525,7 @@ export DX_PROVIDER_ENGINE=codex-plugin
 session_id="codex-direct-context-marker"
 generation="0123456789abcdef0123456789abcdef"
 ctx_file="$(__dx_build_system_context "repo" 4 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
-grep -q "Direct Codex Phase Marker" "$ctx_file"
+grep -q "Direct Codex Phase Completion" "$ctx_file"
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
 if grep -q "dx_complete_file" "$ctx_file"; then
   printf "%s\n" "direct context still exposes the legacy completion marker" >&2
@@ -417,14 +533,18 @@ if grep -q "dx_complete_file" "$ctx_file"; then
 fi
 
 ctx_file="$(__dx_build_system_context "repo" 6 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
-grep -Fq "bash \"\$DEX_DIR/bin/control.sh\" pause" "$ctx_file"
+grep -Fq "bash \"\$DEX_DIR/bin/escalate.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
+if grep -Fq "bash \"\$DEX_DIR/bin/control.sh\" pause" "$ctx_file"; then
+  printf "%s\n" "direct context still asks the agent to impersonate human control" >&2
+  exit 1
+fi
 if grep -q "dx_paused_file" "$ctx_file"; then
   printf "%s\n" "direct context requires a snapshotted pause helper" >&2
   exit 1
 fi
 
 ctx_file="$(__dx_build_system_context "repo" 2 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
-grep -q "Direct Codex Phase Marker" "$ctx_file"
+grep -q "Direct Codex Phase Completion" "$ctx_file"
 grep -q "normal Phase 2 readiness gate" "$ctx_file"
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
 grep -q "Direct Human Control" "$ctx_file"

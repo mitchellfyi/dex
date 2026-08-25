@@ -54,7 +54,7 @@ resulting state and continue using the current phase's completion criteria.
 7. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `small`, `normal`, or `complex`, with a
    deterministic set of reason codes. The tier selects the trusted clean-wave
-   policy from the committed default branch. Its defaults are 3, 6, and 9;
+   policy from the committed default branch. Its defaults are 1, 3, and 6;
    `.dex/dex.md` may configure monotonic values from 1 through 30.
 8. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
    shows all criteria MET, and the review-risk selection matches the final
@@ -72,7 +72,7 @@ resulting state and continue using the current phase's completion criteria.
 3. Waves that find and fix issues write `FINDINGS_FIXED:N`, reset the clean
    counter, and force the next iteration to re-review the full change set.
 4. The loop uses the selected tier's trusted clean-wave requirement. The
-   defaults are 3 for `small`, 6 for `normal`, and 9 for `complex`. A candidate
+   defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`. A candidate
    branch cannot lower the active gate, and the loop has no outer iteration
    maximum.
 5. Prior review conclusions, findings, fingerprints, clean counts, and telemetry
@@ -198,6 +198,13 @@ Even in autonomous mode, STOP and escalate to the user for:
 - Architectural review comments (need human judgement)
 - 3+ failed attempts at the same fix
 - Scope changes that affect other tickets
+
+When a launch or Stop audit supplies an exact generation-bound escalation
+command, use that literal command after two materially different recovery
+strategies fail. It pauses and detaches the current generation and revokes its
+completion authorization. It does not create a human control receipt or a
+completion receipt. Never substitute a raw pause marker, a generic human
+control command, or relaxed completion criteria.
 
 ## Notes
 

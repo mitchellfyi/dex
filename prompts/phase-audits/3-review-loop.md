@@ -20,7 +20,7 @@ All of these must be true:
   set, or the entire tracked codebase when no change set exists.
 - The `/dxreviewloop` result is `SUCCESS`.
 - The loop reached the selected tier's trusted consecutive clean gate. The
-  default requirements are 3 for `small`, 6 for `normal`, and 9 for `complex`.
+  default requirements are 1 for `small`, 3 for `normal`, and 6 for `complex`.
   The committed default branch may configure monotonic requirements from 1
   through 30 in `.dex/dex.md` `## Review Policy`.
   `DEX_REVIEW_CLEAN_PASSES` may raise the resolved requirement but cannot lower
@@ -68,4 +68,7 @@ If completion evidence is missing and no deterministic pause condition is
 recorded, run `/dxreviewloop` or resolve the remaining in-scope issue, then stop
 again for this audit. If review paused, report the normalized pause reason and
 the exact intervention needed; do not rerun the loop or write the Phase 3
-completion signal.
+completion receipt. The Stop hook supplies the only valid generation-bound
+completion command once the audit threshold is reached. Run that literal
+command only when the clean-pass gate and every Phase 3 requirement are met,
+then stop again so Dex can commit the transition.

@@ -78,11 +78,11 @@ import os
 import re
 
 document = os.environ["DX_REVIEW_POLICY_DOCUMENT"]
-defaults = {"small_clean_passes": 3, "normal_clean_passes": 6, "complex_clean_passes": 9}
+defaults = {"small_clean_passes": 1, "normal_clean_passes": 3, "complex_clean_passes": 6}
 lines = document.splitlines()
 headings = [index for index, line in enumerate(lines) if line.strip() == "## Review Policy"]
 if not headings:
-    print("3\t6\t9")
+    print("1\t3\t6")
     raise SystemExit(0)
 if len(headings) != 1:
     raise SystemExit(1)

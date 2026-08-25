@@ -160,13 +160,35 @@ EOF
 # dx_lock_release <lock_dir> <owner_token> — release only a lock we still own
 dx_lock_release() {
   local lock_dir="$1" owner_token="$2" owner_file raw recorded_token
+  local releasing_owner
   [[ -n "$lock_dir" && -n "$owner_token" ]] || return 0
   owner_file="$lock_dir/owner"
   raw=$(cat "$owner_file" 2>/dev/null || true)
   recorded_token=$(printf '%s\n' "$raw" | awk -F '\t' 'NR == 1 { print $3 }')
   [[ "$recorded_token" == "$owner_token" ]] || return 1
-  __dx_lock_command rm -f "$owner_file" 2>/dev/null || return 1
-  __dx_lock_command rmdir "$lock_dir" 2>/dev/null || return 1
+  releasing_owner="${lock_dir}.releasing.${owner_token}"
+  [[ ! -e "$releasing_owner" && ! -L "$releasing_owner" ]] || return 1
+  __dx_lock_command mv "$owner_file" "$releasing_owner" 2>/dev/null || return 1
+  if ! __dx_lock_command rmdir "$lock_dir" 2>/dev/null; then
+    if [[ -d "$lock_dir" && ! -e "$owner_file" && ! -L "$owner_file" ]] \
+      && __dx_lock_command mv "$releasing_owner" "$owner_file" 2>/dev/null; then
+      return 1
+    fi
+    return 1
+  fi
+  __dx_lock_command rm -f "$releasing_owner" 2>/dev/null || true
+}
+
+# A failed release can restore the exact owner for a safe retry. Preserve the
+# first failure as the result so callers never report a transition as clean,
+# even when the retry prevents the live process from stranding the lock.
+dx_lock_release_checked() {
+  local lock_dir="$1" owner_token="$2"
+  if dx_lock_release "$lock_dir" "$owner_token"; then
+    return 0
+  fi
+  dx_lock_release "$lock_dir" "$owner_token" 2>/dev/null || true
+  return 1
 }
 
 # dx_lock_with <lock_dir> <owner_token> <timeout_seconds> <command...>
