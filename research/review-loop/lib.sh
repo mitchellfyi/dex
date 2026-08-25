@@ -287,7 +287,7 @@ def run(output):
         while time.monotonic() < deadline:
             try:
                 os.killpg(process.pid, 0)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 break
             time.sleep(0.05)
         signal_group(signal.SIGKILL)
@@ -448,7 +448,7 @@ with tempfile.TemporaryDirectory(prefix="dex-review-oracle-") as isolated_home:
                 while time.monotonic() < deadline:
                     try:
                         os.killpg(process.pid, 0)
-                    except ProcessLookupError:
+                    except (ProcessLookupError, PermissionError):
                         break
                     time.sleep(0.05)
                 signal_group(signal.SIGKILL)
@@ -1631,6 +1631,7 @@ __review_eval_run_provider() {
         "$runner" "$model" "$effort" "$test_stub" "$test_stub_mode" \
         "$observer_token" "$stdout_log" "$stderr_log"
   ) <<'PY' &
+import errno
 import os
 import signal
 import subprocess
@@ -1656,6 +1657,11 @@ from pathlib import Path
 if not timeout_text.isdigit() or int(timeout_text) < 1:
     raise SystemExit(2)
 timeout = int(timeout_text)
+provider_stub_mode = (
+    "hang"
+    if test_stub == "1" and test_stub_mode == "hang-killpg-probe-eperm"
+    else test_stub_mode
+)
 child_environment = {
     "HOME": trial_home,
     "CODEX_HOME": str(Path(trial_home) / ".codex"),
@@ -1669,7 +1675,7 @@ child_environment = {
     "TERM": os.environ.get("TERM", "dumb"),
     "PYTHONDONTWRITEBYTECODE": "1",
     "REVIEW_EVAL_TEST_STUB": test_stub,
-    "REVIEW_EVAL_TEST_STUB_MODE": test_stub_mode,
+    "REVIEW_EVAL_TEST_STUB_MODE": provider_stub_mode,
 }
 command = [
     "zsh",
@@ -1683,6 +1689,9 @@ command = [
     "",
     observer_token,
 ]
+inject_probe_permission_error = (
+    test_stub == "1" and test_stub_mode == "hang-killpg-probe-eperm"
+)
 
 
 def signal_group(process, selected_signal):
@@ -1692,13 +1701,19 @@ def signal_group(process, selected_signal):
         pass
 
 
+def probe_group(process):
+    if inject_probe_permission_error:
+        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM))
+    os.killpg(process.pid, 0)
+
+
 def terminate_group(process, grace_seconds):
     signal_group(process, signal.SIGTERM)
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
         try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
+            probe_group(process)
+        except (ProcessLookupError, PermissionError):
             break
         time.sleep(0.05)
     signal_group(process, signal.SIGKILL)

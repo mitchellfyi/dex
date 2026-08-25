@@ -886,7 +886,7 @@ censored_status=0
 # case below separately proves descendant reaping once the provider has started.
 TMPDIR="$censored_tmp" \
 REVIEW_EVAL_TEST_STUB=1 \
-REVIEW_EVAL_TEST_STUB_MODE=hang \
+REVIEW_EVAL_TEST_STUB_MODE=hang-killpg-probe-eperm \
   review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
     small-control 1 claude "test-claude" "high" 30 "$censored_trial" || \
       censored_status=$?
