@@ -139,10 +139,10 @@ EXTERNAL_TOKEN="$(dx_session_runtime_start "$SID_EXTERNAL" claude "$REPO_B" "$$"
 
 RECORDS_FILE="$TMP_DIR/records.jsonl"
 dx_session_catalog_records --repo "$REPO_A" > "$RECORDS_FILE"
-assert_eq "5" "$(wc -l < "$RECORDS_FILE" | tr -d '[:space:]')" "top-level record count"
+assert_eq "6" "$(wc -l < "$RECORDS_FILE" | tr -d '[:space:]')" "top-level record count"
 assert_not_contains "$SID_B" "$RECORDS_FILE"
 assert_not_contains "$SID_EXTERNAL" "$RECORDS_FILE"
-assert_not_contains "$SID_ALIAS" "$RECORDS_FILE"
+assert_contains "$SID_ALIAS" "$RECORDS_FILE"
 assert_not_contains "$CHILD_A" "$RECORDS_FILE"
 assert_not_contains "$LONG_CHILD" "$RECORDS_FILE"
 assert_contains "$SID_LEGIT_PASS" "$RECORDS_FILE"
@@ -170,9 +170,113 @@ assert_eq "unknown" "$(json_field "$RECORD_A2" lifecycle_state)" \
 RUNTIME_ONLY_RECORD="$(dx_session_catalog_record "$SID_RUNTIME_ONLY" --repo "$REPO_A")"
 assert_eq "$REPO_A" "$(json_field "$RUNTIME_ONLY_RECORD" workspace)" "runtime-only workspace"
 assert_eq "live" "$(json_field "$RUNTIME_ONLY_RECORD" runtime_health)" "runtime-only health"
+PROVIDER_ONLY_RECORD="$(dx_session_catalog_record "$SID_ALIAS" --repo "$REPO_A")"
+assert_eq "" "$(json_field "$PROVIDER_ONLY_RECORD" provider)" \
+  "mismatched provider residue stays untrusted"
+assert_eq '["provider"]' "$(json_field "$PROVIDER_ONLY_RECORD" artifacts)" \
+  "provider-only residue remains visible"
 LEGIT_PASS_RECORD="$(dx_session_catalog_record "$SID_LEGIT_PASS" --repo "$REPO_A")"
 assert_eq "false" "$(json_field "$LEGIT_PASS_RECORD" is_child)" \
   "valid lifecycle with a child-shaped name"
+
+assert_catalog_record_missing() {
+  local session_id="$1" assertion_name="$2"
+  if dx_session_catalog_record "$session_id" --repo "$REPO_A" >/dev/null 2>&1; then
+    fail "$assertion_name"
+  else
+    assert_eq "1" "$?" "$assertion_name"
+  fi
+}
+
+assert_unsafe_lock_visible() {
+  local session_id="$1" family="$2" assertion_name="$3" record
+  record="$(dx_session_catalog_record "$session_id" --repo "$REPO_A")"
+  assert_eq "[\"${family}\"]" "$(json_field "$record" unsafe_artifacts)" \
+    "$assertion_name"
+}
+
+SAFE_COMPLETION_SID="$(cd "$REPO_A" && dx_scoped_session_id completion-lock-tombstone)"
+SAFE_COMPLETION_LOCK="$DX_LOOP_DIR/${SAFE_COMPLETION_SID}.completion-lock"
+: > "$SAFE_COMPLETION_LOCK"
+chmod 600 "$SAFE_COMPLETION_LOCK"
+assert_catalog_record_missing "$SAFE_COMPLETION_SID" \
+  "safe completion lock tombstone stays hidden"
+rm -f "$SAFE_COMPLETION_LOCK"
+
+SAFE_RUNTIME_SID="$(cd "$REPO_A" && dx_scoped_session_id runtime-lock-tombstone)"
+SAFE_RUNTIME_TOKEN="$(dx_session_runtime_start "$SAFE_RUNTIME_SID" codex "$REPO_A" "$$")"
+[[ -n "$SAFE_RUNTIME_TOKEN" ]] || assert_at $LINENO
+SAFE_RUNTIME_FILE="$(dx_session_runtime_file "$SAFE_RUNTIME_SID")"
+SAFE_RUNTIME_LOCK="${SAFE_RUNTIME_FILE}-lock"
+rm -f "$SAFE_RUNTIME_FILE"
+assert_catalog_record_missing "$SAFE_RUNTIME_SID" \
+  "safe runtime lock tombstone stays hidden"
+rm -f "$SAFE_RUNTIME_LOCK"
+
+COMPLETION_SYMLINK_SID="$(cd "$REPO_A" && dx_scoped_session_id completion-lock-symlink)"
+COMPLETION_SYMLINK_TARGET="$TMP_DIR/completion-lock-symlink-target"
+: > "$COMPLETION_SYMLINK_TARGET"
+chmod 600 "$COMPLETION_SYMLINK_TARGET"
+ln -s "$COMPLETION_SYMLINK_TARGET" \
+  "$DX_LOOP_DIR/${COMPLETION_SYMLINK_SID}.completion-lock"
+assert_unsafe_lock_visible "$COMPLETION_SYMLINK_SID" completion-lock \
+  "completion lock symlink remains visible"
+rm -f "$DX_LOOP_DIR/${COMPLETION_SYMLINK_SID}.completion-lock" \
+  "$COMPLETION_SYMLINK_TARGET"
+
+COMPLETION_HARDLINK_SID="$(cd "$REPO_A" && dx_scoped_session_id completion-lock-hardlink)"
+COMPLETION_HARDLINK_TARGET="$TMP_DIR/completion-lock-hardlink-target"
+: > "$COMPLETION_HARDLINK_TARGET"
+chmod 600 "$COMPLETION_HARDLINK_TARGET"
+ln "$COMPLETION_HARDLINK_TARGET" \
+  "$DX_LOOP_DIR/${COMPLETION_HARDLINK_SID}.completion-lock"
+assert_unsafe_lock_visible "$COMPLETION_HARDLINK_SID" completion-lock \
+  "completion lock hardlink remains visible"
+rm -f "$DX_LOOP_DIR/${COMPLETION_HARDLINK_SID}.completion-lock" \
+  "$COMPLETION_HARDLINK_TARGET"
+
+COMPLETION_MODE_SID="$(cd "$REPO_A" && dx_scoped_session_id completion-lock-mode)"
+COMPLETION_MODE_LOCK="$DX_LOOP_DIR/${COMPLETION_MODE_SID}.completion-lock"
+: > "$COMPLETION_MODE_LOCK"
+chmod 644 "$COMPLETION_MODE_LOCK"
+assert_unsafe_lock_visible "$COMPLETION_MODE_SID" completion-lock \
+  "completion lock with wrong mode remains visible"
+rm -f "$COMPLETION_MODE_LOCK"
+
+RUNTIME_LOCK_PAYLOAD='dex-runtime-lock-v1 0123456789abcdef0123456789abcdef'
+RUNTIME_MALFORMED_SID="$(cd "$REPO_A" && dx_scoped_session_id runtime-lock-malformed)"
+RUNTIME_MALFORMED_LOCK="$DX_STATE_DIR/${RUNTIME_MALFORMED_SID}.runtime-lock"
+printf 'malformed\n' > "$RUNTIME_MALFORMED_LOCK"
+chmod 600 "$RUNTIME_MALFORMED_LOCK"
+assert_unsafe_lock_visible "$RUNTIME_MALFORMED_SID" runtime-lock \
+  "malformed runtime lock remains visible"
+rm -f "$RUNTIME_MALFORMED_LOCK"
+
+RUNTIME_SYMLINK_SID="$(cd "$REPO_A" && dx_scoped_session_id runtime-lock-symlink)"
+RUNTIME_SYMLINK_TARGET="$TMP_DIR/runtime-lock-symlink-target"
+printf '%s\n' "$RUNTIME_LOCK_PAYLOAD" > "$RUNTIME_SYMLINK_TARGET"
+chmod 600 "$RUNTIME_SYMLINK_TARGET"
+ln -s "$RUNTIME_SYMLINK_TARGET" "$DX_STATE_DIR/${RUNTIME_SYMLINK_SID}.runtime-lock"
+assert_unsafe_lock_visible "$RUNTIME_SYMLINK_SID" runtime-lock \
+  "runtime lock symlink remains visible"
+rm -f "$DX_STATE_DIR/${RUNTIME_SYMLINK_SID}.runtime-lock" "$RUNTIME_SYMLINK_TARGET"
+
+RUNTIME_HARDLINK_SID="$(cd "$REPO_A" && dx_scoped_session_id runtime-lock-hardlink)"
+RUNTIME_HARDLINK_TARGET="$TMP_DIR/runtime-lock-hardlink-target"
+printf '%s\n' "$RUNTIME_LOCK_PAYLOAD" > "$RUNTIME_HARDLINK_TARGET"
+chmod 600 "$RUNTIME_HARDLINK_TARGET"
+ln "$RUNTIME_HARDLINK_TARGET" "$DX_STATE_DIR/${RUNTIME_HARDLINK_SID}.runtime-lock"
+assert_unsafe_lock_visible "$RUNTIME_HARDLINK_SID" runtime-lock \
+  "runtime lock hardlink remains visible"
+rm -f "$DX_STATE_DIR/${RUNTIME_HARDLINK_SID}.runtime-lock" "$RUNTIME_HARDLINK_TARGET"
+
+RUNTIME_MODE_SID="$(cd "$REPO_A" && dx_scoped_session_id runtime-lock-mode)"
+RUNTIME_MODE_LOCK="$DX_STATE_DIR/${RUNTIME_MODE_SID}.runtime-lock"
+printf '%s\n' "$RUNTIME_LOCK_PAYLOAD" > "$RUNTIME_MODE_LOCK"
+chmod 644 "$RUNTIME_MODE_LOCK"
+assert_unsafe_lock_visible "$RUNTIME_MODE_SID" runtime-lock \
+  "runtime lock with wrong mode remains visible"
+rm -f "$RUNTIME_MODE_LOCK"
 
 SELECTED="$(dx_session_catalog_select "session:$SID_A" --repo "$REPO_A")"
 assert_eq "$SID_A" "$(json_field "$SELECTED" session_id)" "session selector"
@@ -200,11 +304,11 @@ else
 fi
 
 dx_session_catalog_records --repo "$REPO_A/.dex/worktrees/ticket-101" > "$TMP_DIR/worktree-records.jsonl"
-assert_eq "5" "$(wc -l < "$TMP_DIR/worktree-records.jsonl" | tr -d '[:space:]')" "worktree-scoped count"
+assert_eq "6" "$(wc -l < "$TMP_DIR/worktree-records.jsonl" | tr -d '[:space:]')" "worktree-scoped count"
 assert_contains "$SID_A" "$TMP_DIR/worktree-records.jsonl"
 
 dx_session_catalog_records --repo "$REPO_A" --include-children > "$TMP_DIR/with-children.jsonl"
-assert_eq "7" "$(wc -l < "$TMP_DIR/with-children.jsonl" | tr -d '[:space:]')" "child-inclusive count"
+assert_eq "8" "$(wc -l < "$TMP_DIR/with-children.jsonl" | tr -d '[:space:]')" "child-inclusive count"
 assert_contains "$CHILD_A" "$TMP_DIR/with-children.jsonl"
 CHILD_RECORD="$(dx_session_catalog_record "$CHILD_A" --repo "$REPO_A")"
 assert_eq "true" "$(json_field "$CHILD_RECORD" is_child)" "child classification"

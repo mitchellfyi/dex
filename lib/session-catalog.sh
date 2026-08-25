@@ -301,6 +301,71 @@ def trusted_read(target_file, max_bytes, exact_mode=None, return_metadata=False)
     raise UnsafeStateError(f"changed repeatedly: {transient_error}")
 
 
+def trusted_private_inode(target_file, exact_mode):
+    transient_error = None
+    for attempt in range(READ_ATTEMPTS):
+        descriptor = None
+        try:
+            before = os.lstat(target_file)
+            validate_trusted_regular(before, exact_mode)
+            open_flags = os.O_RDONLY
+            open_flags |= getattr(os, "O_CLOEXEC", 0)
+            open_flags |= getattr(os, "O_NOFOLLOW", 0)
+            open_flags |= getattr(os, "O_NONBLOCK", 0)
+            try:
+                descriptor = os.open(target_file, open_flags)
+            except FileNotFoundError as exc:
+                raise TransientReadError(str(exc))
+            except OSError as exc:
+                if exc.errno in (errno.ENOENT, errno.ESTALE):
+                    raise TransientReadError(str(exc))
+                raise UnsafeStateError(str(exc))
+            opened = os.fstat(descriptor)
+            if fingerprint(opened) != fingerprint(before):
+                raise TransientReadError("changed while opening")
+            try:
+                named = os.lstat(target_file)
+            except FileNotFoundError as exc:
+                raise TransientReadError(str(exc))
+            if fingerprint(named) != fingerprint(opened):
+                raise TransientReadError("path changed while inspecting")
+            return opened
+        except FileNotFoundError:
+            raise
+        except TransientReadError as exc:
+            transient_error = exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        if attempt + 1 < READ_ATTEMPTS:
+            time.sleep(READ_RETRY_SECONDS)
+    raise UnsafeStateError(f"changed repeatedly: {transient_error}")
+
+
+def trusted_runtime_lock_identity(lock_file):
+    payload, metadata = trusted_read(
+        lock_file, 128, exact_mode=0o600, return_metadata=True
+    )
+    expected_length = len(LOCK_PREFIX) + 32 + 1
+    if (
+        len(payload) != expected_length
+        or not payload.startswith(LOCK_PREFIX)
+        or not payload.endswith(b"\n")
+    ):
+        raise UnsafeStateError("runtime lock identity is invalid")
+    try:
+        generation = payload[len(LOCK_PREFIX) : -1].decode("ascii")
+    except UnicodeDecodeError:
+        raise UnsafeStateError("runtime lock identity is invalid")
+    if not LOCK_GENERATION_RE.fullmatch(generation):
+        raise UnsafeStateError("runtime lock identity is invalid")
+    return {
+        "generation": generation,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+    }
+
+
 def artifact_owner(name):
     for suffix, family in EXACT_SUFFIXES:
         if name.endswith(suffix):
@@ -320,7 +385,23 @@ def artifact_owner(name):
     return None
 
 
-def artifact_is_unsafe(entry, family):
+def artifact_is_unsafe(entry, family, location):
+    if family == "completion-lock":
+        if location != "loop":
+            return True
+        try:
+            trusted_private_inode(entry.path, 0o600)
+        except (FileNotFoundError, UnsafeStateError, OSError, ValueError):
+            return True
+        return False
+    if family == "runtime-lock":
+        if location != "state":
+            return True
+        try:
+            trusted_runtime_lock_identity(entry.path)
+        except (FileNotFoundError, UnsafeStateError, OSError, ValueError):
+            return True
+        return False
     try:
         metadata = entry.stat(follow_symlinks=False)
     except (OSError, ValueError):
@@ -372,7 +453,7 @@ def scan_artifacts():
             )
             item["families"].add(family)
             item["locations"].setdefault(family, set()).add(location)
-            if artifact_is_unsafe(entry, family):
+            if artifact_is_unsafe(entry, family, location):
                 item["unsafe"].add(family)
     return grouped
 
@@ -719,24 +800,7 @@ def validate_runtime(record, session_id):
 
 
 def runtime_lock_identity(runtime_file):
-    lock_file = f"{runtime_file}-lock"
-    payload, metadata = trusted_read(
-        lock_file, 128, exact_mode=0o600, return_metadata=True
-    )
-    expected_length = len(LOCK_PREFIX) + 32 + 1
-    if len(payload) != expected_length or not payload.startswith(LOCK_PREFIX) or not payload.endswith(b"\n"):
-        raise UnsafeStateError("runtime lock identity is invalid")
-    try:
-        generation = payload[len(LOCK_PREFIX) : -1].decode("ascii")
-    except UnicodeDecodeError:
-        raise UnsafeStateError("runtime lock identity is invalid")
-    if not LOCK_GENERATION_RE.fullmatch(generation):
-        raise UnsafeStateError("runtime lock identity is invalid")
-    return {
-        "generation": generation,
-        "device": metadata.st_dev,
-        "inode": metadata.st_ino,
-    }
+    return trusted_runtime_lock_identity(f"{runtime_file}-lock")
 
 
 def runtime_details(session_id, families):
@@ -994,7 +1058,10 @@ def build_records():
     grouped = scan_artifacts()
     records = {}
     for session_id, artifacts in grouped.items():
-        if artifacts["families"].issubset({"provider", "runtime-lock"}):
+        if (
+            artifacts["families"].issubset({"completion-lock", "runtime-lock"})
+            and not artifacts["unsafe"]
+        ):
             continue
         metadata, metadata_health = parse_metadata(session_id, artifacts["families"])
         child_match = CHILD_RE.fullmatch(session_id)
