@@ -62,12 +62,15 @@ write_proc_identity() {
 
 write_session() {
   local repo_dir="$1" session_id="$2" ticket="$3" workspace_name="$4" phase="$5"
+  local phase_file
   dx_meta_write "$session_id" \
     "ticket_number=$ticket" \
     "wt_name=$workspace_name" \
     "wt_dir=$repo_dir" \
     "workspace_mode=in-place"
-  printf '%s\n' "$phase" > "$(dx_state_file "$session_id")"
+  phase_file=$(dx_state_file "$session_id")
+  printf '%s\n' "$phase" > "$phase_file"
+  chmod 600 "$phase_file"
 }
 
 run_sessions() {
@@ -123,6 +126,7 @@ dx_meta_write "$CHILD_SID" \
   "parent_session_id=$SID_LIVE" \
   "child_kind=pass"
 printf '3\n' > "$(dx_state_file "$CHILD_SID")"
+chmod 600 "$(dx_state_file "$CHILD_SID")"
 
 start_fixture_process "$TMP_DIR/live-process.out"
 LIVE_PID=$FIXTURE_PID
