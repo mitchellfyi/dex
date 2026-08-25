@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
@@ -145,7 +146,7 @@ if grep -Eq 'block-review-pass-push|block-pre-phase4-push' <<<"$GUARD_OUT"; then
 fi
 
 dx_write_lifecycle_control "$DEX_SESSION_ID" cancel "" user-prompt "$(printf stale | shasum -a 256 | awk '{print $1}')"
-touch "$PAUSED_FILE"
+dx_lifecycle_atomic_write "$PAUSED_FILE" paused
 rm -f "$(dx_active_file "$DEX_SESSION_ID")"
 mkdir "$(dx_active_file "$DEX_SESSION_ID")"
 owned_payload "Resume Dex." "$CONTROL_OWNER" | bash "$HOOK" > "$TMP_DIR/resume-activation-failure.out"
@@ -178,7 +179,7 @@ PROMPT_GENERATION=$(dx_completion_issue \
   "$DEX_SESSION_ID" standalone dxloop-prompt prompt-loop)
 printf 'prompt-loop:PROMPT_COMPLETE:%s/prompts/phase-audits/prompt-loop.md:1:standalone:dxloop-prompt:%s\n' \
   "$ROOT" "$PROMPT_GENERATION" > "$(dx_loop_config_file "$DEX_SESSION_ID")"
-touch "$PAUSED_FILE"
+dx_lifecycle_atomic_write "$PAUSED_FILE" paused
 printf '%s\n' "$CONTROL_OWNER" > "$OWNER_FILE"
 owned_payload "Resume Dex." "$CONTROL_OWNER" | bash "$HOOK" \
   > "$TMP_DIR/standalone-prompt-resume.out"
