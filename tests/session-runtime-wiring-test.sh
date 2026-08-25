@@ -135,21 +135,23 @@ assert_no_file "$CONTENTION_SENTINEL"
 assert_contains "Another Dex runtime already owns this checkout" \
   "$TMP_DIR/contention.output"
 
-# A failed terminal write rejects an otherwise successful callback and leaves
-# no record that still claims a healthy live owner.
-if TEST_SESSION_ID=wiring-finish-failure zsh -fc '
+# Denying writes to the state directory makes terminal publication fail without
+# racing the supervisor heartbeat, which can legitimately replace the record.
+finish_failure_result=0
+TEST_SESSION_ID=wiring-finish-failure zsh -fc '
     source "$DEX_DIR/dx.sh"
     __dx_resolved_provider_agent() { print -r -- codex; }
-    __test_corrupt_runtime() {
-      chmod 644 "$(dx_session_runtime_file "$TEST_SESSION_ID")"
+    __test_deny_terminal_publish() {
+      chmod 500 "$DX_STATE_DIR"
       __dx_runtime_set_terminal completed
     }
     __dx_run_with_runtime \
-      "$TEST_SESSION_ID" "$TEST_REPO" __test_corrupt_runtime
-  ' > "$TMP_DIR/finish-failure.output" 2>&1; then
+      "$TEST_SESSION_ID" "$TEST_REPO" __test_deny_terminal_publish
+  ' > "$TMP_DIR/finish-failure.output" 2>&1 || finish_failure_result=$?
+chmod 700 "$DX_STATE_DIR"
+if [[ "$finish_failure_result" -eq 0 ]]; then
   fail "runtime finish failure was accepted as success"
 fi
-chmod 600 "$DX_STATE_DIR/wiring-finish-failure.runtime"
 assert_contains "could not close the runtime lease safely" \
   "$TMP_DIR/finish-failure.output"
 
