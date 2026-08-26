@@ -2036,6 +2036,8 @@ __dx_run_with_timeout_core() {
   local timeout="$1" temp_dir="" marker="" token_file="" token=""
   local candidate_file="" command_root_pid=""
   local cmd_pid="" watchdog_pid="" cmd_status timeout_enabled=0
+  local started_at="" now="" elapsed="" last_policy_check=""
+  local policy_value="" live_timeout="" timeout_marker=""
   local policy_session="${DX_TIMEOUT_POLICY_SESSION_ID:-}"
   local policy_gate="${DX_TIMEOUT_POLICY_GATE:-}"
   local policy_default="${DX_TIMEOUT_POLICY_DEFAULT_VALUE:-}"
@@ -2084,51 +2086,52 @@ __dx_run_with_timeout_core() {
   cmd_pid=$!
 
   if [[ $timeout_enabled -eq 1 ]]; then
-    (
-      local started_at now elapsed policy_value live_timeout
-      started_at=$(date +%s)
-      while kill -0 "$cmd_pid" 2>/dev/null; do
+    # Keep deadline ownership in the supervisor that also reaps the command.
+    # A separate timer process can lose a scheduling race to an outer lifecycle
+    # fence under load, turning an internal timeout into a misleading SIGTERM.
+    # Poll command liveness cheaply and re-read live policy at most once per
+    # wall-clock second.
+    started_at=$(date +%s)
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+      now=$(date +%s)
+      if [[ "$now" != "$last_policy_check" ]]; then
+        last_policy_check="$now"
         live_timeout="$timeout"
         if [[ -n "$policy_session" && -n "$policy_gate" ]]; then
-          policy_value=$(dx_override_effective "$policy_session" \
+          if ! policy_value=$(dx_override_effective "$policy_session" \
             "$policy_gate" "$policy_default" "$policy_phase" \
-            2>/dev/null) || {
+            2>/dev/null); then
             printf 'policy-invalid\n' > "$marker"
             __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
               "$candidate_file"
-            exit 0
-          }
+            break
+          fi
           if [[ ! "$policy_value" =~ ^[0-9]+$ \
             || ! "$policy_multiplier" =~ ^[1-9][0-9]*$ ]]; then
             printf 'policy-invalid\n' > "$marker"
             __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
               "$candidate_file"
-            exit 0
+            break
           fi
           live_timeout=$((10#$policy_value * 10#$policy_multiplier))
         fi
-        now=$(date +%s)
         elapsed=$((now - started_at))
-        if [[ "$live_timeout" -gt 0 && "$elapsed" -ge "$live_timeout" ]]; then
+        if [[ "$live_timeout" -gt 0 \
+          && "$elapsed" -ge "$live_timeout" ]]; then
           printf 'timeout\n' > "$marker"
           __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
             "$candidate_file"
-          exit 0
+          break
         fi
-        sleep 1 2>/dev/null || true
-      done
-    ) >/dev/null 2>&1 &
-    watchdog_pid=$!
+      fi
+      sleep 0.1 2>/dev/null || true
+    done
   fi
 
   cmd_status=0
   wait "$cmd_pid" 2>/dev/null || cmd_status=$?
 
   if [[ -f "$marker" ]]; then
-    # The watchdog owns TERM-to-KILL escalation. Waiting here prevents the
-    # command root's exit from cancelling cleanup before resistant children die.
-    [[ -n "$watchdog_pid" ]] && wait "$watchdog_pid" 2>/dev/null || true
-    local timeout_marker=""
     timeout_marker=$(cat "$marker" 2>/dev/null || true)
     __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file" \
       "$candidate_file"
@@ -2136,16 +2139,8 @@ __dx_run_with_timeout_core() {
     return 124
   fi
 
-  # A natural command exit may still leave background children. Stop the timer,
-  # then terminate every process that inherited this invocation's token.
-  __dx_timeout_stop_watchdog "$watchdog_pid"
-  if [[ -f "$marker" ]]; then
-    __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
-      "$candidate_file"
-    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file" \
-      "$candidate_file"
-    return 124
-  fi
+  # A natural command exit may still leave background children. Terminate every
+  # process that inherited this invocation's token before returning its status.
   __dx_timeout_terminate_processes "$token_file" "" "$candidate_file"
   __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file" \
     "$candidate_file"
