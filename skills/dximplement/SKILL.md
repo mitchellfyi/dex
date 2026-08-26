@@ -43,7 +43,7 @@ whose scope matches the approved plan, changed files, or current phase. Treat
 memory as useful context, not proof: re-check current code before relying on an
 old lesson.
 
-Before editing UI-affecting files, decide whether the approved plan changes browser UI, visual layout, styles, routes, or user flows. If it does, invoke `dxuicapture` immediately for before evidence and add the generated `visual-evidence.md` manifest path to your working notes. Capture the representative routes/flows you expect to change. If UI files have already been modified before the baseline can be captured, do not synthesize a before state; record `Before capture: unavailable — UI was already modified before capture` in the manifest and final evidence.
+Before editing UI-affecting files, invoke `dxuicapture` to make the visual-proof decision. Capture when a short walkthrough would materially help a reviewer; otherwise record `SKIPPED` with a concrete reason, or `N/A` when there is no browser-rendered impact. If capture is selected, record the representative baseline before UI edits whenever it is meaningful and reproducible. Do not synthesize a before state; use the skill's `after_only` contract and explain why when the feature had no useful baseline.
 
 ### 2. Design the Test Strategy First
 
@@ -170,26 +170,22 @@ update the evidence table with final pass/fail status. Do not invoke `/dxreview`
 from Phase 2; the dedicated Phase 3 `/dxreviewloop` handles adversarial review
 after implementation is complete.
 
-### 7. UI Capture Evidence
+### 7. UI Proof Decision
 
-If the change affects browser UI, invoke the `dxuicapture` skill before Phase 2 completes. Ensure the evidence includes:
+Invoke `dxuicapture` before Phase 2 completes and record one outcome:
 
-- before screenshots/traces captured before UI edits, or an explicit before-unavailable reason
-- after desktop/mobile screenshots for the same representative routes/views
-- Playwright traces and browser logs for captured routes/views
-- video for interactive flows
-- the `visual-evidence.md` manifest path under Dex's artifact directory
+- `READY`: link the short walkthrough, poster, editable storyboard, transcript, and manifest. The structured path should show the representative flow, use before/after parity or a truthful after-only reason, include captions, and remain under 90 seconds.
+- `SKIPPED`: explain why a produced visual artifact would not improve this review. This is a valid agent judgment, not a failed gate.
+- `N/A`: explain why no browser UI is affected.
 
-Artifacts must stay in Dex's artifact directory and must not be committed. Add absolute links to the manifest, screenshots, videos, traces, and logs to the implementation evidence.
-
-If no browser UI changed, add `UI capture: N/A — no UI-affecting files changed` to the evidence.
+Use `NEEDS_REVIEW` while a selected capture is incomplete or needs another production pass. Do not leave the decision `MISSING`. Artifacts stay in Dex's temporary artifact directory and must not be committed. Run `dx ui-capture show` after the baseline and after production so the user sees the handoff path early.
 
 ### 8. Manual Local Smoke Test
 
 A green test suite is not the same as a working feature. Before marking Phase 2 ready, exercise the change end-to-end the way a human reviewer would — run it locally and watch it actually work.
 
 - **Run the change end-to-end locally**, not just the test suite. Start the app/server/CLI the way the project runs it (reuse the dev-server startup documented in `dxuicapture` for web apps), then drive the real user-facing path this ticket changed.
-- **Prefer a real browser, fall back to Playwright.** For browser-facing changes, drive the flow with the Claude-in-Chrome browser tools (`mcp__claude-in-chrome__*`) when a live browser is available; otherwise fall back to Playwright (the Playwright MCP, or the Playwright install `dxuicapture` provisions via `bin/ui-capture.sh --install-only`). For non-UI changes, exercise it the matching way: hit the endpoint, run the command, trigger the job, or call the public API against a running instance.
+- **Prefer a real browser, fall back to Playwright.** For browser-facing changes, drive the flow with the Claude-in-Chrome browser tools (`mcp__claude-in-chrome__*`) when a live browser is available; otherwise fall back to Playwright (the Playwright MCP, or the pinned install `dxuicapture` provisions with `dx ui-capture install`). For non-UI changes, exercise it the matching way: hit the endpoint, run the command, trigger the job, or call the public API against a running instance.
 - **Seed local data when the flow needs it.** Use the project's seeding path if one exists (factories, seed scripts, fixtures); otherwise insert the minimal rows the flow requires directly into the local dev/test database. Seed only what the flow needs.
 - **Judge it like a reviewer**: confirm it works *effectively* (the happy path does the right thing), is *robust* (a representative bad/edge input is handled gracefully, not a crash or 500), and is backed by *good test coverage* (the path you just exercised by hand has corresponding automated tests). If the smoke test exposes a coverage gap, add the test before finishing.
 - **Clean up after yourself.** Stop every process/server you started, remove any rows, temp data, or fixture files you created, and leave no Phase 2 background process in flight. Smoke-test artifacts follow the same rule as UI capture — do not commit them.
@@ -260,7 +256,7 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
   future CI without a user-approved plan change or recorded agent waiver.
 - Final deterministic checks passed locally.
 - The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
-- Required UI capture evidence is linked, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A.
+- The UI proof decision is recorded as `READY`, `SKIPPED` with a reason, or `N/A` with a reason. Choosing `SKIPPED` is allowed when a walkthrough would not improve the review.
 - No Phase 2 background processes or long-running commands are still in flight.
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
   recorded for the final current scope and bound to the trusted clean-wave
@@ -293,7 +289,7 @@ You SHOULD:
 - Implement all planned tasks with TDD
 - Run quality checks on changed files after each task (format, lint, typecheck)
 - Run the self-review loop (Step 5) and final implementation checks (Step 6)
-- Run `/dxuicapture` for UI-affecting changes before UI edits and after implementation, then link the artifacts
+- Run `/dxuicapture` early, then capture a concise walkthrough or record a reasoned `SKIPPED`/`N/A` decision
 - Run the manual local smoke test (Step 8) before marking Phase 2 ready, cleaning up anything it starts or seeds
 - Select and persist the Phase 3 review risk after the final in-scope change
 - Update `.dex/` project docs if your changes require it

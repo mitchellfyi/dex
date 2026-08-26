@@ -47,10 +47,10 @@ resulting state and continue using the current phase's completion criteria.
 
 1. Invoke the Skill tool with `skill: "dximplement"` — work through tasks with TDD discipline. The plan approval was the go-ahead; do not pause to ask for permission.
 2. Ask by default if ambiguous requirements, scope changes, or blocked dependencies arise. The active agent may use the attributed override/waiver contract when proceeding is justified.
-3. For UI-affecting changes, invoke `/dxuicapture` before UI edits for baseline evidence, then again after implementation. Capture screenshots/traces, record video for interactive flows, and link the `visual-evidence.md` manifest from Dex's artifact directory.
+3. Invoke `/dxuicapture` early to decide whether visual proof would help. The agent may capture a concise walkthrough, record `SKIPPED` with a reason for a visible but disproportionate case, or record `N/A` when there is no browser impact. When capture is chosen, prefer a matched before/after flow, keep it under 90 seconds, and surface the temporary bundle after baseline and production.
 4. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
-5. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, the manual smoke test passed or explicitly N/A, and UI capture evidence present or explicitly N/A.
-6. **SCOPE**: focus on implementation, testing, and UI capture evidence. Ticket setup belongs to Phase 0, so only re-run it here if Phase 0 left it incomplete. Phase 4 normally owns verification and publishing, while Phase 5 normally owns the PR description; direct human instructions can change that order.
+5. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, the manual smoke test passed or explicitly N/A, and an honest UI proof decision recorded. A reasoned `SKIPPED` decision is valid; it is not reported as a successful capture.
+6. **SCOPE**: focus on implementation, testing, and the UI proof decision. Ticket setup belongs to Phase 0, so only re-run it here if Phase 0 left it incomplete. Phase 4 normally owns verification and publishing, while Phase 5 normally owns the PR description; direct human instructions can change that order.
 7. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `small`, `normal`, or `complex`, with a
    deterministic set of reason codes. The tier selects the trusted clean-wave

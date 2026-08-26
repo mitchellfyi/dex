@@ -31,6 +31,7 @@
 #   dx run --spec <file>    Run from a structured headless run spec
 #   dx control <action>     Pause, stop, advance, jump, or resume a lifecycle
 #   dx sessions             Inspect and diagnose lifecycle sessions
+#   dx ui-capture           Capture or inspect temporary UI proof
 #   dex                   Alias for dx
 #   dexter                Alias for dx
 
@@ -87,6 +88,7 @@ __dx_cli() {
     run)       __dx_run_spec_cli "$@" ;;
     control)   bash "$DEX_DIR/bin/control.sh" "$@" ;;
     sessions)  bash "$DEX_DIR/bin/sessions.sh" "$@" ;;
+    ui-capture) bash "$DEX_DIR/bin/ui-capture.sh" "$@" ;;
     research)
       local _dx_has_max_cycles=0 _dx_has_runner=0 _dx_research_help=0 _dx_arg
       local _dx_research_args=("$@")
@@ -162,6 +164,7 @@ __dx_cli() {
       echo "  dx run --spec-url URL --run-token TOKEN"
       echo "  dx control          Pause, stop, advance, jump, or resume the current lifecycle"
       echo "  dx sessions         Inspect and diagnose lifecycle sessions"
+      echo "  dx ui-capture       Capture, revise, inspect, or skip temporary UI proof"
       echo "  dx research         Run autonomous research orchestrator"
       echo "                        Defaults: --max-cycles 20; SCENARIO_TIMEOUT 3600s (1h) per scenario"
       echo "                        Override timeout: dx research --scenario-timeout 7200"
@@ -202,7 +205,7 @@ __dx_cli() {
       echo ""
       echo "Autonomous lifecycle phases (run automatically by dx):"
       echo "  1. Plan            Gather context, draft plan, get approval"
-      echo "  2. Implement       Work through tasks with TDD; capture UI before/after evidence"
+      echo "  2. Implement       Work through tasks with TDD; decide and surface UI proof"
       echo "  3. Review          Adaptive adversarial code review"
       echo "  4. Verify & Commit Format, lint, typecheck, test, then commit + push"
       echo "  5. PR              Generate PR description, prepare visual handoff, create draft PR + attach reviewers"
@@ -360,7 +363,7 @@ Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill
 The dxplan skill writes the required Phase 1 lifecycle markers. For freeform \`dx \"<task>\"\` requests with a configured tracker, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues and select the first implementation ticket. After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
 
 For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval." \
-  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. For UI-affecting changes, Phase 2 must invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. Phase focus: implementation, testing, and UI capture evidence. Commit, push, branch, and PR actions remain available when useful; later phases still perform the canonical verification, commit, and PR handoff. When done, stop — the audit loop will verify your work." \
+  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact. Phase focus: implementation, testing, and trustworthy proof. Commit, push, branch, and PR actions remain available when useful; later phases still perform the canonical verification, commit, and PR handoff. When done, stop — the audit loop will verify your work." \
   "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful; later phases still perform their normal handoff steps. When the loop writes a valid success receipt, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dxcommit\" to commit and push. Phase focus: verification and the canonical commit, but PR creation and implementation fixes remain available when useful. When pushed, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from dex.md § Reviewers. Phase focus: PR creation, description, and artifact handoff. Marking ready, posting @mentions, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop — the audit loop will verify." \
@@ -1480,6 +1483,10 @@ __dx_configure_inline_phase() {
 unalias __dx_cleanup_completed_workspace 2>/dev/null; unfunction __dx_cleanup_completed_workspace 2>/dev/null
 __dx_cleanup_completed_workspace() {
   local wt_name="$1" wt_dir="$2" default_branch="$3" workspace_mode="${4:-worktree}" session_id="${5:-}"
+
+  if [[ -n "$session_id" ]] && ! dx_ui_capture_mark_completed "$session_id"; then
+    dx_warn "The lifecycle completed, but Dex could not start the UI proof retention window."
+  fi
 
   if [[ "$workspace_mode" == "worktree" ]]; then
     dx_info "Cleaning up local Dex worktree and branch..."
@@ -3644,6 +3651,10 @@ __dx_show_header() {
   run_id=$(dx_run_read_for_session "$session_id" 2>/dev/null || true)
   [[ -n "$run_id" ]] && echo "  Run ID: ${run_id}"
 
+  if [[ "$step" -ge 2 ]]; then
+    dx_ui_capture_summary "$session_id"
+  fi
+
   # Timing info
   if [[ -f "$times_file" ]] && [[ $step -gt 1 ]]; then
     local prev_step=$((step - 1))
@@ -3693,7 +3704,7 @@ __dx_show_header() {
 unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/null
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
-    test config provider run control sessions research install uninstall uninit status \
+    test config provider run control sessions ui-capture research install uninstall uninit status \
     reload help revert log refine
 }
 
@@ -3778,7 +3789,7 @@ dx() {
     echo "       dx --from-pr <N>   Resume session linked to a PR"
     echo "       dx refine <N|description>  Refine a ticket before implementation"
     echo ""
-    echo "       dx init|sync|maintain|tools|test|config|provider|run|research|install|uninstall|uninit|status|reload|help"
+    echo "       dx init|sync|maintain|tools|test|config|provider|run|ui-capture|research|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -3862,7 +3873,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|run|control|sessions|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
@@ -5392,6 +5403,10 @@ dxclean() {
     echo "  Cleaned ${old_phase_files} old phase state file(s)"
     cleaned=$((cleaned + old_phase_files))
   fi
+
+  # UI proof is intentionally longer-lived than lifecycle state so reviewers
+  # can still retrieve it after a PR completes.
+  dx_ui_capture_cleanup "$(dx_ui_capture_retention_days)" || cleanup_failed=1
 
   if [[ $cleaned -eq 0 ]]; then
     echo "Nothing to clean."

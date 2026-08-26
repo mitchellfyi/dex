@@ -485,7 +485,9 @@ TEST_REPO="$REPO" TEST_WORKTREE_SID="$TEST_WORKTREE_SID" zsh -fc '
   __dx_startup_claim_release
 '
 assert_no_file "$(dx_session_claim_lock_dir "$TEST_WORKTREE_SID")/owner"
-printf '.dex/\n' >> "$(git -C "$REPO" rev-parse --git-path info/exclude)"
+# --git-path may be relative to REPO, not the shell's current directory. The
+# latter can itself be a linked worktree where `.git` is a pointer file.
+printf '.dex/\n' >> "$(git -C "$REPO" rev-parse --absolute-git-dir)/info/exclude"
 
 # If cleanup owns the claim first, a launcher that observed that generation
 # must abort after cleanup commits instead of recreating the deleted SID.

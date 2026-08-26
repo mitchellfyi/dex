@@ -1,244 +1,215 @@
 ---
 name: "dxuicapture"
-description: "Capture UI screenshots, Playwright traces, videos, and browser error logs for UI-affecting changes."
+description: "Decide whether a UI change needs visual proof, then capture and produce a short, editable browser walkthrough when it adds reviewer value."
 ---
 
 # Skill: dxuicapture
 
-Capture before/after visual evidence for browser-facing work.
+Treat visual proof as a review artifact, not ceremony. Make an explicit decision, produce a concise walkthrough when it helps, and surface the result while it is still useful.
 
-## When to Use
+## 1. Make the decision
 
-- At the start of `/dximplement`, before editing UI files, when the approved plan affects web UI, routes, components, styles, browser behavior, or user flows
-- After `/dximplement` finishes UI-affecting changes, before Phase 2 hands off to review
-- During `/dxpr` when a UI change needs final after-capture evidence for PR handoff
-- When a ticket asks for visual verification, screenshots, or video
-- When debugging UI regressions with Playwright MCP or Chrome DevTools MCP
+Read the task, approved plan, and changed files. Choose one outcome:
 
-If the change does not affect UI, record `UI capture: N/A — no UI-affecting files changed` in the implementation evidence and stop.
+- **Capture** when seeing the change would materially help a reviewer: new or changed interactions, navigation, scrolling, state transitions, responsive behavior, layout, styling, validation, onboarding, checkout, uploads, menus, modals, or a visual regression.
+- **Skip** when browser behavior changed but a video would add little or cost more than it clarifies. Examples include a tiny copy or icon adjustment, an environment that cannot safely reproduce the flow, or an existing focused artifact that proves the same thing better.
+- **N/A** when there is no browser-rendered impact.
 
-## Artifact Rules
+The agent owns this judgment. A ticket can ask for visual proof explicitly; that makes capture the default unless it is unsafe or impossible. Otherwise, use the smallest artifact that raises reviewer confidence. Do not record N/A for a visible change, and do not make a token video just to satisfy a checklist.
 
-- Do **not** commit screenshots, videos, traces, generated flow scripts, logs, or visual evidence manifests.
-- Store artifacts only under Dex's artifact directory:
-  - default: `~/.claude/.dex-artifacts/ui/<session>/`
-  - override: `DX_ARTIFACT_DIR`
-- Keep a concise manifest at `$(dx_ui_capture_manifest_file "$session_id")`, usually `~/.claude/.dex-artifacts/ui/<session>/visual-evidence.md`.
-- If `DX_ARTIFACT_DIR` is overridden to a path inside the repo, verify it is ignored before writing artifacts:
+Record a non-capture decision immediately:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
-artifact_root="$(dx_artifacts_dir)"
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ -n "$repo_root" ]]; then
-  case "$artifact_root" in
-    "$repo_root"/*)
-      git check-ignore -q "$artifact_root" || {
-        printf 'UI artifact directory is inside the repo and is not ignored: %s\n' "$artifact_root" >&2
-        exit 1
-      }
-      ;;
-  esac
-fi
+dx ui-capture skip --reason "<why a walkthrough would not improve this review>"
+dx ui-capture not-applicable --reason "<why there is no browser UI impact>"
 ```
 
-- Local artifact links do not render for GitHub reviewers. Use them to hand the user upload-ready files; the user must upload the screenshots manually to the PR body or a PR comment.
+Dex surfaces `READY`, `NEEDS_REVIEW`, `SKIPPED`, `N/A`, or `MISSING` in lifecycle headers and `dx status`. These states are advisory: `SKIPPED` does not fail a phase, but `MISSING` means no decision has been recorded.
 
-## Steps
+## 2. Choose the proof
 
-### 1. Ensure Tooling
+When capture is worthwhile, prefer one representative flow over a tour of the whole product. The default is a matched before/after walkthrough. Use `after_only` when the feature had no meaningful baseline or the old state cannot be reproduced; put the reason in `baseline_reason`.
 
-Run the Dex bootstrap. It installs Playwright into Dex's tool cache and configures both Playwright MCP and Chrome DevTools MCP for Claude/Codex where the CLIs are available.
+The agent may choose:
+
+- the route and seeded state that best explain the change
+- desktop only or desktop plus mobile
+- the shortest useful set of clicks, form input, navigation, and scrolling
+- local narration or captions only
+- the structured recorder below, an existing safe Playwright flow, or browser MCP tools
+
+The structured recorder is preferred for PR proof because it creates an editable storyboard, transcript, captions, video, screenshots, trace, browser logs, and manifest in one bundle. MCP tools remain useful for exploration and debugging.
+
+If an existing project recorder or browser tool produces the clearest artifact, register it without forcing it through the structured producer:
 
 ```bash
-bash "${DEX_DIR:-$HOME/work/dex}/bin/ui-capture.sh" --install-only
+dx ui-capture ready \
+  --manifest /absolute/path/to/visual-evidence.md \
+  --video-file /absolute/path/to/walkthrough.mp4 \
+  --poster-file /absolute/path/to/poster.png \
+  --reason "The project recorder preserves its native interaction markers."
 ```
 
-If this fails because Node.js/npm/npx are missing or network install is blocked, stop and tell the user the exact prerequisite or command that failed. Otherwise, proceed without asking; Dex owns this tooling and keeps it outside the project repo.
+Only the manifest is required. Dex copies supplied files into the temporary session bundle, surfaces them, and attaches them to the active run. This is the escape hatch for sound agent judgment, not a way to label unreviewed footage `READY`.
 
-### 2. Decide Whether UI Capture Is Required
+## 3. Write the storyboard before capture
 
-Check the approved plan and changed files:
-
-```bash
-git diff --name-only
-git diff --stat
-```
-
-Treat these as UI-affecting by default:
-
-- Frontend source under directories such as `src/`, `app/`, `pages/`, `components/`, `routes/`, `views/`, `client/`, `web/`
-- CSS, Sass, Tailwind, styled components, templates, Storybook stories
-- Browser-side JS/TS/React/Vue/Svelte/Solid/Astro/Next/Remix changes
-- API changes whose acceptance criteria include visible UI behavior
-
-If only backend/CLI/docs/test-only files changed and no visible browser behavior is affected, record N/A.
-
-### 3. Prepare Artifact Tracking
-
-Create the session artifact directory outside the repo. `bin/ui-capture.sh` creates and appends to the manifest automatically on each capture run:
+Store the JSON outside the repository:
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
-capture_dir="$(dx_ui_capture_session_dir "$session_id")"
-manifest="$(dx_ui_capture_manifest_file "$session_id")"
-mkdir -p "$capture_dir"
-printf '%s\n' "$manifest"
+storyboard="$(dx_ui_capture_storyboard_file "$session_id")"
+mkdir -p "$(dirname "$storyboard")"
+printf '%s\n' "$storyboard"
 ```
 
-Manifest template:
+Use this shape:
 
-```markdown
-# Visual Evidence
-
-Session: <session_id>
-PR: <pending or PR URL>
-Upload note: local files do not render in GitHub; upload before/after screenshots manually to the PR body or a PR comment.
-
-## Before
-
-- <label> desktop: [desktop.png](/absolute/path/to/desktop.png)
-- <label> mobile: [mobile.png](/absolute/path/to/mobile.png)
-
-## After
-
-- <label> desktop: [desktop.png](/absolute/path/to/desktop.png)
-- <label> mobile: [mobile.png](/absolute/path/to/mobile.png)
-
-## Verification
-
-- URL/flow parity: yes/no
-- Console/page/network/http logs checked: yes/no
-- Notes: <expected or unrelated log entries, unavailable captures, reviewer upload instructions>
+```json
+{
+  "version": 1,
+  "name": "settings-save",
+  "title": "Save notification settings",
+  "summary": "Shows the clearer saved-state confirmation.",
+  "product_context": "People need confidence that their preference was saved.",
+  "technical_summary": "The form now persists the request and renders its successful state.",
+  "how_to_test": "Open settings, change email notifications, save, and confirm the saved state.",
+  "comparison": "before_after",
+  "target_seconds": 55,
+  "max_seconds": 90,
+  "chapters": [
+    {
+      "stage": "before",
+      "title": "Before",
+      "narration": "Before this change, saving gave no clear confirmation.",
+      "actions": [
+        {"action": "goto", "path": "/settings"},
+        {"action": "click", "locator": {"by": "role", "role": "button", "name": "Save"}}
+      ]
+    },
+    {
+      "stage": "after",
+      "title": "After",
+      "narration": "Now the same flow confirms the saved preference and stays ready for another edit.",
+      "actions": [
+        {"action": "goto", "path": "/settings"},
+        {"action": "scroll", "locator": {"by": "label", "name": "Email notifications"}},
+        {"action": "click", "locator": {"by": "label", "name": "Email notifications"}},
+        {"action": "click", "locator": {"by": "role", "role": "button", "name": "Save"}},
+        {"action": "assert", "locator": {"by": "text", "name": "Settings saved"}}
+      ]
+    }
+  ]
+}
 ```
 
-Keep manual notes in the manifest short. It is a user handoff file, not a full implementation report.
+For `after_only`, remove the before chapters and add:
 
-### 4. Start the App
+```json
+"comparison": "after_only",
+"baseline_reason": "The user flow did not exist before this change."
+```
 
-Use the project's existing commands. Prefer the package manager and scripts already in the repo:
+Allowed actions are `goto`, `click`, `fill`, `press`, `hover`, `scroll`, `wait`, `assert`, and `screenshot`. Locators may use accessible role, label, visible text, or test ID. Use `env` instead of `text` for sensitive form values. Arbitrary browser evaluation is deliberately unavailable in structured storyboards.
 
-- `npm run dev`, `pnpm dev`, `yarn dev`, `bun dev`
-- `npm run start`, `pnpm start`, `yarn start`, `bun start`
-- framework-specific scripts already present in `package.json`
-- existing Storybook scripts if the changed UI is component-only
-
-Run the server in the background, wait for the local URL to return a response, and stop the server after capture. Use a different port if the default is occupied.
-
-### 5. Capture Before Evidence
-
-When called at the start of Phase 2 for a UI-affecting plan, capture before editing UI surfaces. Use stable names so the later after capture can match them:
+Validate before starting the app:
 
 ```bash
-bash "${DEX_DIR:-$HOME/work/dex}/bin/ui-capture.sh" \
-  --url "http://127.0.0.1:3000/path" \
-  --name "before-route-name" \
-  --desktop \
-  --mobile \
-  --trace
+dx ui-capture validate --script "$storyboard"
 ```
 
-If UI files were already modified before the baseline could be captured, do not fake a before screenshot. Record this in the manifest and Phase 2 evidence:
+## 4. Meet the production bar
 
-```text
-Before capture: unavailable — UI was already modified before capture.
-```
+Aim for 30–75 seconds; 90 seconds is the hard limit. A strong walkthrough usually has two to five short chapters and fewer than 190 spoken words.
 
-### 6. Capture After Evidence
+The final cut should:
 
-After implementation, capture the same representative routes, viewports, and flows as the before pass wherever possible. Use matching names:
+- establish the user problem in one sentence
+- show the relevant before state when it adds context
+- navigate and scroll naturally instead of jumping between unexplained screens
+- visibly point to the control before interacting with it
+- show the resulting state long enough to understand it
+- explain product impact, the technical change, and how to test it in the transcript and manifest
+- avoid unrelated setup, loading time, editor windows, terminals, notifications, secrets, and personal data
+
+Use seeded local data and the project's normal development command. Keep the window stable. Do not rush clicks, shake the pointer, or narrate implementation trivia that a reviewer can read in the diff.
+
+## 5. Capture and produce
+
+Install the pinned browser, media, and optional local narration tools when needed:
 
 ```bash
-bash "${DEX_DIR:-$HOME/work/dex}/bin/ui-capture.sh" \
-  --url "http://127.0.0.1:3000/path" \
-  --name "after-route-name" \
-  --desktop \
-  --mobile \
-  --trace
+dx ui-capture install
 ```
 
-Inspect the generated logs for every run:
-
-- `console-errors.log`
-- `page-errors.log`
-- `network-errors.log`
-- `http-errors.log`
-- `metadata.json`
-
-Fix real UI/runtime issues before Phase 2 completion. If a log entry is expected or unrelated, document why in the manifest and evidence.
-
-### 7. Capture Video for Interactive Flows
-
-For changed flows involving clicks, forms, navigation, drag/drop, modals, menus, uploads, checkout, auth, onboarding, or other interactions, record video and trace.
-
-Create the flow file inside the artifact directory, never in the repo:
+Start the baseline version of the app, then capture before changing UI files:
 
 ```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
-session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
-flow_dir="$(dx_ui_capture_session_dir "$session_id")/flows"
-mkdir -p "$flow_dir"
+dx ui-capture capture \
+  --stage before \
+  --script "$storyboard" \
+  --url "http://127.0.0.1:3000"
 ```
 
-Flow file template:
-
-```js
-module.exports = async ({ page, screenshot }) => {
-  await page.getByRole('button', { name: /open/i }).click();
-  await screenshot('after-open');
-  await page.getByRole('button', { name: /save/i }).click();
-  await screenshot('after-save');
-};
-```
-
-Then capture with video:
+Run `dx ui-capture show` immediately and share the printed evidence path in your progress update. Then implement the change, start the updated app, and capture the matching flow:
 
 ```bash
-bash "${DEX_DIR:-$HOME/work/dex}/bin/ui-capture.sh" \
-  --url "http://127.0.0.1:3000/path" \
-  --name "after-flow-name" \
-  --desktop \
-  --mobile \
-  --video \
-  --trace \
-  --flow "$flow_dir/flow-name.cjs"
+dx ui-capture capture \
+  --stage after \
+  --script "$storyboard" \
+  --url "http://127.0.0.1:3000"
 ```
 
-The generated `.webm` files are the video evidence. The `.zip` traces can be opened with Playwright Trace Viewer.
+For `after_only`, run only the after command. Add `--mobile` when responsive behavior matters. Add `--no-narration` when captions are the better fit or local voice generation is unavailable.
 
-### 8. Use MCP When Helpful
+The after pass renders `walkthrough.mp4`. Local Kokoro narration is attempted by default; if model loading or synthesis fails, the captioned video remains valid proof. No cloud speech service or API key is required.
 
-The bootstrap configures:
+## 6. Review, revise, and verify
 
-- Playwright MCP (`playwright`) for agent-controlled browser actions
-- Chrome DevTools MCP (`chrome-devtools`) for console, network, performance, and live browser inspection
+Play the MP4 from beginning to end. Check the poster, transcript, captions, screenshots, trace, and four browser logs. Fix real console, page, request, or HTTP errors before handoff.
 
-Use MCP tools when they are available in the session and they make debugging faster. The deterministic artifact command above remains the canonical evidence because it stores files in Dex's artifact directory.
+The editable sources are:
 
-### 9. Verify Evidence
+- `walkthrough.json` for coverage, actions, chapter titles, and narration
+- `transcript.md` for the human-readable product, technical, test, and narration copy
+- `captions.vtt` for accessibility and manual caption edits
 
-Do not mark UI capture complete until:
+Treat `walkthrough.json` as the source of truth. Edit it and rerender:
 
-- each referenced screenshot/video/trace exists and is non-empty
-- before and after captures use the same URL, route, viewport, and flow where possible
-- logs have been checked and real runtime issues are fixed
-- the manifest lists before evidence, after evidence, or an explicit before-unavailable reason
-- artifacts are outside the repo or the artifact directory is ignored
-
-### 10. Report Evidence
-
-Report artifacts as absolute markdown links:
-
-```markdown
-UI capture:
-- Manifest: [visual-evidence.md](/absolute/path/to/visual-evidence.md)
-- Before desktop: [desktop.png](/absolute/path/to/before/desktop.png)
-- After desktop: [desktop.png](/absolute/path/to/after/desktop.png)
-- Mobile screenshot: [mobile.png](/absolute/path/to/after/mobile.png)
-- Video: [desktop video](/absolute/path/to/video.webm)
-- Trace: [desktop trace](/absolute/path/to/desktop-trace.zip)
-- Logs: [metadata.json](/absolute/path/to/metadata.json)
+```bash
+dx ui-capture revise \
+  --script "$storyboard" \
+  --before-url "http://127.0.0.1:3000" \
+  --after-url "http://127.0.0.1:3001"
 ```
 
-For PR handoff, tell the user that the manifest contains local upload-ready files and that GitHub requires manual upload for images to render to reviewers.
+Omit a URL when that stage's actions and on-screen copy did not change. For `after_only`, only `--after-url` can be needed. Repeat until the first viewing is clear without extra explanation.
+
+Before reporting `READY`, confirm:
+
+- the final duration is no more than the storyboard's `max_seconds`
+- the file is preferably under 10 MiB
+- captions are readable and synchronized closely enough to follow
+- before/after routes and data match, or the after-only reason is accurate
+- the changed behavior and final state are visible
+- browser logs were reviewed
+- no generated artifact is staged or committed
+
+## 7. Surface and hand off
+
+Run:
+
+```bash
+dx ui-capture show
+dx ui-capture show --open
+```
+
+Report absolute links to `walkthrough.mp4`, `poster.png`, `transcript.md`, `walkthrough.json`, and `visual-evidence.md`. During an active Dex run, the compact bundle is also registered as run artifacts and uploaded to DexCode when that connection is enabled. GitHub cannot render local paths, so tell the human to drag the MP4 and poster into the PR body or a comment.
+
+Artifacts live under `~/.claude/.dex-artifacts/ui/<session>/`, or `DX_ARTIFACT_DIR`, and must never be committed. Dex marks them completed with the lifecycle and removes completed bundles after 30 days by default. Inspect or retire them explicitly with:
+
+```bash
+dx ui-capture show --json
+dx ui-capture clean --older-than 30
+```

@@ -83,10 +83,12 @@ else
   echo "  Codex:      CLI not found"
 fi
 
-if dx_ui_capture_playwright_ready; then
-  echo "  UI Tools:   Playwright installed ($(dx_ui_capture_tools_dir))"
+if dx_ui_capture_tooling_ready; then
+  echo "  UI Tools:   browser, media, and local narration ready ($(dx_ui_capture_tools_dir))"
+elif dx_ui_capture_playwright_ready && dx_ui_capture_media_ready; then
+  echo "  UI Tools:   browser + media ready; local narration unavailable (captions still work)"
 else
-  echo "  UI Tools:   Playwright not installed — run 'dx install'"
+  echo "  UI Tools:   incomplete — run 'dx ui-capture install'"
 fi
 
 if ! dx_rtk_enabled; then
@@ -143,6 +145,13 @@ else
     echo "  Worktrees:  $count active"
   else
     echo "  Worktrees:  none"
+  fi
+
+  current_session=$(dx_session_id)
+  current_ui_proof=$(dx_ui_capture_status "$current_session")
+  echo "  UI Proof:   $current_ui_proof"
+  if [[ "$current_ui_proof" != "MISSING" ]]; then
+    echo "  UI Details: $(dx_ui_capture_evidence_file "$current_session")"
   fi
 fi
 

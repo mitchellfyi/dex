@@ -38,19 +38,15 @@ Check:
 - The PR state is recorded accurately. Draft is the Phase 5 default; an existing
   or human-requested ready PR is valid and must not be moved backward.
 
-## Step 4: Visual evidence handoff
+## Step 4: UI proof handoff
 
-If the PR includes browser UI changes:
+Read `dx_ui_capture_summary "$SESSION_ID"` and carry the recorded judgment into the PR:
 
-- Confirm the `visual-evidence.md` manifest exists under Dex's artifact directory.
-- Confirm before and after screenshots are listed, or that the manifest records why before evidence is unavailable.
-- If implementation changed after the last after-capture, refresh after screenshots/traces/logs with `/dxuicapture` without modifying implementation code.
-- Confirm no screenshots, videos, traces, logs, flow scripts, or manifests are staged or committed.
-- Confirm the Phase 5 summary gives the user the manifest path and upload-ready before/after screenshot paths.
+- For `READY`, verify the MP4, poster, transcript, editable storyboard, captions, and manifest exist. Refresh the bundle with `/dxuicapture` only when later implementation changed what the walkthrough proves.
+- For `SKIPPED` or `N/A`, preserve the reason and confirm it still matches the final diff.
+- For `MISSING` or `NEEDS_REVIEW`, invoke `/dxuicapture` to finish the decision. A reasoned skip remains valid; an unexplained state is not a useful handoff.
 
-Do not embed local artifact paths as GitHub images; they will not render for reviewers. The user uploads the local images manually to the PR body or a PR comment.
-
-If the PR has no browser UI changes, record `Visual evidence: N/A — no browser UI changes`.
+Confirm no generated artifact is staged or committed. DexCode-connected runs register the compact bundle automatically. GitHub cannot render local paths, so give the human the local MP4 and poster links and tell them to drag those files into the PR body or a comment. Do not claim they were uploaded unless they were.
 
 ## Step 5: Reviewer attachment
 
@@ -87,7 +83,7 @@ All of these must be true before you stop:
 - PR description attributes generation to Dex only, with no Claude Code generated-by footer
 - PR scope matches the plan — no unrelated changes, nothing missing
 - The PR state is recorded and matches the latest human instruction or workflow action
-- Visual evidence is prepared for manual upload when browser UI changed, or explicitly N/A
+- UI proof is handed off as READY with local links, SKIPPED with a reason, or N/A with a reason
 - All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR (or the section is empty/`_none_`)
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

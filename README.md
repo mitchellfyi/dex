@@ -43,8 +43,8 @@ repo memory.
   the agent-selected risk tier's clean-pass gate succeeds.
 - **Real verification:** Dex discovers and runs the repo's format, lint,
   typecheck, generation, and test commands instead of assuming one toolchain.
-- **UI evidence:** Browser-facing changes can capture before/after screenshots,
-  Playwright traces, videos, console logs, and a PR-ready visual manifest.
+- **UI proof:** Agents decide whether a visual artifact would help, then record
+  a reason or produce a short, editable, PR-ready walkthrough.
 - **Local run data:** Each provider-backed run gets a stable run ID,
   append-only JSONL events, redacted logs, summaries, and artifact metadata
   under `~/.dex/runs/`.
@@ -266,8 +266,8 @@ reviews pass.
 - [Factory security](docs/factory-security.md) documents the v1 remote worker,
   token, event-ingestion, and credential boundary.
 - [Guards](docs/guards.md) covers hook-based safety rules.
-- [UI capture](docs/ui-capture.md) covers screenshots, traces, videos, and PR
-  visual evidence.
+- [UI proof](docs/ui-capture.md) covers agent capture decisions, short editable
+  walkthroughs, narration, temporary artifacts, and PR handoff.
 - [Events](docs/events.md) documents run IDs, local run directories, event
   journals, and the optional DexCode sync.
 - [RTK token reduction](docs/rtk-token-reduction.md) covers the optional

@@ -518,10 +518,10 @@ dx_check_openai_docs_mcp_servers() {
 dx_check_ui_capture_tooling() {
   local failed=0
 
-  if dx_ui_capture_playwright_ready; then
-    dx_ok "Playwright UI capture tooling installed"
+  if dx_ui_capture_tooling_ready; then
+    dx_ok "UI capture browser, media, and local narration tooling installed"
   else
-    dx_warn "Playwright UI capture tooling is not installed"
+    dx_warn "UI capture browser, media, or local narration tooling is incomplete"
     failed=1
   fi
 

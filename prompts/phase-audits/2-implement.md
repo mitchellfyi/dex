@@ -72,29 +72,19 @@ Do not create `.dex/learnings.md`. Raw observations are not trusted memory.
 Durable memory belongs in `.dex/memory/domains/` only after `/dxsync` or
 `dx sync` promotes it through a reviewable diff.
 
-## Step 6: UI Capture Evidence
+## Step 6: UI Proof Decision
 
-If the implementation affects browser UI, run `/dxuicapture` before stopping.
+Run `/dxuicapture` before stopping and inspect the persisted decision with `dx ui-capture show`.
 
-Required evidence for UI-affecting changes:
+Accept any well-supported terminal decision:
 
-- Before screenshot/trace for each changed representative route/view captured before UI edits, or an explicit reason the baseline is unavailable
-- Desktop screenshot for each changed representative route/view
-- Mobile screenshot when layout, responsive behavior, shared components, or CSS changed
-- Playwright trace for captured routes/views
-- Video for interactive flows (clicks, forms, navigation, modals, menus, drag/drop, auth, checkout, onboarding, uploads)
-- Console, page, network, and HTTP error logs checked
-- `visual-evidence.md` manifest under Dex's artifact directory, with before and after links grouped for PR upload
-- Absolute links to all screenshots/videos/traces/logs included in the evidence table or final Phase 2 summary
+- `READY`: the walkthrough is short, clear, no more than 90 seconds, and linked with its poster, editable storyboard, transcript, captions, browser logs, and manifest. Before/after parity is present when useful; a truthful after-only reason is valid when no baseline exists.
+- `SKIPPED`: browser UI changed, but the agent explains why a produced walkthrough would not improve the review or would be unsafe or disproportionate.
+- `N/A`: no browser-rendered behavior changed, with a reason.
 
-Artifacts must live under Dex's artifact directory (`${DX_ARTIFACT_DIR:-~/.claude/.dex-artifacts}`) and must not be committed or staged.
-If `DX_ARTIFACT_DIR` points inside the repo, verify the artifact path is gitignored before writing captures.
+`NEEDS_REVIEW` means the agent chose capture but the bundle still needs work. `MISSING` means no decision was recorded. Resolve those when practical; do not turn this advisory proof workflow into a claim that product functionality passed. Manual smoke testing remains a separate requirement.
 
-If the implementation does not affect browser UI, include:
-
-```text
-UI capture: N/A — no UI-affecting files changed
-```
+All generated files must live under Dex's temporary artifact directory (`${DX_ARTIFACT_DIR:-~/.claude/.dex-artifacts}`) and must not be committed or staged.
 
 ## Step 7: Select Phase 3 Review Risk
 
@@ -163,7 +153,7 @@ ALL of these must be true before you stop:
 - No TODO/FIXME/debugging artifacts remain
 - No background processes or long-running verification commands started during Phase 2 are still in flight
 - Any needed `.dex/` updates are staged
-- UI capture evidence is linked for UI-affecting changes, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A
+- The UI proof decision is `READY`, `SKIPPED` with a reason, or `N/A` with a reason; a reasoned skip is valid and is not reported as a passed capture
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
   recorded for the final current scope and bound to the trusted clean-wave
   policy

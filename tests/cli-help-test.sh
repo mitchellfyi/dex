@@ -78,6 +78,7 @@ run_entrypoint_checks() {
 run_entrypoint_checks install "$ROOT/bin/install.sh" "Usage: dx install"
 run_entrypoint_checks uninstall "$ROOT/bin/uninstall.sh" "Usage: dx uninstall"
 run_entrypoint_checks status "$ROOT/bin/status.sh" "Usage: dx status"
+run_entrypoint_checks ui-capture "$ROOT/bin/ui-capture.sh" "Usage: dx ui-capture"
 run_entrypoint_checks config "$ROOT/bin/config.sh" "Usage: dx config"
 run_entrypoint_checks uninit "$ROOT/bin/uninit.sh" "Usage: dx uninit"
 run_entrypoint_checks init "$ROOT/bin/init.sh" "Usage: dx init"

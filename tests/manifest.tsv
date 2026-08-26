@@ -86,6 +86,7 @@ test-command-dex-test.sh	fast	all	600	hermetic
 test-command-project-test.sh	fast	all	600	hermetic
 test-infrastructure-test.sh	fast	all	600	hermetic
 test-manifest-test.sh	fast	all	600	hermetic
+ui-capture-test.sh	fast	all	600	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic
 worktree-test.sh	slow	all	1200	hermetic

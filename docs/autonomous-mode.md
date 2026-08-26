@@ -53,7 +53,7 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 |-------|-----------|-----------------|
 | 0. Setup | `0-setup.md` | Ticket read + assigned, branch renamed + pushed, ticket status In Progress, meta sidecar updated |
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
-| 2. Implement | `2-implement.md` | Task completion, TDD verification, UI capture evidence, evidence table, Phase 3 risk selection |
+| 2. Implement | `2-implement.md` | Task completion, TDD verification, UI proof decision, evidence table, Phase 3 risk selection |
 | 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves reaching the selected tier's trusted clean gate |
 | 4. Verify & Commit | `4-verify.md` | All checks passing, commit quality, pushed to origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
@@ -139,7 +139,7 @@ with a concrete recovery step. State and receipts stay outside the repository
 and are accepted only while their independently hashed HEAD, staged, unstaged,
 and untracked scope still matches.
 
-For browser UI changes, Phase 2 also requires before/after UI capture evidence before handoff to review. `/dxuicapture` stores screenshots, videos, traces, browser logs, and a `visual-evidence.md` upload manifest under `~/.claude/.dex-artifacts/` and links them in the implementation evidence. See [ui-capture.md](ui-capture.md).
+Phase 2 treats UI proof as an explicit agent judgment. `/dxuicapture` can produce a short before/after or after-only walkthrough when it improves the review, record a reasoned `SKIPPED` decision for a visible but disproportionate case, or record `N/A` when nothing changes in the browser. Generated videos, screenshots, traces, captions, browser logs, and the handoff manifest stay under `~/.claude/.dex-artifacts/`; the lifecycle surfaces their status without turning capture into a hard product-correctness gate. See [ui-capture.md](ui-capture.md).
 
 Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from `.dex/dex.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer. The autonomous loop re-reads `dx_complete_wait_minutes` (default 5) and `dx_complete_max_cycles` (default 3) each cycle, addresses failures through `/dxwatchpr` and `/dxprreview`, re-requests reviewers after each push, and closes the ticket once CI is green and all successfully requested reviewers approve. Reviewers GitHub says are not requestable for the repository are warnings, not approval gates. When the current idle budget is exhausted, it pauses with manual follow-up instructions. It never merges the PR.
 
