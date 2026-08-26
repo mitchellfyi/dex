@@ -1089,78 +1089,22 @@ __dx_build_system_context() {
 
   local phase_label
   phase_label=$(__dx_phase_name "$step")
-  local direct_codex_marker_contract=""
+  local include_direct_codex_contract=0
   if [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" \
     && "$completion_generation" =~ ^[0-9a-f]{32}$ ]]; then
-    case "$step" in
-      0|1|2)
-        direct_codex_marker_contract="
-## Direct Codex Phase Completion
-
-This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the completion receipt for you. First satisfy the
-normal Phase ${step} readiness gate, then write this exact receipt before your
-final response:
-
-\`\`\`bash
-bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
-\`\`\`
-
-If two materially different recovery strategies fail, pause this exact phase
-for human help without claiming completion by running exactly:
-bash \"\$DEX_DIR/bin/escalate.sh\" \"${session_id}\" \"${completion_generation}\"
-" ;;
-      3|4|5)
-        direct_codex_marker_contract="
-## Direct Codex Phase Completion
-
-This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the completion receipt for you. After Phase ${step}
-is genuinely complete, write this exact receipt before your final response:
-
-\`\`\`bash
-bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
-\`\`\`
-
-If two materially different recovery strategies fail, pause this exact phase
-for human help without claiming completion by running exactly:
-bash \"\$DEX_DIR/bin/escalate.sh\" \"${session_id}\" \"${completion_generation}\"
-" ;;
-      6)
-        direct_codex_marker_contract="
-## Direct Codex Phase Completion
-
-This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the completion receipt for you. If Phase 6 reaches
-the successful completion criteria, run the exact success command below before
-your final response. If Phase 6 hits a bounded wait or external blocker, run
-the exact generation-bound escalation command instead. Escalation pauses and
-detaches the run while revoking authorization; it does not create a receipt.
-
-\`\`\`bash
-# Success only:
-bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
-# Blocked/paused only:
-bash \"\$DEX_DIR/bin/escalate.sh\" \"${session_id}\" \"${completion_generation}\"
-\`\`\`
-" ;;
-    esac
+    include_direct_codex_contract=1
   fi
   local _ctx_tmp="${ctx_file}.tmp.$$"
-  cat > "$_ctx_tmp" <<EOF
-You are Dex, running the Dex lifecycle for ${wt_name}.
-Initial phase: Phase ${step} (${phase_label}).
-Workspace: ${wt_dir}
-Workspace mode: ${workspace_mode}
-
-## Requested Work
-
-Original dx request: ${raw_input:-$wt_name}
-EOF
+  printf 'You are Dex, running the Dex lifecycle for %s.\n' "$wt_name" > "$_ctx_tmp"
+  printf 'Initial phase: Phase %s (%s).\n' "$step" "$phase_label" >> "$_ctx_tmp"
+  printf 'Workspace: %s\n' "$wt_dir" >> "$_ctx_tmp"
+  printf 'Workspace mode: %s\n\n' "$workspace_mode" >> "$_ctx_tmp"
+  printf '## Requested Work\n\n' >> "$_ctx_tmp"
+  printf 'Original dx request: %s\n' "${raw_input:-$wt_name}" >> "$_ctx_tmp"
   mv -f "$_ctx_tmp" "$ctx_file"
 
   if [[ "$workspace_mode" == "in-place" ]]; then
-    cat >> "$ctx_file" <<EOF
+    cat >> "$ctx_file" <<'EOF'
 
 This lifecycle is running in-place in the current checkout. No Dex worktree
 was created. Dex still prepared the normal lifecycle branch in this checkout
@@ -1173,30 +1117,35 @@ EOF
   if [[ "${DEX_HEADLESS_RUN:-0}" == "1" && -f "${DEX_HEADLESS_RUN_SPEC_FILE:-}" ]]; then
     local headless_plan_approval
     headless_plan_approval=$(dx_run_spec_field "$DEX_HEADLESS_RUN_SPEC_FILE" "workflow.requires_plan_approval" 2>/dev/null || echo "true")
-    cat >> "$ctx_file" <<EOF
+    cat >> "$ctx_file" <<'EOF'
 
 ## Headless Run Spec
 
-This lifecycle was started by \`dx run\` from a structured run spec, not by a
+This lifecycle was started by `dx run` from a structured run spec, not by a
 human typing all task context into the CLI. Treat the run spec as the source of
 truth for repo, source, harness, workflow, and sync context.
+EOF
+    printf '\nRun spec file: %s\n' "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$ctx_file"
+    printf 'Plan approval required: %s\n' "$headless_plan_approval" >> "$ctx_file"
+    cat >> "$ctx_file" <<'EOF'
 
-Run spec file: ${DEX_HEADLESS_RUN_SPEC_FILE}
-Plan approval required: ${headless_plan_approval}
-
-If \`workflow.requires_plan_approval\` is false, do not wait for interactive
+If `workflow.requires_plan_approval` is false, do not wait for interactive
 plan approval. The run spec authorizes the plan once the normal plan quality
 checks pass. Write the normal Phase 1 ready marker after the plan is complete.
 
 Normalized run spec:
 
-\`\`\`json
-$(python3 -m json.tool "$DEX_HEADLESS_RUN_SPEC_FILE" 2>/dev/null || cat "$DEX_HEADLESS_RUN_SPEC_FILE")
-\`\`\`
+```json
+EOF
+    if ! python3 -m json.tool "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$ctx_file" 2>/dev/null; then
+      cat "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$ctx_file"
+    fi
+    cat >> "$ctx_file" <<'EOF'
+```
 EOF
   fi
 
-  cat >> "$ctx_file" <<EOF
+  cat >> "$ctx_file" <<'EOF'
 
 ## Audit Loop
 
@@ -1211,14 +1160,100 @@ Premature stop attempts will be caught and you will be asked to continue.
 Do not create a bare .complete marker or invent a completion command. Claude
 sessions receive their exact receipt command from the Stop hook after the audit
 gate passes. Direct Codex sessions receive it in the phase contract below.
+EOF
 
-${direct_codex_marker_contract}
+  if [[ "$include_direct_codex_contract" -eq 1 ]]; then
+    case "$step" in
+      0|1|2)
+        cat >> "$ctx_file" <<'EOF'
 
+## Direct Codex Phase Completion
+
+This session is running through the direct Codex provider, so there is no
+Claude Stop hook to write the completion receipt for you. First satisfy the
+EOF
+        printf 'normal Phase %s readiness gate, then write this exact receipt before your\n' \
+          "$step" >> "$ctx_file"
+        cat >> "$ctx_file" <<'EOF'
+final response:
+
+```bash
+EOF
+        printf 'bash "$DEX_DIR/bin/complete-receipt.sh" "%s" "%s"\n' \
+          "$session_id" "$completion_generation" >> "$ctx_file"
+        cat >> "$ctx_file" <<'EOF'
+```
+
+If two materially different recovery strategies fail, pause this exact phase
+for human help without claiming completion by running exactly:
+EOF
+        printf 'bash "$DEX_DIR/bin/escalate.sh" "%s" "%s"\n' \
+          "$session_id" "$completion_generation" >> "$ctx_file"
+        ;;
+      3|4|5)
+        cat >> "$ctx_file" <<'EOF'
+
+## Direct Codex Phase Completion
+
+This session is running through the direct Codex provider, so there is no
+Claude Stop hook to write the completion receipt for you. After Phase
+EOF
+        printf '%s is genuinely complete, write this exact receipt before your final response:\n' \
+          "$step" >> "$ctx_file"
+        cat >> "$ctx_file" <<'EOF'
+
+```bash
+EOF
+        printf 'bash "$DEX_DIR/bin/complete-receipt.sh" "%s" "%s"\n' \
+          "$session_id" "$completion_generation" >> "$ctx_file"
+        cat >> "$ctx_file" <<'EOF'
+```
+
+If two materially different recovery strategies fail, pause this exact phase
+for human help without claiming completion by running exactly:
+EOF
+        printf 'bash "$DEX_DIR/bin/escalate.sh" "%s" "%s"\n' \
+          "$session_id" "$completion_generation" >> "$ctx_file"
+        ;;
+      6)
+        cat >> "$ctx_file" <<'EOF'
+
+## Direct Codex Phase Completion
+
+This session is running through the direct Codex provider, so there is no
+Claude Stop hook to write the completion receipt for you. If Phase 6 reaches
+the successful completion criteria, run the exact success command below before
+your final response. If Phase 6 hits a bounded wait or external blocker, run
+the exact generation-bound escalation command instead. Escalation pauses and
+detaches the run while revoking authorization; it does not create a receipt.
+
+```bash
+# Success only:
+EOF
+        printf 'bash "$DEX_DIR/bin/complete-receipt.sh" "%s" "%s"\n' \
+          "$session_id" "$completion_generation" >> "$ctx_file"
+        cat >> "$ctx_file" <<'EOF'
+# Blocked/paused only:
+EOF
+        printf 'bash "$DEX_DIR/bin/escalate.sh" "%s" "%s"\n' \
+          "$session_id" "$completion_generation" >> "$ctx_file"
+        cat >> "$ctx_file" <<'EOF'
+```
+EOF
+        ;;
+    esac
+    printf '\n' >> "$ctx_file"
+  fi
+
+  cat >> "$ctx_file" <<'EOF'
 CRITICAL: You MUST invoke skills using the Skill tool (e.g., Skill(skill="dximplement")).
 Do NOT implement skill functionality ad-hoc — invoke the actual skill.
+EOF
 
-$(__dx_provider_prompt)
+  __dx_provider_prompt >> "$ctx_file"
+  printf '\n' >> "$ctx_file"
 
+  cat >> "$ctx_file" <<'EOF'
 ## Autonomous Phase Contract
 
 The Dex lifecycle controller owns phase transitions. After Phase 1 plan
@@ -1262,37 +1297,37 @@ waived, skipped, or unverified gate as passed.
 Dex gates are soft policy defaults. The active agent may change them during
 this session without relaunching Claude or Codex:
 
-\`\`\`bash
+```bash
 # Change an operational default for the current phase:
-bash "${DEX_DIR}/bin/control.sh" override review.pass-timeout 2400 --source agent --reason "Thorough checks need a longer provider window"
+bash "$DEX_DIR/bin/control.sh" override review.pass-timeout 2400 --source agent --reason "Thorough checks need a longer provider window"
 
 # Apply the same override for the rest of this lifecycle:
-bash "${DEX_DIR}/bin/control.sh" override watch.command-timeout 90 --scope session --source agent --reason "The repository API is responding slowly"
+bash "$DEX_DIR/bin/control.sh" override watch.command-timeout 90 --scope session --source agent --reason "The repository API is responding slowly"
 
 # Keep independent review, but accept a smaller clean streak as a waiver:
-bash "${DEX_DIR}/bin/control.sh" override review.clean-passes 2 --source human --reason "Two clean waves are sufficient for this unusually expensive scope"
+bash "$DEX_DIR/bin/control.sh" override review.clean-passes 2 --source human --reason "Two clean waves are sufficient for this unusually expensive scope"
 
 # Skip the rest of an assurance gate and advance through the safe transition:
-bash "${DEX_DIR}/bin/control.sh" waive review.clean-passes --source agent --reason "Two provider failures prevent independent waves; direct review and all deterministic checks are complete"
-\`\`\`
+bash "$DEX_DIR/bin/control.sh" waive review.clean-passes --source agent --reason "Two provider failures prevent independent waves; direct review and all deterministic checks are complete"
+```
 
-When the human authorizes an exception in chat, use \`--source human\` and quote
-their reason accurately. \`dx control status\` shows active overrides. Use
-\`clear-override\` to return to the default.
+When the human authorizes an exception in chat, use `--source human` and quote
+their reason accurately. `dx control status` shows active overrides. Use
+`clear-override` to return to the default.
 
 Running lifecycle watchdogs and provider timeout supervisors re-read operational
 policy. A lower review target still requires that many genuine independent
-\`CLEAN\` waves and records Phase 3 as waived. A full gate waiver skips the
+`CLEAN` waves and records Phase 3 as waived. A full gate waiver skips the
 remaining gate. Neither path forges success. Runtime integrity is not a policy
 gate, so valid state records, transition ownership, atomic writes, and
 quiescing an active child still apply.
 
-The exact standalone \`dx control ...\` or \`bin/control.sh ...\` command is the
+The exact standalone `dx control ...` or `bin/control.sh ...` command is the
 break-glass path and cannot be denied by a blocking guard. Keep it in its own
 shell tool call: wrappers, substitutions, redirections, pipelines, and appended
 commands are not exempt. Review and maintenance child sessions use the parent
-policy id in \`DEX_POLICY_SESSION_ID\`; pass \`--session
-"\${DEX_POLICY_SESSION_ID}"\` when changing parent policy from a child.
+policy id in `DEX_POLICY_SESSION_ID`; pass `--session
+"${DEX_POLICY_SESSION_ID}"` when changing parent policy from a child.
 
 ## Direct Human Control
 
@@ -1305,45 +1340,46 @@ Claude sessions receive direct stop/jump phrases through the UserPromptSubmit
 hook. Codex sessions, and either provider when applying a reasoned exception,
 run the same provider-neutral command before stopping:
 
-\`\`\`bash
-bash "${DEX_DIR}/bin/control.sh" stop
-bash "${DEX_DIR}/bin/control.sh" done
-bash "${DEX_DIR}/bin/control.sh" jump verify
-bash "${DEX_DIR}/bin/control.sh" resume
-\`\`\`
+```bash
+bash "$DEX_DIR/bin/control.sh" stop
+bash "$DEX_DIR/bin/control.sh" done
+bash "$DEX_DIR/bin/control.sh" jump verify
+bash "$DEX_DIR/bin/control.sh" resume
+```
 
-For a human instruction relayed through Codex, add \`--source human --reason
-"<their reason>"\`. Agent-originated controls use \`--source agent --reason\`.
+For a human instruction relayed through Codex, add `--source human --reason
+"<their reason>"`. Agent-originated controls use `--source agent --reason`.
 Review-wave isolation remains in force until the active child is quiescent.
 A project block guard can be softened explicitly with an override such as
-\`guard.<guard-name>=allow\`; built-in Dex guards are advisory by default.
+`guard.<guard-name>=allow`; built-in Dex guards are advisory by default.
+EOF
 
-## Initial Scope Boundaries (Phase ${step})
-
-${scope_lines}
-
+  printf '\n## Initial Scope Boundaries (Phase %s)\n\n%s\n\n' \
+    "$step" "$scope_lines" >> "$ctx_file"
+  cat >> "$ctx_file" <<'EOF'
 These boundaries apply to the initial phase until the Stop hook hands off to a
 later phase. After a same-session handoff, follow the latest handoff prompt and
 status line for the current phase.
 
 If you lose context after compaction, re-read the current phase audit prompt.
-The initial phase audit prompt was:
-  ${DEX_DIR}/prompts/phase-audits/$(__dx_phase_audit_basename "$step").md
 EOF
+  printf 'The initial phase audit prompt was:\n  %s/prompts/phase-audits/%s.md\n' \
+    "$DEX_DIR" "$(__dx_phase_audit_basename "$step")" >> "$ctx_file"
 
   # Append debt warnings from prior phases so downstream work is aware of accepted gaps
   local debt_file
   debt_file=$(dx_debt_file "$session_id")
   if [[ -f "$debt_file" ]] && [[ -s "$debt_file" ]]; then
-    cat >> "$ctx_file" <<DEOF
+    cat >> "$ctx_file" <<'EOF'
 
 ## Active Technical Debt (from prior phases)
 
 WARNING: The following debt items were accepted in earlier phases. Be aware of
 these when implementing — they may affect your work.
-
-$(cat "$debt_file")
-DEOF
+EOF
+    printf '\n' >> "$ctx_file"
+    cat "$debt_file" >> "$ctx_file"
+    printf '\n' >> "$ctx_file"
   fi
 
   echo "$ctx_file"

@@ -23,6 +23,14 @@ export DX_RUN_ROOT="$TMP_DIR/runs"
 export TMP_DIR
 mkdir -p "$DX_STATE_DIR" "$DX_LOOP_DIR" "$DX_ARTIFACT_DIR" "$DX_TOOL_DIR" "$DX_RUN_ROOT" "$TMP_DIR/repo"
 
+# Prompt prose must never be parsed as shell code. Dynamic values are appended
+# separately, so every heredoc in the context builder must quote its delimiter.
+SYSTEM_CONTEXT_SOURCE=$(sed -n '/^__dx_build_system_context()/,/^}/p' "$ROOT/dx.sh")
+if grep -Eq '<<[[:space:]]*[A-Za-z_][A-Za-z0-9_]*' <<< "$SYSTEM_CONTEXT_SOURCE"; then
+  printf '%s\n' "system-context builder contains an expanding heredoc" >&2
+  exit 1
+fi
+
 git -C "$TMP_DIR/repo" init -q
 git -C "$TMP_DIR/repo" config user.email dex@example.test
 git -C "$TMP_DIR/repo" config user.name "Dex Test"
@@ -527,7 +535,9 @@ set -e
 export DX_PROVIDER_ENGINE=codex-plugin
 session_id="codex-direct-context-marker"
 generation="0123456789abcdef0123456789abcdef"
-ctx_file="$(__dx_build_system_context "repo" 4 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
+context_stderr="$TMP_DIR/context-build.stderr"
+ctx_file="$(__dx_build_system_context "repo" 4 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation" 2> "$context_stderr")"
+[[ ! -s "$context_stderr" ]] || assert_at $LINENO
 grep -q "Direct Codex Phase Completion" "$ctx_file"
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
 if grep -q "dx_complete_file" "$ctx_file"; then
@@ -556,6 +566,10 @@ grep -q "Soft Defaults and Overrides" "$ctx_file"
 grep -q "override review.pass-timeout 2400 --source agent" "$ctx_file"
 grep -q "waive review.clean-passes --source agent" "$ctx_file"
 grep -q "Never describe an overridden" "$ctx_file"
+grep -Fq "\`CLEAN\` waves" "$ctx_file"
+grep -Fq "\`dx control ...\` or \`bin/control.sh ...\`" "$ctx_file"
+grep -Fq "\`DEX_POLICY_SESSION_ID\`" "$ctx_file"
+grep -Fq "\`--session" "$ctx_file"
 '
 
 zsh -fc '
