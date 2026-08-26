@@ -718,7 +718,11 @@ accepted gate name has a live consumer.
 Runtime-supervisor startup and finish waits are in this internal category. They
 default to 15,000ms and 5,000ms and can be changed for a retried command with
 `DX_SESSION_RUNTIME_OWNER_START_TIMEOUT_MILLISECONDS` and
-`DX_SESSION_RUNTIME_OWNER_FINISH_TIMEOUT_MILLISECONDS`.
+`DX_SESSION_RUNTIME_OWNER_FINISH_TIMEOUT_MILLISECONDS`. On macOS, the
+supervisor uses the native process API for identity checks and limits its
+`lsof` fallback to three seconds so a stalled system query cannot delay the
+timeout it is enforcing. A retried command can change that fallback bound with
+`DX_TIMEOUT_PROCESS_SCAN_TIMEOUT_SECONDS` (1–30).
 
 ## Troubleshooting
 

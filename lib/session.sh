@@ -1705,12 +1705,13 @@ dx_kill_process_tree() {
 # children is reparented. Every command launched by dx_run_with_timeout inherits
 # a unique token in both its environment and an open file descriptor, so cleanup
 # can still identify those children. Linux exposes both through /proc. macOS
-# ships lsof, which can resolve the inherited descriptor after reparenting.
+# exposes descriptor identity through libproc, with a bounded lsof fallback.
 __dx_timeout_token_pids() {
   local token_file="$1" candidates="${2:-}"
   [[ -f "$token_file" ]] || return 0
 
   DX_TIMEOUT_PID_CANDIDATES="$candidates" python3 - "$token_file" <<'PY'
+import ctypes
 import os
 import re
 import shutil
@@ -1735,6 +1736,13 @@ for value in candidate_values:
         raise SystemExit(0)
     if candidate > 0:
         candidates.add(candidate)
+timeout_text = os.environ.get("DX_TIMEOUT_PROCESS_SCAN_TIMEOUT_SECONDS", "3")
+try:
+    scan_timeout = int(timeout_text)
+except ValueError:
+    scan_timeout = 3
+if not 1 <= scan_timeout <= 30:
+    scan_timeout = 3
 
 
 def linux_processes(token_path):
@@ -1777,7 +1785,56 @@ def linux_processes(token_path):
     return matches
 
 
-def lsof_processes(token_path):
+def darwin_processes(token_path):
+    matches = set()
+    try:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    except OSError:
+        return None
+    libproc.proc_pidfdinfo.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_int,
+    ]
+    libproc.proc_pidfdinfo.restype = ctypes.c_int
+    process_ids = candidates
+    if not process_ids:
+        libproc.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        libproc.proc_listallpids.restype = ctypes.c_int
+        process_count = libproc.proc_listallpids(None, 0)
+        if process_count <= 0:
+            return None
+        process_buffer = (ctypes.c_int * (process_count + 1024))()
+        returned_count = libproc.proc_listallpids(
+            process_buffer,
+            ctypes.sizeof(process_buffer),
+        )
+        if returned_count <= 0:
+            return None
+        process_ids = {
+            process_id
+            for process_id in process_buffer[:returned_count]
+            if process_id > 0
+        }
+    resolved_path = os.fsencode(token_path.resolve())
+    for process_id in process_ids:
+        buffer = ctypes.create_string_buffer(4096)
+        byte_count = libproc.proc_pidfdinfo(
+            process_id,
+            9,
+            2,  # PROC_PIDFDVNODEPATHINFO
+            buffer,
+            len(buffer),
+        )
+        if byte_count > 0 and resolved_path in buffer.raw[:byte_count]:
+            matches.add(process_id)
+    return matches
+
+
+def lsof_processes(token_path, selected_candidates=None):
+    target_candidates = candidates if selected_candidates is None else selected_candidates
     lsof = shutil.which("lsof")
     if not lsof and sys.platform == "darwin":
         lsof = "/usr/sbin/lsof"
@@ -1785,12 +1842,37 @@ def lsof_processes(token_path):
         return set()
     try:
         command = [lsof]
-        if candidates:
-            command.extend(["-a", "-p", ",".join(str(pid) for pid in sorted(candidates)), "-d", "9"])
-        command.extend(["-t", "--", str(token_path)])
-        output = subprocess.check_output(command, stderr=subprocess.DEVNULL)
-    except (OSError, subprocess.CalledProcessError):
+        if target_candidates:
+            command.extend(
+                [
+                    "-a",
+                    "-p",
+                    ",".join(str(pid) for pid in sorted(target_candidates)),
+                    "-d",
+                    "9",
+                    "-Fpn",
+                ]
+            )
+        else:
+            command.extend(["-t", "--", str(token_path)])
+        output = subprocess.check_output(
+            command,
+            stderr=subprocess.DEVNULL,
+            timeout=scan_timeout,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return set()
+    if target_candidates:
+        matches = set()
+        selected_pid = None
+        resolved_path = os.fsencode(token_path.resolve())
+        for line in output.splitlines():
+            if line.startswith(b"p") and line[1:].isdigit():
+                selected_pid = int(line[1:])
+            elif line.startswith(b"n") and line[1:] == resolved_path:
+                if selected_pid is not None:
+                    matches.add(selected_pid)
+        return matches
     matches = set()
     for raw_pid in output.split():
         try:
@@ -1802,6 +1884,11 @@ def lsof_processes(token_path):
 
 if sys.platform.startswith("linux"):
     matches = linux_processes(Path(sys.argv[1]))
+elif sys.platform == "darwin":
+    token_path = Path(sys.argv[1])
+    matches = darwin_processes(token_path)
+    if matches is None:
+        matches = lsof_processes(token_path)
 else:
     matches = lsof_processes(Path(sys.argv[1]))
 
@@ -1830,6 +1917,25 @@ __dx_timeout_process_tree_pids() {
   fi
 }
 
+# Preserve the last owned ancestry snapshot before a supervised shell exits.
+# This avoids a host-wide descriptor scan when a successful command leaves a
+# background child behind. Token validation still happens before any signal.
+__dx_timeout_record_candidates() {
+  local root_pid="$1" candidate_file="$2" candidate_tmp
+  [[ "$root_pid" =~ ^[0-9]+$ && -n "$candidate_file" ]] || return 0
+  candidate_tmp="${candidate_file}.tmp.${root_pid}"
+  (
+    umask 077
+    __dx_timeout_process_tree_pids "$root_pid" > "$candidate_tmp"
+  ) || {
+    command rm -f "$candidate_tmp" 2>/dev/null || true
+    return 0
+  }
+  command mv "$candidate_tmp" "$candidate_file" 2>/dev/null || {
+    command rm -f "$candidate_tmp" 2>/dev/null || true
+  }
+}
+
 # __dx_timeout_signal_pid_list <pids> <root_pid> <signal>
 __dx_timeout_signal_pid_list() {
   local pids="$1" root_pid="${2:-}" signal="${3:-TERM}" pid
@@ -1840,17 +1946,6 @@ __dx_timeout_signal_pid_list() {
   done <<EOF
 $pids
 EOF
-}
-
-# __dx_timeout_signal_processes <token_file> <root_pid> <signal>
-__dx_timeout_signal_processes() {
-  local token_file="$1" root_pid="${2:-}" signal="${3:-TERM}" pids
-
-  # Capture token-bearing processes before the root is signalled. The PID list
-  # remains useful after descendants are reparented and avoids another costly
-  # lsof scan during the TERM grace period on macOS.
-  pids=$(__dx_timeout_token_pids "$token_file" 2>/dev/null || true)
-  __dx_timeout_signal_pid_list "$pids" "$root_pid" "$signal"
 }
 
 __dx_timeout_pid_list_alive() {
@@ -1865,16 +1960,30 @@ EOF
   return 1
 }
 
-# __dx_timeout_terminate_processes <token_file> [root_pid]
+# __dx_timeout_terminate_processes <token_file> [root_pid] [candidate_file]
 __dx_timeout_terminate_processes() {
-  local token_file="$1" root_pid="${2:-}" candidates="" pids fresh_pids
+  local token_file="$1" root_pid="${2:-}" candidate_file="${3:-}"
+  local candidates="" pids
+  local fresh_candidates="" fresh_pids candidate_pid
 
   if [[ -n "$root_pid" ]]; then
     candidates=$(__dx_timeout_process_tree_pids "$root_pid" 2>/dev/null || true)
+    # The root is the command process created by this supervisor, so it is safe
+    # to terminate before token validation. Descendants still require the token
+    # check because they may exit and have their PIDs reused during cleanup.
+    __dx_timeout_signal_pid_list "" "$root_pid" TERM
+  elif [[ -f "$candidate_file" ]]; then
+    candidates=$(cat "$candidate_file" 2>/dev/null || true)
   fi
   pids=$(__dx_timeout_token_pids "$token_file" "$candidates" \
     2>/dev/null || true)
-  __dx_timeout_signal_pid_list "$pids" "$root_pid" TERM
+  if [[ -z "$root_pid" && -n "$candidates" && -z "$pids" ]]; then
+    # A child shell can daemonize its own child before the wrapper's EXIT
+    # snapshot runs. Fall back to the invocation token only when the retained
+    # ancestry no longer contains a matching process.
+    pids=$(__dx_timeout_token_pids "$token_file" 2>/dev/null || true)
+  fi
+  __dx_timeout_signal_pid_list "$pids" "" TERM
   if __dx_timeout_pid_list_alive "$pids"; then
     sleep 2 2>/dev/null || true
     if __dx_timeout_pid_list_alive "$pids"; then
@@ -1882,7 +1991,15 @@ __dx_timeout_terminate_processes() {
       # period, but not for signalling afterward: an exited PID may already
       # belong to another process. Rescan the invocation token and signal only
       # processes that still carry it. Do not reuse root_pid here either.
-      fresh_pids=$(__dx_timeout_token_pids "$token_file" "$pids" \
+      fresh_candidates=$(
+        while IFS= read -r candidate_pid; do
+          [[ "$candidate_pid" =~ ^[0-9]+$ ]] || continue
+          __dx_timeout_process_tree_pids "$candidate_pid"
+        done <<EOF
+$pids
+EOF
+      )
+      fresh_pids=$(__dx_timeout_token_pids "$token_file" "$fresh_candidates" \
         2>/dev/null || true)
       __dx_timeout_signal_pid_list "$fresh_pids" "" KILL
     fi
@@ -1898,24 +2015,26 @@ __dx_timeout_stop_watchdog() {
 
 __dx_timeout_remove_state() {
   local temp_dir="${1:-}" marker_file="${2:-}" token_file="${3:-}"
-  command rm -f "$marker_file" "$token_file" 2>/dev/null || true
+  local candidate_file="${4:-}"
+  command rm -f "$marker_file" "$token_file" "$candidate_file" 2>/dev/null || true
   [[ -n "$temp_dir" ]] && command rmdir "$temp_dir" 2>/dev/null || true
 }
 
 __dx_timeout_abort() {
   local exit_status="$1" temp_dir="$2" marker_file="$3" token_file="$4"
-  local cmd_pid="${5:-}" watchdog_pid="${6:-}"
+  local candidate_file="$5" cmd_pid="${6:-}" watchdog_pid="${7:-}"
   __dx_timeout_stop_watchdog "$watchdog_pid"
-  __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+  __dx_timeout_terminate_processes "$token_file" "$cmd_pid" "$candidate_file"
   [[ -n "$cmd_pid" ]] && wait "$cmd_pid" 2>/dev/null || true
-  __dx_timeout_signal_processes "$token_file" "" KILL
-  __dx_timeout_remove_state "$temp_dir" "$marker_file" "$token_file"
+  __dx_timeout_remove_state "$temp_dir" "$marker_file" "$token_file" \
+    "$candidate_file"
   exit "$exit_status"
 }
 
 # __dx_run_with_timeout_core <seconds> <command> [args...] — isolated supervisor
 __dx_run_with_timeout_core() {
   local timeout="$1" temp_dir="" marker="" token_file="" token=""
+  local candidate_file="" command_root_pid=""
   local cmd_pid="" watchdog_pid="" cmd_status timeout_enabled=0
   local policy_session="${DX_TIMEOUT_POLICY_SESSION_ID:-}"
   local policy_gate="${DX_TIMEOUT_POLICY_GATE:-}"
@@ -1935,18 +2054,24 @@ __dx_run_with_timeout_core() {
   temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-timeout.XXXXXX") || return 2
   marker="$temp_dir/expired"
   token_file="$temp_dir/token"
+  candidate_file="$temp_dir/candidates"
   token="dx-${$}-${RANDOM}-${RANDOM}-$(date +%s)"
   (umask 077 && printf '%s\n' "$token" > "$token_file") || {
-    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
+    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file" \
+      "$candidate_file"
     return 2
   }
 
-  trap '__dx_timeout_abort 130 "$temp_dir" "$marker" "$token_file" "$cmd_pid" "$watchdog_pid"' INT
-  trap '__dx_timeout_abort 143 "$temp_dir" "$marker" "$token_file" "$cmd_pid" "$watchdog_pid"' TERM
-  trap '__dx_timeout_abort 129 "$temp_dir" "$marker" "$token_file" "$cmd_pid" "$watchdog_pid"' HUP
+  trap '__dx_timeout_abort 130 "$temp_dir" "$marker" "$token_file" "$candidate_file" "$cmd_pid" "$watchdog_pid"' INT
+  trap '__dx_timeout_abort 143 "$temp_dir" "$marker" "$token_file" "$candidate_file" "$cmd_pid" "$watchdog_pid"' TERM
+  trap '__dx_timeout_abort 129 "$temp_dir" "$marker" "$token_file" "$candidate_file" "$cmd_pid" "$watchdog_pid"' HUP
   # Explicit subshell preserves full function execution and exit status when the
   # command is a shell function with invocation-scoped environment variables.
   (
+    # Bash 3.2 and zsh both keep $$ fixed across subshells. A short child can
+    # report its real parent PID portably before the supervised command starts.
+    command_root_pid=$(/bin/sh -c 'printf "%s\n" "$PPID"')
+    trap '__dx_timeout_record_candidates "$command_root_pid" "$candidate_file"' EXIT
     export DX_TIMEOUT_PROCESS_TOKEN="$token"
     unset DX_TIMEOUT_POLICY_SESSION_ID DX_TIMEOUT_POLICY_GATE \
       DX_TIMEOUT_POLICY_DEFAULT_VALUE DX_TIMEOUT_POLICY_PHASE \
@@ -1969,13 +2094,15 @@ __dx_run_with_timeout_core() {
             "$policy_gate" "$policy_default" "$policy_phase" \
             2>/dev/null) || {
             printf 'policy-invalid\n' > "$marker"
-            __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+            __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
+              "$candidate_file"
             exit 0
           }
           if [[ ! "$policy_value" =~ ^[0-9]+$ \
             || ! "$policy_multiplier" =~ ^[1-9][0-9]*$ ]]; then
             printf 'policy-invalid\n' > "$marker"
-            __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+            __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
+              "$candidate_file"
             exit 0
           fi
           live_timeout=$((10#$policy_value * 10#$policy_multiplier))
@@ -1984,7 +2111,8 @@ __dx_run_with_timeout_core() {
         elapsed=$((now - started_at))
         if [[ "$live_timeout" -gt 0 && "$elapsed" -ge "$live_timeout" ]]; then
           printf 'timeout\n' > "$marker"
-          __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+          __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
+            "$candidate_file"
           exit 0
         fi
         sleep 1 2>/dev/null || true
@@ -2000,12 +2128,10 @@ __dx_run_with_timeout_core() {
     # The watchdog owns TERM-to-KILL escalation. Waiting here prevents the
     # command root's exit from cancelling cleanup before resistant children die.
     [[ -n "$watchdog_pid" ]] && wait "$watchdog_pid" 2>/dev/null || true
-    # Sweep once more for a late orphan without repeating the watchdog's
-    # TERM grace period.
-    __dx_timeout_signal_processes "$token_file" "" KILL
     local timeout_marker=""
     timeout_marker=$(cat "$marker" 2>/dev/null || true)
-    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
+    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file" \
+      "$candidate_file"
     [[ "$timeout_marker" == "policy-invalid" ]] && return 125
     return 124
   fi
@@ -2014,13 +2140,15 @@ __dx_run_with_timeout_core() {
   # then terminate every process that inherited this invocation's token.
   __dx_timeout_stop_watchdog "$watchdog_pid"
   if [[ -f "$marker" ]]; then
-    __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
-    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
+    __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
+      "$candidate_file"
+    __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file" \
+      "$candidate_file"
     return 124
   fi
-  __dx_timeout_terminate_processes "$token_file"
-  __dx_timeout_signal_processes "$token_file" "" KILL
-  __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
+  __dx_timeout_terminate_processes "$token_file" "" "$candidate_file"
+  __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file" \
+    "$candidate_file"
   return "$cmd_status"
 }
 

@@ -278,7 +278,7 @@ def run(output):
     def signal_group(selected_signal):
         try:
             os.killpg(process.pid, selected_signal)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
 
     def terminate_group(grace_seconds):
@@ -439,7 +439,7 @@ with tempfile.TemporaryDirectory(prefix="dex-review-oracle-") as isolated_home:
             def signal_group(selected_signal):
                 try:
                     os.killpg(process.pid, selected_signal)
-                except ProcessLookupError:
+                except (ProcessLookupError, PermissionError):
                     pass
 
             def terminate_group(grace_seconds):
@@ -1697,7 +1697,7 @@ inject_probe_permission_error = (
 def signal_group(process, selected_signal):
     try:
         os.killpg(process.pid, selected_signal)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
 
 

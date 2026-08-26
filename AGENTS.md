@@ -511,6 +511,7 @@ the gate map.
 | `DX_RTK_HTTP_TIMEOUT_SECONDS` | Seconds one RTK download may take | 20 for release metadata, 180 for the binary |
 | `DX_SESSION_RUNTIME_OWNER_START_TIMEOUT_MILLISECONDS` | Internal wait for a runtime supervisor to publish ready state; retry-time override, not a lifecycle gate | 15000 |
 | `DX_SESSION_RUNTIME_OWNER_FINISH_TIMEOUT_MILLISECONDS` | Internal wait for a runtime supervisor to publish terminal state; retry-time override, not a lifecycle gate | 5000 |
+| `DX_TIMEOUT_PROCESS_SCAN_TIMEOUT_SECONDS` | Internal bound for one macOS `lsof` scan while cleaning up a supervised process tree; invalid values fall back to the default | 3 |
 | `DEX_LOOP_ACTIVE` | Enable phase audit loop | unset |
 | `DEX_LOOP_PHASE` | Current phase (1-6 or "prompt-loop") | unset |
 | `DEX_PHASE_HANDOFF` | Same-session phase handoff marker (`inline` for `dx`) | unset |

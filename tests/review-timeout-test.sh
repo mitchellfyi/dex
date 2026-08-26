@@ -101,8 +101,12 @@ set -e
 timeout_elapsed=$(( $(date +%s) - started_epoch ))
 assert_eq "124" "$timeout_status" "timeout status"
 assert_eq "1" "$(wc -l < "$TIMEOUT_TERMINATE_COUNT_FILE" | tr -d ' ')" "timeout full termination passes"
-assert_eq "3" "$(wc -l < "$TIMEOUT_SCAN_COUNT_FILE" | tr -d ' ')" \
-  "timeout token scans"
+timeout_scans=$(wc -l < "$TIMEOUT_SCAN_COUNT_FILE" | tr -d ' ')
+if [[ "$timeout_scans" -lt 2 || "$timeout_scans" -gt 3 ]]; then
+  printf 'timeout cleanup: expected 2-3 token scans, got %s\n' \
+    "$timeout_scans" >&2
+  exit 1
+fi
 wait_for_file "$timeout_pid_file" "timeout cleanup"
 assert_process_gone "$(cat "$timeout_pid_file")" "timeout cleanup"
 if [[ $timeout_elapsed -gt 8 ]]; then
@@ -118,8 +122,8 @@ normal_status=$?
 set -e
 assert_eq "37" "$normal_status" "normal command status"
 normal_cumulative_scans=$(wc -l < "$TIMEOUT_SCAN_COUNT_FILE" | tr -d ' ')
-if [[ "$normal_cumulative_scans" -lt 5 || "$normal_cumulative_scans" -gt 6 ]]; then
-  printf 'normal exit cleanup: expected 5-6 cumulative token scans, got %s\n' \
+if [[ "$normal_cumulative_scans" -lt 3 || "$normal_cumulative_scans" -gt 5 ]]; then
+  printf 'normal exit cleanup: expected 3-5 cumulative token scans, got %s\n' \
     "$normal_cumulative_scans" >&2
   exit 1
 fi
@@ -149,9 +153,11 @@ printf '0\n' > "$stale_pid_scan_counter"
   sleep() { return 0; }
   __dx_timeout_terminate_processes unused-token 4242
 )
-assert_eq $'TERM\t4242\t4242' "$(sed -n '1p' "$stale_pid_probe")" \
-  "TERM uses the captured root"
-assert_eq $'KILL\tnone\t4343' "$(sed -n '2p' "$stale_pid_probe")" \
+assert_eq $'TERM\t4242\t' "$(sed -n '1p' "$stale_pid_probe")" \
+  "TERM reaches the owned root before token scanning"
+assert_eq $'TERM\tnone\t4242' "$(sed -n '2p' "$stale_pid_probe")" \
+  "TERM uses the validated token scan for descendants"
+assert_eq $'KILL\tnone\t4343' "$(sed -n '3p' "$stale_pid_probe")" \
   "KILL uses only the fresh token scan"
 
 # A running supervisor re-reads the attributed policy instead of freezing the
@@ -159,13 +165,17 @@ assert_eq $'KILL\tnone\t4343' "$(sed -n '2p' "$stale_pid_probe")" \
 LIVE_TIMEOUT_SESSION="repo-live-timeout-main"
 (
   /bin/sleep 0.2
-  dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 3 phase 3 \
+  dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 4 phase 3 \
     human "Extend the running provider deadline" 0
 ) &
 live_writer_pid=$!
-dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 1 3 1 \
-  /bin/sleep 2
+set +e
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 2 3 1 \
+  /bin/sleep 3
+live_timeout_status=$?
+set -e
 wait "$live_writer_pid"
+assert_eq "0" "$live_timeout_status" "live timeout extension"
 
 dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
   "Restore the default before testing disable"
@@ -175,9 +185,13 @@ dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
     human "Disable the running provider deadline" 0
 ) &
 live_writer_pid=$!
-dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 1 3 1 \
-  /bin/sleep 2
+set +e
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 2 3 1 \
+  /bin/sleep 3
+live_timeout_status=$?
+set -e
 wait "$live_writer_pid"
+assert_eq "0" "$live_timeout_status" "live timeout disable"
 
 dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
   "Restore the default before testing a shorter deadline"
