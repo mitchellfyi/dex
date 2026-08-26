@@ -217,7 +217,7 @@ The built-in operational gates are:
 
 | Gate | Value and consumer |
 |------|--------------------|
-| `session.timeout`, `phase.timeout` | Non-negative seconds for the live lifecycle watchdog; `0` disables that deadline |
+| `phase.timeout` | Non-negative seconds for the live phase watchdog; `0` disables that deadline. Dex does not impose a whole-session deadline. |
 | `phase.min-audits` | Minimum Stop-hook audits before normal completion |
 | `loop.max-iterations`, `loop.stall-timeout`, `loop.stall-escalate` | Audit-loop attempt and stall budgets |
 | `review.clean-passes` | Effective target from 1 through 30; lowering the trusted tier target requires real clean waves and records Phase 3 as waived |
@@ -284,8 +284,9 @@ the human or agent records its specific `guard.<name>=allow` override. Commit,
 push, and PR operations are not blocked by lifecycle phase, with or without a
 control receipt. A requested Phase 3 jump becomes a safe detach if a review
 child is still marked in flight; the jump can be retried after that process
-ends. Human-marked lifecycle completion also preserves the workspace instead
-of running automatic worktree cleanup.
+ends. Once the provider exits from a valid Phase 7 transaction, human-marked
+completion uses the same local worktree and branch cleanup as an ordinary
+completion.
 
 Audit prompts are editable markdown files. Changes take effect on the next loop iteration without reloading shell functions.
 
@@ -636,7 +637,7 @@ Phase state is stored in `~/.claude/.dex-phases/`:
   and waived agent/human policy decisions with scope, optional expiry, and
   reason; waiver rows remain audit history and are not exposed as live values
 - One `.phase-outcomes` file per lifecycle session — the durable terminal outcome ledger (completed/skipped/waived) behind the progress header symbols
-- One `.human-complete` file per lifecycle session when a human marked the lifecycle done, which preserves the workspace instead of cleaning it up
+- One `.human-complete` file per lifecycle session when a human marked the lifecycle done, preserving the completion attribution in the terminal proof
 - One `.meta` file per lifecycle or declared review child, with trusted
   workspace and parent/child provenance used by the session catalog
 - One `.run-id` file linking the lifecycle to its durable journal under
@@ -664,7 +665,6 @@ use an override-bound lower target; other assurance gates use
 | `DEX_LOOP_PROMISE` | `DEX_TICKET_COMPLETE` | Human-readable completion acknowledgement; the generated receipt command carries authorization |
 | `DEX_LOOP_PROMPT` | (from file) | Audit prompt injected on each loop iteration |
 | `DEX_LOOP_PHASE` | (set by wrapper) | Current phase number (0-6) or `prompt-loop`, used to find audit file |
-| `DEX_SESSION_TIMEOUT` | `86400` | Session timeout in seconds (24h). Set to 0 to disable. |
 | `DEX_PHASE_TIMEOUT` | `0` | Seconds any one phase may run; 0 leaves the session budget in charge |
 | `DEX_PHASE_N_TIMEOUT` | unset | Per-phase override (e.g. `DEX_PHASE_2_TIMEOUT=3600`); wins over `DEX_PHASE_TIMEOUT` |
 | `DEX_STOP_SOUND` | `1` | Play a sound when Claude stops (macOS only); set to 0 to turn it off |

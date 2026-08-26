@@ -116,7 +116,7 @@ __dx_cli() {
       if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
         echo "Usage: dx reload"
         echo ""
-        echo "Reload Dex shell functions after updating the installation."
+        echo "Reload Dex shell functions and refresh Claude hook settings."
         return 0
       fi
       if [[ $# -gt 0 ]]; then
@@ -124,8 +124,16 @@ __dx_cli() {
         dx_info "Usage: dx reload"
         return 1
       fi
-      source "$DEX_DIR/dx.sh"
-      echo "Reloaded Dex shell functions."
+      if ! source "$DEX_DIR/dx.sh"; then
+        dx_error "Could not reload Dex shell functions."
+        return 1
+      fi
+      if ! dx_refresh_claude_settings 1 || ! dx_claude_settings_complete; then
+        dx_error "Reloaded Dex shell functions, but Claude hook settings could not be refreshed."
+        dx_info "Run 'dx tools bootstrap' after resolving the settings error."
+        return 1
+      fi
+      dx_done "Reloaded Dex shell functions and refreshed Claude hook settings."
       ;;
     status)    bash "$DEX_DIR/bin/status.sh" "$@" ;;
     help|--help|-h)
@@ -159,7 +167,7 @@ __dx_cli() {
       echo "                        Override timeout: dx research --scenario-timeout 7200"
       echo "                        On main/master, pass --allow-main"
       echo "  dx uninit           Remove Dex from current repo"
-      echo "  dx reload           Reload shell functions after editing dx.sh"
+      echo "  dx reload           Reload shell functions and refresh Claude hooks"
       echo "  dx status           Show installation status"
       echo "  dex                 Alias for dx"
       echo "  dexter              Alias for dx"
@@ -378,11 +386,6 @@ __dx_phase_audit_basename() { dx_lifecycle_phase_audit_basename "$1"; }
 # Respects the DEX_PHASE_<step>_MIN_AUDITS env override; defaults to 1.
 __dx_phase_min_audits() { dx_lifecycle_phase_min_audits "$1"; }
 
-# Session timeout in seconds — single budget for the entire dx run (all phases).
-# Default: 86400 (24 hours). Set to 0 to disable.
-# Override: DEX_SESSION_TIMEOUT=14400 (4h)
-DX_SESSION_TIMEOUT=86400
-
 # Review sub-loop configuration.
 # Lifecycle Phase 3 uses the /dxreviewloop skill in the same Claude session.
 # A risk assessment selects small/normal/complex before the first review wave.
@@ -404,7 +407,7 @@ DX_SESSION_TIMEOUT=86400
 DX_COMPLETE_MAX_CYCLES=3
 DX_COMPLETE_WAIT_MINUTES=5
 
-# Per-phase timeouts are disabled by default (session timeout covers them).
+# Per-phase timeouts are disabled by default.
 # Set per-phase: DEX_PHASE_2_TIMEOUT=3600
 # Set all phases: DEX_PHASE_TIMEOUT=7200
 # zsh 1-indexed: [1]=Plan, [2]=Implement, [3]=Review, [4]=Verify, [5]=PR, [6]=Complete
@@ -1878,7 +1881,7 @@ __dx_codex_direct_phase_handoff() {
         "$(dx_lifecycle_human_complete_file "$session_id")" human-complete; then
         dx_lifecycle_control_lock_release_checked "$session_id" \
           2>/dev/null || true
-        dx_warn "Dex could not persist the human-completion workspace marker. Its control receipt remains available for recovery."
+        dx_warn "Dex could not persist the human-completion marker. Its control receipt remains available for recovery."
         return 1
       fi
       if ! rm -f "$config_file" "$(dx_active_file "$session_id")" \
@@ -2871,11 +2874,6 @@ __dx_run_phases_inline() {
       __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
       echo ""
       echo "Ticket lifecycle complete."
-      if dx_lifecycle_human_complete_valid "$session_id"; then
-        dx_info "Human-controlled completion preserved the lifecycle workspace."
-        __dx_runtime_set_terminal completed
-        return 0
-      fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
       workspace_cleanup_result=$?
       if [[ "$workspace_cleanup_result" -eq 0 ]]; then
@@ -2918,11 +2916,6 @@ __dx_run_phases_inline() {
       __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
       echo ""
       echo "Ticket lifecycle complete."
-      if dx_lifecycle_human_complete_valid "$session_id"; then
-        dx_info "Human-controlled completion preserved the lifecycle workspace."
-        __dx_runtime_set_terminal completed
-        return 0
-      fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" \
         "$workspace_mode" "$session_id"
       workspace_cleanup_result=$?
@@ -2959,9 +2952,6 @@ __dx_run_phases_inline() {
   local message
   message=$(__dx_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")
 
-  local session_timeout="${DEX_SESSION_TIMEOUT:-$DX_SESSION_TIMEOUT}"
-  local session_start_epoch
-  session_start_epoch=$(date +%s)
   local _dx_watchdog_pid="" _dx_pidfile="" _dx_watchdog_reason_file=""
   # An unchecked mktemp leaves the path empty, and the watchdog below then
   # polls a file that can never appear, spinning for the whole session.
@@ -2974,7 +2964,7 @@ __dx_run_phases_inline() {
 
   (
     local watch_target="" watch_now watch_phase watch_phase_start watch_failure=""
-    local watch_session_timeout="" watch_phase_timeout=""
+    local watch_phase_timeout=""
     while [[ -z "$watch_target" ]]; do
       [[ -s "$_dx_pidfile" ]] && watch_target=$(<"$_dx_pidfile")
       [[ -z "$watch_target" ]] && sleep 0.2
@@ -2983,13 +2973,9 @@ __dx_run_phases_inline() {
       watch_now=$(date +%s)
       watch_phase=$(dx_lifecycle_current_phase "$session_id")
       [[ "$watch_phase" =~ ^[0-6]$ ]] || watch_phase="$step"
-      watch_session_timeout=$(dx_override_effective "$session_id" \
-        session.timeout "$session_timeout" "$watch_phase" 2>/dev/null) \
-        || watch_failure="invalid-runtime-override"
       watch_phase_timeout=$(__dx_phase_timeout "$watch_phase" "$session_id" \
         2>/dev/null) || watch_failure="invalid-runtime-override"
-      if [[ ! "$watch_session_timeout" =~ ^[0-9]+$ \
-        || ! "$watch_phase_timeout" =~ ^[0-9]+$ ]]; then
+      if [[ ! "$watch_phase_timeout" =~ ^[0-9]+$ ]]; then
         watch_failure="invalid-runtime-override"
       fi
       if [[ -z "$watch_failure" ]]; then
@@ -2997,10 +2983,7 @@ __dx_run_phases_inline() {
           "$watch_phase")
         [[ "$watch_phase_start" =~ ^[0-9]+$ ]] \
           || watch_phase_start="$watch_now"
-        if [[ "$watch_session_timeout" -gt 0 \
-          && $((watch_now - session_start_epoch)) -ge "$watch_session_timeout" ]]; then
-          watch_failure="session-timeout"
-        elif [[ "$watch_phase_timeout" -gt 0 \
+        if [[ "$watch_phase_timeout" -gt 0 \
           && $((watch_now - watch_phase_start)) -ge "$watch_phase_timeout" ]]; then
           watch_failure="phase-timeout"
         fi
@@ -3054,9 +3037,6 @@ __dx_run_phases_inline() {
       return 1
     fi
     case "$watchdog_reason" in
-      session-timeout)
-        dx_error "Dex paused because the current session runtime budget expired."
-        ;;
       phase-timeout)
         dx_error "Dex paused because the current phase runtime budget expired."
         ;;
@@ -3140,11 +3120,6 @@ __dx_run_phases_inline() {
     __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
     echo ""
     echo "Ticket lifecycle complete."
-    if dx_lifecycle_human_complete_valid "$session_id"; then
-      dx_info "Human-controlled completion preserved the lifecycle workspace."
-      __dx_runtime_set_terminal completed
-      return 0
-    fi
     __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
     workspace_cleanup_result=$?
     if [[ "$workspace_cleanup_result" -eq 0 ]]; then
@@ -3205,11 +3180,6 @@ __dx_run_phases_inline() {
       __dx_show_header "$wt_name" 7 "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
       echo ""
       echo "Ticket lifecycle complete."
-      if dx_lifecycle_human_complete_valid "$session_id"; then
-        dx_info "Human-controlled completion preserved the lifecycle workspace."
-        __dx_runtime_set_terminal completed
-        return 0
-      fi
       __dx_cleanup_completed_workspace "$wt_name" "$wt_dir" "$default_branch" "$workspace_mode" "$session_id"
       workspace_cleanup_result=$?
       if [[ "$workspace_cleanup_result" -eq 0 ]]; then

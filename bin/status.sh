@@ -150,4 +150,4 @@ fi
 echo ""
 echo "Live updates:"
 echo "  Skills, hooks, rules, prompts → changes take effect immediately"
-echo "  Shell functions (dx.sh)       → run 'dx reload' to apply"
+echo "  Shell functions and hooks     → run 'dx reload' to apply"

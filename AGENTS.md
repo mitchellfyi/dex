@@ -394,7 +394,7 @@ leaving the runner with "FAIL(1)" over an empty log.
 
 1. This is zsh-only — zsh syntax is fine here
 2. Prefix functions with `unalias/unfunction` guards for re-sourcing safety
-3. After editing, users run `dx reload` to apply changes
+3. After editing, users run `dx reload` to apply shell changes and refresh Claude hook settings
 
 ### Adding a shared library function
 
@@ -519,7 +519,6 @@ the gate map.
 | `DEX_LOOP_MAX_ITERATIONS` | Max loop iterations | 30 |
 | `DEX_PHASE_TIMEOUT` | Seconds any one phase may run; `0` disables it | `0` (the session budget covers it) |
 | `DEX_PHASE_<N>_TIMEOUT` | Same, for one phase only (e.g. `DEX_PHASE_2_TIMEOUT=3600`); wins over `DEX_PHASE_TIMEOUT` | unset |
-| `DEX_SESSION_TIMEOUT` | Seconds for the whole `dx` run across every phase; `0` disables it | 86400 (24h) |
 | `DEX_STOP_SOUND` | Play a sound when Claude stops (macOS only); `0` turns it off | `1` |
 | `DEX_STOP_SOUND_FILE` | Play this sound file instead of a random system one | unset |
 | `DEX_SKIP_TOOL_BOOTSTRAP` | `1` makes `dx init` skip the Claude/Codex tooling bootstrap, for callers that already ran it | `0` |

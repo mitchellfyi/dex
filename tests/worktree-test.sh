@@ -8,6 +8,7 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-worktree-test.XXXXXX")"
 
 cleanup() {
   git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-61" >/dev/null 2>&1 || true
+  git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/task-completed-cleanup" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -87,5 +88,48 @@ touch -t 202001010000 "$old_dir/one.state" "$old_dir/two.complete"
 export TEST_OLD_DIR="$old_dir"
 old_count=$(zsh -fc 'source "$DEX_DIR/lib/common.sh"; dx_cleanup_stale_files "$TEST_OLD_DIR" "state complete" 7')
 [[ "$old_count" -eq 2 ]] || assert_at $LINENO
+
+# A human-authorized Phase 7 follows the same cleanup path as an ordinary
+# completion. Exercise the direct Codex preflight path without launching a
+# provider, including the required cwd handoff before deleting the worktree.
+cleanup_name="task-completed-cleanup"
+cleanup_wt="$repo/.dex/worktrees/$cleanup_name"
+cleanup_branch="worktree-$cleanup_name"
+default_branch=$(git -C "$repo" symbolic-ref --short HEAD)
+git -C "$repo" worktree add -q "$cleanup_wt" -b "$cleanup_branch" HEAD
+export TEST_CLEANUP_NAME="$cleanup_name"
+export TEST_CLEANUP_WT="$cleanup_wt"
+export TEST_CLEANUP_REPO="$repo"
+export TEST_CLEANUP_BRANCH="$cleanup_branch"
+export TEST_DEFAULT_BRANCH="$default_branch"
+zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  set -e
+  cd "$TEST_CLEANUP_WT"
+  session_id=$(dx_session_id "$TEST_CLEANUP_NAME")
+  state_file=$(dx_state_file "$session_id")
+  times_file=$(dx_times_file "$session_id")
+  dx_lifecycle_atomic_write "$state_file" 6
+  dx_write_lifecycle_control "$session_id" complete 7 terminal "" 6 ""
+  export DX_PROVIDER_APPLIED=1
+  export DX_PROVIDER_ENGINE=codex-plugin
+  export DX_PROVIDER_AGENT=codex
+  __dx_run_phases_inline "$TEST_CLEANUP_NAME" "$TEST_CLEANUP_WT" \
+    "$TEST_DEFAULT_BRANCH" 6 "$state_file" "$times_file" \
+    "dx --resume" worktree "$session_id" "completed cleanup fixture"
+  expected_root=$(cd "$TEST_CLEANUP_REPO" && pwd -P)
+  if [[ "$PWD" != "$expected_root" ]]; then
+    print -u2 -- "cleanup did not return to the repository root: $PWD"
+    exit 1
+  fi
+  if [[ -d "$TEST_CLEANUP_WT" ]]; then
+    print -u2 -- "completed worktree still exists"
+    exit 1
+  fi
+  if git show-ref --verify --quiet "refs/heads/$TEST_CLEANUP_BRANCH"; then
+    print -u2 -- "completed lifecycle branch still exists"
+    exit 1
+  fi
+'
 
 printf 'worktree-test passed\n'

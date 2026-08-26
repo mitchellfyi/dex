@@ -394,10 +394,13 @@ __dx_claude() {
   receipt_generation=$(printf "%s\n" "$command_line" | cut -d\" -f6)
   [[ "$receipt_session" == "$session_id" ]] || assert_at $LINENO
   [[ "$receipt_generation" != "$old_generation" ]] || assert_at $LINENO
+  # A stale pre-removal value must not impose a whole-session deadline. Phase
+  # timeouts remain independently configurable and default to disabled.
+  sleep 2
   bash "$DEX_DIR/bin/complete-receipt.sh" "$receipt_session" "$receipt_generation"
 }
 
-__dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
+DEX_SESSION_TIMEOUT=1 __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
 [[ "$(cat "$state_file")" == "7" ]] || assert_at $LINENO
 [[ "$(dx_phase_outcome_latest "$session_id" 6)" == "completed" ]] || assert_at $LINENO
 '

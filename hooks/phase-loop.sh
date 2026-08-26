@@ -1054,7 +1054,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
               "$(dx_lifecycle_human_complete_file "$SESSION_ID")" human-complete; then
               dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
                 2>/dev/null || true
-              printf '\n%s\n' "Dex recorded override-authorized completion but could not persist its workspace-preservation marker. The control receipt was preserved for recovery." >&2
+              printf '\n%s\n' "Dex recorded override-authorized completion but could not persist its human-completion marker. The control receipt was preserved for recovery." >&2
               exit 2
             fi
             dx_clear_lifecycle_control_unlocked "$SESSION_ID"

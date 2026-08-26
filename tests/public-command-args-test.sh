@@ -47,6 +47,13 @@ zsh -fc '
   fi
   grep -Fq "does not accept arguments" "$TEST_REPO/reload-invalid.out"
 
+  mkdir -p "$HOME/.claude"
+  print -r -- "{}" > "$HOME/.claude/settings.json"
+  dx reload > "$TEST_REPO/reload.out"
+  dx_claude_settings_complete
+  grep -Fq "Reloaded Dex shell functions and refreshed Claude hook settings" \
+    "$TEST_REPO/reload.out"
+
   invalid_cases=(
     "dxcomplete unexpected"
     "dxreviewloop unexpected"
@@ -68,6 +75,22 @@ zsh -fc '
 
   dx help > "$TEST_REPO/dx-help.out"
 '
+
+python3 - "$HOME/.claude/settings.json" <<'PY'
+import json
+import sys
+
+settings = json.load(open(sys.argv[1], encoding="utf-8"))
+entries = settings["hooks"]["UserPromptSubmit"]
+timeouts = [
+    hook.get("timeout")
+    for entry in entries
+    for hook in entry.get("hooks", [])
+    if "hooks/user-prompt-submit.sh" in hook.get("command", "")
+]
+if timeouts != [120]:
+    raise SystemExit(f"unexpected Dex UserPromptSubmit timeouts: {timeouts!r}")
+PY
 
 # `dx help` is the only listing most people read, and it had quietly fallen
 # behind the dispatcher: `dx worker` and `dx dexcode` were both reachable and

@@ -154,8 +154,13 @@ OVERRIDE_FILE="$(dx_override_file "$SESSION")"
 UNSAFE_SESSION="repo-override-policy-unsafe"
 ln -s /dev/null "$(dx_override_file "$UNSAFE_SESSION")"
 assert_rejected "$LINENO" dx_override_effective "$UNSAFE_SESSION" \
-  session.timeout 86400 2
-assert_rejected "$LINENO" dx_override_set "$UNSAFE_SESSION" session.timeout 0 \
-  session - agent "Disable the session deadline" 0
+  phase.timeout 0 2
+assert_rejected "$LINENO" dx_override_set "$UNSAFE_SESSION" phase.timeout 0 \
+  session - agent "Disable the current phase deadline" 0
+
+# Dex never owns a whole-session deadline. A stale environment value cannot be
+# reintroduced through the live override registry.
+assert_rejected "$LINENO" dx_override_set "$SESSION" session.timeout 1 \
+  session - agent "Do not close this provider session automatically" 0
 
 printf 'override policy tests passed\n'

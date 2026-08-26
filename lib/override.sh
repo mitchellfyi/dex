@@ -33,7 +33,7 @@ dx_override_gate_supported() {
   [[ $# -eq 1 ]] || return 2
   local gate="$1"
   case "$gate" in
-    session.timeout|phase.timeout|phase.min-audits|loop.max-iterations|\
+    phase.timeout|phase.min-audits|loop.max-iterations|\
     loop.stall-timeout|loop.stall-escalate|review.clean-passes|\
     review.pass-timeout|review.notice-interval|review.recheck-seconds|\
     watch.pause-ttl|watch.cycle-timeout|watch.command-timeout|\
@@ -60,7 +60,7 @@ dx_override_gate_value_valid() {
       [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 2 \
         && $((10#$value)) -le 30 ]]
       ;;
-    session.timeout|phase.timeout|phase.min-audits|loop.max-iterations|\
+    phase.timeout|phase.min-audits|loop.max-iterations|\
     loop.stall-timeout|loop.stall-escalate|review.pass-timeout|\
     review.notice-interval|review.recheck-seconds|watch.pause-ttl|\
     watch.cycle-timeout|watch.command-timeout|complete.max-cycles|\
