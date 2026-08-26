@@ -206,7 +206,8 @@ printf 'artifact body one\n' > "$artifact_file"
 
 # Registration, direct upload, and confirmation must all complete before the
 # remote id is attached to the local manifest.
-dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Test output"
+dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Test output" \
+  '{"producer":"test"}'
 assert_eq "3" "$(request_count)" "three-step request count"
 
 python3 - "$TMP_DIR/server/requests.jsonl" "$run_id" "$artifact_file" <<'PY'
@@ -230,6 +231,7 @@ assert register["body"] == {
     "content_type": "text/plain",
     "filename": "result.txt",
     "kind": "test_output",
+    "metadata": {"producer": "test"},
     "sha256": hashlib.sha256(artifact).hexdigest(),
     "title": "Test output",
 }, register
@@ -263,13 +265,15 @@ DEXCODE_SYNC=off dx_run_register_artifact "$run_id" "test_output" \
 assert_eq "$before_disabled_requests" "$(request_count)" "disabled artifact sync request count"
 
 # An unchanged registration is idempotent.
-dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Test output"
+dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Test output" \
+  '{"producer":"test"}'
 assert_eq "3" "$(request_count)" "unchanged artifact request count"
 
 # If the local file changes, the old remote id no longer describes it. Upload
 # the new bytes and replace the manifest's remote identity.
 printf 'artifact body two, now changed\n' > "$artifact_file"
-dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Updated test output"
+dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Updated test output" \
+  '{"producer":"test"}'
 assert_eq "6" "$(request_count)" "changed artifact request count"
 assert_eq "remote-art-2" "$(json_value "$manifest_file" "next(item for item in data['artifacts'] if item['path'] == 'reports/result.txt')['dexcode_artifact_id']")" "updated manifest remote id"
 second_hash="$(json_value "$manifest_file" "next(item for item in data['artifacts'] if item['path'] == 'reports/result.txt')['sha256']")"
@@ -281,7 +285,8 @@ assert_eq "$second_hash" "$(json_value "$manifest_file" "next(item for item in d
 
 # Remote metadata follows the manifest too. A title-only update needs a new
 # registration even though the bytes and digest did not change.
-dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Retitled test output"
+dx_run_register_artifact "$run_id" "test_output" "reports/result.txt" "Retitled test output" \
+  '{"producer":"test"}'
 assert_eq "9" "$(request_count)" "retitled artifact request count"
 assert_eq "remote-art-3" "$(json_value "$manifest_file" "next(item for item in data['artifacts'] if item['path'] == 'reports/result.txt')['dexcode_artifact_id']")" "retitled manifest remote id"
 python3 - "$TMP_DIR/server/requests.jsonl" <<'PY'
@@ -291,6 +296,7 @@ from pathlib import Path
 
 records = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
 assert records[-3]["body"]["title"] == "Retitled test output", records[-3]
+assert records[-3]["body"]["metadata"] == {"producer": "test"}, records[-3]
 PY
 
 # A malformed registration and a non-HTTP upload URL remain non-fatal, but the
@@ -351,6 +357,7 @@ assert confirm["authorization"] == "Bearer dc_run_scoped_artifact_token", confir
 PY
 
 assert_eq "video/webm" "$(dx_dexcode_content_type capture.webm)" "WebM content type"
+assert_eq "text/vtt" "$(dx_dexcode_content_type captions.vtt)" "VTT content type"
 assert_eq "application/zip" "$(dx_dexcode_content_type trace.zip)" "ZIP content type"
 assert_eq "image/png" "$(dx_dexcode_content_type SCREENSHOT.PNG)" "case-insensitive content type"
 
@@ -445,6 +452,7 @@ run_id = sys.argv[3]
 first_register, first_upload, replay_register, replay_upload, replay_confirm = records[-5:]
 artifact = next(item for item in manifest["artifacts"] if item["path"] == "reports/pending-replay.txt")
 fingerprint_source = json.dumps({
+    "metadata": artifact["metadata"],
     "path": artifact["path"],
     "sha256": artifact["sha256"],
     "title": artifact["title"],

@@ -189,6 +189,7 @@ MANIFEST="$SESSION_DIR/visual-evidence.md"
 VIDEO="$SESSION_DIR/walkthrough.mp4"
 printf '# evidence\n' > "$MANIFEST"
 printf 'video\n' > "$VIDEO"
+printf 'WEBVTT\n' > "$SESSION_DIR/captions.vtt"
 dx_ui_capture_write_status "$SID" "READY" "Walkthrough ready" "$MANIFEST" "$VIDEO"
 assert_eq "READY" "$(dx_ui_capture_status "$SID")" "ready evidence status"
 assert_file "$EVIDENCE"
@@ -205,6 +206,22 @@ assert_file "$(dx_run_artifact_file "$RUN_ID" "ui-proof/walkthrough.mp4")"
 assert_file "$(dx_run_artifact_file "$RUN_ID" "ui-proof/walkthrough.json")"
 assert_file "$(dx_run_artifact_file "$RUN_ID" "ui-proof/evidence.json")"
 assert_contains '"type": "ui_walkthrough"' "$(dx_run_artifact_manifest_file "$RUN_ID")"
+python3 - "$(dx_run_artifact_manifest_file "$RUN_ID")" "$SID" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    artifacts = json.load(manifest_file)["artifacts"]
+walkthrough = next(item for item in artifacts if item["type"] == "ui_walkthrough")
+assert walkthrough["metadata"] == {
+    "producer": "dex_ui_capture",
+    "role": "walkthrough",
+    "session_id": sys.argv[2],
+    "temporary": True,
+}, walkthrough
+captions = next(item for item in artifacts if item["type"] == "ui_captions")
+assert captions["metadata"]["role"] == "captions", captions
+PY
 
 dx_ui_capture_mark_completed "$SID"
 assert_contains '"phase_state": "completed"' "$EVIDENCE"

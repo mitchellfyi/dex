@@ -474,7 +474,7 @@ PY
 dx_run_sync_artifact() {
   local run_id="$1" manifest_file="$2" artifact_root="$3" artifact_type="$4" rel_path="$5" title="$6"
   local snapshot_file="${7:-${artifact_root}/${rel_path}}"
-  local sync_state existing_id uploaded_sha current_sha uploaded_fingerprint current_fingerprint local_artifact_id remainder remote_id filename
+  local sync_state existing_id uploaded_sha current_sha uploaded_fingerprint current_fingerprint local_artifact_id remainder remote_id filename metadata_b64 metadata_json
 
   command -v dx_dexcode_upload_artifact >/dev/null 2>&1 || return 0
   if command -v dx_dexcode_value_disabled >/dev/null 2>&1; then
@@ -488,6 +488,7 @@ dx_run_sync_artifact() {
 import hashlib
 import json
 import os
+import base64
 from pathlib import Path
 
 try:
@@ -496,7 +497,16 @@ except (OSError, json.JSONDecodeError):
     raise SystemExit(0)
 for item in manifest.get("artifacts", []):
     if item.get("type") == os.environ["DX_SYNC_TYPE"] and item.get("path") == os.environ["DX_SYNC_PATH"]:
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata_json = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+        # DexCode bounds artifact metadata at 8 KiB. Oversized local metadata
+        # remains in the run journal, while the artifact itself still syncs.
+        if len(metadata_json.encode("utf-8")) > 8192:
+            metadata_json = "{}"
         fingerprint_source = json.dumps({
+            "metadata": json.loads(metadata_json),
             "path": item.get("path") or "",
             "sha256": item.get("sha256") or "",
             "title": item.get("title") or "",
@@ -509,6 +519,7 @@ for item in manifest.get("artifacts", []):
             item.get("dexcode_artifact_fingerprint") or "",
             hashlib.sha256(fingerprint_source).hexdigest(),
             item.get("id") or "",
+            base64.urlsafe_b64encode(metadata_json.encode("utf-8")).decode("ascii"),
         )))
         break
 PY
@@ -522,7 +533,9 @@ PY
   uploaded_fingerprint="${remainder%%|*}"
   remainder="${remainder#*|}"
   current_fingerprint="${remainder%%|*}"
-  local_artifact_id="${remainder#*|}"
+  remainder="${remainder#*|}"
+  local_artifact_id="${remainder%%|*}"
+  metadata_b64="${remainder#*|}"
   if [[ -n "$existing_id" && -n "$current_sha" \
     && "$uploaded_sha" == "$current_sha" \
     && -n "$current_fingerprint" \
@@ -531,9 +544,18 @@ PY
   fi
 
   filename="${rel_path##*/}"
+  if ! metadata_json=$(DX_ARTIFACT_METADATA_B64="$metadata_b64" python3 - <<'PY' 2>/dev/null
+import base64
+import os
+
+print(base64.urlsafe_b64decode(os.environ["DX_ARTIFACT_METADATA_B64"]).decode("utf-8"))
+PY
+  ); then
+    metadata_json="{}"
+  fi
   remote_id=$(dx_dexcode_upload_artifact \
     "$run_id" "$snapshot_file" "$artifact_type" "$title" "$filename" \
-    "$local_artifact_id" "$current_fingerprint" 2>/dev/null || true)
+    "$local_artifact_id" "$current_fingerprint" "$metadata_json" 2>/dev/null || true)
   [[ -n "$remote_id" ]] || return 0
 
   # Same read-modify-write as registration: without the lock this update can

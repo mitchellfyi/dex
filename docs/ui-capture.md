@@ -49,7 +49,7 @@ The structured producer writes a compact bundle:
 
 Each raw run contains its screenshot, Playwright trace, WebM source video, metadata, and console, page, network, and HTTP error logs. Set `DX_ARTIFACT_DIR` to move the root. Dex refuses an output directory inside the repository unless Git ignores it.
 
-Generated files are temporary evidence and must not be committed. During an active lifecycle, the compact bundle is also registered in the run journal. If DexCode sync is connected, normal run-artifact sync uploads it there. Local paths still do not render on GitHub; the author drags the MP4 and poster into the PR body or a comment.
+Generated files are temporary evidence and must not be committed. During an active lifecycle, the compact bundle is also registered in the run journal. Each artifact carries its capture session and role, so DexCode can pair the walkthrough with its poster and captions. If DexCode sync is connected, normal run-artifact sync uploads the bundle and DexCode shows supported images and videos on the session page. Local paths still do not render on GitHub; the author drags the MP4 and poster into the PR body or a comment.
 
 An agent can use an existing project recorder, MCP browser, or another suitable tool and still join the evidence workflow:
 

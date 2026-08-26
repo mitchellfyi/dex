@@ -2282,6 +2282,8 @@ dx_dexcode_upload_artifact() {
   local filename="${5:-}" content_type size sha file_stats timeout_seconds upload_timeout_seconds
   local snapshot_file source_root source_name
   local local_artifact_id="${6:-}" sync_fingerprint="${7:-}" idempotency_key=""
+  local metadata_json="${8:-}"
+  [[ -n "$metadata_json" ]] || metadata_json="{}"
 
   dx_dexcode_value_disabled "${DEXCODE_SYNC:-1}" && return 0
   dx_run_validate_id "$run_id" 2>/dev/null || return 0
@@ -2324,9 +2326,14 @@ dx_dexcode_upload_artifact() {
   payload=$(DX_ARTIFACT_KIND="$kind" DX_ARTIFACT_TITLE="$title" \
     DX_ARTIFACT_FILENAME="$filename" DX_ARTIFACT_CONTENT_TYPE="$content_type" \
     DX_ARTIFACT_SIZE="$size" DX_ARTIFACT_SHA="$sha" \
+    DX_ARTIFACT_METADATA="$metadata_json" \
     python3 - <<'PY'
 import json
 import os
+
+metadata = json.loads(os.environ["DX_ARTIFACT_METADATA"])
+if not isinstance(metadata, dict):
+    raise SystemExit("artifact metadata must be a JSON object")
 
 print(json.dumps({
     "byte_size": int(os.environ["DX_ARTIFACT_SIZE"]),
@@ -2335,6 +2342,7 @@ print(json.dumps({
     "filename": os.environ["DX_ARTIFACT_FILENAME"],
     "content_type": os.environ["DX_ARTIFACT_CONTENT_TYPE"],
     "sha256": os.environ["DX_ARTIFACT_SHA"],
+    "metadata": metadata,
 }, sort_keys=True, separators=(",", ":")))
 PY
   ) || { command rm -rf "$tmp_dir"; return 0; }
@@ -2451,6 +2459,7 @@ dx_dexcode_content_type() {
     txt|log) printf 'text/plain\n' ;;
     diff|patch) printf 'text/x-diff\n' ;;
     html) printf 'text/html\n' ;;
+    vtt) printf 'text/vtt\n' ;;
     png) printf 'image/png\n' ;;
     jpg|jpeg) printf 'image/jpeg\n' ;;
     gif) printf 'image/gif\n' ;;

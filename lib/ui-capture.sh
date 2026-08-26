@@ -181,7 +181,7 @@ PY
 }
 
 __dx_ui_capture_register_file() {
-  local run_id="$1" session_id="$2" source_file="$3" rel_path="$4" artifact_type="$5" title="$6"
+  local run_id="$1" session_id="$2" source_file="$3" rel_path="$4" artifact_type="$5" title="$6" role="$7"
   local target_file tmp_file metadata_json
   [[ -f "$source_file" && ! -L "$source_file" ]] || return 0
   target_file=$(dx_run_artifact_file "$run_id" "$rel_path") || return 1
@@ -191,7 +191,9 @@ __dx_ui_capture_register_file() {
     command rm -f "$tmp_file" 2>/dev/null || true
     return 1
   fi
-  metadata_json=$(printf '{"session_id":"%s","temporary":true}' "$session_id")
+  metadata_json=$(printf \
+    '{"producer":"dex_ui_capture","role":"%s","session_id":"%s","temporary":true}' \
+    "$role" "$session_id")
   dx_run_register_artifact "$run_id" "$artifact_type" "$rel_path" "$title" "$metadata_json"
 }
 
@@ -206,21 +208,21 @@ dx_ui_capture_register_bundle() {
   dx_run_artifact_manifest_prepare "$run_id" || return 1
 
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/walkthrough.mp4" \
-    "ui-proof/walkthrough.mp4" "ui_walkthrough" "UI walkthrough" || failed=1
+    "ui-proof/walkthrough.mp4" "ui_walkthrough" "UI walkthrough" "walkthrough" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/poster.png" \
-    "ui-proof/poster.png" "ui_poster" "UI walkthrough poster" || failed=1
+    "ui-proof/poster.png" "ui_poster" "UI walkthrough poster" "poster" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/transcript.md" \
-    "ui-proof/transcript.md" "ui_transcript" "UI walkthrough transcript" || failed=1
+    "ui-proof/transcript.md" "ui_transcript" "UI walkthrough transcript" "transcript" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/captions.vtt" \
-    "ui-proof/captions.vtt" "ui_captions" "UI walkthrough captions" || failed=1
+    "ui-proof/captions.vtt" "ui_captions" "UI walkthrough captions" "captions" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/walkthrough.json" \
-    "ui-proof/walkthrough.json" "ui_storyboard" "Editable UI walkthrough storyboard" || failed=1
+    "ui-proof/walkthrough.json" "ui_storyboard" "Editable UI walkthrough storyboard" "storyboard" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/visual-evidence.md" \
-    "ui-proof/visual-evidence.md" "ui_manifest" "UI visual proof manifest" || failed=1
+    "ui-proof/visual-evidence.md" "ui_manifest" "UI visual proof manifest" "manifest" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/bundle.json" \
-    "ui-proof/bundle.json" "ui_bundle" "UI visual proof metadata" || failed=1
+    "ui-proof/bundle.json" "ui_bundle" "UI visual proof metadata" "bundle" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/evidence.json" \
-    "ui-proof/evidence.json" "ui_evidence" "UI proof decision" || failed=1
+    "ui-proof/evidence.json" "ui_evidence" "UI proof decision" "evidence" || failed=1
   return "$failed"
 }
 

@@ -201,7 +201,9 @@ artifact in three steps:
    `POST /api/v1/runs/<run_id>/artifacts/<artifact_id>`.
 
 The registration body contains `kind`, `title`, `filename`, `content_type`,
-`byte_size`, and `sha256`.
+`byte_size`, `sha256`, and the artifact's JSON-object `metadata`. Dex keeps
+metadata larger than DexCode's 8 KiB limit in the local journal and uploads the
+artifact with an empty metadata object.
 The confirmation body has this shape:
 
 ```json
