@@ -1418,17 +1418,23 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     dx_error "The session override journal is unsafe or malformed."
     return 1
   }
-  # The tier's policy value seeds required_clean and the overrides below only
-  # ever raise it, so the gate can never end up under the tier minimum.
-  local required_clean="" required_candidate=""
-  required_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
+  # Environment and persisted selection values can raise the trusted default.
+  # The attributed in-session override is then allowed to lower or raise the
+  # effective target without changing what the trusted policy says passed.
+  local required_clean="" default_required_clean="" required_candidate=""
+  default_required_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
     "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || return 1
   for required_candidate in "$selection_required" "$prior_required" "$explicit_clean_gate"; do
     [[ -n "$required_candidate" ]] || continue
-    if [[ $((10#$required_candidate)) -gt $((10#$required_clean)) ]]; then
-      required_clean="$required_candidate"
+    if [[ $((10#$required_candidate)) -gt $((10#$default_required_clean)) ]]; then
+      default_required_clean="$required_candidate"
     fi
   done
+  required_clean=$(dx_override_effective "$session_id" review.clean-passes \
+    "$default_required_clean" 3) || {
+    dx_error "The session override journal is unsafe or malformed."
+    return 1
+  }
   __dx_review_validate_gates "$required_clean" || {
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed invalid_gate "$session_id"
     return 1
@@ -1471,8 +1477,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         "$review_criteria_binding" "$review_policy_binding" 2>/dev/null); then
         IFS=$'\t' read -r state_tier state_required state_iteration state_clean \
           state_fingerprint state_binding state_policy_binding <<< "$state_record"
+        : "$state_required"
         if [[ "$state_tier" == "$review_tier" \
-          && "$state_required" == "$required_clean" \
           && "$state_binding" == "$review_criteria_binding" \
           && "$state_policy_binding" == "$review_policy_binding" ]] \
           && dx_review_ledger_valid "$session_id" "$state_clean" \
@@ -1495,11 +1501,17 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
           || review_start_cleanup_rc=1
       fi
     fi
-    if [[ "$review_start_cleanup_rc" -eq 0 ]] \
-      && ! dx_review_write_state "$session_id" "$review_tier" \
-        "$required_clean" "$review_iteration" "$clean_passes" "$PWD" \
-        "$review_criteria_binding" "$review_policy_binding"; then
-      review_start_cleanup_rc=1
+    if [[ "$review_start_cleanup_rc" -eq 0 ]]; then
+      if [[ "$clean_passes" -lt "$required_clean" ]]; then
+        if ! dx_review_write_state "$session_id" "$review_tier" \
+          "$required_clean" "$review_iteration" "$clean_passes" "$PWD" \
+          "$review_criteria_binding" "$review_policy_binding"; then
+          review_start_cleanup_rc=1
+        fi
+      else
+        rm -f "$(dx_review_state_file "$session_id")" 2>/dev/null \
+          || review_start_cleanup_rc=1
+      fi
     fi
     if [[ "$review_start_cleanup_rc" -eq 0 ]]; then
       if ! rm -f "$review_revocation_file" 2>/dev/null \
@@ -1563,7 +1575,32 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   local terminal_selection_op="keep" terminal_state_op="write" terminal_preserve_credit=0
   parent_findings_file=$(dx_findings_file "$session_id")
 
-  while [[ $clean_passes -lt $required_clean ]]; do
+  while :; do
+    local live_required_clean=""
+    live_required_clean=$(dx_override_effective "$session_id" \
+      review.clean-passes "$default_required_clean" 3) || {
+      terminal_reason="override_state_invalid"
+      break
+    }
+    if ! __dx_review_validate_gates "$live_required_clean"; then
+      terminal_reason="invalid_gate"
+      break
+    fi
+    live_required_clean=$((10#$live_required_clean))
+    if [[ "$live_required_clean" -ne "$required_clean" ]]; then
+      required_clean="$live_required_clean"
+      if ! dx_review_write_selection "$session_id" "$review_tier" \
+        "$selection_source" "$selection_reasons" "$PWD" "$required_clean" \
+        "$review_criteria_binding" "$review_policy_binding"; then
+        terminal_reason="selection_write_failed"
+        break
+      fi
+      __dx_review_emit_event "$review_run_id" "review.gate.overridden" \
+        "warn" "Review clean-pass target changed" "$review_phase" \
+        required_clean_int="$required_clean" \
+        trusted_required_clean_int="$default_required_clean"
+    fi
+    [[ $clean_passes -lt $required_clean ]] || break
     pass_timeout=$(dx_override_effective "$session_id" review.pass-timeout \
       "$pass_timeout_default" 3) || {
       terminal_reason="override_state_invalid"
@@ -2214,6 +2251,17 @@ ${message}"
       fi
 
       if [[ -z "$terminal_reason" ]]; then
+        if [[ "$transition_tier" != "$review_tier" ]]; then
+          local escalated_policy_required=""
+          escalated_policy_required=$(dx_review_policy_tier_clean_passes \
+            "$transition_tier" "$review_policy_small" \
+            "$review_policy_normal" "$review_policy_complex") \
+            || terminal_reason="tier_resolution_error"
+          if [[ -z "$terminal_reason" \
+            && "$escalated_policy_required" -gt "$default_required_clean" ]]; then
+            default_required_clean="$escalated_policy_required"
+          fi
+        fi
         review_tier="$transition_tier"
         required_clean=$((10#$transition_required))
         clean_passes=$((10#$transition_clean))

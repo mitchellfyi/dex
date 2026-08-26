@@ -32,6 +32,11 @@ assert_eq "2400" "$(dx_override_effective "$SESSION" review.pass-timeout 900 3)"
   "phase override"
 assert_eq "900" "$(dx_override_effective "$SESSION" review.pass-timeout 900 2)" \
   "phase isolation"
+dx_override_set "$SESSION" review.clean-passes 2 phase 3 human \
+  "Accept two independent clean waves for this unusually expensive scope" 0
+REVIEW_WAIVER_BINDING=$(dx_override_binding "$SESSION" review.clean-passes 2 3)
+[[ "$REVIEW_WAIVER_BINDING" =~ ^[a-f0-9]{64}$ ]] || assert_at $LINENO
+assert_rejected "$LINENO" dx_override_binding "$SESSION" review.clean-passes 3 3
 
 dx_override_set "$SESSION" review.pass-timeout 3600 session - human \
   "Keep review waves roomy for this run" 0
@@ -106,13 +111,15 @@ assert_rejected "$LINENO" dx_override_set "$SESSION" maintain.max-surfaces 0 \
   session - agent "Positive maintenance limit required" 0
 assert_rejected "$LINENO" dx_override_set "$SESSION" guard.project-policy bypass \
   session - human "Unknown guard disposition" 0
+assert_rejected "$LINENO" dx_override_set "$SESSION" unsupported.imaginary-gate 1 \
+  session - agent "This gate has no runtime consumer" 0
 
 # Concurrent writers must not lose one another. Each writes a separate gate so
 # the final active inventory should contain all of them.
 writer_pids=""
 for writer in 1 2 3 4 5 6 7 8; do
   (
-    dx_override_set "$SESSION" "custom.writer-${writer}" "$writer" session - \
+    dx_override_set "$SESSION" "guard.writer-${writer}" allow session - \
       agent "Concurrent writer ${writer}" 0
   ) &
   writer_pids="${writer_pids} $!"
@@ -122,7 +129,7 @@ for writer_pid in $writer_pids; do
 done
 ACTIVE="$(dx_override_list "$SESSION" 3)"
 for writer in 1 2 3 4 5 6 7 8; do
-  [[ "$ACTIVE" == *$"custom.writer-${writer}"$'\t'"${writer}"$'\t'* ]] || \
+  [[ "$ACTIVE" == *$"guard.writer-${writer}"$'\tallow\t'* ]] || \
     assert_at $LINENO
 done
 

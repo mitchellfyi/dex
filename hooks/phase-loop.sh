@@ -394,7 +394,7 @@ dx_phase_start_epoch() {
 
 dx_record_phase_result() {
   local phase="$1" status="$2" exit_code="$3" start_epoch end_epoch duration iterations phase_name
-  local outcome_status=0 outcome_generation
+  local outcome_status=0 outcome_generation outcome="completed" outcome_reason="gates-passed"
   [[ "$phase" =~ ^[0-6]$ ]] || return 0
   end_epoch=$(date +%s)
   start_epoch=$(dx_phase_start_epoch "$phase")
@@ -406,12 +406,24 @@ dx_record_phase_result() {
 
   local event_type severity message data_json
   if [[ "$status" == "advance" && "$exit_code" == "0" ]]; then
-    event_type="phase.completed"
-    severity="info"
-    message="Phase ${phase} completed: ${phase_name}"
+    if [[ "$phase" == "3" ]] \
+      && [[ "${REVIEW_CRITERIA_BINDING:-}" =~ ^[a-f0-9]{64}$ ]] \
+      && dx_review_policy_binding_valid "${REVIEW_POLICY_BINDING:-}" \
+      && [[ "$(dx_review_receipt_outcome "$SESSION_ID" "$(pwd)" \
+        "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING")" == "waived" ]]; then
+      outcome="waived"
+      outcome_reason="review-clean-passes-overridden"
+      event_type="phase.waived"
+      severity="warn"
+      message="Phase ${phase} completed with an attributed review-policy waiver: ${phase_name}"
+    else
+      event_type="phase.completed"
+      severity="info"
+      message="Phase ${phase} completed: ${phase_name}"
+    fi
     outcome_generation="phase-loop-${phase}-${end_epoch}-$$-${RANDOM}"
-    dx_phase_outcome_record "$SESSION_ID" "$phase" "completed" "phase-loop" \
-      "$outcome_generation" "gates-passed" || outcome_status=$?
+    dx_phase_outcome_record "$SESSION_ID" "$phase" "$outcome" "phase-loop" \
+      "$outcome_generation" "$outcome_reason" || outcome_status=$?
     if [[ "$outcome_status" -ne 0 && "$outcome_status" -ne 3 ]]; then
       dx_run_log_append_for_session "$SESSION_ID" "warn" "phase-loop" \
         "Could not append the explicit Phase ${phase} completion receipt; the successful phase log remains available for progress reconciliation"

@@ -314,7 +314,7 @@ assert_eq "$SCOPE_FINGERPRINT" "$receipt_fingerprint" "receipt scope binding"
 assert_eq "$CRITERIA_BINDING" "$receipt_criteria_binding" "receipt criteria binding"
 assert_eq "$POLICY_BINDING" "$receipt_policy_binding" "receipt policy binding"
 dx_review_receipt_valid "$SESSION_ID" "$REPO" "$CRITERIA_BINDING" "$POLICY_BINDING"
-assert_eq "5" "$(cut -f1 "$(dx_review_receipt_file "$SESSION_ID")")" "receipt format version"
+assert_eq "6" "$(cut -f1 "$(dx_review_receipt_file "$SESSION_ID")")" "receipt format version"
 assert_rejected "receipt rejects a different policy" \
   dx_review_read_receipt "$SESSION_ID" "$REPO" "$CRITERIA_BINDING" "$OTHER_POLICY_BINDING"
 assert_rejected "receipt validation requires an explicit policy binding" \
@@ -359,13 +359,13 @@ rm -f "$(dx_state_file "$SESSION_ID")" \
   "$(dx_loop_config_file "$SESSION_ID")" \
   "$(dx_handoff_mode_file "$SESSION_ID")"
 
-cp "$(dx_review_receipt_file "$SESSION_ID")" "$TMP_DIR/receipt-v5"
+cp "$(dx_review_receipt_file "$SESSION_ID")" "$TMP_DIR/receipt-v6"
 printf '4\tsmall\t3\t3\t%s\t%s\t%s\t%s\n' \
   "$SCOPE_FINGERPRINT" "$receipt_ledger_hash" "$CRITERIA_BINDING" "$POLICY_BINDING" \
   > "$(dx_review_receipt_file "$SESSION_ID")"
 assert_rejected "gating receipt rejects legacy format" \
   dx_review_read_receipt "$SESSION_ID" "$REPO" "$CRITERIA_BINDING" "$POLICY_BINDING"
-mv "$TMP_DIR/receipt-v5" "$(dx_review_receipt_file "$SESSION_ID")"
+mv "$TMP_DIR/receipt-v6" "$(dx_review_receipt_file "$SESSION_ID")"
 
 cp "$(dx_review_ledger_file "$SESSION_ID")" "$TMP_DIR/ledger-backup"
 python3 - "$(dx_review_ledger_file "$SESSION_ID")" <<'PY'

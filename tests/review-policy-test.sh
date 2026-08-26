@@ -500,7 +500,7 @@ session_criteria_hash=$(dx_review_criteria_hash "$session_criteria_file")
 dx_review_approve_criteria "$session_id" initial "$session_criteria_hash" >/dev/null
 dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change \
   "$REPO" "$policy_normal" "$session_criteria_hash" "$policy_binding"
-[[ "$(cut -f1 "$(dx_review_selection_file "$session_id")")" == "4" ]] || {
+[[ "$(cut -f1 "$(dx_review_selection_file "$session_id")")" == "5" ]] || {
   printf 'selection was not written with the criteria-bound schema\n' >&2
   exit 1
 }
@@ -552,7 +552,7 @@ dx_cleanup_session "$standalone_session_id"
 
 dx_review_write_state "$session_id" normal "$policy_normal" 4 2 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
-[[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "3" ]] || {
+[[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "4" ]] || {
   printf 'state was not written with the current policy-bound schema\n' >&2
   exit 1
 }
@@ -633,6 +633,38 @@ assert_rejected "receipt gate must match selection" dx_review_receipt_valid \
 dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change \
   "$REPO" "$higher_gate" "$session_criteria_hash" "$policy_binding"
 dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+assert_eq "completed" "$(dx_review_receipt_outcome "$session_id" "$REPO" \
+  "$session_criteria_hash" "$policy_binding")" "trusted review outcome"
+
+# A lower target is valid only while its exact attributed override remains
+# active. It authorizes fewer real CLEAN waves, but its lifecycle outcome is a
+# waiver rather than a claim that the trusted tier policy passed.
+dx_review_ledger_reset "$session_id"
+dx_override_set "$session_id" review.clean-passes 2 phase 3 human \
+  "The remaining provider capacity is limited; accept two clean waves" 0
+dx_review_write_selection "$session_id" normal lifecycle-agent \
+  bounded-production-change "$REPO" 2 "$session_criteria_hash" "$policy_binding"
+dx_review_write_state "$session_id" normal 2 1 1 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" \
+  "$policy_binding" >/dev/null
+rm "$(dx_review_state_file "$session_id")"
+append_clean_ledger "$session_id" 2 "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" waived-clean standard
+dx_review_write_receipt "$session_id" normal 2 2 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" \
+  "$policy_binding"
+assert_eq "waived" "$(dx_review_receipt_outcome "$session_id" "$REPO" \
+  "$session_criteria_hash" "$policy_binding")" "reduced review outcome"
+dx_override_clear "$session_id" review.clean-passes phase 3 human \
+  "Return to the trusted review policy"
+assert_rejected "clearing reduced target invalidates selection" \
+  dx_review_selection_valid "$session_id" "$REPO" "$session_criteria_hash" \
+  "$policy_binding"
+assert_rejected "clearing reduced target invalidates receipt" \
+  dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" \
+  "$policy_binding"
 
 printf '3\tnormal\t%s\t%s\t%s\t%s\t%s\n' \
   "$higher_gate" "$higher_gate" "$base_fingerprint" "$receipt_ledger_hash" \

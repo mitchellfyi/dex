@@ -1471,7 +1471,7 @@ dx_review_revoke_selection() {
 dx_review_write_selection() {
   local session_id="$1" requested_tier="$2" source="$3" reason_codes="$4" repo_dir="${5:-$PWD}"
   local required_clean="${6:-}" tier tier_min fingerprint selection_file floor_record floor_tier floor_reason tier_rank floor_rank
-  local expected_binding="${7:-}" expected_policy_binding="${8:-}" criteria_binding policy_record policy_binding
+  local expected_binding="${7:-}" expected_policy_binding="${8:-}" criteria_binding policy_record policy_binding override_binding
   local revocation_file
   [[ -n "$session_id" && "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
@@ -1492,7 +1492,12 @@ $policy_record
 EOF
   [[ -n "$required_clean" ]] || required_clean="$tier_min"
   dx_review_is_positive_integer "$required_clean" || return 1
-  [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
+  if [[ $((10#$required_clean)) -lt $((10#$tier_min)) ]]; then
+    override_binding=$(dx_override_binding "$session_id" review.clean-passes \
+      "$required_clean" 3) || return 1
+  else
+    override_binding="-"
+  fi
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   selection_file=$(dx_review_selection_file "$session_id") || return 1
   revocation_file=$(dx_review_selection_revocation_file "$session_id") \
@@ -1506,7 +1511,7 @@ EOF
       [[ "$criteria_binding" == "standalone" ]] || return 1
       ;;
   esac
-  dx_review_write_atomic "$selection_file" "4"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}" \
+  dx_review_write_atomic "$selection_file" "5"$'\t'"${tier}"$'\t'"${source}"$'\t'"${reason_codes}"$'\t'"${required_clean}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"$'\t'"${override_binding}" \
     || return 1
   rm -f "$revocation_file" 2>/dev/null || return 1
   [[ ! -e "$revocation_file" && ! -L "$revocation_file" ]]
@@ -1514,7 +1519,7 @@ EOF
 
 dx_review_read_selection() {
   local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" expected_policy_binding="${4:-}" selection_file raw
-  local version tier source reason_codes required_clean fingerprint criteria_binding policy_binding extra current_fingerprint tier_min
+  local version tier source reason_codes required_clean fingerprint criteria_binding policy_binding override_binding extra current_fingerprint tier_min
   local floor_record floor_tier floor_reason tier_rank floor_rank
   local current_binding policy_record current_policy_binding
   selection_file=$(dx_review_selection_file "$session_id") || return 1
@@ -1523,10 +1528,10 @@ dx_review_read_selection() {
     || return 1
   raw=$(__dx_review_read_private_record "$selection_file" 4096) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier source reason_codes required_clean fingerprint criteria_binding policy_binding extra <<EOF
+  IFS=$'\t' read -r version tier source reason_codes required_clean fingerprint criteria_binding policy_binding override_binding extra <<EOF
 $raw
 EOF
-  [[ "$version" == "4" ]] || return 1
+  [[ "$version" == "5" ]] || return 1
   [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   [[ "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
@@ -1548,7 +1553,13 @@ EOF
   dx_review_policy_binding_valid "$policy_binding" || return 1
   [[ "$policy_binding" == "$current_policy_binding" ]] || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
-  [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
+  if [[ $((10#$required_clean)) -lt $((10#$tier_min)) ]]; then
+    [[ "$override_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
+    [[ "$override_binding" == "$(dx_override_binding "$session_id" \
+      review.clean-passes "$required_clean" 3)" ]] || return 1
+  else
+    [[ "$override_binding" == "-" ]] || return 1
+  fi
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   current_fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   [[ "$current_fingerprint" == "$fingerprint" ]] || return 1
@@ -1574,7 +1585,7 @@ dx_review_selection_valid() {
 dx_review_write_state() {
   local session_id="$1" requested_tier="$2" required_clean="$3" iteration="$4" clean_count="$5" repo_dir="${6:-$PWD}"
   local expected_binding="${7:-}" expected_policy_binding="${8:-}" tier tier_min fingerprint state_file criteria_binding
-  local policy_record policy_binding
+  local policy_record policy_binding override_binding
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
@@ -1583,27 +1594,32 @@ dx_review_write_state() {
   IFS=$'\t' read -r tier_min policy_binding _ <<EOF
 $policy_record
 EOF
-  [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
+  if [[ $((10#$required_clean)) -lt $((10#$tier_min)) ]]; then
+    override_binding=$(dx_override_binding "$session_id" review.clean-passes \
+      "$required_clean" 3) || return 1
+  else
+    override_binding="-"
+  fi
   [[ $((10#$clean_count)) -lt $((10#$required_clean)) ]] || return 1
   [[ $((10#$clean_count)) -le $((10#$iteration)) ]] || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   state_file=$(dx_review_state_file "$session_id") || return 1
-  dx_review_write_atomic "$state_file" "3"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"
+  dx_review_write_atomic "$state_file" "4"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"$'\t'"${override_binding}"
 }
 
 dx_review_read_state() {
   local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" expected_policy_binding="${4:-}" state_file raw
-  local version tier tier_min required_clean iteration clean_count fingerprint criteria_binding policy_binding extra current_fingerprint current_binding
+  local version tier tier_min required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding extra current_fingerprint current_binding
   local policy_record current_policy_binding
   state_file=$(dx_review_state_file "$session_id") || return 1
   [[ -f "$state_file" ]] || return 1
   raw=$(cat "$state_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding policy_binding extra <<EOF
+  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding extra <<EOF
 $raw
 EOF
-  [[ "$version" == "3" ]] || return 1
+  [[ "$version" == "4" ]] || return 1
   [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
@@ -1615,7 +1631,13 @@ $policy_record
 EOF
   dx_review_policy_binding_valid "$policy_binding" || return 1
   [[ "$policy_binding" == "$current_policy_binding" ]] || return 1
-  [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
+  if [[ $((10#$required_clean)) -lt $((10#$tier_min)) ]]; then
+    [[ "$override_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
+    [[ "$override_binding" == "$(dx_override_binding "$session_id" \
+      review.clean-passes "$required_clean" 3)" ]] || return 1
+  else
+    [[ "$override_binding" == "-" ]] || return 1
+  fi
   [[ $((10#$clean_count)) -lt $((10#$required_clean)) ]] || return 1
   [[ $((10#$clean_count)) -le $((10#$iteration)) ]] || return 1
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
@@ -2257,7 +2279,7 @@ PY
 dx_review_write_receipt() {
   [[ $# -eq 7 ]] || return 1
   local session_id="$1" requested_tier="$2" required_clean="$3" clean_count="$4" repo_dir="$5" expected_binding="$6"
-  local policy_binding="$7" tier profile tier_min fingerprint receipt_file ledger_hash criteria_binding policy_record current_policy_binding
+  local policy_binding="$7" tier profile tier_min fingerprint receipt_file ledger_hash criteria_binding policy_record current_policy_binding override_binding
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   profile=$(dx_review_tier_profile "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
@@ -2266,7 +2288,12 @@ dx_review_write_receipt() {
   IFS=$'\t' read -r tier_min current_policy_binding _ <<EOF
 $policy_record
 EOF
-  [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
+  if [[ $((10#$required_clean)) -lt $((10#$tier_min)) ]]; then
+    override_binding=$(dx_override_binding "$session_id" review.clean-passes \
+      "$required_clean" 3) || return 1
+  else
+    override_binding="-"
+  fi
   [[ $((10#$clean_count)) -eq $((10#$required_clean)) ]] || return 1
   dx_review_policy_binding_valid "$policy_binding" || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
@@ -2276,21 +2303,21 @@ EOF
   ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
   receipt_file=$(dx_review_receipt_file "$session_id") || return 1
-  dx_review_write_atomic "$receipt_file" "5"$'\t'"${tier}"$'\t'"${profile}"$'\t'"${required_clean}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${ledger_hash}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"
+  dx_review_write_atomic "$receipt_file" "6"$'\t'"${tier}"$'\t'"${profile}"$'\t'"${required_clean}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${ledger_hash}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"$'\t'"${override_binding}"
 }
 
 dx_review_read_receipt() {
   [[ $# -eq 4 ]] || return 1
   local session_id="$1" repo_dir="$2" expected_binding="$3" expected_policy_binding="$4" receipt_file raw
-  local version tier profile expected_profile tier_min required_clean clean_count fingerprint ledger_hash criteria_binding policy_binding extra
+  local version tier profile expected_profile tier_min required_clean clean_count fingerprint ledger_hash criteria_binding policy_binding override_binding extra
   local current_fingerprint current_ledger_hash current_binding policy_record current_policy_binding
   receipt_file=$(dx_review_receipt_file "$session_id") || return 1
   raw=$(__dx_review_read_private_record "$receipt_file" 4096) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier profile required_clean clean_count fingerprint ledger_hash criteria_binding policy_binding extra <<EOF
+  IFS=$'\t' read -r version tier profile required_clean clean_count fingerprint ledger_hash criteria_binding policy_binding override_binding extra <<EOF
 $raw
 EOF
-  [[ "$version" == "5" ]] || return 1
+  [[ "$version" == "6" ]] || return 1
   [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   expected_profile=$(dx_review_tier_profile "$tier") || return 1
@@ -2301,7 +2328,13 @@ EOF
   IFS=$'\t' read -r tier_min current_policy_binding _ <<EOF
 $policy_record
 EOF
-  [[ $((10#$required_clean)) -ge $((10#$tier_min)) ]] || return 1
+  if [[ $((10#$required_clean)) -lt $((10#$tier_min)) ]]; then
+    [[ "$override_binding" =~ ^[a-f0-9]{64}$ ]] || return 1
+    [[ "$override_binding" == "$(dx_override_binding "$session_id" \
+      review.clean-passes "$required_clean" 3)" ]] || return 1
+  else
+    [[ "$override_binding" == "-" ]] || return 1
+  fi
   [[ $((10#$clean_count)) -eq $((10#$required_clean)) ]] || return 1
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
@@ -2348,7 +2381,10 @@ EOF
   receipt_policy_record=$(dx_review_policy_for_tier "$repo_dir" "$receipt_tier" "$expected_policy_binding") || return 1
   receipt_tier_min="${receipt_policy_record%%$'\t'*}"
   [[ "$receipt_tier_min" =~ ^[0-9]+$ ]] || return 1
-  [[ $((10#$receipt_required)) -ge $((10#$receipt_tier_min)) ]] || return 1
+  if [[ $((10#$receipt_required)) -lt $((10#$receipt_tier_min)) ]]; then
+    dx_override_binding "$session_id" review.clean-passes \
+      "$receipt_required" 3 >/dev/null || return 1
+  fi
   [[ $((10#$receipt_clean)) -eq $((10#$receipt_required)) ]] || return 1
   [[ "$selection_policy_binding" == "$expected_policy_binding" ]] || return 1
   : "$selection_source" "$selection_reasons" "$receipt_ledger_hash"
@@ -2357,6 +2393,27 @@ EOF
      "$receipt_fingerprint" == "$selection_fingerprint" && \
      "$receipt_binding" == "$selection_binding" && \
      "$receipt_policy_binding" == "$expected_policy_binding" ]]
+}
+
+# Print completed when the trusted tier target was met, or waived when an
+# attributed review.clean-passes override authorized a lower target.
+dx_review_receipt_outcome() {
+  [[ $# -eq 4 ]] || return 1
+  local session_id="$1" repo_dir="$2" expected_binding="$3"
+  local expected_policy_binding="$4" receipt tier required_clean tier_min policy_record
+  receipt=$(dx_review_read_receipt "$session_id" "$repo_dir" \
+    "$expected_binding" "$expected_policy_binding") || return 1
+  IFS=$'\t' read -r tier required_clean _ <<EOF
+$receipt
+EOF
+  policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" \
+    "$expected_policy_binding") || return 1
+  tier_min="${policy_record%%$'\t'*}"
+  if [[ $((10#$required_clean)) -lt $((10#$tier_min)) ]]; then
+    printf 'waived\n'
+  else
+    printf 'completed\n'
+  fi
 }
 
 dx_review_receipt_revocation_file() {

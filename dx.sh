@@ -1533,7 +1533,8 @@ unalias __dx_record_inline_phase_result 2>/dev/null; unfunction __dx_record_inli
 __dx_record_inline_phase_result() {
   local session_id="$1" phase="$2" phase_status="$3" exit_code="$4"
   local start_epoch end_epoch duration iterations phase_name data_json event_type severity message
-  local outcome_status=0 outcome_generation
+  local outcome_status=0 outcome_generation outcome="completed" outcome_reason="gates-passed"
+  local criteria_binding="" policy_binding="" policy_record=""
   [[ "$phase" =~ ^[0-6]$ ]] || return 0
 
   end_epoch=$(date +%s)
@@ -1545,12 +1546,30 @@ __dx_record_inline_phase_result() {
 
   dx_log_phase "$session_id" "$phase" "$phase_name" "$start_epoch" "$end_epoch" "$duration" "$iterations" "$phase_status" "$exit_code"
   if [[ "$phase_status" == "advance" && "$exit_code" == "0" ]]; then
-    event_type="phase.completed"
-    severity="info"
-    message="Phase ${phase} completed: ${phase_name}"
+    if [[ "$phase" == "3" ]]; then
+      criteria_binding=$(dx_review_read_criteria_approval "$session_id" \
+        2>/dev/null || true)
+      policy_record=$(dx_review_policy_resolve "$PWD" 2>/dev/null || true)
+      IFS=$'\t' read -r _ _ _ policy_binding _ <<< "$policy_record"
+    fi
+    if [[ "$phase" == "3" ]] \
+      && [[ "${criteria_binding:-}" =~ ^[a-f0-9]{64}$ ]] \
+      && dx_review_policy_binding_valid "${policy_binding:-}" \
+      && [[ "$(dx_review_receipt_outcome "$session_id" "$PWD" \
+        "$criteria_binding" "$policy_binding")" == "waived" ]]; then
+      outcome="waived"
+      outcome_reason="review-clean-passes-overridden"
+      event_type="phase.waived"
+      severity="warn"
+      message="Phase ${phase} completed with an attributed review-policy waiver: ${phase_name}"
+    else
+      event_type="phase.completed"
+      severity="info"
+      message="Phase ${phase} completed: ${phase_name}"
+    fi
     outcome_generation="direct-codex-${phase}-${end_epoch}-$$-${RANDOM}"
-    dx_phase_outcome_record "$session_id" "$phase" "completed" "direct-codex" \
-      "$outcome_generation" "gates-passed" || outcome_status=$?
+    dx_phase_outcome_record "$session_id" "$phase" "$outcome" "direct-codex" \
+      "$outcome_generation" "$outcome_reason" || outcome_status=$?
     if [[ "$outcome_status" -ne 0 && "$outcome_status" -ne 3 ]]; then
       dx_run_log_append_for_session "$session_id" "warn" "dx" \
         "Could not append the explicit Phase ${phase} completion receipt; the successful phase log remains available for progress reconciliation"

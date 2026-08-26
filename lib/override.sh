@@ -26,13 +26,40 @@ dx_override_value_valid() {
     && "$value" != *$'\r'* ]]
 }
 
+# Keep this registry aligned with the consumers documented in
+# docs/autonomous-mode.md. Accepting an unconsumed name would create an audit
+# row that looks effective even though no runtime policy changed.
+dx_override_gate_supported() {
+  [[ $# -eq 1 ]] || return 2
+  local gate="$1"
+  case "$gate" in
+    session.timeout|phase.timeout|phase.min-audits|loop.max-iterations|\
+    loop.stall-timeout|loop.stall-escalate|review.clean-passes|\
+    review.pass-timeout|review.notice-interval|review.recheck-seconds|\
+    watch.pause-ttl|watch.cycle-timeout|watch.command-timeout|\
+    complete.max-cycles|complete.wait-minutes|complete.ci-fix-attempts|\
+    failure.attempts-per-strategy|failure.max-strategies|\
+    maintain.max-prs|sync.budget-minutes|maintain.budget-minutes|\
+    maintain.respond-budget-minutes|maintain.command-timeout-seconds|\
+    maintain.max-surfaces|control.pause|control.cancel|control.resume|\
+    phase.completion|phase.jump|verification.required-gates|guard.*)
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 # Known gate values are validated at write time so an override cannot leave a
-# running hook with a policy it cannot interpret. Unknown gate names remain
-# available for project-specific prompt defaults and waivers.
+# running hook with a policy it cannot interpret.
 dx_override_gate_value_valid() {
   [[ $# -eq 2 ]] || return 2
   local gate="$1" value="$2"
+  dx_override_gate_supported "$gate" || return 1
   case "$gate" in
+    review.clean-passes)
+      [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 2 \
+        && $((10#$value)) -le 30 ]]
+      ;;
     session.timeout|phase.timeout|phase.min-audits|loop.max-iterations|\
     loop.stall-timeout|loop.stall-escalate|review.pass-timeout|\
     review.notice-interval|review.recheck-seconds|watch.pause-ttl|\
@@ -49,8 +76,17 @@ dx_override_gate_value_valid() {
     guard.*)
       [[ "$value" == "allow" || "$value" == "enforce" ]]
       ;;
-    *)
-      dx_override_value_valid "$value"
+    control.pause|control.cancel|control.resume)
+      [[ "$value" == "requested" ]]
+      ;;
+    phase.completion)
+      [[ "$value" == "waived" ]]
+      ;;
+    verification.required-gates)
+      [[ "$value" == "waived" ]]
+      ;;
+    phase.jump)
+      [[ "$value" =~ ^[0-6]$ ]]
       ;;
   esac
 }
@@ -240,6 +276,24 @@ dx_override_get() {
   value=$(printf '%s\n' "$rows" | awk -F '\t' -v gate="$gate" \
     '$1 == gate { print $2; found = 1 } END { if (!found) exit 1 }') || return 1
   printf '%s\n' "$value"
+}
+
+# Bind an active decision to its value, scope, attribution, expiry, and reason.
+# The journal remains the human-readable audit trail; this digest lets a
+# downstream receipt prove which active decision it relied on.
+dx_override_binding() {
+  [[ $# -eq 3 || $# -eq 4 ]] || return 2
+  local session_id="$1" gate="$2" expected_value="$3" phase="${4:--}"
+  local rows="" list_rc=0 record=""
+  dx_override_gate_supported "$gate" || return 2
+  rows=$(dx_override_list "$session_id" "$phase") || list_rc=$?
+  [[ "$list_rc" -eq 0 ]] || return "$list_rc"
+  record=$(printf '%s\n' "$rows" | awk -F '\t' -v gate="$gate" \
+    -v value="$expected_value" \
+    '$1 == gate && $2 == value { print; found = 1 } END { if (!found) exit 1 }') \
+    || return 1
+  printf 'dex-override-v1\t%s\n' "$record" | python3 -c \
+    'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
 # dx_override_effective <session> <gate> <default> [phase]
