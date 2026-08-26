@@ -38,6 +38,11 @@ wrapper. That prompt is the source of truth for:
 - Copilot reviewer normalization;
 - event-driven PR feedback response.
 
+Provider budgets and configured command deadlines are soft session policy.
+The wrapper supervises its own provider budget live. Inside the provider,
+follow `prompts/maintain.md` and use `DEX_POLICY_SESSION_ID` with the live
+timeout helper so a human or agent override reaches commands already running.
+
 ## Arguments
 
 Forward user-provided arguments into the prompt contract:

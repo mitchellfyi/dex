@@ -113,6 +113,19 @@ assert_rejected "$LINENO" dx_override_set "$SESSION" guard.project-policy bypass
   session - human "Unknown guard disposition" 0
 assert_rejected "$LINENO" dx_override_set "$SESSION" unsupported.imaginary-gate 1 \
   session - agent "This gate has no runtime consumer" 0
+assert_rejected "$LINENO" dx_override_clear "$SESSION" unsupported.imaginary-gate \
+  session - agent "This gate has no runtime consumer"
+
+# Waivers remain in the append-only journal for attribution but are not live
+# values. A waiver also retires an older phase override for the same gate.
+dx_override_waive "$SESSION" review.clean-passes 3 human \
+  "Independent review is unavailable for this scope"
+assert_eq "6" "$(dx_override_effective "$SESSION" review.clean-passes 6 3)" \
+  "waiver is not an operational clean-pass value"
+grep -Fq $'waive\treview.clean-passes\twaived\tphase\t3\thuman\t0\tIndependent review is unavailable for this scope' \
+  "$(dx_override_file "$SESSION")" || assert_at $LINENO
+assert_rejected "$LINENO" dx_override_waive "$SESSION" \
+  unsupported.imaginary-gate 3 human "Unknown waiver target"
 
 # Concurrent writers must not lose one another. Each writes a separate gate so
 # the final active inventory should contain all of them.

@@ -1263,7 +1263,10 @@ bash "${DEX_DIR}/bin/control.sh" override review.pass-timeout 2400 --source agen
 # Apply the same override for the rest of this lifecycle:
 bash "${DEX_DIR}/bin/control.sh" override watch.command-timeout 90 --scope session --source agent --reason "The repository API is responding slowly"
 
-# Waive an assurance gate and advance through the safe lifecycle transition:
+# Keep independent review, but accept a smaller clean streak as a waiver:
+bash "${DEX_DIR}/bin/control.sh" override review.clean-passes 2 --source human --reason "Two clean waves are sufficient for this unusually expensive scope"
+
+# Skip the rest of an assurance gate and advance through the safe transition:
 bash "${DEX_DIR}/bin/control.sh" waive review.clean-passes --source agent --reason "Two provider failures prevent independent waves; direct review and all deterministic checks are complete"
 \`\`\`
 
@@ -1271,10 +1274,19 @@ When the human authorizes an exception in chat, use \`--source human\` and quote
 their reason accurately. \`dx control status\` shows active overrides. Use
 \`clear-override\` to return to the default.
 
-Operational overrides take effect when their consumer next reads policy. Gate
-waivers do not forge success: they record the current phase as waived. Runtime
-integrity is not a policy gate, so valid state records, transition ownership,
-atomic writes, and quiescing an active child still apply.
+Running lifecycle watchdogs and provider timeout supervisors re-read operational
+policy. A lower review target still requires that many genuine independent
+\`CLEAN\` waves and records Phase 3 as waived. A full gate waiver skips the
+remaining gate. Neither path forges success. Runtime integrity is not a policy
+gate, so valid state records, transition ownership, atomic writes, and
+quiescing an active child still apply.
+
+The exact standalone \`dx control ...\` or \`bin/control.sh ...\` command is the
+break-glass path and cannot be denied by a blocking guard. Keep it in its own
+shell tool call: wrappers, substitutions, redirections, pipelines, and appended
+commands are not exempt. Review and maintenance child sessions use the parent
+policy id in \`DEX_POLICY_SESSION_ID\`; pass \`--session
+"\${DEX_POLICY_SESSION_ID}"\` when changing parent policy from a child.
 
 ## Direct Human Control
 

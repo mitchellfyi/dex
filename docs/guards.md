@@ -145,6 +145,14 @@ but must provide its own reason. An absent, expired, malformed, linked, or
 wrong-mode override journal grants no exception; the original block remains in
 force.
 
+The override command itself cannot be trapped by a broad block rule. Dex
+recognizes only one standalone `dx control ...`, `dex control ...`, or installed
+`bin/control.sh ...` invocation and lets it reach the control CLI, which
+validates and journals the decision. This also works when the built-in guard
+directory cannot be loaded. It is deliberately not a general shell bypass:
+wrappers, command substitutions, redirections, pipelines, separators, and
+appended commands remain subject to every matching guard.
+
 ## Pattern Syntax
 
 Guards use Python regex (`re.MULTILINE`). Matching is case-insensitive by default; add `case_sensitive: true` to the frontmatter for exact-case matching:
@@ -198,5 +206,11 @@ is not permanently rejected: simplifying or splitting it usually lets the guard
 finish. Static authoring problems — a missing `pattern`, an invalid regex, an
 unknown `detector` — are reported on stderr and that one guard is skipped, since
 failing closed there would block every command until the file is fixed.
+
+The exact standalone break-glass control command is the sole exception to the
+fail-closed table. It is recognized before guard loading so the user or active
+agent can pause, stop, soften a specific guard, or change policy even when guard
+configuration is broken. A successful control operation supplies the durable
+audit record.
 
 To disable a guard that keeps failing, set `enabled: false` in its `.md` file.

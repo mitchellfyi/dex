@@ -23,10 +23,13 @@ All of these must be true:
   default requirements are 1 for `small`, 3 for `normal`, and 6 for `complex`.
   The committed default branch may configure monotonic requirements from 1
   through 30 in `.dex/dex.md` `## Review Policy`.
-  `DEX_REVIEW_CLEAN_PASSES` may raise the resolved requirement but cannot lower
-  it. Candidate-branch policy edits do not change the active gate. A lower
-  assurance decision uses `dx control waive review.clean-passes`, which records
-  Phase 3 as waived instead of creating a false clean receipt.
+  `DEX_REVIEW_CLEAN_PASSES` may raise the launch requirement but cannot lower
+  it. Candidate-branch policy edits do not change the active gate. An
+  attributed `review.clean-passes` session override may lower the effective
+  target while still requiring that many independent `CLEAN` waves. Its
+  receipt remains bound to the trusted policy and override decision, and the
+  phase outcome is `waived`. A full `dx control waive review.clean-passes`
+  advances without a clean-review receipt.
 - Every counted clean result came from a fresh pass-scoped agent session that
   saw the current code and scope but no prior review reports, findings,
   fingerprints, clean-pass counts, telemetry, or stale conversation context.
@@ -51,8 +54,9 @@ All of these must be true:
   alternating-fingerprint churn remains. Each of these pauses rather than
   completing the loop.
 - The loop wrote a valid machine-readable review receipt tied to the current
-  scope fingerprint, approved criteria, trusted policy, and attested clean
-  ledger. A prose `SUCCESS` claim without that receipt does not satisfy Phase 3.
+  scope fingerprint, approved criteria, trusted policy, attested clean ledger,
+  and any lower-target override. A prose `SUCCESS` claim without that receipt
+  does not satisfy Phase 3.
 - Review ran again after the most recent in-scope change. After review fixes,
   the loop retained or raised the tier, rebound its selection to the updated
   fingerprint, and reset progress. Any out-of-band scope change invalidated

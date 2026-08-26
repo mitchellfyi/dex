@@ -33,6 +33,14 @@ and unverified remain distinct outcomes. Runtime integrity checks—valid state,
 single ownership, atomic transitions, and stopping an active child before a
 phase change—are not policy gates and cannot be bypassed.
 
+Use the control command as a standalone shell tool call. Dex always permits
+that exact break-glass invocation, even when a project guard uses
+`action: block`; chained commands, substitutions, wrappers, pipelines, and
+redirections receive no exemption. If this is an isolated child session and
+`DEX_POLICY_SESSION_ID` is set, add `--session "$DEX_POLICY_SESSION_ID"` before
+the control subcommand so the decision reaches the parent lifecycle. The
+successful control command writes the audit record.
+
 ### Publishing Across Phases
 
 Lifecycle phases assign default responsibility; they do not restrict access to

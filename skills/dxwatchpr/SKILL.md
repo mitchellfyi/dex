@@ -50,24 +50,28 @@ fi
 trap 'dx_watch_lock_release "$SESSION_ID" "$WATCH_NAME"' EXIT
 ```
 
-Every GitHub or local shell command in this watcher must be bounded. Use either the Bash tool timeout with a value no greater than `$(dx_format_duration "$(dx_watch_command_timeout_seconds)")`, or wrap direct commands with:
+Every GitHub or local shell command in this watcher must be bounded. Use the
+live policy wrapper so a same-session override can change a command that is
+already running:
 
 ```bash
-dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" <command> [args...]
+dx_watch_run_command "$SESSION_ID" <command> [args...]
 ```
 
-If a command returns `124`, it timed out. Report the timeout using `dx_format_duration`, release the lock via the trap, and exit this cycle.
+If a command returns `124`, it timed out. A `watch.command-timeout=0` override
+disables the deadline. Report a timeout using `dx_format_duration`, release the
+lock via the trap, and exit this cycle.
 
 ### 1. Get PR Info
 
 ```bash
-REPO=$(dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh repo view --json nameWithOwner -q .nameWithOwner)
+REPO=$(dx_watch_run_command "$SESSION_ID" gh repo view --json nameWithOwner -q .nameWithOwner)
 
 # Use provided PR number, or detect from current branch
 if [[ -n "$1" ]]; then
   PR_NUM="$1"
 else
-  PR_NUM=$(dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh pr view --json number -q .number)
+  PR_NUM=$(dx_watch_run_command "$SESSION_ID" gh pr view --json number -q .number)
 fi
 ```
 
@@ -80,7 +84,7 @@ PRE_HEAD=$(git rev-parse HEAD)
 ### 2. Check and Fix CI
 
 ```bash
-dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh pr checks "$PR_NUM"
+dx_watch_run_command "$SESSION_ID" gh pr checks "$PR_NUM"
 ```
 
 Parse each check: name, status (pending/pass/fail), URL.
@@ -94,7 +98,7 @@ Parse each check: name, status (pending/pass/fail), URL.
 **Any checks failed:**
 - Fetch logs and diagnose:
   ```bash
-  dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh run view <run-id> --log-failed
+  dx_watch_run_command "$SESSION_ID" gh run view <run-id> --log-failed
   ```
 - Diagnose the failure from the logs. Common categories:
   - **Formatting/linting**: run the project's formatter/linter locally, commit, push
@@ -114,9 +118,9 @@ Parse each check: name, status (pending/pass/fail), URL.
 ### 3. Check Reviews and Comments
 
 ```bash
-dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/reviews"
-dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh api "repos/$REPO/pulls/$PR_NUM/comments"
-dx_run_with_timeout "$(dx_watch_command_timeout_seconds)" gh api graphql --paginate \
+dx_watch_run_command "$SESSION_ID" gh api "repos/$REPO/pulls/$PR_NUM/reviews"
+dx_watch_run_command "$SESSION_ID" gh api "repos/$REPO/pulls/$PR_NUM/comments"
+dx_watch_run_command "$SESSION_ID" gh api graphql --paginate \
   -f owner="${REPO%%/*}" \
   -f name="${REPO#*/}" \
   -F number="$PR_NUM" \

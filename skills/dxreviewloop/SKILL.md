@@ -77,20 +77,23 @@ override launches the same read-only assessment in a fresh session and records
 `standalone-assessor` as the source. An assessment is not a clean pass and must
 not edit the checkout.
 
-`DEX_REVIEW_TIER=small|normal|complex` is the canonical explicit override and
+`DEX_REVIEW_TIER=small|normal|complex` is the canonical launch override and
 takes precedence. `DEX_REVIEW_PROFILE=light|standard|thorough` remains a legacy
-alias. A `DEX_REVIEW_CLEAN_PASSES` override may raise the gate but cannot lower
-the selected tier's resolved policy requirement. The wrapper reads policy
+alias. `DEX_REVIEW_CLEAN_PASSES` may raise the launch gate but cannot lower the
+selected tier's resolved policy requirement. The wrapper reads policy
 values from the trusted default branch, requires values from 1 through 30 in
 monotonic order, and binds the resolved policy to selection, progress, pass
 evidence, and the final receipt. Candidate-branch edits cannot lower the active
 gate. Review may escalate to a higher tier, but it never downgrades.
 
-That restriction protects the meaning of a clean receipt; it is not a hard
-requirement to keep running a broken or inappropriate gate. Ask the human or
-run `dx control waive review.clean-passes --source agent --reason "<why>"`.
-The safe transition records Phase 3 as waived and does not manufacture clean
-wave credit.
+For an outlier, ask the human or set
+`dx control override review.clean-passes <1-30> --source agent --reason "<why>"`.
+The loop re-reads this target between waves and preserves existing valid clean
+credit. Lowering it still requires the chosen number of independent `CLEAN`
+waves, binds progress and the receipt to the active attributed decision, and
+records Phase 3 as waived rather than claiming trusted policy passed. Use
+`dx control waive review.clean-passes` only to skip the remaining gate and
+advance without a clean-review receipt.
 
 There is no outer iteration limit. The loop continues until the clean-pass gate
 succeeds or a deterministic pause condition requires intervention.
@@ -141,7 +144,10 @@ Every wave must:
    and the exact generation-bound receipt supplied for that pass, then stop.
 
 Waves run with `DEX_REVIEW_PASS_ACTIVE=1`, a pass-scoped `DEX_SESSION_ID`, and
-an empty `DEX_PHASE_HANDOFF`. They must never receive or write the lifecycle
+an empty `DEX_PHASE_HANDOFF`. `DEX_POLICY_SESSION_ID` names the parent policy
+session. If a wave needs a timeout exception, it may ask the human or run the
+standalone control command with `--session "$DEX_POLICY_SESSION_ID"`; the live
+supervisor sees the change. Waves must never receive or write the lifecycle
 completion path.
 
 If fresh review-wave CLI sessions are unavailable, pause with

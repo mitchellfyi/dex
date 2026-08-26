@@ -81,6 +81,7 @@ assert_no_receipt() {
 
 assert_receipt() {
   local expected_tier="$1" expected_required="$2" label="$3"
+  local expected_override="${4:--}"
   local receipt="$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-receipt"
   local version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding override_binding extra
   local expected_binding="standalone" expected_policy_binding expected_profile
@@ -102,7 +103,14 @@ assert_receipt() {
   assert_eq "$expected_profile" "$profile" "$label receipt profile"
   assert_eq "$expected_required" "$required" "$label receipt requirement"
   assert_eq "$expected_required" "$clean_count" "$label receipt clean count"
-  assert_eq "-" "$override_binding" "$label receipt policy override"
+  if [[ "$expected_override" == "active" ]]; then
+    expected_override=$(DEX_DIR="$ROOT" HOME="$CASE_HOME" \
+      DX_STATE_DIR="$CASE_STATE_DIR" DX_LOOP_DIR="$CASE_LOOP_DIR" \
+      bash -c 'source "$DEX_DIR/lib/common.sh"; dx_override_binding "$1" review.clean-passes "$2" 3' \
+      _ "$CASE_SESSION_ID" "$expected_required")
+  fi
+  assert_eq "$expected_override" "$override_binding" \
+    "$label receipt policy override"
   assert_eq "" "${extra:-}" "$label receipt fields"
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || {
     printf '%s: invalid receipt fingerprint %s\n' "$label" "$fingerprint" >&2
@@ -151,9 +159,11 @@ assert_retained_credit() {
   fi
 }
 
-assert_standalone_telemetry() { # <status> <pass-count> <label>
+assert_standalone_telemetry() { # <status> <pass-count> <label> [assurance]
   local expected_status="$1" expected_passes="$2" label="$3"
-  if ! python3 - "$CASE_DIR/runs" "$expected_status" "$expected_passes" <<'PY'
+  local expected_assurance="${4:-}"
+  if ! python3 - "$CASE_DIR/runs" "$expected_status" "$expected_passes" \
+    "$expected_assurance" <<'PY'
 import json
 import re
 import sys
@@ -162,6 +172,7 @@ from pathlib import Path
 run_root = Path(sys.argv[1])
 expected_status = sys.argv[2]
 expected_passes = int(sys.argv[3])
+expected_assurance = sys.argv[4]
 run_dirs = [path for path in run_root.glob("run_*") if path.is_dir()]
 assert len(run_dirs) == 1, run_dirs
 run_dir = run_dirs[0]
@@ -204,6 +215,10 @@ for event in finished:
 terminal_type = "run.completed" if expected_status == "completed" else "run.blocked"
 assert event_types.count(terminal_type) == 1, event_types
 assert event_types[-1] == terminal_type, event_types
+if expected_assurance:
+    completed = [event for event in events if event["type"] == "review.completed"]
+    assert len(completed) == 1, completed
+    assert completed[0]["data"]["assurance_outcome"] == expected_assurance, completed
 summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 assert summary["status"] == expected_status, summary
 PY
@@ -259,6 +274,7 @@ run_case() {
   local lifecycle_mode="${5:-standalone}" setup_mode="${6:-}" profile="${7:-}"
   local pass_mode="${8:-}" invocation_mode="${9:-single}" session_mode="${10:-derived}"
   local pass_timeout="${11:-}" clean_override="${12:-}"
+  local live_clean_override="${13:-}"
   local case_pid="" watchdog_pid="" watchdog_marker=""
 
   CASE_NAME="$name"
@@ -336,6 +352,7 @@ run_case() {
   CASE_SESSION_MODE="$session_mode" \
   CASE_PASS_TIMEOUT="$pass_timeout" \
   CASE_CLEAN_OVERRIDE="$clean_override" \
+  CASE_LIVE_CLEAN_OVERRIDE="$live_clean_override" \
   DEX_FACTORY_SYNC=0 \
     zsh -fc '
       source "$DEX_DIR/dx.sh"
@@ -380,6 +397,11 @@ run_case() {
       fi
       if [[ -n "$CASE_CLEAN_OVERRIDE" ]]; then
         export DEX_REVIEW_CLEAN_PASSES="$CASE_CLEAN_OVERRIDE"
+      fi
+      if [[ -n "$CASE_LIVE_CLEAN_OVERRIDE" ]]; then
+        dx_override_set "$CASE_SESSION_ID" review.clean-passes \
+          "$CASE_LIVE_CLEAN_OVERRIDE" phase 3 human \
+          "The fixture approves a reduced independent review target" 0
       fi
 
       __dx_refresh_provider() {
@@ -1652,6 +1674,16 @@ assert_success "normal gate"
 assert_eq "3" "$(call_count pass)" "normal gate pass count"
 assert_no_assessor "normal gate explicit tier"
 assert_receipt "normal" "3" "normal gate"
+
+run_case "normal-lowered-target" "normal" $'CLEAN\nCLEAN' "" \
+  "standalone" "" "" "" "single" "derived" "" "" "2"
+assert_success "normal lowered target"
+assert_eq "2" "$(call_count pass)" "normal lowered target pass count"
+assert_no_assessor "normal lowered target explicit tier"
+assert_receipt "normal" "2" "normal lowered target" active
+assert_contains "Assurance: WAIVED (2/3 clean passes required)" "$CASE_OUTPUT"
+assert_standalone_telemetry "completed" "2" \
+  "normal lowered target telemetry" waived
 
 run_case "complex-gate" "complex" $'CLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN'
 assert_success "complex gate"

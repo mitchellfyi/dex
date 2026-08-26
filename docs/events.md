@@ -97,7 +97,7 @@ reading agent transcripts.
 | `review.pass.started` | Immediately before a fresh wave starts | `pass_id`, `tier`, `profile`, `iteration`, `clean_before`, `required_clean`, `scope_fingerprint` |
 | `review.pass.finished` | After the wave result is validated and counters update | `pass_id`, `tier`, `profile`, `iteration`, `result_kind`, `result_reason`, `findings`, `duration_seconds`, `clean_before`, `clean_after`, `scope_changed`, `working_changed`, `provider_exit`, `terminal_reason`, `evidence_hash`, `deterministic_checks`, `verifier`, `coverage`, `evidence_valid`; validated results also include the evidence finding and fix counts |
 | `review.tier.escalated` | A verified risk signal raises the tier | `from_tier`, `tier`, `profile`, `required_clean`, `iteration` |
-| `review.completed` | The consecutive clean gate succeeds | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, `reason=clean_gate_reached` |
+| `review.completed` | The effective consecutive clean target succeeds | `tier`, `profile`, `required_clean`, `trusted_required_clean`, `assurance_outcome` (`completed` or `waived`), `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, `reason=clean_gate_reached` |
 | `review.paused` | Review needs intervention | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `findings_fixed`, `total_duration_seconds`, normalized `reason` |
 
 Tier selection is `small`/`normal`/`complex`, mapping to `light`/`standard`/
@@ -107,7 +107,10 @@ requirements in the `## Review Policy` table in `.dex/dex.md` on the committed
 default branch. Values must be monotonic integers from 1 through 30. Dex binds
 the resolved trusted policy to the selection, review state, pass evidence,
 clean ledger, and final receipt. An edit on the candidate branch cannot lower
-the active gate.
+the active gate. An attributed `review.clean-passes` session override can select
+a lower effective target without altering the trusted policy. Such a run still
+performs the selected number of independent clean waves, but its completion
+event and receipt outcome are marked `waived` rather than `completed`.
 
 Evidence version 3 records the ordered hash, outcome, and substantive
 context-pack references for every lifecycle criterion. It also binds the

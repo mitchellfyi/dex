@@ -85,7 +85,12 @@ maximum PR count as any other maintenance run.
 4. **Run deterministic checks**
    - Reuse the discovery discipline in `skills/dxverify/SKILL.md`.
    - Prefer targeted commands for selected surfaces.
-   - Keep commands bounded by the invocation budget and command timeout.
+   - Keep commands bounded by the invocation budget and command timeout. When
+     `DEX_POLICY_SESSION_ID` and a numeric `Command timeout seconds` are
+     present, use `dx_run_with_live_timeout "$DEX_POLICY_SESSION_ID"
+     maintain.command-timeout-seconds <default> "${DEX_LOOP_PHASE:--}" 1
+     <command> [args...]`. Re-read policy through the wrapper for every command;
+     `0` disables that command deadline.
    - Log commands and results in the report.
 
 5. **Run focused semantic review**

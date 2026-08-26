@@ -188,6 +188,7 @@ dx_override_clear() {
   local override_source="$5" reason="$6" lock_token
   dx_override_session_id_valid "$session_id" || return 2
   dx_override_gate_valid "$gate" || return 2
+  dx_override_gate_supported "$gate" || return 2
   [[ "$scope" == "phase" || "$scope" == "session" ]] || return 2
   dx_override_phase_valid "$phase" || return 2
   if [[ "$scope" == "phase" ]]; then
@@ -202,6 +203,30 @@ dx_override_clear() {
   lock_token="override-$$-${RANDOM}"
   dx_lock_with "$(dx_override_lock_dir "$session_id")" "$lock_token" 5 \
     __dx_override_append_unlocked "$session_id" clear "$gate" - "$scope" \
+    "$phase" "$override_source" "$reason" 0
+}
+
+# Record a named phase waiver as an audit decision, not as a live operational
+# value. This also clears any older phase-scoped value for the same gate when
+# the journal is reduced, so jumping back cannot feed "waived" to a numeric
+# consumer or silently revive the earlier override.
+# dx_override_waive <session> <gate> <phase> <agent|human> <reason>
+dx_override_waive() {
+  [[ $# -eq 5 ]] || return 2
+  local session_id="$1" gate="$2" phase="$3" override_source="$4"
+  local reason="$5" lock_token
+  dx_override_session_id_valid "$session_id" || return 2
+  dx_override_gate_valid "$gate" || return 2
+  dx_override_gate_supported "$gate" || return 2
+  dx_override_phase_valid "$phase" || return 2
+  [[ "$phase" != "-" ]] || return 2
+  [[ "$override_source" == "agent" || "$override_source" == "human" ]] \
+    || return 2
+  dx_override_reason_valid "$reason" || return 2
+
+  lock_token="override-$$-${RANDOM}"
+  dx_lock_with "$(dx_override_lock_dir "$session_id")" "$lock_token" 5 \
+    __dx_override_append_unlocked "$session_id" waive "$gate" waived phase \
     "$phase" "$override_source" "$reason" 0
 }
 
@@ -227,7 +252,7 @@ dx_override_list() {
       {
         if (NF != 10 || $1 !~ /^[0-9]+$/ ||
             $2 !~ /^[0-9]+-[0-9]+-[0-9]+$/ ||
-            ($3 != "set" && $3 != "clear") ||
+            ($3 != "set" && $3 != "clear" && $3 != "waive") ||
             $4 !~ /^[a-z][a-z0-9]*([.][a-z0-9][a-z0-9-]*)*$/ ||
             ($6 != "phase" && $6 != "session") ||
             ($7 != "-" && $7 != "prompt-loop" && $7 !~ /^[0-6]$/) ||
@@ -239,7 +264,7 @@ dx_override_list() {
         }
         if ($6 == "phase" && $7 != phase) next
         key = $4 SUBSEP $6
-        if ($3 == "clear") {
+        if ($3 == "clear" || $3 == "waive") {
           delete candidate[key]
           delete candidate_order[key]
           next

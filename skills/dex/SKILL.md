@@ -74,9 +74,10 @@ resulting state and continue using the current phase's completion criteria.
 4. The loop uses the selected tier's trusted clean-wave requirement. The
    defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`. A candidate
    branch cannot lower the active gate, and the loop has no outer iteration
-   maximum. If the gate is inappropriate for an outlier, keep the attestation
-   intact and use a reasoned `dx control waive review.clean-passes`; the phase
-   is then recorded as waived rather than passed.
+   maximum. For an outlier, `dx control override review.clean-passes <1-30>`
+   keeps independent review while changing the target. A lower target is bound
+   to the attributed decision and records Phase 3 as waived. Use
+   `dx control waive review.clean-passes` only to skip the remaining waves.
 5. Prior review conclusions, findings, fingerprints, clean counts, and telemetry
    are never passed to a later reviewer.
 6. Each accepted wave supplies evidence version 3 with exact ordered criterion
@@ -89,8 +90,9 @@ resulting state and continue using the current phase's completion criteria.
 8. **SCOPE**: focus on review and fixes. Phase 4 and Phase 5 remain the default
    owners of publishing and PR setup, but those actions are available here.
 9. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
-   receipt binding the approved criteria, trusted policy, and attested clean
-   ledger and proving the selected consecutive clean gate passed.
+   receipt binding the approved criteria, trusted policy, attested clean
+   ledger, and any lower-target override. Report whether the trusted target
+   passed or the attributed lower target was waived.
 
 ### Phase 4: Verify & Commit
 

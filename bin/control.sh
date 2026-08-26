@@ -27,6 +27,12 @@ Override/control options:
   --reason TEXT          Required for agent controls and all policy changes
   --scope phase|session  Override lifetime scope (default: phase)
   --for-seconds N        Expire an override after N seconds; 0 means no expiry
+
+Common gates:
+  review.clean-passes (1-30), review.pass-timeout, session.timeout,
+  phase.timeout, watch.command-timeout, sync.budget-minutes,
+  maintain.budget-minutes, and guard.<guard-name>. A timeout value of 0
+  disables that deadline where supported. Unknown gate names are rejected.
 EOF
 }
 
@@ -120,6 +126,11 @@ record_control_policy() {
   fi
   dx_override_set "$SESSION_ID" "$gate" "$value" "$CONTROL_SCOPE" \
     "$scope_phase" "$CONTROL_ORIGIN" "$CONTROL_REASON" "$expires_at"
+}
+
+record_control_waiver() {
+  dx_override_waive "$SESSION_ID" "$CONTROL_GATE" "$CURRENT_PHASE" \
+    "$CONTROL_ORIGIN" "$CONTROL_REASON"
 }
 
 EXACT_SESSION_ID=""
@@ -345,7 +356,10 @@ case "$COMMAND" in
     }
     [[ "$CURRENT_PHASE" =~ ^[0-6]$ ]] || { dx_error "No resumable lifecycle phase was found."; exit 1; }
     if [[ "$COMMAND" == "waive" ]]; then
-      record_control_policy "$CONTROL_GATE" waived || exit 1
+      record_control_waiver || {
+        dx_error "Could not record the waiver. Check its gate and lifecycle state."
+        exit 1
+      }
     elif [[ -n "$CONTROL_REASON" ]]; then
       record_control_policy phase.completion waived || exit 1
     fi

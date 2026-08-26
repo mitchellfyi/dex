@@ -197,17 +197,21 @@ dx control override watch.command-timeout 90 --scope session \
 dx control clear-override watch.command-timeout --scope session \
   --source agent --reason "API latency has recovered"
 
-# Waive an assurance gate and advance through the normal locked transition.
+# Keep independent review but lower its target for this scope.
+dx control override review.clean-passes 2 --source human \
+  --reason "Two clean waves are sufficient for this unusually expensive scope"
+
+# Skip the rest of an assurance gate and advance through the locked transition.
 dx control waive review.clean-passes --source agent \
   --reason "Provider failures prevent independent waves; direct review and deterministic checks are complete"
 ```
 
 Overrides are phase-scoped unless `--scope session` is supplied. `--for-seconds`
 adds an expiry; `0` means no expiry. `dx control status` shows the effective
-records with source and reason. When a human authorizes the exception in chat,
+records with source and reason. Unsupported gate names are rejected instead of
+creating inert policy records. When a human authorizes the exception in chat,
 the agent records `--source human`; an agent-originated exception requires a
-reason. Explicit one-shot command flags still win where a command has its own
-budget option.
+reason.
 
 The built-in operational gates are:
 
@@ -216,7 +220,8 @@ The built-in operational gates are:
 | `session.timeout`, `phase.timeout` | Non-negative seconds for the live lifecycle watchdog; `0` disables that deadline |
 | `phase.min-audits` | Minimum Stop-hook audits before normal completion |
 | `loop.max-iterations`, `loop.stall-timeout`, `loop.stall-escalate` | Audit-loop attempt and stall budgets |
-| `review.pass-timeout`, `review.notice-interval`, `review.recheck-seconds` | Review provider and Phase 3 wait budgets |
+| `review.clean-passes` | Effective target from 1 through 30; lowering the trusted tier target requires real clean waves and records Phase 3 as waived |
+| `review.pass-timeout`, `review.notice-interval`, `review.recheck-seconds` | Review provider and Phase 3 wait budgets; `0` disables the provider deadline |
 | `watch.pause-ttl`, `watch.cycle-timeout`, `watch.command-timeout` | Phase 6 watcher pause, lease, and command budgets |
 | `complete.max-cycles`, `complete.wait-minutes` | Phase 6 idle-cycle and wait defaults |
 | `failure.attempts-per-strategy`, `failure.max-strategies`, `complete.ci-fix-attempts` | Recovery and repeated-CI-failure escalation defaults |
@@ -225,11 +230,27 @@ The built-in operational gates are:
 | `maintain.command-timeout-seconds`, `maintain.max-surfaces`, `maintain.max-prs` | Maintenance prompt limits and PR cap |
 | `guard.<guard-name>` | `allow` turns a matching project `block` guard into an attributed warning; `enforce` restores it |
 
-Assurance requirements use a named waiver instead of a lower numeric target.
-For example, waive `review.clean-passes`, `verification.required-gates`, or a
-project-specific gate. A waiver records the phase as `waived` or bypassed
-phases as `skipped`; it never creates a clean-review receipt or labels an
-unverified check as passed.
+`review.clean-passes` supports two distinct exceptions. A numeric override
+keeps independent review and requires the chosen number of genuine `CLEAN`
+waves; a target below trusted policy produces an override-bound receipt and a
+`waived` Phase 3 outcome. `dx control waive review.clean-passes` skips the
+remaining gate and advances without a review receipt. Other assurance gates,
+such as `verification.required-gates`, use the named waiver path. Neither form
+labels an unverified check as passed.
+
+Provider deadlines for review, `dx sync`, and maintenance are live. Their
+supervisors re-read policy once per second, so increasing, shortening,
+disabling, clearing, or expiring an override affects the process already
+running. Isolated provider children receive the parent id as
+`DEX_POLICY_SESSION_ID`; an agent inside one can target it with
+`dx control --session "$DEX_POLICY_SESSION_ID" ...`.
+
+The standalone control invocation is Dex's break-glass path. An exact
+`dx control ...`, `dex control ...`, or installed `bin/control.sh ...` Bash
+tool call bypasses blocking guards and a missing built-in guard set, then lets
+the control CLI validate and audit the requested change. The exemption does not
+cover `bash -c`, `env`, substitutions, redirects, pipes, separators, or any
+appended command.
 
 State integrity is not a soft gate. Dex still requires a valid private override
 journal, transition ownership, atomic state changes, and a quiesced Phase 3
@@ -611,8 +632,9 @@ Phase state is stored in `~/.claude/.dex-phases/`:
 - One `.system-context` file per worktree, used by `--append-system-prompt-file` for compaction resilience (regenerated each phase, cleaned up by `SessionEnd` hook)
 - One `.branch` file per lifecycle session, used by in-place mode to resume on the correct branch after branch renames or shell navigation
 - One `.interventions` file per lifecycle session, recording human control receipts for audit without storing prompt text
-- One `.overrides` journal per lifecycle session, recording active and cleared
-  agent/human policy changes with scope, optional expiry, and reason
+- One `.overrides` journal per lifecycle session, recording active, cleared,
+  and waived agent/human policy decisions with scope, optional expiry, and
+  reason; waiver rows remain audit history and are not exposed as live values
 - One `.phase-outcomes` file per lifecycle session — the durable terminal outcome ledger (completed/skipped/waived) behind the progress header symbols
 - One `.human-complete` file per lifecycle session when a human marked the lifecycle done, which preserves the workspace instead of cleaning it up
 - One `.meta` file per lifecycle or declared review child, with trusted
@@ -627,10 +649,10 @@ UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots
 
 ## Environment Variables
 
-These values provide launch-time defaults. A valid active-session override
-listed above is read again by its consumer and takes precedence without a
-relaunch. Assurance gates are waived through `dx control waive`; their success
-receipts are never weakened.
+These values provide launch-time defaults. A valid active-session override is
+read again by its consumer and takes precedence without a relaunch. Review can
+use an override-bound lower target; other assurance gates use
+`dx control waive`. Neither mechanism weakens the meaning of a passed outcome.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -665,7 +687,7 @@ receipts are never weakened.
 | `DEX_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DEX_PHASE_2_MIN_AUDITS=5`) |
 | `DEX_REVIEW_TIER` | agent-selected | Canonical explicit risk-tier override: `small`, `normal`, or `complex`; takes precedence over the legacy profile alias |
 | `DEX_REVIEW_PROFILE` | unset | Legacy alias: `light`, `standard`, or `thorough` map to `small`, `normal`, or `complex` |
-| `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Optional higher consecutive `CLEAN` requirement; it cannot lower the selected tier's trusted policy requirement |
+| `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Launch-only higher consecutive `CLEAN` requirement; use the attributed `review.clean-passes` session override to lower or change a running loop |
 | `DEX_REVIEW_PASS_TIMEOUT` | profile-based | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; defaults are 15 minutes for risk assessment and light waves, 30 minutes for standard waves, and 60 minutes for thorough waves; `0` disables the timeout |
 | `DEX_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
@@ -681,6 +703,17 @@ receipts are never weakened.
 | `DX_RTK_BIN` | unset | RTK binary path override for hooks and checks |
 | `DX_RTK_INSTALL_DIR` | `$DX_TOOL_DIR/rtk/bin` | RTK binary install directory |
 | `DX_RTK_VERSION` | latest release | RTK release pin for Dex installs |
+
+### Internal safety deadlines
+
+Not every timeout is a workflow gate. Short guard-evaluation alarms, state-lock
+acquisition limits, commit-parser bounds, HTTP connect/request deadlines, and
+tool-bootstrap download limits protect a single internal operation. They do
+not authorize or deny a lifecycle outcome, and they are not accepted as
+`dx control override` gate names. Their owning command either exposes an
+explicit flag or environment setting, or reports the failure so the operation
+can be retried. This separation keeps the session policy registry honest: every
+accepted gate name has a live consumer.
 
 ## Troubleshooting
 

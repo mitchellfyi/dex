@@ -1429,9 +1429,11 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   # Environment and persisted selection values can raise the trusted default.
   # The attributed in-session override is then allowed to lower or raise the
   # effective target without changing what the trusted policy says passed.
-  local required_clean="" default_required_clean="" required_candidate=""
-  default_required_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
+  local required_clean="" default_required_clean="" trusted_required_clean=""
+  local required_candidate=""
+  trusted_required_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
     "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || return 1
+  default_required_clean="$trusted_required_clean"
   for required_candidate in "$selection_required" "$prior_required" "$explicit_clean_gate"; do
     [[ -n "$required_candidate" ]] || continue
     if [[ $((10#$required_candidate)) -gt $((10#$default_required_clean)) ]]; then
@@ -2269,6 +2271,9 @@ ${message}"
             "$transition_tier" "$review_policy_small" \
             "$review_policy_normal" "$review_policy_complex") \
             || terminal_reason="tier_resolution_error"
+          if [[ -z "$terminal_reason" ]]; then
+            trusted_required_clean="$escalated_policy_required"
+          fi
           if [[ -z "$terminal_reason" \
             && "$escalated_policy_required" -gt "$default_required_clean" ]]; then
             default_required_clean="$escalated_policy_required"
@@ -2624,24 +2629,42 @@ ${message}"
   fi
 
   if [[ "$review_success_committed" -eq 1 ]]; then
-    local clean_pass_noun="passes"
+    local clean_pass_noun="passes" assurance_outcome="completed"
+    local completion_severity="info" completion_message="Review completed"
+    if [[ "$required_clean" -lt "$trusted_required_clean" ]]; then
+      assurance_outcome="waived"
+      completion_severity="warn"
+      completion_message="Review target reached under attributed waiver"
+    fi
     [[ "$clean_passes" -eq 1 ]] && clean_pass_noun="pass"
     trap - INT TERM HUP
     if [[ -n "$review_lock_token" ]]; then
       dx_error "Review reached its clean gate without releasing the checkout lock, so completion was not reported."
       return 1
     fi
-    __dx_review_emit_event "$review_run_id" "review.completed" "info" \
-      "Review completed" "$review_phase" tier="$review_tier" \
+    __dx_review_emit_event "$review_run_id" "review.completed" \
+      "$completion_severity" "$completion_message" "$review_phase" \
+      tier="$review_tier" \
       profile="$review_profile" required_clean_int="$required_clean" \
+      trusted_required_clean_int="$trusted_required_clean" \
+      assurance_outcome="$assurance_outcome" \
       clean_passes_int="$clean_passes" iterations_int="$review_iteration" \
       findings_fixed_int="$findings_fixed_total" \
       total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" \
       reason=clean_gate_reached
-    dx_done "Review complete: ${clean_passes} consecutive clean ${clean_pass_noun}."
+    if [[ "$assurance_outcome" == "waived" ]]; then
+      dx_warn "Review target reached under an attributed policy waiver: ${clean_passes} consecutive clean ${clean_pass_noun}."
+    else
+      dx_done "Review complete: ${clean_passes} consecutive clean ${clean_pass_noun}."
+    fi
     echo "  Risk tier: ${review_tier} (${review_profile})"
     echo "  Iterations: ${review_iteration}"
     echo "  Findings fixed: ${findings_fixed_total}"
+    if [[ "$assurance_outcome" == "waived" ]]; then
+      echo "  Assurance: WAIVED (${required_clean}/${trusted_required_clean} clean passes required)"
+    else
+      echo "  Assurance: COMPLETED"
+    fi
     echo "  Receipt: $(dx_review_receipt_file "$session_id")"
     echo "  Result: SUCCESS"
     echo "  Exit reason: clean_gate_reached"

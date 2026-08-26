@@ -98,7 +98,11 @@ clean or retried indefinitely. Repositories can change the three gates in the
 default branch's `## Review Policy` table in `.dex/dex.md`. Values must be
 between 1 and 30 and satisfy `small <= normal <= complex`. Dex ignores policy
 edits made only on the candidate branch. `DEX_REVIEW_CLEAN_PASSES` can raise the
-resolved gate for one run but cannot lower it.
+resolved launch gate but cannot lower it. An attributed
+`dx control override review.clean-passes <1-30>` can change the live target;
+lowering it still requires that many independent clean waves and records the
+review phase as waived. A full `dx control waive review.clean-passes` skips the
+remaining review gate.
 
 Phase names describe the default workflow, not publishing permissions. An agent
 may commit, push, or open and update a PR whenever that helps the work. Human
@@ -133,6 +137,7 @@ dxcomplete                 # Resume PR completion for the current branch
 dx provider current        # Show active agent/provider/model resolution
 dx control pause           # Pause, stop, or hand control back to a running lifecycle
 dx control override review.pass-timeout 2400 --source agent --reason "checks need longer"
+dx control override review.clean-passes 2 --source human --reason "two clean waves approved"
 dx control waive review.clean-passes --source human --reason "approved in this session"
 dx sessions list           # List trusted lifecycle sessions in this repository
 dx sessions doctor         # Diagnose inconsistent, dead, or unsafe session state

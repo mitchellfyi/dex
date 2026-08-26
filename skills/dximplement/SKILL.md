@@ -238,10 +238,13 @@ The tier selects the trusted clean-wave policy from the committed default
 branch. The defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`;
 repositories may configure monotonic values from 1 through 30 in `.dex/dex.md`
 `## Review Policy`. The persisted selection is bound to that resolved policy.
-Candidate-branch edits cannot lower the active gate, and
-`DEX_REVIEW_CLEAN_PASSES` can only raise it. A lower assurance decision uses
-`dx control waive review.clean-passes` so the trusted review receipt remains
-truthful.
+Candidate-branch edits cannot lower the active gate, and the launch-only
+`DEX_REVIEW_CLEAN_PASSES` value can only raise it. An attributed
+`dx control override review.clean-passes <1-30>` may lower the effective target
+without changing the trusted policy: the loop still requires that many genuine
+clean waves, binds the receipt to the decision, and records Phase 3 as waived.
+Use `dx control waive review.clean-passes` only when skipping the remaining
+review gate entirely.
 
 The selection is not a review pass. Rewrite it if any later Phase 2 edit changes
 the scope.

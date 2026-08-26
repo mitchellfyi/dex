@@ -125,9 +125,11 @@ env DEX_SESSION_ID="$WAIVER_SESSION" bash "$CONTROL" waive \
   > "$TMP_DIR/waiver.out"
 assert_eq "agent" "$(dx_lifecycle_control_read "$WAIVER_SESSION" source)" \
   "agent waiver attribution"
-assert_eq "waived" \
+assert_eq "enforce" \
   "$(dx_override_effective "$WAIVER_SESSION" verification.required-gates \
-    enforce 2)" "named assurance waiver"
+    enforce 2)" "named assurance waiver is not a live gate value"
+grep -Fq $'waive\tverification.required-gates\twaived\tphase\t2\tagent\t0\tThe platform-specific checker is unavailable in this environment' \
+  "$(dx_override_file "$WAIVER_SESSION")" || assert_at $LINENO
 assert_contains "transition to Phase 3 is pending" "$TMP_DIR/waiver.out"
 dx_cleanup_session "$WAIVER_SESSION"
 

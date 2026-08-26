@@ -139,9 +139,13 @@ branch. The defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`;
 repositories may configure monotonic values from 1 through 30 in `.dex/dex.md`
 `## Review Policy`. The persisted selection is bound to that resolved policy.
 Candidate-branch edits cannot lower the active gate, and
-`DEX_REVIEW_CLEAN_PASSES` can only raise it. If the selected gate is unsuitable
-for an outlier, use a named Phase 3 waiver so the trusted receipt is not
-misrepresented.
+`DEX_REVIEW_CLEAN_PASSES` can only raise it. For an outlier, ask the human or
+record an attributed session decision with
+`dx control override review.clean-passes <1-30> --source agent --reason "<why>"`.
+A lower target still requires that many independent clean waves and produces a
+waiver-bound receipt; it does not claim the trusted policy passed. Use
+`dx control waive review.clean-passes` only when the decision is to skip the
+remaining review gate entirely.
 
 The selection is not a review pass and does not count toward the clean gate.
 Because it is tied to the current scope fingerprint, rewrite it after any later
