@@ -91,6 +91,10 @@ __dx_sync_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]{0,14}$ ]]
 }
 
+__dx_sync_nonnegative_integer() {
+  [[ "$1" =~ ^(0|[1-9][0-9]{0,14})$ ]]
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
@@ -152,6 +156,9 @@ if [[ "$DRY_RUN" -eq 1 || -n "$TRACE_RETRIEVAL" ]]; then
   READ_ONLY=1
 fi
 
+SYNC_BUDGET_DEFAULT_MINUTES="$SYNC_BUDGET_MINUTES"
+SYNC_POLICY_SESSION_ID="${DEX_POLICY_SESSION_ID:-${DEX_SESSION_ID:-$(dx_session_id)}}"
+
 if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   repo_root=""
 fi
@@ -161,7 +168,6 @@ if [[ -z "$repo_root" ]]; then
 fi
 
 if [[ "$SYNC_BUDGET_EXPLICIT" -eq 0 ]]; then
-  SYNC_POLICY_SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
   if dx_session_id_valid "$SYNC_POLICY_SESSION_ID"; then
     SYNC_BUDGET_MINUTES=$(dx_override_effective "$SYNC_POLICY_SESSION_ID" \
       sync.budget-minutes "$SYNC_BUDGET_MINUTES" \
@@ -171,8 +177,8 @@ if [[ "$SYNC_BUDGET_EXPLICIT" -eq 0 ]]; then
     }
   fi
 fi
-if ! __dx_sync_positive_integer "$SYNC_BUDGET_MINUTES"; then
-  dx_error "Sync budget must be a positive decimal with at most 15 digits."
+if ! __dx_sync_nonnegative_integer "$SYNC_BUDGET_MINUTES"; then
+  dx_error "Sync budget must be a non-negative decimal with at most 15 digits."
   exit 1
 fi
 
@@ -325,11 +331,6 @@ SYNC_PROVIDER_SESSION_ID="${SYNC_RUN_SESSION_ID:-sync-$(dx_unique_session_id)}"
 dx_provider_cleanup_session_state "$SYNC_PROVIDER_SESSION_ID"
 
 sync_status_before=$(git -C "$repo_root" status --porcelain=v1 -- .dex 2>/dev/null || true)
-budget_seconds=0
-if [[ "$SYNC_BUDGET_MINUTES" =~ ^[0-9]+$ && "$SYNC_BUDGET_MINUTES" -gt 0 ]]; then
-  budget_seconds=$((SYNC_BUDGET_MINUTES * 60))
-fi
-
 model_flags=()
 if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
   model_flags+=(--model "$DX_CLAUDE_MODEL")
@@ -345,7 +346,7 @@ dx_info "Large repos may be quiet while the provider reads context; timeout is $
 
 set +e
 set +o pipefail
-DEX_SESSION_ID="$SYNC_PROVIDER_SESSION_ID" DEX_RUN_ID="${SYNC_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_run_with_timeout "$budget_seconds" dx_provider_claude -p "${sync_prompt}${provider_prompt}${invocation}" \
+DEX_SESSION_ID="$SYNC_PROVIDER_SESSION_ID" DEX_RUN_ID="${SYNC_RUN_ID:-}" DX_RUN_ROOT="$DX_RUN_ROOT" dx_run_with_live_timeout "$SYNC_POLICY_SESSION_ID" sync.budget-minutes "$SYNC_BUDGET_DEFAULT_MINUTES" "${DEX_LOOP_PHASE:--}" 60 dx_provider_claude -p "${sync_prompt}${provider_prompt}${invocation}" \
   ${model_flags[@]+"${model_flags[@]}"} \
   --dangerously-skip-permissions --permission-mode bypassPermissions \
   --verbose --output-format stream-json --include-partial-messages \

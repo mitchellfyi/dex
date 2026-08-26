@@ -1507,6 +1507,7 @@ __dx_maintain_resolve_mode() {
 
 __dx_maintain_run_provider() {
   local command="$1" repo_root="$2" run_id="$3" report_file="$4" invocation="$5" budget_minutes="${6:-0}" enforce_clean="${7:-0}"
+  local policy_session="${8:-}" policy_gate="${9:-}" policy_default="${10:-$budget_minutes}"
   local budget_seconds=0 before_status after_status dirty_detail prompt_payload provider_shell old_pwd
 
   __dx_maintain_write_report_header "$report_file" "$command" "$repo_root" "$run_id" "starting" "$invocation"
@@ -1554,12 +1555,15 @@ dx_provider_claude "$@"
   # Every provider launch is credential-scrubbed: the session must never see
   # GitHub write tokens, Actions runtime tokens, or git credential helpers.
   MAINTAIN_GH_CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dex-maintain-gh.XXXXXX")
-  dx_run_with_timeout "$budget_seconds" env \
+  if dx_session_id_valid "$policy_session" && dx_override_gate_supported "$policy_gate"; then
+    dx_run_with_live_timeout "$policy_session" "$policy_gate" \
+      "$policy_default" "${DEX_LOOP_PHASE:--}" 60 env \
       -u GH_TOKEN -u GITHUB_TOKEN -u DX_MAINTAIN_TOKEN \
       -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_OUTPUT -u GITHUB_STEP_SUMMARY -u GITHUB_STATE \
       -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
       DEX_DIR="$DEX_DIR" \
       DEX_SESSION_ID="$MAINTAIN_PROVIDER_SESSION_ID" \
+      DEX_POLICY_SESSION_ID="$policy_session" \
       GH_CONFIG_DIR="$MAINTAIN_GH_CONFIG_DIR" \
       GH_PROMPT_DISABLED=1 \
       GIT_CONFIG_NOSYSTEM=1 \
@@ -1575,6 +1579,30 @@ dx_provider_claude "$@"
       -p "$prompt_payload" \
       ${model_flags[@]+"${model_flags[@]}"} \
       --dangerously-skip-permissions --permission-mode bypassPermissions
+  else
+    dx_run_with_timeout "$budget_seconds" env \
+      -u GH_TOKEN -u GITHUB_TOKEN -u DX_MAINTAIN_TOKEN \
+      -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_OUTPUT -u GITHUB_STEP_SUMMARY -u GITHUB_STATE \
+      -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+      DEX_DIR="$DEX_DIR" \
+      DEX_SESSION_ID="$MAINTAIN_PROVIDER_SESSION_ID" \
+      DEX_POLICY_SESSION_ID="$policy_session" \
+      GH_CONFIG_DIR="$MAINTAIN_GH_CONFIG_DIR" \
+      GH_PROMPT_DISABLED=1 \
+      GIT_CONFIG_NOSYSTEM=1 \
+      GIT_CONFIG_GLOBAL=/dev/null \
+      GIT_CONFIG_COUNT=1 \
+      GIT_CONFIG_KEY_0=credential.helper \
+      GIT_CONFIG_VALUE_0= \
+      GIT_TERMINAL_PROMPT=0 \
+      GIT_ASKPASS=/bin/false \
+      SSH_ASKPASS=/bin/false \
+      GIT_SSH_COMMAND="ssh -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile=/dev/null" \
+      bash -c "$provider_shell" bash "$MAINTAIN_PROVIDER_SESSION_ID" \
+      -p "$prompt_payload" \
+      ${model_flags[@]+"${model_flags[@]}"} \
+      --dangerously-skip-permissions --permission-mode bypassPermissions
+  fi
   local claude_exit=$?
   set -e
   if [[ "$enforce_clean" == "1" ]]; then
@@ -1785,7 +1813,8 @@ __dx_maintain_respond() {
   local pr_num="" event_kind="manual" dry_run=0 trusted_preflight=0 defer_publish_file="" context_dir="" expected_branch="" expected_head_sha=""
   local repo_root provider_repo_root run_id artifact_dir report_file invocation context_files response_base_sha maintain_label branch_prefix expected_branch_arg expected_head_sha_arg allowed_categories trusted_config_ref response_worktree_temp=0
   local local_response_state_file
-  local respond_budget_minutes="${DEX_MAINTAIN_RESPOND_BUDGET_MINUTES:-30}"
+  local respond_budget_default_minutes="${DEX_MAINTAIN_RESPOND_BUDGET_MINUTES:-30}"
+  local respond_budget_minutes="$respond_budget_default_minutes"
   local maintain_policy_session=""
   shift
   while [[ $# -gt 0 ]]; do
@@ -1858,7 +1887,7 @@ __dx_maintain_respond() {
       exit 1
     }
   fi
-  __dx_maintain_require_positive_number "maintenance response budget" \
+  __dx_maintain_require_nonnegative_number "maintenance response budget" \
     "$respond_budget_minutes"
   trusted_config_ref="${DX_MAINTAIN_TRUSTED_CONFIG_REF:-$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")}"
   maintain_label="${DX_MAINTAIN_LABEL:-$(__dx_maintain_config_value "$repo_root" "label" "dex-maintenance")}"
@@ -1986,7 +2015,9 @@ exit. Do not push branches or call GitHub write APIs from the provider session.
   fi
 
   __dx_maintain_run_provider "respond" "$provider_repo_root" "$run_id" \
-    "$report_file" "$invocation" "$respond_budget_minutes" "$dry_run"
+    "$report_file" "$invocation" "$respond_budget_minutes" "$dry_run" \
+    "$maintain_policy_session" maintain.respond-budget-minutes \
+    "$respond_budget_default_minutes"
   if [[ "$response_worktree_temp" -eq 1 ]]; then
     __dx_maintain_cleanup_response_worktree "$repo_root" "$provider_repo_root"
     MAINTAIN_RESPONSE_WORKTREE_REPO=""
@@ -2011,6 +2042,7 @@ exit. Do not push branches or call GitHub write APIs from the provider session.
 
 __dx_maintain_run() {
   local mode="" nightly=0 focus="" since="" budget_minutes="" command_timeout_seconds=""
+  local budget_default_minutes=""
   local max_surfaces="" max_prs="" run_sync=1 no_pr=0 dry_run=0 include_working_tree=0 defer_publish_file=""
   local maintain_policy_session="" override_rc=0
   local repo_root provider_repo_root repo_name run_id artifact_dir report_file invocation worktree_info branch_name base_sha base_ref
@@ -2156,6 +2188,7 @@ __dx_maintain_run() {
   maintain_policy_session="${DEX_SESSION_ID:-$(dx_session_id)}"
   if [[ -z "$budget_minutes" ]]; then
     budget_minutes="${DEX_MAINTAIN_BUDGET_MINUTES:-60}"
+    budget_default_minutes="$budget_minutes"
     if dx_session_id_valid "$maintain_policy_session"; then
       budget_minutes=$(dx_override_effective "$maintain_policy_session" \
         maintain.budget-minutes "$budget_minutes" \
@@ -2164,8 +2197,10 @@ __dx_maintain_run() {
         exit 1
       }
     fi
+  else
+    budget_default_minutes="$budget_minutes"
   fi
-  __dx_maintain_require_positive_number "maintenance budget" "$budget_minutes"
+  __dx_maintain_require_nonnegative_number "maintenance budget" "$budget_minutes"
   if [[ -z "$command_timeout_seconds" ]] \
     && dx_session_id_valid "$maintain_policy_session"; then
     command_timeout_seconds=$(dx_override_get "$maintain_policy_session" \
@@ -2179,7 +2214,7 @@ __dx_maintain_run() {
     }
   fi
   if [[ -n "$command_timeout_seconds" ]]; then
-    __dx_maintain_require_positive_number "maintenance command timeout" \
+    __dx_maintain_require_nonnegative_number "maintenance command timeout" \
       "$command_timeout_seconds"
   fi
   if [[ -z "$max_surfaces" ]] \
@@ -2306,10 +2341,16 @@ EOF
 )
 
   if [[ "$dry_run" -eq 1 ]]; then
-    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "${budget_minutes:-0}" "1"
+    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" \
+      "$report_file" "$invocation" "${budget_minutes:-0}" "1" \
+      "$maintain_policy_session" maintain.budget-minutes \
+      "$budget_default_minutes"
     dx_maintenance_write_last_success "$(dx_maintenance_session_id)" "$run_id" 2>/dev/null || true
   else
-    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "${budget_minutes:-0}" "0"
+    __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" \
+      "$report_file" "$invocation" "${budget_minutes:-0}" "0" \
+      "$maintain_policy_session" maintain.budget-minutes \
+      "$budget_default_minutes"
     if [[ "$no_pr" -eq 0 && "$max_prs" -gt 0 ]]; then
       if [[ -n "$defer_publish_file" ]]; then
         __dx_maintain_write_publish_state "$defer_publish_file" "$repo_root" "$provider_repo_root" "$branch_name" "$mode" "$run_id" "$report_file" "$base_sha" "$allowed_categories"

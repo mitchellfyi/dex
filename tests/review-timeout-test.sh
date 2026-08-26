@@ -154,6 +154,63 @@ assert_eq $'TERM\t4242\t4242' "$(sed -n '1p' "$stale_pid_probe")" \
 assert_eq $'KILL\tnone\t4343' "$(sed -n '2p' "$stale_pid_probe")" \
   "KILL uses only the fresh token scan"
 
+# A running supervisor re-reads the attributed policy instead of freezing the
+# value present at provider launch.
+LIVE_TIMEOUT_SESSION="repo-live-timeout-main"
+(
+  /bin/sleep 0.2
+  dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 3 phase 3 \
+    human "Extend the running provider deadline" 0
+) &
+live_writer_pid=$!
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 1 3 1 \
+  /bin/sleep 2
+wait "$live_writer_pid"
+
+dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
+  "Restore the default before testing disable"
+(
+  /bin/sleep 0.2
+  dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 0 phase 3 \
+    human "Disable the running provider deadline" 0
+) &
+live_writer_pid=$!
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 1 3 1 \
+  /bin/sleep 2
+wait "$live_writer_pid"
+
+dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
+  "Restore the default before testing a shorter deadline"
+(
+  /bin/sleep 0.2
+  dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 1 phase 3 \
+    human "Shorten the running provider deadline" 0
+) &
+live_writer_pid=$!
+set +e
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 5 3 1 \
+  /bin/sleep 3
+live_timeout_status=$?
+set -e
+wait "$live_writer_pid"
+assert_eq "124" "$live_timeout_status" "live timeout shortening"
+
+dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 0 phase 3 human \
+  "Start without a provider deadline" 0
+(
+  /bin/sleep 0.2
+  dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
+    "Restore the default provider deadline"
+) &
+live_writer_pid=$!
+set +e
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 1 3 1 \
+  /bin/sleep 3
+live_timeout_status=$?
+set -e
+wait "$live_writer_pid"
+assert_eq "124" "$live_timeout_status" "live timeout restore"
+
 run_signal_case() {
   local signal="$1" expected_status="$2" label="$3"
   local pid_file="$TMP_DIR/${signal}-child.pid" helper_pid helper_status alarm_pid

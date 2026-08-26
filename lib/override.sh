@@ -65,11 +65,11 @@ dx_override_gate_value_valid() {
     review.notice-interval|review.recheck-seconds|watch.pause-ttl|\
     watch.cycle-timeout|watch.command-timeout|complete.max-cycles|\
     complete.wait-minutes|complete.ci-fix-attempts|\
-    failure.attempts-per-strategy|failure.max-strategies|maintain.max-prs)
+    failure.attempts-per-strategy|failure.max-strategies|maintain.max-prs|\
+    sync.budget-minutes|maintain.budget-minutes|\
+    maintain.respond-budget-minutes|maintain.command-timeout-seconds)
       [[ "$value" =~ ^[0-9]+$ && ${#value} -le 15 ]]
       ;;
-    sync.budget-minutes|maintain.budget-minutes|\
-    maintain.respond-budget-minutes|maintain.command-timeout-seconds|\
     maintain.max-surfaces)
       [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 15 ]]
       ;;

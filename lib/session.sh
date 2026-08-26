@@ -1528,6 +1528,17 @@ dx_watch_command_timeout_seconds() {
   fi
 }
 
+# dx_watch_run_command <session_id> <command> [args...]
+# Run one watcher command under the live session policy. The wrapper keeps the
+# environment default separate so clearing an override restores it immediately.
+dx_watch_run_command() {
+  [[ $# -ge 2 ]] || return 2
+  local session_id="$1" timeout_default="${DEX_WATCH_COMMAND_TIMEOUT_SECONDS:-30}"
+  shift
+  dx_run_with_live_timeout "$session_id" watch.command-timeout \
+    "$timeout_default" 6 1 "$@"
+}
+
 # dx_complete_max_cycles [session_id] — Phase 6 idle-cycle budget.
 dx_complete_max_cycles() {
   local session_id="${1:-${DEX_SESSION_ID:-}}"
@@ -1906,10 +1917,18 @@ __dx_timeout_abort() {
 __dx_run_with_timeout_core() {
   local timeout="$1" temp_dir="" marker="" token_file="" token=""
   local cmd_pid="" watchdog_pid="" cmd_status timeout_enabled=0
+  local policy_session="${DX_TIMEOUT_POLICY_SESSION_ID:-}"
+  local policy_gate="${DX_TIMEOUT_POLICY_GATE:-}"
+  local policy_default="${DX_TIMEOUT_POLICY_DEFAULT_VALUE:-}"
+  local policy_phase="${DX_TIMEOUT_POLICY_PHASE:--}"
+  local policy_multiplier="${DX_TIMEOUT_POLICY_MULTIPLIER:-1}"
   shift
   [[ $# -gt 0 ]] || return 2
 
   if [[ "$timeout" =~ ^[0-9]+$ && "$timeout" -gt 0 ]]; then
+    timeout_enabled=1
+  fi
+  if [[ -n "$policy_session" && -n "$policy_gate" ]]; then
     timeout_enabled=1
   fi
 
@@ -1929,6 +1948,9 @@ __dx_run_with_timeout_core() {
   # command is a shell function with invocation-scoped environment variables.
   (
     export DX_TIMEOUT_PROCESS_TOKEN="$token"
+    unset DX_TIMEOUT_POLICY_SESSION_ID DX_TIMEOUT_POLICY_GATE \
+      DX_TIMEOUT_POLICY_DEFAULT_VALUE DX_TIMEOUT_POLICY_PHASE \
+      DX_TIMEOUT_POLICY_MULTIPLIER
     # A low, explicitly opened descriptor survives ordinary shell fork/exec
     # chains on both supported platforms and is discoverable after reparenting.
     exec 9< "$token_file"
@@ -1938,11 +1960,35 @@ __dx_run_with_timeout_core() {
 
   if [[ $timeout_enabled -eq 1 ]]; then
     (
-      sleep "$timeout" 2>/dev/null
-      if kill -0 "$cmd_pid" 2>/dev/null; then
-        : > "$marker"
-        __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
-      fi
+      local started_at now elapsed policy_value live_timeout
+      started_at=$(date +%s)
+      while kill -0 "$cmd_pid" 2>/dev/null; do
+        live_timeout="$timeout"
+        if [[ -n "$policy_session" && -n "$policy_gate" ]]; then
+          policy_value=$(dx_override_effective "$policy_session" \
+            "$policy_gate" "$policy_default" "$policy_phase" \
+            2>/dev/null) || {
+            printf 'policy-invalid\n' > "$marker"
+            __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+            exit 0
+          }
+          if [[ ! "$policy_value" =~ ^[0-9]+$ \
+            || ! "$policy_multiplier" =~ ^[1-9][0-9]*$ ]]; then
+            printf 'policy-invalid\n' > "$marker"
+            __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+            exit 0
+          fi
+          live_timeout=$((10#$policy_value * 10#$policy_multiplier))
+        fi
+        now=$(date +%s)
+        elapsed=$((now - started_at))
+        if [[ "$live_timeout" -gt 0 && "$elapsed" -ge "$live_timeout" ]]; then
+          printf 'timeout\n' > "$marker"
+          __dx_timeout_terminate_processes "$token_file" "$cmd_pid"
+          exit 0
+        fi
+        sleep 1 2>/dev/null || true
+      done
     ) >/dev/null 2>&1 &
     watchdog_pid=$!
   fi
@@ -1957,7 +2003,10 @@ __dx_run_with_timeout_core() {
     # Sweep once more for a late orphan without repeating the watchdog's
     # TERM grace period.
     __dx_timeout_signal_processes "$token_file" "" KILL
+    local timeout_marker=""
+    timeout_marker=$(cat "$marker" 2>/dev/null || true)
     __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
+    [[ "$timeout_marker" == "policy-invalid" ]] && return 125
     return 124
   fi
 
@@ -1973,6 +2022,33 @@ __dx_run_with_timeout_core() {
   __dx_timeout_signal_processes "$token_file" "" KILL
   __dx_timeout_remove_state "$temp_dir" "$marker" "$token_file"
   return "$cmd_status"
+}
+
+# dx_run_with_live_timeout <session> <gate> <default-value> <phase|->
+#   <seconds-per-value> <command> [args...]
+# Re-resolve the policy once per second so an in-session override can extend,
+# shorten, disable, or restore the deadline of a running provider command.
+dx_run_with_live_timeout() {
+  [[ $# -ge 6 ]] || return 2
+  local policy_session="$1" policy_gate="$2" policy_default="$3"
+  local policy_phase="$4" policy_multiplier="$5" initial_value initial_timeout
+  shift 5
+  dx_session_id_valid "$policy_session" || return 2
+  dx_override_gate_supported "$policy_gate" || return 2
+  dx_override_phase_valid "$policy_phase" || return 2
+  [[ "$policy_default" =~ ^[0-9]+$ && ${#policy_default} -le 15 ]] || return 2
+  [[ "$policy_multiplier" =~ ^[1-9][0-9]*$ \
+    && ${#policy_multiplier} -le 4 ]] || return 2
+  initial_value=$(dx_override_effective "$policy_session" "$policy_gate" \
+    "$policy_default" "$policy_phase") || return 125
+  [[ "$initial_value" =~ ^[0-9]+$ && ${#initial_value} -le 15 ]] || return 2
+  initial_timeout=$((10#$initial_value * 10#$policy_multiplier))
+  DX_TIMEOUT_POLICY_SESSION_ID="$policy_session" \
+  DX_TIMEOUT_POLICY_GATE="$policy_gate" \
+  DX_TIMEOUT_POLICY_DEFAULT_VALUE="$policy_default" \
+  DX_TIMEOUT_POLICY_PHASE="$policy_phase" \
+  DX_TIMEOUT_POLICY_MULTIPLIER="$policy_multiplier" \
+    dx_run_with_timeout "$initial_timeout" "$@"
 }
 
 # dx_run_with_timeout <seconds> <command> [args...] — portable timeout wrapper

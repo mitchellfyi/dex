@@ -159,12 +159,13 @@ __dx_review_parent_busy_begin() {
   printf '%s\n' "$busy_token"
 }
 __dx_review_run_with_parent_cancel() {
-  local session_id="$1" busy_token="$2" timeout_seconds="$3"
+  local session_id="$1" busy_token="$2" timeout_default="$3"
   local result_dir result_file result_tmp child_pid child_rc=0 child_state=""
   local current_busy_token=""
   shift 3
   if [[ -z "$busy_token" ]]; then
-    dx_run_with_timeout "$timeout_seconds" "$@"
+    dx_run_with_live_timeout "$session_id" review.pass-timeout \
+      "$timeout_default" 3 1 "$@"
     return
   fi
   result_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-review-child.XXXXXX") || return 1
@@ -172,7 +173,8 @@ __dx_review_run_with_parent_cancel() {
   result_tmp="$result_dir/result.tmp"
   (
     local provider_rc=0
-    dx_run_with_timeout "$timeout_seconds" "$@" || provider_rc=$?
+    dx_run_with_live_timeout "$session_id" review.pass-timeout \
+      "$timeout_default" 3 1 "$@" || provider_rc=$?
     if printf '%s\n' "$provider_rc" >| "$result_tmp"; then
       command mv -f "$result_tmp" "$result_file"
     fi
@@ -805,7 +807,8 @@ dx_review_loop_run() {
   local explicit_clean_gate="${DEX_REVIEW_CLEAN_PASSES:-}"
   local requested_tier="${DEX_REVIEW_TIER:-}" requested_profile="${DEX_REVIEW_PROFILE:-${DX_REVIEW_PROFILE:-auto}}"
   local configured_pass_timeout="${DEX_REVIEW_PASS_TIMEOUT:-}"
-  local assessment_timeout="${configured_pass_timeout:-900}"
+  local assessment_timeout_default="${configured_pass_timeout:-900}"
+  local assessment_timeout="$assessment_timeout_default"
   local pass_timeout="$assessment_timeout"
   assessment_timeout=$(dx_override_effective "$session_id" \
     review.pass-timeout "$assessment_timeout" 3) || {
@@ -1166,7 +1169,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
       if [[ $standalone_review_prompt -eq 0 ]]; then
         local assessment_busy_status=0
         parent_busy_token=$(__dx_review_parent_busy_begin \
-          "$session_id" "review risk assessment" "$assessment_timeout") \
+          "$session_id" "review risk assessment" \
+          "$assessment_timeout_default") \
           || assessment_busy_status=$?
         if [[ "$assessment_busy_status" -ne 0 || -z "$parent_busy_token" ]]; then
           assessment_exit=125
@@ -1193,6 +1197,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
       assessment_exit=0
       if [[ "$provider_agent" == "codex" ]]; then
         DEX_SESSION_ID="$assessment_session_id" \
+        DEX_POLICY_SESSION_ID="$session_id" \
         DEX_LOOP_ACTIVE=0 \
         DEX_REVIEW_ASSESSMENT_ACTIVE=1 \
         DEX_REVIEW_PASS_ACTIVE=0 \
@@ -1203,7 +1208,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         DEX_PHASE_HANDOFF="" \
         DEX_DIR="$DEX_DIR" \
         __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-          "$assessment_timeout" bash "$assessment_codex_wrapper" exec -- \
+          "$assessment_timeout_default" \
+          bash "$assessment_codex_wrapper" exec -- \
           "$assessment_message" || assessment_exit=$?
       else
         local assessment_args=() assessment_arg=""
@@ -1212,6 +1218,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         done
         assessment_args+=("${assessment_mcp_flags[@]}" --no-chrome --disallowedTools "Bash,Edit,Write,NotebookEdit" --print --output-format text --no-session-persistence -n "$assessment_session_name")
         DEX_SESSION_ID="$assessment_session_id" \
+        DEX_POLICY_SESSION_ID="$session_id" \
         DEX_LOOP_ACTIVE=0 \
         DEX_REVIEW_ASSESSMENT_ACTIVE=1 \
         DEX_REVIEW_PASS_ACTIVE=0 \
@@ -1220,7 +1227,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         DEX_PHASE_HANDOFF="" \
         DEX_DIR="$DEX_DIR" \
         __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-          "$assessment_timeout" __dx_claude "${assessment_args[@]}" \
+          "$assessment_timeout_default" \
+          __dx_claude "${assessment_args[@]}" \
           "$assessment_message" >| "$assessment_output_file" || assessment_exit=$?
       fi
       if [[ -z "$review_interrupt_reason" ]]; then
@@ -1763,7 +1771,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     if [[ $standalone_review_prompt -eq 0 ]]; then
       local busy_write_status=0
       parent_busy_token=$(__dx_review_parent_busy_begin \
-        "$session_id" "independent review wave" "$pass_timeout") \
+        "$session_id" "independent review wave" "$pass_timeout_default") \
         || busy_write_status=$?
       if [[ "$busy_write_status" -ne 0 || -z "$parent_busy_token" ]]; then
         if [[ "$busy_write_status" -eq 2 ]]; then
@@ -1844,6 +1852,7 @@ Allowed results: CLEAN, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, CHURN:reas
 ${message}"
 
       DEX_SESSION_ID="$pass_session_id" \
+      DEX_POLICY_SESSION_ID="$session_id" \
       DEX_LOOP_ACTIVE=1 \
       DEX_PHASE_HANDOFF="" \
       DEX_LOOP_PROMISE="$review_promise" \
@@ -1860,11 +1869,13 @@ ${message}"
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-        "$pass_timeout" bash "$codex_wrapper" exec -- "$codex_message" \
+        "$pass_timeout_default" \
+        bash "$codex_wrapper" exec -- "$codex_message" \
         || exit_code=$?
     else
       local claude_args=("${DX_CLAUDE_FLAGS[@]}" "${review_mcp_flags[@]}" -n "$pass_session_name")
       DEX_SESSION_ID="$pass_session_id" \
+      DEX_POLICY_SESSION_ID="$session_id" \
       DEX_LOOP_ACTIVE=1 \
       DEX_PHASE_HANDOFF="" \
       DEX_LOOP_PROMISE="$review_promise" \
@@ -1881,7 +1892,8 @@ ${message}"
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-        "$pass_timeout" __dx_claude "${claude_args[@]}" "$message" \
+        "$pass_timeout_default" \
+        __dx_claude "${claude_args[@]}" "$message" \
         || exit_code=$?
     fi
 

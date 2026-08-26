@@ -82,7 +82,7 @@ assert_no_receipt() {
 assert_receipt() {
   local expected_tier="$1" expected_required="$2" label="$3"
   local receipt="$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-receipt"
-  local version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding extra
+  local version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding override_binding extra
   local expected_binding="standalone" expected_policy_binding expected_profile
 
   if [[ ! -f "$receipt" ]]; then
@@ -91,17 +91,18 @@ assert_receipt() {
     exit 1
   fi
 
-  IFS=$'\t' read -r version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding extra < "$receipt"
+  IFS=$'\t' read -r version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding override_binding extra < "$receipt"
   case "$expected_tier" in
     small) expected_profile="light" ;;
     normal) expected_profile="standard" ;;
     complex) expected_profile="thorough" ;;
   esac
-  assert_eq "5" "$version" "$label receipt version"
+  assert_eq "6" "$version" "$label receipt version"
   assert_eq "$expected_tier" "$tier" "$label receipt tier"
   assert_eq "$expected_profile" "$profile" "$label receipt profile"
   assert_eq "$expected_required" "$required" "$label receipt requirement"
   assert_eq "$expected_required" "$clean_count" "$label receipt clean count"
+  assert_eq "-" "$override_binding" "$label receipt policy override"
   assert_eq "" "${extra:-}" "$label receipt fields"
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || {
     printf '%s: invalid receipt fingerprint %s\n' "$label" "$fingerprint" >&2

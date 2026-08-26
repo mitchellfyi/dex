@@ -38,7 +38,7 @@ assert_fails_with "--budget-minutes requires a positive integer" \
   bash "$ROOT/bin/sync.sh" --budget-minutes 0
 assert_fails_with "--budget-minutes requires a positive integer" \
   bash "$ROOT/bin/sync.sh" --budget-minutes 9999999999999999
-assert_fails_with "Sync budget must be a positive decimal with at most 15 digits." \
+assert_fails_with "Sync budget must be a non-negative decimal with at most 15 digits." \
   env DEX_SYNC_BUDGET_MINUTES=08 bash "$ROOT/bin/sync.sh"
 
 assert_fails_with "--budget-minutes requires a positive integer" \
