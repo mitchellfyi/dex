@@ -1210,6 +1210,20 @@ else
   printf 'FAIL (missing built-in guards should block, got rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
   fail=$((fail + 1))
 fi
+set +e
+GUARD_OUT="$(mkbashpayload \
+  'bash "$DEX_DIR/bin/control.sh" stop --source human --reason emergency' \
+  | env DEX_GUARD_EVENT=bash DEX_DIR="$GUARD_TMP/empty-dex" \
+    python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 && "$GUARD_OUT" == *'break-glass-control'* ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (break glass must survive missing built-ins; rc=%s)\n%s\n' \
+    "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
 
 # An unexpected crash anywhere in the handler must deny rather than allow:
 # exit 1 would let the call through with no guard evaluation at all.
@@ -1319,6 +1333,44 @@ else
   printf 'FAIL (session guard override; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
   fail=$((fail + 1))
 fi
+
+# The exact control command is the escape hatch for a broad project block.
+# Only that command is exempt: separators, substitutions, and shell wrappers
+# keep the full payload under normal guard enforcement.
+for break_glass_command in \
+  'bash "$DEX_DIR/bin/control.sh" override review.pass-timeout 2400 --source agent --reason frobnicate' \
+  'dx control waive review.clean-passes --source human --reason frobnicate'; do
+  set +e
+  GUARD_OUT="$(cd "$OVERRIDE_GUARD_REPO" && mkbashpayload "$break_glass_command" \
+    | env DEX_GUARD_EVENT=bash DEX_DIR="$ROOT" python3 "$HANDLER" 2>&1)"
+  GUARD_RC=$?
+  set -e
+  if [[ "$GUARD_RC" -eq 0 && "$GUARD_OUT" == *'break-glass-control'* ]]; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (exact break-glass control; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+    fail=$((fail + 1))
+  fi
+done
+
+for non_exact_control in \
+  'bash "$DEX_DIR/bin/control.sh" override review.pass-timeout 2400 --reason safe; frobnicate' \
+  'bash "$DEX_DIR/bin/control.sh" override review.pass-timeout 2400 --reason "$(frobnicate)"' \
+  'bash -c '\''bash "$DEX_DIR/bin/control.sh" override review.pass-timeout 2400 --reason frobnicate'\'''; do
+  set +e
+  GUARD_OUT="$(cd "$OVERRIDE_GUARD_REPO" && mkbashpayload "$non_exact_control" \
+    | env DEX_GUARD_EVENT=bash DEX_DIR="$ROOT" python3 "$HANDLER" 2>&1)"
+  GUARD_RC=$?
+  set -e
+  if [[ "$GUARD_RC" -eq 2 && "$GUARD_OUT" == *'test-session-block'* \
+    && "$GUARD_OUT" != *'break-glass-control'* ]]; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (non-exact control must remain blocked; rc=%s)\n%s\n' \
+      "$GUARD_RC" "$GUARD_OUT" >&2
+    fail=$((fail + 1))
+  fi
+done
 
 printf 'guards-test: %d passed, %d failed\n' "$pass" "$fail"
 if [[ "$fail" -ne 0 ]]; then

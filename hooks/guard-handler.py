@@ -198,6 +198,68 @@ PROVIDER_BUILTIN_ENGINES = {
 }
 PROVIDER_ENGINES = {'claude', 'codex-plugin', 'anthropic-gateway'}
 
+BREAK_GLASS_COMMANDS = {
+    'pause', 'detach', 'stop', 'cancel', 'done', 'complete', 'jump', 'phase',
+    'resume', 'override', 'clear-override', 'waive',
+}
+
+
+def _is_control_script(token):
+    """Return True only for the control script in this Dex installation."""
+    dex_dir = os.environ.get('DEX_DIR') or os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))
+    )
+    expected = os.path.realpath(os.path.join(dex_dir, 'bin', 'control.sh'))
+    candidate = token.replace('${DEX_DIR}', dex_dir).replace('$DEX_DIR', dex_dir)
+    if not os.path.isabs(candidate):
+        candidate = os.path.abspath(candidate)
+    return os.path.realpath(candidate) == expected
+
+
+def exact_break_glass_control(text):
+    """Recognize one standalone Dex control invocation.
+
+    The exemption is intentionally narrower than normal shell parsing. Any
+    wrapper, separator, redirection, substitution, or second command leaves
+    the whole tool call under ordinary guard enforcement.
+    """
+    if not text.strip():
+        return False
+    if (
+        extract_dollar_substitutions(text)
+        or extract_executable_backticks(text)
+        or '<(' in text
+        or '>(' in text
+    ):
+        return False
+    tokens = shell_tokens(text)
+    if not tokens or any(
+        token in SHELL_SEPARATORS or token in SHELL_REDIRECTS
+        for token in tokens
+    ):
+        return False
+
+    arguments = []
+    command = token_basename(tokens[0])
+    if command in {'dx', 'dex'}:
+        if len(tokens) < 3 or tokens[1] != 'control':
+            return False
+        arguments = tokens[2:]
+    elif command in SHELLS:
+        if len(tokens) < 3 or tokens[1].startswith('-') or not _is_control_script(tokens[1]):
+            return False
+        arguments = tokens[2:]
+    elif _is_control_script(tokens[0]):
+        arguments = tokens[1:]
+    else:
+        return False
+
+    if len(arguments) >= 2 and arguments[0] == '--session':
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,179}', arguments[1]):
+            return False
+        arguments = arguments[2:]
+    return bool(arguments) and arguments[0] in BREAK_GLASS_COMMANDS
+
 
 def read_provider_config(path):
     try:
@@ -2594,6 +2656,27 @@ def main():
     # Determine event type from environment
     event_type = os.environ.get('DEX_GUARD_EVENT', 'bash')
 
+    # Build text before guard loading so a broken guard installation cannot
+    # trap the one command that can soften, pause, or stop enforcement. The
+    # invoked control script validates and journals the decision itself.
+    text = extract_hook_text(tool_input, event_type) if tool_input.strip() else ''
+    if event_type == 'bash' and exact_break_glass_control(text):
+        context = (
+            "[guard:break-glass-control] WARNING\n\n"
+            "Dex allowed this exact standalone control command regardless of "
+            "blocking guards. The control command will validate and audit any "
+            "state change; appended shell work is not exempt."
+        )
+        print(json.dumps({
+            "continue": True,
+            "systemMessage": context,
+            "hookSpecificOutput": {
+                "hookEventName": hook_event_name_for_guard_event(event_type),
+                "additionalContext": context,
+            },
+        }))
+        sys.exit(0)
+
     guards, builtins_healthy = load_guards(event_type)
     if not builtins_healthy:
         # The built-in rules are the security baseline. If none could be read,
@@ -2606,10 +2689,6 @@ def main():
         sys.exit(2)
     if not guards:
         sys.exit(0)
-
-    # Build text to check against. Claude Code sends hook payload JSON on stdin;
-    # CLAUDE_TOOL_USE_INPUT remains only as a no-stdin/manual-test fallback.
-    text = extract_hook_text(tool_input, event_type) if tool_input.strip() else ''
 
     # For commit events, fetch committed files and message from git if not
     # already provided (post-commit-guard.sh sets CLAUDE_TOOL_USE_INPUT)
