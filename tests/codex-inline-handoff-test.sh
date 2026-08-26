@@ -549,6 +549,10 @@ grep -q "normal Phase 2 readiness gate" "$ctx_file"
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
 grep -q "Direct Human Control" "$ctx_file"
 grep -q "bin/control.sh" "$ctx_file"
+grep -q "Soft Defaults and Overrides" "$ctx_file"
+grep -q "override review.pass-timeout 2400 --source agent" "$ctx_file"
+grep -q "waive review.clean-passes --source agent" "$ctx_file"
+grep -q "Never describe an overridden" "$ctx_file"
 '
 
 zsh -fc '

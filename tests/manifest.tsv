@@ -42,6 +42,7 @@ log-command-test.sh	fast	all	600	hermetic
 maintenance-state-test.sh	fast	all	600	hermetic
 maintenance-test.sh	slow	all	1200	hermetic
 output-format-test.sh	fast	all	600	hermetic
+override-policy-test.sh	fast	all	600	hermetic
 parser-drift-test.sh	fast	all	600	hermetic
 phase-loop-ownership-test.sh	slow	all	1200	hermetic
 portability-test.sh	fast	all	600	hermetic
@@ -58,7 +59,7 @@ review-controller-test.sh	fast	all	600	hermetic
 review-evaluation-harness-test.sh	serial	all	1200	hermetic
 review-evidence-v3-test.sh	slow	all	1200	hermetic
 review-loop-contract-test.sh	fast	all	600	hermetic
-review-loop-test.sh	serial	all	1200	hermetic
+review-loop-test.sh	serial	all	1800	hermetic
 review-policy-config-test.sh	fast	all	600	hermetic
 review-policy-test.sh	slow	all	1200	hermetic
 review-timeout-test.sh	serial	all	1200	hermetic

@@ -348,7 +348,7 @@ __dx_review_pause_intervention() {
       printf 'Fix or explicitly resolve the %s remaining verified finding(s), then rerun dxreviewloop.\n' "${detail:-reported}"
       ;;
     pass_timeout)
-      printf '%s\n' "Fix the hanging review wave or raise DEX_REVIEW_PASS_TIMEOUT, then rerun dxreviewloop."
+      printf '%s\n' "Fix the hanging review wave or set a longer review.pass-timeout session override, then rerun dxreviewloop."
       ;;
     provider_error)
       printf '%s\n' "Restore the selected provider CLI and authentication, then rerun dxreviewloop."
@@ -807,6 +807,12 @@ dx_review_loop_run() {
   local configured_pass_timeout="${DEX_REVIEW_PASS_TIMEOUT:-}"
   local assessment_timeout="${configured_pass_timeout:-900}"
   local pass_timeout="$assessment_timeout"
+  assessment_timeout=$(dx_override_effective "$session_id" \
+    review.pass-timeout "$assessment_timeout" 3) || {
+    dx_error "The session override journal is unsafe or malformed."
+    return 1
+  }
+  pass_timeout="$assessment_timeout"
   __dx_review_validate_gates "${explicit_clean_gate:-1}" || return 1
   if ! dx_review_is_nonnegative_integer "$assessment_timeout" \
     || [[ ${#assessment_timeout} -gt 15 ]]; then
@@ -1400,12 +1406,18 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
     return 1
   }
-  if [[ -z "$configured_pass_timeout" ]]; then
-    pass_timeout=$(__dx_review_default_pass_timeout "$review_profile") || {
+  local pass_timeout_default="${configured_pass_timeout:-}"
+  if [[ -z "$pass_timeout_default" ]]; then
+    pass_timeout_default=$(__dx_review_default_pass_timeout "$review_profile") || {
       dx_error "Could not resolve the default review timeout for profile '${review_profile}'."
       return 1
     }
   fi
+  pass_timeout=$(dx_override_effective "$session_id" review.pass-timeout \
+    "$pass_timeout_default" 3) || {
+    dx_error "The session override journal is unsafe or malformed."
+    return 1
+  }
   # The tier's policy value seeds required_clean and the overrides below only
   # ever raise it, so the gate can never end up under the tier minimum.
   local required_clean="" required_candidate=""
@@ -1552,6 +1564,16 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   parent_findings_file=$(dx_findings_file "$session_id")
 
   while [[ $clean_passes -lt $required_clean ]]; do
+    pass_timeout=$(dx_override_effective "$session_id" review.pass-timeout \
+      "$pass_timeout_default" 3) || {
+      terminal_reason="override_state_invalid"
+      break
+    }
+    if ! dx_review_is_nonnegative_integer "$pass_timeout" \
+      || [[ ${#pass_timeout} -gt 15 ]]; then
+      terminal_reason="invalid_pass_timeout"
+      break
+    fi
     if ! __dx_review_criteria_intact "$session_id" "" "$review_criteria_binding"; then
       terminal_reason="review_criteria_changed"
       clean_passes=0

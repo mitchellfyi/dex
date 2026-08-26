@@ -39,7 +39,9 @@ implementation session, follow that prompt instead of handing off again:
 - Implement the approved plan, using tests and project verification gates.
 - Follow the Stop hook's audit instructions.
 - Run only the literal generation-bound completion command supplied for this
-  launch, and only after every gate passes.
+  launch, and only after every gate passes. If an outlier requires a weaker
+  assurance level, use the provider-neutral override or waiver command instead
+  of forging the completion receipt.
 - If repeated failures exhaust two materially different strategies, use the
   exact escalation command supplied by the hook. Escalation pauses the loop;
   it does not complete it or relax the approved criteria.

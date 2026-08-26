@@ -21,7 +21,10 @@ export DX_LOOP_DIR="$TMP_DIR/loops"
 export DX_ARTIFACT_DIR="$TMP_DIR/artifacts"
 export DX_TOOL_DIR="$TMP_DIR/tools"
 export DX_RUN_ROOT="$TMP_DIR/runs"
-mkdir -p "$HOME"
+mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
+
+# shellcheck disable=SC1091
+source "$ROOT/lib/common.sh"
 
 pass=0
 fail=0
@@ -95,6 +98,18 @@ run_hook "$(mkpayload 'git commit -m "updated some stuff"' 0)"
 check "non-conventional commit blocked" 2 "does not follow conventional format"
 run_hook "$(mkpayload 'git commit -m "updated some stuff"' 0)"
 check "block names the offending message" 2 "updated some stuff"
+
+# Direct commit-format validation follows the same attributed guard override
+# contract as markdown block guards.
+export DEX_SESSION_ID
+DEX_SESSION_ID=$(cd "$repo" && dx_session_id)
+dx_override_set "$DEX_SESSION_ID" guard.commit-format allow session - human \
+  "Importing a legacy commit whose subject must remain unchanged" 0
+commit_with_message "legacy import subject"
+run_hook "$(mkpayload 'git commit -m "legacy import subject"' 0)"
+check "commit format override allowed" 0 "OVERRIDDEN"
+dx_override_clear "$DEX_SESSION_ID" guard.commit-format session - human \
+  "Legacy import is complete"
 
 # Near-misses that must still be rejected.
 for message in \

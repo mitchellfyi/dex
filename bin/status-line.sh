@@ -7,7 +7,7 @@ set -euo pipefail
 # Only session and lifecycle-control helpers are used below, and none of them
 # run at source time, so the rest of lib/ is not loaded. See lib/common.sh.
 # shellcheck disable=SC2034 # read by lib/common.sh when it is sourced below
-DX_COMMON_MODULES="output session lifecycle-control"
+DX_COMMON_MODULES="output session override lifecycle-control"
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 unset DX_COMMON_MODULES
 
@@ -21,9 +21,12 @@ if [[ -z "$CONTROL_SNAPSHOT" \
   exit 0
 fi
 CONTROL_ACTION=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" action)
+CONTROL_SOURCE=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" source)
 if [[ "$CONTROL_ACTION" == "pause" || "$CONTROL_ACTION" == "cancel" ]]; then
   [[ "$CONTROL_ACTION" == "pause" ]] && CONTROL_LABEL="paused" || CONTROL_LABEL="stopped"
-  echo "Dex ${CONTROL_LABEL} by human | phase sequencing detached"
+  CONTROL_ACTOR="human"
+  [[ "$CONTROL_SOURCE" == "agent" ]] && CONTROL_ACTOR="agent"
+  echo "Dex ${CONTROL_LABEL} by ${CONTROL_ACTOR} | phase sequencing detached"
   exit 0
 fi
 PAUSE_CONTEXT_RC=0
@@ -58,6 +61,13 @@ LOOP_FILE=$(dx_loop_file "$SESSION_ID")
 if [[ -f "$LOOP_FILE" ]]; then
   ITER=$(cut -d: -f1 "$LOOP_FILE" 2>/dev/null || echo "0")
   MAX="${DEX_LOOP_MAX_ITERATIONS:-30}"
+  OVERRIDE_PHASE="$PHASE"
+  [[ "$OVERRIDE_PHASE" =~ ^[0-6]$ ]] || OVERRIDE_PHASE="-"
+  if ! MAX=$(dx_override_effective "$SESSION_ID" loop.max-iterations \
+    "$MAX" "$OVERRIDE_PHASE" 2>/dev/null); then
+    echo "Dex blocked | unsafe override state"
+    exit 0
+  fi
   ITER=" | Audit ${ITER}/${MAX}"
 fi
 

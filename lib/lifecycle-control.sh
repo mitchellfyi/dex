@@ -59,10 +59,18 @@ dx_lifecycle_phase_audit_basename() {
   esac
 }
 
+dx_lifecycle_control_actor_label() {
+  if [[ "${1:-}" == "agent" ]]; then
+    printf '%s\n' "agent override"
+  else
+    printf '%s\n' "direct human instruction"
+  fi
+}
+
 # dx_lifecycle_phase_min_audits <phase>
 # Honors the DEX_PHASE_<n>_MIN_AUDITS override; defaults to one audit pass.
 dx_lifecycle_phase_min_audits() {
-  local phase="${1:-}" env_name value
+  local phase="${1:-}" env_name value session_id override_value
   [[ "$phase" =~ ^[0-9]+$ ]] || phase=""
   env_name="DEX_PHASE_${phase}_MIN_AUDITS"
   value="$(printenv "$env_name" 2>/dev/null || true)"
@@ -74,10 +82,17 @@ dx_lifecycle_phase_min_audits() {
     eval "value=\${${env_name}:-}"
   fi
   if [[ "$value" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$value"
+    :
   else
-    printf '%s\n' "1"
+    value="1"
   fi
+  session_id="${DEX_SESSION_ID:-}"
+  if dx_lifecycle_session_id_valid "$session_id"; then
+    override_value=$(dx_override_effective "$session_id" phase.min-audits \
+      "$value" "$phase") || return 1
+    value="$override_value"
+  fi
+  printf '%s\n' "$value"
 }
 
 # dx_lifecycle_detach <session_id> <reason> <source>
@@ -129,7 +144,7 @@ dx_lifecycle_detach() {
 }
 
 # Acquire the lifecycle transition lock and leave the current automation inert.
-# This is for system-owned pauses; human controls have their own receipt path.
+# This is for system-owned pauses; human/agent controls have their own receipt path.
 dx_lifecycle_pause() {
   local session_id="$1" reason="$2" pause_source="$3" pause_rc=0
   dx_lifecycle_session_id_valid "$session_id" || return 1
@@ -671,7 +686,7 @@ dx_write_lifecycle_control() {
     *) return 1 ;;
   esac
   case "$source" in
-    user-prompt|terminal) ;;
+    agent|user-prompt|terminal) ;;
     *) return 1 ;;
   esac
   [[ -z "$prompt_sha256" || "$prompt_sha256" =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -779,13 +794,16 @@ dx_write_lifecycle_control() {
 # committed and cleared the transition, leave the completed state untouched.
 dx_lifecycle_activate_pending_control() {
   local session_id="$1" expected_action="$2" expected_target="$3"
-  local expected_phase="$4" expected_generation="$5" snapshot current_phase
+  local expected_phase="$4" expected_generation="$5"
+  local expected_source="${6:-terminal}" snapshot current_phase
   local control_file
   local action target source generation receipt_phase activation_result="pending"
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$expected_action" == "complete" || "$expected_action" == "jump" ]] || return 1
   [[ "$expected_target" =~ ^[0-7]$ && "$expected_phase" =~ ^[0-6]$ \
     && "$expected_generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] || return 1
+  [[ "$expected_source" == "agent" || "$expected_source" == "terminal" ]] \
+    || return 1
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
   if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
     dx_lifecycle_control_lock_release_checked "$session_id" \
@@ -812,7 +830,7 @@ dx_lifecycle_activate_pending_control() {
     generation=$(dx_lifecycle_control_value "$snapshot" generation)
     receipt_phase=$(dx_lifecycle_control_value "$snapshot" expected_phase)
     if [[ "$action" != "$expected_action" || "$target" != "$expected_target" \
-      || "$source" != "terminal" || "$generation" != "$expected_generation" \
+      || "$source" != "$expected_source" || "$generation" != "$expected_generation" \
       || "$receipt_phase" != "$expected_phase" \
       || ( "$current_phase" != "$expected_phase" \
         && "$current_phase" != "$expected_target" ) ]]; then
@@ -1431,18 +1449,18 @@ dx_consume_completion_receipt() {
   dx_completion_consume "$@"
 }
 
-# dx_record_human_phase_outcomes <session_id> <current> <target> <action> <generation> <source> [recovery]
-# Record the phases a direct human transition crosses. Callers hold the
+# dx_record_control_phase_outcomes <session_id> <current> <target> <action> <generation> <source> [recovery]
+# Record the phases a human/agent transition crosses. Callers hold the
 # lifecycle lock and clear the live control receipt only after this succeeds.
-dx_record_human_phase_outcomes() {
+dx_record_control_phase_outcomes() {
   local session_id="$1" current="$2" target="$3" action="$4"
   local generation="$5" source="$6" recovery="${7:-0}"
-  local outcome reason event_type phase record_status data_json
+  local outcome reason event_type phase record_status data_json actor_label
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$current" =~ ^[0-7]$ && "$target" =~ ^[0-7]$ ]] || return 1
   [[ "$generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] || return 1
   case "$source" in
-    user-prompt|terminal) ;;
+    agent|user-prompt|terminal) ;;
     *) return 1 ;;
   esac
   [[ "$recovery" == "0" || "$recovery" == "1" ]] || return 1
@@ -1452,12 +1470,20 @@ dx_record_human_phase_outcomes() {
     complete)
       [[ "$target" -eq $((current + 1)) ]] || return 1
       outcome="waived"
-      reason="human-complete"
+      if [[ "$source" == "agent" ]]; then
+        reason="agent-complete"
+      else
+        reason="human-complete"
+      fi
       event_type="phase.waived"
       ;;
     jump)
       outcome="skipped"
-      reason="human-jump"
+      if [[ "$source" == "agent" ]]; then
+        reason="agent-jump"
+      else
+        reason="human-jump"
+      fi
       event_type="phase.skipped"
       ;;
     *) return 1 ;;
@@ -1477,12 +1503,18 @@ dx_record_human_phase_outcomes() {
     data_json=$(printf \
       '{"outcome":"%s","reason":"%s","source":"%s","generation":"%s","target_phase":%s}' \
       "$outcome" "$reason" "$source" "$generation" "$target")
+    actor_label=$(dx_lifecycle_control_actor_label "$source")
     dx_event_emit_for_session "$session_id" "$event_type" "warn" \
-      "Phase ${phase} ${outcome} by direct human instruction" "$phase" "$data_json"
+      "Phase ${phase} ${outcome} by ${actor_label}" "$phase" "$data_json"
     dx_run_log_append_for_session "$session_id" "warn" "lifecycle-control" \
-      "Phase ${phase} ${outcome} by direct human instruction; target_phase=${target}; generation=${generation}; source=${source}"
+      "Phase ${phase} ${outcome} by ${actor_label}; target_phase=${target}; generation=${generation}; source=${source}"
     phase=$((phase + 1))
   done
+}
+
+# Compatibility name for older callers and pinned evaluation runtimes.
+dx_record_human_phase_outcomes() {
+  dx_record_control_phase_outcomes "$@"
 }
 
 # Print a validated busy record as six newline-delimited fields: version,

@@ -214,7 +214,7 @@ If any gate fails, fix the plan before proceeding.
 
 ### 6. Present to User
 
-**STOP and present the plan to the user.**
+Present the plan and stop for user approval by default.
 
 Before presenting, invoke the `humanizer` skill on the user-facing plan text. Preserve all technical identifiers, commands, paths, and task structure exactly.
 
@@ -232,7 +232,10 @@ If the previous step ended with no answered questions, double-check Step 2.4 —
 
 When running in plan mode (e.g., via `dx` Phase 1 or `dxloop`), present the plan via `ExitPlanMode`. The user approves or rejects through the plan mode UI.
 
-**Do not begin implementation until the user approves the plan.**
+Do not begin implementation until the user approves the plan unless the active
+lifecycle records a reasoned `plan.approval` waiver. A waiver means the plan
+was not human-approved: preserve that distinction in the phase outcome and do
+not write the normal approval marker or claim approval.
 
 When running under terminal `dx` Phase 1, approval is the handoff signal to the Stop hook. For headless runs started by `dx run`, if `DEX_HEADLESS_RUN=1` and the run spec has `workflow.requires_plan_approval: false`, the run spec is the approval source; complete the same plan quality checks before continuing.
 

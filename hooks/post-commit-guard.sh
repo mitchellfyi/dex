@@ -121,11 +121,30 @@ fi
 # Full set of conventional commit types per https://www.conventionalcommits.org
 CONVENTIONAL_REGEX='^(feat|fix|refactor|perf|docs|test|chore|build|ci|style|revert)(\([^)]+\))?!?: .+'
 if [[ -n "$COMMIT_MSG" ]] && ! grep -qE "$CONVENTIONAL_REGEX" <<< "${COMMIT_MSG}"; then
-  echo "Commit message does not follow conventional format." >&2
-  echo "Expected: <type>[(<scope>)][!]: <description>" >&2
-  echo "Got: $COMMIT_MSG" >&2
-  echo "Amend the commit with a properly formatted message." >&2
-  GUARD_EXIT=2
+  POLICY_SESSION="${DEX_SESSION_ID:-}"
+  if [[ -z "$POLICY_SESSION" ]]; then
+    POLICY_SESSION=$(cd "$COMMIT_REPO" && dx_session_id)
+  fi
+  POLICY_PHASE=$(dx_lifecycle_current_phase "$POLICY_SESSION")
+  [[ "$POLICY_PHASE" =~ ^[0-6]$ ]] || POLICY_PHASE="-"
+  COMMIT_FORMAT_POLICY=$(dx_override_effective "$POLICY_SESSION" \
+    guard.commit-format enforce "$POLICY_PHASE" 2>/dev/null \
+    || printf '%s\n' enforce)
+  if [[ "$COMMIT_FORMAT_POLICY" == "allow" ]]; then
+    COMMIT_OVERRIDE_ROW=$(dx_override_list "$POLICY_SESSION" "$POLICY_PHASE" \
+      2>/dev/null | awk -F '\t' '$1 == "guard.commit-format" { print; exit }')
+    COMMIT_OVERRIDE_SOURCE=$(printf '%s\n' "$COMMIT_OVERRIDE_ROW" | cut -f5)
+    COMMIT_OVERRIDE_REASON=$(printf '%s\n' "$COMMIT_OVERRIDE_ROW" | cut -f7-)
+    echo "OVERRIDDEN: Commit format is advisory for this session." >&2
+    echo "Source: ${COMMIT_OVERRIDE_SOURCE:-unknown}. Reason: ${COMMIT_OVERRIDE_REASON:-not recorded}." >&2
+    echo "Got: $COMMIT_MSG" >&2
+  else
+    echo "Commit message does not follow conventional format." >&2
+    echo "Expected: <type>[(<scope>)][!]: <description>" >&2
+    echo "Got: $COMMIT_MSG" >&2
+    echo "Amend the commit with a properly formatted message." >&2
+    GUARD_EXIT=2
+  fi
 fi
 
 exit $GUARD_EXIT

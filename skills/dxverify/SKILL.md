@@ -23,6 +23,9 @@ its `## Quality Gates` section as authoritative:
 - Do not replace a named gate with an inferred, narrower alternative.
 - Treat a missing command, stale instruction, or un-runnable gate as a failure
   to resolve or report, not permission to skip it.
+- If an outlier justifies skipping a required gate, ask the human or apply a
+  named `verification.required-gates` waiver through `dx control waive`. Keep
+  the skipped result explicit; a waiver is not a passing check.
 
 If the file or section is absent, discover the complete pipeline from the
 repository instead.
@@ -82,4 +85,5 @@ human action.
 
 List every required gate and its result. Include concise failure output and the
 remaining action for any gate that did not pass. Do not report the pipeline as
-successful while a required gate is failed, skipped, or unverified.
+successful while a required gate is failed, skipped, or unverified. If the
+phase proceeds by override, report it as waived with the recorded reason.

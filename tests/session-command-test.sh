@@ -53,7 +53,9 @@ new_repo() {
 
 start_fixture_process() {
   local process_output="$1"
-  sleep 60 > "$process_output" 2>&1 &
+  # The test owns and cleans up this process. Keep it alive beyond the suite's
+  # own 600s timeout so parallel scheduler load cannot turn a live fixture dead.
+  sleep 3600 > "$process_output" 2>&1 &
   FIXTURE_PID=$!
   TEST_PIDS="${TEST_PIDS} ${FIXTURE_PID}"
 }

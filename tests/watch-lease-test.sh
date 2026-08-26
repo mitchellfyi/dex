@@ -94,6 +94,17 @@ acquires "a corrupt lease"
 write_lease "$(( $(date +%s) - 300 ))" "$$"
 DEX_WATCH_CYCLE_TIMEOUT_SECONDS=0 refuses "a live owner when the budget is disabled"
 
+# Session policy wins over the environment and is read again for each cycle,
+# so an agent can adjust a running lifecycle without relaunching its provider.
+dx_override_set "$SESSION" watch.cycle-timeout 10 session - agent \
+  "Take over a wedged watcher sooner" 0
+write_lease "$(( $(date +%s) - 20 ))" "$$"
+acquires "a live owner beyond the dynamic session override"
+dx_override_set "$SESSION" watch.cycle-timeout 0 session - agent \
+  "Keep the current watcher owner until it exits" 0
+write_lease "$(( $(date +%s) - 300 ))" "$$"
+refuses "a live owner under a dynamically disabled budget"
+
 # Releasing lets the next cycle straight in.
 write_lease "$(date +%s)" "$$"
 dx_watch_lock_release "$SESSION" "$WATCH"

@@ -1186,7 +1186,9 @@ PY
 
   launch_concurrent_review owner "$CASE_OUTPUT" &
   owner_pid=$!
-  for _ in {1..100}; do
+  # This is an event wait, not a timing assertion. The full manifest runs
+  # several slow lanes together, so provider startup may take longer than 5s.
+  for _ in {1..600}; do
     [[ -f "$owner_ready" ]] && break
     kill -0 "$owner_pid" 2>/dev/null || break
     sleep 0.05

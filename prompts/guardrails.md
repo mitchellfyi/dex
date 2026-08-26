@@ -2,9 +2,10 @@
 
 Reference document for dex skills. Read when referenced by `/dxplan`, `/dximplement`, or `/dxloop`.
 
-## HARD STOPS — Override All Other Priorities
+## Strong Defaults and Session Overrides
 
-These override code completion momentum, pattern consistency, and time pressure. Violating any is a blocking defect:
+These defaults take priority over code-completion momentum, pattern
+consistency, and time pressure:
 
 1. **Verification failures block completion claims.** If the type checker, linter, or test runner fails → stop adding implementation work and fix it. Do not declare done. A human-requested commit, push, or PR action is still permitted, but report the failing gate accurately and keep remediation active.
 2. **Parameterized queries only.** No string interpolation in database queries. No exceptions.
@@ -12,7 +13,25 @@ These override code completion momentum, pattern consistency, and time pressure.
 4. **Tests must run before done.** "It should work" is not verification.
 5. **No silent error swallowing.** Every catch block logs with context or re-throws.
 
-These rules exist because they compete with the momentum of code completion. If you find yourself about to skip one because "it's simpler" or "just for now" — that impulse is exactly what the rule guards against.
+If an outlier makes a default counterproductive, either ask the human in the
+current session or override it yourself with a concrete reason. Ask first when
+the exception materially changes scope, security posture, externally visible
+behavior, or acceptance criteria. Self-override when delay is itself harmful,
+the safe choice is clear, or the restriction is only an operational budget.
+
+Use the provider-neutral control surface so Claude Code and Codex behave the
+same way:
+
+```bash
+bash "$DEX_DIR/bin/control.sh" override <gate> <value> --source agent --reason "<why>"
+bash "$DEX_DIR/bin/control.sh" waive <gate> --source agent --reason "<why>"
+```
+
+Use `--source human` when the user authorized the exception in chat. An
+override must stay truthful: passed means passed; waived, skipped, blocked,
+and unverified remain distinct outcomes. Runtime integrity checks—valid state,
+single ownership, atomic transitions, and stopping an active child before a
+phase change—are not policy gates and cannot be bypassed.
 
 ### Publishing Across Phases
 

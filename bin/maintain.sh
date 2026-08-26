@@ -1785,6 +1785,8 @@ __dx_maintain_respond() {
   local pr_num="" event_kind="manual" dry_run=0 trusted_preflight=0 defer_publish_file="" context_dir="" expected_branch="" expected_head_sha=""
   local repo_root provider_repo_root run_id artifact_dir report_file invocation context_files response_base_sha maintain_label branch_prefix expected_branch_arg expected_head_sha_arg allowed_categories trusted_config_ref response_worktree_temp=0
   local local_response_state_file
+  local respond_budget_minutes="${DEX_MAINTAIN_RESPOND_BUDGET_MINUTES:-30}"
+  local maintain_policy_session=""
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1847,6 +1849,17 @@ __dx_maintain_respond() {
   __dx_maintain_reject_control_chars "--expected-head-sha" "$expected_head_sha_arg"
 
   repo_root=$(__dx_maintain_repo_root)
+  maintain_policy_session="${DEX_SESSION_ID:-$(dx_session_id)}"
+  if dx_session_id_valid "$maintain_policy_session"; then
+    respond_budget_minutes=$(dx_override_effective "$maintain_policy_session" \
+      maintain.respond-budget-minutes "$respond_budget_minutes" \
+      "${DEX_LOOP_PHASE:--}") || {
+      dx_error "The session override journal is unsafe or malformed."
+      exit 1
+    }
+  fi
+  __dx_maintain_require_positive_number "maintenance response budget" \
+    "$respond_budget_minutes"
   trusted_config_ref="${DX_MAINTAIN_TRUSTED_CONFIG_REF:-$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")}"
   maintain_label="${DX_MAINTAIN_LABEL:-$(__dx_maintain_config_value "$repo_root" "label" "dex-maintenance")}"
   branch_prefix="${DX_MAINTAIN_BRANCH_PREFIX:-$(__dx_maintain_config_value "$repo_root" "branch_prefix" "dex/maintain/")}"
@@ -1972,7 +1985,8 @@ exit. Do not push branches or call GitHub write APIs from the provider session.
 "
   fi
 
-  __dx_maintain_run_provider "respond" "$provider_repo_root" "$run_id" "$report_file" "$invocation" "${DEX_MAINTAIN_RESPOND_BUDGET_MINUTES:-30}" "$dry_run"
+  __dx_maintain_run_provider "respond" "$provider_repo_root" "$run_id" \
+    "$report_file" "$invocation" "$respond_budget_minutes" "$dry_run"
   if [[ "$response_worktree_temp" -eq 1 ]]; then
     __dx_maintain_cleanup_response_worktree "$repo_root" "$provider_repo_root"
     MAINTAIN_RESPONSE_WORKTREE_REPO=""
@@ -1998,6 +2012,7 @@ exit. Do not push branches or call GitHub write APIs from the provider session.
 __dx_maintain_run() {
   local mode="" nightly=0 focus="" since="" budget_minutes="" command_timeout_seconds=""
   local max_surfaces="" max_prs="" run_sync=1 no_pr=0 dry_run=0 include_working_tree=0 defer_publish_file=""
+  local maintain_policy_session="" override_rc=0
   local repo_root provider_repo_root repo_name run_id artifact_dir report_file invocation worktree_info branch_name base_sha base_ref
   local local_state_file
   local maintain_label branch_prefix allowed_categories
@@ -2138,10 +2153,51 @@ __dx_maintain_run() {
     no_pr=1
     max_prs="0"
   fi
+  maintain_policy_session="${DEX_SESSION_ID:-$(dx_session_id)}"
   if [[ -z "$budget_minutes" ]]; then
     budget_minutes="${DEX_MAINTAIN_BUDGET_MINUTES:-60}"
+    if dx_session_id_valid "$maintain_policy_session"; then
+      budget_minutes=$(dx_override_effective "$maintain_policy_session" \
+        maintain.budget-minutes "$budget_minutes" \
+        "${DEX_LOOP_PHASE:--}") || {
+        dx_error "The session override journal is unsafe or malformed."
+        exit 1
+      }
+    fi
   fi
   __dx_maintain_require_positive_number "maintenance budget" "$budget_minutes"
+  if [[ -z "$command_timeout_seconds" ]] \
+    && dx_session_id_valid "$maintain_policy_session"; then
+    command_timeout_seconds=$(dx_override_get "$maintain_policy_session" \
+      maintain.command-timeout-seconds "${DEX_LOOP_PHASE:--}" 2>/dev/null) || {
+      override_rc=$?
+      [[ "$override_rc" -eq 1 ]] || {
+        dx_error "The session override journal is unsafe or malformed."
+        exit 1
+      }
+      command_timeout_seconds=""
+    }
+  fi
+  if [[ -n "$command_timeout_seconds" ]]; then
+    __dx_maintain_require_positive_number "maintenance command timeout" \
+      "$command_timeout_seconds"
+  fi
+  if [[ -z "$max_surfaces" ]] \
+    && dx_session_id_valid "$maintain_policy_session"; then
+    max_surfaces=$(dx_override_get "$maintain_policy_session" \
+      maintain.max-surfaces "${DEX_LOOP_PHASE:--}" 2>/dev/null) || {
+      override_rc=$?
+      [[ "$override_rc" -eq 1 ]] || {
+        dx_error "The session override journal is unsafe or malformed."
+        exit 1
+      }
+      max_surfaces=""
+    }
+  fi
+  if [[ -n "$max_surfaces" ]]; then
+    __dx_maintain_require_positive_number "maintenance max surfaces" \
+      "$max_surfaces"
+  fi
   if [[ -z "$since" ]]; then
     since=$(__dx_maintain_last_success_ref)
   fi
@@ -2150,10 +2206,13 @@ __dx_maintain_run() {
   fi
 
   if [[ -z "$max_prs" ]]; then
-    if [[ "$mode" == "report" || "$no_pr" -eq 1 ]]; then
-      max_prs="0"
-    else
-      max_prs=$(__dx_maintain_config_value "$repo_root" "max_prs" "1")
+    max_prs=$(__dx_maintain_config_value "$repo_root" "max_prs" "1")
+    if dx_session_id_valid "$maintain_policy_session"; then
+      max_prs=$(dx_override_effective "$maintain_policy_session" \
+        maintain.max-prs "$max_prs" "${DEX_LOOP_PHASE:--}") || {
+        dx_error "The session override journal is unsafe or malformed."
+        exit 1
+      }
     fi
   fi
   if [[ ! "$max_prs" =~ ^(0|[1-9][0-9]{0,14})$ ]]; then

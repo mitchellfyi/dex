@@ -82,18 +82,18 @@ This runs between turns and won't consume context. `/dxwatchpr` checks CI status
 
 If the user sends a direct prompt while Phase 6 is active, the `UserPromptSubmit` hook writes a watcher-pause marker. Scheduled `/dxwatchpr` invocations must no-op while that marker is active and must not run GitHub/CI commands. Running `/dxcomplete` or explicitly asking to resume watchers clears the marker. The default pause TTL is `60m 0s`.
 
-Each watcher invocation must also stay within `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). If the previous watcher cycle is still locked within that runtime budget, the next `/loop` tick must no-op instead of overlapping.
+Each watcher invocation reads `dx_watch_cycle_timeout_seconds` (default `2m 0s`). If the previous watcher cycle is still locked within that current runtime budget, the next `/loop` tick must no-op instead of overlapping.
 
 ---
 
 ## Wait window
 
-Each cycle must wait at least `DEX_COMPLETE_WAIT_MINUTES` minutes (default 5) before declaring the cycle idle and moving on. You don't sleep — you simply stop and let the Stop hook's audit loop re-engage you on the next iteration. Compute elapsed time:
+Each cycle reads its minimum wait from `dx_complete_wait_minutes` (default 5) before declaring the cycle idle and moving on. You don't sleep — you simply stop and let the Stop hook's audit loop re-engage you on the next iteration. Compute elapsed time:
 
 ```bash
 NOW=$(date +%s)
 ELAPSED=$((NOW - LAST_EPOCH))
-WAIT_MINUTES="${DEX_COMPLETE_WAIT_MINUTES:-5}"
+WAIT_MINUTES=$(dx_complete_wait_minutes "${DEX_SESSION_ID:-$(dx_session_id)}")
 WAIT_SECONDS=$((WAIT_MINUTES * 60))
 ```
 
@@ -154,22 +154,23 @@ Increment the cycle counter (use arithmetic, not parameter expansion — `NEW_CY
 
 ### Case C — No CI/review progress
 
-The cycle was idle. Increment the cycle counter (`NEW_CYCLE=$((CYCLE + 1))`). If `NEW_CYCLE >= DEX_COMPLETE_MAX_CYCLES` → proceed to Case D bounded-timeout pause. Otherwise, write `"${NEW_CYCLE}:${NOW}"` to the state file and stop. Next iteration starts a new wait window.
+The cycle was idle. Re-read `MAX_CYCLES=$(dx_complete_max_cycles "${DEX_SESSION_ID:-$(dx_session_id)}")`, then increment the cycle counter (`NEW_CYCLE=$((CYCLE + 1))`). If `NEW_CYCLE >= MAX_CYCLES` → proceed to Case D bounded-timeout pause. Otherwise, write `"${NEW_CYCLE}:${NOW}"` to the state file and stop. Next iteration starts a new wait window.
 
-### Case D — Bounded-timeout pause or hard escalation
+### Case D — Bounded-timeout pause or material escalation
 
+Re-read `CI_FIX_ATTEMPTS=$(dx_complete_ci_fix_attempts "${DEX_SESSION_ID:-$(dx_session_id)}")`.
 Stop and escalate to the user immediately if:
-- The watcher has completed `DEX_COMPLETE_MAX_CYCLES` idle cycles (default 3) without checks and approvals going green
-- CI has failed the same check 3 times in a row (`/dxwatchpr` should already escalate)
+- The watcher has completed the current `MAX_CYCLES` idle-cycle budget without checks and approvals going green
+- CI has failed the same check `CI_FIX_ATTEMPTS` times in a row (`/dxwatchpr` should already escalate)
 - A reviewer requested a scope change that affects other tickets
 - A secrets scan failed
 - Architectural disagreement that needs human judgement
 
-For the bounded-timeout pause, print this notice and stop without writing a
-completion receipt:
+For the bounded-timeout pause, print a notice using the current `MAX_CYCLES`
+and `WAIT_MINUTES`, then stop without writing a completion receipt:
 
 ```
-Autonomous PR monitoring paused after 3 idle 5-minute cycles.
+Autonomous PR monitoring paused after <MAX_CYCLES> idle <WAIT_MINUTES>-minute cycles.
 Run /dxwatchpr manually for a one-off CI/review check, or /loop 5m /dxwatchpr to resume watching.
 Run /dxcomplete manually when the PR is ready and you want Dex to complete the ticket.
 The PR was not merged.
@@ -190,7 +191,7 @@ same exact escalation command, and stop without writing a completion receipt.
 Cycle ends successfully only when **Case A** is reached: CI green and all successfully requested reviewers approved. Completion means the ticket is closed and the local Dex worktree/branch can be removed; it never means merging the PR.
 
 Cycle pauses with escalation when:
-- `CYCLE >= DEX_COMPLETE_MAX_CYCLES` (default 3) and checks/approvals are not green
+- `CYCLE >= MAX_CYCLES` and checks/approvals are not green
 - Hard escalation (see Case D)
 
 Only Case A may run the exact generation-bound completion command supplied by

@@ -16,7 +16,7 @@ Monitor a ready PR for both CI status and review feedback. This is the only sche
 
 Each invocation is a **single check cycle**. `/loop` handles scheduling. The session context carries state between invocations naturally.
 
-Each cycle has a hard runtime budget from `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). Do not allow a watcher cycle to run longer than that budget or overlap with a later `/loop` tick.
+Each cycle reads its soft runtime budget from `dx_watch_cycle_timeout_seconds` (default `2m 0s`). A session override may change it before the next lease check. Do not overlap a later `/loop` tick while the current lease is valid.
 
 ## Arguments
 
@@ -195,8 +195,8 @@ Invoke the `humanizer` skill on any free-form PR comments or status prose before
 
 ### 7. Escalation
 
-STOP, cancel the watcher, and escalate to the user when:
-- The same CI check fails 3 times after attempted fixes.
+Cancel the watcher and escalate by default when:
+- The same CI check reaches `dx_complete_ci_fix_attempts` after attempted fixes.
 - A secrets scan fails. Credential rotation may be needed.
 - A reviewer requests a significant architectural change (affects multiple files, changes the approach).
 - There is a disagreement with a reviewer on the correct approach.
@@ -204,10 +204,12 @@ STOP, cancel the watcher, and escalate to the user when:
 - A human reviewer explicitly requests changes that conflict with the approved plan, require scope/architecture judgement, or remain unclear after reading the surrounding code.
 
 Clear, in-scope human feedback should be handled autonomously through `/dxprreview`; do not pause only because the commenter is human.
+If an outlier justifies continuing, ask for or record a reasoned policy
+override. Waive an assurance requirement rather than reporting it as passed.
 
 ## Timeout
 
-The scheduled watcher is bounded by Phase 6: `/dxcomplete` defaults to 3 idle cycles of 5 minutes each. When that window expires, Dex pauses with a notice telling the user to run `/dxwatchpr` manually for a one-off CI/review check, `/loop 5m /dxwatchpr` to resume watching, or `/dxcomplete` when the PR is ready to complete the ticket.
+The scheduled watcher uses Phase 6's current `dx_complete_max_cycles` and `dx_complete_wait_minutes` values. When that window expires, Dex pauses with a notice telling the user to run `/dxwatchpr` manually for a one-off CI/review check, `/loop 5m /dxwatchpr` to resume watching, or `/dxcomplete` when the PR is ready to complete the ticket.
 
 ## Notes
 

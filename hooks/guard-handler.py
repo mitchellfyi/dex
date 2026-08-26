@@ -35,6 +35,8 @@ import sys
 import glob
 import json
 import shlex
+import stat
+import time
 
 # Running this file by path already puts hooks/ on sys.path, but not under
 # PYTHONSAFEPATH, so name the directory rather than depend on the default.
@@ -2425,6 +2427,161 @@ def hook_event_name_for_guard_event(event_type):
     return event_type
 
 
+def _trusted_private_text(session_id, suffix, max_bytes):
+    """Read one private state file without following or racing an inode."""
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,179}', session_id or ''):
+        return None
+    if suffix not in {'overrides', 'phase'}:
+        return None
+    state_dir = os.environ.get(
+        'DX_STATE_DIR', os.path.join(os.path.expanduser('~'), '.claude', '.dex-phases')
+    )
+    target = os.path.join(state_dir, f'{session_id}.{suffix}')
+    try:
+        before = os.lstat(target)
+    except FileNotFoundError:
+        return None
+    try:
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_nlink != 1
+            or not 1 <= before.st_size <= max_bytes
+        ):
+            return None
+        flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_NONBLOCK', 0)
+        if hasattr(os, 'O_NOFOLLOW'):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(target, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or stat.S_IMODE(opened.st_mode) != 0o600
+                or opened.st_nlink != 1
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            ):
+                return None
+            raw = os.read(descriptor, max_bytes + 1)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        named = os.lstat(target)
+        if (
+            len(raw) > max_bytes
+            or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            or (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns)
+            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            or not raw.endswith(b'\n')
+            or b'\r' in raw
+        ):
+            return None
+        return raw.decode('utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _trusted_override_text(session_id):
+    """Read one private override journal without following or racing an inode."""
+    return _trusted_private_text(session_id, 'overrides', 1048576)
+
+
+def _override_phase(session_id):
+    phase = os.environ.get('DEX_LOOP_PHASE', '')
+    if re.fullmatch(r'(?:[0-6]|prompt-loop)', phase):
+        return phase
+    phase = _trusted_private_text(session_id, 'phase', 8)
+    if phase is None:
+        return '-'
+    phase = phase.strip()
+    return phase if re.fullmatch(r'[0-6]', phase) else '-'
+
+
+def active_session_overrides():
+    """Return active gate records keyed by gate; malformed state grants nothing."""
+    session_id = os.environ.get('DEX_SESSION_ID', '')
+    raw = _trusted_override_text(session_id)
+    if raw is None:
+        return {}
+    lines = raw.splitlines()
+    expected_header = (
+        'created_at\tgeneration\taction\tgate\tvalue\tscope\tphase\t'
+        'source\texpires_at\treason'
+    )
+    if not lines or lines[0] != expected_header:
+        return {}
+    current_phase = _override_phase(session_id)
+    now = int(time.time())
+    candidates = {}
+    for order, line in enumerate(lines[1:], start=1):
+        fields = line.split('\t')
+        if len(fields) != 10:
+            return {}
+        created, generation, action, gate, value, scope, phase, source, expiry, reason = fields
+        if (
+            not created.isdigit()
+            or not re.fullmatch(r'[0-9]+-[0-9]+-[0-9]+', generation)
+            or action not in {'set', 'clear'}
+            or not re.fullmatch(r'[a-z][a-z0-9]*(?:[.][a-z0-9][a-z0-9-]*)*', gate)
+            or scope not in {'phase', 'session'}
+            or not re.fullmatch(r'(?:-|[0-6]|prompt-loop)', phase)
+            or source not in {'agent', 'human'}
+            or not expiry.isdigit()
+            or not reason
+            or (scope == 'phase' and phase == '-')
+            or (scope == 'session' and phase != '-')
+        ):
+            return {}
+        if scope == 'phase' and phase != current_phase:
+            continue
+        key = (gate, scope)
+        if action == 'clear':
+            candidates.pop(key, None)
+            continue
+        if int(expiry) and int(expiry) <= now:
+            continue
+        candidates[key] = {
+            'gate': gate,
+            'value': value,
+            'scope': scope,
+            'phase': phase,
+            'source': source,
+            'reason': reason,
+            'order': order,
+        }
+    active = {}
+    for record in candidates.values():
+        previous = active.get(record['gate'])
+        if previous is None or record['order'] > previous['order']:
+            active[record['gate']] = record
+    return active
+
+
+def apply_guard_overrides(warnings, blocks):
+    overrides = active_session_overrides()
+    if not overrides:
+        return warnings, blocks
+    remaining = []
+    for blocked in blocks:
+        override = overrides.get(f"guard.{blocked['name']}")
+        if override is None or override['value'] != 'allow':
+            remaining.append(blocked)
+            continue
+        warnings.append({
+            'name': blocked['name'],
+            'action': 'warn',
+            'message': (
+                f"OVERRIDDEN — this blocking guard is advisory for the current "
+                f"{override['scope']}. Source: {override['source']}. "
+                f"Reason: {override['reason']}"
+            ),
+        })
+    return warnings, remaining
+
+
 def main():
     # Flow: read tool input from env → determine event type → load matching
     # guards from built-in (hooks/guards/) and project (.dex/guards/) dirs
@@ -2470,6 +2627,7 @@ def main():
             pass
 
     warnings, blocks = check_guards(guards, text, extract_hook_path_text(tool_input, event_type))
+    warnings, blocks = apply_guard_overrides(warnings, blocks)
 
     # Print blocks
     for b in blocks:

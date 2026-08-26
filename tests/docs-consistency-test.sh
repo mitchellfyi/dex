@@ -36,7 +36,9 @@ def tracked(pattern):
 
 # The lib module table must name every module, and only real ones.
 tabled = set(re.findall(r"^\| `([a-z-]+\.sh)` \|", agents, re.M))
-on_disk = {Path(p).name for p in tracked("lib/*.sh")}
+# Include newly added modules before they are staged. This test checks the
+# working tree an agent is editing, not only Git's current index.
+on_disk = {path.name for path in (root / "lib").glob("*.sh") if path.is_file()}
 if tabled != on_disk:
     problems.append(
         "AGENTS.md lib module table is out of step with lib/: "

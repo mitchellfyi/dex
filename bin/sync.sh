@@ -85,6 +85,7 @@ TRACE_RETRIEVAL=""
 PHASE=""
 INCLUDE_WORKING_TREE=0
 SYNC_BUDGET_MINUTES="${DEX_SYNC_BUDGET_MINUTES:-60}"
+SYNC_BUDGET_EXPLICIT=0
 
 __dx_sync_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]{0,14}$ ]]
@@ -117,6 +118,7 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       SYNC_BUDGET_MINUTES="$2"
+      SYNC_BUDGET_EXPLICIT=1
       shift 2
       ;;
     --trace-retrieval)
@@ -145,11 +147,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if ! __dx_sync_positive_integer "$SYNC_BUDGET_MINUTES"; then
-  dx_error "Sync budget must be a positive decimal with at most 15 digits."
-  exit 1
-fi
-
 READ_ONLY=0
 if [[ "$DRY_RUN" -eq 1 || -n "$TRACE_RETRIEVAL" ]]; then
   READ_ONLY=1
@@ -160,6 +157,22 @@ if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
 fi
 if [[ -z "$repo_root" ]]; then
   dx_error "Not in a git repository."
+  exit 1
+fi
+
+if [[ "$SYNC_BUDGET_EXPLICIT" -eq 0 ]]; then
+  SYNC_POLICY_SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+  if dx_session_id_valid "$SYNC_POLICY_SESSION_ID"; then
+    SYNC_BUDGET_MINUTES=$(dx_override_effective "$SYNC_POLICY_SESSION_ID" \
+      sync.budget-minutes "$SYNC_BUDGET_MINUTES" \
+      "${DEX_LOOP_PHASE:--}") || {
+      dx_error "The session override journal is unsafe or malformed."
+      exit 1
+    }
+  fi
+fi
+if ! __dx_sync_positive_integer "$SYNC_BUDGET_MINUTES"; then
+  dx_error "Sync budget must be a positive decimal with at most 15 digits."
   exit 1
 fi
 

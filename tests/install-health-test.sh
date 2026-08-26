@@ -37,6 +37,54 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as handle:
     settings = json.load(handle)
 
+prompt_hooks = [
+    hook
+    for group in settings["hooks"]["UserPromptSubmit"]
+    for hook in group.get("hooks", [])
+    if "user-prompt-submit.sh" in hook.get("command", "")
+]
+assert len(prompt_hooks) == 1, prompt_hooks
+assert prompt_hooks[0].get("timeout") == 120, prompt_hooks
+prompt_hooks[0].pop("timeout")
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(settings, handle, indent=2)
+    handle.write("\n")
+PY
+
+if dx_claude_settings_complete; then
+  printf 'UserPromptSubmit hook without its timeout was reported as complete\n' >&2
+  exit 1
+fi
+
+bash "$ROOT/bin/install-settings.sh" --quiet
+dx_claude_settings_complete
+
+python3 - "$HOME/.claude/settings.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    settings = json.load(handle)
+
+prompt_hooks = [
+    hook
+    for group in settings["hooks"]["UserPromptSubmit"]
+    for hook in group.get("hooks", [])
+    if "user-prompt-submit.sh" in hook.get("command", "")
+]
+assert len(prompt_hooks) == 1, prompt_hooks
+assert prompt_hooks[0].get("timeout") == 120, prompt_hooks
+PY
+
+python3 - "$HOME/.claude/settings.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    settings = json.load(handle)
+
 for event, hook_name in (
     ("PreCompact", "pre-compact.sh"),
     ("SessionEnd", "session-end.sh"),

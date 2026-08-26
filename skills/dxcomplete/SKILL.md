@@ -7,7 +7,7 @@ description: "Run Phase 6 of the Dex lifecycle: ready the PR, request reviewers,
 
 Phase 6 of the autonomous lifecycle. Marks the PR ready, requests configured reviewers, posts `@mention` comments, monitors CI and reviews through `/dxwatchpr`, addresses failures, and closes the ticket once everything is green and approved. It never merges the PR.
 
-This skill runs as a **cycle loop** driven by `prompts/phase-audits/6-complete.md`. The Stop hook re-injects the audit prompt every iteration; each cycle waits at least `DEX_COMPLETE_WAIT_MINUTES` minutes before checking outcomes. Defaults are 5 minutes per cycle and 3 cycles before pausing for manual follow-up.
+This skill runs as a **cycle loop** driven by `prompts/phase-audits/6-complete.md`. The Stop hook re-injects the audit prompt every iteration. Read `dx_complete_wait_minutes` and `dx_complete_max_cycles` each cycle so in-session overrides apply. Defaults are 5 minutes per cycle and 3 cycles before pausing for manual follow-up.
 
 ## When to Use
 
@@ -19,8 +19,8 @@ This skill runs as a **cycle loop** driven by `prompts/phase-audits/6-complete.m
 Phase 6 runs unattended until CI is green and configured reviewers approve, or
 until the bounded watch window or an explicit escalation condition is hit. Do
 not ask the user whether to continue between wait cycles. Waiting for
-CI/reviewers is handled by the Stop hook cycle loop and configured
-`DEX_COMPLETE_WAIT_MINUTES`.
+CI/reviewers is handled by the Stop hook cycle loop and the current
+`dx_complete_wait_minutes` value.
 
 Before posting PR comments, ticket updates, or final prose summaries, invoke the
 `humanizer` skill. Preserve reviewer handles, PR numbers, ticket IDs, commands,
@@ -97,13 +97,17 @@ When setup runs:
 
 This checks CI status, fixes CI failures when appropriate, addresses review comments via `/dxprreview`, resolves clear review threads after replying, and cancels itself when checks are green and all successfully requested reviews are approved.
 
-If the user sends a direct prompt during Phase 6, the `UserPromptSubmit` hook pauses scheduled watcher cycles for `DEX_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`). During that pause the watcher skill must skip GitHub/CI commands until the user runs `/dxcomplete` or asks to resume watching.
+If the user sends a direct prompt during Phase 6, the `UserPromptSubmit` hook pauses scheduled watcher cycles using `dx_watch_pause_ttl_seconds` (default `60m 0s`). During that pause the watcher skill must skip GitHub/CI commands until the user runs `/dxcomplete` or asks to resume watching.
 
-Each scheduled watcher invocation is also bounded by `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` (default `2m 0s`). If a prior `/dxwatchpr` cycle is still within that budget, the next scheduled tick must skip without running GitHub/CI commands.
+Each scheduled watcher invocation uses `dx_watch_cycle_timeout_seconds` (default `2m 0s`). If a prior `/dxwatchpr` cycle is still within that current budget, the next scheduled tick must skip without running GitHub/CI commands.
 
 ### 4. Wait Window
 
-Each cycle waits at least `DEX_COMPLETE_WAIT_MINUTES` minutes (default 5) between outcome checks. You don't sleep — you just stop, and the Stop hook re-injects the audit on the next iteration. The audit checks elapsed time and only authorizes outcome evaluation once the window has elapsed.
+Each cycle reads `dx_complete_wait_minutes` (default 5) before waiting, so an
+in-session policy override applies to the next check. You don't sleep — you
+just stop, and the Stop hook re-injects the audit on the next iteration. The
+audit checks elapsed time and only authorizes outcome evaluation once the
+window has elapsed.
 
 ### 5. Outcome Evaluation (after wait window)
 
@@ -132,7 +136,7 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
 
 - **All CI green AND all successfully requested `request` reviewers approved** → proceed to Step 6 (final verification + close).
 - **New commits were pushed** (e.g., `/dxwatchpr` fixed CI or `/dxprreview` addressed comments) → re-request reviewers and re-post the mention comment so reviewers know there's something new. Increment cycle, reset wait window.
-- **Cycle was idle** (no new commits, no new approvals, checks/reviews not green) → increment cycle. If `cycle_count >= DEX_COMPLETE_MAX_CYCLES`, pause with the manual follow-up notice; otherwise keep waiting.
+- **Cycle was idle** (no new commits, no new approvals, checks/reviews not green) → re-read `dx_complete_max_cycles`, increment cycle, and pause with the manual follow-up notice when the current budget is reached; otherwise keep waiting.
 - **Hard escalation** (3 same-check CI fails, scope change requested, secrets failure, architectural disagreement) → stop and escalate immediately with cited evidence.
 
 ### 6. Final Verification

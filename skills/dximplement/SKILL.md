@@ -85,9 +85,9 @@ Do not create `.dex/learnings.md`; raw observations are not trusted memory.
 ### 4. Handle Scope Changes
 
 If during implementation you discover:
-- **A requirement is ambiguous**: STOP. Present 2-3 options with trade-offs. Ask the user to choose.
-- **The plan needs to change**: STOP. Explain the change and its impact. Ask for approval.
-- **A dependency is blocked**: STOP. Document the blocker. Ask how to proceed.
+- **A requirement is ambiguous**: ask by default. Present 2-3 options with trade-offs, or record a justified override when one interpretation is clearly safest.
+- **The plan needs to change**: ask by default. Explain the change and its impact; if proceeding without a reply is justified, preserve the original criterion as waived or changed rather than passed.
+- **A dependency is blocked**: document the blocker and ask by default. Use the session override contract when an outlier has a safe, auditable fallback.
 
 **When running non-interactively** (no user to respond — e.g., `-p` mode, automated harness, or if the user is unavailable): do NOT stop on ambiguity. Instead, choose the **most comprehensive reasonable interpretation** and document your assumptions in a README. Specifically:
 - Start with a time-bounded execution order: create the exact requested deliverable first, add the smallest runnable public API, then add tests and documentation around that concrete artifact. Avoid spending the early part of a run on optional architecture, broad scaffolding, or alternative implementations before the named output exists.
@@ -147,7 +147,13 @@ Every criterion must have status MET with specific file:line evidence. Any NOT F
 
 Use a plain GitHub Markdown table or short bullets. Do not use Unicode box-drawing tables; they wrap poorly in Claude Code transcripts.
 
-Completion is blocked unless every acceptance criterion and verification gate is exactly `MET`. Treat `NOT MET`, `NOT FOUND`, `DEFERRED`, `SKIPPED`, `BLOCKED`, `N/A`, "CI will cover it", "port busy", "tool unavailable", or equivalent as a blocker unless the user explicitly approved a plan change. If a local port is busy, use another port or stop the conflicting process and rerun the required check; do not defer required Phase 2 verification to future CI.
+Completion defaults to requiring every acceptance criterion and verification
+gate to be exactly `MET`. Treat `NOT MET`, `NOT FOUND`, `DEFERRED`, `SKIPPED`,
+`BLOCKED`, `N/A`, "CI will cover it", "port busy", "tool unavailable", or an
+equivalent result as unresolved. Resolve it, ask the user for a plan change, or
+apply a reasoned phase waiver under the shared guardrails. Never relabel a
+waived or unverified result as `MET`. If a local port is busy, normally use
+another port or stop the conflicting process and rerun the check.
 
 Before declaring PASS, confirm that no implementation helper, UI capture, test
 runner, dev server, or other Phase 2 background process is still in flight.
@@ -233,7 +239,9 @@ branch. The defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`;
 repositories may configure monotonic values from 1 through 30 in `.dex/dex.md`
 `## Review Policy`. The persisted selection is bound to that resolved policy.
 Candidate-branch edits cannot lower the active gate, and
-`DEX_REVIEW_CLEAN_PASSES` can only raise it.
+`DEX_REVIEW_CLEAN_PASSES` can only raise it. A lower assurance decision uses
+`dx control waive review.clean-passes` so the trusted review receipt remains
+truthful.
 
 The selection is not a review pass. Rewrite it if any later Phase 2 edit changes
 the scope.
@@ -243,8 +251,10 @@ the scope.
 When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), write the Phase 2 ready marker only after all of these are true:
 
 - Every planned task is complete.
-- Every acceptance criterion and verification gate is exactly `MET`.
-- No evidence entry is deferred, skipped, blocked, missing, or delegated to future CI unless the user approved a plan change.
+- Every acceptance criterion and verification gate is exactly `MET`, or the
+  phase has a named, reasoned waiver that will be recorded as a waiver.
+- No evidence entry is deferred, skipped, blocked, missing, or delegated to
+  future CI without a user-approved plan change or recorded agent waiver.
 - Final deterministic checks passed locally.
 - The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
 - Required UI capture evidence is linked, including before/after evidence or a before-unavailable reason, or UI capture is explicitly N/A.

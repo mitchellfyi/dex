@@ -240,6 +240,19 @@ dx_state_file() { echo "${DX_STATE_DIR}/${1}.phase"; }
 # dx_times_file <session_id>  — phase timing file path
 dx_times_file() { echo "${DX_STATE_DIR}/${1}.times"; }
 
+# dx_session_phase_start_epoch <session_id> <phase> — latest phase start time.
+dx_session_phase_start_epoch() {
+  local session_id="$1" phase="$2" times_file
+  dx_session_id_valid "$session_id" || return 1
+  [[ "$phase" =~ ^[0-6]$ ]] || return 1
+  times_file=$(dx_times_file "$session_id")
+  if [[ -f "$times_file" ]]; then
+    awk -F: -v phase="$phase" \
+      '$1 == phase { started=$2 } END { if (started != "") print started }' \
+      "$times_file"
+  fi
+}
+
 # dx_loop_file <session_id>   — loop iteration state file path
 dx_loop_file() { echo "${DX_LOOP_DIR}/${1}.state"; }
 
@@ -1424,7 +1437,12 @@ dx_watch_pause_file() { echo "${DX_LOOP_DIR}/${1}.watch-pause"; }
 
 # dx_watch_pause_ttl_seconds — watch-pause lifetime; 0 means no automatic expiry
 dx_watch_pause_ttl_seconds() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}"
   local ttl="${DEX_WATCH_PAUSE_TTL_SECONDS:-3600}"
+  if dx_session_id_valid "$session_id"; then
+    ttl=$(dx_override_effective "$session_id" watch.pause-ttl "$ttl" \
+      "${DEX_LOOP_PHASE:--}") || return 1
+  fi
   if [[ "$ttl" =~ ^[0-9]+$ ]]; then
     echo "$ttl"
   else
@@ -1447,7 +1465,7 @@ dx_watch_pause_active() {
     return 1
   fi
 
-  ttl=$(dx_watch_pause_ttl_seconds)
+  ttl=$(dx_watch_pause_ttl_seconds "$session_id")
   [[ "$ttl" -gt 0 ]] || return 0
 
   now=$(date +%s)
@@ -1482,7 +1500,12 @@ dx_clear_watch_pause() {
 
 # dx_watch_cycle_timeout_seconds — max runtime for one scheduled watcher cycle
 dx_watch_cycle_timeout_seconds() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}"
   local timeout="${DEX_WATCH_CYCLE_TIMEOUT_SECONDS:-120}"
+  if dx_session_id_valid "$session_id"; then
+    timeout=$(dx_override_effective "$session_id" watch.cycle-timeout "$timeout" \
+      "${DEX_LOOP_PHASE:--}") || return 1
+  fi
   if [[ "$timeout" =~ ^[0-9]+$ ]]; then
     echo "$timeout"
   else
@@ -1492,12 +1515,84 @@ dx_watch_cycle_timeout_seconds() {
 
 # dx_watch_command_timeout_seconds — max runtime for a single watcher shell command
 dx_watch_command_timeout_seconds() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}"
   local timeout="${DEX_WATCH_COMMAND_TIMEOUT_SECONDS:-30}"
+  if dx_session_id_valid "$session_id"; then
+    timeout=$(dx_override_effective "$session_id" watch.command-timeout "$timeout" \
+      "${DEX_LOOP_PHASE:--}") || return 1
+  fi
   if [[ "$timeout" =~ ^[0-9]+$ ]]; then
     echo "$timeout"
   else
     echo "30"
   fi
+}
+
+# dx_complete_max_cycles [session_id] — Phase 6 idle-cycle budget.
+dx_complete_max_cycles() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}"
+  local cycles="${DEX_COMPLETE_MAX_CYCLES:-3}"
+  if dx_session_id_valid "$session_id"; then
+    cycles=$(dx_override_effective "$session_id" complete.max-cycles "$cycles" \
+      6) || return 1
+  fi
+  if [[ "$cycles" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$cycles"
+  else
+    printf '%s\n' "3"
+  fi
+}
+
+# dx_complete_wait_minutes [session_id] — Phase 6 delay between checks.
+dx_complete_wait_minutes() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}"
+  local minutes="${DEX_COMPLETE_WAIT_MINUTES:-5}"
+  if dx_session_id_valid "$session_id"; then
+    minutes=$(dx_override_effective "$session_id" complete.wait-minutes \
+      "$minutes" 6) || return 1
+  fi
+  if [[ "$minutes" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$minutes"
+  else
+    printf '%s\n' "5"
+  fi
+}
+
+# dx_failure_attempts_per_strategy [session_id] — recovery retries before a
+# materially different approach is expected.
+dx_failure_attempts_per_strategy() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}" attempts="3"
+  if dx_session_id_valid "$session_id"; then
+    attempts=$(dx_override_effective "$session_id" \
+      failure.attempts-per-strategy "$attempts" "${DEX_LOOP_PHASE:--}") \
+      || return 1
+  fi
+  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=3
+  printf '%s\n' "$attempts"
+}
+
+# dx_failure_max_strategies [session_id] — distinct approaches before the
+# default escalation point.
+dx_failure_max_strategies() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}" strategies="2"
+  if dx_session_id_valid "$session_id"; then
+    strategies=$(dx_override_effective "$session_id" failure.max-strategies \
+      "$strategies" "${DEX_LOOP_PHASE:--}") || return 1
+  fi
+  [[ "$strategies" =~ ^[0-9]+$ ]] || strategies=2
+  printf '%s\n' "$strategies"
+}
+
+# dx_complete_ci_fix_attempts [session_id] — repeated CI failures before the
+# Phase 6 escalation default applies.
+dx_complete_ci_fix_attempts() {
+  local session_id="${1:-${DEX_SESSION_ID:-}}" attempts="3"
+  if dx_session_id_valid "$session_id"; then
+    attempts=$(dx_override_effective "$session_id" complete.ci-fix-attempts \
+      "$attempts" 6) || return 1
+  fi
+  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=3
+  printf '%s\n' "$attempts"
 }
 
 # dx_watch_lock_file <session_id> <watch_name> — per-watcher overlap guard
@@ -1541,7 +1636,7 @@ dx_watch_lock_acquire() {
   epoch="${raw%%$'\t'*}"
   owner_pid="${raw#*$'\t'}"
   owner_pid="${owner_pid%%$'\t'*}"
-  timeout=$(dx_watch_cycle_timeout_seconds)
+  timeout=$(dx_watch_cycle_timeout_seconds "$session_id")
   now=$(date +%s)
 
   if [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
@@ -2325,7 +2420,9 @@ dx_cleanup_session() {
   # `&&` here would make a missing state directory the function's exit status,
   # which contradicts the promise above and would abort a `set -e` caller.
   if [[ -d "$DX_STATE_DIR" ]]; then
-    rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" "${DX_STATE_DIR}/${sid}.terminal-commit" 2>/dev/null || true
+    rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" "${DX_STATE_DIR}/${sid}.terminal-commit" "${DX_STATE_DIR}/${sid}.overrides" 2>/dev/null || true
+    rm -f "${DX_STATE_DIR}/${sid}.override-lock/owner" 2>/dev/null || true
+    rmdir "${DX_STATE_DIR}/${sid}.override-lock" 2>/dev/null || true
   fi
   return "$completion_revoke_result"
 }

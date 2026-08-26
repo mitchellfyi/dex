@@ -101,10 +101,11 @@ edits made only on the candidate branch. `DEX_REVIEW_CLEAN_PASSES` can raise the
 resolved gate for one run but cannot lower it.
 
 Phase names describe the default workflow, not publishing permissions. An agent
-may commit, push, or open and update a PR whenever that helps the work. A direct
-human instruction can pause or stop Dex, mark the current phase done, or jump to
-another phase; Dex records skipped and waived outcomes separately from passed
-gates.
+may commit, push, or open and update a PR whenever that helps the work. Human
+and agent controls can pause or stop Dex, change a phase/session runtime
+default, waive a named assurance gate, or jump to another phase. Every exception
+records its source and reason; skipped and waived outcomes stay separate from
+passed gates. See [session policy overrides](docs/autonomous-mode.md#session-policy-overrides).
 
 The clean-pass bookkeeping is designed to stop a review loop drifting into a
 false pass — wrong scope, changed criteria, a reused result, a lost finding —
@@ -131,6 +132,8 @@ dxreviewloop               # Resolve risk (or honor an override), then review to
 dxcomplete                 # Resume PR completion for the current branch
 dx provider current        # Show active agent/provider/model resolution
 dx control pause           # Pause, stop, or hand control back to a running lifecycle
+dx control override review.pass-timeout 2400 --source agent --reason "checks need longer"
+dx control waive review.clean-passes --source human --reason "approved in this session"
 dx sessions list           # List trusted lifecycle sessions in this repository
 dx sessions doctor         # Diagnose inconsistent, dead, or unsafe session state
 dx test                    # Test Dex here, or verify another initialized project

@@ -4,7 +4,7 @@ Instructions for AI coding agents working on the Dex codebase.
 
 ## What Is Dex
 
-Dex is a standalone workflow automation framework for Claude Code. It provides autonomous ticket lifecycle management — from planning through ready-for-merge PR completion — using worktree isolation, quality-gated phase execution, and codebase-agnostic skill discovery. It works with any repo after a one-time global install. Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<https://syntheticindustry.ai/>).
+Dex is a standalone workflow automation framework for Claude Code and the Codex CLI. It provides autonomous ticket lifecycle management — from planning through ready-for-merge PR completion — using worktree isolation, quality-gated phase execution, and codebase-agnostic skill discovery. It works with any repo after a one-time global install. Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<https://syntheticindustry.ai/>).
 
 ## Tech Stack
 
@@ -86,7 +86,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`,
 `attribution.sh`, `codex.sh`, `completion.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
-`lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `project-state.sh`,
+`lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `override.sh`, `project-state.sh`,
 `provider.sh`, `review.sh`, `review-controller.sh`, `review-loop.sh`,
 `review-policy.sh`, `rtk.sh`, `run-spec.sh`, `session-catalog.sh`, `session-management.sh`,
 `session-runtime.sh`, `session.sh`, `ui-capture.sh`,
@@ -205,6 +205,10 @@ env_value: optional-exact-value
 - A `block` guard fails closed: one that times out, crashes, or cannot be loaded denies the
   tool call. With every guard on `warn`, those same failures skip the guard and are reported
   on stderr. See docs/guards.md § Failure Behavior.
+- During an active lifecycle, a specific project block can be softened to an
+  attributed warning with `dx control override guard.<name> allow`. The record
+  must name its human or agent source and reason. Unsafe override state grants
+  nothing, so the original block remains in force.
 
 ## Prompt Conventions
 
@@ -253,8 +257,8 @@ Hooks defined in `settings.json`, referenced by paths to Dex scripts:
 When `DEX_LOOP_ACTIVE=1`, the Stop hook intercepts Claude's exit and injects a
 phase-specific audit prompt. Normal gate advancement requires the exact
 generation-bound completion receipt the hook authorized for that session and
-phase; a bare `.complete` marker is not authorization. A direct human `done` or
-`jump` records a waiver or skip instead of claiming the gate passed. The loop
+phase; a bare `.complete` marker is not authorization. A human or agent `done`,
+`waive`, or `jump` control records a waiver or skip instead of claiming the gate passed. The loop
 stops for intervention after its configured audit limit, which defaults to 30.
 For `dx` lifecycles, the hook advances phases inside the same Claude session by
 updating phase state/config and injecting the next phase instructions. Phase 1
@@ -264,6 +268,15 @@ the approved-plan marker and strict review-criteria artifact exist, then seals
 the artifact's canonical hash. Phase 3 uses `.phase-3.busy` while
 `/dxreviewloop` is waiting on a review wave; the hook does not count audit
 iterations during that wait.
+
+Operational limits are soft defaults. `dx control override <gate> <value>`
+stores a phase- or session-scoped policy change with attribution, reason, and
+optional expiry; hooks and provider wrappers re-read it while the lifecycle is
+running. Assurance requirements are crossed with a named `dx control waive`
+record, never by weakening or forging a success receipt. The active agent may
+ask the human or self-override when justified. Private state validation,
+transition ownership, atomic writes, and quiescing an active review child are
+runtime invariants and remain fail-closed.
 
 The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. The trusted default-branch policy maps that tier to a consecutive-clean requirement; its defaults are 1, 3, and 6, respectively. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and trusted policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. The loop has no routine maximum and pauses on changed or partially covered criteria, residual findings, blockers, churn, invalid results, or provider failure.
 
@@ -413,8 +426,9 @@ prefer extracting it into `lib/` modules. The pattern:
 | `events.sh` | Run IDs, local run directories, JSONL event journals, redacted logs, artifact manifests, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_log_append()`, `dx_run_register_artifact()`, `dx_run_write_summary()` |
 | `factory.sh` | Optional Dex Factory event sync over HTTP | `dx_factory_sync_pending_events()`, `dx_factory_events_endpoint()`, `dx_factory_sync_requested()` |
 | `git.sh` | Git helpers | `dx_default_branch()`, `dx_slugify()` |
-| `lifecycle-control.sh` | Direct-human lifecycle pause, stop, phase transition, ownership, and audit receipts | `dx_write_lifecycle_control()`, `dx_lifecycle_control_read()`, `dx_lifecycle_control_lock_acquire()` |
+| `lifecycle-control.sh` | Human/agent lifecycle pause, stop, phase transition, ownership, and audit receipts | `dx_write_lifecycle_control()`, `dx_lifecycle_control_read()`, `dx_lifecycle_control_lock_acquire()` |
 | `maintenance.sh` | Background maintenance config, workflow install, run IDs, locks, and reviewer normalization | `dx_maintenance_event_mode()`, `dx_maintenance_install_workflow()`, `dx_maintenance_run_id()`, `dx_maintenance_request_reviewer()` |
+| `override.sh` | Session policy journal, validation, expiry, and effective-value resolution | `dx_override_set()`, `dx_override_clear()`, `dx_override_list()`, `dx_override_effective()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `project-state.sh` | Init ownership snapshots and conservative project cleanup | `dx_project_state_begin()`, `dx_project_state_finalize()`, `dx_project_state_remove_managed()` |
 | `review.sh` | Scope-bound review selection/state, evidence, retained proofs, ledgers, receipts, result parsing, churn detection, and telemetry JSON | `dx_review_evidence_valid()`, `dx_review_ledger_valid()`, `dx_review_write_receipt()`, `dx_review_findings_churn_kind()`, `dx_review_event_json()` |
@@ -464,6 +478,11 @@ They live in `lib/review-loop.sh` beside the loop that uses them.
 **What stays in dx.sh:** Functions that use zsh-specific syntax (`${(j: :)@}`, zsh arrays) or need `unalias/unfunction` re-sourcing guards. The public commands (`dx`, `dxloop`, `dxrm`, `dxls`, `dxclean`, `dxcomplete`, `dxreviewloop`, `dex`, `dexter`) must stay because they are shell functions loaded into the user's zsh session.
 
 ## Environment Variables
+
+The environment values below are launch defaults. Active lifecycle consumers
+re-read the corresponding `dx control override` records without a provider
+relaunch. Named assurance waivers are separate and never alter success
+receipts. See `docs/autonomous-mode.md` for the gate map.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|

@@ -4,6 +4,14 @@ set -euo pipefail
 
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
+# Review waves are one-shot child processes. Their generated task prompt is
+# not a human lifecycle instruction, and there is no later interactive turn
+# in which a parsed control could safely run. The parent review loop owns all
+# pause, cancel, and phase decisions for these children.
+if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
+  exit 0
+fi
+
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 dx_lifecycle_session_id_valid "$SESSION_ID" || exit 0
 HOOK_INPUT=$(cat)

@@ -356,7 +356,7 @@ For headless dx run sessions with workflow.requires_plan_approval=false, the run
   "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful; later phases still perform their normal handoff steps. When the loop writes a valid success receipt, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dxcommit\" to commit and push. Phase focus: verification and the canonical commit, but PR creation and implementation fixes remain available when useful. When pushed, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from dex.md § Reviewers. Phase focus: PR creation, description, and artifact handoff. Marking ready, posting @mentions, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop — the audit loop will verify." \
-  "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, wait DEX_COMPLETE_WAIT_MINUTES per cycle, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
+  "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, re-read the current completion wait/cycle defaults, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the current bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
 )
 
 DX_PHASE_0_TIMEOUT="0"
@@ -413,23 +413,29 @@ DX_PHASE_TIMEOUTS=("0" "0" "0" "0" "0" "0")
 # ─── Internal helpers ───────────────────────────────────────────────────────
 
 
-# __dx_phase_timeout <step>
+# __dx_phase_timeout <step> [session_id]
 # Resolve the effective timeout for a phase (seconds). Returns 0 to disable.
 # Priority: DEX_PHASE_N_TIMEOUT > DEX_PHASE_TIMEOUT > DX_PHASE_TIMEOUTS[step]
 __dx_phase_timeout() {
   local step="$1"
+  local session_id="${2:-${DEX_SESSION_ID:-}}" resolved_timeout
   # shellcheck disable=SC2034  # used via zsh ${(P)env_var} indirect expansion below
   local env_var="DEX_PHASE_${step}_TIMEOUT"
   if [[ -n "${(P)env_var:-}" ]]; then
-    echo "${(P)env_var}"
+    resolved_timeout="${(P)env_var}"
   elif [[ -n "${DEX_PHASE_TIMEOUT:-}" ]]; then
-    echo "$DEX_PHASE_TIMEOUT"
+    resolved_timeout="$DEX_PHASE_TIMEOUT"
   else
     case "$step" in
-      0) echo "$DX_PHASE_0_TIMEOUT" ;;
-      *) echo "${DX_PHASE_TIMEOUTS[$step]:-0}" ;;
+      0) resolved_timeout="$DX_PHASE_0_TIMEOUT" ;;
+      *) resolved_timeout="${DX_PHASE_TIMEOUTS[$step]:-0}" ;;
     esac
   fi
+  if dx_lifecycle_session_id_valid "$session_id"; then
+    resolved_timeout=$(dx_override_effective "$session_id" phase.timeout \
+      "$resolved_timeout" "$step") || return 1
+  fi
+  echo "$resolved_timeout"
 }
 
 
@@ -1226,7 +1232,7 @@ Same-session handoff rules:
   the user.
 - Phase 3 must use /dxreviewloop with the selected tier's trusted clean-pass gate.
 
-Human input is required only for:
+Ask the human by default for:
 - Phase 1 plan approval or plan rejection
 - Clarifying questions during planning when requirements cannot be resolved
 - Scope or acceptance-criteria changes after plan approval
@@ -1237,7 +1243,38 @@ Human input is required only for:
 - Max phase-audit iterations or repeated loop stalls without completion
 - Phase 6 waiting for CI and successfully requested reviewer approval
 
-If none of those applies, keep working autonomously.
+These are escalation defaults, not hard stops. If an outlier makes a default
+counterproductive, either ask the human in this session or override it yourself
+with a specific reason. Prefer asking when the decision materially changes
+scope, security posture, externally visible behavior, or acceptance criteria.
+Self-override when delay itself is harmful, the safe choice is clear, or the
+restriction is only an operational budget. Never describe an overridden,
+waived, skipped, or unverified gate as passed.
+
+## Soft Defaults and Overrides
+
+Dex gates are soft policy defaults. The active agent may change them during
+this session without relaunching Claude or Codex:
+
+\`\`\`bash
+# Change an operational default for the current phase:
+bash "${DEX_DIR}/bin/control.sh" override review.pass-timeout 2400 --source agent --reason "Thorough checks need a longer provider window"
+
+# Apply the same override for the rest of this lifecycle:
+bash "${DEX_DIR}/bin/control.sh" override watch.command-timeout 90 --scope session --source agent --reason "The repository API is responding slowly"
+
+# Waive an assurance gate and advance through the safe lifecycle transition:
+bash "${DEX_DIR}/bin/control.sh" waive review.clean-passes --source agent --reason "Two provider failures prevent independent waves; direct review and all deterministic checks are complete"
+\`\`\`
+
+When the human authorizes an exception in chat, use \`--source human\` and quote
+their reason accurately. \`dx control status\` shows active overrides. Use
+\`clear-override\` to return to the default.
+
+Operational overrides take effect when their consumer next reads policy. Gate
+waivers do not forge success: they record the current phase as waived. Runtime
+integrity is not a policy gate, so valid state records, transition ownership,
+atomic writes, and quiescing an active child still apply.
 
 ## Direct Human Control
 
@@ -1246,8 +1283,9 @@ Phrases such as "stop Dex", "leave the review loop", "skip verification",
 "mark this phase done", "jump to the PR phase", or "resume Dex" are control
 instructions. Follow the latest human request immediately.
 
-Claude sessions receive control through the UserPromptSubmit hook. Direct Codex
-sessions must run the matching provider-neutral command before stopping:
+Claude sessions receive direct stop/jump phrases through the UserPromptSubmit
+hook. Codex sessions, and either provider when applying a reasoned exception,
+run the same provider-neutral command before stopping:
 
 \`\`\`bash
 bash "${DEX_DIR}/bin/control.sh" stop
@@ -1256,9 +1294,11 @@ bash "${DEX_DIR}/bin/control.sh" jump verify
 bash "${DEX_DIR}/bin/control.sh" resume
 \`\`\`
 
-These controls waive only Dex lifecycle sequencing. Review-wave session
-isolation and the destructive-command, secret, and sensitive-file guards remain
-active; none of those guards blocks ordinary commit, push, or PR operations.
+For a human instruction relayed through Codex, add \`--source human --reason
+"<their reason>"\`. Agent-originated controls use \`--source agent --reason\`.
+Review-wave isolation remains in force until the active child is quiescent.
+A project block guard can be softened explicitly with an override such as
+\`guard.<guard-name>=allow\`; built-in Dex guards are advisory by default.
 
 ## Initial Scope Boundaries (Phase ${step})
 
@@ -1571,12 +1611,17 @@ PY
 
 unalias __dx_pause_reason_message 2>/dev/null; unfunction __dx_pause_reason_message 2>/dev/null
 __dx_pause_reason_message() {
-  local session_id="$1" reason="$2" raw_iter iterations max_iterations
+  local session_id="$1" reason="$2" raw_iter iterations max_iterations current_phase
   case "$reason" in
     max-iter|max-iterations)
       raw_iter=$(cat "$(dx_loop_file "$session_id")" 2>/dev/null || echo "")
       iterations="${raw_iter%%:*}"
       max_iterations="${DEX_LOOP_MAX_ITERATIONS:-30}"
+      current_phase=$(dx_lifecycle_current_phase "$session_id")
+      [[ -n "$current_phase" ]] || current_phase="prompt-loop"
+      max_iterations=$(dx_override_effective "$session_id" loop.max-iterations \
+        "$max_iterations" "$current_phase" 2>/dev/null \
+        || printf '%s\n' "$max_iterations")
       if [[ "$iterations" =~ ^[0-9]+$ && "$max_iterations" =~ ^[0-9]+$ ]]; then
         echo "max audit iterations reached (${iterations}/${max_iterations})"
       else
@@ -1639,7 +1684,7 @@ __dx_codex_direct_phase_handoff() {
   local controls_only="${5:-0}"
   local provider_state provider_engine="" line ready_file next_phase criteria_binding=""
   local policy_record="" policy_binding="" policy_small="" policy_normal="" policy_complex="" policy_ref="" policy_oid=""
-  local control_action control_target control_expected control_phase control_snapshot control_source
+  local control_action control_target control_expected control_phase control_snapshot control_source control_actor
   local control_generation control_from control_recovery control_busy_token
   local config_file control_file control_config context_record config_phase config_promise config_audit
   local config_handoff
@@ -1683,6 +1728,7 @@ __dx_codex_direct_phase_handoff() {
   control_target=$(dx_lifecycle_control_value "$control_snapshot" target_phase)
   control_expected=$(dx_lifecycle_control_value "$control_snapshot" expected_phase)
   control_source=$(dx_lifecycle_control_value "$control_snapshot" source)
+  control_actor=$(dx_lifecycle_control_actor_label "$control_source")
   control_generation=$(dx_lifecycle_control_value "$control_snapshot" generation)
   control_phase=$(dx_lifecycle_current_phase "$session_id")
   if [[ "$control_action" == "pause" || "$control_action" == "cancel" ]]; then
@@ -1699,7 +1745,8 @@ __dx_codex_direct_phase_handoff() {
   if [[ "$control_action" == "complete" || "$control_action" == "jump" ]]; then
     if [[ ! "$control_target" =~ ^[0-7]$ \
       || ! "$control_generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ \
-      || ( "$control_source" != "user-prompt" && "$control_source" != "terminal" ) ]]; then
+      || ( "$control_source" != "agent" && "$control_source" != "user-prompt" \
+        && "$control_source" != "terminal" ) ]]; then
       dx_clear_lifecycle_control_unlocked "$session_id"
       dx_lifecycle_control_lock_release_checked "$session_id" \
         2>/dev/null || true
@@ -1714,7 +1761,7 @@ __dx_codex_direct_phase_handoff() {
       control_from="$control_expected"
       control_recovery=1
     elif [[ -n "$control_expected" && "$control_expected" != "$control_phase" ]]; then
-      dx_warn "Ignoring stale human lifecycle transition for Phase ${control_expected}; current phase is ${control_phase}."
+      dx_warn "Ignoring stale ${control_actor} transition for Phase ${control_expected}; current phase is ${control_phase}."
       dx_clear_lifecycle_control_unlocked "$session_id"
       dx_lifecycle_control_lock_release_checked "$session_id" \
         2>/dev/null || true
@@ -1748,7 +1795,7 @@ __dx_codex_direct_phase_handoff() {
     if ! __dx_abandon_completion_state "$session_id"; then
       dx_lifecycle_control_lock_release_checked "$session_id" \
         2>/dev/null || true
-      dx_warn "Dex could not revoke the current phase completion authorization; the human transition remains pending."
+      dx_warn "Dex could not revoke the current phase completion authorization; the ${control_actor} transition remains pending."
       return 1
     fi
     if [[ "$control_recovery" -eq 0 ]]; then
@@ -1772,7 +1819,7 @@ __dx_codex_direct_phase_handoff() {
       fi
     fi
 
-    if ! dx_record_human_phase_outcomes "$session_id" "$control_from" "$control_target" \
+    if ! dx_record_control_phase_outcomes "$session_id" "$control_from" "$control_target" \
       "$control_action" "$control_generation" "$control_source" "$control_recovery"; then
       dx_lifecycle_control_lock_release_checked "$session_id" \
         2>/dev/null || true
@@ -1794,7 +1841,7 @@ __dx_codex_direct_phase_handoff() {
       dx_phase_busy_finish "$session_id" 3 "$control_busy_token" 2>/dev/null || true
     fi
     dx_run_log_append_for_session "$session_id" "warn" "dx" \
-      "Direct Codex applied human lifecycle transition: phase=${control_from}; target_phase=${control_target}; action=${control_action}; generation=${control_generation}; recovery=${control_recovery}" 2>/dev/null || true
+      "Direct Codex applied ${control_actor}: phase=${control_from}; target_phase=${control_target}; action=${control_action}; generation=${control_generation}; recovery=${control_recovery}" 2>/dev/null || true
     if [[ "$control_target" == "7" ]]; then
       if ! dx_lifecycle_atomic_write \
         "$(dx_lifecycle_human_complete_file "$session_id")" human-complete; then
@@ -1837,7 +1884,7 @@ __dx_codex_direct_phase_handoff() {
       dx_warn "Dex could not validate the human-authorized terminal proof. It returned to a paused Phase 6 and was not reported complete."
       return 1
     fi
-    dx_info "Human control moved the direct Codex lifecycle from Phase ${control_from} to Phase ${control_target}."
+    dx_info "The ${control_actor} moved the direct Codex lifecycle from Phase ${control_from} to Phase ${control_target}."
     return 0
   fi
 
@@ -2882,7 +2929,9 @@ __dx_run_phases_inline() {
   message=$(__dx_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")
 
   local session_timeout="${DEX_SESSION_TIMEOUT:-$DX_SESSION_TIMEOUT}"
-  local _dx_watchdog_pid="" _dx_pidfile=""
+  local session_start_epoch
+  session_start_epoch=$(date +%s)
+  local _dx_watchdog_pid="" _dx_pidfile="" _dx_watchdog_reason_file=""
   # An unchecked mktemp leaves the path empty, and the watchdog below then
   # polls a file that can never appear, spinning for the whole session.
   if ! _dx_pidfile=$(mktemp "${TMPDIR:-/tmp}/dx-inline.XXXXXX"); then
@@ -2890,26 +2939,58 @@ __dx_run_phases_inline() {
     dx_error "Could not create the phase handoff temp file"
     return 1
   fi
+  _dx_watchdog_reason_file="${_dx_pidfile}.reason"
 
-  if [[ "$session_timeout" -gt 0 ]]; then
-    (
-      local tgt=""
-      while [[ -z "$tgt" ]]; do
-        [[ -s "$_dx_pidfile" ]] && tgt=$(<"$_dx_pidfile")
-        [[ -z "$tgt" ]] && sleep 0.2
-      done
-      sleep "$session_timeout" 2>/dev/null
-      __dx_kill_process_tree "$tgt" TERM
-      sleep 2
-      __dx_kill_process_tree "$tgt" KILL
-    ) &
-    _dx_watchdog_pid=$!
-    # Disown the just-backgrounded watchdog so zsh doesn't print a job-control
-    # "terminated" notice when we kill it during cleanup below. $! is already
-    # captured, so `kill "$_dx_watchdog_pid"` still works after disowning.
-    # (zsh's `disown` takes a job spec, not a PID, so disown the current job.)
-    disown 2>/dev/null || true
-  fi
+  (
+    local watch_target="" watch_now watch_phase watch_phase_start watch_failure=""
+    local watch_session_timeout="" watch_phase_timeout=""
+    while [[ -z "$watch_target" ]]; do
+      [[ -s "$_dx_pidfile" ]] && watch_target=$(<"$_dx_pidfile")
+      [[ -z "$watch_target" ]] && sleep 0.2
+    done
+    while kill -0 "$watch_target" 2>/dev/null; do
+      watch_now=$(date +%s)
+      watch_phase=$(dx_lifecycle_current_phase "$session_id")
+      [[ "$watch_phase" =~ ^[0-6]$ ]] || watch_phase="$step"
+      watch_session_timeout=$(dx_override_effective "$session_id" \
+        session.timeout "$session_timeout" "$watch_phase" 2>/dev/null) \
+        || watch_failure="invalid-runtime-override"
+      watch_phase_timeout=$(__dx_phase_timeout "$watch_phase" "$session_id" \
+        2>/dev/null) || watch_failure="invalid-runtime-override"
+      if [[ ! "$watch_session_timeout" =~ ^[0-9]+$ \
+        || ! "$watch_phase_timeout" =~ ^[0-9]+$ ]]; then
+        watch_failure="invalid-runtime-override"
+      fi
+      if [[ -z "$watch_failure" ]]; then
+        watch_phase_start=$(dx_session_phase_start_epoch "$session_id" \
+          "$watch_phase")
+        [[ "$watch_phase_start" =~ ^[0-9]+$ ]] \
+          || watch_phase_start="$watch_now"
+        if [[ "$watch_session_timeout" -gt 0 \
+          && $((watch_now - session_start_epoch)) -ge "$watch_session_timeout" ]]; then
+          watch_failure="session-timeout"
+        elif [[ "$watch_phase_timeout" -gt 0 \
+          && $((watch_now - watch_phase_start)) -ge "$watch_phase_timeout" ]]; then
+          watch_failure="phase-timeout"
+        fi
+      fi
+      if [[ -n "$watch_failure" ]]; then
+        (umask 077; printf '%s\n' "$watch_failure" \
+          >| "$_dx_watchdog_reason_file")
+        __dx_kill_process_tree "$watch_target" TERM
+        sleep 2
+        __dx_kill_process_tree "$watch_target" KILL
+        break
+      fi
+      sleep 1
+    done
+  ) &
+  _dx_watchdog_pid=$!
+  # Disown the just-backgrounded watchdog so zsh doesn't print a job-control
+  # "terminated" notice when we kill it during cleanup below. $! is already
+  # captured, so `kill "$_dx_watchdog_pid"` still works after disowning.
+  # (zsh's `disown` takes a job spec, not a PID, so disown the current job.)
+  disown 2>/dev/null || true
 
   (
     sh -c 'echo $PPID' > "$_dx_pidfile"
@@ -2930,8 +3011,29 @@ __dx_run_phases_inline() {
     __dx_claude "${claude_args[@]}" "$message"
   )
   local exit_code=$?
-  rm -f "$_dx_pidfile"
+  local watchdog_reason=""
+  [[ -s "$_dx_watchdog_reason_file" ]] \
+    && watchdog_reason=$(<"$_dx_watchdog_reason_file")
+  rm -f "$_dx_pidfile" "$_dx_watchdog_reason_file"
   [[ -n "$_dx_watchdog_pid" ]] && kill "$_dx_watchdog_pid" 2>/dev/null
+  if [[ -n "$watchdog_reason" ]]; then
+    if ! dx_lifecycle_pause "$session_id" "$watchdog_reason" phase-loop; then
+      dx_error "Dex could not safely pause after the runtime watchdog fired."
+      __dx_runtime_set_terminal failed
+      return 1
+    fi
+    case "$watchdog_reason" in
+      session-timeout)
+        dx_error "Dex paused because the current session runtime budget expired."
+        ;;
+      phase-timeout)
+        dx_error "Dex paused because the current phase runtime budget expired."
+        ;;
+      *)
+        dx_error "Dex paused because its session override state is unsafe or invalid."
+        ;;
+    esac
+  fi
 
   local final_step="$step"
   if [[ -e "$state_file" || -L "$state_file" ]]; then
@@ -2974,6 +3076,9 @@ __dx_run_phases_inline() {
     iterations="${raw_iter%%:*}"
     [[ "$iterations" =~ ^[0-9]+$ ]] || iterations=0
     max_iterations="${DEX_LOOP_MAX_ITERATIONS:-30}"
+    max_iterations=$(dx_override_effective "$session_id" loop.max-iterations \
+      "$max_iterations" "$final_step" 2>/dev/null \
+      || printf '%s\n' "$max_iterations")
     pause_reason="phase did not complete"
     if [[ "$iterations" -ge "$max_iterations" ]]; then
       pause_reason="max audit iterations reached (${iterations}/${max_iterations})"
@@ -4400,6 +4505,9 @@ dxcomplete() {
 unalias __dxcomplete_run 2>/dev/null; unfunction __dxcomplete_run 2>/dev/null
 __dxcomplete_run() {
   local provider_agent="$1" pr_num="$2" session_id="$3" start_dir="$4"
+  local complete_max_cycles complete_wait_minutes
+  complete_max_cycles=$(dx_complete_max_cycles "$session_id") || return 1
+  complete_wait_minutes=$(dx_complete_wait_minutes "$session_id") || return 1
 
   # Use a session ID derived from the current location (worktree-aware via dx_session_id)
   local cleanup_repo_root cleanup_default_branch cleanup_mode="" cleanup_wt_name="" cleanup_wt_dir=""
@@ -4497,7 +4605,7 @@ $(__dx_provider_prompt)"
     completion_prompt="Run the standalone Dex completion workflow for PR #${pr_num}. Read skills/dxcomplete/SKILL.md and skills/dxwatchpr/SKILL.md, then carry out their checks and fixes directly in this Codex session.
 
 Direct Codex completion contract:
-- Codex has no Claude Stop hook or /loop scheduler. Perform the bounded watcher cycles synchronously, with at most ${DEX_COMPLETE_MAX_CYCLES:-$DX_COMPLETE_MAX_CYCLES} cycles and the configured ${DEX_COMPLETE_WAIT_MINUTES:-$DX_COMPLETE_WAIT_MINUTES}-minute interval.
+- Codex has no Claude Stop hook or /loop scheduler. Perform the bounded watcher cycles synchronously, with at most ${complete_max_cycles} cycles and the current ${complete_wait_minutes}-minute interval. Re-read dx_complete_max_cycles and dx_complete_wait_minutes before each cycle so in-session overrides take effect.
 - Do not merge the PR.
 - On success, and only after every completion criterion passes, run: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${completion_generation}\"
 - If the bounded watch window expires or external state blocks completion, run: bash \"\$DEX_DIR/bin/escalate.sh\" \"${session_id}\" \"${completion_generation}\"
@@ -4510,8 +4618,8 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
   DEX_LOOP_ACTIVE=1 \
   DEX_LOOP_PROMISE="DEX_TICKET_COMPLETE" \
   DEX_LOOP_PHASE="6" \
-  DEX_COMPLETE_MAX_CYCLES="${DEX_COMPLETE_MAX_CYCLES:-$DX_COMPLETE_MAX_CYCLES}" \
-  DEX_COMPLETE_WAIT_MINUTES="${DEX_COMPLETE_WAIT_MINUTES:-$DX_COMPLETE_WAIT_MINUTES}" \
+  DEX_COMPLETE_MAX_CYCLES="$complete_max_cycles" \
+  DEX_COMPLETE_WAIT_MINUTES="$complete_wait_minutes" \
   DEX_DIR="$DEX_DIR" \
   __dx_claude "${DX_CLAUDE_FLAGS[@]}" -n "dxcomplete-pr-${pr_num}" \
     "$completion_prompt"

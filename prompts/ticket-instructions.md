@@ -4,7 +4,7 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
 
    - Read ticket {{TICKET_NUM}} — title, description, acceptance criteria, and relations.
    - Read all comments on the ticket (for Linear: use `list_comments` with the issue ID). Comments often contain clarifications, decisions, and context not captured in the description.
-   - If the tracker supports assignees: check the assignee. If assigned to someone else, STOP and warn. If unassigned, assign to the current user (for Linear: use `save_issue` with `assignee: "me"`).
+   - If the tracker supports assignees: check the assignee. If assigned to someone else, pause and warn by default; do not silently reassign. A reasoned `setup.ticket-ownership` waiver may continue without claiming ownership changed. If unassigned, assign to the current user (for Linear: use `save_issue` with `assignee: "me"`).
    - If no tracker is configured: use the branch name `{{BRANCH}}` and the local filesystem for context. Ask the user what they want to work on.
 
 2. Rename and push the branch. The default workflow leaves draft PR creation to `/dxpr` in Phase 5, after implementation commits exist. If the user asks for a PR during setup, create or update it as requested and record its state for the later phases. A branch with no changes may not be eligible for a PR; report that state rather than treating an empty bootstrap commit as required.

@@ -188,6 +188,23 @@ assert_out_empty "bystander gets no injected output"
 assert_file_eq "bystander did not steal the claim" "$DX_LOOP_DIR/$SID.owner" "claude-owner"
 rm -f "$DX_LOOP_DIR/$SID".*
 
+# A policy record written after provider launch is read by the next Stop hook
+# invocation and wins over the inherited environment.
+SID="repo-test-8-dynamic-loop-limit"
+touch "$DX_LOOP_DIR/$SID.active"
+printf '%s\n' "1:$(date +%s):0" > "$(dx_loop_file "$SID")"
+dx_override_set "$SID" loop.max-iterations 1 phase prompt-loop agent \
+  "Stop this exploratory loop after its current audit" 0
+set +e
+OUT="$(printf '{"session_id":"claude-dynamic-limit"}' | env \
+  DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=prompt-loop \
+  DEX_LOOP_MAX_ITERATIONS=30 bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "dynamic loop limit stops the current provider session" 0
+assert_out_contains "dynamic loop limit is applied" "max iterations (1)"
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
 # --- case 2: file-only activation without a trusted context fails closed ---
 SID="repo-test-2-main"
 touch "$DX_LOOP_DIR/$SID.active"
@@ -462,8 +479,10 @@ printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
 configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
 touch "$DX_LOOP_DIR/$SID.active"
 dx_phase_busy_begin "$SID" 3 "persisted timeout fixture" 2400 >/dev/null
+dx_override_set "$SID" review.pass-timeout 3600 phase 3 agent \
+  "The current wave needs another twenty minutes" 0
 BUSY_FILE=$(dx_phase_busy_file "$SID" 3)
-backdate_versioned_busy_record "$BUSY_FILE" 901
+backdate_versioned_busy_record "$BUSY_FILE" 2401
 set +e
 OUT="$(printf '{"session_id":"claude-timeout-wait"}' | env \
   DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
@@ -473,9 +492,9 @@ OUT="$(printf '{"session_id":"claude-timeout-wait"}' | env \
 RC=$?
 set -e
 assert_rc "persisted timeout keeps a live review wave waiting" 2
-assert_out_contains "persisted timeout reports the selected deadline" "40m 0s"
-assert_out_lacks "stale parent timeout does not pause the wave" "review pass timeout reached"
-if [[ ! -e "$(dx_paused_file "$SID")" ]]; then report "stale parent timeout leaves lifecycle active" 0; else report "stale parent timeout leaves lifecycle active" 1; fi
+assert_out_contains "dynamic timeout reports the selected deadline" "1h 0m"
+assert_out_lacks "dynamic timeout does not pause the wave" "review pass timeout reached"
+if [[ ! -e "$(dx_paused_file "$SID")" ]]; then report "dynamic timeout leaves lifecycle active" 0; else report "dynamic timeout leaves lifecycle active" 1; fi
 dx_completion_cleanup "$SID"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
@@ -783,8 +802,11 @@ SH
   printf '%s\n' "$race_rc" > "$RACE_RC_FILE"
 ) &
 RACE_PID=$!
-for _attempt in $(seq 1 100); do
+# This is an event wait, not a timing assertion. Parallel manifest lanes can
+# delay hook startup, so leave enough time for the child to reach either event.
+for _attempt in $(seq 1 600); do
   [[ -e "$RACE_BARRIER" || -e "$RACE_RC_FILE" ]] && break
+  kill -0 "$RACE_PID" 2>/dev/null || break
   /bin/sleep 0.05
 done
 if [[ -e "$RACE_BARRIER" && ! -e "$RACE_RC_FILE" ]]; then

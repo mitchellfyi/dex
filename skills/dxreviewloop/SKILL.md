@@ -86,6 +86,12 @@ monotonic order, and binds the resolved policy to selection, progress, pass
 evidence, and the final receipt. Candidate-branch edits cannot lower the active
 gate. Review may escalate to a higher tier, but it never downgrades.
 
+That restriction protects the meaning of a clean receipt; it is not a hard
+requirement to keep running a broken or inappropriate gate. Ask the human or
+run `dx control waive review.clean-passes --source agent --reason "<why>"`.
+The safe transition records Phase 3 as waived and does not manufacture clean
+wave credit.
+
 There is no outer iteration limit. The loop continues until the clean-pass gate
 succeeds or a deterministic pause condition requires intervention.
 

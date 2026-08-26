@@ -3,7 +3,7 @@
 #
 # Flow:
 #   1. Claude tries to stop → this hook runs
-#   2. Apply pending human control before considering automatic completion
+#   2. Apply pending human/agent control before considering automatic completion
 #   3. Validate the exact generation-bound receipt for this launch
 #   4. Check iteration count → pause/escalate
 #   5. Check min audit iterations:
@@ -176,7 +176,7 @@ dx_reinject_completion_command() {
   local heading="$1" explanation="$2" rotate_result=0
   dx_rotate_completion_context || rotate_result=$?
   if [[ "$rotate_result" -eq 2 ]]; then
-    printf '\n%s\n' "A direct human lifecycle transition arrived first. Stop again so Dex can apply it." >&2
+    printf '\n%s\n' "A lifecycle override arrived first. Stop again so Dex can apply it." >&2
     return 2
   fi
   if [[ "$rotate_result" -ne 0 ]]; then
@@ -213,7 +213,7 @@ dx_detach_or_report() {
   if dx_lifecycle_detach "$SESSION_ID" "$reason" "$detach_source"; then
     return 0
   fi
-  printf '\n%s\n' "Dex could not prove that completion authorization was revoked. The lifecycle was not reported as cleanly detached; repair its state files and retry the human control." >&2
+  printf '\n%s\n' "Dex could not prove that completion authorization was revoked. The lifecycle was not reported as cleanly detached; repair its state files and retry the control." >&2
   return 1
 }
 
@@ -789,7 +789,8 @@ CONTROL_OWNER=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" owner_session)
 CONTROL_GENERATION=$(dx_lifecycle_control_value "$CONTROL_SNAPSHOT" generation)
 
 CONTROL_VALID=0
-if [[ "$CONTROL_SOURCE" == "user-prompt" || "$CONTROL_SOURCE" == "terminal" ]]; then
+if [[ "$CONTROL_SOURCE" == "agent" || "$CONTROL_SOURCE" == "user-prompt" \
+  || "$CONTROL_SOURCE" == "terminal" ]]; then
   if [[ "$CONTROL_GENERATION" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
     case "$CONTROL_ACTION" in
       pause|cancel|resume) CONTROL_VALID=1 ;;
@@ -802,6 +803,7 @@ if [[ -n "$CONTROL_OWNER" && ( -z "$HOOK_CLAUDE_SESSION_ID" || "$CONTROL_OWNER" 
 fi
 
 if [[ "$CONTROL_VALID" -eq 1 ]]; then
+  CONTROL_ACTOR=$(dx_lifecycle_control_actor_label "$CONTROL_SOURCE")
   case "$CONTROL_ACTION" in
     resume)
       if ! RESUME_RECORD=$(dx_lifecycle_resume_completion_context_unlocked \
@@ -835,12 +837,12 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
         exit 2
       fi
       dx_run_log_append_for_session "$SESSION_ID" "warn" "phase-loop" \
-        "Dex lifecycle ${CONTROL_ACTION} accepted from direct human instruction; generation=${CONTROL_GENERATION}" 2>/dev/null || true
+        "Dex lifecycle ${CONTROL_ACTION} accepted from ${CONTROL_ACTOR}; generation=${CONTROL_GENERATION}" 2>/dev/null || true
       if ! dx_release_transition_or_brake "${CONTROL_ACTION}-lock-release"; then
         printf '\n%s\n' "Dex applied the human ${CONTROL_ACTION} but could not release its transition lock. The lifecycle remains inert; repair the lock before continuing." >&2
         exit 2
       fi
-      printf '{"continue":false,"stopReason":"Dex lifecycle %s by direct human instruction."}\n' "$CONTROL_ACTION"
+      printf '{"continue":false,"stopReason":"Dex lifecycle %s by %s."}\n' "$CONTROL_ACTION" "$CONTROL_ACTOR"
       exit 0
       ;;
     complete|jump)
@@ -858,7 +860,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
           printf '\n%s\n' "Dex stopped the loop but could not release its transition lock. The loop remains inert; repair the lock before continuing." >&2
           exit 2
         fi
-        printf '{"continue":false,"stopReason":"Dex loop stopped by direct human instruction."}\n'
+        printf '{"continue":false,"stopReason":"Dex loop stopped by %s."}\n' "$CONTROL_ACTOR"
         exit 0
       elif [[ "$CONTROL_TARGET" == "$CONTROL_CURRENT_PHASE" \
         && "$CONTROL_EXPECTED_PHASE" =~ ^[0-7]$ \
@@ -934,7 +936,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
             printf '\n%s\n' "Dex paused at the review-child fence but could not release its transition lock. The lifecycle remains inert." >&2
             exit 2
           fi
-          printf '\n%s\n\n' "--- Dex detached by direct human instruction ---" >&2
+          printf '\n--- Dex detached by %s ---\n\n' "$CONTROL_ACTOR" >&2
           printf '%s\n' "The active review child must finish or be interrupted before a phase jump can be applied. Its result will not advance the lifecycle." >&2
           exit 0
         else
@@ -954,7 +956,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
             fi
           fi
 
-          if ! dx_record_human_phase_outcomes "$SESSION_ID" "$CONTROL_FROM_PHASE" \
+          if ! dx_record_control_phase_outcomes "$SESSION_ID" "$CONTROL_FROM_PHASE" \
             "$CONTROL_TARGET" "$CONTROL_ACTION" "$CONTROL_GENERATION" "$CONTROL_SOURCE" \
             "$CONTROL_RECOVERY"; then
             dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
@@ -1008,7 +1010,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
               "$(dx_lifecycle_human_complete_file "$SESSION_ID")" human-complete; then
               dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
                 2>/dev/null || true
-              printf '\n%s\n' "Dex recorded human-authorized completion but could not persist its workspace-preservation marker. The control receipt was preserved for recovery." >&2
+              printf '\n%s\n' "Dex recorded override-authorized completion but could not persist its workspace-preservation marker. The control receipt was preserved for recovery." >&2
               exit 2
             fi
             dx_clear_lifecycle_control_unlocked "$SESSION_ID"
@@ -1022,7 +1024,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
                   human-terminal-proof-failed phase-loop 2>/dev/null || true
               dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
                 2>/dev/null || true
-              printf '\n%s\n' "Dex could not commit the human-authorized terminal proof. It returned to a paused Phase 6 and was not reported complete." >&2
+              printf '\n%s\n' "Dex could not commit the override-authorized terminal proof. It returned to a paused Phase 6 and was not reported complete." >&2
               exit 2
             fi
             if ! dx_lifecycle_control_lock_release "$SESSION_ID"; then
@@ -1040,12 +1042,12 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
                 human-terminal-commit-failed phase-loop 2>/dev/null \
                 || dx_lifecycle_completion_brake "$SESSION_ID" \
                   human-terminal-commit-failed phase-loop 2>/dev/null || true
-              printf '\n%s\n' "Dex could not verify the human-authorized terminal transaction. It returned to a paused Phase 6 and was not reported complete." >&2
+              printf '\n%s\n' "Dex could not verify the override-authorized terminal transaction. It returned to a paused Phase 6 and was not reported complete." >&2
               exit 2
             fi
             {
-              printf '\n%s\n\n' "--- Dex lifecycle marked complete by direct human instruction ---"
-              printf '%s\n' "The lifecycle workspace is preserved; human-authorized completion does not run automatic worktree cleanup."
+              printf '\n--- Dex lifecycle marked complete by %s ---\n\n' "$CONTROL_ACTOR"
+              printf '%s\n' "The lifecycle workspace is preserved; override-authorized completion does not run automatic worktree cleanup."
             } >&2
             exit 2
           fi
@@ -1054,7 +1056,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
             dx_abandon_completion || true
             dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
               2>/dev/null || true
-            printf '\n%s\n' "Dex changed the authoritative phase but could not reactivate its loop. The human control was preserved for recovery; repair the active marker and stop again." >&2
+            printf '\n%s\n' "Dex changed the authoritative phase but could not reactivate its loop. The control was preserved for recovery; repair the active marker and stop again." >&2
             exit 2
           fi
           dx_clear_lifecycle_control_unlocked "$SESSION_ID"
@@ -1064,8 +1066,8 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
             exit 2
           fi
           {
-            printf '\n%s\n\n' "--- Dex phase changed by direct human instruction ---"
-            printf 'Continue at Phase %s (%s). Earlier gates carry explicit human-authorized outcomes in the lifecycle ledger.\n\n' \
+            printf '\n--- Dex phase changed by %s ---\n\n' "$CONTROL_ACTOR"
+            printf 'Continue at Phase %s (%s). Earlier gates carry explicit override outcomes in the lifecycle ledger.\n\n' \
               "$CONTROL_TARGET" "$(dx_phase_name "$CONTROL_TARGET")"
             dx_inline_phase_message "$CONTROL_TARGET"
           } >&2
@@ -1208,11 +1210,21 @@ dx_record_session_branch "$SESSION_ID" "$(pwd)" 2>/dev/null || true
 # 30 iterations is tuned for medium-sized features; reduce for simple bugs (10-15).
 # Each iteration = one audit cycle, so 30 is a safety net, not an expected count.
 MAX_ITERATIONS_RAW="${DEX_LOOP_MAX_ITERATIONS:-30}"
+MAX_ITERATIONS_RAW=$(dx_override_effective "$SESSION_ID" loop.max-iterations \
+  "$MAX_ITERATIONS_RAW" "${DEX_LOOP_PHASE:-prompt-loop}") || {
+  printf '\n%s\n' "Dex found an unsafe or malformed override journal. The audit gate remains closed." >&2
+  exit 2
+}
 if ! MAX_ITERATIONS=$(dx_normalize_numeric_limit "$MAX_ITERATIONS_RAW"); then
   dx_report_invalid_numeric_limit "DEX_LOOP_MAX_ITERATIONS" "$MAX_ITERATIONS_RAW"
   exit 2
 fi
-MIN_AUDIT_ITERATIONS_RAW="$MIN_AUDIT_ITERATIONS"
+MIN_AUDIT_ITERATIONS_RAW=$(dx_override_effective "$SESSION_ID" \
+  phase.min-audits "$MIN_AUDIT_ITERATIONS" \
+  "${DEX_LOOP_PHASE:-prompt-loop}") || {
+  printf '\n%s\n' "Dex found an unsafe or malformed override journal. The audit gate remains closed." >&2
+  exit 2
+}
 if ! MIN_AUDIT_ITERATIONS=$(dx_normalize_numeric_limit "$MIN_AUDIT_ITERATIONS_RAW"); then
   dx_report_invalid_numeric_limit "DEX_LOOP_MIN_AUDITS" "$MIN_AUDIT_ITERATIONS_RAW"
   exit 2
@@ -1251,7 +1263,10 @@ if [[ "${DEX_LOOP_PHASE:-}" == "6" && "$COMPLETION_SIGNAL_READY" -ne 1 ]]; then
     if [[ "$COMPLETE_STATE_RAW" =~ ^([0-9]+):([0-9]+)$ ]]; then
       COMPLETE_CYCLE="${BASH_REMATCH[1]}"
       COMPLETE_LAST_EPOCH="${BASH_REMATCH[2]}"
-      COMPLETE_WAIT_MINUTES_RAW="${DEX_COMPLETE_WAIT_MINUTES:-5}"
+      COMPLETE_WAIT_MINUTES_RAW=$(dx_complete_wait_minutes "$SESSION_ID") || {
+        printf '\n%s\n' "Dex found an unsafe or malformed override journal. The Phase 6 wait gate remains closed." >&2
+        exit 2
+      }
       if ! COMPLETE_WAIT_MINUTES=$(dx_normalize_numeric_limit "$COMPLETE_WAIT_MINUTES_RAW"); then
         dx_report_invalid_numeric_limit "DEX_COMPLETE_WAIT_MINUTES" "$COMPLETE_WAIT_MINUTES_RAW"
         exit 2
@@ -1433,6 +1448,11 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
     if [[ "$BUSY_RECORD_VERSION" == "1" ]]; then
       BUSY_TIMEOUT_RAW="${DEX_REVIEW_PASS_TIMEOUT:-900}"
     fi
+    BUSY_TIMEOUT_RAW=$(dx_override_effective "$SESSION_ID" \
+      review.pass-timeout "$BUSY_TIMEOUT_RAW" 3) || {
+      printf '\n%s\n' "Dex found an unsafe or malformed override journal. The review wait gate remains closed." >&2
+      exit 2
+    }
     if ! BUSY_TIMEOUT=$(dx_normalize_numeric_limit "$BUSY_TIMEOUT_RAW"); then
       dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_TIMEOUT" "$BUSY_TIMEOUT_RAW"
       exit 2
@@ -1455,6 +1475,11 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
     rm -f "$STATE_FILE"
 
     BUSY_NOTICE_INTERVAL_RAW="${DEX_REVIEW_PASS_NOTICE_INTERVAL:-120}"
+    BUSY_NOTICE_INTERVAL_RAW=$(dx_override_effective "$SESSION_ID" \
+      review.notice-interval "$BUSY_NOTICE_INTERVAL_RAW" 3) || {
+      printf '\n%s\n' "Dex found an unsafe or malformed override journal. The review wait gate remains closed." >&2
+      exit 2
+    }
     if ! BUSY_NOTICE_INTERVAL=$(dx_normalize_numeric_limit "$BUSY_NOTICE_INTERVAL_RAW"); then
       dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_NOTICE_INTERVAL" "$BUSY_NOTICE_INTERVAL_RAW"
       exit 2
@@ -1479,6 +1504,11 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
 
     if [[ $SHOULD_PRINT_BUSY_NOTICE -eq 0 ]]; then
       BUSY_RECHECK_SECONDS_RAW="${DEX_REVIEW_PASS_RECHECK_SECONDS:-45}"
+      BUSY_RECHECK_SECONDS_RAW=$(dx_override_effective "$SESSION_ID" \
+        review.recheck-seconds "$BUSY_RECHECK_SECONDS_RAW" 3) || {
+        printf '\n%s\n' "Dex found an unsafe or malformed override journal. The review wait gate remains closed." >&2
+        exit 2
+      }
       if ! BUSY_RECHECK_SECONDS=$(dx_normalize_numeric_limit "$BUSY_RECHECK_SECONDS_RAW"); then
         dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_RECHECK_SECONDS" "$BUSY_RECHECK_SECONDS_RAW"
         exit 2
@@ -1731,9 +1761,11 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
     if [[ -n "$LATE_CONTROL_SNAPSHOT" \
       || -e "$CONTROL_FILE" || -L "$CONTROL_FILE" ]]; then
       LATE_CONTROL_ACTION=$(dx_lifecycle_control_value "$LATE_CONTROL_SNAPSHOT" action)
+      LATE_CONTROL_SOURCE=$(dx_lifecycle_control_value "$LATE_CONTROL_SNAPSHOT" source)
+      LATE_CONTROL_ACTOR=$(dx_lifecycle_control_actor_label "$LATE_CONTROL_SOURCE")
       if [[ "$LATE_CONTROL_ACTION" == "pause" || "$LATE_CONTROL_ACTION" == "cancel" ]]; then
         if ! dx_detach_or_report "manual-${LATE_CONTROL_ACTION}" \
-          "$(dx_lifecycle_control_value "$LATE_CONTROL_SNAPSHOT" source)"; then
+          "$LATE_CONTROL_SOURCE"; then
           dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
             2>/dev/null || true
           exit 2
@@ -1743,15 +1775,15 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
             phase-loop 2>/dev/null || true
           dx_lifecycle_control_lock_release_retained "$SESSION_ID" \
             2>/dev/null || true
-          printf '\n%s\n' "Dex applied the human pause but could not release its transition lock. The lifecycle remains inert; repair the lock before resuming." >&2
+          printf '\n%s\n' "Dex applied the pause but could not release its transition lock. The lifecycle remains inert; repair the lock before resuming." >&2
           exit 2
         fi
-        printf '{"continue":false,"stopReason":"Dex lifecycle paused by direct human instruction."}\n'
+        printf '{"continue":false,"stopReason":"Dex lifecycle paused by %s."}\n' "$LATE_CONTROL_ACTOR"
         exit 0
       fi
       dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
         2>/dev/null || true
-      printf '\n%s\n' "A direct human lifecycle transition arrived before phase completion committed. Stop again to apply it." >&2
+      printf '\n%s\n' "A lifecycle override arrived before phase completion committed. Stop again to apply it." >&2
       exit 2
     fi
   fi
@@ -2017,7 +2049,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
         printf '\n%s\n' "Dex could not release the standalone transition lock. The loop was left inert and completion was not reported." >&2
         exit 2
       fi
-      printf '\n%s\n' "A direct human lifecycle control arrived before standalone completion committed. Stop again so it can take priority." >&2
+      printf '\n%s\n' "A lifecycle control arrived before standalone completion committed. Stop again so it can take priority." >&2
       exit 2
     fi
     if ! dx_consume_completion_receipt "$SESSION_ID" "$COMPLETION_MODE" \
@@ -2070,11 +2102,22 @@ NOW_EPOCH=$(date +%s)
 # threshold, the loop may be stuck on a fundamentally broken problem.
 # Inspired by autoresearch's NaN/exploding-loss early termination.
 STALL_TIMEOUT_RAW="${DEX_LOOP_STALL_TIMEOUT:-300}"  # default: 5 minutes
+STALL_TIMEOUT_RAW=$(dx_override_effective "$SESSION_ID" loop.stall-timeout \
+  "$STALL_TIMEOUT_RAW" "${DEX_LOOP_PHASE:-prompt-loop}") || {
+  printf '\n%s\n' "Dex found an unsafe or malformed override journal. The stall gate remains closed." >&2
+  exit 2
+}
 if ! STALL_TIMEOUT=$(dx_normalize_numeric_limit "$STALL_TIMEOUT_RAW"); then
   dx_report_invalid_numeric_limit "DEX_LOOP_STALL_TIMEOUT" "$STALL_TIMEOUT_RAW"
   exit 2
 fi
 STALL_ESCALATE_AFTER_RAW="${DEX_LOOP_STALL_ESCALATE:-3}"  # escalate after N stalls
+STALL_ESCALATE_AFTER_RAW=$(dx_override_effective "$SESSION_ID" \
+  loop.stall-escalate "$STALL_ESCALATE_AFTER_RAW" \
+  "${DEX_LOOP_PHASE:-prompt-loop}") || {
+  printf '\n%s\n' "Dex found an unsafe or malformed override journal. The stall gate remains closed." >&2
+  exit 2
+}
 if ! STALL_ESCALATE_AFTER=$(dx_normalize_numeric_limit "$STALL_ESCALATE_AFTER_RAW"); then
   dx_report_invalid_numeric_limit "DEX_LOOP_STALL_ESCALATE" "$STALL_ESCALATE_AFTER_RAW"
   exit 2

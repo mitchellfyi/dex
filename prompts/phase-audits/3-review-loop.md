@@ -24,7 +24,9 @@ All of these must be true:
   The committed default branch may configure monotonic requirements from 1
   through 30 in `.dex/dex.md` `## Review Policy`.
   `DEX_REVIEW_CLEAN_PASSES` may raise the resolved requirement but cannot lower
-  it. Candidate-branch policy edits do not change the active gate.
+  it. Candidate-branch policy edits do not change the active gate. A lower
+  assurance decision uses `dx control waive review.clean-passes`, which records
+  Phase 3 as waived instead of creating a false clean receipt.
 - Every counted clean result came from a fresh pass-scoped agent session that
   saw the current code and scope but no prior review reports, findings,
   fingerprints, clean-pass counts, telemetry, or stale conversation context.

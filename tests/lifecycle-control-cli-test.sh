@@ -37,6 +37,23 @@ write_cleanup_marker() { # <sid>
   chmod 600 "$DX_LOOP_DIR/${marker_sid}.cleanup-journal"
 }
 
+# A standalone Claude/Codex provider can keep session-scoped soft policy even
+# when no phase loop is active. Assurance waivers still require a lifecycle.
+STANDALONE_SESSION="$(dx_session_repo_key)-standalone-policy"
+env DEX_SESSION_ID="$STANDALONE_SESSION" bash "$CONTROL" override \
+  sync.budget-minutes 90 --scope session --source agent \
+  --reason "The repository inventory needs a longer sync pass" \
+  > "$TMP_DIR/standalone-override.out"
+assert_eq "90" \
+  "$(dx_override_effective "$STANDALONE_SESSION" sync.budget-minutes 60 -)" \
+  "standalone session override"
+env DEX_SESSION_ID="$STANDALONE_SESSION" bash "$CONTROL" status \
+  > "$TMP_DIR/standalone-status.out"
+assert_contains "sync.budget-minutes" "$TMP_DIR/standalone-status.out"
+env DEX_SESSION_ID="$STANDALONE_SESSION" bash "$CONTROL" clear-override \
+  sync.budget-minutes --scope session --source agent \
+  --reason "The sync pass completed" > "$TMP_DIR/standalone-clear.out"
+
 # Direct control, pause, and cancel writers share the transition lock with
 # cleanup and cannot publish new lifecycle state after its journal appears.
 CLEANUP_BARRIER_SESSION="$(dx_session_repo_key)-cleanup-control-barrier"
@@ -73,6 +90,47 @@ printf '%s\n' "claude-owner" > "$(dx_owner_file "$DEX_SESSION_ID")"
 bash "$CONTROL" status > "$TMP_DIR/status.out"
 grep -q "Phase: 2 (Implement)" "$TMP_DIR/status.out"
 
+# The active agent can change an operational default without relaunching the
+# provider. The status view surfaces attribution and justification.
+bash "$CONTROL" override loop.max-iterations 45 --source agent \
+  --reason "The migration audit needs more turns" > "$TMP_DIR/override.out"
+assert_eq "45" \
+  "$(dx_override_effective "$DEX_SESSION_ID" loop.max-iterations 30 2)" \
+  "CLI override value"
+bash "$CONTROL" status > "$TMP_DIR/status-with-override.out"
+assert_contains "loop.max-iterations" "$TMP_DIR/status-with-override.out"
+assert_contains "The migration audit needs more turns" \
+  "$TMP_DIR/status-with-override.out"
+
+assert_rejected "$LINENO" bash "$CONTROL" override loop.max-iterations 50 \
+  --source agent > "$TMP_DIR/override-no-reason.out" 2>&1
+assert_contains "--reason is required" "$TMP_DIR/override-no-reason.out"
+
+bash "$CONTROL" clear-override loop.max-iterations --source agent \
+  --reason "Return to the normal audit budget" > "$TMP_DIR/override-clear.out"
+assert_eq "30" \
+  "$(dx_override_effective "$DEX_SESSION_ID" loop.max-iterations 30 2)" \
+  "cleared CLI override"
+
+WAIVER_SESSION="$(dx_session_repo_key)-agent-waiver"
+printf '%s\n' 2 > "$(dx_state_file "$WAIVER_SESSION")"
+printf '%s\n' inline > "$(dx_handoff_mode_file "$WAIVER_SESSION")"
+WAIVER_COMPLETION=$(dx_completion_issue "$WAIVER_SESSION" lifecycle phase 2)
+printf '2:PHASE_2_COMPLETE:%s/prompts/phase-audits/2-implement.md:1:lifecycle:phase:%s\n' \
+  "$ROOT" "$WAIVER_COMPLETION" > "$(dx_loop_config_file "$WAIVER_SESSION")"
+touch "$(dx_active_file "$WAIVER_SESSION")"
+env DEX_SESSION_ID="$WAIVER_SESSION" bash "$CONTROL" waive \
+  verification.required-gates --source agent \
+  --reason "The platform-specific checker is unavailable in this environment" \
+  > "$TMP_DIR/waiver.out"
+assert_eq "agent" "$(dx_lifecycle_control_read "$WAIVER_SESSION" source)" \
+  "agent waiver attribution"
+assert_eq "waived" \
+  "$(dx_override_effective "$WAIVER_SESSION" verification.required-gates \
+    enforce 2)" "named assurance waiver"
+assert_contains "transition to Phase 3 is pending" "$TMP_DIR/waiver.out"
+dx_cleanup_session "$WAIVER_SESSION"
+
 for unsafe_control_kind in symlink fifo directory wrong-mode; do
   case "$unsafe_control_kind" in
     symlink) ln -s /dev/null "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ;;
@@ -85,7 +143,7 @@ for unsafe_control_kind in symlink fifo directory wrong-mode; do
   esac
   assert_rejected "$LINENO" bash "$CONTROL" status \
     > "$TMP_DIR/unsafe-control-${unsafe_control_kind}.out" 2>&1
-  assert_contains "unsafe or unreadable human-control receipt" \
+  assert_contains "unsafe or unreadable control receipt" \
     "$TMP_DIR/unsafe-control-${unsafe_control_kind}.out"
   if [[ -d "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]]; then
     rmdir "$(dx_lifecycle_control_file "$DEX_SESSION_ID")"
@@ -126,13 +184,18 @@ assert_file "$(dx_loop_config_file "$DEX_SESSION_ID")"
 assert_file "$(dx_handoff_mode_file "$DEX_SESSION_ID")"
 rmdir "$(dx_active_file "$DEX_SESSION_ID")"
 
-bash "$CONTROL" resume > "$TMP_DIR/resume.out"
+bash "$CONTROL" resume --source agent \
+  --reason "The transient state-file conflict has been removed" \
+  > "$TMP_DIR/resume.out"
 [[ ! -f "$(dx_lifecycle_control_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 [[ ! -f "$(dx_paused_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 [[ -f "$(dx_active_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 RESUME_GENERATION=$(dx_completion_current_generation "$DEX_SESSION_ID" lifecycle phase 2)
 [[ "$RESUME_GENERATION" =~ ^[0-9a-f]{32}$ ]] || assert_at $LINENO
 [[ "$RESUME_GENERATION" != "$INITIAL_GENERATION" ]] || assert_at $LINENO
+assert_eq "requested" \
+  "$(dx_override_effective "$DEX_SESSION_ID" control.resume none 2)" \
+  "agent resume attribution"
 [[ "$(cut -d: -f5-7 "$(dx_loop_config_file "$DEX_SESSION_ID")")" == "lifecycle:phase:${RESUME_GENERATION}" ]] || assert_at $LINENO
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$DEX_SESSION_ID\" \"$RESUME_GENERATION\"" "$TMP_DIR/resume.out"
 

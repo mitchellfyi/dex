@@ -1,5 +1,19 @@
 # Failure Recovery
 
+Read the current soft recovery defaults before deciding whether to switch
+strategy or escalate:
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+ATTEMPTS_PER_STRATEGY=$(dx_failure_attempts_per_strategy "$SESSION_ID")
+MAX_STRATEGIES=$(dx_failure_max_strategies "$SESSION_ID")
+```
+
+The defaults are 3 concrete attempts per strategy and 2 materially different
+strategies. The agent may ask the human to change them or record a justified
+`failure.attempts-per-strategy` / `failure.max-strategies` override itself.
+
 Use this process after the same check or review finding fails twice. Stop
 repeating the current attempt before it turns into a loop.
 
@@ -18,8 +32,8 @@ will change. Do not count another identical retry as a new strategy.
 
 ## Recover within the approved contract
 
-Try no more than three concrete attempts for one strategy, then switch to a
-materially different strategy. Useful choices include:
+Try no more than `ATTEMPTS_PER_STRATEGY` concrete attempts for one strategy,
+then switch to a materially different strategy. Useful choices include:
 
 - Re-read the exact failure and compare it with a working pattern in the repo.
 - Reduce the reproduction and test the smallest failing boundary.
@@ -35,8 +49,8 @@ useful context, but it never satisfies a completion gate.
 
 ## Escalate without claiming completion
 
-After two materially different strategies fail, use the exact escalation
-command supplied by the Dex hook. That command is bound to this launch's
+After `MAX_STRATEGIES` materially different strategies fail, the default is to
+use the exact escalation command supplied by the Dex hook. That command is bound to this launch's
 completion generation. Never look up a newer generation and never write a
 completion, readiness, or human-control marker yourself.
 

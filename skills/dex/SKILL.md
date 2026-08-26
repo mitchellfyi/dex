@@ -26,7 +26,7 @@ resulting state and continue using the current phase's completion criteria.
 1. Runs in NORMAL mode (no plan mode) so the agent can write to git and the tracker before any planning starts.
 2. Follow `prompts/ticket-instructions.md` end to end:
    - Read the ticket from the configured tracker (including all comments).
-   - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, **[STOP]** and warn.
+   - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, pause and ask by default. A justified `setup.ticket-ownership` waiver may continue without claiming ownership changed.
    - Rename the lifecycle branch to the tracker's git branch name and push it with upstream tracking. Draft PR creation normally stays with Phase 5 unless the user asks for it earlier.
    - Set ticket status to **In Progress**.
    - If the description is empty or unclear, draft 2-3 sentences plus an acceptance-criteria checklist, present to the user, and update the ticket once confirmed.
@@ -38,7 +38,7 @@ resulting state and continue using the current phase's completion criteria.
 
 1. Phase 0 already handled ticket setup; do not redo it unless something is clearly missing (status still Backlog/Todo, no assignee, branch not renamed/pushed).
 2. Run `/dxplan` — gather any remaining context, draft the implementation plan, create tasks.
-3. **[STOP]** Present the plan to the user. Wait for approval.
+3. Present the plan and wait for approval by default. If an outlier justifies proceeding in the current session, record a named `plan.approval` waiver; do not represent it as human approval.
 4. If the user requests changes, revise and re-present.
 5. When running under the terminal `dx` lifecycle, stop once immediately after approval so the Stop hook can audit the plan and inject Phase 2 in the same session. Do not tell the user to run `/dximplement`.
 6. When running `/dex` interactively without the wrapper, output `PHASE_1_COMPLETE` when the user approves.
@@ -46,7 +46,7 @@ resulting state and continue using the current phase's completion criteria.
 ### Phase 2: Implement
 
 1. Invoke the Skill tool with `skill: "dximplement"` — work through tasks with TDD discipline. The plan approval was the go-ahead; do not pause to ask for permission.
-2. **[STOP]** if ambiguous requirements, scope changes, or blocked dependencies arise.
+2. Ask by default if ambiguous requirements, scope changes, or blocked dependencies arise. The active agent may use the attributed override/waiver contract when proceeding is justified.
 3. For UI-affecting changes, invoke `/dxuicapture` before UI edits for baseline evidence, then again after implementation. Capture screenshots/traces, record video for interactive flows, and link the `visual-evidence.md` manifest from Dex's artifact directory.
 4. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
 5. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, the manual smoke test passed or explicitly N/A, and UI capture evidence present or explicitly N/A.
@@ -74,7 +74,9 @@ resulting state and continue using the current phase's completion criteria.
 4. The loop uses the selected tier's trusted clean-wave requirement. The
    defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`. A candidate
    branch cannot lower the active gate, and the loop has no outer iteration
-   maximum.
+   maximum. If the gate is inappropriate for an outlier, keep the attestation
+   intact and use a reasoned `dx control waive review.clean-passes`; the phase
+   is then recorded as waived rather than passed.
 5. Prior review conclusions, findings, fingerprints, clean counts, and telemetry
    are never passed to a later reviewer.
 6. Each accepted wave supplies evidence version 3 with exact ordered criterion
@@ -93,7 +95,7 @@ resulting state and continue using the current phase's completion criteria.
 ### Phase 4: Verify & Commit
 
 1. Run `/dxverify` — format, lint, typecheck, generate, test.
-2. Fix any failures. Re-run until all green, within the retry budget from `prompts/failure-recovery.md` (3 retries per strategy, 2 strategies).
+2. Fix any failures. Re-run until all green, using the current retry defaults from `dx_failure_attempts_per_strategy` and `dx_failure_max_strategies` as described in `prompts/failure-recovery.md`.
 3. Run `/dxcommit` — atomic conventional commits, push to origin.
 4. Output `PHASE_4_COMPLETE` when all checks pass and code is pushed.
 
@@ -107,10 +109,10 @@ resulting state and continue using the current phase's completion criteria.
 
 1. Read `## Reviewers` from `dex.md`. On the first cycle: `gh pr ready`, re-sync `request` reviewers (idempotent), post one `@mention` comment listing all `mention` reviewers.
 2. Set up monitoring: `/loop 5m /dxwatchpr`. The PR watcher handles both CI failures and review feedback.
-3. Wait at least `DEX_COMPLETE_WAIT_MINUTES` minutes (default 5) per cycle. The Stop hook re-injects the audit and only authorizes outcome evaluation once the window has elapsed.
-4. **[STOP]** if a loop escalates (CI failures after 3 attempts, architectural review comments, secrets scan, scope conflict).
+3. Re-read `dx_complete_wait_minutes` (default 5) each cycle. The Stop hook re-injects the audit and only authorizes outcome evaluation once the current window has elapsed.
+4. Escalate by default when a loop reaches `dx_complete_ci_fix_attempts`, or encounters architectural review comments, a secrets scan failure, or a scope conflict. Ask for or record a justified waiver when an exception is appropriate.
 5. After each push: re-request `request` reviewers and post a fresh mention comment so reviewers know there's something new.
-6. After `DEX_COMPLETE_MAX_CYCLES` (default 3) idle cycles with no progress, escalate to the user.
+6. After the current `dx_complete_max_cycles` value (default 3) is reached with no progress, escalate to the user.
 7. When CI green AND all successfully requested `request` reviewers have approved, run `/dxcomplete`'s final verification — update tracker to Done, print summary.
 8. Output `DEX_TICKET_COMPLETE` once verification passes.
 
@@ -121,8 +123,9 @@ If the session is interrupted, `dx 999` or `dx --resume` picks up from the saved
 As a fallback (for example, `/dex` without the wrapper), use repository and PR
 state to orient the next action. External state is a hint, not proof that an
 unrecorded Review or Verify phase passed. Prefer persisted Dex phase outcomes
-when they exist, and ask for an explicit human waiver or jump before bypassing
-an unresolved gate.
+when they exist. Ask for a waiver or jump before bypassing an unresolved gate
+when the consequence is material; the active agent may also apply a reasoned
+session override when the safe choice is clear.
 
 1. **Check for existing PR**: `gh pr view --json state,isDraft,statusCheckRollup`
    - No PR + branch still on `worktree-ticket-*` or `worktree-task-*` and ticket status is not yet In Progress → Phase 0 (Setup)
@@ -131,8 +134,9 @@ an unresolved gate.
      Dex phase; do not infer Review or Verify completion from the PR alone
    - Merged PR with Dex already at Phase 5 or later → reconcile Phase 5 as
      externally complete and continue Phase 6 cleanup
-   - Merged PR while Dex is still before Phase 5 → surface the mismatch and wait
-     for an explicit human waiver or phase jump
+   - Merged PR while Dex is still before Phase 5 → surface the mismatch, then
+     ask for a waiver or apply a reasoned agent waiver when waiting would not
+     improve the decision
 
 2. **Check task list**: If tasks exist from a prior `/dxplan`, offer to resume from the first incomplete task rather than re-planning.
 
@@ -193,18 +197,22 @@ Only output `DEX_TICKET_COMPLETE` when you have verified:
 
 ### Escalation in autonomous mode
 
-Even in autonomous mode, STOP and escalate to the user for:
+Even in autonomous mode, escalate to the user by default for:
 - Secrets scan failures (never auto-fix)
 - Architectural review comments (need human judgement)
-- 3+ failed attempts at the same fix
+- The current `dx_failure_attempts_per_strategy` budget at the same fix
 - Scope changes that affect other tickets
 
 When a launch or Stop audit supplies an exact generation-bound escalation
-command, use that literal command after two materially different recovery
-strategies fail. It pauses and detaches the current generation and revokes its
+command, use that literal command after the current
+`dx_failure_max_strategies` default is reached. It pauses and detaches the current generation and revokes its
 completion authorization. It does not create a human control receipt or a
 completion receipt. Never substitute a raw pause marker, a generic human
 control command, or relaxed completion criteria.
+
+These are soft escalation defaults. If an outlier makes one counterproductive,
+the agent may ask the user or record a specific, reasoned override itself. It
+must preserve any unmet assurance item as waived, skipped, or unresolved.
 
 ## Notes
 

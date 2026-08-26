@@ -16,7 +16,7 @@ Evidence: tracker tool invocation succeeded, or N/A.
 ## 2. Assignee
 
 - If the tracker supports assignees: the ticket is assigned to the authenticated user.
-- If the ticket was already assigned to someone else: you STOPPED and warned the user (do NOT silently reassign).
+- If the ticket was already assigned to someone else: you paused and warned the user by default. Do not silently reassign. A reasoned `setup.ticket-ownership` waiver may continue without claiming the assignee changed.
 - If no tracker is configured: this step is N/A.
 
 Evidence: tracker output shows the assignee, or N/A.

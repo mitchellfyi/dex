@@ -141,7 +141,7 @@ and untracked scope still matches.
 
 For browser UI changes, Phase 2 also requires before/after UI capture evidence before handoff to review. `/dxuicapture` stores screenshots, videos, traces, browser logs, and a `visual-evidence.md` upload manifest under `~/.claude/.dex-artifacts/` and links them in the implementation evidence. See [ui-capture.md](ui-capture.md).
 
-Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from `.dex/dex.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer. The autonomous loop waits at least `DEX_COMPLETE_WAIT_MINUTES` (default 5) per cycle for CI and reviews, addresses failures through `/dxwatchpr` and `/dxprreview`, re-requests reviewers after each push, and closes the ticket once CI is green and all successfully requested reviewers approve. Reviewers GitHub says are not requestable for the repository are warnings, not approval gates. After `DEX_COMPLETE_MAX_CYCLES` (default 3) idle cycles with no progress, it pauses with manual follow-up instructions. It never merges the PR.
+Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from `.dex/dex.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer. The autonomous loop re-reads `dx_complete_wait_minutes` (default 5) and `dx_complete_max_cycles` (default 3) each cycle, addresses failures through `/dxwatchpr` and `/dxprreview`, re-requests reviewers after each push, and closes the ticket once CI is green and all successfully requested reviewers approve. Reviewers GitHub says are not requestable for the repository are warnings, not approval gates. When the current idle budget is exhausted, it pauses with manual follow-up instructions. It never merges the PR.
 
 DX maintain has a separate GitHub Actions path for background maintenance. The
 installed workflow can run on schedules, manual dispatch, trusted `issues`
@@ -164,7 +164,7 @@ GitHub native auto-merge for the exact published head with
 `gh pr merge --auto --match-head-commit`. Dex does not use admin bypass, and the
 provider session still never receives GitHub write credentials.
 
-When the user submits a direct prompt during Phase 6, the `UserPromptSubmit` hook writes a `.watch-pause` marker. Scheduled `/dxwatchpr` cycles must no-op while the marker is active, so manual work is not interrupted by CI/review polling commands. The pause expires after `DEX_WATCH_PAUSE_TTL_SECONDS` (default `60m 0s`) unless the user runs `/dxcomplete` or asks to resume watching.
+When the user submits a direct prompt during Phase 6, the `UserPromptSubmit` hook writes a `.watch-pause` marker. Scheduled `/dxwatchpr` cycles must no-op while the marker is active, so manual work is not interrupted by CI/review polling commands. The pause uses `dx_watch_pause_ttl_seconds` (default `60m 0s`) unless the user runs `/dxcomplete` or asks to resume watching.
 
 Each watcher cycle also has a runtime lock with a default budget of `2m 0s`. If a later `/loop` tick fires while the previous `/dxwatchpr` cycle is still within that budget, the later tick skips instead of starting overlapping GitHub or CI work. Individual watcher shell commands default to `0m 30s`.
 
@@ -173,6 +173,68 @@ handoffs in the same Claude session without asking whether to continue. A phase 
 explicit escalation condition such as missing credentials/tooling, a destructive
 git decision, repeated failed fix attempts, a max phase-audit count, review
 findings/blockers/churn, or feedback that needs human judgement.
+
+### Session policy overrides
+
+Those escalation points and runtime budgets are defaults, not immutable
+restrictions. The active Claude Code or Codex agent may ask the human for an
+exception, or make one itself when the safe choice is clear and waiting would
+be counterproductive. Changes are applied through the same provider-neutral
+control command, so they take effect inside the current lifecycle without
+relaunching the provider:
+
+```bash
+# Change one operational default for the current phase.
+dx control override review.pass-timeout 2400 --source agent \
+  --reason "The thorough checks need a longer provider window"
+
+# Keep an override for the rest of the session, or give it a time limit.
+dx control override watch.command-timeout 90 --scope session \
+  --for-seconds 1800 --source human \
+  --reason "Repository API calls are slow today"
+
+# Remove a policy change.
+dx control clear-override watch.command-timeout --scope session \
+  --source agent --reason "API latency has recovered"
+
+# Waive an assurance gate and advance through the normal locked transition.
+dx control waive review.clean-passes --source agent \
+  --reason "Provider failures prevent independent waves; direct review and deterministic checks are complete"
+```
+
+Overrides are phase-scoped unless `--scope session` is supplied. `--for-seconds`
+adds an expiry; `0` means no expiry. `dx control status` shows the effective
+records with source and reason. When a human authorizes the exception in chat,
+the agent records `--source human`; an agent-originated exception requires a
+reason. Explicit one-shot command flags still win where a command has its own
+budget option.
+
+The built-in operational gates are:
+
+| Gate | Value and consumer |
+|------|--------------------|
+| `session.timeout`, `phase.timeout` | Non-negative seconds for the live lifecycle watchdog; `0` disables that deadline |
+| `phase.min-audits` | Minimum Stop-hook audits before normal completion |
+| `loop.max-iterations`, `loop.stall-timeout`, `loop.stall-escalate` | Audit-loop attempt and stall budgets |
+| `review.pass-timeout`, `review.notice-interval`, `review.recheck-seconds` | Review provider and Phase 3 wait budgets |
+| `watch.pause-ttl`, `watch.cycle-timeout`, `watch.command-timeout` | Phase 6 watcher pause, lease, and command budgets |
+| `complete.max-cycles`, `complete.wait-minutes` | Phase 6 idle-cycle and wait defaults |
+| `failure.attempts-per-strategy`, `failure.max-strategies`, `complete.ci-fix-attempts` | Recovery and repeated-CI-failure escalation defaults |
+| `sync.budget-minutes` | `dx sync` provider budget |
+| `maintain.budget-minutes`, `maintain.respond-budget-minutes` | Maintenance provider budgets |
+| `maintain.command-timeout-seconds`, `maintain.max-surfaces`, `maintain.max-prs` | Maintenance prompt limits and PR cap |
+| `guard.<guard-name>` | `allow` turns a matching project `block` guard into an attributed warning; `enforce` restores it |
+
+Assurance requirements use a named waiver instead of a lower numeric target.
+For example, waive `review.clean-passes`, `verification.required-gates`, or a
+project-specific gate. A waiver records the phase as `waived` or bypassed
+phases as `skipped`; it never creates a clean-review receipt or labels an
+unverified check as passed.
+
+State integrity is not a soft gate. Dex still requires a valid private override
+journal, transition ownership, atomic state changes, and a quiesced Phase 3
+child before crossing its boundary. Malformed policy state grants nothing and
+pauses consumers that rely on it.
 
 ### Direct human control
 
@@ -195,13 +257,14 @@ dx control jump verify
 dx control resume
 ```
 
-Human control does not disable review-wave session isolation or the
-destructive-command, secret, and sensitive-file guards. Commit, push, and PR
-operations are not blocked by lifecycle phase, with or without a human control
-receipt. A requested Phase 3 jump becomes a safe detach if a review child is
-still marked in flight; the jump can be retried after that process ends.
-Human-marked lifecycle completion also preserves the workspace instead of
-running automatic worktree cleanup.
+Human control does not disable review-wave session isolation. Built-in guards
+remain advisory. A project guard configured as `block` remains blocking unless
+the human or agent records its specific `guard.<name>=allow` override. Commit,
+push, and PR operations are not blocked by lifecycle phase, with or without a
+control receipt. A requested Phase 3 jump becomes a safe detach if a review
+child is still marked in flight; the jump can be retried after that process
+ends. Human-marked lifecycle completion also preserves the workspace instead
+of running automatic worktree cleanup.
 
 Audit prompts are editable markdown files. Changes take effect on the next loop iteration without reloading shell functions.
 
@@ -491,7 +554,7 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - `.prompt` — original freeform task or `dxloop` prompt, re-injected during audits and kept outside the git checkout
 - `.handoff-mode` — marker that this `dx` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
-- `.control` — current direct-human pause, stop, complete, or phase-jump receipt; stores a prompt hash rather than prompt text
+- `.control` — current human- or agent-originated pause, stop, complete, or phase-jump receipt; human prompts are represented by a hash rather than prompt text
 - `.control-lock` — transition lock that prevents two Stop-hook invocations from applying the same receipt
 - `.watch-pause` — marker that scheduled Phase 6 PR watcher should no-op after a direct user prompt
 - `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dxwatchpr` cycle
@@ -548,6 +611,8 @@ Phase state is stored in `~/.claude/.dex-phases/`:
 - One `.system-context` file per worktree, used by `--append-system-prompt-file` for compaction resilience (regenerated each phase, cleaned up by `SessionEnd` hook)
 - One `.branch` file per lifecycle session, used by in-place mode to resume on the correct branch after branch renames or shell navigation
 - One `.interventions` file per lifecycle session, recording human control receipts for audit without storing prompt text
+- One `.overrides` journal per lifecycle session, recording active and cleared
+  agent/human policy changes with scope, optional expiry, and reason
 - One `.phase-outcomes` file per lifecycle session — the durable terminal outcome ledger (completed/skipped/waived) behind the progress header symbols
 - One `.human-complete` file per lifecycle session when a human marked the lifecycle done, which preserves the workspace instead of cleaning it up
 - One `.meta` file per lifecycle or declared review child, with trusted
@@ -561,6 +626,11 @@ Phase state is stored in `~/.claude/.dex-phases/`:
 UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots, videos, traces, flow scripts, logs, and PR upload manifests stay out of git.
 
 ## Environment Variables
+
+These values provide launch-time defaults. A valid active-session override
+listed above is read again by its consumer and takes precedence without a
+relaunch. Assurance gates are waived through `dx control waive`; their success
+receipts are never weakened.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

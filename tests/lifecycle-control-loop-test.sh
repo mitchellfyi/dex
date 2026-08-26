@@ -163,6 +163,23 @@ if grep -q "Phase 2 Gate" <<<"$OUT"; then
   exit 1
 fi
 
+SID="agent-control-waive"
+setup_inline "$SID" 2
+dx_override_set "$SID" verification.required-gates waived phase 2 agent \
+  "The platform-specific verifier is unavailable" 0
+dx_write_lifecycle_control "$SID" complete 3 agent "" 2 ""
+run_hook "$SID" 2
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+assert_eq "3" "$(cat "$(dx_state_file "$SID")")" \
+  "agent waiver advances the phase"
+assert_eq "waived" "$(dx_phase_outcome_latest "$SID" 2)" \
+  "agent waiver outcome"
+grep -q "agent override" <<<"$OUT"
+if grep -q "gates-passed" "$(dx_phase_outcomes_file "$SID")"; then
+  printf 'agent waiver was recorded as gates passed\n' >&2
+  exit 1
+fi
+
 SID="human-control-jump"
 setup_inline "$SID" 2
 BUSY_TOKEN=$(dx_phase_busy_begin "$SID" 3 "cross-phase review child")

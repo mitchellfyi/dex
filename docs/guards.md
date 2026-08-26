@@ -130,6 +130,21 @@ enabled: false
 ---
 ```
 
+For a temporary exception during an active Dex lifecycle, leave the guard file
+unchanged and record an attributed softening instead:
+
+```bash
+dx control override guard.no-force-push allow --scope session \
+  --source human --reason "Emergency rollback approved in this session"
+```
+
+The matching `block` becomes a warning for that phase or session and its hook
+message includes the source and reason. Use `clear-override` with the same gate
+and scope to restore the file's policy early. An agent can use `--source agent`,
+but must provide its own reason. An absent, expired, malformed, linked, or
+wrong-mode override journal grants no exception; the original block remains in
+force.
+
 ## Pattern Syntax
 
 Guards use Python regex (`re.MULTILINE`). Matching is case-insensitive by default; add `case_sensitive: true` to the frontmatter for exact-case matching:

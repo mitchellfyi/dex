@@ -19,8 +19,14 @@ export DEX_DIR="$ROOT"
 # guard applicability must not vary with the developer's real config.
 GUARD_HOME_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dex-guards-home.XXXXXX")"
 export HOME="$GUARD_HOME_TMP/home"
-mkdir -p "$HOME"
+export DX_STATE_DIR="$GUARD_HOME_TMP/state"
+export DX_LOOP_DIR="$GUARD_HOME_TMP/loops"
+export DX_RUN_ROOT="$GUARD_HOME_TMP/runs"
+mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 trap 'rm -rf "$GUARD_HOME_TMP"' EXIT
+
+# shellcheck disable=SC1091
+source "$ROOT/lib/common.sh"
 
 pass=0
 fail=0
@@ -1276,6 +1282,43 @@ assert_action "a capitalised Block blocks"           'action: Block' yes no
 assert_action "an unknown action warns and says so"  'action: deny'  no  yes
 assert_action "a misspelled block warns and says so" 'action: bock'  no  yes
 assert_action "an omitted action is a quiet warn"    ''              no  no
+
+# A project block guard remains the default, but a session-scoped allow record
+# can soften it without editing the repo's guard definition. The handler must
+# surface that decision as context and preserve its attribution.
+OVERRIDE_GUARD_REPO="$GUARD_HOME_TMP/override-guard-repo"
+mkdir -p "$OVERRIDE_GUARD_REPO/.dex/guards"
+printf '%s\n' '---' 'name: test-session-block' 'enabled: true' \
+  'event: bash' 'pattern: frobnicate' 'action: block' '---' '' \
+  'This project normally blocks frobnicate.' \
+  > "$OVERRIDE_GUARD_REPO/.dex/guards/test-session-block.md"
+set +e
+GUARD_OUT="$(cd "$OVERRIDE_GUARD_REPO" && mkbashpayload 'frobnicate safely' \
+  | env DEX_GUARD_EVENT=bash DEX_SESSION_ID=repo-guard-override-main \
+    python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 2 && "$GUARD_OUT" == *'test-session-block'* ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (project block baseline; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+dx_override_set repo-guard-override-main guard.test-session-block allow \
+  session - agent "The project-specific command is safe for this fixture" 0
+set +e
+GUARD_OUT="$(cd "$OVERRIDE_GUARD_REPO" && mkbashpayload 'frobnicate safely' \
+  | env DEX_GUARD_EVENT=bash DEX_SESSION_ID=repo-guard-override-main \
+    DX_STATE_DIR="$DX_STATE_DIR" python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 && "$GUARD_OUT" == *'OVERRIDDEN'* \
+  && "$GUARD_OUT" == *'test-session-block'* ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (session guard override; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
 
 printf 'guards-test: %d passed, %d failed\n' "$pass" "$fail"
 if [[ "$fail" -ne 0 ]]; then

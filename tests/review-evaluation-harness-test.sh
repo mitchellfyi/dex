@@ -185,8 +185,10 @@ runtime_contract_files=(
   bin/complete-receipt.sh
   bin/session-runtime-owner.sh
   dx.sh
+  hooks/user-prompt-submit.sh
   lib/common.sh
   lib/completion.sh
+  lib/override.sh
   lib/review.sh
   lib/review-controller.sh
   lib/review-loop.sh
@@ -723,14 +725,17 @@ PY
 
 normal_trial="$TMP_DIR/normal-tier-trial"
 complex_trial="$TMP_DIR/complex-tier-trial"
+# These fixtures exercise three and six clean waves respectively. Give their
+# process-level safety deadline headroom on slower CI hosts; wave behavior and
+# every result assertion remain unchanged.
 REVIEW_EVAL_TEST_STUB=1 \
 REVIEW_EVAL_TEST_STUB_MODE=tier-normal \
   review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
-    normal-control 1 claude "test-claude" "high" 120 "$normal_trial"
+    normal-control 1 claude "test-claude" "high" 300 "$normal_trial"
 REVIEW_EVAL_TEST_STUB=1 \
 REVIEW_EVAL_TEST_STUB_MODE=tier-complex \
   review_eval_run_trial "$runtime_source" "$runtime_source_sha" baseline \
-    complex-control 1 claude "test-claude" "high" 120 "$complex_trial"
+    complex-control 1 claude "test-claude" "high" 300 "$complex_trial"
 
 premature_trial="$TMP_DIR/premature-completion-trial"
 cp -R "$managed_trial" "$premature_trial"
