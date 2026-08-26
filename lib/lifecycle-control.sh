@@ -209,10 +209,10 @@ dx_lifecycle_terminal_commit_publish_unlocked() {
     "version=1"$'\n'"phase=7"$'\n'"transition_token=${transition_token}"$'\n'"authority=${authority}"
 }
 
-__dx_lifecycle_terminal_commit_valid_unlocked() {
+__dx_lifecycle_terminal_commit_proof_valid_unlocked() {
   [[ $# -eq 1 ]] || return 1
   local session_id="$1" terminal_raw="" line_one line_two line_three line_four
-  local remaining terminal_file human_file live_file
+  local remaining terminal_file human_file
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "${DX_LIFECYCLE_CONTROL_LOCK_SESSION:-}" == "$session_id" \
     && -n "${DX_LIFECYCLE_CONTROL_LOCK_TOKEN:-}" ]] || return 1
@@ -232,6 +232,18 @@ __dx_lifecycle_terminal_commit_valid_unlocked() {
   [[ "$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)" == "7" ]] \
     || return 1
 
+  human_file=$(dx_lifecycle_human_complete_file "$session_id")
+  if [[ -e "$human_file" || -L "$human_file" ]]; then
+    dx_lifecycle_human_complete_valid "$session_id" || return 1
+  fi
+  return 0
+}
+
+__dx_lifecycle_terminal_commit_valid_unlocked() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" live_file
+  __dx_lifecycle_terminal_commit_proof_valid_unlocked "$session_id" \
+    || return 1
   for live_file in \
     "$(dx_lifecycle_control_file "$session_id")" \
     "$(dx_paused_file "$session_id")" \
@@ -246,10 +258,34 @@ __dx_lifecycle_terminal_commit_valid_unlocked() {
     "$(dx_phase_busy_quiesced_file "$session_id" 3)"; do
     [[ ! -e "$live_file" && ! -L "$live_file" ]] || return 1
   done
-  human_file=$(dx_lifecycle_human_complete_file "$session_id")
-  if [[ -e "$human_file" || -L "$human_file" ]]; then
-    dx_lifecycle_human_complete_valid "$session_id" || return 1
+  return 0
+}
+
+# Older Dex versions could validate completion context before recognizing
+# Phase 7 and add this exact pause to an otherwise valid terminal transaction.
+# Repair only that known artifact, restoring it if another invariant is broken.
+dx_lifecycle_terminal_invalid_context_repair_unlocked() {
+  [[ $# -eq 1 ]] || return 1
+  local session_id="$1" paused_file pause_file paused_raw="" pause_raw=""
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  __dx_lifecycle_terminal_commit_proof_valid_unlocked "$session_id" \
+    || return 1
+  paused_file=$(dx_paused_file "$session_id")
+  pause_file=$(dx_pause_state_file "$session_id")
+  paused_raw=$(dx_lifecycle_trusted_file_read "$paused_file" 64) || return 1
+  pause_raw=$(dx_lifecycle_trusted_file_read "$pause_file" 512) || return 1
+  [[ "$paused_raw" == "paused" \
+    && "$pause_raw" == "reason=invalid-completion-context"$'\n'"source=phase-loop" ]] \
+    || return 1
+
+  command rm -f "$paused_file" "$pause_file" 2>/dev/null || return 1
+  if __dx_lifecycle_terminal_commit_valid_unlocked "$session_id"; then
+    return 0
   fi
+
+  dx_lifecycle_atomic_write "$pause_file" "$pause_raw" 2>/dev/null || true
+  dx_lifecycle_atomic_write "$paused_file" "$paused_raw" 2>/dev/null || true
+  return 1
 }
 
 # A terminal proof becomes authoritative only after its publishing transition

@@ -277,6 +277,40 @@ assert_rc "env-activated session proceeds" 2
 assert_file_eq "env-activated session reclaims" "$DX_LOOP_DIR/$SID.owner" "claude-relaunch"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
+# A stale provider environment survives the Phase 6 handoff, but Phase 7 is
+# already terminal and has no completion config to recover. Older hooks paused
+# here before reaching their terminal-state check; repair that exact artifact
+# and let Claude exit normally.
+SID="repo-test-3-completed-main"
+dx_lifecycle_atomic_write "$(dx_state_file "$SID")" 7
+dx_lifecycle_control_lock_acquire "$SID"
+dx_lifecycle_terminal_commit_publish_unlocked "$SID" \
+  0123456789abcdef0123456789abcdef
+dx_lifecycle_control_lock_release "$SID"
+dx_write_pause_state "$SID" invalid-completion-context phase-loop
+dx_lifecycle_atomic_write "$(dx_paused_file "$SID")" paused
+set +e
+OUT="$(printf '{"session_id":"claude-completed"}' | env \
+  DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=6 \
+  DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "completed lifecycle exits normally" 0
+assert_out_lacks "completed lifecycle avoids invalid context" \
+  "could not recover a versioned completion context"
+if dx_lifecycle_terminal_commit_valid "$SID"; then
+  report "completed lifecycle retains valid terminal proof" 0
+else
+  report "completed lifecycle retains valid terminal proof" 1
+fi
+if [[ ! -e "$(dx_paused_file "$SID")" \
+  && ! -e "$(dx_pause_state_file "$SID")" ]]; then
+  report "completed lifecycle retires false pause" 0
+else
+  report "completed lifecycle retires false pause" 1
+fi
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
 # --- case 4: completed review pass never runs the inline phase handoff ---
 SID="repo-test-4-main-pass-1-999"
 configure_review_pass_completion "$SID"

@@ -571,32 +571,6 @@ if isinstance(value, str):
 ' 2>/dev/null || true)
 fi
 
-# Ownership guard — SESSION_ID is path-derived, so a bystander Claude session
-# opened in the same worktree/branch resolves the same id and would otherwise
-# be captured by this hook (injected audits, phase handoffs). Claim rules:
-#   - env-activated sessions (DEX_LOOP_ACTIVE=1 with an explicit
-#     DEX_SESSION_ID) were launched by a dx wrapper for exactly this loop;
-#     they own it and (re)claim on every stop.
-#   - file-activated sessions (.active only) claim only when unclaimed; on a
-#     mismatch they stay inert.
-# Wrappers remove the claim before each launch (relaunch/--resume gets a fresh
-# Claude session id). Empty HOOK_CLAUDE_SESSION_ID (payload missing/unparsable)
-# skips enforcement rather than breaking active loops.
-OWNER_FILE=$(dx_owner_file "$SESSION_ID")
-if [[ -n "$HOOK_CLAUDE_SESSION_ID" ]]; then
-  OWNER_ID=""
-  [[ -f "$OWNER_FILE" ]] && OWNER_ID=$(cat "$OWNER_FILE" 2>/dev/null || echo "")
-  if [[ "$OWNER_ID" != "$HOOK_CLAUDE_SESSION_ID" ]]; then
-    if [[ "$LOOP_ACTIVE" == "1" && -n "${DEX_SESSION_ID:-}" ]]; then
-      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
-    elif [[ -n "$OWNER_ID" ]]; then
-      exit 0
-    else
-      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
-    fi
-  fi
-fi
-
 HANDOFF_MODE="${DEX_PHASE_HANDOFF:-}"
 HANDOFF_MODE_FILE=$(dx_handoff_mode_file "$SESSION_ID")
 if [[ -z "$HANDOFF_MODE" && -f "$HANDOFF_MODE_FILE" ]]; then
@@ -613,6 +587,7 @@ if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
 fi
 PAUSED_FILE=$(dx_paused_file "$SESSION_ID")
 COMPLETE_FILE=$(dx_complete_file "$SESSION_ID")
+OWNER_FILE=$(dx_owner_file "$SESSION_ID")
 PHASE_STATE_FILE=$(dx_state_file "$SESSION_ID")
 CONFIG_FILE=$(dx_loop_config_file "$SESSION_ID")
 CONTROL_FILE=$(dx_lifecycle_control_file "$SESSION_ID")
@@ -642,6 +617,63 @@ if [[ "$HANDOFF_MODE" == "inline" && "$AUTHORITATIVE_PHASE_RC" -ne 0 ]]; then
     2>/dev/null || true
   printf '\n%s\n' "Dex could not read the authoritative lifecycle phase safely. Completion authorization is closed; repair the phase state before resuming." >&2
   exit 2
+fi
+
+# A completed lifecycle has no live completion config to recover. Recognize
+# its terminal transaction before pause/config handling so stale inline
+# environment from the just-finished provider cannot turn Phase 7 into an
+# invalid-completion-context pause. Repair only the exact pause written by
+# affected older Dex versions.
+if [[ "$AUTHORITATIVE_PHASE" == "7" ]]; then
+  TERMINAL_CONTEXT_RC=0
+  if ! __dx_lifecycle_terminal_commit_valid_unlocked "$SESSION_ID"; then
+    dx_lifecycle_terminal_invalid_context_repair_unlocked "$SESSION_ID" \
+      || TERMINAL_CONTEXT_RC=1
+  fi
+  if [[ "$TERMINAL_CONTEXT_RC" -eq 0 ]]; then
+    rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE" \
+      "$COMPLETE_FILE" "$(dx_pause_state_file "$SESSION_ID")" \
+      "$(dx_loop_file "$SESSION_ID")" "$CONFIG_FILE" \
+      "$(dx_findings_file "$SESSION_ID")" "$(dx_prompt_file "$SESSION_ID")" \
+      "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.started \
+      "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.ready \
+      "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.busy-notice 2>/dev/null || true
+    for FINISHED_PHASE in 0 1 2 4 5 6; do
+      rm -f "$(dx_phase_busy_file "$SESSION_ID" "$FINISHED_PHASE")" \
+        2>/dev/null || true
+    done
+  fi
+  if ! dx_lifecycle_control_lock_release "$SESSION_ID"; then
+    dx_lifecycle_control_lock_release_retained "$SESSION_ID" \
+      2>/dev/null || true
+    printf '\n%s\n' "Dex verified lifecycle completion but could not release its transition lock. Stop again after the stale lock is recovered." >&2
+    exit 2
+  fi
+  if [[ "$TERMINAL_CONTEXT_RC" -eq 0 ]]; then
+    exit 0
+  fi
+  printf '\n%s\n' "Dex found Phase 7 without a valid terminal commit proof. The lifecycle remains inert and was not reported complete." >&2
+  exit 2
+fi
+
+# Ownership guard — SESSION_ID is path-derived, so a bystander Claude session
+# opened in the same worktree/branch resolves the same id and would otherwise
+# be captured by this hook. Completed Phase 7 is handled first because merely
+# claiming it would create live state that invalidates the terminal proof.
+if [[ -n "$HOOK_CLAUDE_SESSION_ID" ]]; then
+  OWNER_ID=""
+  [[ -f "$OWNER_FILE" ]] && OWNER_ID=$(cat "$OWNER_FILE" 2>/dev/null || echo "")
+  if [[ "$OWNER_ID" != "$HOOK_CLAUDE_SESSION_ID" ]]; then
+    if [[ "$LOOP_ACTIVE" == "1" && -n "${DEX_SESSION_ID:-}" ]]; then
+      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
+    elif [[ -n "$OWNER_ID" ]]; then
+      dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
+        2>/dev/null || true
+      exit 0
+    else
+      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
+    fi
+  fi
 fi
 
 # Pause publication is serialized by this same lock. Handle it before config
@@ -1059,7 +1091,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
             fi
             {
               printf '\n--- Dex lifecycle marked complete by %s ---\n\n' "$CONTROL_ACTOR"
-              printf '%s\n' "The lifecycle workspace is preserved; override-authorized completion does not run automatic worktree cleanup."
+              printf '%s\n' "Present a final summary, then exit normally. The Dex launcher will remove the local lifecycle worktree and branch and return the shell to the repository root."
             } >&2
             exit 2
           fi
@@ -1110,48 +1142,6 @@ else
   if ! dx_release_transition_or_brake phase-gate-lock-release; then
     printf '\n%s\n' "Dex could not release its transition lock before the audit gate. Completion authorization was revoked and the lifecycle remains paused." >&2
     exit 2
-  fi
-fi
-
-# After inline Phase 6 completes, the Claude process can still carry stale
-# DEX_LOOP_ACTIVE/DEX_LOOP_PHASE env vars until the user closes the
-# session. The phase state file is authoritative; phase 7 means the lifecycle is
-# done and the Stop hook must not re-enter an earlier gate.
-if [[ "$HANDOFF_MODE" == "inline" ]]; then
-  PHASE_STATE=""
-  PHASE_STATE_RC=0
-  PHASE_STATE=$(dx_lifecycle_phase_state "$SESSION_ID" 2>/dev/null) \
-    || PHASE_STATE_RC=$?
-  if [[ "$PHASE_STATE_RC" -eq 2 ]]; then
-    if dx_lifecycle_control_lock_acquire "$SESSION_ID"; then
-      dx_lifecycle_completion_brake "$SESSION_ID" invalid-phase-state \
-        phase-loop 2>/dev/null || true
-      dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
-        2>/dev/null || true
-    fi
-    printf '\n%s\n' "Dex could not verify the authoritative lifecycle phase. Completion authorization remains closed." >&2
-    exit 2
-  fi
-  if [[ "$PHASE_STATE" == "7" ]]; then
-    if ! dx_lifecycle_terminal_commit_valid "$SESSION_ID"; then
-      dx_lifecycle_completion_brake "$SESSION_ID" \
-        terminal-proof-missing phase-loop 2>/dev/null || true
-      printf '\n%s\n' "Dex found Phase 7 without a valid terminal commit proof. The lifecycle remains inert and was not reported complete." >&2
-      exit 2
-    fi
-    rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE" "$COMPLETE_FILE" \
-      "$(dx_pause_state_file "$SESSION_ID")" "$(dx_loop_file "$SESSION_ID")" \
-      "$(dx_loop_config_file "$SESSION_ID")" "$(dx_findings_file "$SESSION_ID")" \
-      "$(dx_prompt_file "$SESSION_ID")" "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.started \
-      "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.ready "${DX_LOOP_DIR}/${SESSION_ID}".phase-*.busy-notice 2>/dev/null
-    for FINISHED_PHASE in 0 1 2 4 5 6; do
-      rm -f "$(dx_phase_busy_file "$SESSION_ID" "$FINISHED_PHASE")" 2>/dev/null || true
-    done
-    if dx_phase_busy_quiesced "$SESSION_ID" 3; then
-      FINISHED_BUSY_TOKEN=$(dx_phase_busy_token "$SESSION_ID" 3)
-      dx_phase_busy_finish "$SESSION_ID" 3 "$FINISHED_BUSY_TOKEN" 2>/dev/null || true
-    fi
-    exit 0
   fi
 fi
 
