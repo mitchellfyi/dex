@@ -650,6 +650,58 @@ STANDALONE_REVIEW_RECORD="$(dx_session_catalog_record \
   "$STANDALONE_REVIEW_SID" --repo "$REPO_A")"
 assert_eq "completed" "$(json_field "$STANDALONE_REVIEW_RECORD" lifecycle_state)" \
   "standalone clean receipt completes runtime"
+
+# Receipt v6 also carries an override binding when an attributed target is
+# below trusted policy. The catalog delegates full validation and must accept
+# that truthful waived-assurance receipt as a completed standalone runtime.
+LOWERED_REVIEW_SID="$(cd "$REPO_A" && dx_scoped_session_id standalone-lowered-review)"
+dx_meta_write "$LOWERED_REVIEW_SID" \
+  "ticket_number=standalone-lowered-review" \
+  "wt_name=standalone-lowered-review" \
+  "wt_dir=$REPO_A" \
+  "workspace_mode=in-place"
+LOWERED_REVIEW_TOKEN="$(dx_session_runtime_start \
+  "$LOWERED_REVIEW_SID" claude "$REPO_A" "$$")"
+dx_session_runtime_finish "$LOWERED_REVIEW_SID" \
+  "$LOWERED_REVIEW_TOKEN" completed "$$"
+DEX_DIR="$ROOT" DX_STATE_DIR="$DX_STATE_DIR" DX_LOOP_DIR="$DX_LOOP_DIR" \
+  bash -c '
+    source "$DEX_DIR/lib/common.sh"
+    source "$DEX_DIR/tests/review-proof-fixture.sh"
+    session_id="$1"
+    repo_dir="$2"
+    policy_binding="$3"
+    fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || exit 91
+    dx_override_set "$session_id" review.clean-passes 2 phase 3 human \
+      "Two independent clean waves are sufficient for this catalog fixture" \
+      0 || exit 92
+    evidence_file="$4/evidence.json"
+    context_file="$4/context.md"
+    dx_review_write_selection "$session_id" normal environment \
+      operator-override "$repo_dir" 2 standalone "$policy_binding" || exit 93
+    dx_test_write_clean_review_proof "$session_id" catalog-lowered-1 standard \
+      "$fingerprint" standalone "$policy_binding" "$evidence_file" \
+      "$context_file" || exit 94
+    dx_review_ledger_append "$session_id" 1 catalog-lowered-1 standard \
+      "$fingerprint" standalone "$policy_binding" "$evidence_file" \
+      "$context_file" || exit 95
+    evidence_file="$5/evidence.json"
+    context_file="$5/context.md"
+    dx_test_write_clean_review_proof "$session_id" catalog-lowered-2 standard \
+      "$fingerprint" standalone "$policy_binding" "$evidence_file" \
+      "$context_file" || exit 96
+    dx_review_ledger_append "$session_id" 2 catalog-lowered-2 standard \
+      "$fingerprint" standalone "$policy_binding" "$evidence_file" \
+      "$context_file" || exit 97
+    dx_review_write_receipt "$session_id" normal 2 2 "$repo_dir" \
+      standalone "$policy_binding" || exit 98
+  ' _ "$LOWERED_REVIEW_SID" "$REPO_A" "$STANDALONE_REVIEW_POLICY" \
+    "$TMP_DIR/lowered-review-proof-1" "$TMP_DIR/lowered-review-proof-2"
+LOWERED_REVIEW_RECORD="$(dx_session_catalog_record \
+  "$LOWERED_REVIEW_SID" --repo "$REPO_A")"
+assert_eq "completed" \
+  "$(json_field "$LOWERED_REVIEW_RECORD" lifecycle_state)" \
+  "override-bound clean receipt completes standalone runtime"
 chmod u+w "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-proofs" \
   "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-proofs/1" \
   "$DX_LOOP_DIR/${STANDALONE_REVIEW_SID}.review-proofs/1/evidence.json"

@@ -55,12 +55,14 @@ import subprocess
 import sys
 
 try:
+    # This is a deadlock sentinel, not a five-second performance assertion.
+    # Full-suite CPU contention must not turn a correct refusal into a timeout.
     result = subprocess.run(
         ["bash", sys.argv[2], "--skip-analysis", "--skip-config"],
         cwd=sys.argv[1],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        timeout=5,
+        timeout=30,
         check=False,
     )
 except subprocess.TimeoutExpired as exc:

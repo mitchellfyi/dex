@@ -715,6 +715,11 @@ explicit flag or environment setting, or reports the failure so the operation
 can be retried. This separation keeps the session policy registry honest: every
 accepted gate name has a live consumer.
 
+Runtime-supervisor startup and finish waits are in this internal category. They
+default to 15,000ms and 5,000ms and can be changed for a retried command with
+`DX_SESSION_RUNTIME_OWNER_START_TIMEOUT_MILLISECONDS` and
+`DX_SESSION_RUNTIME_OWNER_FINISH_TIMEOUT_MILLISECONDS`.
+
 ## Troubleshooting
 
 ### Loop doesn't stop

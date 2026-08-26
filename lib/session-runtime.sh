@@ -2000,7 +2000,7 @@ EOF
       ;;
   esac
   start_timeout=$(__dx_session_runtime_owner_timeout \
-    DX_SESSION_RUNTIME_OWNER_START_TIMEOUT_MILLISECONDS 5000) || return $?
+    DX_SESSION_RUNTIME_OWNER_START_TIMEOUT_MILLISECONDS 15000) || return $?
   owner_root=$(dx_session_runtime_owner_root) || return 3
   if [[ -e "$owner_root" || -L "$owner_root" ]]; then
     [[ -d "$owner_root" && ! -L "$owner_root" ]] || return 3

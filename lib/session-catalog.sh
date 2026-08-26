@@ -128,9 +128,9 @@ TERMINAL_PROOF_RE = re.compile(
     rb"authority=(?:[0-9a-f]{32}|[0-9]+-[0-9]+-[0-9]+)\n"
 )
 REVIEW_RECEIPT_RE = re.compile(
-    rb"5\t(?:small\tlight|normal\tstandard|complex\tthorough)\t"
+    rb"6\t(?:small\tlight|normal\tstandard|complex\tthorough)\t"
     rb"([1-9][0-9]{0,14})\t\1\t[0-9a-f]{64}\t[0-9a-f]{64}\t"
-    rb"(?:standalone|[0-9a-f]{64})\t[0-9a-f]{64}\n"
+    rb"(?:standalone|[0-9a-f]{64})\t[0-9a-f]{64}\t(?:-|[0-9a-f]{64})\n"
 )
 
 EXACT_SUFFIXES = [
@@ -996,7 +996,7 @@ def standalone_review_complete_valid(session_id, families):
         fields = payload[:-1].decode("ascii").split("\t")
     except UnicodeDecodeError:
         return False
-    if len(fields) != 9 or fields[7] != "standalone":
+    if len(fields) != 10 or fields[7] != "standalone":
         return False
     if not os.path.isabs(dex_runtime_dir):
         return False
