@@ -55,8 +55,10 @@ check "explicit complete" 3 "/dex complete" complete 4
 check "explicit jump" 2 "/dex jump verify" jump 4
 check "explicit resume" 2 "/dex resume" resume ""
 check "compact pause" 3 "/dxpause" pause ""
+check "compact recover" 3 "/dxrecover" recover ""
 check "compact jump" 2 "/dxjump verify" jump 4
 check "compact resume" 2 "/dxresume" resume ""
+check "explicit recover" 3 "/dx recover" recover ""
 for phase in 0 1 2 3 4 5 6; do
   check "compact skip phase ${phase}" "$phase" "/dxskip" complete "$((phase + 1))"
 done

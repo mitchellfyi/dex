@@ -70,6 +70,14 @@ All of these must be true:
 The outer review loop has no iteration maximum. It continues until the clean
 gate succeeds or a deterministic pause condition occurs.
 
+If the Stop hook reports that an interrupt left a stale review fence whose
+owner PID is dead, do not delete the marker or wait for its timeout. Run the
+exact standalone `bin/control.sh recover review --source agent --reason ...`
+command printed by the hook. Use it only for that dead-owner diagnosis; it
+refuses live or malformed state and leaves Phase 3 paused with no clean credit.
+Then use `/dxresume` to retry or `/dxskip` only when the user intends to bypass
+review.
+
 If completion evidence is missing and no deterministic pause condition is
 recorded, run `/dxreviewloop` or resolve the remaining in-scope issue, then stop
 again for this audit. If review paused, report the normalized pause reason and

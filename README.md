@@ -136,6 +136,7 @@ dxreviewloop               # Resolve risk (or honor an override), then review to
 dxcomplete                 # Resume PR completion for the current branch
 dx provider current        # Show active agent/provider/model resolution
 dx control pause           # Pause, stop, or hand control back to a running lifecycle
+dx control recover review --reason "review owner stopped after interrupt"
 dx control override review.pass-timeout 2400 --source agent --reason "checks need longer"
 dx control override review.clean-passes 2 --source human --reason "two clean waves approved"
 dx control waive review.clean-passes --source human --reason "approved in this session"
@@ -145,6 +146,12 @@ dx test                    # Test Dex here, or verify another initialized projec
 dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
 ```
+
+Inside a lifecycle, the compact controls are `/dxpause`, `/dxskip`,
+`/dxjump verify`, `/dxresume`, and `/dxrecover`. Skip advances from whichever
+phase is active and records an attributed waiver. Recover is only for a stale
+Phase 3 fence whose review owner stopped after an interrupt; it leaves the
+lifecycle paused so you can choose resume or skip.
 
 `dx login`, `dx logout`, and `dx whoami` manage the optional DexCode connection
 that syncs run events and artifacts; see [docs/events.md](docs/events.md).

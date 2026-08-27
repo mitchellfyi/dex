@@ -267,6 +267,12 @@ the agent's next tool call. Pause and stop detach the session from Dex's Stop
 hook's phase sequencing while preserving the workspace and current phase for a
 later resume.
 
+The compact forms are `/dxpause`, `/dxskip`, `/dxjump verify`, `/dxresume`, and
+`/dxrecover`. `/dxskip` works in any active phase and moves to the next one;
+`/dxjump <phase>` names the destination. Skip records the current phase as
+waived, while jump records crossed phases as skipped. Neither claims that a
+bypassed gate passed.
+
 The same controls are available from a terminal and to direct Codex sessions:
 
 ```bash
@@ -287,6 +293,29 @@ child is still marked in flight; the jump can be retried after that process
 ends. Once the provider exits from a valid Phase 7 transaction, human-marked
 completion uses the same local worktree and branch cleanup as an ordinary
 completion.
+
+#### Interrupted review recovery
+
+A hard interrupt can stop the Phase 3 review owner before it clears
+`.phase-3.busy`. The Stop hook checks the PID stored in that fence. When the PID
+is dead, it pauses immediately and prints the supported recovery command
+instead of waiting for the normal review timeout.
+
+Use `/dxrecover` in the owning interactive session. An agent or terminal should
+use an attributed standalone command:
+
+```bash
+bash "$DEX_DIR/bin/control.sh" recover review --source agent \
+  --reason "review owner stopped after interrupt"
+```
+
+Use recovery only after an interrupt or process failure and only when Dex
+reports that the recorded owner is no longer running. The command independently
+checks the PID and refuses a live owner, a missing fence, or malformed state.
+It revokes completion authorization, removes the stale review fence and its
+sidecars, and leaves Phase 3 paused. It does not grant clean-review credit or
+mark the phase skipped. Continue with `/dxresume` to retry Phase 3 or `/dxskip`
+to move on with an explicit waiver. Do not delete the fence by hand.
 
 Audit prompts are editable markdown files. Changes take effect on the next loop iteration without reloading shell functions.
 
@@ -589,7 +618,7 @@ Loop state is stored in `~/.claude/.dex-loops/`:
   acceptance criterion and verification gate is complete and a valid
   current-scope, policy-bound review-risk selection exists; the Stop hook
   ignores `PHASE_2_COMPLETE` without it
-- `.phase-3.busy` — Phase 3 marker written by `dxreviewloop` while a review wave is running; the Stop hook does not count audit iterations while waiting
+- `.phase-3.busy` — Phase 3 marker written by `dxreviewloop` while a review wave is running; the Stop hook does not count audit iterations while waiting, detects a dead recorded owner, and directs the agent to attributed recovery rather than manual deletion
 - `.phase-3.busy-notice` — timestamp used to throttle repeated Phase 3 busy-gate notices while the same review pass is still running
 - `.phase-3.busy-cancel` / `.phase-3.busy-quiesced` — the cancellation request and the owner's acknowledgement in the review-child quiesce protocol
 - `.review-criteria.json` — strict approved objectives, acceptance criteria,

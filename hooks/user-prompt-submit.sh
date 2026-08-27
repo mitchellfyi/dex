@@ -186,7 +186,8 @@ if [[ "$LIFECYCLE_ACTIVE" -eq 1 ]]; then
     [[ "$CONTROL_TARGET" == "-" ]] && CONTROL_TARGET=""
   fi
 
-  if [[ "$CONTROL_ACTION" == "complete" || "$CONTROL_ACTION" == "jump" ]]; then
+  if [[ "$CONTROL_ACTION" == "complete" || "$CONTROL_ACTION" == "jump" \
+    || "$CONTROL_ACTION" == "recover" ]]; then
     if [[ "$CONTEXT_MODE" != "lifecycle" || "$CONTEXT_PURPOSE" != "phase" \
       || "$CONTEXT_HANDOFF" != "inline" ]]; then
       cat <<'JSON'
@@ -197,6 +198,40 @@ JSON
   fi
 
   case "$CONTROL_ACTION" in
+    recover)
+      RECOVERY_RESULT_RC=0
+      dx_lifecycle_recover_review_fence "$SESSION_ID" user-prompt \
+        "Direct /dxrecover instruction after an interrupted review owner" \
+        || RECOVERY_RESULT_RC=$?
+      case "$RECOVERY_RESULT_RC" in
+        0)
+          cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Direct human recovery instruction accepted. Dex removed the stale Phase 3 review fence after proving its recorded owner PID was dead. This did not mark review as passed or waived, and the lifecycle remains paused. Follow the user's latest request; use /dxresume to retry Phase 3 or /dxskip to move on with a recorded waiver."}}
+JSON
+          ;;
+        2)
+          cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Dex did not recover anything because no Phase 3 review fence exists. No lifecycle state was changed."}}
+JSON
+          ;;
+        3)
+          cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Dex refused /dxrecover because the Phase 3 review fence is malformed or untrusted. Nothing was removed; inspect and repair the state before resuming automation."}}
+JSON
+          ;;
+        4)
+          cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Dex refused /dxrecover because the recorded Phase 3 review owner is still alive. Interrupt or wait for that process before retrying recovery."}}
+JSON
+          ;;
+        *)
+          cat <<'JSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Dex could not safely recover the Phase 3 review fence. It did not report success; the lifecycle remains paused."}}
+JSON
+          ;;
+      esac
+      exit 0
+      ;;
     resume)
       __dx_write_human_control resume "" "$CONTROL_HASH" || exit 0
       if ! __dx_resume_lifecycle_now; then

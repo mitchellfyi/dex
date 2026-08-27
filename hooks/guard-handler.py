@@ -200,7 +200,7 @@ PROVIDER_ENGINES = {'claude', 'codex-plugin', 'anthropic-gateway'}
 
 BREAK_GLASS_COMMANDS = {
     'pause', 'detach', 'stop', 'cancel', 'done', 'complete', 'jump', 'phase',
-    'resume', 'override', 'clear-override', 'waive',
+    'resume', 'recover', 'override', 'clear-override', 'waive',
 }
 
 

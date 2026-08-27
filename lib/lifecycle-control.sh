@@ -1629,6 +1629,120 @@ EOF
     "$timeout_value" "$label"
 }
 
+# dx_phase_busy_owner_status <session_id> <phase>
+# Print absent, invalid, live<TAB>PID, or dead<TAB>PID. Callers use this
+# conservative reading before deciding whether an interrupted review fence can
+# be recovered; an unreadable marker is never treated as a dead owner.
+dx_phase_busy_owner_status() {
+  local session_id="$1" phase="$2" busy_file record owner_pid
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$phase" =~ ^[0-6]$ ]] || return 1
+  busy_file=$(dx_phase_busy_file "$session_id" "$phase")
+  if [[ ! -e "$busy_file" && ! -L "$busy_file" ]]; then
+    printf '%s\n' absent
+    return 0
+  fi
+  if [[ ! -f "$busy_file" || -L "$busy_file" ]]; then
+    printf '%s\n' invalid
+    return 0
+  fi
+  record=$(__dx_phase_busy_record "$session_id" "$phase" 2>/dev/null) || {
+    printf '%s\n' invalid
+    return 0
+  }
+  record="${record#*$'\n'}"
+  record="${record#*$'\n'}"
+  record="${record#*$'\n'}"
+  owner_pid="${record%%$'\n'*}"
+  if __dx_lock_pid_alive "$owner_pid"; then
+    printf 'live\t%s\n' "$owner_pid"
+  else
+    printf 'dead\t%s\n' "$owner_pid"
+  fi
+}
+
+# dx_lifecycle_recover_review_fence <session_id> <source> <reason>
+# Recover only the Phase 3 fence left by a provably dead review owner. This is
+# not a review result: completion is revoked, the lifecycle stays paused, and
+# the caller must explicitly resume Phase 3 or skip it. Return 2 when no fence
+# exists, 3 for malformed state, and 4 while the recorded owner is still alive.
+dx_lifecycle_recover_review_fence() {
+  local session_id="$1" recovery_source="$2" recovery_reason="$3"
+  local owner_snapshot owner_kind owner_pid recovered_json fence_file
+  local recovery_rc=0
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  case "$recovery_source" in agent|human|user-prompt) ;; *) return 1 ;; esac
+  dx_override_reason_valid "$recovery_reason" || return 1
+
+  dx_lifecycle_control_lock_acquire "$session_id" || return 1
+  if ! __dx_lifecycle_cleanup_barrier_unlocked "$session_id"; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  owner_snapshot=$(dx_phase_busy_owner_status "$session_id" 3) || recovery_rc=1
+  owner_kind="${owner_snapshot%%$'\t'*}"
+  owner_pid=""
+  [[ "$owner_snapshot" == *$'\t'* ]] && owner_pid="${owner_snapshot#*$'\t'}"
+  case "$owner_kind" in
+    absent) recovery_rc=2 ;;
+    invalid) recovery_rc=3 ;;
+    live) recovery_rc=4 ;;
+    dead) : ;;
+    *) recovery_rc=1 ;;
+  esac
+  if [[ "$recovery_rc" -ne 0 ]]; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return "$recovery_rc"
+  fi
+
+  # Detach first so no completion generation survives the maintenance action.
+  # It also records the attributed pause before any fence file is removed.
+  if ! dx_lifecycle_detach "$session_id" stale-review-fence-recovered \
+    "$recovery_source"; then
+    if __dx_lifecycle_control_lock_owned "$session_id"; then
+      dx_lifecycle_control_lock_release_checked "$session_id" \
+        >/dev/null 2>&1 || true
+    fi
+    return 1
+  fi
+
+  # Re-read under the same transition lock. The token cannot silently change
+  # between the dead-owner proof and deletion.
+  if [[ "$(dx_phase_busy_owner_status "$session_id" 3)" != "$owner_snapshot" ]]; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
+  for fence_file in \
+    "$(dx_phase_busy_file "$session_id" 3)" \
+    "$(dx_phase_busy_notice_file "$session_id" 3)" \
+    "$(dx_phase_busy_cancel_file "$session_id" 3)" \
+    "$(dx_phase_busy_quiesced_file "$session_id" 3)"; do
+    rm -f "$fence_file" 2>/dev/null || recovery_rc=1
+    [[ ! -e "$fence_file" && ! -L "$fence_file" ]] || recovery_rc=1
+  done
+  if [[ "$recovery_rc" -ne 0 ]] \
+    || ! dx_lifecycle_control_lock_release_checked "$session_id"; then
+    dx_lifecycle_completion_brake "$session_id" review-fence-recovery-failed \
+      "$recovery_source" 2>/dev/null || true
+    return 1
+  fi
+
+  recovered_json=$(printf \
+    '{"reason":"stale-review-owner","source":"%s","owner_pid":%s}' \
+    "$recovery_source" "$owner_pid")
+  dx_event_emit_for_session "$session_id" "review.fence.recovered" "warn" \
+    "Recovered stale Phase 3 review fence" "3" "$recovered_json" \
+    2>/dev/null || true
+  dx_run_log_append_for_session "$session_id" "warn" "lifecycle-control" \
+    "Recovered stale Phase 3 review fence for dead owner PID ${owner_pid}; source=${recovery_source}; reason=${recovery_reason}" \
+    2>/dev/null || true
+  return 0
+}
+
 dx_phase_busy_token() {
   local session_id="$1" phase="$2" record token
   record=$(__dx_phase_busy_record "$session_id" "$phase" 2>/dev/null) \

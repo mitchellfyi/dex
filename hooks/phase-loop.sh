@@ -1435,6 +1435,7 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
     BUSY_RECORD_REST="${BUSY_RECORD_REST#*$'\n'}"
     BUSY_TOKEN_FIELD="${BUSY_RECORD_REST%%$'\n'*}"
     BUSY_RECORD_REST="${BUSY_RECORD_REST#*$'\n'}"
+    BUSY_OWNER_PID="${BUSY_RECORD_REST%%$'\n'*}"
     BUSY_RECORD_REST="${BUSY_RECORD_REST#*$'\n'}"
     BUSY_TIMEOUT_RAW="${BUSY_RECORD_REST%%$'\n'*}"
     BUSY_LABEL="${BUSY_RECORD_REST#*$'\n'}"
@@ -1444,6 +1445,27 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
         2>/dev/null || true
       printf '\n%s\n\n' "--- Dex Phase 3 Gate: review child quiesced ---" >&2
       printf '%s\n' "The matching review owner acknowledged that its child ended. Continue dxreviewloop with the returned result before stopping again." >&2
+      exit 2
+    fi
+    if ! __dx_lock_pid_alive "$BUSY_OWNER_PID"; then
+      dx_event_emit_for_session "$SESSION_ID" "run.blocked" "warn" \
+        "Dex lifecycle paused: review owner stopped" "3" \
+        "{\"reason\":\"stale-review-owner\",\"owner_pid\":${BUSY_OWNER_PID}}" \
+        2>/dev/null || true
+      dx_run_log_append_for_session "$SESSION_ID" "warn" "phase-loop" \
+        "Lifecycle paused: Phase 3 review owner PID ${BUSY_OWNER_PID} is no longer running" \
+        2>/dev/null || true
+      dx_run_write_summary_for_session "$SESSION_ID" "blocked" \
+        "Interrupted review owner in Phase 3" 2>/dev/null || true
+      if ! dx_lifecycle_pause "$SESSION_ID" stale-review-owner phase-loop; then
+        printf '\n%s\n' "Dex found that the Phase 3 review owner stopped, but could not publish a safe pause. Completion authorization remains closed; repair the lifecycle state before resuming." >&2
+        exit 2
+      fi
+      printf '\n%s\n\n' "--- Dex phase paused: stale Phase 3 review fence ---" >&2
+      printf 'The review owner PID %s is no longer running. Dex preserved the fence and did not treat the review as passed.\n' "$BUSY_OWNER_PID" >&2
+      printf '%s\n' "Use /dxrecover in this session, or have an agent run this exact standalone command:" >&2
+      printf '  bash "$DEX_DIR/bin/control.sh" recover review --source agent --reason "review owner stopped after interrupt"\n' >&2
+      printf '%s\n' "Recovery removes only the stale fence and leaves Phase 3 paused; then use /dxresume to retry or /dxskip to move on." >&2
       exit 2
     fi
     BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))

@@ -37,6 +37,37 @@ guard_payload() {
   python3 -c 'import json, sys; print(json.dumps({"tool_input": {"command": sys.argv[1]}}))' "$1"
 }
 
+# The compact recovery command is available to the owning lifecycle agent.
+# It only clears a validated fence whose recorded owner is no longer alive,
+# and it leaves the lifecycle paused for an explicit resume or skip decision.
+RECOVER_SID="human-control-hook-recover"
+RECOVER_OWNER="claude-recover-owner"
+RECOVER_EPOCH=$(date +%s)
+RECOVER_PID=99999999
+while __dx_lock_pid_alive "$RECOVER_PID"; do
+  RECOVER_PID=$((RECOVER_PID + 1))
+done
+RECOVER_TOKEN="${RECOVER_EPOCH}-${RECOVER_PID}-1"
+dx_lifecycle_atomic_write "$(dx_state_file "$RECOVER_SID")" 3
+dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$RECOVER_SID")" inline
+RECOVER_GENERATION=$(dx_completion_issue "$RECOVER_SID" lifecycle phase 3)
+dx_lifecycle_atomic_write "$(dx_loop_config_file "$RECOVER_SID")" \
+  "3:PHASE_3_COMPLETE:${ROOT}/prompts/phase-audits/3-review-loop.md:1:lifecycle:phase:${RECOVER_GENERATION}"
+dx_lifecycle_atomic_write "$(dx_active_file "$RECOVER_SID")" active
+dx_lifecycle_atomic_write "$(dx_owner_file "$RECOVER_SID")" "$RECOVER_OWNER"
+dx_lifecycle_atomic_write "$(dx_phase_busy_file "$RECOVER_SID" 3)" \
+  "${RECOVER_EPOCH}"$'\t'"${RECOVER_TOKEN}"$'\t'"${RECOVER_PID}"$'\t'"interrupted review wave"
+owned_payload "/dxrecover" "$RECOVER_OWNER" | env \
+  DEX_SESSION_ID="$RECOVER_SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+  bash "$HOOK" > "$TMP_DIR/recover.out"
+assert_contains "stale Phase 3 review fence" "$TMP_DIR/recover.out"
+assert_contains "/dxresume" "$TMP_DIR/recover.out"
+assert_contains "/dxskip" "$TMP_DIR/recover.out"
+assert_no_file "$(dx_phase_busy_file "$RECOVER_SID" 3)"
+assert_file "$(dx_paused_file "$RECOVER_SID")"
+assert_no_file "$(dx_completion_expectation_file "$RECOVER_SID")"
+dx_cleanup_session "$RECOVER_SID"
+
 CONTROL_FILE=$(dx_lifecycle_control_file "$DEX_SESSION_ID")
 PAUSED_FILE=$(dx_paused_file "$DEX_SESSION_ID")
 OWNER_FILE=$(dx_owner_file "$DEX_SESSION_ID")

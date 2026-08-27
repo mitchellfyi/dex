@@ -1339,6 +1339,7 @@ fi
 # keep the full payload under normal guard enforcement.
 for break_glass_command in \
   'bash "$DEX_DIR/bin/control.sh" override review.pass-timeout 2400 --source agent --reason frobnicate' \
+  'bash "$DEX_DIR/bin/control.sh" recover review --source agent --reason frobnicate' \
   'dx control waive review.clean-passes --source human --reason frobnicate'; do
   set +e
   GUARD_OUT="$(cd "$OVERRIDE_GUARD_REPO" && mkbashpayload "$break_glass_command" \

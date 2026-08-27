@@ -419,6 +419,20 @@ dx_lifecycle_atomic_write "$(dx_active_file "$BUSY_RESUME_SESSION")" active
 dx_lifecycle_control_lock_release "$BUSY_RESUME_SESSION"
 BUSY_RESUME_TOKEN=$(dx_phase_busy_begin "$BUSY_RESUME_SESSION" 3 review-pass)
 dx_lifecycle_pause "$BUSY_RESUME_SESSION" manual-pause lifecycle-control
+env DEX_SESSION_ID="$BUSY_RESUME_SESSION" bash "$CONTROL" status \
+  > "$TMP_DIR/busy-recover-live-status.out"
+assert_contains "Review fence: active" "$TMP_DIR/busy-recover-live-status.out"
+assert_rejected "$LINENO" env DEX_SESSION_ID="$BUSY_RESUME_SESSION" \
+  bash "$CONTROL" recover review --source agent \
+  > "$TMP_DIR/busy-recover-no-reason.out" 2>&1
+assert_contains "--reason is required" "$TMP_DIR/busy-recover-no-reason.out"
+assert_rejected "$LINENO" env DEX_SESSION_ID="$BUSY_RESUME_SESSION" \
+  bash "$CONTROL" recover review --source agent \
+  --reason "The review command was interrupted" \
+  > "$TMP_DIR/busy-recover-live.out" 2>&1
+assert_contains "still alive" "$TMP_DIR/busy-recover-live.out"
+assert_file "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_completion_expectation_file "$BUSY_RESUME_SESSION")"
 assert_rejected "$LINENO" env DEX_SESSION_ID="$BUSY_RESUME_SESSION" \
   bash "$CONTROL" resume > "$TMP_DIR/busy-resume-rejected.out" 2>&1
 assert_file "$(dx_paused_file "$BUSY_RESUME_SESSION")"
@@ -435,6 +449,51 @@ assert_no_file "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)"
 assert_no_file "$(dx_phase_busy_cancel_file "$BUSY_RESUME_SESSION" 3)"
 assert_no_file "$(dx_phase_busy_quiesced_file "$BUSY_RESUME_SESSION" 3)"
 assert_no_file "$(dx_paused_file "$BUSY_RESUME_SESSION")"
+
+# An interrupted review owner can leave its fence behind. Recovery is an
+# attributed, fail-closed detach: it proves the recorded PID is dead, revokes
+# completion, removes only the review fence, and leaves Phase 3 paused.
+STALE_BUSY_EPOCH=$(date +%s)
+STALE_BUSY_PID=99999999
+while __dx_lock_pid_alive "$STALE_BUSY_PID"; do
+  STALE_BUSY_PID=$((STALE_BUSY_PID + 1))
+done
+STALE_BUSY_TOKEN="${STALE_BUSY_EPOCH}-${STALE_BUSY_PID}-1"
+dx_lifecycle_atomic_write "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)" \
+  "${STALE_BUSY_EPOCH}"$'\t'"${STALE_BUSY_TOKEN}"$'\t'"${STALE_BUSY_PID}"$'\t'"interrupted review wave"
+dx_lifecycle_atomic_write "$(dx_phase_busy_notice_file "$BUSY_RESUME_SESSION" 3)" \
+  "${STALE_BUSY_EPOCH}"$'\t'"interrupted review wave"
+env DEX_SESSION_ID="$BUSY_RESUME_SESSION" bash "$CONTROL" status \
+  > "$TMP_DIR/busy-recover-dead-status.out"
+assert_contains "Review fence: stale" "$TMP_DIR/busy-recover-dead-status.out"
+assert_contains "dx control recover review --source agent" \
+  "$TMP_DIR/busy-recover-dead-status.out"
+env DEX_SESSION_ID="$BUSY_RESUME_SESSION" bash "$CONTROL" recover review \
+  --source agent --reason "The review command was interrupted and its owner exited" \
+  > "$TMP_DIR/busy-recover-dead.out"
+assert_contains "remains paused" "$TMP_DIR/busy-recover-dead.out"
+assert_contains "/dxresume" "$TMP_DIR/busy-recover-dead.out"
+assert_contains "/dxskip" "$TMP_DIR/busy-recover-dead.out"
+assert_no_file "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_phase_busy_notice_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_phase_busy_cancel_file "$BUSY_RESUME_SESSION" 3)"
+assert_no_file "$(dx_phase_busy_quiesced_file "$BUSY_RESUME_SESSION" 3)"
+assert_file "$(dx_paused_file "$BUSY_RESUME_SESSION")"
+assert_eq "stale-review-fence-recovered" \
+  "$(dx_pause_state_read "$BUSY_RESUME_SESSION" reason)" \
+  "stale review recovery pause reason"
+assert_no_file "$(dx_completion_expectation_file "$BUSY_RESUME_SESSION")"
+assert_no_file "$(dx_active_file "$BUSY_RESUME_SESSION")"
+
+dx_lifecycle_atomic_write "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)" \
+  "malformed review fence"
+assert_rejected "$LINENO" env DEX_SESSION_ID="$BUSY_RESUME_SESSION" \
+  bash "$CONTROL" recover review --source agent \
+  --reason "The interrupted review left malformed state" \
+  > "$TMP_DIR/busy-recover-malformed.out" 2>&1
+assert_contains "malformed" "$TMP_DIR/busy-recover-malformed.out"
+assert_file "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)"
+rm -f "$(dx_phase_busy_file "$BUSY_RESUME_SESSION" 3)"
 
 # If the Stop hook applies a terminal transition before the CLI can reactivate
 # it, the activation helper reports the committed result without resurrecting

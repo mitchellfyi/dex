@@ -87,6 +87,13 @@ resulting state and continue using the current phase's completion criteria.
    recomputes every attestation when it validates the receipt.
 7. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid results,
    provider failures, and deterministic fingerprint churn pause the loop.
+   If an interrupt leaves `.phase-3.busy` behind and the Stop hook reports that
+   its recorded owner PID is dead, do not remove state files or wait for the
+   ordinary timeout. Run exactly:
+   `bash "$DEX_DIR/bin/control.sh" recover review --source agent --reason "<why the review owner stopped>"`.
+   Use this only for the dead-owner diagnosis. The command refuses live or
+   malformed state and leaves Phase 3 paused; then follow the user's direction
+   to `/dxresume` or `/dxskip`.
 8. **SCOPE**: focus on review and fixes. Phase 4 and Phase 5 remain the default
    owners of publishing and PR setup, but those actions are available here.
 9. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
@@ -121,6 +128,11 @@ resulting state and continue using the current phase's completion criteria.
 ## Resuming
 
 If the session is interrupted, `dx 999` or `dx --resume` picks up from the saved phase. Phase tracking is handled by the `dx` shell lifecycle (see `dx.sh` `__dx_run_phases_inline`), which persists the current phase number in `~/.claude/.dex-phases/<session_id>.phase`. The Stop hook is responsible for advancing phases in-session by updating phase state and injecting the next phase message and audit prompt.
+
+An interrupted Phase 3 review may need fence recovery before resume. Trust the
+Stop hook's PID diagnosis, not the marker's age: recover only when it says the
+owner is dead, never while it says review is still running. Recovery is
+maintenance, not evidence that review passed.
 
 As a fallback (for example, `/dex` without the wrapper), use repository and PR
 state to orient the next action. External state is a hint, not proof that an

@@ -285,6 +285,13 @@ self-override when justified. Private state validation, transition ownership,
 atomic writes, and quiescing an active review child are runtime invariants and
 remain fail-closed.
 
+If an interrupt kills the Phase 3 review owner before it clears its busy fence,
+the Stop hook reports the dead PID and prints the supported recovery command.
+Agents must run that exact standalone `bin/control.sh recover review --source
+agent --reason ...` command instead of deleting state by hand. Use it only for
+the dead-owner diagnosis: it refuses live or malformed state, revokes
+completion, and leaves Phase 3 paused for `/dxresume` or `/dxskip`.
+
 The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. The trusted default-branch policy maps that tier to a consecutive-clean requirement; its defaults are 1, 3, and 6, respectively. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and trusted policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. The loop has no routine maximum and pauses on changed or partially covered criteria, residual findings, blockers, churn, invalid results, or provider failure.
 
 ### Session IDs

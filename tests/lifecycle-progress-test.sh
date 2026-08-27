@@ -171,7 +171,7 @@ grep -Fq "✓ Setup  ◇ Plan  ↷ Implement  ? Review  → Verify & Commit" "$D
 grep -Fq "↷ skipped by human" "$DISPLAY_OUTPUT"
 grep -Fq "◇ marked done by human" "$DISPLAY_OUTPUT"
 grep -Fq "? outcome not recorded" "$DISPLAY_OUTPUT"
-grep -Fq "Controls: /dxpause  /dxskip  /dxresume" "$DISPLAY_OUTPUT"
+grep -Fq "Controls: /dxpause  /dxskip  /dxresume  /dxrecover" "$DISPLAY_OUTPUT"
 
 # Historical sessions can outlive their compact phase TSV. Reconcile only a
 # validated phase.completed run event; unrelated journal or PR evidence never

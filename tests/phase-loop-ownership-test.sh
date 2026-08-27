@@ -504,6 +504,41 @@ for NONCANONICAL_BUSY_TOKEN in "1-1-1-" "1-1-1--"; do
   rm -f "$DX_LOOP_DIR/$SID".*
 done
 
+# A hard interrupt can kill the review owner before it acknowledges the cancel
+# request. The Stop hook detects the dead PID immediately, pauses the lifecycle,
+# and gives the agent the supported recovery command instead of waiting for the
+# ordinary pass timeout.
+SID="repo-test-8-dead-review-owner"
+printf '%s\n' "3" > "$DX_STATE_DIR/$SID.phase"
+printf '%s\n' "inline" > "$DX_LOOP_DIR/$SID.handoff-mode"
+configure_lifecycle_completion "$SID" 3 "$ROOT/prompts/phase-audits/3-review-loop.md"
+touch "$DX_LOOP_DIR/$SID.active"
+DEAD_BUSY_EPOCH=$(date +%s)
+DEAD_BUSY_PID=99999999
+while __dx_lock_pid_alive "$DEAD_BUSY_PID"; do
+  DEAD_BUSY_PID=$((DEAD_BUSY_PID + 1))
+done
+DEAD_BUSY_TOKEN="${DEAD_BUSY_EPOCH}-${DEAD_BUSY_PID}-1"
+dx_lifecycle_atomic_write "$(dx_phase_busy_file "$SID" 3)" \
+  "${DEAD_BUSY_EPOCH}"$'\t'"${DEAD_BUSY_TOKEN}"$'\t'"${DEAD_BUSY_PID}"$'\t'"interrupted review wave"
+set +e
+OUT="$(printf '{"session_id":"claude-dead-review-owner"}' | env \
+  DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
+  DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=3600 \
+  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+assert_rc "dead review owner closes the wait gate" 2
+assert_out_contains "dead review owner is reported" "owner PID ${DEAD_BUSY_PID} is no longer running"
+assert_out_contains "dead review owner names supported recovery" \
+  'bin/control.sh" recover review --source agent --reason'
+assert_out_lacks "dead review owner is not reported as live" "review pass in progress"
+if [[ -e "$(dx_paused_file "$SID")" ]]; then report "dead review owner pauses the lifecycle" 0; else report "dead review owner pauses the lifecycle" 1; fi
+if [[ -e "$(dx_phase_busy_file "$SID" 3)" ]]; then report "dead review fence remains for attributed recovery" 0; else report "dead review fence remains for attributed recovery" 1; fi
+dx_completion_cleanup "$SID"
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
 # The review owner persists its selected timeout in the busy record. The
 # parent Stop hook must use that value instead of the environment inherited
 # when Claude launched.

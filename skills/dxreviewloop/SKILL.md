@@ -206,6 +206,22 @@ After the gate succeeds, write a machine-readable review receipt tied to the
 current scope fingerprint. Lifecycle Phase 3 advances only when that receipt is
 valid; a prose success claim is not sufficient.
 
+If the wrapper is killed by an interrupt before it clears the parent
+`.phase-3.busy` fence, the next Stop audit checks the recorded owner PID. When
+Dex reports that PID is dead, the lifecycle agent should run the exact
+standalone command it prints:
+
+```bash
+bash "$DEX_DIR/bin/control.sh" recover review --source agent \
+  --reason "review owner stopped after interrupt"
+```
+
+Do not delete the fence manually, and do not use recovery merely because a
+wave is slow. The command refuses a live owner or untrusted record. Successful
+recovery revokes completion and leaves Phase 3 paused with no clean credit;
+use `/dxresume` to retry or `/dxskip` only when the user intends to bypass the
+phase.
+
 ## Telemetry
 
 Record review state changes in the run journal with these event types:

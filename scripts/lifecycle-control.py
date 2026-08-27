@@ -100,14 +100,14 @@ def phase_after_keyword(text: str, keyword_end: int) -> int | None:
 
 def explicit_directive(text: str, current_phase: int | None) -> dict[str, object] | None:
     match = re.search(
-        r"(?im)^\s*/dx(skip|pause|resume|jump)"
+        r"(?im)^\s*/dx(skip|pause|resume|recover|jump)"
         r"(?:\s+(?:to\s+|at\s+)?([^\n;]+?))?\s*$",
         text,
     )
     if not match:
         match = re.search(
             r"(?im)^\s*/(?:dex|dx)\s+(stop|cancel|exit|disable|ignore|pause|leave|resume|"
-            r"continue|complete|done|skip|jump)(?:\s+(?:to\s+|at\s+)?([^\n;]+?))?\s*$",
+            r"continue|complete|done|skip|recover|jump)(?:\s+(?:to\s+|at\s+)?([^\n;]+?))?\s*$",
             text,
         )
     if not match:
@@ -119,6 +119,8 @@ def explicit_directive(text: str, current_phase: int | None) -> dict[str, object
         return result("cancel", prompt=text)
     if command in {"pause", "leave"}:
         return result("pause", prompt=text)
+    if command == "recover" and not argument:
+        return result("recover", prompt=text)
     if command in {"resume", "continue"} and not argument:
         return result("resume", prompt=text)
 

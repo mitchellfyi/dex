@@ -7,6 +7,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 usage() {
   cat <<'EOF'
 Usage: dx control <status|pause|stop|done|jump PHASE|resume>
+       dx control recover review --reason TEXT [--source agent|human]
        dx control override GATE VALUE --reason TEXT [--scope phase|session]
        dx control clear-override GATE --reason TEXT [--scope phase|session]
        dx control waive GATE --reason TEXT
@@ -17,14 +18,17 @@ Usage: dx control <status|pause|stop|done|jump PHASE|resume>
   done         Mark the current phase done and advance without its remaining gates
   jump PHASE   Move to Phase 0-6, or a phase name such as review, verify, or pr
   resume       Clear a pause and resume the recorded phase
+  recover review
+               Clear a validated Phase 3 fence only when its owner PID is dead;
+               leaves the lifecycle paused for an explicit resume or skip
   override     Change a soft default for this phase or session
   clear-override
                Remove the matching soft-default override
   waive        Mark a named gate waived and advance the current phase safely
 
 Override/control options:
-  --source agent|human   Attribution (override and waive default to agent)
-  --reason TEXT          Required for agent controls and all policy changes
+  --source agent|human   Attribution (policy changes default to agent; recovery to human)
+  --reason TEXT          Required for recovery, agent controls, and policy changes
   --scope phase|session  Override lifetime scope (default: phase)
   --for-seconds N        Expire an override after N seconds; 0 means no expiry
 
@@ -194,6 +198,7 @@ CONTROL_FOR_SECONDS=0
 CONTROL_GATE=""
 CONTROL_VALUE=""
 TARGET_INPUT=""
+RECOVERY_TARGET=""
 
 case "$COMMAND" in
   status)
@@ -218,6 +223,28 @@ case "$COMMAND" in
     TARGET_INPUT="$1"
     shift
     parse_policy_options "$@" || exit 1
+    ;;
+  recover)
+    [[ $# -ge 1 ]] || {
+      dx_error "Usage: dx control recover review --reason TEXT"
+      exit 1
+    }
+    RECOVERY_TARGET="$1"
+    shift
+    parse_policy_options "$@" || exit 1
+    if ! RECOVERY_PHASE=$(phase_number "$RECOVERY_TARGET") \
+      || [[ "$RECOVERY_PHASE" != "3" ]]; then
+      dx_error "Recovery currently supports only the Phase 3 review fence."
+      exit 1
+    fi
+    [[ -n "$CONTROL_REASON" ]] || {
+      dx_error "--reason is required for review-fence recovery."
+      exit 1
+    }
+    [[ "$CONTROL_SCOPE" == "phase" && "$CONTROL_FOR_SECONDS" -eq 0 ]] || {
+      dx_error "Review-fence recovery does not accept --scope or --for-seconds."
+      exit 1
+    }
     ;;
   override)
     [[ $# -ge 2 ]] || { dx_error "Usage: dx control override GATE VALUE --reason TEXT"; exit 1; }
@@ -298,6 +325,19 @@ case "$COMMAND" in
       PAUSE_REASON=$(dx_pause_state_read "$SESSION_ID" reason)
       printf 'Lifecycle: paused%s\n' "${PAUSE_REASON:+ (${PAUSE_REASON})}"
     fi
+    REVIEW_OWNER_STATUS=$(dx_phase_busy_owner_status "$SESSION_ID" 3)
+    REVIEW_OWNER_KIND="${REVIEW_OWNER_STATUS%%$'\t'*}"
+    REVIEW_OWNER_PID=""
+    [[ "$REVIEW_OWNER_STATUS" == *$'\t'* ]] \
+      && REVIEW_OWNER_PID="${REVIEW_OWNER_STATUS#*$'\t'}"
+    case "$REVIEW_OWNER_KIND" in
+      live) printf 'Review fence: active (owner PID %s)\n' "$REVIEW_OWNER_PID" ;;
+      dead)
+        printf 'Review fence: stale (owner PID %s is dead)\n' "$REVIEW_OWNER_PID"
+        printf '%s\n' 'Recovery: dx control recover review --source agent --reason "<why the review owner stopped>"'
+        ;;
+      invalid) printf '%s\n' 'Review fence: malformed (automatic recovery is disabled)' ;;
+    esac
     if [[ -n "$ACTIVE_OVERRIDES" ]]; then
       printf 'Overrides:\n'
       while IFS=$'\t' read -r OVERRIDE_GATE OVERRIDE_VALUE OVERRIDE_SCOPE \
@@ -315,6 +355,35 @@ case "$COMMAND" in
     else
       printf 'Overrides: none\n'
     fi
+    ;;
+  recover)
+    RECOVERY_RESULT_RC=0
+    dx_lifecycle_recover_review_fence "$SESSION_ID" "$CONTROL_ORIGIN" \
+      "$CONTROL_REASON" || RECOVERY_RESULT_RC=$?
+    case "$RECOVERY_RESULT_RC" in
+      0)
+        dx_done "Recovered the stale Phase 3 review fence. The lifecycle remains paused."
+        dx_info "Use /dxresume to retry Phase 3 or /dxskip to move on with a recorded waiver."
+        ;;
+      2)
+        dx_error "No Phase 3 review fence was found. Nothing was changed."
+        exit 1
+        ;;
+      3)
+        dx_error "The Phase 3 review fence is malformed or untrusted. Nothing was removed."
+        exit 1
+        ;;
+      4)
+        REVIEW_OWNER_STATUS=$(dx_phase_busy_owner_status "$SESSION_ID" 3)
+        REVIEW_OWNER_PID="${REVIEW_OWNER_STATUS#*$'\t'}"
+        dx_error "The Phase 3 review owner PID ${REVIEW_OWNER_PID} is still alive. Interrupt or wait for that process, then retry recovery."
+        exit 1
+        ;;
+      *)
+        dx_error "Dex could not safely recover the Phase 3 review fence. The lifecycle remains paused."
+        exit 1
+        ;;
+    esac
     ;;
   override)
     if ! record_control_policy "$CONTROL_GATE" "$CONTROL_VALUE"; then
@@ -372,7 +441,7 @@ case "$COMMAND" in
         dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry the phase change."
         exit 1
       fi
-      dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. Jump after that process ends."
+      dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. If an interrupt killed its owner, run: dx control recover review --source agent --reason \"<why>\""
       exit 0
     fi
     if ! dx_write_lifecycle_control "$SESSION_ID" complete "$TARGET_PHASE" "$CONTROL_RECEIPT_SOURCE" "" \
@@ -412,7 +481,7 @@ case "$COMMAND" in
         dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry the phase change."
         exit 1
       fi
-      dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. Jump after that process ends."
+      dx_warn "Dex detached at Phase 3 because a review child is still marked in flight. If an interrupt killed its owner, run: dx control recover review --source agent --reason \"<why>\""
       exit 0
     fi
     if ! dx_write_lifecycle_control "$SESSION_ID" jump "$TARGET_PHASE" "$CONTROL_RECEIPT_SOURCE" "" \
