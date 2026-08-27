@@ -167,6 +167,14 @@ if grep -Eq 'block-review-pass-push|block-pre-phase4-push' <<<"$GUARD_OUT"; then
   exit 1
 fi
 
+dx_clear_lifecycle_control "$DEX_SESSION_ID"
+owned_payload "/dxskip" "$CONTROL_OWNER" | bash "$HOOK" > "$TMP_DIR/compact-skip.out"
+assert_eq "complete" "$(dx_lifecycle_control_read "$DEX_SESSION_ID" action)" \
+  "compact skip advances the current phase"
+assert_eq "4" "$(dx_lifecycle_control_read "$DEX_SESSION_ID" target_phase)" \
+  "compact skip targets the next phase"
+assert_contains "Phase 4" "$TMP_DIR/compact-skip.out"
+
 dx_write_lifecycle_control "$DEX_SESSION_ID" cancel "" user-prompt "$(printf stale | shasum -a 256 | awk '{print $1}')"
 dx_lifecycle_atomic_write "$PAUSED_FILE" paused
 rm -f "$(dx_active_file "$DEX_SESSION_ID")"

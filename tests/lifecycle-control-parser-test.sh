@@ -54,6 +54,14 @@ check "explicit pause" 3 "/dex pause" pause ""
 check "explicit complete" 3 "/dex complete" complete 4
 check "explicit jump" 2 "/dex jump verify" jump 4
 check "explicit resume" 2 "/dex resume" resume ""
+check "compact pause" 3 "/dxpause" pause ""
+check "compact jump" 2 "/dxjump verify" jump 4
+check "compact resume" 2 "/dxresume" resume ""
+for phase in 0 1 2 3 4 5 6; do
+  check "compact skip phase ${phase}" "$phase" "/dxskip" complete "$((phase + 1))"
+done
+check "compact skip named phase" 2 "/dxskip verify" jump 5
+check "compact jump requires target" 2 "/dxjump" "" ""
 
 check "negated stop" 3 "Do not stop Dex; keep reviewing." "" ""
 check "negated skip" 3 "Don't skip verification." "" ""

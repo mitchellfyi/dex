@@ -3660,6 +3660,7 @@ __dx_show_header() {
     [[ $has_unknown -eq 1 ]] && legend+="? outcome not recorded"
     echo "$legend"
   fi
+  dx_info "Controls: /dxpause  /dxskip  /dxresume"
   echo ""
 
   # Metadata (only if worktree exists and has commits).
