@@ -559,6 +559,9 @@ fi
 ctx_file="$(__dx_build_system_context "repo" 2 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
 grep -q "Direct Codex Phase Completion" "$ctx_file"
 grep -q "normal Phase 2 readiness gate" "$ctx_file"
+grep -q "Follow prompts/commit-format.md" "$ctx_file"
+grep -q "push immediately after every commit" "$ctx_file"
+grep -q "stop the lifecycle as no-change" "$ctx_file"
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
 grep -q "Direct Human Control" "$ctx_file"
 grep -q "bin/control.sh" "$ctx_file"
@@ -570,6 +573,17 @@ grep -Fq "\`CLEAN\` waves" "$ctx_file"
 grep -Fq "\`dx control ...\` or \`bin/control.sh ...\`" "$ctx_file"
 grep -Fq "\`DEX_POLICY_SESSION_ID\`" "$ctx_file"
 grep -Fq "\`--session" "$ctx_file"
+
+ctx_file="$(__dx_build_system_context "repo" 3 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
+grep -q "Do not commit, push, or create a PR in Phase 3" "$ctx_file"
+if grep -q "Push any accepted-fix commit" "$ctx_file"; then
+  printf "%s\n" "Phase 3 context still tells the agent to publish review fixes" >&2
+  exit 1
+fi
+
+ctx_file="$(__dx_build_system_context "repo" 4 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
+grep -q "review or verification left changes" "$ctx_file"
+grep -q "user-direction path" "$ctx_file"
 '
 
 zsh -fc '

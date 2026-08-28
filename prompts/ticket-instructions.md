@@ -7,23 +7,28 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
    - If the tracker supports assignees: check the assignee. If assigned to someone else, pause and warn by default; do not silently reassign. A reasoned `setup.ticket-ownership` waiver may continue without claiming ownership changed. If unassigned, assign to the current user (for Linear: use `save_issue` with `assignee: "me"`).
    - If no tracker is configured: use the branch name `{{BRANCH}}` and the local filesystem for context. Ask the user what they want to work on.
 
-2. Rename and push the branch. The default workflow leaves draft PR creation to `/dxpr` in Phase 5, after implementation commits exist. If the user asks for a PR during setup, create or update it as requested and record its state for the later phases. A branch with no changes may not be eligible for a PR; report that state rather than treating an empty bootstrap commit as required.
+2. Rename the branch locally, but do not push it during setup. A newly created
+   lifecycle branch should stay local until it contains its first real
+   implementation commit. Do not create an empty bootstrap commit just to make
+   the branch pushable. Phase 2 establishes upstream tracking immediately after
+   the first implementation commit, then pushes every later commit as it is
+   created. The default workflow leaves draft PR creation to `/dxpr` in Phase 5.
+   If the user asks for a PR during setup and the branch has no branch-specific
+   commits yet, report that it will be created after the first implementation
+   commit instead of publishing an empty branch.
 
    **If ticket context was found**:
    - Rename to match the ticket's git branch name (returned by the tracker — e.g., Linear's `branchName` field from `get_issue`):
      ```
      git branch -m {{BRANCH}} <suggested-branch-name>
-     git push -u origin <suggested-branch-name>
      ```
 
    **If no ticket context**:
    - Keep the current branch name `{{BRANCH}}`.
-   - Push the branch so the remote tracks it:
-     ```
-     git push -u origin {{BRANCH}}
-     ```
 
-   - After renaming, update the per-session meta sidecar so `dx <N>` can find this worktree later even though the branch no longer matches `worktree-ticket-*`:
+   **For both cases**:
+   - Update the per-session meta sidecar so `dx <N>` can find this worktree
+     later even when the branch no longer matches `worktree-ticket-*`:
      ```bash
      source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
      SID="${DEX_SESSION_ID:-$(dx_session_id)}"

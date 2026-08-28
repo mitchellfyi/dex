@@ -63,9 +63,9 @@ All of these must be true:
   selection, progress, and receipts before counting resumed.
 - Any criteria or trusted-policy binding change invalidated prior selection,
   progress, clean credit, and receipts before review resumed.
-- Phase 3 stays focused on review by default. If a commit, push, or PR action
-  occurs during the phase, record the resulting state. Re-run `/dxreviewloop`
-  after any code change; publishing does not replace the clean-pass requirement.
+- Phase 3 stays focused on review and fixes. Do not commit, push, or create a PR
+  during this phase. Phase 4 commits and publishes accepted review fixes after
+  final verification. Re-run `/dxreviewloop` after any code change.
 
 The outer review loop has no iteration maximum. It continues until the clean
 gate succeeds or a deterministic pause condition occurs.

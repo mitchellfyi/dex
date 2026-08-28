@@ -676,6 +676,8 @@ RC=$?
 set -e
 assert_rc "valid Phase 1 criteria reach handoff" 2
 assert_out_contains "Phase 1 criteria emit Phase 2 handoff" "Phase Handoff: Phase 1 complete"
+assert_out_contains "Phase 2 handoff requires incremental pushes" "push immediately after every commit"
+assert_out_contains "Phase 2 handoff protects no-change branches" "stop the lifecycle as no-change"
 assert_file_eq "valid Phase 1 criteria advance to Phase 2" "$DX_STATE_DIR/$SID.phase" "2"
 if dx_review_read_criteria_approval "$SID" >/dev/null; then
   report "Phase 1 transition seals approved criteria" 0
@@ -729,6 +731,8 @@ RC=$?
 set -e
 assert_rc "current Phase 2 risk selection reaches handoff" 2
 assert_out_contains "Phase 2 selection emits Phase 3 handoff" "Phase Handoff: Phase 2 complete"
+assert_out_contains "Phase 3 handoff forbids publishing" "Do not commit, push, or create a PR in Phase 3"
+assert_out_lacks "Phase 3 handoff does not push review fixes" "Push any accepted-fix commit"
 assert_file_eq "Phase 2 selection advances to Phase 3" "$DX_STATE_DIR/$SID.phase" "3"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
@@ -792,6 +796,8 @@ RC=$?
 set -e
 assert_rc "valid Phase 3 receipt reaches the handoff" 2
 assert_out_contains "valid receipt emits Phase 4 handoff" "Phase Handoff: Phase 3 complete"
+assert_out_contains "Phase 4 handoff publishes later repairs" "review fixes or verification left changes"
+assert_out_contains "Phase 4 handoff rejects empty PR branches" "user-direction path"
 assert_file_eq "valid receipt advances to Phase 4" "$DX_STATE_DIR/$SID.phase" "4"
 if [[ ! -e "$(dx_review_proof_dir "$SID")" && ! -L "$(dx_review_proof_dir "$SID")" ]]; then
   report "Phase 3 handoff removes retained proof bundles" 0

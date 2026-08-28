@@ -64,13 +64,13 @@ dx 1234
   |     Explore the ticket and codebase, propose an approach, wait for approval.
   |
   |-- Phase 2: Implement
-  |     Build with tests, prove criteria, then select small/normal/complex review risk.
+  |     Build with tests, commit and push green increments, prove criteria, then select review risk.
   |
   |-- Phase 3: Review
   |     Run fresh review-wave CLI sessions to the selected tier's trusted clean gate.
   |
   |-- Phase 4: Verify + Commit
-  |     Run quality gates, create atomic conventional commits, push the branch.
+  |     Run final gates, commit review or verification repairs, confirm the remote is current.
   |
   |-- Phase 5: PR
   |     Create the draft PR with description, reviewer routing, and visual handoff.
@@ -104,12 +104,14 @@ lowering it still requires that many independent clean waves and records the
 review phase as waived. A full `dx control waive review.clean-passes` skips the
 remaining review gate.
 
-Phase names describe the default workflow, not publishing permissions. An agent
-may commit, push, or open and update a PR whenever that helps the work. Human
-and agent controls can pause or stop Dex, change a phase/session runtime
-default, waive a named assurance gate, or jump to another phase. Every exception
-records its source and reason; skipped and waived outcomes stay separate from
-passed gates. See [session policy overrides](docs/autonomous-mode.md#session-policy-overrides).
+Publishing follows phase ownership: Phase 2 publishes implementation commits,
+Phase 3 leaves review fixes in the working tree, Phase 4 publishes review and
+verification repairs, and Phase 5 owns PR creation. These boundaries are prompt
+contracts rather than hard Git restrictions. Human and agent controls can pause
+or stop Dex, change a phase/session runtime default, waive a named assurance
+gate, or jump to another phase. Every exception records its source and reason;
+skipped and waived outcomes stay separate from passed gates. See [session
+policy overrides](docs/autonomous-mode.md#session-policy-overrides).
 
 The clean-pass bookkeeping is designed to stop a review loop drifting into a
 false pass — wrong scope, changed criteria, a reused result, a lost finding —

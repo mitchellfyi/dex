@@ -482,24 +482,24 @@ dx_inline_phase_message() {
   case "$1" in
     1)
       cat <<'EOF'
-Phase 0 setup is complete (branch renamed and pushed, ticket assigned, status set to In Progress). Begin Phase 1: Plan. Call EnterPlanMode now, then immediately invoke the Skill tool with skill: "dxplan". Do not redo ticket setup unless something is clearly missing. For freeform task requests with a configured tracker, after the user approves the plan via ExitPlanMode, offer the dxplan tracker intake choices before writing the Phase 1 approval marker. After that gate is complete or explicitly skipped, write the Phase 1 approval marker and stop so the Stop hook can audit and advance.
+Phase 0 setup is complete (branch renamed locally, ticket assigned, status set to In Progress). A newly created local branch should remain unpushed until its first implementation commit; leave any existing published branch as-is. Begin Phase 1: Plan. Call EnterPlanMode now, then immediately invoke the Skill tool with skill: "dxplan". Do not redo ticket setup unless something is clearly missing. For freeform task requests with a configured tracker, after the user approves the plan via ExitPlanMode, offer the dxplan tracker intake choices before writing the Phase 1 approval marker. After that gate is complete or explicitly skipped, write the Phase 1 approval marker and stop so the Stop hook can audit and advance.
 
 For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval.
 EOF
       ;;
     2)
       cat <<'EOF'
-The plan is approved. Invoke the Skill tool with skill: "dximplement" to begin implementation. Phase focus: implementation, testing, and UI capture evidence. For UI-affecting changes, invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. Commit, push, branch, and PR actions remain available when useful; later phases still perform the normal verification and handoff. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance the lifecycle.
+The plan is approved. Invoke the Skill tool with skill: "dximplement" to begin implementation. Phase focus: implementation, testing, and UI capture evidence. For UI-affecting changes, invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. Follow prompts/commit-format.md, commit coherent green increments early, and push immediately after every commit. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 still performs final verification and publishes review or verification repairs. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance the lifecycle.
 EOF
       ;;
     3)
       cat <<'EOF'
-Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Any fix resets the clean streak. Residual findings, blockers, churn, invalid results, or provider failures pause the loop instead of counting as clean. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance.
+Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Any fix resets the clean streak. Residual findings, blockers, churn, invalid results, or provider failures pause the loop instead of counting as clean. Phase focus: review and fixes. Do not commit, push, or create a PR in Phase 3; Phase 4 publishes accepted review fixes after final verification. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance.
 EOF
       ;;
     4)
       cat <<'EOF'
-Begin Phase 4: Verify & Commit. Invoke the Skill tool with skill: "dxverify" to run the quality pipeline. Fix failures and rerun until green. Then invoke skill: "dxcommit" to commit and push. PR creation and broader implementation work remain available when useful. When pushed, stop so the Stop hook can audit and advance.
+Begin Phase 4: Verify & Commit. Invoke the Skill tool with skill: "dxverify" to run the quality pipeline. Fix failures and rerun until green. If Phase 3 review fixes or verification left changes, invoke skill: "dxcommit" to create atomic repair commits and push each one immediately; otherwise confirm local HEAD is already on origin. A newly created local branch with no branch-specific commits must return to Phase 2's user-direction path instead of entering the PR flow. PR creation and broader implementation work remain available when useful. When the branch is verified and current, stop so the Stop hook can audit and advance.
 EOF
       ;;
     5)
@@ -1324,7 +1324,7 @@ case "$PAUSE_GATE_RC" in
 esac
 
 # Phase 0 has an external readiness gate: the agent must explicitly mark setup
-# done (after renaming the branch, pushing, and updating tracker status). Block
+# done (after renaming the branch locally and updating tracker status). Block
 # the stop until the ready marker exists so an early "I'm done" cannot skip
 # bootstrap. Mirrors Phase 1/Phase 2 gates below.
 if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "0" ]]; then
@@ -1341,7 +1341,7 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "0" ]]; then
     printf '%s\n' "Phase 0 owns ticket bootstrap. Before you can advance to planning, all of these must be true:" >&2
     printf '%s\n' "- Ticket fetched from the configured tracker (skip if none is configured)." >&2
     printf '%s\n' "- Assignee set to the authenticated user (skip if already assigned to you; STOP and warn if assigned to someone else)." >&2
-    printf '%s\n' "- Lifecycle branch renamed to the tracker's git branch name and pushed." >&2
+    printf '%s\n' "- Lifecycle branch renamed locally to the tracker's git branch name; leave it unpushed until its first implementation commit." >&2
     printf '%s\n' "- Ticket status moved to In Progress." >&2
     printf '%s\n' "- Description / acceptance criteria drafted (only if the ticket was empty or unclear)." >&2
     printf '%s\n' "" >&2
@@ -1587,9 +1587,9 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
       printf '%s\n' "" >&2
       printf 'This wait-state notice is throttled to once every %s unless the review pass changes or times out.\n' "$(dx_format_duration "$BUSY_NOTICE_INTERVAL")" >&2
       if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
-        printf '%s\n' "Continue waiting for the current review pass. Its timeout is disabled, so Dex will not pause it based on elapsed time. Commit, push, and PR actions remain available, but do not start a later lifecycle phase while this review child can still edit files." >&2
+        printf '%s\n' "Continue waiting for the current review pass. Its timeout is disabled, so Dex will not pause it based on elapsed time. Do not commit, push, create a PR, or start a later lifecycle phase while this review child can still edit files." >&2
       else
-        printf 'Continue waiting for the current review pass. If this exceeds %s, Dex will pause Phase 3 for intervention. Commit, push, and PR actions remain available, but do not start a later lifecycle phase while this review child can still edit files.\n' "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
+        printf 'Continue waiting for the current review pass. If this exceeds %s, Dex will pause Phase 3 for intervention. Do not commit, push, create a PR, or start a later lifecycle phase while this review child can still edit files.\n' "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
       fi
     fi
     exit 2

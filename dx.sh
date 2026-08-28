@@ -205,9 +205,9 @@ __dx_cli() {
       echo ""
       echo "Autonomous lifecycle phases (run automatically by dx):"
       echo "  1. Plan            Gather context, draft plan, get approval"
-      echo "  2. Implement       Work through tasks with TDD; decide and surface UI proof"
+      echo "  2. Implement       Work through tasks with TDD; commit and push green increments; decide UI proof"
       echo "  3. Review          Adaptive adversarial code review"
-      echo "  4. Verify & Commit Format, lint, typecheck, test, then commit + push"
+      echo "  4. Verify & Commit Run final gates; commit and push review or verification repairs"
       echo "  5. PR              Generate PR description, prepare visual handoff, create draft PR + attach reviewers"
       echo "  6. Complete        Mark ready, request reviewers, monitor CI/reviews, close ticket"
       ;;
@@ -356,22 +356,22 @@ __dx_phase_message() {
 # completion promises, audit basenames, and min-audit counts come from the
 # shared tables in lib/lifecycle-control.sh via the __dx_phase_* helpers below.
 DX_PHASE_MESSAGES=(\
-  "Phase 0 setup (branch rename, push, ticket status → In Progress, assignment) is already complete. Do NOT redo it unless you find it missing.
+  "Phase 0 setup (local branch rename, ticket status → In Progress, assignment) is already complete. A newly created local branch should remain unpushed until its first implementation commit; leave any existing published branch as-is. Do NOT redo setup unless you find it missing.
 
 Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill tool with skill: \"dxplan\" (or /dxplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dxplan skill unless the skill explicitly instructs you to.
 
 The dxplan skill writes the required Phase 1 lifecycle markers. For freeform \`dx \"<task>\"\` requests with a configured tracker, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues and select the first implementation ticket. After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
 
 For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval." \
-  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact. Phase focus: implementation, testing, and trustworthy proof. Commit, push, branch, and PR actions remain available when useful; later phases still perform the canonical verification, commit, and PR handoff. When done, stop — the audit loop will verify your work." \
-  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit, push, branch, and PR actions remain available when useful; later phases still perform their normal handoff steps. When the loop writes a valid success receipt, stop — the audit loop will verify." \
-  "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. Then invoke skill: \"dxcommit\" to commit and push. Phase focus: verification and the canonical commit, but PR creation and implementation fixes remain available when useful. When pushed, stop — the audit loop will verify." \
+  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact. Phase focus: implementation, testing, and trustworthy proof. Follow prompts/commit-format.md, commit coherent green increments early, and push immediately after every commit. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If the approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 still performs final verification and publishes review or verification repairs. When done, stop — the audit loop will verify your work." \
+  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Do not commit, push, or create a PR in Phase 3; Phase 4 publishes accepted review fixes after final verification. When the loop writes a valid success receipt, stop — the audit loop will verify." \
+  "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. If Phase 3 review fixes or verification left changes, invoke skill: \"dxcommit\" to create atomic repair commits and push each one immediately; otherwise confirm local HEAD is already on origin. A newly created local branch with no branch-specific commits cannot enter the ordinary PR flow; return to Phase 2's user-direction path instead of publishing it. Phase focus: final verification, but PR creation and implementation fixes remain available when useful. When the branch is verified and current, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from dex.md § Reviewers. Phase focus: PR creation, description, and artifact handoff. Marking ready, posting @mentions, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, re-read the current completion wait/cycle defaults, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the current bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
 )
 
 DX_PHASE_0_TIMEOUT="0"
-DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (c) rename the lifecycle branch to the tracker's git branch name and push it; PR creation is normally deferred until Phase 5 but remains available when useful; (d) set ticket status to In Progress; (e) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, push the current lifecycle branch and proceed. Phase focus: ticket setup. Planning and implementation normally begin in later phases, but commits, pushes, branches, and PR actions remain available. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
+DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (c) rename the lifecycle branch locally to the tracker's git branch name, but do not push it until Phase 2 creates the first real implementation commit and do not create an empty bootstrap commit; PR creation is normally deferred until Phase 5; (d) set ticket status to In Progress; (e) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, keep the current lifecycle branch local until its first implementation commit. Phase focus: ticket setup. Planning, implementation commits, and pushes begin in later phases. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
 
 # Thin wrappers over the shared phase tables in lib/lifecycle-control.sh; the
 # __dx_ names stay because dx.sh uses them throughout.
@@ -1066,19 +1066,26 @@ __dx_build_system_context() {
   # Build phase-specific scope boundaries
   local scope_lines=""
   case $step in
-    0) scope_lines="- DO read the ticket, assign it to the authenticated user (if unassigned), rename the lifecycle branch to the tracker's git branch name, push the renamed branch, and set ticket status to In Progress
+    0) scope_lines="- DO read the ticket, assign it to the authenticated user (if unassigned), rename the lifecycle branch locally to the tracker's git branch name, and set ticket status to In Progress
+- Do NOT push a newly created branch before its first real implementation commit, and do not create an empty bootstrap commit
 - DO operate in NORMAL mode — do NOT call EnterPlanMode in this phase
-- Keep the phase focused on ticket bootstrap. Planning and implementation normally follow later; commit and PR actions remain available when the user or active workflow calls for them
+- Keep the phase focused on ticket bootstrap. Planning, implementation commits, pushes, and PR work follow in later phases
 - DO write the Phase 0 ready marker (dx_phase_ready_file step 0) when setup is complete, then stop" ;;
     1) scope_lines="- DO invoke the dxplan skill immediately after entering Plan Mode
-- Phase 0 already handled branch rename and ticket setup; do not redo them unless the markers are missing
+- Phase 0 already handled the local branch rename and ticket setup; for a newly created local branch, the missing remote branch is expected until the first implementation commit
 - Do NOT explore code or draft a plan by hand outside dxplan unless the skill explicitly instructs you to
 - DO wait for explicit user approval via ExitPlanMode before marking Phase 1 ready" ;;
     2) scope_lines="- DO implement, test, and verify completeness via the Skill tool
-- Commits, pushes, branches, and PR actions remain available; Phase 4 and Phase 5 still provide their normal canonical handoffs" ;;
+- Follow prompts/commit-format.md for staging, forbidden-file review, messages, and attribution
+- Commit coherent green increments early and push immediately after every commit
+- Establish upstream only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit
+- If approved work produces no branch-specific commit on a new local branch, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action
+- Phase 4 performs final verification and publishes review or verification repairs; Phase 5 owns the PR handoff" ;;
     3) scope_lines="- DO run /dxreviewloop, fix all findings, and reach a SUCCESS result
-- Commits, pushes, branches, and PR actions remain available; use them only when they help the current work" ;;
-    4) scope_lines="- DO run format/lint/typecheck/test, fix failures, commit, push
+- Do not commit, push, or create a PR in Phase 3; Phase 4 publishes accepted review fixes" ;;
+    4) scope_lines="- DO run format/lint/typecheck/test and fix failures
+- If review or verification left changes, commit them atomically and push each commit immediately; otherwise confirm local HEAD is already on origin
+- A new local branch with no branch-specific commits must return to Phase 2's user-direction path instead of entering the PR flow
 - PR creation and broader implementation fixes remain available when useful" ;;
     5) scope_lines="- DO create or update the PR, write the description, and attach 'request' reviewers from dex.md § Reviewers
 - Ready-state changes, @mention comments, implementation changes, commits, and pushes remain available; Phase 6 still performs the normal completion workflow" ;;

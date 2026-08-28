@@ -65,9 +65,28 @@ For each task in the approved plan:
    - Write a failing test first.
    - Write the minimum code to make it pass.
    - Refactor while keeping tests green.
-4. After completing the task, run deterministic quality checks (format, lint, typecheck) on changed files only. Fix issues before moving to the next task — this prevents error accumulation across tasks. Run the language's type checker and static analysis tool. If tests use libraries that extend the assertion framework, verify the type checker also recognizes those extensions. These checks must pass — do not defer them to the end.
-5. Codebase stewardship: if you encounter dead code, stale comments, or outdated references in files you are modifying, clean them up — but do not expand scope to files outside the plan.
-6. `TaskUpdate(task_id, "completed")`
+4. After each coherent Red-Green-Refactor increment, run its focused tests and
+   the deterministic checks relevant to the changed files. Fix failures before
+   committing. Read `prompts/commit-format.md` before the first commit and apply
+   its staging, forbidden-file, message, and Dex-attribution rules to every
+   commit.
+5. Commit and push the green increment immediately instead of holding changes
+   for the end of the task or Phase 4. Large tasks should produce more than one
+   commit when they contain independently coherent increments. For a new local
+   branch with no upstream, the first real branch-specific commit establishes
+   `origin/<current-branch>` as upstream; later commits push to that upstream.
+   Never push the new branch before that commit, and never create an empty
+   commit just to publish it.
+6. After completing the task, run deterministic quality checks (format, lint,
+   typecheck) across all files changed by that task. Fix issues before moving to
+   the next task. If tests use libraries that extend the assertion framework,
+   verify that the type checker recognizes those extensions.
+7. Codebase stewardship: if you encounter dead code, stale comments, or outdated references in files you are modifying, clean them up — but do not expand scope to files outside the plan.
+8. `TaskUpdate(task_id, "completed")`
+
+The same commit-and-push cadence applies to every later Phase 2 change,
+including implementation-inventory fixes, final-check repairs, and tests added
+after the manual smoke test.
 
 ### 3. Keep `.dex/` in Sync
 
@@ -257,6 +276,14 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
 - Final deterministic checks passed locally.
 - The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
 - The UI proof decision is recorded as `READY`, `SKIPPED` with a reason, or `N/A` with a reason. Choosing `SKIPPED` is allowed when a walkthrough would not improve the review.
+- Every implementation change is committed, every implementation commit has
+  been pushed, local HEAD matches its upstream, and no empty bootstrap commit
+  was used to publish the branch.
+- If approved work produced no branch-specific commit on a newly created local
+  branch, keep it unpushed and do not write the Phase 2 ready marker. Ask the
+  user whether to stop the lifecycle as no-change or choose an explicit
+  lifecycle control action instead of advancing into a PR flow that cannot
+  complete.
 - No Phase 2 background processes or long-running commands are still in flight.
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
   recorded for the final current scope and bound to the trusted clean-wave
@@ -273,12 +300,12 @@ Do not write this marker early. The Stop hook ignores `PHASE_2_COMPLETE` without
 
 ## Scope Boundaries
 
-Keep Phase 2 focused on implementation and its evidence. By default, Phase 4
-owns final verification, commits, and pushes; Phase 5 owns pull-request work;
-and Phase 6 owns final ticket state. Commits, pushes, and pull-request actions
-are still permitted in Phase 2 when the user directs them or the active
-workflow requires them. Record what changed so the later phase can continue
-from the current repository and PR state.
+Keep Phase 2 focused on implementation and its evidence. Phase 2 owns routine
+implementation commits and pushes; Phase 3 reviews without committing or
+pushing; Phase 4 owns final verification and commits any review or verification
+repair; Phase 5 owns pull-request work; and Phase 6 owns final ticket state.
+Record each pushed increment so the later phases continue from the current
+repository and PR state.
 
 During implementation, avoid unrelated lifecycle administration:
 - Leave final ticket-state changes to Phase 6 unless the user directs otherwise.
@@ -288,6 +315,7 @@ During implementation, avoid unrelated lifecycle administration:
 You SHOULD:
 - Implement all planned tasks with TDD
 - Run quality checks on changed files after each task (format, lint, typecheck)
+- Commit coherent green increments early and push immediately after every commit
 - Run the self-review loop (Step 5) and final implementation checks (Step 6)
 - Run `/dxuicapture` early, then capture a concise walkthrough or record a reasoned `SKIPPED`/`N/A` decision
 - Run the manual local smoke test (Step 8) before marking Phase 2 ready, cleaning up anything it starts or seeds

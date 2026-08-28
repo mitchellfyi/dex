@@ -23,10 +23,11 @@ Review your commit history (`git log --oneline origin/<default-branch>..HEAD`):
 
 ## Step 2.5: `.dex/` in commits
 
-Check if `.dex/` files were modified during implementation:
-- If yes, ensure they're committed (ideally in a separate `docs(.dex): sync project config` commit).
-- If `.dex/` changes are mixed into code commits, split them out.
-- If `.dex/` changes are unstaged/uncommitted, stage and commit them now.
+Phase 2 should already have committed and pushed any `.dex/` updates required
+by implementation. If review or final verification added further `.dex/`
+changes, commit them now, ideally as a separate
+`docs(.dex): sync project config` commit. Do not move an implementation-owned
+`.dex/` update into Phase 4 merely because it was left staged.
 
 ## Step 3: Diff review
 
@@ -37,9 +38,17 @@ Run `git diff --stat origin/<default-branch>` and review:
 
 ## Step 4: Push
 
-Has the code been pushed to origin? If not, push it.
+Phase 2 should already have pushed each implementation commit. Confirm local
+HEAD matches `origin/<current-branch>`. If Phase 3 review fixes or final
+verification left changes, commit them atomically and push immediately.
 
 If you pushed and got errors (e.g., remote rejection, hook failures), fix the issues and push again.
+
+If a newly created local branch has no branch-specific commits, keep it
+unpushed. It cannot satisfy the ordinary Phase 4 completion gate or continue to
+Phase 5; return to Phase 2's user-direction path instead. The user may stop the
+lifecycle as no-change or choose an explicit lifecycle control action. Do not
+create an empty commit.
 
 ## Completion criteria
 
@@ -48,6 +57,8 @@ ALL of these must be true before you stop:
 - Commits are clean and atomic with conventional messages
 - No unwanted files in the diff
 - Any `.dex/` changes are committed cleanly
-- Code is pushed to origin successfully
+- Every branch-specific commit is pushed to origin successfully
+- A newly created local branch with no branch-specific commits did not enter
+  the ordinary Phase 4 flow
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

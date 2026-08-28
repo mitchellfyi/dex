@@ -119,8 +119,10 @@ All of these must be true before you stop:
 - The review result signal file contains one allowed result value.
 - The context pack is non-empty and the findings file contains exactly one
   valid hash.
-- Any commit, push, branch, PR, or reviewer action is reflected in the context
-  pack. Re-run the review after an action that changed the review scope.
+- For lifecycle-bound criteria, no commit, push, branch switch, PR, or reviewer
+  action occurred; verified fixes remain in the working tree for Phase 4. For a
+  standalone review, reflect any such action in the context pack and re-run the
+  review after an action that changed the review scope.
 
 When those criteria are met, stop. The outer `/dxreviewloop` owns the selected
 tier's trusted consecutive `CLEAN` gate, which defaults to 1, 3, or 6 waves.

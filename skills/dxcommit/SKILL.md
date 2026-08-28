@@ -21,13 +21,17 @@ git status
 git diff --stat
 ```
 
-Review what has changed. Identify logical groupings for atomic commits. If there are no changes to commit (clean working tree, nothing staged), **stop here** — inform the user and skip the remaining steps.
+Review what has changed and identify logical groupings for atomic commits. If
+the working tree is clean, check whether the current branch has an unpushed
+branch-specific commit from an earlier failed push. Continue to the push check
+when it does. Otherwise stop: do not publish a newly created branch merely to
+establish upstream tracking, and do not create an empty commit.
 
-### 2. Stage and Commit
+### 2. Stage, Commit, and Push Each Group
 
 Read the commit format guide from the Dex prompts directory (`prompts/commit-format.md`) for the full format specification.
 
-For each logical group:
+For each logical group, finish all four steps before starting the next group:
 
 1. **Stage specific files** — never use `git add -A` or `git add .`:
    ```bash
@@ -45,16 +49,26 @@ For each logical group:
    ```
    Do not include `Generated with Claude Code`, `Co-Authored-By: Claude ...`, or any similar Claude Code footer.
 
-### 3. Push
+4. **Push immediately.** The first real commit on a new local branch establishes
+   its upstream; every later commit pushes to that upstream before another
+   commit is created:
 
-```bash
-current_branch=$(git branch --show-current)
-upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
-if [[ -z "$upstream" || "$upstream" != "origin/${current_branch}" ]]; then
-  git push -u origin HEAD
-else
-  git push
-fi
-```
+   ```bash
+   current_branch=$(git branch --show-current)
+   upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+   if [[ -z "$upstream" || "$upstream" != "origin/${current_branch}" ]]; then
+     git push -u origin HEAD
+   else
+     git push
+   fi
+   ```
 
-Verify the push succeeded. This handles newly created Dex lifecycle branches whose first checkout was based on the default branch's upstream or remote-tracking ref, but whose push target must be their own branch. If push fails due to diverged history, investigate — do not force push without user approval.
+   Verify the push succeeded before staging the next logical group. If it fails
+   because the remote diverged, investigate; do not force-push without user
+   approval.
+
+### 3. Final Sync Check
+
+Confirm the working tree is clean, the current branch contains at least one
+branch-specific commit, and local HEAD matches `origin/<current-branch>`. A
+newly created branch with no branch-specific commits stays local.

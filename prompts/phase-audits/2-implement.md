@@ -24,6 +24,29 @@ Quick scan for obvious issues (the Review phase will do deep analysis):
 
 Fix anything found before proceeding.
 
+## Step 2.5: Commit and Push Cadence
+
+Review the implementation command history, `git status`, and the branch's
+commits relative to the default branch:
+
+- Coherent green increments were committed during implementation instead of
+  being held until Phase 4.
+- Focused tests and checks passed before each implementation commit.
+- Every commit followed `prompts/commit-format.md`: specific-file staging,
+  forbidden and sensitive file review, a conventional message, and Dex-only
+  attribution.
+- The newly created branch stayed local until its first branch-specific commit;
+  no empty bootstrap commit was used to publish it.
+- The first implementation commit established upstream tracking, and every
+  later commit was pushed immediately after it was created.
+- The working tree contains no completed implementation work waiting to be
+  committed, and local HEAD matches `origin/<current-branch>`.
+
+If approved work produced no branch-specific commit on a newly created local
+branch, keep it unpushed and do not complete Phase 2. Ask the user whether to
+stop the lifecycle as no-change or choose an explicit lifecycle control action;
+do not advance into a PR flow that cannot complete.
+
 ## Step 3: Evidence Table
 
 For each acceptance criterion from the plan, fill in the evidence table:
@@ -151,8 +174,14 @@ ALL of these must be true before you stop:
 - The change was exercised end-to-end locally and passed the manual smoke
   test, or manual verification is explicitly N/A with a reason
 - No TODO/FIXME/debugging artifacts remain
+- Every implementation commit was pushed immediately after creation, local
+  HEAD matches its upstream, and no empty bootstrap commit was used to publish
+  the branch.
+- A newly created local branch with no branch-specific commit remains unpushed
+  and blocks the ordinary Phase 2 handoff pending user direction.
 - No background processes or long-running verification commands started during Phase 2 are still in flight
-- Any needed `.dex/` updates are staged
+- Any needed `.dex/` updates are committed and pushed with the implementation
+  increment that required them
 - The UI proof decision is `READY`, `SKIPPED` with a reason, or `N/A` with a reason; a reasoned skip is valid and is not reported as a passed capture
 - A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
   recorded for the final current scope and bound to the trusted clean-wave

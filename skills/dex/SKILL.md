@@ -16,10 +16,10 @@ Orchestrate the full ticket lifecycle from planning through completion.
 
 The terminal `dx` lifecycle runs phases in the same Claude Code session. Each phase has an audit loop that critically reviews the work before allowing completion; when the phase passes, the Stop hook injects the next phase instructions directly into the current session.
 
-Commits, pushes, and pull-request actions remain available in every phase.
-Phase assignments describe their default focus and owner. When a direct human
-instruction or the active workflow calls for one of those actions, record the
-resulting state and continue using the current phase's completion criteria.
+Phase 2 owns routine implementation commits and pushes. Phase 3 reviews and
+fixes without committing, pushing, or creating a PR. Phase 4 commits and pushes
+review or verification repairs, Phase 5 owns PR setup, and Phase 6 owns external
+review follow-through. Phase 3 must be quiescent before any later publication.
 
 ### Phase 0: Setup
 
@@ -27,16 +27,21 @@ resulting state and continue using the current phase's completion criteria.
 2. Follow `prompts/ticket-instructions.md` end to end:
    - Read the ticket from the configured tracker (including all comments).
    - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, pause and ask by default. A justified `setup.ticket-ownership` waiver may continue without claiming ownership changed.
-   - Rename the lifecycle branch to the tracker's git branch name and push it with upstream tracking. Draft PR creation normally stays with Phase 5 unless the user asks for it earlier.
+   - Rename the lifecycle branch locally to the tracker's git branch name. Do
+     not push a newly created branch with no branch-specific commits and do not
+     create an empty bootstrap commit. Phase 2 publishes it after the first
+     implementation commit. Draft PR creation normally stays with Phase 5.
    - Set ticket status to **In Progress**.
    - If the description is empty or unclear, draft 2-3 sentences plus an acceptance-criteria checklist, present to the user, and update the ticket once confirmed.
    - Update the per-session meta sidecar with `tracker_key` and `current_branch` so future `dx <N>` invocations can find the worktree even after the branch rename.
-3. **SCOPE**: keep the phase focused on ticket bootstrap. Planning and source work normally begin in later phases; commits and PR work retain their existing phase owners unless the user directs otherwise.
+3. **SCOPE**: keep the phase focused on ticket bootstrap. Planning and source
+   work normally begin in later phases; routine commits and pushes begin in
+   Phase 2, and PR work normally begins in Phase 5.
 4. When setup is complete, write the Phase 0 ready marker (`dx_phase_ready_file ... 0`) and stop once so the Stop hook can audit and advance to Phase 1 automatically.
 
 ### Phase 1: Plan
 
-1. Phase 0 already handled ticket setup; do not redo it unless something is clearly missing (status still Backlog/Todo, no assignee, branch not renamed/pushed).
+1. Phase 0 already handled ticket setup; do not redo it unless something is clearly missing (status still Backlog/Todo, no assignee, or branch not renamed). For a newly created local branch, the absence of a remote branch before the first implementation commit is expected.
 2. Run `/dxplan` — gather any remaining context, draft the implementation plan, create tasks.
 3. Present the plan and wait for approval by default. If an outlier justifies proceeding in the current session, record a named `plan.approval` waiver; do not represent it as human approval.
 4. If the user requests changes, revise and re-present.
@@ -46,19 +51,32 @@ resulting state and continue using the current phase's completion criteria.
 ### Phase 2: Implement
 
 1. Invoke the Skill tool with `skill: "dximplement"` — work through tasks with TDD discipline. The plan approval was the go-ahead; do not pause to ask for permission.
-2. Ask by default if ambiguous requirements, scope changes, or blocked dependencies arise. The active agent may use the attributed override/waiver contract when proceeding is justified.
-3. Invoke `/dxuicapture` early to decide whether visual proof would help. The agent may capture a concise walkthrough, record `SKIPPED` with a reason for a visible but disproportionate case, or record `N/A` when there is no browser impact. When capture is chosen, prefer a matched before/after flow, keep it under 90 seconds, and surface the temporary bundle after baseline and production.
-4. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
-5. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, the manual smoke test passed or explicitly N/A, and an honest UI proof decision recorded. A reasoned `SKIPPED` decision is valid; it is not reported as a successful capture.
-6. **SCOPE**: focus on implementation, testing, and the UI proof decision. Ticket setup belongs to Phase 0, so only re-run it here if Phase 0 left it incomplete. Phase 4 normally owns verification and publishing, while Phase 5 normally owns the PR description; direct human instructions can change that order.
-7. After the final in-scope change, select and persist the Phase 3 risk
+2. Commit early and often. After each coherent implementation increment is
+   green under its focused tests and checks, create an atomic conventional
+   commit and push it immediately. For a new local branch with no upstream, the
+   first real branch-specific commit establishes tracking; every later commit
+   is pushed as it is created. Never publish the new branch before that commit.
+3. Ask by default if ambiguous requirements, scope changes, or blocked dependencies arise. The active agent may use the attributed override/waiver contract when proceeding is justified.
+4. Invoke `/dxuicapture` early to decide whether visual proof would help. The agent may capture a concise walkthrough, record `SKIPPED` with a reason for a visible but disproportionate case, or record `N/A` when there is no browser impact. When capture is chosen, prefer a matched before/after flow, keep it under 90 seconds, and surface the temporary bundle after baseline and production.
+5. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
+6. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, implementation commits pushed, the manual smoke test passed or explicitly N/A, and an honest UI proof decision recorded. A reasoned `SKIPPED` decision is valid; it is not reported as a successful capture.
+7. **SCOPE**: focus on implementation, testing, incremental commits and pushes,
+   and the UI proof decision. Ticket setup belongs to Phase 0, so only re-run it
+   here if Phase 0 left it incomplete. Phase 3 does not commit or push. Phase 4
+   owns final verification and commits any review or verification repairs,
+   while Phase 5 normally owns the PR description.
+8. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `small`, `normal`, or `complex`, with a
    deterministic set of reason codes. The tier selects the trusted clean-wave
    policy from the committed default branch. Its defaults are 1, 3, and 6;
    `.dex/dex.md` may configure monotonic values from 1 through 30.
-8. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
-   shows all criteria MET, and the review-risk selection matches the final
-   scope fingerprint and trusted policy.
+9. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
+   shows all criteria MET, implementation commits are pushed, and the
+   review-risk selection matches the final scope fingerprint and trusted
+   policy. If approved work produced no branch-specific commit on a newly
+   created local branch, keep it unpushed and pause for user direction instead
+   of advancing toward Phase 5. The user may stop the lifecycle as no-change or
+   choose an explicit lifecycle control action.
 
 ### Phase 3: Review
 
@@ -94,8 +112,9 @@ resulting state and continue using the current phase's completion criteria.
    Use this only for the dead-owner diagnosis. The command refuses live or
    malformed state and leaves Phase 3 paused; then follow the user's direction
    to `/dxresume` or `/dxskip`.
-8. **SCOPE**: focus on review and fixes. Phase 4 and Phase 5 remain the default
-   owners of publishing and PR setup, but those actions are available here.
+8. **SCOPE**: focus on review and fixes. Do not commit, push, or create a PR in
+   Phase 3. Phase 4 commits and pushes accepted review fixes after final
+   verification; Phase 5 owns PR setup.
 9. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
    receipt binding the approved criteria, trusted policy, attested clean
    ledger, and any lower-target override. Report whether the trusted target
@@ -105,8 +124,14 @@ resulting state and continue using the current phase's completion criteria.
 
 1. Run `/dxverify` — format, lint, typecheck, generate, test.
 2. Fix any failures. Re-run until all green, using the current retry defaults from `dx_failure_attempts_per_strategy` and `dx_failure_max_strategies` as described in `prompts/failure-recovery.md`.
-3. Run `/dxcommit` — atomic conventional commits, push to origin.
-4. Output `PHASE_4_COMPLETE` when all checks pass and code is pushed.
+3. If Phase 3 review fixes or verification left changes, run `/dxcommit` to
+   create atomic conventional repair commits and push each one immediately.
+   Otherwise, confirm the implementation branch is clean and its HEAD is
+   already on origin.
+4. Output `PHASE_4_COMPLETE` when all checks pass and every branch-specific
+   commit is pushed. A newly created local branch with no branch-specific
+   commits cannot use the ordinary Phase 4 completion path; return to Phase 2's
+   user-direction path instead of publishing it.
 
 ### Phase 5: PR
 

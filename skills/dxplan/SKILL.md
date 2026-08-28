@@ -27,9 +27,11 @@ touch "$(dx_phase_started_file "${DEX_SESSION_ID:-$(dx_session_id)}" 1)"
 This marker tells the Stop hook that the actual `dxplan` workflow is running.
 Do not skip it when `DEX_SESSION_ID` is present.
 
-Phase 0 (Setup) already renamed the branch, assigned the ticket, pushed the
-branch, and moved status to In Progress before Phase 1 began. Do not redo
-those steps here; only flag missing setup back to the user if you notice it.
+Phase 0 (Setup) already renamed the branch locally, assigned the ticket, and
+moved status to In Progress before Phase 1 began. A newly created local branch
+intentionally stays unpushed until its first implementation commit; an existing
+published branch is left as-is. Do not redo those steps here; only flag missing
+setup back to the user if you notice it.
 
 ### 1. Gather Context
 
@@ -285,10 +287,10 @@ After write-back:
   dx_meta_write "$SID" "tracker_key=<KEY-OR-URL>" "ticket_number=<NUMBER-IF-GITHUB>"
   ```
 - If the tracker provides a branch name for the chosen ticket, rename the
-  current lifecycle branch to that branch, push it, and record it:
+  current lifecycle branch locally and record it. Leave it unpushed until
+  Phase 2 creates the first implementation commit:
   ```bash
   git branch -m "$(git rev-parse --abbrev-ref HEAD)" "<tracker-branch-name>"
-  git push -u origin "<tracker-branch-name>"
   dx_meta_write "$SID" "current_branch=<tracker-branch-name>"
   ```
 - Move only the chosen implementation ticket to In Progress. Leave backlog

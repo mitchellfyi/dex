@@ -204,6 +204,11 @@ fi
 grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
 grep -q -- "Initial phase: Phase 0 (Setup)." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Begin Phase 0: Setup" "$DEX_TEST_CODEX_PROMPT"
+grep -q -- "do not push it until Phase 2 creates the first real implementation commit" "$DEX_TEST_CODEX_PROMPT"
+if grep -q -- "push the current lifecycle branch and proceed" "$DEX_TEST_CODEX_PROMPT"; then
+  printf '%s\n' "Phase 0 prompt still publishes an empty lifecycle branch" >&2
+  exit 1
+fi
 
 # A run spec can say how hard to think. Codex takes effort as configuration
 # rather than a flag of its own, so it has to arrive as -c

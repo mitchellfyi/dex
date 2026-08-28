@@ -111,5 +111,8 @@ reviewers must never receive it.
 ## Final Report
 
 End with the `Review Wave Result` block from `prompts/review-wave.md`.
-Publishing does not satisfy the wave contract. Re-run the review whenever a
-publishing action changes the review scope's content.
+For lifecycle-bound criteria, leave verified fixes in the working tree for
+Phase 4; do not commit, push, switch branches, or create or update a PR. A
+standalone review may publish when useful, but publishing does not satisfy the
+wave contract. Re-run the review whenever an allowed publishing action changes
+the review scope's content.

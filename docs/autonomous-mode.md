@@ -51,11 +51,11 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 
 | Phase | Audit File | What It Reviews |
 |-------|-----------|-----------------|
-| 0. Setup | `0-setup.md` | Ticket read + assigned, branch renamed + pushed, ticket status In Progress, meta sidecar updated |
+| 0. Setup | `0-setup.md` | Ticket read + assigned, branch renamed locally, ticket status In Progress, meta sidecar updated |
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
-| 2. Implement | `2-implement.md` | Task completion, TDD verification, UI proof decision, evidence table, Phase 3 risk selection |
+| 2. Implement | `2-implement.md` | Task completion, TDD verification, early commits pushed immediately, UI proof decision, evidence table, Phase 3 risk selection |
 | 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves reaching the selected tier's trusted clean gate |
-| 4. Verify & Commit | `4-verify.md` | All checks passing, commit quality, pushed to origin |
+| 4. Verify & Commit | `4-verify.md` | All checks passing, review/verification repairs committed, branch current on origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
 | 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor CI/reviews through `/dxwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
 
@@ -288,11 +288,13 @@ Human control does not disable review-wave session isolation. Built-in guards
 remain advisory. A project guard configured as `block` remains blocking unless
 the human or agent records its specific `guard.<name>=allow` override. Commit,
 push, and PR operations are not blocked by lifecycle phase, with or without a
-control receipt. A requested Phase 3 jump becomes a safe detach if a review
-child is still marked in flight; the jump can be retried after that process
-ends. Once the provider exits from a valid Phase 7 transaction, human-marked
-completion uses the same local worktree and branch cleanup as an ordinary
-completion.
+control receipt, but the lifecycle prompt contract still assigns implementation
+publication to Phase 2, review and verification repair publication to Phase 4,
+and PR creation to Phase 5. A requested Phase 3 jump becomes a safe detach if a
+review child is still marked in flight; the jump can be retried after that
+process ends. Once the provider exits from a valid Phase 7 transaction,
+human-marked completion uses the same local worktree and branch cleanup as an
+ordinary completion.
 
 #### Interrupted review recovery
 
@@ -391,8 +393,10 @@ wrapper validates and consumes the receipt itself.
 (`<session>-pass-<N>-<pid>`) and are hard-isolated in the Stop hook. The inline
 phase handoff never runs for them, so a wave cannot advance the lifecycle or be
 instructed to advance it. Each pass gets a new context-pack path and no prior
-review conclusions. This isolation does not restrict ordinary commit, push,
-branch, or PR actions; those remain available in every lifecycle phase.
+review conclusions. The lifecycle Phase 3 prompt leaves fixes in the working
+tree for Phase 4 to publish. Standalone review waves may publish when useful.
+These are prompt contracts; review-wave isolation does not technically block
+Git or PR actions.
 
 Risk assessors are stricter than review waves: they run without Bash or file
 editing, with inherited MCP servers disabled. Codex assessors use
@@ -420,9 +424,15 @@ not create a worktree, but it still prepares the normal lifecycle branch
 (`worktree-ticket-*` or `worktree-task-*`) in the current checkout, using
 the default branch's upstream or remote-tracking ref as the starting point just
 like worktree mode. It never branches new work from the current feature branch.
-Phase 4 commits and pushes that branch. If uncommitted changes are present and
-Dex would need to switch or create the lifecycle branch, it stops so you can
-commit or stash first. `dx --resume` resumes the most recent worktree or
+Phase 0 leaves the new branch local. Phase 2 commits coherent green increments
+and pushes each one immediately, using the first real implementation commit to
+establish upstream tracking. Phase 4 runs final verification and pushes any
+review or verification repair commits. If Phase 2 produces no branch-specific
+commit, the new branch stays local and the lifecycle pauses for user direction
+instead of entering the PR flow. The user may stop the lifecycle as no-change
+or choose an explicit lifecycle control action. If uncommitted changes are
+present and Dex would need to switch or create the lifecycle branch, it stops so
+you can commit or stash first. `dx --resume` resumes the most recent worktree or
 in-place lifecycle.
 
 ## Prompt Loop Mode (`dxloop`)

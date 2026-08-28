@@ -1,5 +1,5 @@
 > **Note:** Phase 0 (Setup) runs in NORMAL mode (not plan mode). Its job is to
-> bootstrap ticket state — tracker assignment, branch rename, branch push, and
+> bootstrap ticket state — tracker assignment, local branch rename, and
 > ticket status → In Progress — before Phase 1 (Plan) begins. This audit only
 > runs after the Phase 0 ready marker has been written.
 
@@ -21,11 +21,15 @@ Evidence: tracker tool invocation succeeded, or N/A.
 
 Evidence: tracker output shows the assignee, or N/A.
 
-## 3. Branch Rename and Push
+## 3. Local Branch Rename
 
 - The lifecycle branch was renamed to the tracker's git branch name (e.g. `feat/ENG-999-fix-login`). If no tracker, the lifecycle branch name was kept as-is.
-- The renamed (or kept) branch was pushed to `origin` with upstream tracking (`git push -u origin <branch>`).
-- Draft PR creation was left for Phase 5 by default. If the user requested a PR during setup, its current state is recorded for the later phases.
+- A newly created branch with no branch-specific commits was not pushed merely
+  to establish upstream tracking. No empty bootstrap commit was created. Phase
+  2 will push the branch immediately after its first implementation commit.
+- Draft PR creation was left for Phase 5 by default. If the user requested a PR
+  during setup but the branch had no branch-specific commits, the setup summary
+  records that publication is deferred until the first implementation commit.
 - The Dex meta sidecar reflects the rename: run
 
   ```bash
@@ -36,7 +40,10 @@ Evidence: tracker output shows the assignee, or N/A.
 
   using the tracker's key (e.g. `ENG-999`). This lets future `dx <N>` invocations resume the right worktree even after a rename.
 
-Evidence: `git rev-parse --abbrev-ref HEAD` shows the new name; `git ls-remote --heads origin <branch>` confirms the push; `dx_meta_read` shows `tracker_key` and `current_branch`.
+Evidence: `git rev-parse --abbrev-ref HEAD` shows the new name; the setup command
+history contains no empty commit or first push for a branch with no
+branch-specific commits; `dx_meta_read` shows `tracker_key` and
+`current_branch`.
 
 ## 4. Ticket Status → In Progress
 
@@ -56,7 +63,9 @@ Evidence: tracker comment or update record, or N/A.
 
 - Setup stayed focused on tracker, branch, and ticket bootstrap.
 - Planning and source work normally remain with Phases 1 and 2.
-- Phase 4 remains the default owner of final verification, commits, and pushes; Phase 5 remains the default owner of pull-request setup.
+- Phase 2 owns routine implementation commits and pushes. Phase 4 remains the
+  default owner of final verification and any resulting cleanup commit; Phase
+  5 remains the default owner of pull-request setup.
 - Any commit, push, or pull-request action requested during Phase 0 is recorded in the setup summary so later phases continue from the actual repository and PR state.
 
 ## 7. Ready Marker

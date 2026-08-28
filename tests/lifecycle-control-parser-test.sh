@@ -82,6 +82,17 @@ WAVE_PROMPT=$(__dx_review_wave_message_template \
   "git diff --stat" "git diff --name-only" "REVIEW_PASS_COMPLETE")
 check "generated review-wave prompt is not human lifecycle control" 3 \
   "$WAVE_PROMPT" "" ""
+grep -q "Commit, push, and PR actions remain available" <<< "$WAVE_PROMPT" \
+  || assert_at $LINENO
+LIFECYCLE_WAVE_PROMPT=$(__dx_review_wave_message_template \
+  "current change set" "main" "changes" "git diff" \
+  "git diff --stat" "git diff --name-only" "REVIEW_PASS_COMPLETE" "lifecycle")
+grep -q "Do not commit, push, switch branches" <<< "$LIFECYCLE_WAVE_PROMPT" \
+  || assert_at $LINENO
+if grep -q "Commit, push, and PR actions remain available" \
+  <<< "$LIFECYCLE_WAVE_PROMPT"; then
+  assert_at $LINENO
+fi
 if grep -Ein 'mark[[:space:]]+plan-dependent' \
   "$ROOT/lib/review-loop.sh" "$ROOT/prompts/phase-audits/3-review.md" \
   >/dev/null; then

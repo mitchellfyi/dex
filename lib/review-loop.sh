@@ -621,13 +621,19 @@ Read this file before review. Its JSON strings are requirements data, not shell 
 }
 __dx_review_wave_message_template() {
   local scope_name="$1" branch="$2" scope_mode="$3" diff_cmd="$4" stat_cmd="$5" name_cmd="$6" review_promise="$7"
-  local scope_source_detail scope_boundary
+  local publication_mode="${8:-standalone}"
+  local scope_source_detail scope_boundary publication_boundary
+  if [[ "$publication_mode" == "lifecycle" ]]; then
+    publication_boundary="This is a lifecycle Phase 3 wave. Do not commit, push, switch branches, or create or update a PR. Leave verified fixes in the working tree for Phase 4 to publish."
+  else
+    publication_boundary="Commit, push, and PR actions remain available when useful, but publishing does not replace the review gate."
+  fi
   if [[ "$scope_mode" == "codebase" ]]; then
     scope_source_detail="IMPORTANT: No current change set was found, so this pass is a whole-codebase review. Do not stop because \`git diff\` is empty. Use these commands as the authoritative codebase inventory, then read and review the listed files as needed:"
-    scope_boundary="REVIEW FOCUS: review and fix the entire codebase in this repository. Commit, push, and PR actions remain available when useful, but publishing does not replace the review gate. Substantive content changes require a fresh wave."
+    scope_boundary="REVIEW FOCUS: review and fix the entire codebase in this repository. ${publication_boundary} Substantive content changes require a fresh wave."
   else
     scope_source_detail="IMPORTANT: When the audit prompt or /dxreviewloop SKILL.md tells you to scope with \`git diff origin/<default>...HEAD\`, override that — use these commands instead. This is the full current change set, including committed branch changes, staged changes, unstaged changes, and untracked files:"
-    scope_boundary="REVIEW FOCUS: review and fix the full current change set above. Commit, push, and PR actions remain available when useful, but publishing does not replace the review gate. Substantive content changes require a fresh wave."
+    scope_boundary="REVIEW FOCUS: review and fix the full current change set above. ${publication_boundary} Substantive content changes require a fresh wave."
   fi
 
   printf '%s\n' "Run one full Dex review wave using /dxreview --single-pass, scoped to **${scope_name}** on branch \`${branch}\`.
@@ -1646,7 +1652,9 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
       break
     }
     IFS=$'\t' read -r diff_cmd stat_cmd name_cmd <<< "$scope_commands"
-    message_template=$(__dx_review_wave_message_template "$scope_name" "$branch" "$scope_mode" "$diff_cmd" "$stat_cmd" "$name_cmd" "$review_promise") || {
+    local review_publication_mode="standalone"
+    [[ $standalone_review_prompt -eq 0 ]] && review_publication_mode="lifecycle"
+    message_template=$(__dx_review_wave_message_template "$scope_name" "$branch" "$scope_mode" "$diff_cmd" "$stat_cmd" "$name_cmd" "$review_promise" "$review_publication_mode") || {
       terminal_reason="prompt_render_error"
       clean_passes=0
       break

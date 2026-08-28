@@ -43,11 +43,17 @@ successful control command writes the audit record.
 
 ### Publishing Across Phases
 
-Lifecycle phases assign default responsibility; they do not restrict access to
-git or pull-request actions. A commit, push, PR creation, or PR update may happen
-in any phase when the user requests it or the active workflow requires it. Keep
+Lifecycle phases assign responsibility for git and pull-request actions. Phase
+2 owns routine implementation commits and pushes. Phase 3 does not commit,
+push, or create PRs; Phase 4 publishes review and verification repairs. Keep
 the verification state accurate: publishing does not make a failing gate green
 or satisfy a phase's completion criteria on its own.
+
+Do not push a newly created local branch merely to establish upstream tracking.
+Wait until it contains at least one real branch-specific commit: a commit that
+is not already reachable from the lifecycle's starting base branch. Never use
+an empty bootstrap commit to make the branch publishable. During implementation,
+commit coherent green increments early and push immediately after every commit.
 
 ## AI Discipline
 

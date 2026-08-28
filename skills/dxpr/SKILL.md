@@ -26,9 +26,16 @@ DEFAULT_BRANCH=$(dx_default_branch)
 BASE_REF=$(dx_default_branch_base_ref "$(pwd)" "$DEFAULT_BRANCH")
 git log "$BASE_REF"..HEAD --oneline
 git diff "$BASE_REF"...HEAD --stat
+BRANCH_SPECIFIC_COUNT=$(git rev-list --count "$BASE_REF"..HEAD)
 ```
 
 Understand the full scope of changes across all commits. Note any `.dex/` file changes — these should be called out in the PR description.
+
+If `BRANCH_SPECIFIC_COUNT` is `0`, stop. Do not push the branch, create an empty
+commit, or create a PR. The ordinary PR path requires at least one real
+branch-specific commit. Return to the lifecycle's Phase 2 user-direction path;
+the user may stop the lifecycle as no-change or choose an explicit lifecycle
+control action.
 
 ### 2. Generate PR Description
 
