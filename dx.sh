@@ -2494,7 +2494,7 @@ __dx_selected_resume_after_claim() {
     __dx_runtime_set_terminal blocked
     return 1
   }
-  if ! dx_review_lock_acquire "$workspace_dir" "$review_lock_token" "$$"; then
+  if ! dx_review_lock_acquire "$workspace_dir" "$review_lock_token" ""; then
     __dx_runtime_set_terminal blocked
     dx_error "Another review or recovery operation already owns this checkout."
     return 1
