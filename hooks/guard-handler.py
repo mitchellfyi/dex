@@ -30,6 +30,7 @@ No external dependencies — stdlib only.
 import os
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import glob
@@ -242,6 +243,12 @@ def exact_break_glass_control(text):
     arguments = []
     command = token_basename(tokens[0])
     if command in {'dx', 'dex'}:
+        # The real `dx` is a shell function, never a file, so only the bare
+        # name can mean it. A path-qualified token, or a PATH entry that
+        # resolves to some executable named dx, is a different program and
+        # must not inherit the pre-guard exemption.
+        if tokens[0] != command or shutil.which(command) is not None:
+            return False
         if len(tokens) < 3 or tokens[1] != 'control':
             return False
         arguments = tokens[2:]
