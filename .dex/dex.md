@@ -27,7 +27,7 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 dx.sh                Main shell functions (zsh only)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
-bin/                 CLI scripts: install, uninstall, init, uninit, config, control, sessions, test, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line
+bin/                 CLI scripts: install, uninstall, init, uninit, config, control, sessions, test, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line, activate-loop, complete-receipt, escalate, session-runtime-owner
 docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (8 rules)

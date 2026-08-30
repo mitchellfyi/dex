@@ -123,6 +123,26 @@ else
   echo "  Shell:      NOT INSTALLED"
 fi
 
+# The rest of the toolchain Dex reaches for, so "is this set up right?" has
+# one answer instead of a first failed run per missing tool.
+missing_tools=""
+for base_tool in git python3 zsh; do
+  command -v "$base_tool" >/dev/null 2>&1 || missing_tools="$missing_tools $base_tool"
+done
+if [[ -n "$missing_tools" ]]; then
+  echo "  Tools:      MISSING —${missing_tools}"
+else
+  echo "  Tools:      git, python3, zsh present"
+fi
+if command -v gh &>/dev/null; then
+  echo "  GitHub CLI: $(gh --version 2>/dev/null | head -1 || echo present)"
+else
+  echo "  GitHub CLI: not found — PR creation, reviewers, and CI watching need it"
+fi
+if ! command -v jq &>/dev/null; then
+  echo "  jq:         not found (optional — 'dx config' skips MCP merges without it)"
+fi
+
 # Current project
 echo ""
 echo "Project:"

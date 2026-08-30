@@ -256,7 +256,9 @@ PY
 
 CONFLICT_BIN="$TMP_DIR/conflict-bin"
 mkdir -p "$CONFLICT_BIN"
-for command_name in bash basename chmod dirname find grep ln mkdir mv python3 readlink rm; do
+# git and zsh are here because install.sh checks for them up front; this
+# scenario is about the skills-path conflict, not missing prerequisites.
+for command_name in bash basename chmod dirname find git grep ln mkdir mv python3 readlink rm zsh; do
   command_path=$(command -v "$command_name")
   ln -s "$command_path" "$CONFLICT_BIN/$command_name"
 done

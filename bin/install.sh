@@ -44,6 +44,18 @@ fi
 echo "Dex — Global Install"
 echo ""
 
+# Everything Dex does at run time needs these three; finding out at first
+# `dx` run is a worse experience than hearing it now.
+for required_tool in git python3 zsh; do
+  if ! command -v "$required_tool" >/dev/null 2>&1; then
+    dx_error "Missing required tool: $required_tool. Install it and rerun 'dx install'."
+    exit 1
+  fi
+done
+if ! command -v gh >/dev/null 2>&1; then
+  dx_warn "GitHub CLI (gh) not found. PR creation, reviewer routing, and CI watching need it."
+fi
+
 # Ensure ~/.claude directory exists (Claude Code normally creates it, but we
 # need it before creating symlinks)
 mkdir -p "$CLAUDE_DIR"
@@ -96,8 +108,10 @@ if [[ "${SHELL:-}" != */zsh ]]; then
   dx_warn "Switch to zsh (chsh -s \$(which zsh)) or source ~/.zshrc from a zsh session to use Dex."
 fi
 
-# 4. Make scripts executable
-if chmod +x "$DEX_DIR/hooks/"*.sh "$DEX_DIR/hooks/"*.py "$DEX_DIR/bin/"*.sh 2>/dev/null; then
+# 4. Make scripts executable. The .py files stay as Git shipped them: every
+# caller runs them through python3, and re-flipping shell_parse.py's mode
+# would dirty the checkout.
+if chmod +x "$DEX_DIR/hooks/"*.sh "$DEX_DIR/bin/"*.sh 2>/dev/null; then
   dx_done "Made scripts executable"
 else
   dx_error "Failed to make Dex scripts executable"

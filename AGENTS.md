@@ -14,8 +14,12 @@ Dex is a standalone workflow automation framework for Claude Code and the Codex 
   - `lib/*.sh` — **bash/zsh-compatible** (sourced by both dx.sh and hooks)
 - **Python 3 (stdlib only):** `hooks/guard-handler.py` — guard evaluation;
   `hooks/git-commit-target.py` — did this command create a commit, and where;
-  `hooks/shell_parse.py` — the shell-command reading both of them share. No
-  external dependencies
+  `hooks/shell_parse.py` — the shell-command reading both of them share;
+  `scripts/*.py` — helpers `lib/` invokes with `python3` or imports via
+  `PYTHONPATH` (redaction, settings merging, lifecycle-control parsing, run-log
+  tee, project state). No external dependencies
+- **Node (no dependencies):** `scripts/ui-capture.cjs` — the Playwright
+  UI-capture driver
 - **Markdown + YAML frontmatter:** Skills, guards, prompts, rules
 
 ## Directory Structure
@@ -28,8 +32,12 @@ hooks/               Claude Code hooks, guard handler, shared shell parser
 lib/                 Shared shell libraries sourced by common.sh; see the module table below
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (0-6 + prompt-loop)
+research/            Review-loop benchmark harness (scenario repos, oracles, orchestrator) — not shipped functionality
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
+templates/           Files Dex installs into other repos (the dx-maintain GitHub workflow)
+tests/               Test suite: check.sh (static), run-all.sh (manifest runner), *-test.sh
+.github/workflows/   CI plus the DexCode plan, Dependabot-guard, and maintenance workflows
 dx.sh                Main shell functions (zsh only)
 settings.json        Hook definitions template
 install.sh           Quick-start installer (delegates to bin/install.sh)
@@ -77,6 +85,15 @@ All scripts use `set -euo pipefail`. Use early returns, not deep nesting.
 - **Functions:** `dx_` prefix (public), `__dx_` prefix (internal), snake_case
 - **Variables:** `local` for locals, `SCREAMING_SNAKE_CASE` with `DEX_` or `DX_` prefix for env vars
 - **Files:** kebab-case for scripts and directories
+
+### bin/ script tiers
+
+User-facing `bin/` scripts (`init.sh`, `status.sh`, `config.sh`, …) take
+`-h`/`--help` and print a `usage()` block. Internal ones invoked only by Dex
+itself (`activate-loop.sh`, `complete-receipt.sh`, `escalate.sh`,
+`install-settings.sh`, `session-runtime-owner.sh`) validate arity and print a
+bare `Usage:` line — they have no human callers to help. Keep a new script in
+the tier its callers put it in.
 
 ### Library sourcing
 

@@ -27,9 +27,10 @@ dx 1234
 dx "add account export"
 ```
 
-That is the normal path. `dx init` creates `.dex/` project context so future runs
-know your stack, conventions, quality gates, reviewers, guards, and durable
-repo memory.
+That is the normal path — run it from zsh, since `source ~/.zshrc` and the
+`dx` function only work there (see Requirements). `dx init` creates `.dex/`
+project context so future runs know your stack, conventions, quality gates,
+reviewers, guards, and durable repo memory.
 
 ## Why Use Dex
 
@@ -148,7 +149,14 @@ dx sessions doctor         # Diagnose inconsistent, dead, or unsafe session stat
 dx test                    # Test Dex here, or verify another initialized project
 dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
+dx config                  # Configure integrations (ticket tracker, reviewers, MCP)
+dx maintain                # Run background maintenance or install its GitHub workflow
+dx ui-capture              # Capture, revise, inspect, or skip UI proof artifacts
+dx revert 1234 2           # Revert a worktree to a phase checkpoint
+dx uninit                  # Remove Dex from the current repo
 ```
+
+`dx help` lists every command.
 
 Inside Claude Code, run `/dxproof` to capture the current UI diff as a captioned
 before/after walkthrough. `/dxcapture` is the same command under an alias.
@@ -196,6 +204,8 @@ and choose the first issue to implement.
   watching, and GitHub Issues ticket tracking.
 - Optional: Node.js and npm, used for Playwright UI-capture tooling.
 - Optional: Codex CLI if you want the `codex-subscription` provider profile.
+- Optional: `jq`, used by `dx config` to merge MCP server settings; without it
+  that merge is skipped.
 - Optional: `shellcheck`, language toolchains, and test tools used by your repo.
 
 Dex installs Playwright UI-capture tooling and RTK token-reduction tooling into
@@ -290,10 +300,18 @@ reviews pass.
 ## Contributing
 
 Verify changes with `dx test dex` (static checks followed by the manifest test
-suite). CI runs static checks on Linux and test shards on Linux and macOS.
-`dx.sh` is zsh-only; `lib/`, `hooks/`, and `bin/` must stay
-bash-compatible down to bash 3.2, which is what macOS ships. See
+suite). The test runner needs `zsh`, `python3`, `git`, and either `timeout` or
+`perl` (stock macOS has no `timeout`; the runner falls back to `perl`).
+`shellcheck`, `node`, and `actionlint` are optional but without them the
+static checks cover less than CI does. CI runs static checks on Linux and test
+shards on Linux and macOS. `dx.sh` is zsh-only; `lib/`, `hooks/`, and `bin/`
+must stay bash-compatible down to bash 3.2, which is what macOS ships. See
 [AGENTS.md](AGENTS.md) for conventions.
+
+The `research/` tree — about half the repo's tracked files — is a benchmark
+harness for the review loop, not shipped functionality: scenario repos with
+seeded defects, hidden scoring oracles, and an orchestrator (`dx research`).
+See [research/AGENTS.md](research/AGENTS.md).
 
 ## Status
 
