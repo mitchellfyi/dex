@@ -496,6 +496,11 @@ dx_sync_inline_phase_from_state() {
 
 dx_inline_phase_message() {
   case "$1" in
+    0)
+      cat <<'EOF'
+Begin Phase 0: Setup. Read the ticket, assign it to the authenticated user if it is unassigned, rename the lifecycle branch locally to the tracker's git branch name, and set the ticket status to In Progress. Keep a newly created local branch unpushed until its first implementation commit, and never create an empty bootstrap commit. Stay in normal mode — do not call EnterPlanMode in this phase. When setup is complete, write the Phase 0 ready marker (dx_phase_ready_file step 0) and stop so the Stop hook can audit and advance.
+EOF
+      ;;
     1)
       cat <<'EOF'
 Phase 0 setup is complete (branch renamed locally, ticket assigned, status set to In Progress). A newly created local branch should remain unpushed until its first implementation commit; leave any existing published branch as-is. Begin Phase 1: Plan. Call EnterPlanMode now, then immediately invoke the Skill tool with skill: "dxplan". Do not redo ticket setup unless something is clearly missing. For freeform task requests with a configured tracker, after the user approves the plan via ExitPlanMode, offer the dxplan tracker intake choices before writing the Phase 1 approval marker. After that gate is complete or explicitly skipped, write the Phase 1 approval marker and stop so the Stop hook can audit and advance.
@@ -2019,7 +2024,9 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
   # both to its parent wrapper. The parent consumes that same generation only
   # after it rechecks human control and the full pass contract.
   if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
-    rm -f "$STATE_FILE" "$CONFIG_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
+    # || true on the terminal removals: a failed rm under set -e would abort
+    # before the success JSON below and leave ACTIVE_FILE reactivating the loop.
+    rm -f "$STATE_FILE" "$CONFIG_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")" || true
   else
     if ! dx_lifecycle_control_lock_acquire "$SESSION_ID"; then
       printf '\n%s\n' "Dex is already applying lifecycle state; stop again after it finishes." >&2
@@ -2055,9 +2062,9 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
       "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" \
       "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" \
       "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" \
-      "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")"
+      "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")" || true
   fi
-  rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE"
+  rm -f "$ACTIVE_FILE" "$OWNER_FILE" "$HANDOFF_MODE_FILE" "$PAUSED_FILE" || true
   printf '%s\n' '{"continue":false,"stopReason":"Dex loop complete."}'
   exit 0
 fi
@@ -2292,7 +2299,9 @@ if [[ "$MIGRATED_COMPLETION" -eq 1 \
   printf '%s\n' "## Failure Escalation (pause only)" >&2
   printf '%s\n' "If two materially different recovery strategies fail, this exact command pauses the current generation for human help. It does not signal completion:" >&2
   printf '%s\n' "" >&2
-  dx_print_escalation_command
+  # A malformed generation makes this return 1; under set -e a bare call
+  # would abort the hook before the receipt block and the final exit 2.
+  dx_print_escalation_command || true
   printf '%s\n' "" >&2
 fi
 

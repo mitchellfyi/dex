@@ -176,8 +176,14 @@ if [[ "$LIFECYCLE_ACTIVE" -eq 1 ]]; then
   if [[ "$CONTEXT_MODE" == "standalone" || -z "$CURRENT_PHASE" ]]; then
     CURRENT_PHASE="$CONTEXT_PHASE"
   fi
+  # Fail open — a broken parser must never block a prompt — but say so:
+  # silently losing pause/cancel/jump recognition would look like Dex
+  # ignoring the human.
   CONTROL_FIELDS=$(printf '%s' "$PROMPT" | python3 "$DEX_DIR/scripts/lifecycle-control.py" \
-    --phase "$CURRENT_PHASE" --format tsv 2>/dev/null || true)
+    --phase "$CURRENT_PHASE" --format tsv 2>/dev/null) || {
+    CONTROL_FIELDS=""
+    printf '%s\n' "[dex] lifecycle-control parser failed; phrase controls are inactive for this prompt" >&2
+  }
   CONTROL_ACTION=""
   CONTROL_TARGET=""
   CONTROL_HASH=""

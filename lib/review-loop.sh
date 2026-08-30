@@ -879,7 +879,7 @@ dx_review_loop_run() {
 
   local review_lock_token="" review_lock_status=0
   review_lock_token=$(__dx_review_nonce)
-  dx_review_lock_acquire "$repo_root" "$review_lock_token" "$$" || review_lock_status=$?
+  dx_review_lock_acquire "$repo_root" "$review_lock_token" "" || review_lock_status=$?
   if [[ $review_lock_status -ne 0 ]]; then
     if [[ "$review_startup_claim" -eq 1 ]]; then
       if ! dx_session_claim_release_checked "$session_id"; then

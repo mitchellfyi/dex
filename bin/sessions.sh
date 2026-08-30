@@ -323,6 +323,9 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as records_file:
     for raw_line in records_file:
+        # Skip blank lines like the --all path does; one must not break `list`.
+        if not raw_line.strip():
+            continue
         record = json.loads(raw_line)
         phase = record.get("phase")
         workspace = record.get("workspace_name") or record.get("workspace") or "-"

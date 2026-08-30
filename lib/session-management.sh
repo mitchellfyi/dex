@@ -1930,10 +1930,13 @@ __dx_session_management_checkout_acquire() { # <journal> <parent> <repo>
       "$parent_session" "$repo_dir"
     return
   fi
-  checkout_token="$(date +%s)-$$-${RANDOM}"
-  dx_review_lock_acquire "$workspace" "$checkout_token" "$$" || return 1
+  # Owner PID and journal holder both name the acquiring process — $$ is the
+  # top-level shell inside a subshell; see dx_lock_self_pid_var.
+  dx_lock_self_pid_var
+  checkout_token="$(date +%s)-${DX_LOCK_SELF_PID}-${RANDOM}"
+  dx_review_lock_acquire "$workspace" "$checkout_token" "$DX_LOCK_SELF_PID" || return 1
   if ! __dx_session_management_journal checkout-held "$journal_file" \
-      "$parent_session" "$repo_dir" "$$" "$checkout_token"; then
+      "$parent_session" "$repo_dir" "$DX_LOCK_SELF_PID" "$checkout_token"; then
     dx_review_lock_release_checked "$workspace" "$checkout_token" \
       >/dev/null 2>&1 || true
     return 1

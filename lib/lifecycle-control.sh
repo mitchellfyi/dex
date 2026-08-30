@@ -1791,6 +1791,11 @@ dx_phase_busy_begin() {
     [[ ${#timeout_value} -le 15 ]] || return 1
   fi
   epoch=$(date +%s)
+  # $$ is deliberate here, not the dx_lock_self_pid_var pattern: this function
+  # returns its token on stdout, so every caller runs it inside a command
+  # substitution whose subshell dies immediately. The fence's real owner is
+  # that caller's shell — which $$ names in both bash and zsh — and recording
+  # the substitution's PID would make every live fence read as stale.
   token="${epoch}-$$-${RANDOM}"
   busy_file=$(dx_phase_busy_file "$session_id" "$phase")
   cancel_file=$(dx_phase_busy_cancel_file "$session_id" "$phase")

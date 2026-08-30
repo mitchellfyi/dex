@@ -14,9 +14,13 @@ Usage: dx control <status|pause|stop|done|jump PHASE|resume>
 
   status       Show the current phase, pending control, and active overrides
   pause        Detach Dex and preserve the current phase for resume
+               (detach is an alias)
   stop         Stop Dex enforcement and preserve the workspace
+               (cancel is an alias)
   done         Mark the current phase done and advance without its remaining gates
+               (complete is an alias)
   jump PHASE   Move to Phase 0-6, or a phase name such as review, verify, or pr
+               (phase is an alias)
   resume       Clear a pause and resume the recorded phase
   recover review
                Clear a validated Phase 3 fence only when its owner PID is dead;
@@ -411,7 +415,10 @@ case "$COMMAND" in
     if [[ -n "$CONTROL_REASON" ]]; then
       record_control_policy "control.${ACTION}" requested || exit 1
     fi
-    dx_write_lifecycle_control "$SESSION_ID" "$ACTION" "" "$CONTROL_RECEIPT_SOURCE" "" "$CURRENT_PHASE" "$OWNER_SESSION"
+    if ! dx_write_lifecycle_control "$SESSION_ID" "$ACTION" "" "$CONTROL_RECEIPT_SOURCE" "" "$CURRENT_PHASE" "$OWNER_SESSION"; then
+      dx_error "Could not publish the ${ACTION} control."
+      exit 1
+    fi
     if ! dx_lifecycle_detach "$SESSION_ID" "manual-${ACTION}" "$CONTROL_RECEIPT_SOURCE"; then
       dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry ${COMMAND}."
       exit 1
@@ -436,7 +443,10 @@ case "$COMMAND" in
     [[ "$CONTROL_ORIGIN" == "agent" ]] && CONTROL_RECEIPT_SOURCE="agent"
     TARGET_PHASE=$((CURRENT_PHASE + 1))
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$TARGET_PHASE"; then
-      dx_write_lifecycle_control "$SESSION_ID" pause "" "$CONTROL_RECEIPT_SOURCE" "" "$CURRENT_PHASE" "$OWNER_SESSION"
+      if ! dx_write_lifecycle_control "$SESSION_ID" pause "" "$CONTROL_RECEIPT_SOURCE" "" "$CURRENT_PHASE" "$OWNER_SESSION"; then
+        dx_error "Could not publish the pause control."
+        exit 1
+      fi
       if ! dx_lifecycle_detach "$SESSION_ID" "review-child-active" "$CONTROL_RECEIPT_SOURCE"; then
         dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry the phase change."
         exit 1
@@ -476,7 +486,10 @@ case "$COMMAND" in
     CONTROL_RECEIPT_SOURCE="terminal"
     [[ "$CONTROL_ORIGIN" == "agent" ]] && CONTROL_RECEIPT_SOURCE="agent"
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$TARGET_PHASE"; then
-      dx_write_lifecycle_control "$SESSION_ID" pause "" "$CONTROL_RECEIPT_SOURCE" "" "$CURRENT_PHASE" "$OWNER_SESSION"
+      if ! dx_write_lifecycle_control "$SESSION_ID" pause "" "$CONTROL_RECEIPT_SOURCE" "" "$CURRENT_PHASE" "$OWNER_SESSION"; then
+        dx_error "Could not publish the pause control."
+        exit 1
+      fi
       if ! dx_lifecycle_detach "$SESSION_ID" "review-child-active" "$CONTROL_RECEIPT_SOURCE"; then
         dx_error "Dex could not prove that completion authorization was revoked. Repair the lifecycle state files and retry the phase change."
         exit 1
@@ -516,8 +529,11 @@ case "$COMMAND" in
     if [[ -n "$CONTROL_REASON" ]]; then
       record_control_policy control.resume requested || exit 1
     fi
-    dx_write_lifecycle_control "$SESSION_ID" resume "" "$CONTROL_RECEIPT_SOURCE" \
-      "" "$CURRENT_PHASE" "$OWNER_SESSION"
+    if ! dx_write_lifecycle_control "$SESSION_ID" resume "" "$CONTROL_RECEIPT_SOURCE" \
+      "" "$CURRENT_PHASE" "$OWNER_SESSION"; then
+      dx_error "Could not publish the resume control."
+      exit 1
+    fi
     if ! RESUME_RECORD=$(resume_recorded_phase); then
       dx_error "Could not create fresh completion authorization for the recorded lifecycle phase."
       exit 1

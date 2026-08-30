@@ -825,7 +825,6 @@ finally:
     except OSError:
         pass
 PY
-  chmod 600 "$config_file" 2>/dev/null || true
 }
 
 # Records the status in DX_DEXCODE_LAST_HTTP_STATUS so callers can tell a
@@ -2279,6 +2278,7 @@ dx_dexcode_prepare_run_sync() {
 dx_dexcode_upload_artifact() {
   local run_id="$1" file_path="$2" kind="$3" title="$4"
   local connection token api_url factory_url tmp_dir response_file http_status artifact_id upload_url artifact_state
+  local escaped_upload_url
   local filename="${5:-}" content_type size sha file_stats timeout_seconds upload_timeout_seconds
   local snapshot_file source_root source_name
   local local_artifact_id="${6:-}" sync_fingerprint="${7:-}" idempotency_key=""
@@ -2395,13 +2395,20 @@ PY
     return 0
   fi
 
-  if ! http_status=$(command curl -q -sS -o /dev/null -w "%{http_code}" \
+  # The presigned URL carries its signature, so it goes to curl through
+  # --config on stdin like every credential in this file — in argv it would
+  # sit in ps for the whole upload. curl config double quotes need \" and \\
+  # escaped; the validator already rejects control characters.
+  escaped_upload_url=${upload_url//\\/\\\\}
+  escaped_upload_url=${escaped_upload_url//\"/\\\"}
+  if ! http_status=$(printf 'url = "%s"\n' "$escaped_upload_url" \
+    | command curl -q -sS --config - -o /dev/null -w "%{http_code}" \
     --max-time "$upload_timeout_seconds" \
     --proto '=http,https' \
     -X PUT \
     -H "Content-Type: ${content_type}" \
     --data-binary @"$snapshot_file" \
-    "$upload_url" 2>/dev/null); then
+    2>/dev/null); then
     http_status="000"
   fi
   if ! dx_dexcode_http_success "$http_status"; then
