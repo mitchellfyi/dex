@@ -1,5 +1,5 @@
 ---
-name: humanizer
+name: "humanizer"
 description: "Humanize AI-sounding prose while preserving meaning and technical accuracy. Use whenever writing or editing copy, docs, release notes, PR descriptions, ticket bodies, GitHub/issue/review comments, user-facing messages, or code comments. Apply before posting or publishing text and before finalizing comments in code."
 ---
 

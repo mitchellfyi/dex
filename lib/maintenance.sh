@@ -103,8 +103,11 @@ dx_maintenance_report_file() {
   printf '%s/report.md\n' "$(dx_maintenance_artifact_dir "$1")"
 }
 
-dx_maintenance_config_value() {
-  local repo_root="$1" key="$2" default_value="${3:-}" value
+# dx_maintenance_config_value_from_text <content> <key> <default> — read one
+# `## Maintenance` table value out of dex.md content, wherever it came from
+# (the working tree here, a git ref in bin/maintain.sh).
+dx_maintenance_config_value_from_text() {
+  local content="$1" key="$2" default_value="${3:-}" value
   value=$(awk -F'|' -v want="$key" '
     /^## Maintenance[[:space:]]*$/ { in_section = 1; next }
     in_section && /^## / { exit }
@@ -118,12 +121,21 @@ dx_maintenance_config_value() {
         exit
       }
     }
-  ' "$repo_root/.dex/dex.md" 2>/dev/null || true)
+  ' <<EOF
+$content
+EOF
+  ) || true
   if [[ -n "$value" && "$value" != "Value" && "$value" != "---" ]]; then
     printf '%s\n' "$value"
   else
     printf '%s\n' "$default_value"
   fi
+}
+
+dx_maintenance_config_value() {
+  local repo_root="$1" key="$2" default_value="${3:-}" content=""
+  content=$(cat "$repo_root/.dex/dex.md" 2>/dev/null || true)
+  dx_maintenance_config_value_from_text "$content" "$key" "$default_value"
 }
 
 dx_maintenance_event_mode() {

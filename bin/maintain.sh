@@ -342,42 +342,19 @@ __dx_maintain_worktree_dirty() {
   [[ -n "$(git -C "$repo_root" status --porcelain=v1 -uall 2>/dev/null | grep -vE '^.. \.dex/worktrees(/|$)' || true)" ]]
 }
 
-__dx_maintain_config_value() {
-  local repo_root="$1" key="$2" default_value="${3:-}"
-  dx_maintenance_config_value "$repo_root" "$key" "$default_value"
-}
-
 __dx_maintain_config_value_at_ref() {
-  local repo_root="$1" ref="$2" key="$3" default_value="${4:-}"
-  local value
+  local repo_root="$1" ref="$2" key="$3" default_value="${4:-}" content=""
   if [[ -z "$ref" ]]; then
-    __dx_maintain_config_value "$repo_root" "$key" "$default_value"
+    dx_maintenance_config_value "$repo_root" "$key" "$default_value"
     return 0
   fi
-  value=$(git -C "$repo_root" show "${ref}:.dex/dex.md" 2>/dev/null | awk -F'|' -v want="$key" '
-    /^## Maintenance[[:space:]]*$/ { in_section = 1; next }
-    in_section && /^## / { exit }
-    in_section && /^\|/ {
-      k = $2
-      v = $3
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-      if (k == want) {
-        print v
-        exit
-      }
-    }
-  ' || true)
-  if [[ -n "$value" && "$value" != "Value" && "$value" != "---" ]]; then
-    printf '%s\n' "$value"
-  else
-    printf '%s\n' "$default_value"
-  fi
+  content=$(git -C "$repo_root" show "${ref}:.dex/dex.md" 2>/dev/null || true)
+  dx_maintenance_config_value_from_text "$content" "$key" "$default_value"
 }
 
 __dx_maintain_enabled_value() {
   local repo_root="$1" enabled
-  enabled="${DX_MAINTAIN_ENABLED:-$(__dx_maintain_config_value "$repo_root" "enabled" "true")}"
+  enabled="${DX_MAINTAIN_ENABLED:-$(dx_maintenance_config_value "$repo_root" "enabled" "true")}"
   case "$(printf '%s' "$enabled" | tr '[:upper:]' '[:lower:]')" in
     false|no|0|disabled) return 1 ;;
     *) return 0 ;;
@@ -386,7 +363,7 @@ __dx_maintain_enabled_value() {
 
 __dx_maintain_enabled() {
   local repo_root="$1" enabled
-  enabled=$(__dx_maintain_config_value "$repo_root" "enabled" "true")
+  enabled=$(dx_maintenance_config_value "$repo_root" "enabled" "true")
   case "$(printf '%s' "$enabled" | tr '[:upper:]' '[:lower:]')" in
     false|no|0|disabled) return 1 ;;
     *) return 0 ;;
@@ -1890,9 +1867,9 @@ __dx_maintain_respond() {
   __dx_maintain_require_nonnegative_number "maintenance response budget" \
     "$respond_budget_minutes"
   trusted_config_ref="${DX_MAINTAIN_TRUSTED_CONFIG_REF:-$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")}"
-  maintain_label="${DX_MAINTAIN_LABEL:-$(__dx_maintain_config_value "$repo_root" "label" "dex-maintenance")}"
-  branch_prefix="${DX_MAINTAIN_BRANCH_PREFIX:-$(__dx_maintain_config_value "$repo_root" "branch_prefix" "dex/maintain/")}"
-  allowed_categories="${DX_MAINTAIN_ALLOWED_CATEGORIES:-$(__dx_maintain_config_value "$repo_root" "low_risk_fix_categories" "docs, rules, guards, memory, tests")}"
+  maintain_label="${DX_MAINTAIN_LABEL:-$(dx_maintenance_config_value "$repo_root" "label" "dex-maintenance")}"
+  branch_prefix="${DX_MAINTAIN_BRANCH_PREFIX:-$(dx_maintenance_config_value "$repo_root" "branch_prefix" "dex/maintain/")}"
+  allowed_categories="${DX_MAINTAIN_ALLOWED_CATEGORIES:-$(dx_maintenance_config_value "$repo_root" "low_risk_fix_categories" "docs, rules, guards, memory, tests")}"
   if ! __dx_maintain_enabled_value "$repo_root"; then
     dx_skip "DX maintain is disabled in .dex/dex.md."
     exit 0
@@ -2166,10 +2143,10 @@ __dx_maintain_run() {
     dx_skip "DX maintain is disabled in .dex/dex.md."
     exit 0
   fi
-  mode="${mode:-$(__dx_maintain_config_value "$repo_root" "default_mode" "report")}"
-  maintain_label="${DX_MAINTAIN_LABEL:-$(__dx_maintain_config_value "$repo_root" "label" "dex-maintenance")}"
-  branch_prefix="${DX_MAINTAIN_BRANCH_PREFIX:-$(__dx_maintain_config_value "$repo_root" "branch_prefix" "dex/maintain/")}"
-  allowed_categories=$(__dx_maintain_config_value "$repo_root" "low_risk_fix_categories" "docs, rules, guards, memory, tests")
+  mode="${mode:-$(dx_maintenance_config_value "$repo_root" "default_mode" "report")}"
+  maintain_label="${DX_MAINTAIN_LABEL:-$(dx_maintenance_config_value "$repo_root" "label" "dex-maintenance")}"
+  branch_prefix="${DX_MAINTAIN_BRANCH_PREFIX:-$(dx_maintenance_config_value "$repo_root" "branch_prefix" "dex/maintain/")}"
+  allowed_categories=$(dx_maintenance_config_value "$repo_root" "low_risk_fix_categories" "docs, rules, guards, memory, tests")
 
   case "$mode" in
     report|propose|fix-scoped) ;;
@@ -2241,7 +2218,7 @@ __dx_maintain_run() {
   fi
 
   if [[ -z "$max_prs" ]]; then
-    max_prs=$(__dx_maintain_config_value "$repo_root" "max_prs" "1")
+    max_prs=$(dx_maintenance_config_value "$repo_root" "max_prs" "1")
     if dx_session_id_valid "$maintain_policy_session"; then
       max_prs=$(dx_override_effective "$maintain_policy_session" \
         maintain.max-prs "$max_prs" "${DEX_LOOP_PHASE:--}") || {
@@ -2415,8 +2392,8 @@ __dx_maintain_publish_deferred() {
     dx_error "Deferred publish state belongs to a different repo root: $state_repo_root"
     exit 1
   fi
-  label_name="${DX_MAINTAIN_LABEL:-$(__dx_maintain_config_value "$repo_root" "label" "dex-maintenance")}"
-  allowed_categories="${DX_MAINTAIN_ALLOWED_CATEGORIES:-$(__dx_maintain_config_value "$repo_root" "low_risk_fix_categories" "docs, rules, guards, memory, tests")}"
+  label_name="${DX_MAINTAIN_LABEL:-$(dx_maintenance_config_value "$repo_root" "label" "dex-maintenance")}"
+  allowed_categories="${DX_MAINTAIN_ALLOWED_CATEGORIES:-$(dx_maintenance_config_value "$repo_root" "low_risk_fix_categories" "docs, rules, guards, memory, tests")}"
   [[ -n "$branch" && -n "$mode" && -n "$run_id" && -n "$report_file" && -n "$label_name" && -n "$base_sha" && -n "$patch_file" && -f "$patch_file" ]] || {
     dx_error "Deferred publish state is incomplete: $state_file"
     exit 1

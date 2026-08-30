@@ -2040,7 +2040,7 @@ __dx_run_with_timeout_core() {
   local timeout="$1" temp_dir="" marker="" token_file="" token=""
   local candidate_file="" command_root_pid=""
   local cmd_pid="" watchdog_pid="" cmd_status timeout_enabled=0
-  local started_at="" now="" elapsed="" last_policy_check=""
+  local started_at="" now="" elapsed="" last_policy_check="" seconds_base=""
   local policy_value="" live_timeout="" timeout_marker=""
   local policy_session="${DX_TIMEOUT_POLICY_SESSION_ID:-}"
   local policy_gate="${DX_TIMEOUT_POLICY_GATE:-}"
@@ -2094,10 +2094,13 @@ __dx_run_with_timeout_core() {
     # A separate timer process can lose a scheduling race to an outer lifecycle
     # fence under load, turning an internal timeout into a misleading SIGTERM.
     # Poll command liveness cheaply and re-read live policy at most once per
-    # wall-clock second.
+    # wall-clock second. Time comes from $SECONDS instead of a date fork per
+    # 100ms tick — at this rate a one-hour phase would fork 36,000 dates.
+    # (${SECONDS%%.*} because a zsh caller may have made SECONDS a float.)
     started_at=$(date +%s)
+    seconds_base="${SECONDS%%.*}"
     while kill -0 "$cmd_pid" 2>/dev/null; do
-      now=$(date +%s)
+      now=$((started_at + ${SECONDS%%.*} - seconds_base))
       if [[ "$now" != "$last_policy_check" ]]; then
         last_policy_check="$now"
         live_timeout="$timeout"
