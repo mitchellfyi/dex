@@ -1683,16 +1683,19 @@ dx_watch_lock_release() {
 
 dx_kill_process_tree() {
   local pid="$1" signal="${2:-TERM}" child
-  [[ -n "$pid" && -n "$signal" ]] || return 0
+  # Validate like __dx_kill_process_tree in dx.sh: a non-numeric pid must not
+  # reach kill, and the walk must never signal the shell doing the killing.
+  [[ "$pid" =~ ^[0-9]+$ && -n "$signal" ]] || return 0
+  [[ "$pid" == "$$" ]] && return 0
 
   if command -v pgrep >/dev/null 2>&1; then
     while IFS= read -r child; do
-      [[ -n "$child" ]] || continue
+      [[ "$child" =~ ^[0-9]+$ ]] || continue
       dx_kill_process_tree "$child" "$signal"
     done < <(pgrep -P "$pid" 2>/dev/null || true)
   else
     while IFS= read -r child; do
-      [[ -n "$child" ]] || continue
+      [[ "$child" =~ ^[0-9]+$ ]] || continue
       dx_kill_process_tree "$child" "$signal"
     done < <(ps -eo pid=,ppid= 2>/dev/null | awk -v parent="$pid" '$2 == parent { print $1 }')
   fi

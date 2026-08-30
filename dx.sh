@@ -1116,17 +1116,20 @@ __dx_build_system_context() {
     && "$completion_generation" =~ ^[0-9a-f]{32}$ ]]; then
     include_direct_codex_contract=1
   fi
-  local _ctx_tmp="${ctx_file}.tmp.$$"
+  # The whole prompt is assembled in a temp file and published with one
+  # checked rename at the end, so the live path never holds a torn or
+  # truncated system prompt and a build failure reaches the caller.
+  local _ctx_tmp
+  _ctx_tmp=$(mktemp "${ctx_file}.tmp.XXXXXX") || return 1
   printf 'You are Dex, running the Dex lifecycle for %s.\n' "$wt_name" > "$_ctx_tmp"
   printf 'Initial phase: Phase %s (%s).\n' "$step" "$phase_label" >> "$_ctx_tmp"
   printf 'Workspace: %s\n' "$wt_dir" >> "$_ctx_tmp"
   printf 'Workspace mode: %s\n\n' "$workspace_mode" >> "$_ctx_tmp"
   printf '## Requested Work\n\n' >> "$_ctx_tmp"
   printf 'Original dx request: %s\n' "${raw_input:-$wt_name}" >> "$_ctx_tmp"
-  mv -f "$_ctx_tmp" "$ctx_file"
 
   if [[ "$workspace_mode" == "in-place" ]]; then
-    cat >> "$ctx_file" <<'EOF'
+    cat >> "$_ctx_tmp" <<'EOF'
 
 This lifecycle is running in-place in the current checkout. No Dex worktree
 was created. Dex still prepared the normal lifecycle branch in this checkout
@@ -1139,7 +1142,7 @@ EOF
   if [[ "${DEX_HEADLESS_RUN:-0}" == "1" && -f "${DEX_HEADLESS_RUN_SPEC_FILE:-}" ]]; then
     local headless_plan_approval
     headless_plan_approval=$(dx_run_spec_field "$DEX_HEADLESS_RUN_SPEC_FILE" "workflow.requires_plan_approval" 2>/dev/null || echo "true")
-    cat >> "$ctx_file" <<'EOF'
+    cat >> "$_ctx_tmp" <<'EOF'
 
 ## Headless Run Spec
 
@@ -1147,9 +1150,9 @@ This lifecycle was started by `dx run` from a structured run spec, not by a
 human typing all task context into the CLI. Treat the run spec as the source of
 truth for repo, source, harness, workflow, and sync context.
 EOF
-    printf '\nRun spec file: %s\n' "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$ctx_file"
-    printf 'Plan approval required: %s\n' "$headless_plan_approval" >> "$ctx_file"
-    cat >> "$ctx_file" <<'EOF'
+    printf '\nRun spec file: %s\n' "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$_ctx_tmp"
+    printf 'Plan approval required: %s\n' "$headless_plan_approval" >> "$_ctx_tmp"
+    cat >> "$_ctx_tmp" <<'EOF'
 
 If `workflow.requires_plan_approval` is false, do not wait for interactive
 plan approval. The run spec authorizes the plan once the normal plan quality
@@ -1159,15 +1162,15 @@ Normalized run spec:
 
 ```json
 EOF
-    if ! python3 -m json.tool "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$ctx_file" 2>/dev/null; then
-      cat "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$ctx_file"
+    if ! python3 -m json.tool "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$_ctx_tmp" 2>/dev/null; then
+      cat "$DEX_HEADLESS_RUN_SPEC_FILE" >> "$_ctx_tmp"
     fi
-    cat >> "$ctx_file" <<'EOF'
+    cat >> "$_ctx_tmp" <<'EOF'
 ```
 EOF
   fi
 
-  cat >> "$ctx_file" <<'EOF'
+  cat >> "$_ctx_tmp" <<'EOF'
 
 ## Audit Loop
 
@@ -1187,7 +1190,7 @@ EOF
   if [[ "$include_direct_codex_contract" -eq 1 ]]; then
     case "$step" in
       0|1|2)
-        cat >> "$ctx_file" <<'EOF'
+        cat >> "$_ctx_tmp" <<'EOF'
 
 ## Direct Codex Phase Completion
 
@@ -1195,25 +1198,25 @@ This session is running through the direct Codex provider, so there is no
 Claude Stop hook to write the completion receipt for you. First satisfy the
 EOF
         printf 'normal Phase %s readiness gate, then write this exact receipt before your\n' \
-          "$step" >> "$ctx_file"
-        cat >> "$ctx_file" <<'EOF'
+          "$step" >> "$_ctx_tmp"
+        cat >> "$_ctx_tmp" <<'EOF'
 final response:
 
 ```bash
 EOF
         printf 'bash "$DEX_DIR/bin/complete-receipt.sh" "%s" "%s"\n' \
-          "$session_id" "$completion_generation" >> "$ctx_file"
-        cat >> "$ctx_file" <<'EOF'
+          "$session_id" "$completion_generation" >> "$_ctx_tmp"
+        cat >> "$_ctx_tmp" <<'EOF'
 ```
 
 If two materially different recovery strategies fail, pause this exact phase
 for human help without claiming completion by running exactly:
 EOF
         printf 'bash "$DEX_DIR/bin/escalate.sh" "%s" "%s"\n' \
-          "$session_id" "$completion_generation" >> "$ctx_file"
+          "$session_id" "$completion_generation" >> "$_ctx_tmp"
         ;;
       3|4|5)
-        cat >> "$ctx_file" <<'EOF'
+        cat >> "$_ctx_tmp" <<'EOF'
 
 ## Direct Codex Phase Completion
 
@@ -1221,24 +1224,24 @@ This session is running through the direct Codex provider, so there is no
 Claude Stop hook to write the completion receipt for you. After Phase
 EOF
         printf '%s is genuinely complete, write this exact receipt before your final response:\n' \
-          "$step" >> "$ctx_file"
-        cat >> "$ctx_file" <<'EOF'
+          "$step" >> "$_ctx_tmp"
+        cat >> "$_ctx_tmp" <<'EOF'
 
 ```bash
 EOF
         printf 'bash "$DEX_DIR/bin/complete-receipt.sh" "%s" "%s"\n' \
-          "$session_id" "$completion_generation" >> "$ctx_file"
-        cat >> "$ctx_file" <<'EOF'
+          "$session_id" "$completion_generation" >> "$_ctx_tmp"
+        cat >> "$_ctx_tmp" <<'EOF'
 ```
 
 If two materially different recovery strategies fail, pause this exact phase
 for human help without claiming completion by running exactly:
 EOF
         printf 'bash "$DEX_DIR/bin/escalate.sh" "%s" "%s"\n' \
-          "$session_id" "$completion_generation" >> "$ctx_file"
+          "$session_id" "$completion_generation" >> "$_ctx_tmp"
         ;;
       6)
-        cat >> "$ctx_file" <<'EOF'
+        cat >> "$_ctx_tmp" <<'EOF'
 
 ## Direct Codex Phase Completion
 
@@ -1253,29 +1256,29 @@ detaches the run while revoking authorization; it does not create a receipt.
 # Success only:
 EOF
         printf 'bash "$DEX_DIR/bin/complete-receipt.sh" "%s" "%s"\n' \
-          "$session_id" "$completion_generation" >> "$ctx_file"
-        cat >> "$ctx_file" <<'EOF'
+          "$session_id" "$completion_generation" >> "$_ctx_tmp"
+        cat >> "$_ctx_tmp" <<'EOF'
 # Blocked/paused only:
 EOF
         printf 'bash "$DEX_DIR/bin/escalate.sh" "%s" "%s"\n' \
-          "$session_id" "$completion_generation" >> "$ctx_file"
-        cat >> "$ctx_file" <<'EOF'
+          "$session_id" "$completion_generation" >> "$_ctx_tmp"
+        cat >> "$_ctx_tmp" <<'EOF'
 ```
 EOF
         ;;
     esac
-    printf '\n' >> "$ctx_file"
+    printf '\n' >> "$_ctx_tmp"
   fi
 
-  cat >> "$ctx_file" <<'EOF'
+  cat >> "$_ctx_tmp" <<'EOF'
 CRITICAL: You MUST invoke skills using the Skill tool (e.g., Skill(skill="dximplement")).
 Do NOT implement skill functionality ad-hoc — invoke the actual skill.
 EOF
 
-  __dx_provider_prompt >> "$ctx_file"
-  printf '\n' >> "$ctx_file"
+  __dx_provider_prompt >> "$_ctx_tmp"
+  printf '\n' >> "$_ctx_tmp"
 
-  cat >> "$ctx_file" <<'EOF'
+  cat >> "$_ctx_tmp" <<'EOF'
 ## Autonomous Phase Contract
 
 The Dex lifecycle controller owns phase transitions. After Phase 1 plan
@@ -1377,8 +1380,8 @@ A project block guard can be softened explicitly with an override such as
 EOF
 
   printf '\n## Initial Scope Boundaries (Phase %s)\n\n%s\n\n' \
-    "$step" "$scope_lines" >> "$ctx_file"
-  cat >> "$ctx_file" <<'EOF'
+    "$step" "$scope_lines" >> "$_ctx_tmp"
+  cat >> "$_ctx_tmp" <<'EOF'
 These boundaries apply to the initial phase until the Stop hook hands off to a
 later phase. After a same-session handoff, follow the latest handoff prompt and
 status line for the current phase.
@@ -1386,24 +1389,28 @@ status line for the current phase.
 If you lose context after compaction, re-read the current phase audit prompt.
 EOF
   printf 'The initial phase audit prompt was:\n  %s/prompts/phase-audits/%s.md\n' \
-    "$DEX_DIR" "$(__dx_phase_audit_basename "$step")" >> "$ctx_file"
+    "$DEX_DIR" "$(__dx_phase_audit_basename "$step")" >> "$_ctx_tmp"
 
   # Append debt warnings from prior phases so downstream work is aware of accepted gaps
   local debt_file
   debt_file=$(dx_debt_file "$session_id")
   if [[ -f "$debt_file" ]] && [[ -s "$debt_file" ]]; then
-    cat >> "$ctx_file" <<'EOF'
+    cat >> "$_ctx_tmp" <<'EOF'
 
 ## Active Technical Debt (from prior phases)
 
 WARNING: The following debt items were accepted in earlier phases. Be aware of
 these when implementing — they may affect your work.
 EOF
-    printf '\n' >> "$ctx_file"
-    cat "$debt_file" >> "$ctx_file"
-    printf '\n' >> "$ctx_file"
+    printf '\n' >> "$_ctx_tmp"
+    cat "$debt_file" >> "$_ctx_tmp"
+    printf '\n' >> "$_ctx_tmp"
   fi
 
+  if [[ ! -s "$_ctx_tmp" ]] || ! mv -f "$_ctx_tmp" "$ctx_file"; then
+    command rm -f "$_ctx_tmp" 2>/dev/null
+    return 1
+  fi
   echo "$ctx_file"
 }
 
@@ -3007,7 +3014,10 @@ __dx_run_phases_inline() {
   echo "${step}:${phase_start_epoch}" >> "$times_file"
 
   local ctx_file
-  ctx_file=$(__dx_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input" "$completion_generation")
+  if ! ctx_file=$(__dx_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input" "$completion_generation"); then
+    dx_error "Could not build the Phase ${step} system context."
+    return 1
+  fi
 
   local claude_args=("${DX_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
   [[ $had_times_file -eq 1 ]] && claude_args+=(--resume)
@@ -3109,6 +3119,17 @@ PY
   [[ -s "$_dx_watchdog_reason_file" ]] \
     && watchdog_reason=$(<"$_dx_watchdog_reason_file")
   rm -f "$_dx_pidfile" "$_dx_watchdog_reason_file"
+  if [[ -n "$watchdog_reason" && -n "$_dx_watchdog_pid" ]]; then
+    # The watchdog fired and may be mid TERM→KILL escalation. Killing it
+    # between the two signals would leave TERM-ignoring children running,
+    # so give the sequence a bounded window to finish on its own.
+    local _dx_watch_wait=0
+    while kill -0 "$_dx_watchdog_pid" 2>/dev/null \
+      && [[ $_dx_watch_wait -lt 30 ]]; do
+      sleep 0.1
+      _dx_watch_wait=$((_dx_watch_wait + 1))
+    done
+  fi
   [[ -n "$_dx_watchdog_pid" ]] && kill "$_dx_watchdog_pid" 2>/dev/null
   if [[ -n "$watchdog_reason" ]]; then
     if ! dx_lifecycle_pause "$session_id" "$watchdog_reason" phase-loop; then
@@ -3411,7 +3432,9 @@ __dx_run_spec_apply_env() {
 
 unalias __dx_run_spec_cli 2>/dev/null; unfunction __dx_run_spec_cli 2>/dev/null
 __dx_run_spec_cli() {
+  setopt localoptions localtraps
   local spec_path="" spec_url="" run_token="" dry_run=0 validate_only=0
+  local original_dir="$PWD" tmp_dir=""
   local -x DEX_RUN_TOKEN="${DEX_RUN_TOKEN:-}"
   local -x DEX_FACTORY_RUN_TOKEN="${DEX_FACTORY_RUN_TOKEN:-}"
   local -x DEX_FACTORY_URL="${DEX_FACTORY_URL:-}"
@@ -3479,8 +3502,15 @@ __dx_run_spec_cli() {
     return 1
   fi
 
-  local tmp_dir source_label input_spec normalized_spec error_text
+  local source_label input_spec normalized_spec error_text
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-run-spec.XXXXXX") || return 1
+  chmod 700 "$tmp_dir" 2>/dev/null || true
+  # Every path below leaves through this trap — zsh runs a function-local
+  # EXIT trap on return and interrupt alike — so a fetched spec never
+  # outlives the command and the caller's shell ends up where it started.
+  # Values are baked in with (q) because zsh tears down locals before the
+  # trap body runs.
+  trap "command rm -rf ${(q)tmp_dir} 2>/dev/null; cd ${(q)original_dir} 2>/dev/null" EXIT
   normalized_spec="$tmp_dir/normalized-spec.json"
   if [[ -n "$spec_url" ]]; then
     source_label=$(dx_run_spec_redact_source "$spec_url")
@@ -3490,7 +3520,6 @@ __dx_run_spec_cli() {
     if ! error_text=$(dx_run_spec_fetch "$spec_url" "$input_spec" "$fetch_token" 2>&1); then
       dx_error "$error_text"
       __dx_run_spec_record_failure "$source_label" "$error_text" "fetch" "$PWD"
-      command rm -rf "$tmp_dir" 2>/dev/null || true
       return 1
     fi
   else
@@ -3501,7 +3530,6 @@ __dx_run_spec_cli() {
   if ! error_text=$(dx_run_spec_normalize "$input_spec" "$normalized_spec" 2>&1); then
     dx_error "$error_text"
     __dx_run_spec_record_failure "$source_label" "$error_text" "validation" "$PWD"
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
   fi
 
@@ -3513,7 +3541,6 @@ __dx_run_spec_cli() {
 
   if [[ $validate_only -eq 1 ]]; then
     dx_done "Run spec is valid: ${run_id}"
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return 0
   fi
 
@@ -3521,37 +3548,23 @@ __dx_run_spec_cli() {
     error_text="repository.working_directory does not exist: ${repo_dir}"
     dx_error "$error_text"
     __dx_run_spec_record_failure "$source_label" "$error_text" "startup" "$PWD"
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
   fi
   if ! git -C "$repo_dir" rev-parse --show-toplevel >/dev/null 2>&1; then
     error_text="repository.working_directory is not inside a git repository: ${repo_dir}"
     dx_error "$error_text"
     __dx_run_spec_record_failure "$source_label" "$error_text" "startup" "$repo_dir"
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
   fi
 
   local -x DEX_HEADLESS_RUN=1
-  __dx_run_spec_apply_env "$normalized_spec" "$run_token" || {
-    command rm -rf "$tmp_dir" 2>/dev/null || true
-    return 1
-  }
+  __dx_run_spec_apply_env "$normalized_spec" "$run_token" || return 1
 
-  local original_dir="$PWD"
   cd "$repo_dir" 2>/dev/null || return 1
-  __dx_resolve_workspace_name "$workspace_input" || {
-    cd "$original_dir" 2>/dev/null || true
-    command rm -rf "$tmp_dir" 2>/dev/null || true
-    return 1
-  }
+  __dx_resolve_workspace_name "$workspace_input" || return 1
   local session_id
   session_id=$(__dx_session_id_for_workspace "in-place" "$_dx_wt_name")
-  if ! __dx_startup_claim_acquire "$session_id"; then
-    cd "$original_dir" 2>/dev/null || true
-    command rm -rf "$tmp_dir" 2>/dev/null || true
-    return 1
-  fi
+  __dx_startup_claim_acquire "$session_id" || return 1
 
   local final_spec
   if ! final_spec=$(dx_run_spec_prepare_journal "$normalized_spec" "$session_id" "$repo_dir" "dx run"); then
@@ -3559,8 +3572,6 @@ __dx_run_spec_cli() {
     dx_error "$error_text"
     __dx_run_spec_record_failure "$source_label" "$error_text" "startup" "$repo_dir"
     __dx_startup_claim_release || true
-    cd "$original_dir" 2>/dev/null || true
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
   fi
   local -x DEX_HEADLESS_RUN_SPEC_FILE="$final_spec"
@@ -3586,20 +3597,12 @@ __dx_run_spec_cli() {
     dx_done "Run spec startup is valid: ${run_id}"
     dx_info "Repository: ${repo_dir}"
     dx_info "Journal: $(dx_run_dir "$run_id")"
-    if ! __dx_startup_claim_release; then
-      cd "$original_dir" 2>/dev/null || true
-      command rm -rf "$tmp_dir" 2>/dev/null || true
-      return 1
-    fi
-    cd "$original_dir" 2>/dev/null || true
-    command rm -rf "$tmp_dir" 2>/dev/null || true
+    __dx_startup_claim_release || return 1
     return 0
   fi
 
   __dx_refresh_provider || {
     __dx_startup_claim_release || true
-    cd "$original_dir" 2>/dev/null || true
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
   }
 
@@ -3609,22 +3612,19 @@ __dx_run_spec_cli() {
     error_text="could not prepare in-place lifecycle workspace"
     dx_event_emit_safe "$run_id" "run.failed" "error" "$error_text" "" "$(__dx_run_spec_failure_json "$source_label" "$error_text" "startup")"
     dx_run_write_summary_safe "$run_id" "failed" "$error_text"
-    cd "$original_dir" 2>/dev/null || true
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return "$setup_status"
   fi
 
   session_id="$_dx_session_id"
   final_spec=$(dx_run_spec_prepare_journal "$normalized_spec" "$session_id" "$repo_dir" "dx run") || {
     __dx_startup_claim_release || true
-    cd "$original_dir" 2>/dev/null || true
-    command rm -rf "$tmp_dir" 2>/dev/null || true
     return 1
   }
   local -x DEX_HEADLESS_RUN_SPEC_FILE="$final_spec"
   local -x DEX_RUN_ID="$run_id"
   dx_meta_write "$session_id" "headless=1" "run_id=${run_id}" "run_spec=${final_spec}"
-  __dx_write_last_session "$_dx_wt_name" "$_dx_wt_dir" "$_dx_workspace_mode"
+  __dx_write_last_session "$_dx_wt_name" "$_dx_wt_dir" "$_dx_workspace_mode" \
+    || dx_warn "Could not record this session for dx --resume."
 
   local state_file times_file step=0
   state_file=$(dx_state_file "$session_id")
@@ -3643,10 +3643,6 @@ __dx_run_spec_cli() {
   __dx_run_with_runtime "$session_id" "$_dx_wt_dir" __dx_run_phases_inline \
     "$_dx_wt_name" "$_dx_wt_dir" "$_dx_default_branch" "$step" "$state_file" \
     "$times_file" "$resume_hint" "$_dx_workspace_mode" "$session_id" "$raw_input"
-  local run_status=$?
-  cd "$original_dir" 2>/dev/null || true
-  command rm -rf "$tmp_dir" 2>/dev/null || true
-  return "$run_status"
 }
 
 # __dx_show_header <wt_name> <current_step> <wt_dir> [default_branch] [session_id] [workspace_mode]
@@ -4017,8 +4013,11 @@ dx() {
   state_file=$(dx_state_file "$session_id")
   times_file=$(dx_times_file "$session_id")
 
-  # Save as last session for --resume (atomic write to avoid corruption on interrupt)
-  __dx_write_last_session "$_dx_wt_name" "$_dx_wt_dir" "$_dx_workspace_mode"
+  # Save as last session for --resume (atomic write to avoid corruption on
+  # interrupt). A failed write with stale contents would resume the wrong
+  # session later, so say so now.
+  __dx_write_last_session "$_dx_wt_name" "$_dx_wt_dir" "$_dx_workspace_mode" \
+    || dx_warn "Could not record this session for dx --resume."
 
   # Read current phase (default: 0 — Setup runs before Plan on fresh tickets).
   local step=0
