@@ -3012,7 +3012,22 @@ __dx_run_phases_inline() {
   local claude_args=("${DX_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
   [[ $had_times_file -eq 1 ]] && claude_args+=(--resume)
   claude_args+=(--append-system-prompt-file "$ctx_file")
-  claude_args+=(--settings "{\"statusLine\":{\"type\":\"command\",\"command\":\"bash '${DEX_DIR}/bin/status-line.sh'\"}}")
+  # DEX_DIR needs shell quoting inside the command string and JSON encoding
+  # around it — an install path with a quote or backslash breaks hand-rolled
+  # interpolation. A build failure skips the status line rather than passing
+  # Claude malformed settings.
+  local statusline_settings
+  if statusline_settings=$(python3 - "$DEX_DIR/bin/status-line.sh" <<'PY'
+import json, shlex, sys
+
+print(json.dumps({"statusLine": {
+    "type": "command",
+    "command": "bash " + shlex.quote(sys.argv[1]),
+}}))
+PY
+  ) && [[ -n "$statusline_settings" ]]; then
+    claude_args+=(--settings "$statusline_settings")
+  fi
 
   local message
   message=$(__dx_phase_message "$step" "$raw_input" "$workspace_mode" "$wt_dir")
