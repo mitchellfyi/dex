@@ -3,7 +3,19 @@
 # Fail-open Claude Code hook that delegates Bash command rewrites to RTK.
 set -euo pipefail
 
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+# This runs on every Bash tool call, so load only the modules it reads
+# (the status line uses the same fast path). A broken or partial install
+# must not surface here: this hook enhances output, it never gates it.
+DX_COMMON_MODULES="output rtk"
+dex_common="${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
+# A missing source target is fatal in bash even inside a guard, so probe it.
+if [[ ! -r "$dex_common" ]]; then
+  exit 0
+fi
+if ! source "$dex_common" 2>/dev/null; then
+  exit 0
+fi
+unset DX_COMMON_MODULES
 
 if ! dx_rtk_enabled; then
   exit 0
