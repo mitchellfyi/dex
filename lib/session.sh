@@ -2107,7 +2107,9 @@ __dx_run_with_timeout_core() {
               "$candidate_file"
             break
           fi
-          if [[ ! "$policy_value" =~ ^[0-9]+$ \
+          # Mirror the entry-point bounds: past 15 digits the arithmetic
+          # below overflows negative and silently disables the deadline.
+          if [[ ! "$policy_value" =~ ^[0-9]+$ || ${#policy_value} -gt 15 \
             || ! "$policy_multiplier" =~ ^[1-9][0-9]*$ ]]; then
             printf 'policy-invalid\n' > "$marker"
             __dx_timeout_terminate_processes "$token_file" "$cmd_pid" \
