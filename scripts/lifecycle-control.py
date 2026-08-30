@@ -295,8 +295,12 @@ def main() -> int:
     parser.add_argument("--format", choices=("json", "tsv"), default="json")
     args = parser.parse_args()
     current_phase = int(args.phase) if re.fullmatch(r"[0-6]", args.phase) else None
-    prompt = sys.stdin.read(65537)
+    prompt = sys.stdin.read()
     parsed = parse_prompt(prompt, current_phase)
+    if parsed["action"]:
+        # parse_prompt bounds its regex scan to the prompt's head, but the
+        # attribution hash has to cover everything the human actually sent.
+        parsed["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     if args.format == "tsv":
         target = parsed["target_phase"] if parsed["target_phase"] != "" else "-"
         print(
