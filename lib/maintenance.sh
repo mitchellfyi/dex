@@ -182,8 +182,10 @@ dx_maintenance_lock_acquire() {
   [[ -n "$session_id" ]] || return 1
   mkdir -p "$DX_MAINTENANCE_DIR"
   ttl=$(dx_maintenance_lock_ttl_seconds)
+  # The empty owner-pid argument lets dx_lock_acquire record the acquiring
+  # process itself, which matters if this ever runs from a subshell.
   dx_lock_acquire "$(__dx_maintenance_lock_dir "$session_id")" \
-    "$(__dx_maintenance_lock_token "$owner")" "$$" "$ttl"
+    "$(__dx_maintenance_lock_token "$owner")" "" "$ttl"
 }
 
 dx_maintenance_lock_release() {

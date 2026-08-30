@@ -179,9 +179,12 @@ dx_review_findings_history_append() {
   # Stale-lock takeover used to be an unserialized rm-then-recreate: two
   # waiters could both see a dead owner, and the second would remove the
   # first's fresh lock, letting both append and then reporting a successful
-  # append as a failure. dx_lock_acquire serializes reclamation.
-  owner="review-history-$$"
-  dx_lock_acquire "$lock_dir" "$owner" || return 1
+  # append as a failure. dx_lock_acquire serializes reclamation. The owner
+  # names the acquiring process itself, not $$, which is the parent inside a
+  # backgrounded subshell — see dx_lock_self_pid_var.
+  dx_lock_self_pid_var
+  owner="review-history-$DX_LOCK_SELF_PID"
+  dx_lock_acquire "$lock_dir" "$owner" "$DX_LOCK_SELF_PID" || return 1
 
   if [[ ! -e "$history_file" || -f "$history_file" ]] && \
      { [[ ! -f "$history_file" ]] || LC_ALL=C awk '

@@ -2314,9 +2314,11 @@ PY
 # symlinks when ageing a path. Neither was the good one, which is the argument
 # for keeping one.
 
-# dx_review_lock_acquire <repo_dir> <owner_token> [owner_pid] — atomically own one checkout
+# dx_review_lock_acquire <repo_dir> <owner_token> [owner_pid] — atomically own
+# one checkout. Without an explicit owner_pid, dx_lock_acquire records the
+# acquiring process itself rather than $$.
 dx_review_lock_acquire() {
-  local repo_dir="$1" owner_token="$2" caller_pid="${3:-$$}" lock_dir
+  local repo_dir="$1" owner_token="$2" caller_pid="${3:-}" lock_dir
   lock_dir=$(dx_review_lock_dir "$repo_dir") || return 2
   dx_lock_acquire "$lock_dir" "$owner_token" "$caller_pid" 30
 }

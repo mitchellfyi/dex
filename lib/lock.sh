@@ -55,6 +55,24 @@ print(max(0, int(time.time() - modified)))
 PY
 }
 
+# dx_lock_self_pid_var — set DX_LOCK_SELF_PID to the calling process's PID
+#
+# $$ names the top-level shell even inside a backgrounded subshell, in both
+# bash and zsh, so an owner record keyed on it makes a killed subshell's lock
+# look held for as long as its parent lives — and lets a parent and its
+# subshell forge each other's release tokens. bash 3.2 has no BASHPID, so
+# when that variable is absent one exec'd sh answers with the caller's real
+# PID. This must run as a plain command in the owning process: calling it
+# through a command substitution would report the substitution's subshell.
+dx_lock_self_pid_var() {
+  DX_LOCK_SELF_PID="${BASHPID:-}"
+  if [[ ! "$DX_LOCK_SELF_PID" =~ ^[0-9]+$ ]]; then
+    DX_LOCK_SELF_PID=$(exec sh -c 'echo "$PPID"' 2>/dev/null) \
+      || DX_LOCK_SELF_PID=""
+  fi
+  [[ "$DX_LOCK_SELF_PID" =~ ^[0-9]+$ ]] || DX_LOCK_SELF_PID="$$"
+}
+
 # __dx_lock_pid_alive <pid> — whether a process still exists
 __dx_lock_pid_alive() {
   local pid="$1"
@@ -81,8 +99,13 @@ __dx_lock_publish_owner() {
 # Returns 0 when the lock is held by this caller, 1 when another live owner
 # holds it (retry later), 2 on a usage or filesystem error.
 dx_lock_acquire() {
-  local lock_dir="$1" owner_token="$2" caller_pid="${3:-$$}" stale_grace="${4:-30}"
+  local lock_dir="$1" owner_token="$2" caller_pid="${3:-}" stale_grace="${4:-30}"
   local owner_file reaper_dir raw owner_epoch owner_pid recorded_token extra lock_age reaper_age
+  if [[ -z "$caller_pid" ]]; then
+    # Default to the acquiring process itself, not $$ — see dx_lock_self_pid_var.
+    dx_lock_self_pid_var
+    caller_pid="$DX_LOCK_SELF_PID"
+  fi
   [[ -n "$lock_dir" ]] || return 2
   [[ -n "$owner_token" && "$owner_token" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
   [[ "$caller_pid" =~ ^[0-9]+$ ]] && kill -0 "$caller_pid" 2>/dev/null || return 2

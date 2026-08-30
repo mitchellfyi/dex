@@ -100,20 +100,20 @@ __dx_factory_positive_int() {
 # grace period, publishes an owner record that tells a stale lock from a live
 # one, and serializes reclamation so two waiters cannot both steal. Sharing it
 # means the next fix to any of that lands in one place.
-__dx_factory_sync_lock_token() {
-  printf 'factory-%s\n' "$$"
-}
-
 # Retries on contention and then gives up quietly: failing to sync events must
-# never be the thing that ends a run.
+# never be the thing that ends a run. Token and owner PID name the acquiring
+# process itself, not $$, which is the parent inside backgrounded subshells —
+# see dx_lock_self_pid_var.
 __dx_factory_sync_acquire_lock() {
   local lock_dir="$1" attempts=0 max_attempts stale_seconds lock_status
   max_attempts=$(__dx_factory_positive_int "${DEX_FACTORY_LOCK_ATTEMPTS:-40}" 40 1000)
   stale_seconds=$(__dx_factory_positive_int "${DEX_FACTORY_LOCK_STALE_SECONDS:-5}" 5 3600)
+  dx_lock_self_pid_var
   while true; do
     # `status` is read-only in zsh and lib/ is sourced by both shells, so the
     # result gets an explicit name.
-    dx_lock_acquire "$lock_dir" "$(__dx_factory_sync_lock_token)" "$$" "$stale_seconds"
+    dx_lock_acquire "$lock_dir" "factory-$DX_LOCK_SELF_PID" \
+      "$DX_LOCK_SELF_PID" "$stale_seconds"
     lock_status=$?
     [[ "$lock_status" -eq 0 ]] && return 0
     [[ "$lock_status" -eq 2 ]] && return 1
@@ -124,7 +124,8 @@ __dx_factory_sync_acquire_lock() {
 }
 
 __dx_factory_sync_release_lock() {
-  dx_lock_release "$1" "$(__dx_factory_sync_lock_token)" || true
+  dx_lock_self_pid_var
+  dx_lock_release "$1" "factory-$DX_LOCK_SELF_PID" || true
 }
 
 __dx_factory_sync_read_cursor() {

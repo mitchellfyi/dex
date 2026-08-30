@@ -669,17 +669,18 @@ dx_run_log_tee() {
 
 # Journal and manifest writers share one token per process. dx_lock_acquire
 # reclaims a lock whose owner died, so a killed run no longer wedges every
-# later event for that run behind an orphaned lock directory.
-__dx_event_lock_token() {
-  printf 'events-%s\n' "$$"
-}
-
+# later event for that run behind an orphaned lock directory. The token and
+# owner PID come from the acquiring process itself — $$ names the top-level
+# shell even inside the backgrounded subshells that emit events, which made a
+# killed subshell's lock look held for as long as its parent lived, silently
+# dropping every later event for that run.
 __dx_event_acquire_lock() {
   # `status` is a read-only special parameter in zsh, and lib/ is sourced by
   # both shells, so lock results use an explicit name.
   local lock_dir="$1" attempts=0 lock_status
+  dx_lock_self_pid_var
   while true; do
-    dx_lock_acquire "$lock_dir" "$(__dx_event_lock_token)"
+    dx_lock_acquire "$lock_dir" "events-$DX_LOCK_SELF_PID" "$DX_LOCK_SELF_PID"
     lock_status=$?
     [[ "$lock_status" -eq 0 ]] && return 0
     [[ "$lock_status" -eq 2 ]] && return 1
@@ -690,7 +691,8 @@ __dx_event_acquire_lock() {
 }
 
 __dx_event_release_lock() {
-  dx_lock_release "$1" "$(__dx_event_lock_token)" || true
+  dx_lock_self_pid_var
+  dx_lock_release "$1" "events-$DX_LOCK_SELF_PID" || true
 }
 
 dx_event_emit() {
