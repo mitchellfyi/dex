@@ -416,14 +416,15 @@ run_case "claude-preflight-cancel" "claude" "preflight-cancel" 1 \
   "Review stopped before its first wave because a direct human control or pause is pending." 0
 
 # Signal cleanup runs only after the supervised child has stopped. Its matching
-# quiescence acknowledgement must release the parent Phase 3 barrier.
+# quiescence acknowledgement must release the parent Phase 3 barrier — the
+# interrupt checkpoints do this through __dx_review_parent_busy_finish.
 SIGNAL_STATE_DIR="$TMP_DIR/signal-phases"
 SIGNAL_LOOP_DIR="$TMP_DIR/signal-loops"
 mkdir -p "$SIGNAL_STATE_DIR" "$SIGNAL_LOOP_DIR"
 DEX_DIR="$ROOT" DX_STATE_DIR="$SIGNAL_STATE_DIR" DX_LOOP_DIR="$SIGNAL_LOOP_DIR" zsh -fc '
   source "$DEX_DIR/dx.sh"
   token=$(dx_phase_busy_begin signal-review-parent 3 "signal fixture")
-  __dx_review_handle_interrupt "" "" 0 signal-review-parent "" 3 user_interrupt "$token"
+  __dx_review_parent_busy_finish signal-review-parent "$token"
   [[ ! -f "$(dx_phase_busy_file signal-review-parent 3)" ]] || assert_at $LINENO
 '
 

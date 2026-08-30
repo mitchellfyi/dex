@@ -428,21 +428,6 @@ __dx_review_preflight_pause() {
   return 1
 }
 
-__dx_review_handle_interrupt() {
-  local run_id="$1" telemetry_session_id="$2" standalone="$3" session_id="$4"
-  local child_session_id="$5" review_phase="$6" reason="$7" busy_token="${8:-}"
-  if [[ -n "$child_session_id" ]]; then
-    dx_provider_cleanup_session_state "$child_session_id" 2>/dev/null || true
-    dx_cleanup_session "$child_session_id" 2>/dev/null || true
-  fi
-  if [[ "$standalone" != "1" && -n "$busy_token" ]]; then
-    if dx_phase_busy_acknowledge "$session_id" 3 "$busy_token"; then
-      dx_phase_busy_finish "$session_id" 3 "$busy_token" 2>/dev/null || true
-    fi
-  fi
-  __dx_review_record_pause "$run_id" "$telemetry_session_id" "$standalone" "$session_id" \
-    "$review_phase" "Review interrupted" blocked "$reason"
-}
 # __dx_review_assessment_message <scope_name> <files_changed> <context_file>
 #   <criteria_block> <provider_agent> <policy_small> <policy_normal>
 #   <policy_complex> <policy_binding> <rubric> <completion_generation>
@@ -1863,6 +1848,10 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         parent_busy_token=""
       fi
       current_review_child_session=""
+      # The pass provider state was written before the busy fence went up, so
+      # this checkpoint clears it like the post-wave ones do — cleanup_session
+      # alone leaves the alias-session provider file behind.
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
       dx_cleanup_session "$pass_session_id" 2>/dev/null || true
       __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
         "$standalone_review_prompt" "$session_id" "$review_phase" \
