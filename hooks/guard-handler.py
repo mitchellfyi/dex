@@ -80,8 +80,17 @@ def parse_frontmatter(text):
     return result
 
 
+# parse_guard's answer for a file that parsed cleanly but declares
+# `enabled: false` — readable, just deliberately off.
+GUARD_DISABLED = object()
+
+
 def parse_guard(filepath):
-    """Parse a guard markdown file with YAML frontmatter."""
+    """Parse a guard markdown file with YAML frontmatter.
+
+    Returns the guard dict, GUARD_DISABLED for a readable guard that is
+    switched off, or None when the file cannot be read or parsed.
+    """
     try:
         with open(filepath, 'r') as f:
             content = f.read()
@@ -108,8 +117,13 @@ def parse_guard(filepath):
         print(f"[guard] skipped {filepath}: parse error: {e}", file=sys.stderr)
         return None
 
-    if not meta or not meta.get('enabled', True):
+    if not meta:
         return None
+    if not meta.get('enabled', True):
+        # Distinct from None (unreadable): a deliberately disabled guard still
+        # proves its file is present and readable, so disabling every built-in
+        # must not read as a broken install that blocks all tool calls.
+        return GUARD_DISABLED
 
     # Only the exact string `block` denies; everything else is read as a warn.
     # So `action: Block`, `action: deny` and a plain typo all used to turn a
@@ -155,7 +169,9 @@ def load_guards(event_type):
     builtin_loaded = 0
     for f in builtin_files:
         g = parse_guard(f)
-        if g:
+        if g is GUARD_DISABLED:
+            builtin_loaded += 1
+        elif g:
             builtin_loaded += 1
             if not g.get('event'):
                 print(f"[guard] Warning: guard {f} missing 'event' field, skipping", file=sys.stderr)
@@ -170,7 +186,7 @@ def load_guards(event_type):
     if os.path.isdir(project_dir):
         for f in sorted(glob.glob(os.path.join(project_dir, '*.md'))):
             g = parse_guard(f)
-            if g:
+            if g and g is not GUARD_DISABLED:
                 if not g.get('event'):
                     print(f"[guard] Warning: guard {f} missing 'event' field, skipping", file=sys.stderr)
                 elif g['event'] in (event_type, 'all'):
@@ -502,6 +518,11 @@ def guard_environment_matches(guard):
     expected = guard.get('env_value')
     if expected is None or expected == '':
         return bool(actual)
+    if isinstance(expected, bool):
+        # parse_frontmatter reads an unquoted true/false as a Python bool;
+        # match the YAML spelling, not str()'s capitalization, which could
+        # never equal an environment value.
+        return actual == ('true' if expected else 'false')
     return actual == str(expected)
 
 

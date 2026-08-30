@@ -1225,6 +1225,27 @@ else
   fail=$((fail + 1))
 fi
 
+# Every built-in switched off by hand is a deliberate configuration, not a
+# broken install: the handler must not read it as an absent baseline and
+# start denying every tool call.
+mkdir -p "$GUARD_TMP/disabled-dex/hooks/guards"
+for guard_file in "$ROOT"/hooks/guards/*.md; do
+  sed 's/^enabled: true$/enabled: false/' "$guard_file" \
+    > "$GUARD_TMP/disabled-dex/hooks/guards/$(basename "$guard_file")"
+done
+set +e
+GUARD_OUT="$(mkbashpayload 'echo hello' | env DEX_GUARD_EVENT=bash \
+  DEX_DIR="$GUARD_TMP/disabled-dex" python3 "$HANDLER" 2>&1)"
+GUARD_RC=$?
+set -e
+if [[ "$GUARD_RC" -eq 0 && "$GUARD_OUT" != *'no built-in guards'* ]]; then
+  pass=$((pass + 1))
+else
+  printf 'FAIL (all built-ins disabled must not brick the hook; rc=%s)\n%s\n' \
+    "$GUARD_RC" "$GUARD_OUT" >&2
+  fail=$((fail + 1))
+fi
+
 # An unexpected crash anywhere in the handler must deny rather than allow:
 # exit 1 would let the call through with no guard evaluation at all.
 mkdir -p "$GUARD_TMP/shim"

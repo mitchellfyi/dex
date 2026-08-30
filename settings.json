@@ -64,7 +64,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/phase-loop.sh\""
+            "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/phase-loop.sh\"",
+            "timeout": 1800
           }
         ]
       },

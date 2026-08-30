@@ -2,7 +2,7 @@
 name: warn-review-assessment-bash
 enabled: true
 event: bash
-pattern: (?s).*
+pattern: (?s).+
 action: warn
 env_var: DEX_REVIEW_ASSESSMENT_ACTIVE
 env_value: "1"

@@ -110,11 +110,7 @@ if [[ -f "$TIMES_FILE" ]]; then
   if [[ "${TOTAL_START:-}" =~ ^[0-9]+$ ]]; then
     NOW=$(date +%s)
     SECS=$((NOW - TOTAL_START))
-    if [[ $SECS -lt 60 ]]; then
-      ELAPSED=" | ${SECS}s"
-    else
-      ELAPSED=" | $((SECS / 60))m $((SECS % 60))s"
-    fi
+    ELAPSED=" | $(dx_format_duration "$SECS")"
   fi
 fi
 

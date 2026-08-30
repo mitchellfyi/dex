@@ -18,10 +18,13 @@ several natural checkpoints into one late commit either.
 ## Format
 
 ```
-<type>(<scope>): <short description>
+<type>[(<scope>)][!]: <short description>
 ```
 
 **Types**: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `build`, `ci`, `style`, `revert`
+
+The scope is optional. Append `!` after the type or scope to mark a breaking
+change.
 
 ## Multi-line Messages
 

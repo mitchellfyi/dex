@@ -196,7 +196,14 @@ def merge_settings(existing, template, dex_dir, home):
             raise ValueError(f"settings template hook event {event!r} must be an array")
         existing_groups = merged_hooks.get(event, [])
         retained = filtered_groups(existing_groups, dex_dir, home) if isinstance(existing_groups, list) else []
-        merged_hooks[event] = retained + copy.deepcopy(template_groups)
+        if event == "PreToolUse":
+            # Dex's guards must evaluate before any retained user hook: a user
+            # hook that rewrites or approves the call must not run ahead of
+            # the guard that would have flagged it. Other events keep user
+            # hooks first.
+            merged_hooks[event] = copy.deepcopy(template_groups) + retained
+        else:
+            merged_hooks[event] = retained + copy.deepcopy(template_groups)
     result["hooks"] = merged_hooks
 
     existing_worktree = existing.get("worktree")
