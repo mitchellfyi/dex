@@ -661,6 +661,15 @@ def main():
             file=sys.stderr,
         )
         return 1
+    except Exception as error:
+        # Same decision as the timeout above, for the same reason — but a
+        # crash must not surface as a traceback the caller reads as noise.
+        print(
+            f'[dex] could not read this command for a commit '
+            f'({type(error).__name__}); skipping commit-format validation',
+            file=sys.stderr,
+        )
+        return 1
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous)
