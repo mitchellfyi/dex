@@ -10,7 +10,6 @@ import os
 from pathlib import Path, PurePosixPath
 import shlex
 import stat
-import string
 import sys
 import tempfile
 
@@ -124,7 +123,9 @@ def read_attribution_state(path: Path) -> dict:
             if (
                 not isinstance(digest, str)
                 or len(digest) != 64
-                or any(character not in string.hexdigits for character in digest)
+                # Lowercase only: sha256_file() emits lowercase, so an
+                # uppercase digest would pass here and then never match.
+                or any(character not in "0123456789abcdef" for character in digest)
             ):
                 raise SystemExit("dex: invalid generated hook receipt")
     if state["installation_complete"] and "commit-msg" not in generated:

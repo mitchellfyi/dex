@@ -1145,6 +1145,9 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const storyboard = options.script ? loadStoryboard(path.resolve(options.script)) : null;
   if (options.mode === 'validate') {
+    // Without this, "storyboard: valid" prints before the null storyboard
+    // throws a TypeError two lines later.
+    if (!storyboard) throw new Error('validate requires --script');
     console.log('storyboard: valid');
     console.log(`estimated_seconds: ${estimatedSeconds(storyboard)}`);
     console.log(`max_seconds: ${storyboard.max_seconds}`);

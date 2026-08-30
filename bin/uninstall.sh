@@ -181,12 +181,23 @@ if grep -qE "$DX_ZSHRC_SOURCE_ACTIVE_PATTERN" "$ZSHRC" 2>/dev/null; then
   # Also removes the DEX_DIR export and source lines. The source-line pattern
   # is anchored to source/. commands: the old bare 'dex.*dx\.sh' also deleted
   # any user line that merely mentioned both strings (an alias, a comment).
-  # || true: grep -v exits 1 when no lines survive filtering (valid when .zshrc
-  # contained only Dex lines); without this, set -e + pipefail aborts the script.
-  grep -vxE '# Dex( —.*)?' "$ZSHRC" | grep -vE '^export DEX_DIR=' \
-    | grep -vE "^[[:space:]]*(source|\.)[[:space:]].*(${DX_ZSHRC_SOURCE_PATTERN})" > "${ZSHRC}.tmp" || true
-  mv "${ZSHRC}.tmp" "$ZSHRC"
-  dx_done "Removed Dex lines from ~/.zshrc"
+  # grep -v exits 1 when no lines survive filtering (valid when .zshrc
+  # contained only Dex lines), so 1 is tolerated — but higher codes are real
+  # errors, and an unchecked write here once meant a failed filter could
+  # truncate the user's ~/.zshrc.
+  zshrc_filter_status=0
+  zshrc_filtered=$(grep -vxE '# Dex( —.*)?' "$ZSHRC" | grep -vE '^export DEX_DIR=' \
+    | grep -vE "^[[:space:]]*(source|\.)[[:space:]].*(${DX_ZSHRC_SOURCE_PATTERN})") \
+    || zshrc_filter_status=$?
+  if [[ $zshrc_filter_status -le 1 ]] \
+    && printf '%s\n' "$zshrc_filtered" > "${ZSHRC}.tmp" \
+    && mv "${ZSHRC}.tmp" "$ZSHRC"; then
+    dx_done "Removed Dex lines from ~/.zshrc"
+  else
+    rm -f "${ZSHRC}.tmp" 2>/dev/null || true
+    dx_error "Could not rewrite ~/.zshrc; it was left unchanged. Remove the Dex lines by hand."
+    uninstall_failed=1
+  fi
 else
   dx_skip "No Dex source line in ~/.zshrc"
 fi
