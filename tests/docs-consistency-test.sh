@@ -176,6 +176,38 @@ if task_commands != expected_task:
     if unknown:
         problems.append(f"__dx_task_commands names {unknown}, which dx() does not accept")
 
+# Every relative link in the entry-point docs must resolve, and a #fragment
+# must name a real heading in its target. README's doc links had only ever
+# been checked by hand.
+def heading_anchor(line):
+    text = re.sub(r"[`*_]", "", line.lstrip("#").strip()).lower()
+    return re.sub(r"\s+", "-", re.sub(r"[^\w\s-]", "", text)).strip("-")
+
+
+link_docs = [root / "README.md"] + sorted((root / "docs").glob("*.md"))
+checked_links = 0
+for doc in link_docs:
+    body = doc.read_text(encoding="utf-8")
+    for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", body):
+        if re.match(r"[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
+            continue
+        path_part, _, fragment = target.partition("#")
+        resolved = (doc.parent / path_part).resolve()
+        checked_links += 1
+        if not resolved.exists():
+            problems.append(f"{doc.name} links to missing {target}")
+            continue
+        if fragment and resolved.suffix == ".md":
+            anchors = {
+                heading_anchor(line)
+                for line in resolved.read_text(encoding="utf-8").splitlines()
+                if line.startswith("#")
+            }
+            if fragment.lower() not in anchors:
+                problems.append(
+                    f"{doc.name} links to {target}, but that heading is not there"
+                )
+
 if problems:
     for problem in problems:
         print(f"docs: {problem}", file=sys.stderr)
@@ -183,7 +215,8 @@ if problems:
 
 print(
     f"docs-consistency: {len(on_disk)} lib modules, {len(guards)} guards, "
-    f"{len(wired)} hooks, {skills} skills, {len(routed)} dx commands all match"
+    f"{len(wired)} hooks, {skills} skills, {len(routed)} dx commands, "
+    f"{checked_links} doc links all match"
 )
 PY
 

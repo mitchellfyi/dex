@@ -55,7 +55,11 @@ if command -v python3 >/dev/null 2>&1; then
   # exits 1 on a SyntaxError, and lib.sh reads 1 as "fail" — the defect is
   # still there — while only other codes count as "invalid". A broken oracle
   # therefore scores every trial against the agent instead of erroring.
+  # tests/*.py mostly self-check by running below, but import-only fixtures
+  # (dex_test_http.py) and research/*.py otherwise surface a syntax error as
+  # an opaque test failure instead of a named one.
   python3 -m py_compile "$ROOT"/hooks/*.py "$ROOT"/scripts/*.py \
+    "$ROOT"/tests/*.py "$ROOT"/research/*.py \
     "$ROOT"/research/review-loop/scenarios/*/hidden/oracle.py \
     || fail "python3 -m py_compile"
   # Most of Dex's Python is not in those files: it is embedded in shell
@@ -106,6 +110,15 @@ if command -v node >/dev/null 2>&1; then
   node --check "$ROOT/scripts/ui-capture.cjs" || fail "node --check scripts/ui-capture.cjs"
 else
   printf 'SKIP node syntax (node not installed)\n'
+fi
+
+# The workflows embed ~1,500 lines of shell that bash -n and shellcheck never
+# see; actionlint runs shellcheck on every run: block. The template copy is
+# covered transitively — tests/maintenance-test.sh pins it to the .github one.
+if command -v actionlint >/dev/null 2>&1; then
+  actionlint "$ROOT"/.github/workflows/*.yml || fail "actionlint"
+else
+  printf 'SKIP actionlint (not installed)\n'
 fi
 
 if [[ $status -eq 0 ]]; then

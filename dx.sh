@@ -3434,6 +3434,7 @@ unalias __dx_run_spec_cli 2>/dev/null; unfunction __dx_run_spec_cli 2>/dev/null
 __dx_run_spec_cli() {
   setopt localoptions localtraps
   local spec_path="" spec_url="" run_token="" dry_run=0 validate_only=0
+  # shellcheck disable=SC2034  # read inside the zsh-quoted trap below
   local original_dir="$PWD" tmp_dir=""
   local -x DEX_RUN_TOKEN="${DEX_RUN_TOKEN:-}"
   local -x DEX_FACTORY_RUN_TOKEN="${DEX_FACTORY_RUN_TOKEN:-}"
@@ -3510,6 +3511,7 @@ __dx_run_spec_cli() {
   # outlives the command and the caller's shell ends up where it started.
   # Values are baked in with (q) because zsh tears down locals before the
   # trap body runs.
+  # shellcheck disable=SC2064  # expanding now is the point — see above
   trap "command rm -rf ${(q)tmp_dir} 2>/dev/null; cd ${(q)original_dir} 2>/dev/null" EXIT
   normalized_spec="$tmp_dir/normalized-spec.json"
   if [[ -n "$spec_url" ]]; then

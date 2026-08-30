@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2016
+# shellcheck disable=SC1090,SC1091,SC2016,SC2034
 # Fail-open Claude Code hook that delegates Bash command rewrites to RTK.
 set -euo pipefail
 
