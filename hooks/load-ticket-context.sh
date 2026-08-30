@@ -51,12 +51,6 @@ elif [[ -f "$TASK_PROMPT_FILE" ]]; then
   echo "Task: $(cat "$TASK_PROMPT_FILE")"
   echo ""
   echo "Use /dex to begin work on this task, or work on it directly."
-elif [[ -f "$REPO_TOP/.dex-prompt" ]]; then
-  echo "Branch: ${BRANCH}"
-  echo ""
-  echo "Task: $(cat "$REPO_TOP/.dex-prompt")"
-  echo ""
-  echo "Use /dex to begin work on this task, or work on it directly."
 else
   echo "Branch: ${BRANCH}"
   echo ""

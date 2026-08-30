@@ -1871,31 +1871,6 @@ __dx_session_runtime_owner_trusted_read() { # <opaque-handle> <file> <max>
     "$owner_device" "$owner_inode" "$file_name" "$maximum_bytes"
 }
 
-__dx_session_runtime_owner_handle_valid() {
-  [[ $# -eq 1 ]] || return 3
-  local metadata_record metadata_extra root_device root_inode owner_device owner_inode
-  local owner_root owner_directory expected_root_device expected_root_inode
-  local expected_owner_device expected_owner_inode
-  owner_root=$(dx_session_runtime_owner_root) || return 3
-  __dx_session_runtime_owner_descriptor_parse "$1" || return $?
-  owner_directory="$__DX_RUNTIME_OWNER_DIRECTORY"
-  expected_root_device="$__DX_RUNTIME_OWNER_ROOT_DEVICE"
-  expected_root_inode="$__DX_RUNTIME_OWNER_ROOT_INODE"
-  expected_owner_device="$__DX_RUNTIME_OWNER_DEVICE"
-  expected_owner_inode="$__DX_RUNTIME_OWNER_INODE"
-  __dx_session_runtime_owner_descriptor_clear
-  metadata_record=$(__dx_session_runtime_owner_metadata \
-    "$owner_root" "$owner_directory" 2>/dev/null) || return 3
-  IFS=$'\t' read -r root_device root_inode owner_device owner_inode metadata_extra <<EOF
-$metadata_record
-EOF
-  [[ -z "${metadata_extra:-}" \
-    && "$root_device" == "$expected_root_device" \
-    && "$root_inode" == "$expected_root_inode" \
-    && "$owner_device" == "$expected_owner_device" \
-    && "$owner_inode" == "$expected_owner_inode" ]]
-}
-
 __dx_session_runtime_owner_atomic_write() { # <handle> <file-name> <content>
   local owner_descriptor="$1" file_name="$2" file_content="$3"
   local owner_root owner_directory root_device root_inode owner_device owner_inode

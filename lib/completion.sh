@@ -636,11 +636,6 @@ def main(arguments):
         cleanup_completion(base_dir, session_id)
         return
 
-    if operation == "legacy-present":
-        if len(values) != 1 or lstat_optional(legacy_file(base_dir, session_id)) is None:
-            raise CompletionStateError
-        return
-
     raise CompletionStateError
 
 
@@ -738,10 +733,4 @@ __dx_completion_recover_cleanup() {
   [[ $# -eq 1 ]] || return 2
   dx_session_id_valid "$1" || return 1
   __dx_completion_run recover-cleanup "$@"
-}
-
-dx_completion_legacy_present() {
-  [[ $# -eq 1 ]] || return 2
-  dx_session_id_valid "$1" || return 1
-  __dx_completion_run legacy-present "$@"
 }
