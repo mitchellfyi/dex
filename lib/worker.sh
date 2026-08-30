@@ -584,16 +584,20 @@ __dx_worker_execute() {
   dx_info "Claimed ${run_id} for ${slug} (attempt ${attempt})."
 
   # Only the spec URL and the run token cross into the child. The worker
-  # credential stays in this process.
+  # credential stays in this process, and the run token travels through the
+  # environment rather than argv, where any local process could read it for
+  # the lifetime of the run.
   if [[ "$dry_run" -eq 1 ]]; then
     (
       cd "$work_dir" 2>/dev/null || exit 1
-      dx run --spec-url "$spec_url" --run-token "$run_token" --dry-run
+      export DEX_RUN_TOKEN="$run_token"
+      dx run --spec-url "$spec_url" --dry-run
     ) &
   else
     (
       cd "$work_dir" 2>/dev/null || exit 1
-      dx run --spec-url "$spec_url" --run-token "$run_token"
+      export DEX_RUN_TOKEN="$run_token"
+      dx run --spec-url "$spec_url"
     ) &
   fi
   child_pid=$!
