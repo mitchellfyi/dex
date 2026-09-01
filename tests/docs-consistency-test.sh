@@ -96,10 +96,25 @@ if wired != documented:
     )
 
 # Counts and sizes quoted in prose.
-skills = len(tracked("skills/*/SKILL.md"))
+skill_paths = sorted((root / "skills").glob("*/SKILL.md"))
+skills = len(skill_paths)
 claimed_skills = re.search(r"Lifecycle skills \((\d+) total", dex_md)
 if claimed_skills and int(claimed_skills.group(1)) != skills:
     problems.append(f".dex/dex.md says {claimed_skills.group(1)} skills; there are {skills}")
+
+for skill_path in skill_paths:
+    frontmatter_name = re.search(
+        r'^name:\s*["\']?([a-z0-9-]+)["\']?\s*$',
+        skill_path.read_text(encoding="utf-8"),
+        re.M,
+    )
+    expected_name = skill_path.parent.name
+    if not frontmatter_name or frontmatter_name.group(1) != expected_name:
+        actual_name = frontmatter_name.group(1) if frontmatter_name else "missing"
+        problems.append(
+            f"{skill_path.relative_to(root)} has skill name {actual_name!r}; "
+            f"expected {expected_name!r}"
+        )
 
 dx_lines = len((root / "dx.sh").read_text(encoding="utf-8").splitlines())
 for match in re.finditer(r"~(\d{3,5}) lines", agents + dex_md):

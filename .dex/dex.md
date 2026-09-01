@@ -37,7 +37,7 @@ prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (0-6, two Phase 3 variants,
                      plus prompt-loop)
 research/            DX research and the isolated review-loop evaluation harness
-skills/              Lifecycle skills (18 total, linked into ~/.claude/skills/)
+skills/              Lifecycle skills (20 total, linked into ~/.claude/skills/)
 .dex/                Per-project config (this directory)
   providers.json     Repo-local default agent/provider profile
 ```

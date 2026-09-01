@@ -43,8 +43,8 @@ repo memory.
   the agent-selected risk tier's clean-pass gate succeeds.
 - **Real verification:** Dex discovers and runs the repo's format, lint,
   typecheck, generation, and test commands instead of assuming one toolchain.
-- **UI proof:** Agents decide whether a visual artifact would help, then record
-  a reason or produce a short, editable, PR-ready walkthrough.
+- **UI proof:** `/dxproof` (also `/dxcapture`) reconstructs the branch baseline
+  and records a captioned before/after walkthrough for the current UI diff.
 - **Local run data:** Each provider-backed run gets a stable run ID,
   append-only JSONL events, redacted logs, summaries, and artifact metadata
   under `~/.dex/runs/`.
@@ -146,6 +146,9 @@ dx test                    # Test Dex here, or verify another initialized projec
 dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
 ```
+
+Inside Claude Code, run `/dxproof` to capture the current UI diff as a captioned
+before/after walkthrough. `/dxcapture` is the same command under an alias.
 
 Inside a lifecycle, the compact controls are `/dxpause`, `/dxskip`,
 `/dxjump verify`, `/dxresume`, and `/dxrecover`. Skip advances from whichever
@@ -273,8 +276,9 @@ reviews pass.
 - [Factory security](docs/factory-security.md) documents the v1 remote worker,
   token, event-ingestion, and credential boundary.
 - [Guards](docs/guards.md) covers hook-based safety rules.
-- [UI proof](docs/ui-capture.md) covers agent capture decisions, short editable
-  walkthroughs, narration, temporary artifacts, and PR handoff.
+- [UI proof](docs/ui-capture.md) covers manual `/dxproof` captures, lifecycle
+  decisions, captioned before/after walkthroughs, temporary artifacts, and PR
+  handoff.
 - [Events](docs/events.md) documents run IDs, local run directories, event
   journals, and the optional DexCode sync.
 - [RTK token reduction](docs/rtk-token-reduction.md) covers the optional

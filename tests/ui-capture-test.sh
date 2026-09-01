@@ -6,6 +6,29 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
 source "$ROOT/tests/helpers.sh"
 
+python3 - "$ROOT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+prompt = root / "prompts" / "ui-proof.md"
+assert prompt.is_file(), prompt
+
+for name, mode in {
+    "dxproof": "manual proof mode",
+    "dxcapture": "manual proof mode",
+    "dxuicapture": "lifecycle decision mode",
+}.items():
+    skill = root / "skills" / name / "SKILL.md"
+    text = skill.read_text(encoding="utf-8")
+    match = re.search(r'^name:\s*["\']?([a-z0-9-]+)["\']?\s*$', text, re.M)
+    assert match and match.group(1) == name, (name, match.group(1) if match else None)
+    assert "prompts/ui-proof.md" in text, name
+    assert mode in text.lower(), (name, mode)
+    assert len(text.splitlines()) < 30, f"{name} duplicated the shared proof prompt"
+PY
+
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-ui-capture-test.XXXXXX")"
 export HOME="$TMP_DIR/home"
 export DX_STATE_DIR="$TMP_DIR/state"

@@ -2,6 +2,10 @@
 
 Dex can turn a browser-facing change into a short, editable PR walkthrough. It also lets the implementation agent decide that a recording would not help. The important contract is an explicit, visible decision—not a video made for its own sake.
 
+Run `/dxproof` whenever you want the full visual artifact on demand. `/dxcapture` is an alias. Both commands inspect committed and working-tree changes against the branch's comparison base, reconstruct the old revision in a temporary Git worktree, and capture matched before and after flows. The final bundle includes the combined MP4, captions, poster, editable storyboard, screenshots, traces, and browser logs. The older `/dxuicapture` entrypoint remains available for lifecycle capture decisions and uses the same shared workflow.
+
+Manual proof is different from the lifecycle decision below: an explicit `/dxproof` or `/dxcapture` request captures the artifact unless the diff has no browser-visible effect or the flow cannot be reproduced safely. A blocked manual capture stays `NEEDS_REVIEW` with the reason; it is not converted into a discretionary skip.
+
 ## Decision states
 
 Every lifecycle can carry one UI proof state:
