@@ -1,9 +1,14 @@
 > **Note:** Phase 0 (Setup) runs in NORMAL mode (not plan mode). Its job is to
-> bootstrap ticket state — tracker assignment, local branch rename, and
+> bootstrap ticket state — tracker assignment, local branch resolution, and
 > ticket status → In Progress — before Phase 1 (Plan) begins. This audit only
 > runs after the Phase 0 ready marker has been written.
 
 Before stopping, audit your ticket bootstrap. Each item below must be verifiable. If any item is unmet, finish it now instead of stopping.
+
+Read and apply `prompts/issue-hygiene.md`. Phase 0 owns the full duplicate and
+relationship search, reconciliation of accepted decisions into the working
+issue, and reconciliation of any existing open PR. End the phase summary with
+the exact `Issue/PR work:` line required by that contract.
 
 ## 1. Ticket Read
 
@@ -21,16 +26,31 @@ Evidence: tracker tool invocation succeeded, or N/A.
 
 Evidence: tracker output shows the assignee, or N/A.
 
-## 3. Local Branch Rename
+## 3. Local Branch Resolution
 
-- The lifecycle branch was renamed to the tracker's git branch name (e.g. `feat/ENG-999-fix-login`). If no tracker, the lifecycle branch name was kept as-is.
+- The lifecycle branch was prepared with `dx_ticket_branch_prepare` using the
+  tracker's git branch name (for example, `feat/ENG-999-fix-login`). If no
+  tracker was configured, the lifecycle branch name was kept as-is.
+- When the tracker supplied a branch name, session metadata records
+  `ticket_branch_source` as `remote`, `local`, or `new`. A `remote` result also
+  records `ticket_branch_pr_kind` as `OPEN` or `NONE`, plus the fetched commit
+  as `ticket_branch_remote_oid`. If no tracker was configured, these fields are
+  N/A.
+- For a remote result, the current branch tracks
+  `origin/<tracker-branch>`, the recorded remote commit is reachable from local
+  `HEAD`, and the work started from the fetched branch rather than the default
+  branch. A network or GitHub lookup failure was not treated as a missing
+  branch.
+- A remote branch with only closed or merged PRs was not adopted. Setup paused
+  for explicit direction instead of silently reviving completed or abandoned
+  work.
 - A newly created branch with no branch-specific commits was not pushed merely
   to establish upstream tracking. No empty bootstrap commit was created. Phase
   2 will push the branch immediately after its first implementation commit.
 - Draft PR creation was left for Phase 5 by default. If the user requested a PR
   during setup but the branch had no branch-specific commits, the setup summary
   records that publication is deferred until the first implementation commit.
-- The Dex meta sidecar reflects the rename: run
+- The Dex meta sidecar reflects the resolved branch: run
 
   ```bash
   source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
@@ -40,10 +60,12 @@ Evidence: tracker output shows the assignee, or N/A.
 
   using the tracker's key (e.g. `ENG-999`). This lets future `dx <N>` invocations resume the right worktree even after a rename.
 
-Evidence: `git rev-parse --abbrev-ref HEAD` shows the new name; the setup command
-history contains no empty commit or first push for a branch with no
-branch-specific commits; `dx_meta_read` shows `tracker_key` and
-`current_branch`.
+Evidence: `git rev-parse --abbrev-ref HEAD` shows the resolved name;
+`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'` and
+`git merge-base --is-ancestor '@{u}' HEAD` pass for a remote result; the setup
+command history contains no empty commit or first push for a new branch; and
+`dx_meta_read` shows `tracker_key`, `current_branch`, `ticket_branch_source`,
+and the applicable remote metadata.
 
 ## 4. Ticket Status → In Progress
 
@@ -77,6 +99,7 @@ Evidence: tracker comment or update record, or N/A.
 
 ALL of these must be true before you stop:
 - Every applicable item in §§1–6 is done or explicitly N/A.
+- Issue and PR hygiene is complete, and the summary contains `Issue/PR work:`.
 - The ready marker (§7) is written.
 - No Phase 0 background process is still running.
 

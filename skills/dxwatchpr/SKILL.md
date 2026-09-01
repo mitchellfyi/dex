@@ -18,6 +18,12 @@ Each invocation is a **single check cycle**. `/loop` handles scheduling. The ses
 
 Each cycle reads its soft runtime budget from `dx_watch_cycle_timeout_seconds` (default `2m 0s`). A session override may change it before the next lease check. Do not overlap a later `/loop` tick while the current lease is valid.
 
+Read `prompts/issue-hygiene.md`. A scheduled watcher gathers evidence and may
+delegate accepted feedback to `/dxprreview`, but the lifecycle owner performs
+tracker writes once after checking existing relations and prior cycle work.
+End every watcher report with the contract's exact `Issue/PR work:` line, using
+unchanged when the cycle produced no material tracker context.
+
 ## Arguments
 
 Optional: a PR number (e.g., `/dxwatchpr 456`). If omitted, operates on the current branch's open PR.

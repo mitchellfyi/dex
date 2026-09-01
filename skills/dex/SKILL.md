@@ -21,17 +21,28 @@ fixes without committing, pushing, or creating a PR. Phase 4 commits and pushes
 review or verification repairs, Phase 5 owns PR setup, and Phase 6 owns external
 review follow-through. Phase 3 must be quiescent before any later publication.
 
+Read `prompts/issue-hygiene.md` for the lifecycle-wide issue and PR contract.
+Phase 0 performs the full duplicate, relationship, and existing-PR search.
+Later phases apply the contract when material new context appears. Every phase
+handoff and completed-phase summary must include its exact `Issue/PR work:`
+line, including when all fields are unchanged or N/A.
+
 ### Phase 0: Setup
 
 1. Runs in NORMAL mode (no plan mode) so the agent can write to git and the tracker before any planning starts.
 2. Follow `prompts/ticket-instructions.md` end to end:
    - Read the ticket from the configured tracker (including all comments).
    - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, pause and ask by default. A justified `setup.ticket-ownership` waiver may continue without claiming ownership changed.
-   - Rename the lifecycle branch locally to the tracker's git branch name. Do
-     not push a newly created branch with no branch-specific commits and do not
-     create an empty bootstrap commit. Phase 2 publishes it after the first
-     implementation commit. Draft PR creation normally stays with Phase 5.
+   - Run `dx_ticket_branch_prepare` with the tracker's git branch name. It
+     adopts an existing origin branch only when its PR is open or it has no PR,
+     and otherwise prepares a new local branch. Do not push a new branch with
+     no branch-specific commits or create an empty bootstrap commit. Phase 2
+     publishes it after the first implementation commit. Draft PR creation
+     normally stays with Phase 5.
    - Set ticket status to **In Progress**.
+   - Apply `prompts/issue-hygiene.md`: search for duplicates and related work,
+     reconcile accepted comment decisions into the issue, and read and update
+     the existing open PR when its title or body is stale.
    - If the description is empty or unclear, draft 2-3 sentences plus an acceptance-criteria checklist, present to the user, and update the ticket once confirmed.
    - Update the per-session meta sidecar with `tracker_key` and `current_branch` so future `dx <N>` invocations can find the worktree even after the branch rename.
 3. **SCOPE**: keep the phase focused on ticket bootstrap. Planning and source
@@ -41,7 +52,7 @@ review follow-through. Phase 3 must be quiescent before any later publication.
 
 ### Phase 1: Plan
 
-1. Phase 0 already handled ticket setup; do not redo it unless something is clearly missing (status still Backlog/Todo, no assignee, or branch not renamed). For a newly created local branch, the absence of a remote branch before the first implementation commit is expected.
+1. Phase 0 already handled ticket setup; do not redo it unless something is clearly missing (status still Backlog/Todo, no assignee, or branch unresolved). An adopted remote branch already tracks origin. For a genuinely new local branch, the absence of a remote before the first implementation commit is expected.
 2. Run `/dxplan` — gather any remaining context, draft the implementation plan, create tasks.
 3. Present the plan and wait for approval by default. If an outlier justifies proceeding in the current session, record a named `plan.approval` waiver; do not represent it as human approval.
 4. If the user requests changes, revise and re-present.
@@ -76,6 +87,8 @@ review follow-through. Phase 3 must be quiescent before any later publication.
    created local branch, keep it unpushed and pause for user direction instead
    of advancing toward Phase 5. The user may stop the lifecycle as no-change or
    choose an explicit lifecycle control action.
+10. Reconcile material implementation discoveries under
+    `prompts/issue-hygiene.md` before the phase handoff.
 
 ### Phase 3: Review
 
@@ -118,6 +131,9 @@ review follow-through. Phase 3 must be quiescent before any later publication.
    receipt binding the approved criteria, trusted policy, attested clean
    ledger, and any lower-target override. Report whether the trusted target
    passed or the attributed lower target was waived.
+10. Review children report tracker candidates only. The lifecycle owner applies
+    `prompts/issue-hygiene.md` once for accepted findings so waves cannot create
+    duplicate follow-up issues.
 
 ### Phase 4: Verify & Commit
 
@@ -131,12 +147,16 @@ review follow-through. Phase 3 must be quiescent before any later publication.
    commit is pushed. A newly created local branch with no branch-specific
    commits cannot use the ordinary Phase 4 completion path; return to Phase 2's
    user-direction path instead of publishing it.
+5. Apply `prompts/issue-hygiene.md` to material verification discoveries before
+   the phase handoff.
 
 ### Phase 5: PR
 
 1. Run `/dxpr` — generate the PR description, refresh any UI after-capture handoff, create or update the PR, attach `request`-type reviewers from `dex.md § Reviewers`, and update the tracker if available. New PRs default to draft.
-2. Phase 6 normally owns marking the PR ready and posting `@mention` comments so reviewer notifications happen together. If the user directs either action in Phase 5, carry it out and record the updated PR state for Phase 6.
-3. Output `PHASE_5_COMPLETE` when the PR is current, its actual draft or ready state is recorded, and reviewers are attached.
+2. Reconcile the working issue, related issues, and PR under
+   `prompts/issue-hygiene.md` before finalizing its copy.
+3. Phase 6 normally owns marking the PR ready and posting `@mention` comments so reviewer notifications happen together. If the user directs either action in Phase 5, carry it out and record the updated PR state for Phase 6.
+4. Output `PHASE_5_COMPLETE` when the PR is current, its actual draft or ready state is recorded, and reviewers are attached.
 
 ### Phase 6: Complete (autonomous)
 
@@ -147,7 +167,9 @@ review follow-through. Phase 3 must be quiescent before any later publication.
 5. After each push: re-request `request` reviewers and post a fresh mention comment so reviewers know there's something new.
 6. After the current `dx_complete_max_cycles` value (default 3) is reached with no progress, escalate to the user.
 7. When CI green AND all successfully requested `request` reviewers have approved, run `/dxcomplete`'s final verification — update tracker to Done, print summary.
-8. Output `DEX_TICKET_COMPLETE` once verification passes.
+8. Apply `prompts/issue-hygiene.md` once to accepted CI or review discoveries;
+   scheduled watcher cycles must not create duplicate follow-ups.
+9. Output `DEX_TICKET_COMPLETE` once verification passes.
 
 ## Resuming
 

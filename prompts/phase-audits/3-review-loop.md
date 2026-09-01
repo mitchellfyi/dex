@@ -7,6 +7,11 @@ review-wave sessions. Review runs in the current checkout. It must not run Phase
 0 setup, create or switch worktrees, create or rename branches, or call
 `dx <ticket-or-task>`.
 
+Apply `prompts/issue-hygiene.md` after the lifecycle owner accepts review
+findings. Fresh review children report out-of-scope issue candidates but never
+write to the tracker; the owner performs one duplicate search and one external
+write. End the phase summary with the contract's exact `Issue/PR work:` line.
+
 ## Completion Criteria
 
 All of these must be true:
@@ -64,6 +69,8 @@ All of these must be true:
 - Phase 3 stays focused on review and fixes. Do not commit, push, or create a PR
   during this phase. Phase 4 commits and publishes accepted review fixes after
   final verification. Re-run `/dxreviewloop` after any code change.
+- Accepted review findings were reconciled under
+  `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`.
 
 The outer review loop has no iteration maximum. It continues until the clean
 gate succeeds or a deterministic pause condition occurs.

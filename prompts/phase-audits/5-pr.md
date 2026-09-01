@@ -5,6 +5,12 @@ Phase 5 focuses on PR creation, description, ticket links, and attaching
 readiness, `@mention` comments, monitoring, feedback, and ticket closure. These
 are workflow defaults, not publishing restrictions.
 
+Apply `prompts/issue-hygiene.md` before finalizing PR copy. Reconcile the
+working issue, related issues, and any existing open PR so the title, body,
+links, scope, risks, and verification reflect accepted current context without
+discarding useful history. End the phase summary with the contract's exact
+`Issue/PR work:` line.
+
 ## Step 1: PR description
 
 Read the PR description you generated and check:
@@ -85,5 +91,7 @@ All of these must be true before you stop:
 - The PR state is recorded and matches the latest human instruction or workflow action
 - UI proof is handed off as READY with local links, SKIPPED with a reason, or N/A with a reason
 - All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR (or the section is empty/`_none_`)
+- Issue and PR reconciliation followed `prompts/issue-hygiene.md`, and the
+  summary contains `Issue/PR work:`
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

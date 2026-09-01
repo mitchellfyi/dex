@@ -9,6 +9,12 @@ Run `/dxreview --single-pass` in fresh review-wave sessions until the selected
 risk tier reaches its consecutive `CLEAN` gate. This is the default Review
 phase used by `dx`.
 
+Read `prompts/issue-hygiene.md` for tracker ownership. Fresh review-wave
+children never create or update external issues. They return concrete
+out-of-scope candidates with evidence; after accepting a finding, the lifecycle
+owner performs the duplicate search and external write once. The Phase 3
+handoff ends with the contract's exact `Issue/PR work:` line.
+
 ## Workspace Boundary
 
 `/dxreviewloop` is a one-off review command unless it is invoked from an active

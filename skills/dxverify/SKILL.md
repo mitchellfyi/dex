@@ -7,6 +7,11 @@ description: "Run and repair the full quality pipeline for a project. Use before
 
 Verify the current project against its declared quality contract.
 
+Read `prompts/issue-hygiene.md`. Apply it only when verification reveals
+material new context, not for transient failures repaired within accepted
+scope. Reconcile concrete findings before handoff and end the Phase 4 summary
+with the contract's exact `Issue/PR work:` line.
+
 ## 1. Read the project contract first
 
 Find the Git repository root, then inspect the current change:

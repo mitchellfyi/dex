@@ -4,24 +4,42 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
 
    - Read ticket {{TICKET_NUM}} — title, description, acceptance criteria, and relations.
    - Read all comments on the ticket (for Linear: use `list_comments` with the issue ID). Comments often contain clarifications, decisions, and context not captured in the description.
+   - Read and apply `prompts/issue-hygiene.md`: search open and closed tracker
+     items with several semantic queries, read strong duplicate and related
+     candidates, and inspect the current branch's existing open PR when one
+     exists. Reconcile accepted comment decisions into the issue and stale PR
+     body. Do not create a new PR, mark one ready, request reviewers, or post
+     review notifications during this setup step.
    - If the tracker supports assignees: check the assignee. If assigned to someone else, pause and warn by default; do not silently reassign. A reasoned `setup.ticket-ownership` waiver may continue without claiming ownership changed. If unassigned, assign to the current user (for Linear: use `save_issue` with `assignee: "me"`).
    - If no tracker is configured: use the branch name `{{BRANCH}}` and the local filesystem for context. Ask the user what they want to work on.
 
-2. Rename the branch locally, but do not push it during setup. A newly created
-   lifecycle branch should stay local until it contains its first real
-   implementation commit. Do not create an empty bootstrap commit just to make
-   the branch pushable. Phase 2 establishes upstream tracking immediately after
-   the first implementation commit, then pushes every later commit as it is
-   created. The default workflow leaves draft PR creation to `/dxpr` in Phase 5.
-   If the user asks for a PR during setup and the branch has no branch-specific
-   commits yet, report that it will be created after the first implementation
-   commit instead of publishing an empty branch.
+2. Prepare the tracker's branch locally, but do not publish a new branch during
+   setup. Use the shared helper so an existing remote branch is never mistaken
+   for a new one. The helper checks `origin` directly, fetches the exact branch,
+   verifies that it has an open PR or no PR, adopts its current tip, establishes
+   upstream tracking, and updates the saved lifecycle branch. It stops without
+   changing the local branch when the checkout is dirty, the remote is
+   unavailable, branch histories conflict, or the remote branch has only closed
+   or merged PRs.
+
+   A genuinely new lifecycle branch should stay local until it contains its
+   first real implementation commit. Do not create an empty bootstrap commit
+   just to make the branch pushable. Phase 2 establishes upstream tracking after
+   that first commit, then pushes every later commit as it is created. The
+   default workflow leaves draft PR creation to `/dxpr` in Phase 5. If the user
+   asks for a PR during setup and the new branch has no branch-specific commits,
+   report that it will be created after the first implementation commit.
 
    **If ticket context was found**:
-   - Rename to match the ticket's git branch name (returned by the tracker — e.g., Linear's `branchName` field from `get_issue`):
+   - Prepare the ticket's git branch name returned by the tracker (for example,
+     Linear's `branchName` field from `get_issue`):
      ```
-     git branch -m {{BRANCH}} <suggested-branch-name>
+     source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+     BRANCH_SOURCE=$(dx_ticket_branch_prepare "<suggested-branch-name>" "$(pwd)") || exit 1
      ```
+     `BRANCH_SOURCE` is `remote`, `local`, or `new`. Include it in the setup
+     summary. Do not reproduce the fetch, PR-state, reset, switch, or tracking
+     logic by hand.
 
    **If no ticket context**:
    - Keep the current branch name `{{BRANCH}}`.
@@ -56,4 +74,10 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
    touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 0)"
    ```
 
-   Then print a brief one-line summary of what was set up (branch, ticket status, assignee) and stop once. Do NOT call `EnterPlanMode`, do NOT invoke `/dxplan`, and do NOT wait for a "ready to start?" prompt — the Stop hook will inject Phase 1 instructions automatically. The user can interrupt at any time if they want to redirect.
+   Then print a brief setup summary covering the branch, ticket status,
+   assignee, duplicate and related searches, any issue or existing-PR updates,
+   and any linked issues created. End with the exact `Issue/PR work:` line from
+   `prompts/issue-hygiene.md`. Do NOT call `EnterPlanMode`, do NOT invoke
+   `/dxplan`, and do NOT wait for a "ready to start?" prompt — the Stop hook
+   will inject Phase 1 instructions automatically. The user can interrupt at
+   any time if they want to redirect.

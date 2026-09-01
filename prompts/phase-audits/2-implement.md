@@ -2,6 +2,12 @@ Before stopping, audit your implementation for completeness. Do NOT stop until e
 
 The dedicated Review phase (Phase 3) will handle adversarial code review. Your job here is to ensure the implementation is **functionally complete** — all tasks done, tests passing, no obvious gaps.
 
+Apply `prompts/issue-hygiene.md` to material implementation discoveries.
+Update the working issue and existing PR when their current descriptions are
+stale, keep accepted related work in the same PR, and create a linked follow-up
+for concrete distinct work after the duplicate search. End the phase summary
+with the contract's exact `Issue/PR work:` line.
+
 ## Step 1: Task Completion Check
 
 For each task in the approved plan:
@@ -169,6 +175,8 @@ ALL of these must be true before you stop:
 - Every acceptance criterion has status MET in the evidence table (Step 3)
 - All tests pass (run the test suite one final time to confirm)
 - No acceptance criterion or verification gate is deferred, skipped, blocked, or delegated to future CI
+- Material implementation discoveries were handled under
+  `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`
 - The change was exercised end-to-end locally and passed the manual smoke
   test, or manual verification is explicitly N/A with a reason
 - No TODO/FIXME/debugging artifacts remain

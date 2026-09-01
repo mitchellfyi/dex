@@ -8,6 +8,12 @@
 
 Before stopping, critically audit your plan:
 
+Apply `prompts/issue-hygiene.md` if planning uncovered material context that
+changes the working issue, relates this work to another issue, or warrants a
+distinct follow-up. Keep related, bounded work in this plan and the same PR;
+rotate the approved criteria when scope changes. End the phase summary with
+the contract's exact `Issue/PR work:` line.
+
 1. COMPLETENESS — Does the plan cover every acceptance criterion from the ticket?
    - Re-read the ticket requirements. For each one, confirm there is a task that addresses it.
    - If any criterion is missing or only partially covered, add a task now.
@@ -93,5 +99,7 @@ If you find gaps in any of the above, fix them and re-present the plan.
 - The approved objectives, acceptance criteria, and verification requirements
   are preserved in a valid `dx_review_criteria_file` artifact for Phase 3
 - Freeform tracker intake is complete, explicitly skipped, or not applicable
+- Any material planning discovery has been reconciled under
+  `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

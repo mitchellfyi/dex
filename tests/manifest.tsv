@@ -30,6 +30,7 @@ init-reliability-test.sh	fast	all	600	hermetic
 init-uninit-ownership-test.sh	slow	all	1200	hermetic
 install-health-test.sh	slow	all	1200	hermetic
 install-uninstall-test.sh	slow	all	1200	hermetic
+issue-hygiene-contract-test.sh	fast	all	600	hermetic
 legacy-resume-test.sh	fast	all	600	hermetic
 lifecycle-control-cli-test.sh	fast	all	600	hermetic
 lifecycle-control-hook-test.sh	fast	all	600	hermetic
@@ -87,6 +88,9 @@ test-command-dex-test.sh	fast	all	600	hermetic
 test-command-project-test.sh	fast	all	600	hermetic
 test-infrastructure-test.sh	fast	all	600	hermetic
 test-manifest-test.sh	fast	all	600	hermetic
+ticket-branch-adoption-errors-test.sh	fast	all	600	hermetic
+ticket-branch-adoption-test.sh	fast	all	600	hermetic
+ticket-branch-instructions-test.sh	fast	all	600	hermetic
 ui-capture-test.sh	fast	all	600	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic

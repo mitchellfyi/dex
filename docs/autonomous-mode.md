@@ -51,13 +51,34 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 
 | Phase | Audit File | What It Reviews |
 |-------|-----------|-----------------|
-| 0. Setup | `0-setup.md` | Ticket read + assigned, branch renamed locally, ticket status In Progress, meta sidecar updated |
+| 0. Setup | `0-setup.md` | Ticket read + assigned, duplicate/related search complete, existing PR reconciled, eligible remote branch adopted or new branch prepared, ticket status In Progress, meta sidecar updated |
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
 | 2. Implement | `2-implement.md` | Task completion, TDD verification, early commits pushed immediately, UI proof decision, evidence table, Phase 3 risk selection |
 | 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves reaching the selected tier's global clean gate |
 | 4. Verify & Commit | `4-verify.md` | All checks passing, review/verification repairs committed, branch current on origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
 | 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor CI/reviews through `/dxwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
+
+During Phase 0, `dx_ticket_branch_prepare` resolves the branch name supplied by
+the tracker. If that branch exists on `origin`, Dex fetches its current tip and
+adopts it when it has an open pull request or no pull request. The local branch
+then tracks `origin/<tracker-branch>`. A branch with only closed or merged pull
+requests requires explicit direction. Dirty worktrees, conflicting local
+history, remote failures, and unavailable PR state also stop setup without
+replacing the lifecycle branch. When the branch does not exist locally or on
+`origin`, Dex renames the untouched placeholder and leaves it unpushed until
+Phase 2 creates the first implementation commit.
+
+Issue and PR hygiene is shared across the lifecycle through
+`prompts/issue-hygiene.md`. Phase 0 performs the full duplicate and related-work
+search, reconciles accepted comment decisions into the working issue, and
+updates an existing open PR when its title or body is stale. Later phases repeat
+that work only when planning, implementation, review, verification, CI, or
+reviewer feedback adds material context. Related bounded work stays in the same
+PR; concrete distinct work becomes a linked follow-up after another duplicate
+search. Fresh review-wave children report candidates but never write to the
+tracker, leaving one lifecycle owner to perform each external write. Every
+phase reports issue and PR work explicitly, including unchanged and N/A cases.
 
 The review audit (Phase 3) is risk-selected. After the final Phase 2 in-scope
 change, the implementation agent applies the ordered rubric and records the

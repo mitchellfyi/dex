@@ -27,6 +27,12 @@ dx_review_approve_criteria "$SESSION_ID" reapproved "$PREVIOUS_CRITERIA_HASH" "$
 Rotation clears earlier risk selection, clean credit, and receipts. Re-run the
 Phase 3 risk selection against the final scope afterward.
 
+Read `prompts/issue-hygiene.md`. Apply it whenever implementation produces
+material evidence beyond the current issue or PR description. Keep accepted,
+bounded work for the same outcome in this PR; create a deduplicated linked
+follow-up for concrete distinct work. End the Phase 2 summary with the
+contract's exact `Issue/PR work:` line.
+
 ## When to Use
 
 - After the user has approved the plan from `/dxplan`
@@ -139,7 +145,9 @@ exact generation-bound escalation command supplied for the current launch or
 audit. It pauses the run without claiming completion. Once the user provides
 direction and resumes the phase, continue from the approved scope.
 
-Update the ticket via the configured tracker (see dex.md § Integrations) with the scope change details. If no tracker is configured, inform the user in conversation.
+Update the ticket and any existing PR through the configured integrations with
+accepted scope-change details, following `prompts/issue-hygiene.md`. If no
+tracker is configured, inform the user in conversation.
 
 ### 5. Implementation Inventory
 
@@ -324,4 +332,6 @@ You SHOULD:
 
 - Stay in scope. Only implement what's in the plan.
 - If you think of improvements outside the plan, note them but don't implement them.
+- Route concrete out-of-scope discoveries through `prompts/issue-hygiene.md`
+  instead of leaving them as untracked notes.
 - Keep the user informed at natural milestones (e.g., "3 of 5 tasks complete").

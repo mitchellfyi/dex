@@ -9,6 +9,10 @@ Run one full-scope review wave. Direct `/dxreview` invocations dispatch to
 `/dxreviewloop`; single-pass mode is for callers that pass `--single-pass`
 explicitly (`/dxreviewloop`, Phase 3, and the dxloop audit).
 
+Read `prompts/issue-hygiene.md`, but do not perform its external writes from an
+isolated review wave. Report concrete out-of-scope issue candidates and their
+evidence to the lifecycle owner so it can deduplicate and write once.
+
 ## Dispatch
 
 If invoked without `--single-pass` or `--no-loop`, invoke `dxreviewloop` and

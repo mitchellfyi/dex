@@ -33,6 +33,12 @@ intentionally stays unpushed until its first implementation commit; an existing
 published branch is left as-is. Do not redo those steps here; only flag missing
 setup back to the user if you notice it.
 
+Read `prompts/issue-hygiene.md`. Phase 0 normally completed the full search, so
+repeat it only when planning adds material context or freeform tracker intake
+would write a new issue. Reconcile accepted clarifications, related scope, and
+the existing open PR before approval. End the phase handoff with the exact
+`Issue/PR work:` line from the contract.
+
 ### 1. Gather Context
 
 Use the integrations configured in dex.md § Integrations. Skip any that are "not configured".
@@ -264,6 +270,9 @@ Ask the user which path they want:
 
 When creating tracker items:
 - Use the tracker configured in `.dex/dex.md § Integrations`.
+- Run the duplicate search in `prompts/issue-hygiene.md` with the final proposed
+  title and outcome before every write; update a matching issue instead of
+  creating another one.
 - Apply the `humanizer` skill to every ticket title/body before creating it.
   Preserve file paths, commands, acceptance criteria, task numbering, risk
   labels, and verification commands exactly.
@@ -286,12 +295,13 @@ After write-back:
   SID="${DEX_SESSION_ID:-$(dx_session_id)}"
   dx_meta_write "$SID" "tracker_key=<KEY-OR-URL>" "ticket_number=<NUMBER-IF-GITHUB>"
   ```
-- If the tracker provides a branch name for the chosen ticket, rename the
-  current lifecycle branch locally and record it. Leave it unpushed until
-  Phase 2 creates the first implementation commit:
+- If the tracker provides a branch name for the chosen ticket, prepare it with
+  the shared branch helper. This resumes an eligible branch already on origin
+  and otherwise keeps a new branch local until Phase 2 creates its first
+  implementation commit:
   ```bash
-  git branch -m "$(git rev-parse --abbrev-ref HEAD)" "<tracker-branch-name>"
-  dx_meta_write "$SID" "current_branch=<tracker-branch-name>"
+  BRANCH_SOURCE=$(dx_ticket_branch_prepare "<tracker-branch-name>" "$(pwd)") || exit 1
+  dx_meta_write "$SID" "current_branch=$(git branch --show-current)"
   ```
 - Move only the chosen implementation ticket to In Progress. Leave backlog
   sub-issues untouched unless the user explicitly says otherwise.
@@ -304,6 +314,9 @@ skipped by the user.
 Before writing the plan summary, invoke the `humanizer` skill on the draft copy. Preserve task numbering, file paths, commands, ticket IDs, and acceptance criteria exactly.
 
 Add the plan summary to the existing or newly selected ticket via the configured tracker. If no tracker is configured, skip — the plan exists in the conversation and task list.
+
+Report the resulting issue and PR changes with the exact `Issue/PR work:` line
+from `prompts/issue-hygiene.md`.
 
 ### 9. Mark Phase 1 Ready
 

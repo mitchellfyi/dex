@@ -26,6 +26,11 @@ Before posting PR comments, ticket updates, or final prose summaries, invoke the
 `humanizer` skill. Preserve reviewer handles, PR numbers, ticket IDs, commands,
 tables, counts, and status labels exactly.
 
+Read `prompts/issue-hygiene.md`. Apply it once to material CI or review
+discoveries, using the lifecycle owner for tracker writes so scheduled cycles
+cannot file duplicates. Every cycle and terminal summary ends with its exact
+`Issue/PR work:` line.
+
 ## Steps
 
 ### 0. Resume Phase 6 Watcher
@@ -150,9 +155,14 @@ Once Case A in Step 5 is met:
 
 If any condition is not met, return to Step 5 (do not advance to closure).
 
-### 7. Update Ticket
+### 7. Reconcile and Update Ticket
 
-Mark the ticket as Done via the configured tracker (see `dex.md § Integrations`). Add a final summary — what was implemented, key decisions, follow-up work. Skip if no tracker configured — the PR is the record.
+Before closure, apply `prompts/issue-hygiene.md` to accepted CI and review
+findings. Update the working issue and PR when their descriptions are stale;
+create deduplicated linked follow-up issues for concrete distinct work. Then
+mark the ticket as Done via the configured tracker (see `dex.md §
+Integrations`) and add a final summary covering implementation, decisions, and
+follow-up identifiers. Skip tracker writes if no tracker is configured.
 
 Invoke the `humanizer` skill on the final ticket summary before posting it. Keep commit SHAs, PR links, ticket IDs, reviewer handles, and verification details exact.
 
@@ -207,6 +217,9 @@ Do not emit `DEX_TICKET_COMPLETE` on this timeout path.
 ## Notes
 
 - Do not merge the PR — that's the user's decision (autonomous merging is intentionally out of scope).
-- If follow-up work was identified during implementation, mention it in the summary but do not create new tickets unless asked.
+- Handle follow-up work under `prompts/issue-hygiene.md`: update an existing
+  issue when it matches, automatically create a linked issue for concrete
+  distinct work, and ask only when the classification or product choice is
+  genuinely ambiguous.
 - The ticket should be marked "Done" (if a tracker is available) once CI and reviews are green; the actual merge happens only when a maintainer accepts the PR.
 - Hard escalations (secrets, scope conflict, architectural disagreement, 3+ CI failures on the same check) stop the loop and surface a structured escalation to the user — never auto-resolve these.

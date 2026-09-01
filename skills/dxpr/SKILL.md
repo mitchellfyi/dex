@@ -9,6 +9,11 @@ Generate or update a PR description and attach `request`-type reviewers. New
 pull requests default to draft; Phase 6 (`dxcomplete`) normally marks them ready
 and posts `@mention` comments.
 
+Read and apply `prompts/issue-hygiene.md` before generating PR copy. Reconcile
+accepted scope and comment decisions into the working issue, related issues,
+and any existing open PR while preserving its state and discussion. End the
+Phase 5 summary with the contract's exact `Issue/PR work:` line.
+
 ## When to Use
 
 - After `/dxcommit` has pushed all changes

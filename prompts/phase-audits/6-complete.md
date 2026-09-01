@@ -6,6 +6,12 @@ Before posting PR comments, ticket updates, or free-form status summaries, invok
 the `humanizer` skill. Preserve reviewer handles, PR numbers, ticket IDs,
 commands, counts, status labels, and required audit wording exactly.
 
+Apply `prompts/issue-hygiene.md` whenever CI, review comments, or completion
+work reveals material new context. Reconcile accepted findings once through
+the lifecycle owner; do not let scheduled watcher cycles create duplicate
+issues. Every cycle summary, including idle and terminal cycles, ends with the
+contract's exact `Issue/PR work:` line.
+
 ---
 
 ## Setup (only on the very first invocation)
@@ -207,5 +213,7 @@ or `/dxcomplete` to resume completion.
 - All `request` reviewers have been requested at least once
 - One mention comment has been posted for `mention` reviewers (if any)
 - All CI checks green AND all successfully requested `request`-type reviewers approved AND ticket marked Done (if tracker configured). `mention`-type reviewers and non-requestable reviewers do NOT gate completion.
+- Material CI and review findings were handled under
+  `prompts/issue-hygiene.md`, and the terminal summary contains `Issue/PR work:`.
 
 Do NOT emit `DEX_TICKET_COMPLETE` until the Stop hook authorizes completion via the audit-iteration threshold. Follow the standard pattern.

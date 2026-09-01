@@ -7,6 +7,11 @@ description: "Critically evaluate PR review comments, fix valid issues, push bac
 
 Critically evaluate PR review comments — fix what should be fixed, push back on what should not, and escalate what needs human judgement. Normal PR review runs reply inline on GitHub without asking, then resolve each review thread when the reply clearly closes the comment.
 
+Read `prompts/issue-hygiene.md`. After accepting a review comment that changes
+scope, clarifies the working issue or PR, or reveals concrete distinct work,
+reconcile it through that contract. Search before any tracker write and leave
+the resulting identifiers for the Phase 6 `Issue/PR work:` summary.
+
 ## When to Use
 
 - Invoked by `/dxwatchpr` when new review comments are detected

@@ -335,6 +335,8 @@ __dx_phase_message() {
   else
     printf '%s\n' "${DX_PHASE_MESSAGES[$step]}"
   fi
+  printf '%s\n' ""
+  printf '%s\n' "Read prompts/issue-hygiene.md. Apply it to material issue or PR context in this phase, and end every phase handoff or completed-phase summary with its exact Issue/PR work: line."
   __dx_provider_prompt
   if [[ -n "$raw_input" ]] || [[ "$workspace_mode" == "in-place" ]]; then
     printf '%s\n' ""
@@ -343,7 +345,7 @@ __dx_phase_message() {
     if [[ "$workspace_mode" == "in-place" ]]; then
       printf '%s\n' "Workspace mode: in-place. No Dex worktree was created."
       [[ -n "$wt_dir" ]] && printf 'Current checkout: %s\n' "$wt_dir"
-      printf '%s\n' "Use the current checkout and Dex-managed branch; do not create or switch branches unless ticket setup instructions explicitly require a branch rename."
+      printf '%s\n' "Use the current checkout and Dex-managed branch; change branches only through the ticket setup helper when the tracker supplies a branch name."
     fi
   fi
 }
@@ -356,7 +358,7 @@ __dx_phase_message() {
 # completion promises, audit basenames, and min-audit counts come from the
 # shared tables in lib/lifecycle-control.sh via the __dx_phase_* helpers below.
 DX_PHASE_MESSAGES=(\
-  "Phase 0 setup (local branch rename, ticket status → In Progress, assignment) is already complete. A newly created local branch should remain unpushed until its first implementation commit; leave any existing published branch as-is. Do NOT redo setup unless you find it missing.
+  "Phase 0 setup (ticket branch resolution, ticket status → In Progress, assignment) is already complete. An adopted remote branch already tracks origin. A genuinely new local branch should remain unpushed until its first implementation commit. Do NOT redo setup unless you find it missing.
 
 Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill tool with skill: \"dxplan\" (or /dxplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dxplan skill unless the skill explicitly instructs you to.
 
@@ -371,7 +373,7 @@ For headless dx run sessions with workflow.requires_plan_approval=false, the run
 )
 
 DX_PHASE_0_TIMEOUT="0"
-DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (c) rename the lifecycle branch locally to the tracker's git branch name, but do not push it until Phase 2 creates the first real implementation commit and do not create an empty bootstrap commit; PR creation is normally deferred until Phase 5; (d) set ticket status to In Progress; (e) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, keep the current lifecycle branch local until its first implementation commit. Phase focus: ticket setup. Planning, implementation commits, and pushes begin in later phases. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
+DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) apply prompts/issue-hygiene.md to search for duplicates and related work, reconcile accepted decisions into the ticket, and reconcile any existing open PR; (c) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (d) run dx_ticket_branch_prepare with the tracker's git branch name so an eligible branch already on origin is fetched and tracked while a genuinely new branch remains local until Phase 2's first real implementation commit; never create an empty bootstrap commit; new PR creation is normally deferred until Phase 5; (e) set ticket status to In Progress; (f) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, keep the current lifecycle branch local until its first implementation commit. Phase focus: ticket setup. Planning, implementation commits, and pushes begin in later phases. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
 
 # Thin wrappers over the shared phase tables in lib/lifecycle-control.sh; the
 # __dx_ names stay because dx.sh uses them throughout.
@@ -868,7 +870,9 @@ __dx_setup_worktree_claimed() {
   # Share .claude/ config and MCP auth with main repo
   dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
   __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
-  dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}" "original_branch=worktree-${_dx_wt_name}"
+  local _dx_original_head
+  _dx_original_head=$(git -C "$_dx_wt_dir" rev-parse --verify 'HEAD^{commit}') || return 1
+  dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}" "original_branch=worktree-${_dx_wt_name}" "original_head=${_dx_original_head}"
   [[ $_dx_is_task -eq 0 ]] && dx_meta_write "$_dx_session_id" "ticket_number=${_dx_wt_name#ticket-}"
 
   return 0
@@ -951,6 +955,7 @@ unalias __dx_setup_in_place_claimed 2>/dev/null; unfunction __dx_setup_in_place_
 __dx_setup_in_place_claimed() {
   local raw_input="$1"
   local branch_name="worktree-${_dx_wt_name}"
+  local _dx_original_head=""
 
   dx_info "Running lifecycle in current checkout (no worktree): ${_dx_wt_dir}"
 
@@ -1030,6 +1035,7 @@ __dx_setup_in_place_claimed() {
       dx_error "Failed to create branch ${branch_name}."
       return 1
     fi
+    _dx_original_head=$(git -C "$_dx_wt_dir" rev-parse --verify 'HEAD^{commit}') || return 1
   fi
 
   if [[ $has_changes -eq 1 ]]; then
@@ -1044,7 +1050,11 @@ __dx_setup_in_place_claimed() {
   fi
 
   __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
-  dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=in-place" "raw_input=${raw_input}" "original_branch=${branch_name}"
+  if [[ -n "$_dx_original_head" ]]; then
+    dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=in-place" "raw_input=${raw_input}" "original_branch=${branch_name}" "original_head=${_dx_original_head}"
+  else
+    dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=in-place" "raw_input=${raw_input}" "original_branch=${branch_name}"
+  fi
   [[ $_dx_is_task -eq 0 ]] && dx_meta_write "$_dx_session_id" "ticket_number=${_dx_wt_name#ticket-}"
   return 0
 }
@@ -1066,13 +1076,14 @@ __dx_build_system_context() {
   # Build phase-specific scope boundaries
   local scope_lines=""
   case $step in
-    0) scope_lines="- DO read the ticket, assign it to the authenticated user (if unassigned), rename the lifecycle branch locally to the tracker's git branch name, and set ticket status to In Progress
+    0) scope_lines="- DO read the ticket, assign it to the authenticated user (if unassigned), resolve the tracker's branch with dx_ticket_branch_prepare, and set ticket status to In Progress
+- An eligible branch already on origin must be fetched and tracked; do not rebuild it from the default branch
 - Do NOT push a newly created branch before its first real implementation commit, and do not create an empty bootstrap commit
 - DO operate in NORMAL mode — do NOT call EnterPlanMode in this phase
 - Keep the phase focused on ticket bootstrap. Planning, implementation commits, pushes, and PR work follow in later phases
 - DO write the Phase 0 ready marker (dx_phase_ready_file step 0) when setup is complete, then stop" ;;
     1) scope_lines="- DO invoke the dxplan skill immediately after entering Plan Mode
-- Phase 0 already handled the local branch rename and ticket setup; for a newly created local branch, the missing remote branch is expected until the first implementation commit
+- Phase 0 already resolved the ticket branch and ticket setup; an adopted branch tracks origin, while a genuinely new branch remains local until the first implementation commit
 - Do NOT explore code or draft a plan by hand outside dxplan unless the skill explicitly instructs you to
 - DO wait for explicit user approval via ExitPlanMode before marking Phase 1 ready" ;;
     2) scope_lines="- DO implement, test, and verify completeness via the Skill tool
@@ -1117,7 +1128,7 @@ This lifecycle is running in-place in the current checkout. No Dex worktree
 was created. Dex still prepared the normal lifecycle branch in this checkout
 before launching Claude. Treat existing files, staged changes, unstaged changes,
 and the current branch as user-owned context. Do not switch branches or create a
-new branch unless ticket setup instructions explicitly require a branch rename.
+new branch unless the ticket setup helper is resolving a tracker-provided branch.
 EOF
   fi
 

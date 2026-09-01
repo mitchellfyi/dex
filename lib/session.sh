@@ -1277,9 +1277,10 @@ dx_session_branch_read() {
   printf '%s\n' "$branch_value"
 }
 
-# dx_meta_file <session_id> — per-session metadata sidecar (ticket id, tracker key,
-# workspace dir/mode, original input). Used to resume a lifecycle by ticket
-# number even when the worktree dir or branch has been renamed.
+# dx_meta_file <session_id> — per-session metadata sidecar (ticket identity,
+# workspace, branch resolution, and the disposable branch's starting commit).
+# Used to resume a lifecycle by ticket number after a branch rename and to
+# protect work created before a remote ticket branch is adopted.
 dx_meta_file() { echo "${DX_STATE_DIR}/${1}.meta"; }
 
 # dx_meta_read <session_id> <key>
