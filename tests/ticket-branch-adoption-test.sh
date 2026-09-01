@@ -255,4 +255,20 @@ zsh -fc '
     "$DX_TEST_ZSH_REMOTE_OID" ]] || exit 1
 '
 
+# A pure local rename — no matching branch anywhere — tolerates a dirty tree:
+# in-place mode proceeds with local changes and carries them into scope, so
+# the bookkeeping path must not reject what dx.sh already accepted. The
+# tree-moving paths (switch, ff-merge, reset) still refuse; the errors test
+# covers that side.
+new_fixture dirty-rename feature/ENG-129-existing
+git -C "$FIXTURE_REPO" switch -q --no-track -c worktree-ticket-129 origin/main
+prepare_session "$FIXTURE_REPO" worktree-ticket-129 ticket-129-dirty
+printf 'work in flight\n' > "$FIXTURE_REPO/in-flight.txt"
+branch_source=$(DEX_SESSION_ID="$PREPARED_SESSION" \
+  dx_ticket_branch_prepare feature/ENG-129-brand-new "$FIXTURE_REPO")
+assert_eq "new" "$branch_source" "dirty rename branch source"
+assert_eq "feature/ENG-129-brand-new" \
+  "$(git -C "$FIXTURE_REPO" branch --show-current)" "dirty rename applied"
+[[ -f "$FIXTURE_REPO/in-flight.txt" ]] || assert_at $LINENO
+
 printf 'ticket branch adoption tests passed\n'

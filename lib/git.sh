@@ -287,11 +287,13 @@ dx_ticket_branch_prepare() {
     printf 'ERROR: Could not inspect the ticket worktree before branch setup.\n' >&2
     return 1
   }
-  if [[ -n "$dirty_output" ]]; then
-    printf 'ERROR: Cannot prepare ticket branch %s with uncommitted changes. Commit, stash, or discard them, then try again.\n' \
-      "$branch_name" >&2
-    return 1
-  fi
+  # A dirty tree blocks only the paths below that move the working tree —
+  # ff-merge, branch switch, and hard reset. Pure bookkeeping (recording
+  # state on the current branch, or renaming it in place) must tolerate
+  # local changes: in-place mode explicitly proceeds with a dirty checkout
+  # and carries those changes into the lifecycle scope.
+  local tree_dirty=0
+  [[ -n "$dirty_output" ]] && tree_dirty=1
 
   remote_line=$(__dx_ticket_branch_run "$remote_timeout_seconds" \
     git -C "$repo_dir" ls-remote --heads --exit-code "$remote_name" \
@@ -351,6 +353,11 @@ dx_ticket_branch_prepare() {
       local_oid="$current_oid"
       if git -C "$repo_dir" merge-base --is-ancestor "$local_oid" \
           "$remote_oid" 2>/dev/null; then
+        if [[ "$tree_dirty" -eq 1 ]]; then
+          printf 'ERROR: Cannot prepare ticket branch %s with uncommitted changes. Commit, stash, or discard them, then try again.\n' \
+            "$branch_name" >&2
+          return 1
+        fi
         git -C "$repo_dir" merge --ff-only --quiet "$remote_ref" || return 1
       elif git -C "$repo_dir" merge-base --is-ancestor "$remote_oid" \
           "$local_oid" 2>/dev/null; then
@@ -412,6 +419,11 @@ dx_ticket_branch_prepare() {
     else
       branch_source="local"
     fi
+    if [[ "$tree_dirty" -eq 1 ]]; then
+      printf 'ERROR: Cannot prepare ticket branch %s with uncommitted changes. Commit, stash, or discard them, then try again.\n' \
+        "$branch_name" >&2
+      return 1
+    fi
     git -C "$repo_dir" switch --quiet "$branch_name" || return 1
     case "$current_branch" in
       worktree-ticket-*|worktree-task-*)
@@ -423,6 +435,11 @@ dx_ticket_branch_prepare() {
         "$current_oid"; then
       printf 'ERROR: Dex will not replace branch %s because it no longer matches the untouched lifecycle starting point.\n' \
         "$current_branch" >&2
+      return 1
+    fi
+    if [[ "$tree_dirty" -eq 1 ]]; then
+      printf 'ERROR: Cannot prepare ticket branch %s with uncommitted changes. Commit, stash, or discard them, then try again.\n' \
+        "$branch_name" >&2
       return 1
     fi
     original_branch="$current_branch"
