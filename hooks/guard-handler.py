@@ -262,7 +262,10 @@ def exact_break_glass_control(text):
         # The real `dx` is a shell function, never a file, so only the bare
         # name can mean it. A path-qualified token, or a PATH entry that
         # resolves to some executable named dx, is a different program and
-        # must not inherit the pre-guard exemption.
+        # must not inherit the pre-guard exemption. Function-over-PATH
+        # precedence is no counterargument: this hook only ever evaluates
+        # agent tool calls, and that non-interactive bash has no dx function
+        # — PATH lookup is exactly what would execute.
         if tokens[0] != command or shutil.which(command) is not None:
             return False
         if len(tokens) < 3 or tokens[1] != 'control':
