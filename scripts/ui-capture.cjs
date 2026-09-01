@@ -522,7 +522,12 @@ function writeTranscript(sessionDir, storyboard, mediaSeconds = null) {
     '## Transcript', '',
   ];
   storyboard.chapters.forEach((chapter) => {
-    lines.push(`### ${chapter.stage === 'before' ? 'Before' : 'After'}: ${chapter.title}`, '', chapter.narration, '');
+    const stage = chapter.stage === 'before' ? 'Before' : 'After';
+    const title = chapter.title.trim();
+    const heading = title.toLowerCase() === stage.toLowerCase() || title.toLowerCase().startsWith(`${stage.toLowerCase()}:`)
+      ? title
+      : `${stage}: ${title}`;
+    lines.push(`### ${heading}`, '', chapter.narration, '');
   });
   fs.writeFileSync(path.join(sessionDir, 'transcript.md'), `${lines.join('\n')}\n`);
 

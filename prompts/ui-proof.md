@@ -161,7 +161,10 @@ captures. Confirm that:
 - `git status --short` contains no generated proof artifact
 
 Edit `walkthrough.json` and use `dx ui-capture revise` until the bundle meets
-that bar. Do not mark custom footage `READY` before watching it.
+that bar. Capture, validation, tooling, and revision failures are recorded as
+`NEEDS_REVIEW` with a local error log; fix the cause and retry instead of
+replacing that state with `SKIPPED`. Do not mark custom footage `READY` before
+watching it.
 
 ## Clean up and report
 

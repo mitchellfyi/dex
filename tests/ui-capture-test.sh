@@ -193,6 +193,13 @@ function addRecord(sessionDir, stage, hash) {
   addRecord(staleDir, 'after', 'stale-after');
   let result = await produceBundle(staleDir, storyboard, false);
   if (result.status !== 'NEEDS_REVIEW' || result.video) throw new Error('stale captures were accepted');
+  const transcript = fs.readFileSync(path.join(staleDir, 'transcript.md'), 'utf8');
+  if (transcript.includes('### Before: Before') || transcript.includes('### After: After')) {
+    throw new Error('transcript duplicated stage labels');
+  }
+  if (!transcript.includes('### Before\n') || !transcript.includes('### After\n')) {
+    throw new Error('transcript stage headings are missing');
+  }
 
   const failedDir = path.join(producerRoot, 'failed');
   addRecord(failedDir, 'before', stageHash(storyboard, 'before'));
@@ -207,6 +214,37 @@ function addRecord(sessionDir, stage, hash) {
   process.exit(1);
 });
 JS
+
+REAL_NODE=$(command -v node)
+FAKE_BIN="$TMP_DIR/fake-bin"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/node" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == "validate" && "${1:-}" == */scripts/ui-capture.cjs ]]; then
+  printf '%s\n' 'storyboard: valid' 'estimated_seconds: 10' 'max_seconds: 90'
+  exit 0
+fi
+if [[ "${2:-}" == "capture" && "${1:-}" == */scripts/ui-capture.cjs ]]; then
+  printf '%s\n' 'fixture capture failed' >&2
+  exit 17
+fi
+exec "$REAL_NODE" "$@"
+SH
+chmod +x "$FAKE_BIN/node"
+
+FAILURE_SID="ui-capture-failure"
+set +e
+PATH="$FAKE_BIN:$PATH" REAL_NODE="$REAL_NODE" bash "$ROOT/bin/ui-capture.sh" capture \
+  --session "$FAILURE_SID" --stage before --script "$VALID_SCRIPT" \
+  --url "http://127.0.0.1:49999" > "$TMP_DIR/capture-failure.out" 2>&1
+failure_exit=$?
+set -e
+assert_eq "17" "$failure_exit" "capture failure exit"
+assert_eq "NEEDS_REVIEW" "$(dx_ui_capture_status "$FAILURE_SID")" "capture failure status"
+assert_contains 'before capture failed' "$(dx_ui_capture_evidence_file "$FAILURE_SID")"
+assert_contains 'fixture capture failed' "$(dx_ui_capture_session_dir "$FAILURE_SID")/before-capture-error.log"
+assert_contains 'UI proof: NEEDS_REVIEW' "$TMP_DIR/capture-failure.out"
 
 MANIFEST="$SESSION_DIR/visual-evidence.md"
 VIDEO="$SESSION_DIR/walkthrough.mp4"

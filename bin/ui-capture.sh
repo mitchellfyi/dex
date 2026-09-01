@@ -115,6 +115,40 @@ write_in_progress_manifest() {
   command mv -f "$tmp_file" "$manifest_file"
 }
 
+record_capture_failure() {
+  local failure_session="$1" failure_stage="$2" failure_storyboard="${3:-}" failure_output="${4:-}"
+  local failure_dir failure_manifest failure_error failure_error_tmp failure_manifest_tmp failure_slug failure_message
+  failure_dir=$(dx_ui_capture_session_dir "$failure_session")
+  failure_manifest=$(dx_ui_capture_manifest_file "$failure_session")
+  failure_slug=$(slugify "$failure_stage")
+  [[ -n "$failure_slug" ]] || failure_slug="capture"
+  failure_error="$failure_dir/${failure_slug}-error.log"
+  failure_error_tmp="${failure_error}.tmp.$$"
+  failure_manifest_tmp="${failure_manifest}.tmp.$$"
+  failure_message="${failure_stage} failed; inspect ${failure_error} and retry the proof."
+
+  mkdir -p "$failure_dir"
+  if [[ -n "$failure_output" ]]; then
+    printf '%s\n' "$failure_output" > "$failure_error_tmp"
+  else
+    printf '%s\n' "No detailed error output was captured. Review the terminal output and retry." > "$failure_error_tmp"
+  fi
+  command mv -f "$failure_error_tmp" "$failure_error"
+
+  {
+    printf '# Visual Proof\n\n'
+    printf 'Status: NEEDS_REVIEW\n\n'
+    printf '%s\n\n' "$failure_message"
+    printf -- '- Session: %s\n' "$failure_session"
+    printf -- '- Failed step: %s\n' "$failure_stage"
+    [[ -n "$failure_storyboard" ]] && printf -- '- Storyboard: %s\n' "$failure_storyboard"
+    printf -- '- Error log: %s\n' "$failure_error"
+  } > "$failure_manifest_tmp"
+  command mv -f "$failure_manifest_tmp" "$failure_manifest"
+
+  dx_ui_capture_write_status "$failure_session" "NEEDS_REVIEW" "$failure_message" "$failure_manifest" ""
+}
+
 record_bundle_status() {
   local session_id="$1" session_dir bundle_file evidence_status message manifest_file video_file
   session_dir=$(dx_ui_capture_session_dir "$session_id")
@@ -327,12 +361,26 @@ esac
 
 if ! dx_install_ui_capture_playwright; then
   dx_error "UI capture tooling is not ready"
+  if [[ "$mode" == "capture" || "$mode" == "revise" ]]; then
+    record_capture_failure "$session_id" "UI capture tooling setup" "$storyboard" \
+      "UI capture tooling is not ready. Review the terminal output, run 'dx ui-capture install', and retry."
+    dx_ui_capture_summary "$session_id"
+  fi
   exit 1
 fi
 
 canonical_storyboard=""
 if [[ -n "$storyboard" ]]; then
-  node "$DEX_DIR/scripts/ui-capture.cjs" validate --script "$storyboard"
+  set +e
+  validation_output=$(node "$DEX_DIR/scripts/ui-capture.cjs" validate --script "$storyboard" 2>&1)
+  validation_exit=$?
+  set -e
+  printf '%s\n' "$validation_output"
+  if [[ "$validation_exit" -ne 0 ]]; then
+    record_capture_failure "$session_id" "Storyboard validation" "$storyboard" "$validation_output"
+    dx_ui_capture_summary "$session_id"
+    exit "$validation_exit"
+  fi
   mkdir -p "$session_dir"
   canonical_storyboard=$(dx_ui_capture_storyboard_file "$session_id")
   if [[ "$storyboard" != "$canonical_storyboard" ]]; then
@@ -348,7 +396,16 @@ if [[ "$mode" == "revise" ]]; then
   [[ -n "$before_url" ]] && runner_args+=(--before-url "$before_url")
   [[ -n "$after_url" ]] && runner_args+=(--after-url "$after_url")
   [[ "$narration" -eq 0 ]] && runner_args+=(--no-narration)
-  DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}"
+  set +e
+  revision_output=$(DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}" 2>&1)
+  revision_exit=$?
+  set -e
+  printf '%s\n' "$revision_output"
+  if [[ "$revision_exit" -ne 0 ]]; then
+    record_capture_failure "$session_id" "Walkthrough revision" "$canonical_storyboard" "$revision_output"
+    dx_ui_capture_summary "$session_id"
+    exit "$revision_exit"
+  fi
   record_bundle_status "$session_id"
   dx_ui_capture_summary "$session_id"
   exit 0
@@ -380,8 +437,17 @@ if [[ -n "$canonical_storyboard" ]]; then
 fi
 
 dx_info "Capturing ${stage:+${stage} }UI proof for ${url}"
-capture_output=$(DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}")
+set +e
+capture_output=$(DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}" 2>&1)
+capture_exit=$?
+set -e
 printf '%s\n' "$capture_output"
+if [[ "$capture_exit" -ne 0 ]]; then
+  capture_stage="${stage:+${stage} }capture"
+  record_capture_failure "$session_id" "$capture_stage" "$canonical_storyboard" "$capture_output"
+  dx_ui_capture_summary "$session_id"
+  exit "$capture_exit"
+fi
 
 if [[ -z "$canonical_storyboard" ]]; then
   append_legacy_manifest "$session_id" "$run_name" "$url" "$abs_out_dir" "$capture_output"

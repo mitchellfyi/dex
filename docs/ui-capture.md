@@ -235,7 +235,7 @@ Set `DX_UI_CAPTURE_RETENTION_DAYS` to an integer from 1 through 3650. Active bun
 | Symptom | Action |
 |---|---|
 | UI tools are incomplete | Run `dx ui-capture install`, then `dx status`. |
-| The app is unreachable | Start its normal dev server and pass the printed HTTP(S) URL. |
+| The app is unreachable | The proof stays `NEEDS_REVIEW` with a capture error log. Start its normal dev server and retry with the printed HTTP(S) URL. |
 | Narration fails | Keep the captions-only result or rerun with `--no-narration`. |
 | The MP4 is too long | Remove setup steps or split the storyboard into a more focused proof. |
 | The MP4 is too large | Shorten the flow; Dex already attempts a higher-compression pass. |
