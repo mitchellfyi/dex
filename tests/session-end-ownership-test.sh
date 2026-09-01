@@ -42,4 +42,31 @@ printf '%s\n' '{"session_id":"claude-owner"}' | bash "$ROOT/hooks/session-end.sh
 [[ $(wc -l < "$TIMES_FILE") -eq 2 ]] || assert_at $LINENO
 grep -q '^end:[0-9][0-9]*$' "$TIMES_FILE"
 
+# SessionEnd has a short host-side deadline. Keep its runtime independent of
+# modules it never calls so library growth cannot consume that budget.
+MINIMAL_RUNTIME="$TMP_DIR/minimal-runtime"
+MINIMAL_STATE_DIR="$TMP_DIR/minimal-state"
+MINIMAL_LOOP_DIR="$TMP_DIR/minimal-loops"
+mkdir -p "$MINIMAL_RUNTIME/hooks" "$MINIMAL_RUNTIME/lib" \
+  "$MINIMAL_STATE_DIR" "$MINIMAL_LOOP_DIR"
+cp "$ROOT/hooks/session-end.sh" "$MINIMAL_RUNTIME/hooks/session-end.sh"
+cp "$ROOT/lib/common.sh" "$ROOT/lib/session.sh" "$MINIMAL_RUNTIME/lib/"
+
+MINIMAL_SESSION_ID="minimal-session-end-test"
+MINIMAL_TIMES_FILE="$MINIMAL_STATE_DIR/${MINIMAL_SESSION_ID}.times"
+MINIMAL_CTX_FILE="$MINIMAL_STATE_DIR/${MINIMAL_SESSION_ID}.system-context"
+printf '0:100\n' > "$MINIMAL_TIMES_FILE"
+printf 'context\n' > "$MINIMAL_CTX_FILE"
+
+printf '%s\n' '{"session_id":"minimal-owner"}' | env \
+  DEX_DIR="$MINIMAL_RUNTIME" \
+  DEX_SESSION_ID="$MINIMAL_SESSION_ID" \
+  DX_STATE_DIR="$MINIMAL_STATE_DIR" \
+  DX_LOOP_DIR="$MINIMAL_LOOP_DIR" \
+  bash "$MINIMAL_RUNTIME/hooks/session-end.sh"
+
+[[ ! -f "$MINIMAL_CTX_FILE" ]] || assert_at $LINENO
+[[ $(wc -l < "$MINIMAL_TIMES_FILE") -eq 2 ]] || assert_at $LINENO
+grep -q '^end:[0-9][0-9]*$' "$MINIMAL_TIMES_FILE"
+
 printf 'session end ownership tests passed\n'

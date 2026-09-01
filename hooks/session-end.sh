@@ -3,6 +3,8 @@
 # Runs when a Claude Code session ends (cleanly or otherwise).
 set -euo pipefail
 
+# shellcheck disable=SC2034  # read by lib/common.sh while it is sourced
+DX_COMMON_MODULES="session"
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"

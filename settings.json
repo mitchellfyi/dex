@@ -95,7 +95,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/session-end.sh\""
+            "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/session-end.sh\"",
+            "timeout": 10
           }
         ]
       }
