@@ -438,14 +438,24 @@ if [[ -n "$canonical_storyboard" ]]; then
 fi
 
 dx_info "Capturing ${stage:+${stage} }UI proof for ${url}"
+# stdout and stderr stay separate: the failure record keeps both, but the
+# manifest below is built from stdout alone — merged streams turned node and
+# Playwright stderr chatter into PR-facing manifest bullets.
+capture_stderr_file=$(mktemp "${TMPDIR:-/tmp}/dex-ui-capture-stderr.XXXXXX")
 set +e
-capture_output=$(DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}" 2>&1)
+capture_output=$(DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}" 2>"$capture_stderr_file")
 capture_exit=$?
 set -e
+capture_stderr=$(cat "$capture_stderr_file" 2>/dev/null || true)
+rm -f "$capture_stderr_file"
 printf '%s\n' "$capture_output"
+[[ -n "$capture_stderr" ]] && printf '%s\n' "$capture_stderr" >&2
 if [[ "$capture_exit" -ne 0 ]]; then
   capture_stage="${stage:+${stage} }capture"
-  record_capture_failure "$session_id" "$capture_stage" "$canonical_storyboard" "$capture_output"
+  capture_evidence="$capture_output"
+  [[ -n "$capture_stderr" ]] \
+    && capture_evidence="${capture_evidence}"$'\n'"${capture_stderr}"
+  record_capture_failure "$session_id" "$capture_stage" "$canonical_storyboard" "$capture_evidence"
   dx_ui_capture_summary "$session_id"
   exit "$capture_exit"
 fi

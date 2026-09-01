@@ -584,7 +584,14 @@ async function runViewport({ browser, playwright, options, storyboard, viewportN
 
   if (traceStarted) {
     try {
-      await context.tracing.stop({ path: tracePath });
+      // Export the multi-MB zip only when someone will read it — an explicit
+      // --trace, or a failure whose evidence it carries. A clean run used to
+      // serialize it and delete it two statements later.
+      if (options.trace || captureError) {
+        await context.tracing.stop({ path: tracePath });
+      } else {
+        await context.tracing.stop();
+      }
     } catch (error) {
       if (!captureError) captureError = error;
     }
@@ -598,7 +605,6 @@ async function runViewport({ browser, playwright, options, storyboard, viewportN
     const traceNote = traceStarted && fs.existsSync(tracePath) ? ` Failure trace: ${tracePath}` : '';
     fail(`${String(captureError && captureError.message ? captureError.message : captureError)}${traceNote}`);
   }
-  if (traceStarted && !options.trace) fs.rmSync(tracePath, { force: true });
 
   const videoFiles = fs.existsSync(videoDir)
     ? fs.readdirSync(videoDir).filter((file) => file.endsWith('.webm')).map((file) => path.join(videoDir, file))
