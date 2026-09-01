@@ -40,7 +40,7 @@ printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Keep review 
 CRITERIA_BINDING="$(dx_review_criteria_hash "$CRITERIA_FILE")"
 dx_review_approve_criteria "$SESSION_ID" initial "$CRITERIA_BINDING" >/dev/null
 SCOPE_FINGERPRINT="$(dx_review_scope_fingerprint "$REPO")"
-POLICY_BINDING="$(dx_review_policy_binding 1 3 6)"
+POLICY_BINDING="$(dx_review_policy_binding 1 2 3)"
 OTHER_POLICY_BINDING="$(dx_review_policy_binding 2 4 7)"
 PASS_BINDING="$(dx_review_pass_binding "$PASS_ID" "$SCOPE_FINGERPRINT" "$CRITERIA_BINDING" "$POLICY_BINDING")"
 

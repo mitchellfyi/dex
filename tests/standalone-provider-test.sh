@@ -1098,7 +1098,7 @@ run_review_route_case() { # <provider> <ambient-host> <expected-route> [use-asse
   local review_parent_session
   review_parent_session=$(__dx_review_standalone_session_id "review-${provider}")
   assert_no_file "$(dx_session_claim_lock_dir "$review_parent_session")/owner"
-  grep -Fq "Agent:  $(tr '[:lower:]' '[:upper:]' <<< "${expected_route:0:1}")${expected_route:1}" "$output_file"
+  grep -Fq "[info]  $(tr '[:lower:]' '[:upper:]' <<< "${expected_route:0:1}")${expected_route:1} · " "$output_file"
 
   if [[ -n "$timeout_override" ]]; then
     [[ "$(grep -Fxc "$timeout_override" "$timeout_file")" -eq 1 ]] || {

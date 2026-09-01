@@ -2,10 +2,6 @@
 # Resolve Dex's fixed clean-pass policy. Repository policy tables were removed
 # in v2 so every checkout receives the same 1/2/3 assurance floor.
 
-__dx_review_policy_sha256_stdin() {
-  python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
-}
-
 dx_review_policy_binding() {
   [[ $# -eq 3 ]] || return 1
   local small="$1" normal="$2" complex="$3" value
@@ -18,7 +14,7 @@ dx_review_policy_binding() {
   complex=$((10#$complex))
   [[ $small -le $normal && $normal -le $complex ]] || return 1
   printf 'review-policy-v2:small=%s,normal=%s,complex=%s' \
-    "$small" "$normal" "$complex" | __dx_review_policy_sha256_stdin
+    "$small" "$normal" "$complex" | dx_review_sha256_stdin
 }
 
 dx_review_policy_tier_clean_passes() {

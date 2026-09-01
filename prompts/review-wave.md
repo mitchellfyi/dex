@@ -257,9 +257,16 @@ counting the wave or retrying indefinitely.
 
 ## 7. Result Signal
 
-When `DEX_REVIEW_BUSY_TOKEN` is set, call `dx_phase_busy_update` before context,
-checks, scouting, verification, and fixes. Use the supplied parent session and
-busy token, and keep the label in this form:
+When `DEX_REVIEW_BUSY_TOKEN` is set, update the live stage before context,
+checks, scouting, verification, and fixes. The busy record is keyed under the
+parent lifecycle session — supplied as `DEX_POLICY_SESSION_ID`, not this
+wave's own `DEX_SESSION_ID` — so the exact call is:
+
+```bash
+dx_phase_busy_update "$DEX_POLICY_SESSION_ID" 3 "$DEX_REVIEW_BUSY_TOKEN" "<label>"
+```
+
+Keep the label in this form:
 
 ```text
 Wave <number> · <stage> · <clean-before>/<required-clean> clean

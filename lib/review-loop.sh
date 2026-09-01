@@ -668,7 +668,7 @@ After deterministic checks, use provider-native parallel agents for independent 
 
 The top-level wave is the only writer and verifier. Snapshot the checkout before and after scouting. If a scout changes it, restore nothing and write \`BLOCKED:scout-mutated-checkout\`. Retry one failed scout once; if the required coverage is still unavailable, write \`BLOCKED:review-scout-unavailable\`. If parallel agents are unavailable, run the same groups sequentially in this session. Merge their candidate inventories, verify and deduplicate findings, batch-fix safe verified issues, rerun affected checks, then write the result and evidence files.
 
-When \`DEX_REVIEW_BUSY_TOKEN\` is set, update the live stage with \`dx_phase_busy_update\` before context, checks, scouting, verification, and fixes. Keep the label in this form: \`Wave __REVIEW_ITERATION__ · <stage> · __REVIEW_CLEAN_BEFORE__/__REVIEW_REQUIRED_CLEAN__ clean\`. Run in the current checkout; do not create or switch branches or worktrees.
+When \`DEX_REVIEW_BUSY_TOKEN\` is set, update the live stage before context, checks, scouting, verification, and fixes with exactly \`dx_phase_busy_update \"\$DEX_POLICY_SESSION_ID\" 3 \"\$DEX_REVIEW_BUSY_TOKEN\" \"<label>\"\` — the busy record is keyed under the parent lifecycle session in \`DEX_POLICY_SESSION_ID\`, not this wave's own \`DEX_SESSION_ID\`. Keep the label in this form: \`Wave __REVIEW_ITERATION__ · <stage> · __REVIEW_CLEAN_BEFORE__/__REVIEW_REQUIRED_CLEAN__ clean\`. Run in the current checkout; do not create or switch branches or worktrees.
 
 Result semantics:
 - Write \`CLEAN\` only if this wave found zero verified findings and applied zero fixes.

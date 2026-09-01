@@ -885,7 +885,7 @@ if expected == "completed":
         raise SystemExit(1)
     completion = review_completed[0]
     completion_data = completion.get("data", {})
-    required = {"small": 1, "normal": 3, "complex": 6}[resolved_tier]
+    required = {"small": 1, "normal": 2, "complex": 3}[resolved_tier]
     started = [event.get("data", {}) for event in events if event.get("type") == "review.pass.started"]
     finished = [event.get("data", {}) for event in events if event.get("type") == "review.pass.finished"]
     started_keys = [(event.get("iteration"), event.get("pass_id")) for event in started]

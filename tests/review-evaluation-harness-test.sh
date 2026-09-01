@@ -725,7 +725,7 @@ PY
 
 normal_trial="$TMP_DIR/normal-tier-trial"
 complex_trial="$TMP_DIR/complex-tier-trial"
-# These fixtures exercise three and six clean waves respectively. Give their
+# These fixtures exercise two and three clean waves respectively. Give their
 # process-level safety deadline headroom on slower CI hosts; wave behavior and
 # every result assertion remain unchanged.
 REVIEW_EVAL_TEST_STUB=1 \
@@ -819,8 +819,8 @@ import sys
 from pathlib import Path
 
 for root_text, expected_tier, expected_waves in (
-    (sys.argv[1], "normal", 3),
-    (sys.argv[2], "complex", 6),
+    (sys.argv[1], "normal", 2),
+    (sys.argv[2], "complex", 3),
 ):
     root = Path(root_text)
     manifest = json.loads((root / "manifest.json").read_text())
