@@ -12,7 +12,7 @@ Usage: dx ui-capture <command> [options]
 
 Commands:
   dx ui-capture capture --url URL [--stage before|after --script FILE] [capture options]
-  dx ui-capture revise --script FILE [--before-url URL] [--after-url URL] [--no-narration]
+  dx ui-capture revise --script FILE [--before-url URL] [--after-url URL] [--trace] [--no-narration]
   dx ui-capture validate --script FILE
   dx ui-capture show [--session ID] [--json] [--open]
   dx ui-capture ready --manifest FILE [--video-file FILE] [--poster-file FILE] [--reason TEXT]
@@ -395,6 +395,7 @@ if [[ "$mode" == "revise" ]]; then
   runner_args=(revise --script "$canonical_storyboard" --session-dir "$session_dir")
   [[ -n "$before_url" ]] && runner_args+=(--before-url "$before_url")
   [[ -n "$after_url" ]] && runner_args+=(--after-url "$after_url")
+  [[ "$trace" -eq 1 ]] && runner_args+=(--trace)
   [[ "$narration" -eq 0 ]] && runner_args+=(--no-narration)
   set +e
   revision_output=$(DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}" 2>&1)

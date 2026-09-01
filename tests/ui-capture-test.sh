@@ -88,6 +88,7 @@ cat > "$VALID_SCRIPT" <<'JSON'
   "product_context": "People need confirmation that notification settings were saved.",
   "technical_summary": "The form now persists and reports the successful request.",
   "how_to_test": "Open settings, enable email notifications, and save.",
+  "suppress": ["[data-dex-transient-toast]"],
   "target_seconds": 70,
   "max_seconds": 90,
   "chapters": [
@@ -98,7 +99,8 @@ cat > "$VALID_SCRIPT" <<'JSON'
       "actions": [
         {"action": "goto", "path": "/settings"},
         {"action": "click", "locator": {"by": "role", "role": "button", "name": "Save"}},
-        {"action": "wait", "ms": 500}
+        {"action": "wait", "ms": 500},
+        {"action": "waitFor", "locator": {"by": "testId", "name": "settings-form"}, "timeout_ms": 30000}
       ]
     },
     {
@@ -121,11 +123,11 @@ node "$ROOT/scripts/ui-capture.cjs" validate --script "$VALID_SCRIPT" > "$TMP_DI
 assert_contains 'storyboard: valid' "$TMP_DIR/validate.out"
 assert_contains 'estimated_seconds:' "$TMP_DIR/validate.out"
 
-python3 - "$VALID_SCRIPT" "$TMP_DIR/no-before.json" "$TMP_DIR/after-only.json" "$TMP_DIR/too-long.json" "$TMP_DIR/long-script.json" "$TMP_DIR/bad-action.json" <<'PY'
+python3 - "$VALID_SCRIPT" "$TMP_DIR/no-before.json" "$TMP_DIR/after-only.json" "$TMP_DIR/too-long.json" "$TMP_DIR/long-script.json" "$TMP_DIR/bad-action.json" "$TMP_DIR/fixed-wait-only.json" <<'PY'
 import json
 import sys
 
-source, no_before, after_only, too_long, long_script, bad_action = sys.argv[1:]
+source, no_before, after_only, too_long, long_script, bad_action, fixed_wait_only = sys.argv[1:]
 data = json.load(open(source, encoding="utf-8"))
 
 value = dict(data)
@@ -148,6 +150,10 @@ json.dump(value, open(long_script, "w", encoding="utf-8"))
 value = json.loads(json.dumps(data))
 value["chapters"][1]["actions"][0]["action"] = "evaluate"
 json.dump(value, open(bad_action, "w", encoding="utf-8"))
+
+value = json.loads(json.dumps(data))
+value["chapters"][0]["actions"] = [action for action in value["chapters"][0]["actions"] if action["action"] != "waitFor"]
+json.dump(value, open(fixed_wait_only, "w", encoding="utf-8"))
 PY
 
 assert_rejected "missing before chapter" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/no-before.json"
@@ -156,6 +162,7 @@ assert_contains 'storyboard: valid' "$TMP_DIR/after-only.out"
 assert_rejected "duration over 90 seconds" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/too-long.json"
 assert_rejected "narration over storyboard duration" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/long-script.json"
 assert_rejected "arbitrary script action" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/bad-action.json"
+assert_rejected "fixed wait is not a readiness gate" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/fixed-wait-only.json"
 assert_rejected "missing script" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/missing.json"
 
 node - "$ROOT/scripts/ui-capture.cjs" "$VALID_SCRIPT" "$TMP_DIR/producer" <<'JS'
@@ -163,8 +170,20 @@ const fs = require('fs');
 const path = require('path');
 
 const [modulePath, storyboardPath, producerRoot] = process.argv.slice(2);
-const { loadStoryboard, produceBundle, stageHash, webUrl } = require(modulePath);
+const {
+  generateNarration,
+  loadStoryboard,
+  narrationDurationMatches,
+  produceBundle,
+  runAction,
+  stageHash,
+  webUrl,
+  writeVtt,
+} = require(modulePath);
 const storyboard = loadStoryboard(storyboardPath);
+if (storyboard.chapters[0].actions.at(-1).locator.by !== 'testid') {
+  throw new Error('common testId locator casing was not normalized');
+}
 if (webUrl('http://127.0.0.1:3000', 'test URL') !== 'http://127.0.0.1:3000/') {
   throw new Error('safe HTTP URL changed unexpectedly');
 }
@@ -178,20 +197,189 @@ function addRecord(sessionDir, stage, hash) {
   const directory = path.join(sessionDir, `${stage}-capture`);
   fs.mkdirSync(directory, { recursive: true });
   const video = path.join(directory, `${stage}.webm`);
+  const screenshot = path.join(directory, 'desktop.png');
   fs.writeFileSync(video, 'not real media');
+  fs.writeFileSync(screenshot, 'not real image');
   fs.writeFileSync(path.join(directory, 'metadata.json'), `${JSON.stringify({
     stage,
     stageHash: hash,
     capturedAt: stage === 'before' ? '2026-01-01T00:00:00Z' : '2026-01-01T00:00:01Z',
-    results: [{ viewport: 'desktop', videos: [video], screenshot: path.join(directory, 'desktop.png') }],
+    results: [{
+      viewport: 'desktop',
+      viewportSize: { width: 1440, height: 900 },
+      videos: [video],
+      screenshot,
+      storyboardExecution: {
+        actionCount: storyboard.chapters
+          .filter((chapter) => chapter.stage === stage)
+          .reduce((total, chapter) => total + chapter.actions.length, 0),
+        readiness: [{
+          chapterIndex: storyboard.chapters.findIndex((chapter) => chapter.stage === stage),
+          action: 'waitFor',
+          locator: { by: 'text', name: 'Loaded' },
+          state: 'visible',
+        }],
+        readinessSatisfied: true,
+        timeline: storyboard.chapters
+          .map((chapter, chapterIndex) => ({ chapter, chapterIndex }))
+          .filter(({ chapter }) => chapter.stage === stage)
+          .map(({ chapterIndex }, index) => ({ chapterIndex, startSeconds: index * 4, endSeconds: (index + 1) * 4 })),
+      },
+    }],
   })}\n`);
 }
 
 (async () => {
+  let waitedForOptions = null;
+  const waitStartedAt = Date.now();
+  await runAction({
+    page: {
+      getByText: () => ({
+        waitFor: async (options) => {
+          waitedForOptions = options;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        },
+      }),
+    },
+    action: {
+      action: 'waitFor',
+      locator: { by: 'text', name: 'Loaded' },
+      state: 'hidden',
+      timeout_ms: 1234,
+    },
+    baseUrl: 'http://127.0.0.1/',
+    screenshot: async () => {},
+    stage: 'after',
+  });
+  if (Date.now() - waitStartedAt < 20 || waitedForOptions.state !== 'hidden' || waitedForOptions.timeout !== 1234) {
+    throw new Error('waitFor did not await the requested readiness predicate');
+  }
+
+  if (narrationDurationMatches(24.15, 42)) throw new Error('truncated narration duration was accepted');
+  const unsuppressed = JSON.parse(JSON.stringify(storyboard));
+  unsuppressed.suppress = [];
+  if (stageHash(unsuppressed, 'before') === stageHash(storyboard, 'before')) {
+    throw new Error('suppression policy was not bound to the stage capture');
+  }
+
+  const narrationDir = path.join(producerRoot, 'narration');
+  fs.mkdirSync(narrationDir, { recursive: true });
+  const generatedTexts = [];
+  const durations = new Map();
+  const narrationServices = {
+    createTts: async () => ({
+      generate: async (text) => {
+        generatedTexts.push(text);
+        return {
+          save: async (filePath) => {
+            fs.writeFileSync(filePath, 'audio');
+            durations.set(filePath, (text.trim().split(/\s+/u).length / 150) * 60);
+          },
+        };
+      },
+    }),
+    durationOf: (filePath) => durations.get(filePath) || null,
+    concatenate: (clips, output) => {
+      fs.writeFileSync(output, 'combined audio');
+      durations.set(output, clips.reduce((total, clip) => total + durations.get(clip), 0));
+    },
+  };
+  let narration = await generateNarration(narrationDir, storyboard, 'ffmpeg', narrationServices);
+  if (!narration.ok || generatedTexts.length !== storyboard.chapters.length) {
+    throw new Error('narration was not generated once per chapter');
+  }
+  if (narration.reason !== null || narration.cues.length !== storyboard.chapters.length) {
+    throw new Error('successful narration metadata is misleading');
+  }
+
+  const truncatedDir = path.join(producerRoot, 'truncated-narration');
+  fs.mkdirSync(truncatedDir, { recursive: true });
+  let generatedCount = 0;
+  const truncatedDurations = new Map();
+  narration = await generateNarration(truncatedDir, storyboard, 'ffmpeg', {
+    createTts: async () => ({
+      generate: async (text) => {
+        generatedCount += 1;
+        return {
+          save: async (filePath) => {
+            fs.writeFileSync(filePath, 'audio');
+            const expected = (text.trim().split(/\s+/u).length / 150) * 60;
+            truncatedDurations.set(filePath, generatedCount === 2 ? expected * 0.25 : expected);
+          },
+        };
+      },
+    }),
+    durationOf: (filePath) => truncatedDurations.get(filePath) || null,
+    concatenate: () => { throw new Error('truncated clips must not be concatenated'); },
+  });
+  if (narration.ok || !narration.incomplete || fs.existsSync(path.join(truncatedDir, 'narration.wav'))) {
+    throw new Error('truncated narration was retained or accepted');
+  }
+
+  writeVtt(narrationDir, storyboard, [
+    { chapterIndex: 0, startSeconds: 0, endSeconds: 3.25 },
+    { chapterIndex: 1, startSeconds: 3.25, endSeconds: 9.5 },
+  ]);
+  const captions = fs.readFileSync(path.join(narrationDir, 'captions.vtt'), 'utf8');
+  if (!captions.includes('00:00:03.250 --> 00:00:09.500')) {
+    throw new Error('captions did not use measured chapter timing');
+  }
+
+  const fakeFfmpeg = path.join(producerRoot, 'fake-ffmpeg');
+  fs.writeFileSync(fakeFfmpeg, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'if [[ "$1" == "-i" && "$#" -eq 2 ]]; then',
+    '  case "$2" in',
+    '    *before.webm) duration="8.00" ;;',
+    '    *after.webm) duration="9.00" ;;',
+    '    *) duration="17.00" ;;',
+    '  esac',
+    '  printf "Duration: 00:00:%s\\n" "$duration" >&2',
+    '  exit 1',
+    'fi',
+    'output="${!#}"',
+    'printf "media\\n" > "$output"',
+    '',
+  ].join('\n'));
+  fs.chmodSync(fakeFfmpeg, 0o700);
+  const readyDir = path.join(producerRoot, 'ready');
+  addRecord(readyDir, 'before', stageHash(storyboard, 'before'));
+  addRecord(readyDir, 'after', stageHash(storyboard, 'after'));
+  process.env.DX_UI_CAPTURE_FFMPEG = fakeFfmpeg;
+  let result = await produceBundle(readyDir, storyboard, false);
+  if (result.status !== 'READY' || !result.readiness_verified || result.narration !== 'captions-only') {
+    throw new Error('verified captions-only bundle was not ready');
+  }
+  const measuredCaptions = fs.readFileSync(path.join(readyDir, 'captions.vtt'), 'utf8');
+  if (!measuredCaptions.includes('00:00:08.000 --> 00:00:12.000')) {
+    throw new Error('captions-only bundle did not use the capture timeline');
+  }
+  if (result.suppressed_selectors[0] !== '[data-dex-transient-toast]') {
+    throw new Error('suppressed selectors were not recorded in the bundle');
+  }
+
+  const mismatchedDir = path.join(producerRoot, 'mismatched-viewports');
+  addRecord(mismatchedDir, 'before', stageHash(storyboard, 'before'));
+  addRecord(mismatchedDir, 'after', stageHash(storyboard, 'after'));
+  const beforeMetadataPath = path.join(mismatchedDir, 'before-capture', 'metadata.json');
+  const beforeMetadata = JSON.parse(fs.readFileSync(beforeMetadataPath, 'utf8'));
+  beforeMetadata.results.push({
+    ...JSON.parse(JSON.stringify(beforeMetadata.results[0])),
+    viewport: 'mobile',
+    viewportSize: { width: 390, height: 844 },
+  });
+  fs.writeFileSync(beforeMetadataPath, `${JSON.stringify(beforeMetadata)}\n`);
+  result = await produceBundle(mismatchedDir, storyboard, false);
+  if (result.status !== 'NEEDS_REVIEW' || result.viewport_parity !== false
+    || !result.message.includes('viewport sets differ')) {
+    throw new Error('mismatched before and after viewports were accepted');
+  }
+
   const staleDir = path.join(producerRoot, 'stale');
   addRecord(staleDir, 'before', 'stale-before');
   addRecord(staleDir, 'after', 'stale-after');
-  let result = await produceBundle(staleDir, storyboard, false);
+  result = await produceBundle(staleDir, storyboard, false);
   if (result.status !== 'NEEDS_REVIEW' || result.video) throw new Error('stale captures were accepted');
   const transcript = fs.readFileSync(path.join(staleDir, 'transcript.md'), 'utf8');
   if (transcript.includes('### Before: Before') || transcript.includes('### After: After')) {

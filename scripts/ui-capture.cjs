@@ -7,9 +7,13 @@ const { pathToFileURL } = require('url');
 const { spawnSync } = require('child_process');
 
 const ALLOWED_ACTIONS = new Set([
-  'goto', 'click', 'fill', 'press', 'hover', 'scroll', 'wait', 'assert', 'screenshot',
+  'goto', 'click', 'fill', 'press', 'hover', 'scroll', 'wait', 'waitFor', 'assert', 'screenshot',
+]);
+const ALLOWED_ACTION_KEYS = new Set([
+  'action', 'path', 'locator', 'text', 'env', 'key', 'ms', 'state', 'timeout_ms', 'y', 'name',
 ]);
 const ALLOWED_LOCATORS = new Set(['role', 'label', 'text', 'testid']);
+const ALLOWED_WAIT_STATES = new Set(['attached', 'detached', 'visible', 'hidden']);
 const VALID_STAGES = new Set(['before', 'after']);
 
 function fail(message) {
@@ -46,7 +50,7 @@ function parseArgs(argv) {
       case '--flow': options.flow = argv[++index]; break;
       case '--wait-ms': options.waitMs = Number(argv[++index]); break;
       case '--desktop': options.desktop = true; break;
-      case '--mobile': options.mobile = true; break;
+      case '--mobile': options.mobile = true; options.desktop = true; break;
       case '--video': options.video = true; break;
       case '--trace': options.trace = true; break;
       case '--no-narration': options.narration = false; break;
@@ -89,9 +93,11 @@ function validateLocator(locator, label) {
   if (!locator || typeof locator !== 'object' || Array.isArray(locator)) {
     fail(`${label}.locator must be an object`);
   }
-  if (!ALLOWED_LOCATORS.has(locator.by)) {
+  const locatorKind = typeof locator.by === 'string' ? locator.by.toLowerCase() : locator.by;
+  if (!ALLOWED_LOCATORS.has(locatorKind)) {
     fail(`${label}.locator.by must be role, label, text, or testid`);
   }
+  locator.by = locatorKind;
   requiredString(locator.name, `${label}.locator.name`, 500);
   if (locator.by === 'role') requiredString(locator.role, `${label}.locator.role`, 80);
   for (const key of Object.keys(locator)) {
@@ -104,9 +110,12 @@ function validateLocator(locator, label) {
 function validateAction(action, label) {
   if (!action || typeof action !== 'object' || Array.isArray(action)) fail(`${label} must be an object`);
   if (!ALLOWED_ACTIONS.has(action.action)) fail(`${label}.action is unsupported: ${action.action}`);
-  if (['click', 'fill', 'hover', 'scroll', 'assert'].includes(action.action) && action.locator) {
+  for (const key of Object.keys(action)) {
+    if (!ALLOWED_ACTION_KEYS.has(key)) fail(`${label} contains unsupported key: ${key}`);
+  }
+  if (['click', 'fill', 'hover', 'scroll', 'waitFor', 'assert'].includes(action.action) && action.locator) {
     validateLocator(action.locator, label);
-  } else if (['click', 'fill', 'hover', 'assert'].includes(action.action)) {
+  } else if (['click', 'fill', 'hover', 'waitFor', 'assert'].includes(action.action)) {
     fail(`${label}.locator is required for ${action.action}`);
   }
   if (action.action === 'goto') requiredString(action.path, `${label}.path`, 2048);
@@ -122,12 +131,45 @@ function validateAction(action, label) {
       fail(`${label}.ms must be an integer between 0 and 5000`);
     }
   }
+  if (action.action === 'waitFor') {
+    if (action.state !== undefined && !ALLOWED_WAIT_STATES.has(action.state)) {
+      fail(`${label}.state must be attached, detached, visible, or hidden`);
+    }
+    if (action.timeout_ms !== undefined
+      && (!Number.isInteger(action.timeout_ms) || action.timeout_ms < 1 || action.timeout_ms > 60000)) {
+      fail(`${label}.timeout_ms must be an integer between 1 and 60000`);
+    }
+  }
   if (action.action === 'scroll' && !action.locator) {
     if (!Number.isInteger(action.y) || Math.abs(action.y) > 5000) {
       fail(`${label}.y must be an integer between -5000 and 5000`);
     }
   }
   if (action.action === 'screenshot') requiredString(action.name, `${label}.name`, 120);
+}
+
+function actionInvalidatesReadiness(action) {
+  return ['goto', 'click', 'fill', 'press', 'hover', 'scroll'].includes(action.action);
+}
+
+function validateCaptureReadiness(storyboard) {
+  for (const stage of VALID_STAGES) {
+    const chapters = storyboard.chapters.filter((chapter) => chapter.stage === stage);
+    if (chapters.length === 0) continue;
+    let readinessSatisfied = false;
+    for (const chapter of chapters) {
+      for (const action of chapter.actions) {
+        if (actionInvalidatesReadiness(action)) readinessSatisfied = false;
+        if (action.action === 'waitFor' || action.action === 'assert') readinessSatisfied = true;
+        if (action.action === 'screenshot' && !readinessSatisfied) {
+          fail(`${stage} screenshot "${action.name}" must follow waitFor or assert after the last state-changing action`);
+        }
+      }
+    }
+    if (!readinessSatisfied) {
+      fail(`${stage} final screenshot must follow waitFor or assert after the last state-changing action; fixed waits are not a readiness gate`);
+    }
+  }
 }
 
 function loadStoryboard(filePath) {
@@ -156,6 +198,16 @@ function loadStoryboard(filePath) {
   if (value.comparison === 'after_only') {
     requiredString(value.baseline_reason, 'storyboard.baseline_reason');
   }
+  if (value.suppress !== undefined) {
+    if (!Array.isArray(value.suppress) || value.suppress.length > 20) {
+      fail('storyboard.suppress must be an array with at most 20 CSS selectors');
+    }
+    value.suppress = value.suppress.map((selector, index) => (
+      requiredString(selector, `storyboard.suppress[${index}]`, 500)
+    ));
+  } else {
+    value.suppress = [];
+  }
   if (!Array.isArray(value.chapters) || value.chapters.length < 1 || value.chapters.length > 12) {
     fail('storyboard.chapters must contain between 1 and 12 chapters');
   }
@@ -176,6 +228,10 @@ function loadStoryboard(filePath) {
   for (const stage of requiredStages) {
     if (!stages.has(stage)) fail(`storyboard must include at least one ${stage} chapter`);
   }
+  if (value.comparison === 'after_only' && stages.has('before')) {
+    fail('after_only storyboards must not include before chapters');
+  }
+  validateCaptureReadiness(value);
   const transcriptSeconds = estimatedSeconds(value);
   if (transcriptSeconds > value.max_seconds) {
     fail(`storyboard narration is approximately ${transcriptSeconds}s and exceeds max_seconds ${value.max_seconds}`);
@@ -184,7 +240,7 @@ function loadStoryboard(filePath) {
 }
 
 function narrationText(storyboard) {
-  return storyboard.chapters.map((chapter) => chapter.narration.trim()).join(' ');
+  return orderedChapters(storyboard).map(({ chapter }) => chapter.narration.trim()).join(' ');
 }
 
 function estimatedSeconds(storyboard) {
@@ -192,12 +248,28 @@ function estimatedSeconds(storyboard) {
   return Math.max(1, Math.ceil((words / 150) * 60));
 }
 
+function estimatedChapterSeconds(chapter) {
+  const words = chapter.narration.trim().split(/\s+/u).filter(Boolean).length;
+  return Math.max(1, (words / 150) * 60);
+}
+
+function orderedChapters(storyboard) {
+  const stages = storyboard.comparison === 'after_only' ? ['after'] : ['before', 'after'];
+  return stages.flatMap((stage) => storyboard.chapters
+    .map((chapter, chapterIndex) => ({ chapter, chapterIndex }))
+    .filter(({ chapter }) => chapter.stage === stage));
+}
+
 function stableHash(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
 function stageHash(storyboard, stage) {
-  return stableHash(storyboard.chapters.filter((chapter) => chapter.stage === stage));
+  return stableHash({
+    captureContractVersion: 2,
+    suppress: storyboard.suppress || [],
+    chapters: storyboard.chapters.filter((chapter) => chapter.stage === stage),
+  });
 }
 
 function slugify(value) {
@@ -218,9 +290,31 @@ async function safeGoto(page, url) {
   try {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
   } catch (error) {
-    if (!/networkidle|Navigation timeout/i.test(String(error && error.message))) throw error;
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    const message = String(error && error.message ? error.message : error);
+    if (/networkidle|Navigation timeout/i.test(message)) {
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        return;
+      } catch (fallbackError) {
+        const fallbackMessage = String(fallbackError && fallbackError.message ? fallbackError.message : fallbackError);
+        fail(`Navigation to ${url} failed after the network-idle fallback: ${fallbackMessage}`);
+      }
+    }
+    const addressHint = /ERR_CONNECTION_REFUSED|ECONNREFUSED/i.test(message)
+      ? ' Verify that the app is listening on this address (127.0.0.1 for IPv4, [::1] for IPv6, or localhost).'
+      : '';
+    fail(`Navigation to ${url} failed: ${message}${addressHint}`);
   }
+}
+
+async function installSuppressions(context, selectors) {
+  if (!selectors || selectors.length === 0) return;
+  await context.addInitScript((suppressedSelectors) => {
+    const style = document.createElement('style');
+    style.id = '__dex_ui_suppressions';
+    style.textContent = suppressedSelectors.map((selector) => `${selector} { display: none !important; }`).join('\n');
+    document.documentElement.appendChild(style);
+  }, selectors);
 }
 
 function locatorFor(page, spec) {
@@ -316,6 +410,14 @@ async function runAction({ page, action, baseUrl, screenshot, stage }) {
     await page.waitForTimeout(action.ms);
     return;
   }
+  if (action.action === 'waitFor') {
+    const locator = locatorFor(page, action.locator);
+    await locator.waitFor({
+      state: action.state || 'visible',
+      timeout: action.timeout_ms || 30000,
+    });
+    return;
+  }
   if (action.action === 'press') {
     await page.keyboard.press(action.key);
     return;
@@ -359,12 +461,19 @@ async function runAction({ page, action, baseUrl, screenshot, stage }) {
   await page.waitForTimeout(500);
 }
 
-async function runStoryboardStage({ page, options, storyboard, viewportName, outDir }) {
-  const chapters = storyboard.chapters.filter((chapter) => chapter.stage === options.stage);
-  for (const chapter of chapters) {
+async function runStoryboardStage({ page, options, storyboard, viewportName, outDir, startedAt }) {
+  const chapters = storyboard.chapters
+    .map((chapter, chapterIndex) => ({ chapter, chapterIndex }))
+    .filter(({ chapter }) => chapter.stage === options.stage);
+  const timelineStartedAt = startedAt || Date.now();
+  const timeline = [];
+  const readiness = [];
+  for (const { chapter, chapterIndex } of chapters) {
     let chapterShown = false;
+    let chapterStartedAt = null;
     for (const action of chapter.actions) {
       if (action.action !== 'goto' && !chapterShown) {
+        chapterStartedAt = Date.now();
         await showChapter(page, chapter);
         chapterShown = true;
       }
@@ -380,18 +489,39 @@ async function runStoryboardStage({ page, options, storyboard, viewportName, out
         },
       });
       if (action.action === 'goto') {
+        chapterStartedAt = Date.now();
         await showChapter(page, chapter);
         chapterShown = true;
       }
+      if (action.action === 'waitFor' || action.action === 'assert') {
+        readiness.push({
+          chapterIndex,
+          action: action.action,
+          locator: action.locator,
+          state: action.action === 'waitFor' ? (action.state || 'visible') : 'visible',
+        });
+      }
     }
+    timeline.push({
+      chapterIndex,
+      startSeconds: Math.max(0, ((chapterStartedAt || timelineStartedAt) - timelineStartedAt) / 1000),
+      endSeconds: Math.max(0.001, (Date.now() - timelineStartedAt) / 1000),
+    });
   }
+  return {
+    actionCount: chapters.reduce((total, { chapter }) => total + chapter.actions.length, 0),
+    readiness,
+    readinessSatisfied: readiness.length > 0,
+    timeline,
+  };
 }
 
 async function runViewport({ browser, playwright, options, storyboard, viewportName, viewport }) {
   const outDir = options.out;
   const videoDir = path.join(outDir, 'video', viewportName);
-  const contextOptions = { viewport, deviceScaleFactor: 1, ignoreHTTPSErrors: true };
-  if (viewportName === 'mobile') Object.assign(contextOptions, playwright.devices['iPhone 15']);
+  const contextOptions = viewportName === 'mobile'
+    ? { ...playwright.devices['iPhone 15'], viewport, deviceScaleFactor: 1, ignoreHTTPSErrors: true }
+    : { viewport, deviceScaleFactor: 1, ignoreHTTPSErrors: true };
   if (options.video || storyboard) {
     fs.mkdirSync(videoDir, { recursive: true });
     contextOptions.recordVideo = { dir: videoDir, size: viewport };
@@ -399,49 +529,93 @@ async function runViewport({ browser, playwright, options, storyboard, viewportN
 
   const context = await browser.newContext(contextOptions);
   const tracePath = path.join(outDir, `${viewportName}-trace.zip`);
-  if (options.trace || storyboard) await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
-
-  const page = await context.newPage();
+  const shouldTrace = options.trace || Boolean(storyboard);
+  let traceStarted = false;
+  let captureError = null;
+  let storyboardExecution = null;
+  let screenshotPath = null;
   const consoleErrors = [];
   const pageErrors = [];
   const networkErrors = [];
   const responses = [];
-  page.on('console', (message) => { if (['error', 'warning'].includes(message.type())) consoleErrors.push(`[${message.type()}] ${message.text()}`); });
-  page.on('pageerror', (error) => pageErrors.push(error.stack || error.message || String(error)));
-  page.on('requestfailed', (request) => networkErrors.push(`${request.method()} ${request.url()} :: ${(request.failure() || {}).errorText || 'failed'}`));
-  page.on('response', (response) => { if (response.status() >= 400) responses.push(`${response.status()} ${response.url()}`); });
+  try {
+    await installSuppressions(context, storyboard ? storyboard.suppress : []);
+    if (shouldTrace) {
+      await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+      traceStarted = true;
+    }
 
-  await safeGoto(page, options.url);
-  await ensureOverlay(page, options.stage || 'capture');
-  if (options.waitMs > 0) await page.waitForTimeout(options.waitMs);
+    const startedAt = Date.now();
+    const page = await context.newPage();
+    page.on('console', (message) => { if (['error', 'warning'].includes(message.type())) consoleErrors.push(`[${message.type()}] ${message.text()}`); });
+    page.on('pageerror', (error) => pageErrors.push(error.stack || error.message || String(error)));
+    page.on('requestfailed', (request) => networkErrors.push(`${request.method()} ${request.url()} :: ${(request.failure() || {}).errorText || 'failed'}`));
+    page.on('response', (response) => { if (response.status() >= 400) responses.push(`${response.status()} ${response.url()}`); });
 
-  if (storyboard) {
-    await runStoryboardStage({ page, options, storyboard, viewportName, outDir });
-  } else if (options.flow) {
-    const flowPath = path.resolve(options.flow);
-    const flow = require(flowPath);
-    const runner = typeof flow === 'function' ? flow : flow.run;
-    if (typeof runner !== 'function') fail(`Flow file must export a function or { run }; got ${flowPath}`);
-    await runner({
-      page, context, viewportName, artifactsDir: outDir,
-      screenshot: async (name) => {
-        const screenshotPath = path.join(outDir, `${viewportName}-${slugify(name)}.png`);
-        await page.screenshot({ path: screenshotPath, fullPage: true });
-        return screenshotPath;
-      },
-    });
+    await safeGoto(page, options.url);
+    await ensureOverlay(page, options.stage || 'capture');
+    if (options.waitMs > 0) await page.waitForTimeout(options.waitMs);
+
+    if (storyboard) {
+      storyboardExecution = await runStoryboardStage({
+        page, options, storyboard, viewportName, outDir, startedAt,
+      });
+    } else if (options.flow) {
+      const flowPath = path.resolve(options.flow);
+      const flow = require(flowPath);
+      const runner = typeof flow === 'function' ? flow : flow.run;
+      if (typeof runner !== 'function') fail(`Flow file must export a function or { run }; got ${flowPath}`);
+      await runner({
+        page, context, viewportName, artifactsDir: outDir,
+        screenshot: async (name) => {
+          const flowScreenshotPath = path.join(outDir, `${viewportName}-${slugify(name)}.png`);
+          await page.screenshot({ path: flowScreenshotPath, fullPage: true });
+          return flowScreenshotPath;
+        },
+      });
+    }
+
+    if (options.waitMs > 0) await page.waitForTimeout(options.waitMs);
+    screenshotPath = path.join(outDir, `${viewportName}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: !storyboard });
+  } catch (error) {
+    captureError = error;
   }
 
-  if (options.waitMs > 0) await page.waitForTimeout(options.waitMs);
-  const screenshotPath = path.join(outDir, `${viewportName}.png`);
-  await page.screenshot({ path: screenshotPath, fullPage: !storyboard });
-  if (options.trace || storyboard) await context.tracing.stop({ path: tracePath });
-  await context.close();
+  if (traceStarted) {
+    try {
+      await context.tracing.stop({ path: tracePath });
+    } catch (error) {
+      if (!captureError) captureError = error;
+    }
+  }
+  try {
+    await context.close();
+  } catch (error) {
+    if (!captureError) captureError = error;
+  }
+  if (captureError) {
+    const traceNote = traceStarted && fs.existsSync(tracePath) ? ` Failure trace: ${tracePath}` : '';
+    fail(`${String(captureError && captureError.message ? captureError.message : captureError)}${traceNote}`);
+  }
+  if (traceStarted && !options.trace) fs.rmSync(tracePath, { force: true });
 
   const videoFiles = fs.existsSync(videoDir)
     ? fs.readdirSync(videoDir).filter((file) => file.endsWith('.webm')).map((file) => path.join(videoDir, file))
     : [];
-  return { viewport: viewportName, screenshot: screenshotPath, trace: options.trace || storyboard ? tracePath : null, videos: videoFiles, consoleErrors, pageErrors, networkErrors, httpErrors: responses };
+  return {
+    viewport: viewportName,
+    viewportSize: viewport,
+    screenshot: screenshotPath,
+    trace: options.trace ? tracePath : null,
+    videos: videoFiles,
+    storyboardExecution,
+    suppressedSelectors: storyboard ? storyboard.suppress : [],
+    consoleErrors,
+    pageErrors,
+    networkErrors,
+    httpErrors: responses,
+  };
 }
 
 async function captureStage(options, storyboard) {
@@ -462,7 +636,7 @@ async function captureStage(options, storyboard) {
   }
 
   const metadata = {
-    version: 2,
+    version: 3,
     name: options.name || (storyboard && storyboard.name) || 'capture',
     stage: options.stage || null,
     url: options.url,
@@ -509,11 +683,51 @@ function latestStageRecord(records, stage) {
 
 function primaryVideo(record) {
   if (!record) return null;
-  const result = record.results.find((candidate) => candidate.viewport === 'desktop') || record.results[0];
+  const result = primaryResult(record);
   return result && result.videos && result.videos.find((video) => fs.existsSync(video));
 }
 
-function writeTranscript(sessionDir, storyboard, mediaSeconds = null) {
+function primaryResult(record) {
+  if (!record || !Array.isArray(record.results)) return null;
+  return record.results.find((candidate) => candidate.viewport === 'desktop') || record.results[0] || null;
+}
+
+function captureExecutionVerified(record, storyboard, stage) {
+  const expectedChapters = storyboard.chapters
+    .map((chapter, chapterIndex) => ({ chapter, chapterIndex }))
+    .filter(({ chapter }) => chapter.stage === stage);
+  const expectedActionCount = expectedChapters
+    .reduce((total, { chapter }) => total + chapter.actions.length, 0);
+  const expectedChapterIndices = expectedChapters.map(({ chapterIndex }) => chapterIndex);
+  return Boolean(record && Array.isArray(record.results) && record.results.length > 0
+    && record.results.every((result) => {
+      const execution = result.storyboardExecution;
+      if (!execution || execution.readinessSatisfied !== true
+        || execution.actionCount !== expectedActionCount || !Array.isArray(execution.timeline)
+        || !Array.isArray(execution.readiness) || execution.readiness.length === 0) {
+        return false;
+      }
+      const actualChapterIndices = execution.timeline.map((timing) => timing.chapterIndex);
+      return JSON.stringify(actualChapterIndices) === JSON.stringify(expectedChapterIndices);
+    }));
+}
+
+function finalReadinessGate(record) {
+  const result = primaryResult(record);
+  const readiness = result && result.storyboardExecution && result.storyboardExecution.readiness;
+  return Array.isArray(readiness) && readiness.length > 0 ? readiness[readiness.length - 1] : null;
+}
+
+function captureViewportContract(record) {
+  if (!record || !Array.isArray(record.results)) return [];
+  return record.results.map((result) => ({
+    name: result.viewport,
+    width: result.viewportSize && result.viewportSize.width,
+    height: result.viewportSize && result.viewportSize.height,
+  })).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function writeTranscript(sessionDir, storyboard) {
   const lines = [
     `# ${storyboard.title}`, '', storyboard.summary, '',
     '## Product context', '', storyboard.product_context, '',
@@ -521,7 +735,7 @@ function writeTranscript(sessionDir, storyboard, mediaSeconds = null) {
     '## How to test', '', storyboard.how_to_test, '',
     '## Transcript', '',
   ];
-  storyboard.chapters.forEach((chapter) => {
+  orderedChapters(storyboard).forEach(({ chapter }) => {
     const stage = chapter.stage === 'before' ? 'Before' : 'After';
     const title = chapter.title.trim();
     const heading = title.toLowerCase() === stage.toLowerCase() || title.toLowerCase().startsWith(`${stage.toLowerCase()}:`)
@@ -530,24 +744,65 @@ function writeTranscript(sessionDir, storyboard, mediaSeconds = null) {
     lines.push(`### ${heading}`, '', chapter.narration, '');
   });
   fs.writeFileSync(path.join(sessionDir, 'transcript.md'), `${lines.join('\n')}\n`);
+}
 
-  const total = mediaSeconds === null
-    ? Math.max(estimatedSeconds(storyboard), storyboard.target_seconds)
-    : Math.max(1, mediaSeconds);
-  const duration = total / storyboard.chapters.length;
+function timecode(seconds) {
+  const totalMilliseconds = Math.max(0, Math.round(seconds * 1000));
+  const hours = String(Math.floor(totalMilliseconds / 3600000)).padStart(2, '0');
+  const minutes = String(Math.floor((totalMilliseconds % 3600000) / 60000)).padStart(2, '0');
+  const secs = String(Math.floor((totalMilliseconds % 60000) / 1000)).padStart(2, '0');
+  const milliseconds = String(totalMilliseconds % 1000).padStart(3, '0');
+  return `${hours}:${minutes}:${secs}.${milliseconds}`;
+}
+
+function writeVtt(sessionDir, storyboard, cues) {
+  const chapters = new Map(orderedChapters(storyboard).map((entry) => [entry.chapterIndex, entry.chapter]));
+  if (!Array.isArray(cues) || cues.length !== chapters.size) {
+    fail('Caption timing is incomplete; every storyboard chapter needs a measured cue');
+  }
   const vtt = ['WEBVTT', ''];
-  const timecode = (seconds) => {
-    const totalMilliseconds = Math.max(0, Math.round(seconds * 1000));
-    const hours = String(Math.floor(totalMilliseconds / 3600000)).padStart(2, '0');
-    const minutes = String(Math.floor((totalMilliseconds % 3600000) / 60000)).padStart(2, '0');
-    const secs = String(Math.floor((totalMilliseconds % 60000) / 1000)).padStart(2, '0');
-    const milliseconds = String(totalMilliseconds % 1000).padStart(3, '0');
-    return `${hours}:${minutes}:${secs}.${milliseconds}`;
-  };
-  storyboard.chapters.forEach((chapter, index) => {
-    vtt.push(`${timecode(index * duration)} --> ${timecode((index + 1) * duration)}`, chapter.narration, '');
+  const seen = new Set();
+  let previousEnd = 0;
+  cues.slice().sort((left, right) => left.startSeconds - right.startSeconds).forEach((cue) => {
+    const chapter = chapters.get(cue.chapterIndex);
+    if (!chapter || !Number.isFinite(cue.startSeconds) || !Number.isFinite(cue.endSeconds)
+      || cue.endSeconds <= cue.startSeconds || cue.startSeconds < previousEnd || seen.has(cue.chapterIndex)) {
+      fail('Caption timing contains an invalid chapter cue');
+    }
+    seen.add(cue.chapterIndex);
+    previousEnd = cue.endSeconds;
+    vtt.push(`${timecode(cue.startSeconds)} --> ${timecode(cue.endSeconds)}`, chapter.narration, '');
   });
   fs.writeFileSync(path.join(sessionDir, 'captions.vtt'), `${vtt.join('\n')}\n`);
+}
+
+function captureCaptionCues(storyboard, binary, before, after) {
+  const records = new Map([['before', before], ['after', after]]);
+  const stages = storyboard.comparison === 'after_only' ? ['after'] : ['before', 'after'];
+  const cues = [];
+  let stageOffset = 0;
+  for (const stage of stages) {
+    const record = records.get(stage);
+    const result = primaryResult(record);
+    const video = primaryVideo(record);
+    const duration = video ? mediaDuration(binary, video) : null;
+    const timeline = result && result.storyboardExecution && result.storyboardExecution.timeline;
+    if (duration === null || !Array.isArray(timeline)) return null;
+    for (const { chapterIndex } of orderedChapters(storyboard).filter(({ chapter }) => chapter.stage === stage)) {
+      const timing = timeline.find((candidate) => candidate.chapterIndex === chapterIndex);
+      if (!timing || !Number.isFinite(timing.startSeconds) || !Number.isFinite(timing.endSeconds)
+        || timing.startSeconds < 0 || timing.startSeconds >= duration || timing.endSeconds <= timing.startSeconds) {
+        return null;
+      }
+      cues.push({
+        chapterIndex,
+        startSeconds: stageOffset + timing.startSeconds,
+        endSeconds: stageOffset + Math.min(duration, timing.endSeconds),
+      });
+    }
+    stageOffset += duration;
+  }
+  return cues;
 }
 
 function ffmpegBinary() {
@@ -573,19 +828,88 @@ function mediaDuration(binary, filePath) {
   return (Number(match[1]) * 3600) + (Number(match[2]) * 60) + Number(match[3]);
 }
 
-async function generateNarration(sessionDir, storyboard) {
+function narrationDurationMatches(actualSeconds, estimatedDuration) {
+  if (!Number.isFinite(actualSeconds) || actualSeconds <= 0) return false;
+  const tolerance = Math.max(2, estimatedDuration * 0.35);
+  return Math.abs(actualSeconds - estimatedDuration) <= tolerance;
+}
+
+async function generateNarration(sessionDir, storyboard, binary, services = {}) {
   const toolsDir = process.env.DX_UI_CAPTURE_TOOLS_DIR;
-  if (!toolsDir) return { ok: false, reason: 'tool directory is unavailable' };
+  if (!toolsDir && !services.createTts) return { ok: false, reason: 'tool directory is unavailable' };
+  const output = path.join(sessionDir, 'narration.wav');
+  const clipsDir = path.join(sessionDir, '.narration-chapters');
+  fs.rmSync(output, { force: true });
+  fs.rmSync(clipsDir, { recursive: true, force: true });
+  fs.mkdirSync(clipsDir, { recursive: true });
   try {
-    const packagePath = require.resolve('kokoro-js', { paths: [toolsDir] });
-    const { KokoroTTS } = await import(pathToFileURL(packagePath).href);
-    const tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'q8', device: 'cpu' });
-    const audio = await tts.generate(narrationText(storyboard), { voice: process.env.DX_UI_CAPTURE_VOICE || 'bf_emma', speed: 1.05 });
-    const output = path.join(sessionDir, 'narration.wav');
-    await audio.save(output);
-    return { ok: fs.existsSync(output) && fs.statSync(output).size > 0, path: output, reason: 'local Kokoro narration failed' };
+    let tts;
+    if (services.createTts) {
+      tts = await services.createTts();
+    } else {
+      const packagePath = require.resolve('kokoro-js', { paths: [toolsDir] });
+      const { KokoroTTS } = await import(pathToFileURL(packagePath).href);
+      tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'q8', device: 'cpu' });
+    }
+    const durationOf = services.durationOf || ((filePath) => mediaDuration(binary, filePath));
+    const concatenate = services.concatenate || ((clipPaths, targetPath) => {
+      const concatFile = path.join(clipsDir, 'concat.txt');
+      const escape = (file) => file.replace(/'/g, "'\\''");
+      fs.writeFileSync(concatFile, `${clipPaths.map((file) => `file '${escape(file)}'`).join('\n')}\n`);
+      runFfmpeg(binary, ['-y', '-f', 'concat', '-safe', '0', '-i', concatFile, '-c:a', 'pcm_s16le', targetPath]);
+    });
+    const clips = [];
+    const cues = [];
+    let offset = 0;
+    for (const { chapter, chapterIndex } of orderedChapters(storyboard)) {
+      const clipPath = path.join(clipsDir, `${String(chapterIndex).padStart(2, '0')}.wav`);
+      const audio = await tts.generate(chapter.narration.trim(), {
+        voice: process.env.DX_UI_CAPTURE_VOICE || 'bf_emma',
+        speed: 1.05,
+      });
+      await audio.save(clipPath);
+      const actualDuration = fs.existsSync(clipPath) && fs.statSync(clipPath).size > 0
+        ? durationOf(clipPath)
+        : null;
+      const expectedDuration = estimatedChapterSeconds(chapter);
+      if (!narrationDurationMatches(actualDuration, expectedDuration)) {
+        return {
+          ok: false,
+          incomplete: true,
+          reason: `chapter ${chapterIndex + 1} narration duration ${actualDuration === null ? 'could not be measured' : `${actualDuration.toFixed(2)}s`} does not match the ${expectedDuration.toFixed(2)}s estimate`,
+        };
+      }
+      clips.push(clipPath);
+      cues.push({ chapterIndex, startSeconds: offset, endSeconds: offset + actualDuration });
+      offset += actualDuration;
+    }
+    concatenate(clips, output);
+    const outputDuration = fs.existsSync(output) && fs.statSync(output).size > 0 ? durationOf(output) : null;
+    const estimatedDuration = orderedChapters(storyboard)
+      .reduce((total, { chapter }) => total + estimatedChapterSeconds(chapter), 0);
+    const concatTolerance = Math.max(0.25, offset * 0.02);
+    if (!Number.isFinite(outputDuration) || Math.abs(outputDuration - offset) > concatTolerance
+      || !narrationDurationMatches(outputDuration, estimatedDuration)) {
+      fs.rmSync(output, { force: true });
+      return {
+        ok: false,
+        incomplete: true,
+        reason: `combined narration duration ${outputDuration === null ? 'could not be measured' : `${outputDuration.toFixed(2)}s`} does not match the ${estimatedDuration.toFixed(2)}s estimate`,
+      };
+    }
+    return {
+      ok: true,
+      path: output,
+      reason: null,
+      durationSeconds: outputDuration,
+      estimatedDurationSeconds: estimatedDuration,
+      cues,
+    };
   } catch (error) {
+    fs.rmSync(output, { force: true });
     return { ok: false, reason: String(error && error.message ? error.message : error) };
+  } finally {
+    fs.rmSync(clipsDir, { recursive: true, force: true });
   }
 }
 
@@ -601,12 +925,32 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
   const finalVideo = path.join(sessionDir, 'walkthrough.mp4');
   const poster = path.join(sessionDir, 'poster.png');
   const manifest = path.join(sessionDir, 'visual-evidence.md');
+  const captions = path.join(sessionDir, 'captions.vtt');
   fs.rmSync(finalVideo, { force: true });
   fs.rmSync(poster, { force: true });
+  fs.rmSync(captions, { force: true });
   const notes = [];
   let status = 'READY';
   let narration = { ok: false, reason: 'disabled' };
   let finalDurationSeconds = null;
+  let captionCues = null;
+
+  const readinessSatisfied = (!requiresBefore || captureExecutionVerified(before, storyboard, 'before'))
+    && captureExecutionVerified(after, storyboard, 'after');
+  const beforeReadinessGate = finalReadinessGate(before);
+  const afterReadinessGate = finalReadinessGate(after);
+  const beforeViewports = captureViewportContract(before);
+  const afterViewports = captureViewportContract(after);
+  const viewportParity = !requiresBefore
+    || (beforeViewports.length > 0 && stableHash(beforeViewports) === stableHash(afterViewports));
+  if ((before || after) && !readinessSatisfied) {
+    status = 'NEEDS_REVIEW';
+    notes.push('Capture readiness could not be verified for every recorded viewport. Re-run both stages with waitFor or assert gates.');
+  }
+  if ((before || after) && !viewportParity) {
+    status = 'NEEDS_REVIEW';
+    notes.push('Before and after viewport sets differ. Re-run the stages with the same viewport names and dimensions.');
+  }
 
   if ((requiresBefore && !beforeVideo) || !afterVideo) {
     status = 'NEEDS_REVIEW';
@@ -625,10 +969,11 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
       fs.writeFileSync(concatFile, `${sourceVideos.map((file) => `file '${escape(file)}'`).join('\n')}\n`);
       const silentVideo = path.join(sessionDir, '.walkthrough-silent.mp4');
       runFfmpeg(binary, ['-y', '-f', 'concat', '-safe', '0', '-i', concatFile, '-c:v', 'libx264', '-preset', 'medium', '-crf', '25', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', silentVideo]);
-      if (narrationEnabled) narration = await generateNarration(sessionDir, storyboard);
+      if (narrationEnabled) narration = await generateNarration(sessionDir, storyboard, binary);
       if (narration.ok) {
+        captionCues = narration.cues;
         const silentDuration = mediaDuration(binary, silentVideo);
-        const narrationDuration = mediaDuration(binary, narration.path);
+        const narrationDuration = narration.durationSeconds;
         if (silentDuration !== null && narrationDuration !== null) {
           const finalDuration = Math.max(silentDuration, narrationDuration);
           const videoPadding = Math.max(0, finalDuration - silentDuration);
@@ -644,9 +989,15 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
         }
       } else {
         fs.copyFileSync(silentVideo, finalVideo);
-        notes.push(narrationEnabled
-          ? `Local narration unavailable; the captioned video is ready (${narration.reason}).`
-          : 'Narration was disabled; the captioned video is ready.');
+        captionCues = captureCaptionCues(storyboard, binary, before, after);
+        if (narration.incomplete) status = 'NEEDS_REVIEW';
+        if (!narrationEnabled) {
+          notes.push('Narration was disabled; the captioned video is ready.');
+        } else if (narration.incomplete) {
+          notes.push(`Local narration was incomplete and the audio was discarded (${narration.reason}).`);
+        } else {
+          notes.push(`Local narration unavailable; captions use the measured capture timeline (${narration.reason}).`);
+        }
       }
       fs.rmSync(concatFile, { force: true });
       fs.rmSync(silentVideo, { force: true });
@@ -666,10 +1017,14 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
         status = 'NEEDS_REVIEW';
         notes.push(`Final video is ${(fs.statSync(finalVideo).size / (1024 * 1024)).toFixed(1)} MiB; trim the storyboard before PR upload.`);
       }
+      if (captionCues) {
+        writeVtt(sessionDir, storyboard, captionCues);
+      } else {
+        status = 'NEEDS_REVIEW';
+        notes.push('Caption timing could not be measured from narration or the captured chapter timeline.');
+      }
     }
   }
-
-  if (finalDurationSeconds !== null) writeTranscript(sessionDir, storyboard, finalDurationSeconds);
 
   const afterResult = after && (after.results.find((item) => item.viewport === 'desktop') || after.results[0]);
   if (afterResult && afterResult.screenshot && fs.existsSync(afterResult.screenshot)) fs.copyFileSync(afterResult.screenshot, poster);
@@ -680,11 +1035,16 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     `- Video: ${fs.existsSync(finalVideo) ? finalVideo : 'not rendered'}`,
     `- Poster: ${fs.existsSync(poster) ? poster : 'not rendered'}`,
     `- Transcript: ${path.join(sessionDir, 'transcript.md')}`,
-    `- Captions: ${path.join(sessionDir, 'captions.vtt')}`,
+    `- Captions: ${fs.existsSync(captions) ? captions : 'not generated'}`,
     `- Storyboard: ${path.join(sessionDir, 'walkthrough.json')}`,
     '', '## Capture parity', '',
     `- Before: ${requiresBefore ? (before ? before.directory : 'missing') : `not requested — ${storyboard.baseline_reason}`}`,
     `- After: ${after ? after.directory : 'missing'}`,
+    `- Readiness gates: ${readinessSatisfied ? 'satisfied for every recorded viewport' : 'not verified'}`,
+    `- Viewport parity: ${viewportParity ? 'matched' : 'mismatched'}`,
+    `- Before final gate: ${requiresBefore ? (beforeReadinessGate ? JSON.stringify(beforeReadinessGate) : 'missing') : 'not requested'}`,
+    `- After final gate: ${afterReadinessGate ? JSON.stringify(afterReadinessGate) : 'missing'}`,
+    `- Suppressed selectors: ${storyboard.suppress.length > 0 ? storyboard.suppress.map((selector) => JSON.stringify(selector)).join(', ') : 'none'}`,
     '', '## How to test', '', storyboard.how_to_test, '',
     '## PR handoff', '',
     '- Upload the MP4 and poster to the pull request by dragging them into the PR body or a comment.',
@@ -694,7 +1054,7 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
   fs.writeFileSync(manifest, `${manifestLines.join('\n')}\n`);
 
   const result = {
-    version: 1,
+    version: 2,
     status,
     message: status === 'READY'
       ? `${requiresBefore ? 'Before/after' : 'After-only'} walkthrough ready (${narration.ok ? 'local narration' : 'captions only'})`
@@ -703,8 +1063,16 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     video: fs.existsSync(finalVideo) ? finalVideo : '',
     poster: fs.existsSync(poster) ? poster : '',
     transcript: path.join(sessionDir, 'transcript.md'),
-    captions: path.join(sessionDir, 'captions.vtt'),
-    narration: narration.ok ? 'kokoro' : 'captions-only',
+    captions: fs.existsSync(captions) ? captions : '',
+    narration: narration.ok ? 'kokoro' : (narration.incomplete ? 'failed' : 'captions-only'),
+    narration_duration_seconds: narration.ok ? narration.durationSeconds : null,
+    estimated_narration_seconds: narration.ok ? narration.estimatedDurationSeconds : estimatedSeconds(storyboard),
+    chapter_cues: captionCues || [],
+    readiness_verified: readinessSatisfied,
+    readiness_gates: { before: beforeReadinessGate, after: afterReadinessGate },
+    viewport_parity: viewportParity,
+    viewports: { before: beforeViewports, after: afterViewports },
+    suppressed_selectors: storyboard.suppress,
     before: before ? before.directory : '',
     after: after ? after.directory : '',
     duration_seconds: finalDurationSeconds,
@@ -722,10 +1090,13 @@ async function produceBundle(sessionDir, storyboard, narrationEnabled) {
     fs.mkdirSync(sessionDir, { recursive: true });
     const finalVideo = path.join(sessionDir, 'walkthrough.mp4');
     const poster = path.join(sessionDir, 'poster.png');
+    const captions = path.join(sessionDir, 'captions.vtt');
     const manifest = path.join(sessionDir, 'visual-evidence.md');
     const reason = `Walkthrough production failed: ${String(error && error.message ? error.message : error).replace(/\s+/gu, ' ').slice(0, 1200)}`;
     fs.rmSync(finalVideo, { force: true });
     fs.rmSync(poster, { force: true });
+    fs.rmSync(captions, { force: true });
+    fs.rmSync(path.join(sessionDir, '.narration-chapters'), { recursive: true, force: true });
     for (const temporaryName of ['.walkthrough-concat.txt', '.walkthrough-silent.mp4', '.walkthrough-compressed.mp4']) {
       fs.rmSync(path.join(sessionDir, temporaryName), { force: true });
     }
@@ -736,7 +1107,7 @@ async function produceBundle(sessionDir, storyboard, narrationEnabled) {
       '## Editable sources', '',
       `- Storyboard: ${path.join(sessionDir, 'walkthrough.json')}`,
       `- Transcript: ${path.join(sessionDir, 'transcript.md')}`,
-      `- Captions: ${path.join(sessionDir, 'captions.vtt')}`, '',
+      '- Captions: not generated', '',
       'Raw screenshots, source videos, traces, and browser logs remain in the stage capture directories.', '',
     ];
     fs.writeFileSync(manifest, `${manifestLines.join('\n')}\n`);
@@ -748,7 +1119,7 @@ async function produceBundle(sessionDir, storyboard, narrationEnabled) {
       video: '',
       poster: '',
       transcript: path.join(sessionDir, 'transcript.md'),
-      captions: path.join(sessionDir, 'captions.vtt'),
+      captions: '',
       narration: narrationEnabled ? 'failed' : 'captions-only',
       before: '',
       after: '',
@@ -805,7 +1176,7 @@ async function main() {
         : `${stage} capture is missing; start that version of the app and pass --${stage}-url`);
     }
     const out = path.join(options.sessionDir, `${new Date().toISOString().replace(/[:.]/g, '')}-${stage}-revision`);
-    await captureStage({ ...options, mode: 'capture', stage, url, out, desktop: true, video: true, trace: true }, storyboard);
+    await captureStage({ ...options, mode: 'capture', stage, url, out, desktop: true, video: true }, storyboard);
   }
   const bundle = await produceBundle(options.sessionDir, storyboard, options.narration);
   console.log(`bundle: ${path.join(options.sessionDir, 'bundle.json')}`);
@@ -813,11 +1184,15 @@ async function main() {
 }
 
 module.exports = {
+  generateNarration,
   loadStoryboard,
   matchingStageRecord,
+  narrationDurationMatches,
   produceBundle,
+  runAction,
   stageHash,
   webUrl,
+  writeVtt,
 };
 
 if (require.main === module) {

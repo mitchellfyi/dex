@@ -97,7 +97,11 @@ the user; never silently substitute it for the requested before/after proof.
 Build the storyboard from the diff and observed product behavior, not from file
 names alone. The normal comparison is `before_after`. Give the before and after
 chapters matching actions wherever parity is possible, and make the captions
-describe the visible difference without narrating code trivia.
+describe the visible difference without narrating code trivia. End each stage
+with `waitFor` or `assert` after the last state-changing action; a fixed sleep is
+not evidence that the application reached the intended state. When unrelated
+transient chrome would obscure the proof, use the storyboard's opt-in
+`suppress` selectors and keep the list as narrow as possible.
 
 Prepare the tools and the session storyboard:
 
@@ -137,7 +141,7 @@ dx ui-capture capture \
 Pass `--mobile` to both stages when responsive behavior is in scope. The final
 bundle must include recorded before and after footage, visible stage/chapter
 labels, `walkthrough.mp4`, `poster.png`, `captions.vtt`, `transcript.md`, the
-editable storyboard, screenshots, traces, and reviewed browser logs. Narration
+editable storyboard, screenshots, failure or explicitly requested traces, and reviewed browser logs. Narration
 is optional; captions are not. The combined MP4 should make the comparison
 clear on its first viewing.
 

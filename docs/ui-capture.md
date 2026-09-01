@@ -2,7 +2,7 @@
 
 Dex can turn a browser-facing change into a short, editable PR walkthrough. It also lets the implementation agent decide that a recording would not help. The important contract is an explicit, visible decision—not a video made for its own sake.
 
-Run `/dxproof` whenever you want the full visual artifact on demand. `/dxcapture` is an alias. Both commands inspect committed and working-tree changes against the branch's comparison base, reconstruct the old revision in a temporary Git worktree, and capture matched before and after flows. The final bundle includes the combined MP4, captions, poster, editable storyboard, screenshots, traces, and browser logs. The older `/dxuicapture` entrypoint remains available for lifecycle capture decisions and uses the same shared workflow.
+Run `/dxproof` whenever you want the full visual artifact on demand. `/dxcapture` is an alias. Both commands inspect committed and working-tree changes against the branch's comparison base, reconstruct the old revision in a temporary Git worktree, and capture matched before and after flows. The final bundle includes the combined MP4, captions, poster, editable storyboard, screenshots, browser logs, and any failure or explicitly requested traces. The older `/dxuicapture` entrypoint remains available for lifecycle capture decisions and uses the same shared workflow.
 
 Manual proof is different from the lifecycle decision below: an explicit `/dxproof` or `/dxcapture` request captures the artifact unless the diff has no browser-visible effect or the flow cannot be reproduced safely. A blocked manual capture stays `NEEDS_REVIEW` with the reason; it is not converted into a discretionary skip.
 
@@ -51,7 +51,7 @@ The structured producer writes a compact bundle:
   <timestamp>-<pid>-after-*/
 ```
 
-Each raw run contains its screenshot, Playwright trace, WebM source video, metadata, and console, page, network, and HTTP error logs. Set `DX_ARTIFACT_DIR` to move the root. Dex refuses an output directory inside the repository unless Git ignores it.
+Each raw run contains its screenshot, WebM source video, metadata, and console, page, network, and HTTP error logs. Failed runs retain their Playwright trace; successful runs retain it only when `--trace` is set. Set `DX_ARTIFACT_DIR` to move the root. Dex refuses an output directory inside the repository unless Git ignores it.
 
 Generated files are temporary evidence and must not be committed. During an active lifecycle, the compact bundle is also registered in the run journal. Each artifact carries its capture session and role, so DexCode can pair the walkthrough with its poster and captions. If DexCode sync is connected, normal run-artifact sync uploads the bundle and DexCode shows supported images and videos on the session page. Local paths still do not render on GitHub; the author drags the MP4 and poster into the PR body or a comment.
 
@@ -84,7 +84,7 @@ dx ui-capture install
 dx status
 ```
 
-The speech model is loaded locally and does not need a cloud API key. When narration is disabled or synthesis fails, Dex keeps a captioned MP4 and can still report `READY` if the other production checks pass.
+The speech model is loaded locally and does not need a cloud API key. When narration is disabled or the model is unavailable, Dex keeps a captioned MP4 and can still report `READY` if the other production checks pass. Audio that fails duration validation is discarded and leaves the bundle at `NEEDS_REVIEW`.
 
 ## Storyboard
 
@@ -97,7 +97,7 @@ The speech model is loaded locally and does not need a cloud API key. When narra
 - before and after chapters
 - narration and deterministic browser actions
 
-The structured action vocabulary is deliberately small: `goto`, `click`, `fill`, `press`, `hover`, `scroll`, `wait`, `assert`, and `screenshot`. Locators use accessible roles, labels, visible text, or test IDs. This covers normal user flows without allowing arbitrary JavaScript in a generated storyboard. Existing explicit `--flow` modules remain available for unstructured and unusual flows.
+The structured action vocabulary is deliberately small: `goto`, `click`, `fill`, `press`, `hover`, `scroll`, `wait`, `waitFor`, `assert`, and `screenshot`. Locators use accessible roles, labels, visible text, or test IDs. `waitFor` accepts `visible`, `hidden`, `attached`, and `detached` states plus an optional `timeout_ms` up to 60 seconds. This covers normal user flows without allowing arbitrary JavaScript in a generated storyboard. Existing explicit `--flow` modules remain available for unstructured and unusual flows.
 
 A minimal storyboard looks like this:
 
@@ -111,6 +111,7 @@ A minimal storyboard looks like this:
   "technical_summary": "The form persists the request and renders its successful state.",
   "how_to_test": "Open settings, change email notifications, save, and confirm the saved state.",
   "comparison": "before_after",
+  "suppress": ["[data-ui-transient-toast]"],
   "target_seconds": 55,
   "max_seconds": 90,
   "chapters": [
@@ -120,7 +121,8 @@ A minimal storyboard looks like this:
       "narration": "Saving previously gave no clear confirmation.",
       "actions": [
         {"action": "goto", "path": "/settings"},
-        {"action": "click", "locator": {"by": "role", "role": "button", "name": "Save"}}
+        {"action": "click", "locator": {"by": "role", "role": "button", "name": "Save"}},
+        {"action": "waitFor", "locator": {"by": "role", "role": "heading", "name": "Notification settings"}}
       ]
     },
     {
@@ -140,13 +142,17 @@ A minimal storyboard looks like this:
 
 Use `"comparison": "after_only"` with a non-empty `baseline_reason` when a before state did not exist or cannot truthfully be reproduced. The validator still requires an after chapter.
 
+Every stage must finish with a predicate-based readiness gate after its last state-changing action. Use `waitFor` when an element appears or disappears, or `assert` when the visible element is part of the proof. Fixed waits can still make a recording easier to watch, but they do not qualify as readiness gates. This prevents a before/after bundle from reaching `READY` when either side was captured while the application was still settling.
+
+`suppress` is optional and accepts up to 20 CSS selectors. Dex installs those rules before page scripts run, records them in capture metadata and the final manifest, and uses them for both stages. Use suppression only for unrelated transient chrome such as background-job toasts; do not hide the interface under review.
+
 Validate the script before capture:
 
 ```bash
 dx ui-capture validate --script /absolute/path/to/walkthrough.json
 ```
 
-Validation rejects unknown actions, unsafe locator keys, a transcript whose estimated reading time exceeds the maximum, or a maximum above 90 seconds.
+Validation rejects unknown actions, unsafe locator keys, fixed-wait-only capture boundaries, a transcript whose estimated reading time exceeds the maximum, or a maximum above 90 seconds. Locator kinds are case-insensitive, so both `testid` and the common `testId` spelling are accepted.
 
 ## Capture workflow
 
@@ -159,7 +165,7 @@ dx ui-capture capture \
   --url http://127.0.0.1:3000
 ```
 
-The recorder draws a stable stage badge, chapter caption, pointer, and focus highlight. Storyboard actions can navigate, scroll, and interact with the UI. Playwright captures the final screenshot, source video, trace, and browser logs.
+The recorder draws a stable stage badge, chapter caption, pointer, and focus highlight. Storyboard actions can navigate, scroll, and interact with the UI. Playwright captures the final screenshot, source video, and browser logs. It retains a trace when capture fails; pass `--trace` to keep one after a successful run.
 
 Run `dx ui-capture show` after the baseline. This gives the author the evidence file immediately, while the after pass is still pending.
 
@@ -172,9 +178,9 @@ dx ui-capture capture \
   --url http://127.0.0.1:3000
 ```
 
-The after pass produces the final MP4, poster, transcript, captions, and manifest. Add `--mobile` when responsive behavior matters. Add `--no-narration` for an intentional captions-only cut.
+The after pass produces the final MP4, poster, transcript, captions, and manifest. Add `--mobile` to capture both the 1440×900 desktop viewport and the exact 390×844 mobile viewport. Before/after bundles remain `NEEDS_REVIEW` when their viewport names or dimensions differ. Add `--no-narration` for an intentional captions-only cut.
 
-Aim for 30–75 seconds. Ninety seconds is a hard limit. The final producer checks real media duration and tries a second compression pass above 10 MiB. It reports `NEEDS_REVIEW` when duration, size, missing source footage, or media tooling prevents a clean handoff.
+Aim for 30–75 seconds. Ninety seconds is a hard limit. Narration is synthesized and measured chapter by chapter, and caption cues use the measured speech or capture timeline. Incomplete narration is discarded and the bundle remains `NEEDS_REVIEW`; missing narration tooling can still produce a truthful captions-only cut. The final producer checks real media duration and tries a second compression pass above 10 MiB. It reports `NEEDS_REVIEW` when duration, size, missing source footage, readiness, caption timing, or media tooling prevents a clean handoff.
 
 ## Revision
 
@@ -236,7 +242,8 @@ Set `DX_UI_CAPTURE_RETENTION_DAYS` to an integer from 1 through 3650. Active bun
 |---|---|
 | UI tools are incomplete | Run `dx ui-capture install`, then `dx status`. |
 | The app is unreachable | The proof stays `NEEDS_REVIEW` with a capture error log. Start its normal dev server and retry with the printed HTTP(S) URL. |
-| Narration fails | Keep the captions-only result or rerun with `--no-narration`. |
+| Narration tooling is unavailable | Keep the captions-only result or rerun with `--no-narration`. |
+| Narration is incomplete | Review the failure note, then rerun after repairing the local narration tool or use `--no-narration` intentionally. |
 | The MP4 is too long | Remove setup steps or split the storyboard into a more focused proof. |
 | The MP4 is too large | Shorten the flow; Dex already attempts a higher-compression pass. |
 | A locator is ambiguous | Prefer an accessible role and exact name, then a label or stable test ID. |
