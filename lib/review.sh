@@ -394,6 +394,167 @@ print(hashlib.sha256(canonical.encode("ascii")).hexdigest())
 PY
 }
 
+dx_review_sha256_stdin() {
+  python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
+# A deterministic baseline contains only project-wide command evidence. It is
+# reusable while every supplied binding still matches and every command passed.
+dx_review_baseline_valid() {
+  [[ $# -eq 5 ]] || return 1
+  local baseline_file="$1" expected_scope="$2" expected_working="$3"
+  local expected_criteria="$4" expected_policy="$5"
+  [[ "$expected_scope" =~ ^[a-f0-9]{64}$ ]] || return 1
+  [[ "$expected_working" =~ ^[a-f0-9]{64}$ ]] || return 1
+  dx_review_criteria_binding_valid "$expected_criteria" || return 1
+  dx_review_policy_binding_valid "$expected_policy" || return 1
+  __dx_review_regular_files_bounded 262144 "$baseline_file" || return 1
+  DX_REVIEW_BASELINE_SCOPE="$expected_scope" \
+  DX_REVIEW_BASELINE_WORKING="$expected_working" \
+  DX_REVIEW_BASELINE_CRITERIA="$expected_criteria" \
+  DX_REVIEW_BASELINE_POLICY="$expected_policy" \
+  python3 - "$baseline_file" <<'PY'
+import json
+import os
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+required = {
+    "version",
+    "scope_fingerprint",
+    "working_fingerprint",
+    "criteria_binding",
+    "policy_binding",
+    "commands",
+}
+if (
+    not isinstance(payload, dict)
+    or set(payload) != required
+    or isinstance(payload["version"], bool)
+    or payload["version"] != 1
+):
+    raise SystemExit(1)
+expected = {
+    "scope_fingerprint": os.environ["DX_REVIEW_BASELINE_SCOPE"],
+    "working_fingerprint": os.environ["DX_REVIEW_BASELINE_WORKING"],
+    "criteria_binding": os.environ["DX_REVIEW_BASELINE_CRITERIA"],
+    "policy_binding": os.environ["DX_REVIEW_BASELINE_POLICY"],
+}
+if any(payload[key] != value for key, value in expected.items()):
+    raise SystemExit(1)
+commands = payload["commands"]
+if not isinstance(commands, list) or not 1 <= len(commands) <= 64:
+    raise SystemExit(1)
+for item in commands:
+    if not isinstance(item, dict) or set(item) != {
+        "name", "command", "status", "duration_seconds"
+    }:
+        raise SystemExit(1)
+    name = item["name"]
+    command = item["command"]
+    duration = item["duration_seconds"]
+    if (
+        not isinstance(name, str)
+        or not 1 <= len(name) <= 160
+        or name != name.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+        or not isinstance(command, str)
+        or not 1 <= len(command) <= 4096
+        or command != command.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in command)
+        or item["status"] != "pass"
+        or isinstance(duration, bool)
+        or not isinstance(duration, int)
+        or not 0 <= duration <= 999999999999999
+    ):
+        raise SystemExit(1)
+PY
+}
+
+dx_review_baseline_hash() {
+  [[ $# -eq 1 ]] || return 1
+  local baseline_file="$1"
+  __dx_review_regular_files_bounded 262144 "$baseline_file" || return 1
+  python3 - "$baseline_file" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    print(hashlib.sha256(handle.read()).hexdigest())
+PY
+}
+
+dx_review_baseline_summary() {
+  [[ $# -eq 1 ]] || return 1
+  local baseline_file="$1"
+  __dx_review_regular_files_bounded 262144 "$baseline_file" || return 1
+  python3 - "$baseline_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    commands = json.load(handle)["commands"]
+print(f"{len(commands)}\t{sum(item['duration_seconds'] for item in commands)}")
+PY
+}
+
+dx_review_metrics_valid() {
+  local metrics_file="$1"
+  __dx_review_regular_files_bounded 4096 "$metrics_file" || return 1
+  python3 - "$metrics_file" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+keys = {
+    "version",
+    "context_seconds",
+    "checks_seconds",
+    "scout_seconds",
+    "verifier_seconds",
+}
+if (
+    not isinstance(payload, dict)
+    or set(payload) != keys
+    or isinstance(payload["version"], bool)
+    or payload["version"] != 1
+):
+    raise SystemExit(1)
+for key in keys - {"version"}:
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 86400:
+        raise SystemExit(1)
+PY
+}
+
+dx_review_metrics_summary() {
+  local metrics_file="$1"
+  dx_review_metrics_valid "$metrics_file" || return 1
+  python3 - "$metrics_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+print("\t".join(str(payload[key]) for key in (
+    "context_seconds",
+    "checks_seconds",
+    "scout_seconds",
+    "verifier_seconds",
+)))
+PY
+}
+
 # Resolve an explicit criteria binding, or infer one for compatibility callers.
 # A present-but-invalid criteria file is always an error.
 dx_review_resolve_criteria_binding() {

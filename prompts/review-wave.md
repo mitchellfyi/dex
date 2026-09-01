@@ -3,18 +3,20 @@
 One `/dxreviewloop` iteration reviews the caller-supplied scope. This is usually
 the full current change set; when no change set exists, it is the entire tracked
 codebase. The outer loop maps its selected risk tier to review depth and a
-consecutive `CLEAN` gate. The default policy is 1 wave for `small`, 3 for
-`normal`, and 6 for `complex`; the wrapper supplies the resolved trusted policy
-for the current run.
+consecutive `CLEAN` gate. The global policy is 1 wave for `small`, 2 for
+`normal`, and 3 for `complex`; the wrapper supplies the bound policy for the
+current run.
 
 ## Rules
 
 - Review the full caller-supplied scope every wave.
 - Treat this as an independent review. Use only the current code, supplied
   scope, supplied acceptance criteria, and selected profile.
-- Do not read or infer prior review reports, prior findings, findings
+- Do not read or infer prior semantic review reports, prior findings, findings
   fingerprints, clean-pass counts, telemetry, stale session prompts, previous
   turns, or unrelated ticket context.
+- A scope-bound deterministic baseline is mechanical command evidence, not a
+  prior review conclusion. Reuse it only under the rules below.
 - Build the context pack before broad exploration or domain-specific review.
 - Run deterministic checks before semantic review.
 - The review wave runs in one CLI session.
@@ -104,6 +106,39 @@ Run available scoped checks first: format/check, lint, typecheck, targeted tests
 generated-code freshness, shell syntax/`shellcheck`, and CI/config validation
 when relevant. Mechanical fixes make the wave non-`CLEAN`.
 
+The wrapper may supply `DEX_REVIEW_BASELINE_FILE` and one of two modes:
+
+- `fresh`: run every applicable check. If an expensive command explicitly runs
+  the whole project's test suite or equivalent all-target gate, record its
+  passing result in the baseline.
+- `reuse`: validate the baseline with `dx_review_baseline_valid` against the
+  supplied scope, working-tree, criteria, and policy bindings. Reuse only the
+  listed project-wide commands instead of rerunning them.
+
+Every wave still runs fast static checks, lint, type checks, focused tests,
+generated-file checks, repro probes, and checks affected by a fix. Never reuse
+an ambiguous, partially scoped, failed, or unavailable command. A fresh
+baseline is optional when no command qualifies. When one does, write it
+atomically with this exact shape:
+
+```json
+{
+  "version": 1,
+  "scope_fingerprint": "<DEX_REVIEW_SCOPE_FINGERPRINT>",
+  "working_fingerprint": "<DEX_REVIEW_WORKING_FINGERPRINT>",
+  "criteria_binding": "<DEX_REVIEW_CRITERIA_BINDING>",
+  "policy_binding": "<DEX_REVIEW_POLICY_BINDING>",
+  "commands": [
+    {
+      "name": "full test suite",
+      "command": "<exact command>",
+      "status": "pass",
+      "duration_seconds": 42
+    }
+  ]
+}
+```
+
 `CLEAN` and `FINDINGS_FIXED:N` require all applicable deterministic checks to
 pass. If a required check fails, is only partially run, or cannot be run, use a
 non-clean result that accurately describes the blocker. Never pair `CLEAN`
@@ -129,7 +164,7 @@ the final change set as a regression test, keep it and include it in the fix. If
 it was review-only, remove it before the wave result and keep the command/output
 in the context pack.
 
-## 4. Issue Harvest
+## 4. Parallel Issue Harvest
 
 Collect all candidate issues before fixing anything.
 
@@ -140,7 +175,21 @@ Collect all candidate issues before fixing anything.
 - `thorough` (`complex`): all domain sweeps across the full caller-supplied
   scope.
 
-The wave orchestrator covers all requested domains in the current CLI session.
+Use provider-native parallel agents for independent, read-only scouting. The
+top-level wave remains the only writer and verifier. Use no more than three
+groups:
+
+1. correctness, contracts, and tests
+2. security, architecture, and devops
+3. frontend, performance, and observability
+
+Use the first two groups for `light`; use up to all three applicable groups for
+`standard` and `thorough`. Snapshot the checkout before and after scouting. If
+a scout changes it, restore nothing and write `BLOCKED:scout-mutated-checkout`.
+Retry a failed scout once. If required coverage is still unavailable, write
+`BLOCKED:review-scout-unavailable`. If the provider cannot run parallel agents,
+run the same groups sequentially in the top-level session.
+
 Construct breaking inputs, trace direct callers, and filter speculation.
 
 Full domain roster in `thorough`: correctness, security, contracts, tests,
@@ -175,10 +224,10 @@ them.
 
 ## 5. Verification
 
-Run an explicit verifier pass over the candidate inventory. Deduplicate by root
-cause, re-read cited code, check project context and caller-supplied accepted
-debt, reject weak/stale evidence, confirm change relevance, and normalize
-severity.
+The top-level wave runs an explicit verifier pass over the merged candidate
+inventory. Deduplicate by root cause, re-read cited code, check project context
+and caller-supplied accepted debt, reject weak or stale evidence, confirm change
+relevance, and normalize severity.
 
 Only verified findings may drive fixes. If a valid upward escalation survives
 verification, write it instead of fixing.
@@ -207,6 +256,27 @@ states, write `CHURN:fix-cycle` and stop. The outer loop pauses rather than
 counting the wave or retrying indefinitely.
 
 ## 7. Result Signal
+
+When `DEX_REVIEW_BUSY_TOKEN` is set, call `dx_phase_busy_update` before context,
+checks, scouting, verification, and fixes. Use the supplied parent session and
+busy token, and keep the label in this form:
+
+```text
+Wave <number> · <stage> · <clean-before>/<required-clean> clean
+```
+
+Before completing, atomically write optional stage timing telemetry to
+`DEX_REVIEW_METRICS_FILE` when that path is supplied:
+
+```json
+{
+  "version": 1,
+  "context_seconds": 0,
+  "checks_seconds": 0,
+  "scout_seconds": 0,
+  "verifier_seconds": 0
+}
+```
 
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1

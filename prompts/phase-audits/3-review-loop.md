@@ -19,15 +19,13 @@ All of these must be true:
 - `/dxreviewloop` reviewed the full caller-supplied scope: the current change
   set, or the entire tracked codebase when no change set exists.
 - The `/dxreviewloop` result is `SUCCESS`.
-- The loop reached the selected tier's trusted consecutive clean gate. The
-  default requirements are 1 for `small`, 3 for `normal`, and 6 for `complex`.
-  The committed default branch may configure monotonic requirements from 1
-  through 30 in `.dex/dex.md` `## Review Policy`.
+- The loop reached the selected tier's global consecutive clean gate: 1 for
+  `small`, 2 for `normal`, and 3 for `complex`.
   `DEX_REVIEW_CLEAN_PASSES` may raise the launch requirement but cannot lower
   it. Candidate-branch policy edits do not change the active gate. An
   attributed `review.clean-passes` session override may lower the effective
   target while still requiring that many independent `CLEAN` waves. Its
-  receipt remains bound to the trusted policy and override decision, and the
+  receipt remains bound to the global policy and override decision, and the
   phase outcome is `waived`. A full `dx control waive review.clean-passes`
   advances without a clean-review receipt.
 - Every counted clean result came from a fresh pass-scoped agent session that

@@ -197,7 +197,7 @@ __dx_cli() {
       echo "Standalone completion (recovery / non-dx PRs):"
       echo "  dxcomplete             Monitor CI/reviews, address comments, close ticket"
       echo ""
-      echo "Standalone review (agent-selected risk tier with a trusted clean-pass gate):"
+      echo "Standalone review (agent-selected risk tier with a global clean-pass gate):"
       echo "  dxreviewloop           Review current changes, or whole codebase if clean"
       echo ""
       echo "Prompt loop:"
@@ -364,7 +364,7 @@ The dxplan skill writes the required Phase 1 lifecycle markers. For freeform \`d
 
 For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact. Phase focus: implementation, testing, and trustworthy proof. Follow prompts/commit-format.md, commit coherent green increments early, and push immediately after every commit. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If the approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 still performs final verification and publishes review or verification repairs. When done, stop — the audit loop will verify your work." \
-  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Do not commit, push, or create a PR in Phase 3; Phase 4 publishes accepted review fixes after final verification. When the loop writes a valid success receipt, stop — the audit loop will verify." \
+  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 1, normal 2, and complex 3 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and parallel read-only domain scouting, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Do not commit, push, or create a PR in Phase 3; Phase 4 publishes accepted review fixes after final verification. When the loop writes a valid success receipt, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). Fix any failures and re-run until all green. If Phase 3 review fixes or verification left changes, invoke skill: \"dxcommit\" to create atomic repair commits and push each one immediately; otherwise confirm local HEAD is already on origin. A newly created local branch with no branch-specific commits cannot enter the ordinary PR flow; return to Phase 2's user-direction path instead of publishing it. Phase focus: final verification, but PR creation and implementation fixes remain available when useful. When the branch is verified and current, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, prepare any UI visual evidence handoff, create the draft PR, and attach the configured 'request' reviewers from dex.md § Reviewers. Phase focus: PR creation, description, and artifact handoff. Marking ready, posting @mentions, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: mark the PR ready, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, re-read the current completion wait/cycle defaults, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the current bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
@@ -392,8 +392,8 @@ __dx_phase_min_audits() { dx_lifecycle_phase_min_audits "$1"; }
 # Review sub-loop configuration.
 # Lifecycle Phase 3 uses the /dxreviewloop skill in the same Claude session.
 # A risk assessment selects small/normal/complex before the first review wave.
-# The trusted default-branch policy (lib/review-policy.sh) maps that tier to a
-# clean-pass gate, using 1/3/6 by default. Legacy light/standard/thorough
+# The global policy (lib/review-policy.sh) maps that tier to a fixed 1/2/3
+# clean-pass gate. Legacy light/standard/thorough
 # profile names remain accepted. There is no outer iteration limit; verified
 # churn, provider failures, timeouts, invalid evidence, and user interrupts
 # pause it.
@@ -1278,7 +1278,7 @@ Same-session handoff rules:
 - When a phase is complete, stop once for the Stop hook audit.
 - If the Stop hook gives you the next phase, continue immediately without asking
   the user.
-- Phase 3 must use /dxreviewloop with the selected tier's trusted clean-pass gate.
+- Phase 3 must use /dxreviewloop with the selected tier's global clean-pass gate.
 
 Ask the human by default for:
 - Phase 1 plan approval or plan rejection
@@ -4824,7 +4824,7 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
 # read-only review findings, verify/dedupe, batch-fix, re-check, then write a
 # review-result signal. Only a wave with zero verified findings and zero fixes
 # writes CLEAN. A preflight risk selection resolves small/normal/complex to
-# the trusted policy's required clean waves, and a wave may escalate that tier upward.
+# the global policy's required clean waves, and a wave may escalate that tier upward.
 
 
 

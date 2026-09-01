@@ -22,14 +22,6 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 | Generate | N/A | No code generation |
 | All | `dx test dex` | Static checks followed by the full Dex suite |
 
-## Review Policy
-
-| Setting | Value |
-|---------|-------|
-| small_clean_passes | 1 |
-| normal_clean_passes | 3 |
-| complex_clean_passes | 6 |
-
 ## Project Structure
 ```
 dx.sh                Main shell functions (zsh only)

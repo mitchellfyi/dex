@@ -74,6 +74,23 @@ check "audit iteration" "Audit 7/30"
 run_status_line
 check "elapsed minutes" "2m"
 
+# Phase 3 puts live wave detail in the persistent status line instead of
+# emitting transcript heartbeats from the Stop hook.
+BUSY_TOKEN=$(dx_phase_busy_begin "$DEX_SESSION_ID" 3 \
+  "Wave 2 · scouting · 1/3 clean" 3600)
+run_status_line
+check "review phase name" "Phase 3/6 · Review"
+run_status_line
+check "review wave detail" "Wave 2 · scouting · 1/3 clean"
+run_status_line
+check "review wave timeout" "/1h 0m"
+dx_phase_busy_update "$DEX_SESSION_ID" 3 "$BUSY_TOKEN" \
+  "Wave 2 · verifying · 1/3 clean"
+run_status_line
+check "review wave stage update" "Wave 2 · verifying · 1/3 clean"
+dx_phase_busy_acknowledge "$DEX_SESSION_ID" 3 "$BUSY_TOKEN"
+dx_phase_busy_finish "$DEX_SESSION_ID" 3 "$BUSY_TOKEN"
+
 # Past the last phase.
 printf '7\n' > "$(dx_state_file "$DEX_SESSION_ID")"
 run_status_line

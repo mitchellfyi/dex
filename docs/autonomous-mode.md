@@ -54,7 +54,7 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 | 0. Setup | `0-setup.md` | Ticket read + assigned, branch renamed locally, ticket status In Progress, meta sidecar updated |
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
 | 2. Implement | `2-implement.md` | Task completion, TDD verification, early commits pushed immediately, UI proof decision, evidence table, Phase 3 risk selection |
-| 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves reaching the selected tier's trusted clean gate |
+| 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves reaching the selected tier's global clean gate |
 | 4. Verify & Commit | `4-verify.md` | All checks passing, review/verification repairs committed, branch current on origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
 | 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor CI/reviews through `/dxwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
@@ -63,7 +63,7 @@ The review audit (Phase 3) is risk-selected. After the final Phase 2 in-scope
 change, the implementation agent applies the ordered rubric and records the
 highest matching tier with bounded reason codes. `small` maps to a `light`
 profile, `normal` maps to `standard`, and `complex` maps to `thorough`. The
-default consecutive clean-wave requirements are 1, 3, and 6. Trust boundaries;
+global consecutive clean-wave requirements are 1, 2, and 3. Trust boundaries;
 authentication, authorization, permissions, secrets, payments, or destructive
 behavior; persistence, schemas, or migrations; public API, CLI, configuration,
 or compatibility contracts; concurrency or process lifecycle; hooks, guards,
@@ -71,26 +71,10 @@ CI, deployment, or packaging; broad cross-module behavior; and material
 uncertainty that prevents the supplied scope or its verification from being
 bounded require `complex` review.
 
-Repositories can set deterministic clean-wave requirements in the committed
-default branch's `.dex/dex.md`:
-
-```markdown
-## Review Policy
-
-| Setting | Value |
-|---------|-------|
-| small_clean_passes | 1 |
-| normal_clean_passes | 3 |
-| complex_clean_passes | 6 |
-```
-
-All three rows are required when the section is present. Values must be
-monotonic integers from 1 through 30. Dex uses the defaults when the section is
-absent. It reads this policy from the trusted default-branch commit, so an
-unmerged candidate-branch edit cannot lower the current run's gate. Dex stores
-the policy binding in the selection, resumable state, pass evidence, clean
-ledger, and final receipt. `DEX_REVIEW_CLEAN_PASSES` may raise the resolved
-requirement for a run, but it cannot lower it.
+The 1/2/3 policy is fixed across repositories. Dex stores its binding in the
+selection, resumable state, pass evidence, clean ledger, and final receipt.
+`DEX_REVIEW_CLEAN_PASSES` may raise the requirement for a run, but it cannot
+lower it.
 
 Phase 2 selection is mandatory in the normal lifecycle flow. If a legacy or
 resumed lifecycle has no valid selection for its current scope, `dxreviewloop`
@@ -221,7 +205,7 @@ The built-in operational gates are:
 | `phase.min-audits` | Minimum Stop-hook audits before normal completion |
 | `loop.max-iterations`, `loop.stall-timeout`, `loop.stall-escalate` | Audit-loop attempt and stall budgets |
 | `review.clean-passes` | Effective target from 1 through 30; lowering the trusted tier target requires real clean waves and records Phase 3 as waived |
-| `review.pass-timeout`, `review.notice-interval`, `review.recheck-seconds` | Review provider and Phase 3 wait budgets; `0` disables the provider deadline |
+| `review.pass-timeout`, `review.recheck-seconds` | Review provider and quiet Phase 3 recheck budgets; `0` disables the provider deadline |
 | `watch.pause-ttl`, `watch.cycle-timeout`, `watch.command-timeout` | Phase 6 watcher pause, lease, and command budgets |
 | `complete.max-cycles`, `complete.wait-minutes` | Phase 6 idle-cycle and wait defaults |
 | `failure.attempts-per-strategy`, `failure.max-strategies`, `complete.ci-fix-attempts` | Recovery and repeated-CI-failure escalation defaults |
@@ -232,7 +216,7 @@ The built-in operational gates are:
 
 `review.clean-passes` supports two distinct exceptions. A numeric override
 keeps independent review and requires the chosen number of genuine `CLEAN`
-waves; a target below trusted policy produces an override-bound receipt and a
+waves; a target below global policy produces an override-bound receipt and a
 `waived` Phase 3 outcome. `dx control waive review.clean-passes` skips the
 remaining gate and advances without a review receipt. Other assurance gates,
 such as `verification.required-gates`, use the named waiver path. Neither form
@@ -344,13 +328,11 @@ where earning it is easier than faking it, and it makes every counted pass
 auditable after the fact. Treat it as protection against a confused agent, not
 a hostile one, and keep the human review gate on the resulting PR.
 
-Two lower-cost gaps are worth knowing about specifically. A selection file that
+One lower-cost gap is worth knowing about specifically. A selection file that
 records `source=environment` is trusted without re-applying the deterministic
 tier floor, so a resumed loop can adopt a cheaper tier than the assessor would
-have chosen. And the trusted policy is read through `origin/<default-branch>`,
-a local ref that can be moved offline; in a repository with no remote,
-`dx_default_branch` falls back to the current branch, which makes the agent's
-own commits the policy authority.
+have chosen. The clean-wave counts themselves remain bound to Dex's global
+policy.
 
 ## Activation
 
@@ -629,7 +611,6 @@ Loop state is stored in `~/.claude/.dex-loops/`:
   current-scope, policy-bound review-risk selection exists; the Stop hook
   ignores `PHASE_2_COMPLETE` without it
 - `.phase-3.busy` — Phase 3 marker written by `dxreviewloop` while a review wave is running; the Stop hook does not count audit iterations while waiting, detects a dead recorded owner, and directs the agent to attributed recovery rather than manual deletion
-- `.phase-3.busy-notice` — timestamp used to throttle repeated Phase 3 busy-gate notices while the same review pass is still running
 - `.phase-3.busy-cancel` / `.phase-3.busy-quiesced` — the cancellation request and the owner's acknowledgement in the review-child quiesce protocol
 - `.review-criteria.json` — strict approved objectives, acceptance criteria,
   and verification requirements created after plan approval; each lifecycle
@@ -657,6 +638,11 @@ Loop state is stored in `~/.claude/.dex-loops/`:
   advance on prose success alone
 - `.review-context` — pass-scoped compact context pack; each fresh reviewer gets
   a new path and no previous review report
+- `.review-baseline.json` — scope-bound passing evidence for expensive,
+  explicitly project-wide deterministic commands; semantic findings are never
+  stored here
+- `.review-metrics.json` — pass-scoped context, checks, scouting, and verifier
+  durations used for review performance telemetry
 - `.findings` — transient findings fingerprints used only by the outer wrapper
   for repeated/alternating churn detection; fingerprints are not passed to
   reviewers or telemetry
@@ -728,7 +714,6 @@ use an override-bound lower target; other assurance gates use
 | `DEX_REVIEW_PROFILE` | unset | Legacy alias: `light`, `standard`, or `thorough` map to `small`, `normal`, or `complex` |
 | `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Launch-only higher consecutive `CLEAN` requirement; use the attributed `review.clean-passes` session override to lower or change a running loop |
 | `DEX_REVIEW_PASS_TIMEOUT` | profile-based | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; defaults are 15 minutes for risk assessment and light waves, 30 minutes for standard waves, and 60 minutes for thorough waves; `0` disables the timeout |
-| `DEX_REVIEW_PASS_NOTICE_INTERVAL` | `120` (2m 0s) | Minimum seconds between repeated Phase 3 busy-gate notices for the same review pass |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation. A cycle that outruns it hands the lease to the next tick; a watcher that exits hands it over immediately, without waiting out the budget. `0` means no budget, as it does for the phase timeouts |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |
@@ -787,9 +772,8 @@ Check that `DEX_LOOP_ACTIVE=1` is set in the environment. The `dx` command sets 
 
 ### High API costs
 
-Choose the review tier that matches the actual risk. The default clean-wave
-requirements are 1 for `small`, 3 for `normal`, and 6 for `complex`; the trusted
-`## Review Policy` table may configure them within the validated bounds. Do not
+Choose the review tier that matches the actual risk. The global clean-wave
+requirements are 1 for `small`, 2 for `normal`, and 3 for `complex`. Do not
 lower the tier for security, contract, migration, concurrency, shell/hook, or
 broad dependency changes. `DEX_LOOP_MAX_ITERATIONS` controls phase-audit
 retries, not the review clean gate.

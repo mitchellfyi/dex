@@ -54,6 +54,7 @@ public-command-args-test.sh	fast	all	600	hermetic
 push-guards-test.sh	fast	all	600	hermetic
 research-orchestrate-args-test.sh	fast	all	600	hermetic
 research-score-test.sh	fast	all	600	hermetic
+review-baseline-test.sh	fast	all	600	hermetic
 review-controller-integration-test.sh	fast	all	600	hermetic
 review-controller-test.sh	fast	all	600	hermetic
 review-evaluation-harness-test.sh	serial	all	1200	hermetic

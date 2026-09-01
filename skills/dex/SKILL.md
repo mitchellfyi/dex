@@ -67,9 +67,8 @@ review follow-through. Phase 3 must be quiescent before any later publication.
    while Phase 5 normally owns the PR description.
 8. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `small`, `normal`, or `complex`, with a
-   deterministic set of reason codes. The tier selects the trusted clean-wave
-   policy from the committed default branch. Its defaults are 1, 3, and 6;
-   `.dex/dex.md` may configure monotonic values from 1 through 30.
+   deterministic set of reason codes. The tier selects Dex's fixed global
+   clean-wave policy: 1 for `small`, 2 for `normal`, and 3 for `complex`.
 9. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
    shows all criteria MET, implementation commits are pushed, and the
    review-risk selection matches the final scope fingerprint and trusted
@@ -89,9 +88,9 @@ review follow-through. Phase 3 must be quiescent before any later publication.
    triage when needed, batch fixes, and targeted recheck.
 3. Waves that find and fix issues write `FINDINGS_FIXED:N`, reset the clean
    counter, and force the next iteration to re-review the full change set.
-4. The loop uses the selected tier's trusted clean-wave requirement. The
-   defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`. A candidate
-   branch cannot lower the active gate, and the loop has no outer iteration
+4. The loop uses the selected tier's global clean-wave requirement: 1 for
+   `small`, 2 for `normal`, and 3 for `complex`. A candidate branch cannot
+   lower the active gate, and the loop has no outer iteration
    maximum. For an outlier, `dx control override review.clean-passes <1-30>`
    keeps independent review while changing the target. A lower target is bound
    to the attributed decision and records Phase 3 as waived. Use

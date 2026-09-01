@@ -22,13 +22,13 @@ context for the same checkout, not a fresh git workspace.
 ## Risk Selection
 
 Resolve one risk tier before the first review wave. The tier controls review
-depth and selects the trusted clean-wave policy. The default policy is:
+depth and selects the global clean-wave policy:
 
 | Risk tier | Review profile | Required consecutive `CLEAN` waves |
 |-----------|----------------|-------------------------------------|
 | `small` | `light` | 1 |
-| `normal` | `standard` | 3 |
-| `complex` | `thorough` | 6 |
+| `normal` | `standard` | 2 |
+| `complex` | `thorough` | 3 |
 
 Use `prompts/review-risk-assessment.md` as the source of truth. Its first
 matching rule wins:
@@ -80,11 +80,9 @@ not edit the checkout.
 `DEX_REVIEW_TIER=small|normal|complex` is the canonical launch override and
 takes precedence. `DEX_REVIEW_PROFILE=light|standard|thorough` remains a legacy
 alias. `DEX_REVIEW_CLEAN_PASSES` may raise the launch gate but cannot lower the
-selected tier's resolved policy requirement. The wrapper reads policy
-values from the trusted default branch, requires values from 1 through 30 in
-monotonic order, and binds the resolved policy to selection, progress, pass
-evidence, and the final receipt. Candidate-branch edits cannot lower the active
-gate. Review may escalate to a higher tier, but it never downgrades.
+selected tier's global policy requirement. The wrapper binds the fixed 1/2/3
+policy to selection, progress, pass evidence, and the final receipt. Review may
+escalate to a higher tier, but it never downgrades.
 
 For an outlier, ask the human or set
 `dx control override review.clean-passes <1-30> --source agent --reason "<why>"`.

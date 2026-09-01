@@ -2224,6 +2224,13 @@ dx_review_result_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_L
 # dx_review_context_file <session_id> — compact context pack for review waves
 dx_review_context_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-context"; }
 
+# dx_review_baseline_file <session_id> — reusable full-suite evidence for one
+# exact review scope. Semantic findings never belong in this artifact.
+dx_review_baseline_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-baseline.json"; }
+
+# dx_review_metrics_file <session_id> — optional per-wave stage timings
+dx_review_metrics_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-metrics.json"; }
+
 # dx_review_criteria_file <session_id> — approved lifecycle requirements for review
 dx_review_criteria_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-criteria.json"; }
 
@@ -2611,7 +2618,7 @@ dx_cleanup_session() {
   fi
   if [[ -d "$DX_LOOP_DIR" ]]; then
     dx_review_ledger_reset "$sid" 2>/dev/null || true
-    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_selection_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-selection.revoked" "$(dx_review_receipt_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-receipt.revoked" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
+    rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_baseline_file "$sid")" "$(dx_review_metrics_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_selection_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-selection.revoked" "$(dx_review_receipt_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-receipt.revoked" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
     rm -f "${DX_LOOP_DIR}/${sid}.control-lock/owner" 2>/dev/null || true
     rmdir "${DX_LOOP_DIR}/${sid}.control-lock" 2>/dev/null || true
     find "$DX_LOOP_DIR" -maxdepth 1 -type f \( -name "${sid}.phase-*.started" -o -name "${sid}.phase-*.ready" -o -name "${sid}.phase-*.busy" -o -name "${sid}.phase-*.busy-notice" -o -name "${sid}.phase-*.busy-cancel" -o -name "${sid}.phase-*.busy-quiesced" \) -exec rm -f {} + 2>/dev/null || true

@@ -24,6 +24,21 @@ assert_eq() {
   [[ "$expected" == "$actual" ]] || fail "$label: expected '$expected', got '$actual'"
 }
 
+assert_fixed_policy() {
+  local repo="$1" label="$2"
+  local record small normal complex binding trusted_ref trusted_version
+  record=$(dx_review_policy_resolve "$repo")
+  IFS=$'\t' read -r small normal complex binding trusted_ref trusted_version <<EOF
+$record
+EOF
+  assert_eq "1" "$small" "$label small gate"
+  assert_eq "2" "$normal" "$label normal gate"
+  assert_eq "3" "$complex" "$label complex gate"
+  assert_eq "$(dx_review_policy_binding 1 2 3)" "$binding" "$label binding"
+  assert_eq "global-defaults" "$trusted_ref" "$label provenance"
+  assert_eq "v2" "$trusted_version" "$label version"
+}
+
 write_policy() {
   local target="$1" small="$2" normal="$3" complex="$4"
   mkdir -p "$(dirname "$target")"
@@ -53,24 +68,17 @@ git -C "$repo" config user.name "Dex Test"
 git -C "$repo" config user.email "dex-test@example.com"
 git -C "$repo" switch -qc feature
 
-IFS=$'\t' read -r small normal complex binding trusted_ref trusted_oid <<EOF
-$(dx_review_policy_resolve "$repo")
-EOF
-assert_eq "2" "$small" "trusted small gate"
-assert_eq "5" "$normal" "trusted normal gate"
-assert_eq "8" "$complex" "trusted complex gate"
-assert_eq "origin/main" "$trusted_ref" "trusted policy ref"
-assert_eq "$(git -C "$repo" rev-parse origin/main)" "$trusted_oid" "trusted policy commit"
-assert_eq "$binding" "$(dx_review_policy_binding 2 5 8)" "canonical policy binding"
-assert_eq "2" "$(dx_review_policy_tier_clean_passes small 2 5 8)" "small policy lookup"
-assert_eq "5" "$(dx_review_policy_tier_clean_passes standard 2 5 8)" "normal alias lookup"
-assert_eq "8" "$(dx_review_policy_tier_clean_passes high-risk 2 5 8)" "complex alias lookup"
+assert_fixed_policy "$repo" "custom repository table is ignored"
+binding=$(dx_review_policy_binding 1 2 3)
+assert_eq "1" "$(dx_review_policy_tier_clean_passes small 1 2 3)" "small policy lookup"
+assert_eq "2" "$(dx_review_policy_tier_clean_passes standard 1 2 3)" "normal alias lookup"
+assert_eq "3" "$(dx_review_policy_tier_clean_passes high-risk 1 2 3)" "complex alias lookup"
 IFS=$'\t' read -r tier_required tier_binding _ <<EOF
 $(dx_review_policy_for_tier "$repo" normal)
 EOF
-assert_eq "5" "$tier_required" "trusted tier lookup"
+assert_eq "2" "$tier_required" "trusted tier lookup"
 assert_eq "$binding" "$tier_binding" "trusted tier binding"
-assert_eq "5" "$(dx_review_policy_for_tier "$repo" normal "$binding" | cut -f1)" \
+assert_eq "2" "$(dx_review_policy_for_tier "$repo" normal "$binding" | cut -f1)" \
   "expected binding lookup"
 if dx_review_policy_for_tier "$repo" normal "$(dx_review_policy_binding 1 3 6)" >/dev/null 2>&1; then
   fail "tier lookup accepted a different policy binding"
@@ -79,8 +87,7 @@ fi
 write_policy "$repo/.dex/dex.md" 1 1 1
 git -C "$repo" add .dex/dex.md
 git -C "$repo" commit -qm "test: attempt to lower policy from feature"
-assert_eq $'2\t5\t8' "$(dx_review_policy_resolve "$repo" | cut -f1-3)" \
-  "candidate policy cannot lower trusted gates"
+assert_fixed_policy "$repo" "candidate policy is ignored"
 
 missing="$TMP_DIR/missing"
 git init -q -b main "$missing"
@@ -89,7 +96,7 @@ git -C "$missing" config user.email "dex-test@example.com"
 printf '%s\n' '# Project context' > "$missing/README.md"
 git -C "$missing" add README.md
 git -C "$missing" commit -qm "test: omit review policy"
-assert_eq $'1\t3\t6' "$(dx_review_policy_resolve "$missing" | cut -f1-3)" \
+assert_eq $'1\t2\t3' "$(dx_review_policy_resolve "$missing" | cut -f1-3)" \
   "missing policy uses recommended defaults"
 
 invalid="$TMP_DIR/invalid"
@@ -100,17 +107,13 @@ write_policy "$invalid/.dex/dex.md" 6 5 8
 git -C "$invalid" add .dex/dex.md
 git -C "$invalid" commit -qm "test: make default policy non-monotonic"
 git -C "$invalid" update-ref refs/remotes/origin/main HEAD
-if dx_review_policy_resolve "$invalid" >/dev/null 2>&1; then
-  fail "non-monotonic trusted policy was accepted"
-fi
+assert_fixed_policy "$invalid" "invalid repository policy is ignored"
 
 write_policy "$invalid/.dex/dex.md" 1 2 31
 git -C "$invalid" add .dex/dex.md
 git -C "$invalid" commit -qm "test: exceed review policy limit"
 git -C "$invalid" update-ref refs/remotes/origin/main HEAD
-if dx_review_policy_resolve "$invalid" >/dev/null 2>&1; then
-  fail "out-of-range trusted policy was accepted"
-fi
+assert_fixed_policy "$invalid" "out-of-range repository policy is ignored"
 
 unborn="$TMP_DIR/unborn"
 git init -q -b main "$unborn"
@@ -121,17 +124,17 @@ IFS=$'\t' read -r unborn_small unborn_normal unborn_complex unborn_binding \
 $(dx_review_policy_resolve "$unborn")
 EOF
 assert_eq "1" "$unborn_small" "unborn built-in small gate"
-assert_eq "3" "$unborn_normal" "unborn built-in normal gate"
-assert_eq "6" "$unborn_complex" "unborn built-in complex gate"
-assert_eq "$(dx_review_policy_binding 1 3 6)" "$unborn_binding" \
+assert_eq "2" "$unborn_normal" "unborn built-in normal gate"
+assert_eq "3" "$unborn_complex" "unborn built-in complex gate"
+assert_eq "$(dx_review_policy_binding 1 2 3)" "$unborn_binding" \
   "unborn built-in policy binding"
-assert_eq "built-in-defaults" "$unborn_ref" "unborn policy provenance ref"
-assert_eq "unborn" "$unborn_oid" "unborn policy provenance commit"
+assert_eq "global-defaults" "$unborn_ref" "unborn policy provenance ref"
+assert_eq "v2" "$unborn_oid" "unborn policy provenance version"
 dx_review_policy_provenance_valid "$unborn_ref" "$unborn_oid"
-if dx_review_policy_provenance_valid origin/main unborn; then
+if dx_review_policy_provenance_valid origin/main v2; then
   fail "mixed unborn policy provenance was accepted"
 fi
-if dx_review_policy_provenance_valid built-in-defaults 0000000000000000000000000000000000000000; then
+if dx_review_policy_provenance_valid global-defaults v1; then
   fail "built-in policy sentinel accepted a commit OID"
 fi
 
@@ -144,8 +147,6 @@ git -C "$detached" add app.txt
 git -C "$detached" commit -qm "test: create detached policy fixture"
 git -C "$detached" switch -q --detach
 git -C "$detached" branch -D main >/dev/null
-if dx_review_policy_resolve "$detached" >/dev/null 2>&1; then
-  fail "committed repository without a trusted default ref used unborn defaults"
-fi
+assert_fixed_policy "$detached" "detached repository uses global policy"
 
 printf 'review-policy-config-test passed\n'

@@ -202,13 +202,13 @@ base_fingerprint="$(dx_review_scope_fingerprint "$REPO")"
 IFS=$'\t' read -r policy_small policy_normal policy_complex policy_binding \
   policy_ref policy_oid < <(dx_review_policy_resolve "$REPO")
 assert_eq "1" "$policy_small" "trusted small policy"
-assert_eq "3" "$policy_normal" "trusted normal policy"
-assert_eq "6" "$policy_complex" "trusted complex policy"
+assert_eq "2" "$policy_normal" "trusted normal policy"
+assert_eq "3" "$policy_complex" "trusted complex policy"
 [[ "$policy_binding" =~ ^[a-f0-9]{64}$ ]] || {
   printf 'trusted policy binding is not a full lowercase SHA-256 digest\n' >&2
   exit 1
 }
-[[ -n "$policy_ref" && "$policy_oid" =~ ^[a-f0-9]{40,64}$ ]] || {
+[[ "$policy_ref" == "global-defaults" && "$policy_oid" == "v2" ]] || {
   printf 'trusted policy provenance is incomplete\n' >&2
   exit 1
 }
@@ -550,7 +550,7 @@ assert_rejected "selection rejects malformed policy binding" \
   dx_review_selection_valid "$standalone_session_id" "$REPO" standalone "$policy_binding"
 dx_cleanup_session "$standalone_session_id"
 
-dx_review_write_state "$session_id" normal "$policy_normal" 4 2 "$REPO" \
+dx_review_write_state "$session_id" normal "$policy_normal" 4 1 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
 [[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "4" ]] || {
   printf 'state was not written with the current policy-bound schema\n' >&2
@@ -562,7 +562,7 @@ IFS=$'\t' read -r state_tier required iteration clean_count state_fingerprint st
 assert_eq "normal" "$state_tier" "state tier"
 assert_eq "$policy_normal" "$required" "state requirement"
 assert_eq "4" "$iteration" "state iteration"
-assert_eq "2" "$clean_count" "state clean count"
+assert_eq "1" "$clean_count" "state clean count"
 assert_eq "$base_fingerprint" "$state_fingerprint" "state fingerprint"
 assert_eq "$session_criteria_hash" "$state_binding" "state criteria binding"
 assert_eq "$policy_binding" "$state_policy" "state policy binding"
@@ -570,7 +570,7 @@ printf '2\tnormal\t6\t4\t2\t%s\t%s\n' \
   "$base_fingerprint" "$session_criteria_hash" > "$(dx_review_state_file "$session_id")"
 assert_rejected "legacy state cannot retain clean review credit" \
   dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
-dx_review_write_state "$session_id" normal "$policy_normal" 4 2 "$REPO" \
+dx_review_write_state "$session_id" normal "$policy_normal" 4 1 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
 assert_rejected "state below tier gate" dx_review_write_state \
   "$session_id" normal "$((policy_normal - 1))" 1 0 "$REPO" \
@@ -640,18 +640,18 @@ assert_eq "completed" "$(dx_review_receipt_outcome "$session_id" "$REPO" \
 # active. It authorizes fewer real CLEAN waves, but its lifecycle outcome is a
 # waiver rather than a claim that the trusted tier policy passed.
 dx_review_ledger_reset "$session_id"
-dx_override_set "$session_id" review.clean-passes 2 phase 3 human \
-  "The remaining provider capacity is limited; accept two clean waves" 0
+dx_override_set "$session_id" review.clean-passes 1 phase 3 human \
+  "The remaining provider capacity is limited; accept one clean wave" 0
 dx_review_write_selection "$session_id" normal lifecycle-agent \
-  bounded-production-change "$REPO" 2 "$session_criteria_hash" "$policy_binding"
-dx_review_write_state "$session_id" normal 2 1 1 "$REPO" \
+  bounded-production-change "$REPO" 1 "$session_criteria_hash" "$policy_binding"
+dx_review_write_state "$session_id" normal 1 1 0 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
 dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" \
   "$policy_binding" >/dev/null
 rm "$(dx_review_state_file "$session_id")"
-append_clean_ledger "$session_id" 2 "$base_fingerprint" \
+append_clean_ledger "$session_id" 1 "$base_fingerprint" \
   "$session_criteria_hash" "$policy_binding" waived-clean standard
-dx_review_write_receipt "$session_id" normal 2 2 "$REPO" \
+dx_review_write_receipt "$session_id" normal 1 1 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
 dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" \
   "$policy_binding"

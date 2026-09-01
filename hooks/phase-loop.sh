@@ -28,6 +28,22 @@ set -euo pipefail
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 mkdir -p "$DX_LOOP_DIR"
 
+# Expected Stop-hook control flow uses Claude Code's structured protocol so a
+# phase handoff or in-flight wait is not rendered as a hook error. Genuine
+# failures still use stderr and exit 2 at their call sites.
+dx_stop_json_block() {
+  local reason="$1" system_message="${2:-}"
+  python3 -c '
+import json
+import sys
+
+payload = {"decision": "block", "reason": sys.argv[1], "suppressOutput": True}
+if sys.argv[2]:
+    payload["systemMessage"] = sys.argv[2]
+print(json.dumps(payload, separators=(",", ":")))
+' "$reason" "$system_message"
+}
+
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 if ! dx_session_id_valid "$SESSION_ID"; then
   printf '%s\n' "Dex: refusing unsafe session id." >&2
@@ -494,7 +510,7 @@ EOF
       ;;
     3)
       cat <<'EOF'
-Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop". Use the current Phase 2 risk selection: small requires 1, normal 3, and complex 6 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and domain review, verifies findings, batch-fixes safe issues, and rechecks. Any fix resets the clean streak. Residual findings, blockers, churn, invalid results, or provider failures pause the loop instead of counting as clean. Phase focus: review and fixes. Do not commit, push, or create a PR in Phase 3; Phase 4 publishes accepted review fixes after final verification. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance.
+Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop". Use the current Phase 2 risk selection: small requires 1, normal 2, and complex 3 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and parallel read-only domain scouting, verifies findings, batch-fixes safe issues, and rechecks. Any fix resets the clean streak. Residual findings, blockers, churn, invalid results, or provider failures pause the loop instead of counting as clean. Phase focus: review and fixes. Do not commit, push, or create a PR in Phase 3; Phase 4 publishes accepted review fixes after final verification. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance.
 EOF
       ;;
     4)
@@ -1438,7 +1454,6 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
     BUSY_OWNER_PID="${BUSY_RECORD_REST%%$'\n'*}"
     BUSY_RECORD_REST="${BUSY_RECORD_REST#*$'\n'}"
     BUSY_TIMEOUT_RAW="${BUSY_RECORD_REST%%$'\n'*}"
-    BUSY_LABEL="${BUSY_RECORD_REST#*$'\n'}"
     PHASE_BUSY_NOTICE_FILE=$(dx_phase_busy_notice_file "$SESSION_ID" 3)
     if dx_phase_busy_quiesced "$SESSION_ID" 3; then
       dx_phase_busy_finish "$SESSION_ID" 3 "$BUSY_TOKEN_FIELD" \
@@ -1498,101 +1513,44 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "3" ]]; then
 
     rm -f "$STATE_FILE"
 
-    BUSY_NOTICE_INTERVAL_RAW="${DEX_REVIEW_PASS_NOTICE_INTERVAL:-120}"
-    BUSY_NOTICE_INTERVAL_RAW=$(dx_override_effective "$SESSION_ID" \
-      review.notice-interval "$BUSY_NOTICE_INTERVAL_RAW" 3) || {
+    BUSY_RECHECK_SECONDS_RAW="${DEX_REVIEW_PASS_RECHECK_SECONDS:-45}"
+    BUSY_RECHECK_SECONDS_RAW=$(dx_override_effective "$SESSION_ID" \
+      review.recheck-seconds "$BUSY_RECHECK_SECONDS_RAW" 3) || {
       printf '\n%s\n' "Dex found an unsafe or malformed override journal. The review wait gate remains closed." >&2
       exit 2
     }
-    if ! BUSY_NOTICE_INTERVAL=$(dx_normalize_numeric_limit "$BUSY_NOTICE_INTERVAL_RAW"); then
-      dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_NOTICE_INTERVAL" "$BUSY_NOTICE_INTERVAL_RAW"
+    if ! BUSY_RECHECK_SECONDS=$(dx_normalize_numeric_limit "$BUSY_RECHECK_SECONDS_RAW"); then
+      dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_RECHECK_SECONDS" "$BUSY_RECHECK_SECONDS_RAW"
       exit 2
     fi
-    SHOULD_PRINT_BUSY_NOTICE=1
-
-    if [[ "$BUSY_NOTICE_INTERVAL" -gt 0 && -f "$PHASE_BUSY_NOTICE_FILE" ]]; then
-      BUSY_NOTICE_RAW=$(cat "$PHASE_BUSY_NOTICE_FILE" 2>/dev/null || echo "")
-      BUSY_NOTICE_EPOCH="$BUSY_NOTICE_RAW"
-      BUSY_NOTICE_LABEL=""
-      if [[ "$BUSY_NOTICE_RAW" == *$'\t'* ]]; then
-        BUSY_NOTICE_EPOCH="${BUSY_NOTICE_RAW%%$'\t'*}"
-        BUSY_NOTICE_LABEL="${BUSY_NOTICE_RAW#*$'\t'}"
-      fi
-      if [[ "$BUSY_NOTICE_EPOCH" =~ ^[0-9]+$ && "$BUSY_NOTICE_LABEL" == "$BUSY_LABEL" ]]; then
-        BUSY_NOTICE_AGE=$(( $(date +%s) - BUSY_NOTICE_EPOCH ))
-        if [[ "$BUSY_NOTICE_AGE" -lt "$BUSY_NOTICE_INTERVAL" ]]; then
-          SHOULD_PRINT_BUSY_NOTICE=0
-        fi
-      fi
+    if [[ "$BUSY_RECHECK_SECONDS" -gt 0 ]]; then
+      BUSY_POLL_DEADLINE=$(( $(date +%s) + BUSY_RECHECK_SECONDS ))
+      while [[ -f "$PHASE_BUSY_FILE" ]]; do
+        BUSY_POLL_NOW=$(date +%s)
+        [[ "$BUSY_POLL_NOW" -lt "$BUSY_POLL_DEADLINE" ]] || break
+        BUSY_SLEEP_SECONDS=$((BUSY_POLL_DEADLINE - BUSY_POLL_NOW))
+        [[ "$BUSY_SLEEP_SECONDS" -le 2 ]] || BUSY_SLEEP_SECONDS=2
+        [[ "$BUSY_SLEEP_SECONDS" -gt 0 ]] || break
+        sleep "$BUSY_SLEEP_SECONDS"
+      done
     fi
 
-    if [[ $SHOULD_PRINT_BUSY_NOTICE -eq 0 ]]; then
-      BUSY_RECHECK_SECONDS_RAW="${DEX_REVIEW_PASS_RECHECK_SECONDS:-45}"
-      BUSY_RECHECK_SECONDS_RAW=$(dx_override_effective "$SESSION_ID" \
-        review.recheck-seconds "$BUSY_RECHECK_SECONDS_RAW" 3) || {
-        printf '\n%s\n' "Dex found an unsafe or malformed override journal. The review wait gate remains closed." >&2
-        exit 2
-      }
-      if ! BUSY_RECHECK_SECONDS=$(dx_normalize_numeric_limit "$BUSY_RECHECK_SECONDS_RAW"); then
-        dx_report_invalid_numeric_limit "DEX_REVIEW_PASS_RECHECK_SECONDS" "$BUSY_RECHECK_SECONDS_RAW"
-        exit 2
-      fi
-      if [[ "$BUSY_RECHECK_SECONDS" -gt 0 ]]; then
-        BUSY_POLL_DEADLINE=$(( $(date +%s) + BUSY_RECHECK_SECONDS ))
-        while [[ -f "$PHASE_BUSY_FILE" ]]; do
-          BUSY_POLL_NOW=$(date +%s)
-          [[ "$BUSY_POLL_NOW" -lt "$BUSY_POLL_DEADLINE" ]] || break
-          BUSY_SLEEP_SECONDS=$((BUSY_POLL_DEADLINE - BUSY_POLL_NOW))
-          [[ "$BUSY_SLEEP_SECONDS" -le 2 ]] || BUSY_SLEEP_SECONDS=2
-          [[ "$BUSY_SLEEP_SECONDS" -gt 0 ]] || break
-          sleep "$BUSY_SLEEP_SECONDS"
-        done
-      fi
-
-      if [[ ! -f "$PHASE_BUSY_FILE" ]]; then
-        rm -f "$PHASE_BUSY_NOTICE_FILE"
-        printf '\n%s\n\n' "--- Dex Phase 3 Gate: review pass finished ---" >&2
-        printf '%s\n' "The busy marker cleared while the Stop hook was waiting. Continue dxreviewloop with the returned review result before stopping again." >&2
-        exit 2
-      fi
-
-      BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))
-      if [[ -n "$BUSY_LABEL" ]]; then
-        if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
-          printf '\n--- Dex Phase 3 Gate: still waiting on %s (%s elapsed; timeout disabled) ---\n\n' "$BUSY_LABEL" "$(dx_format_duration "$BUSY_AGE")" >&2
-        else
-          printf '\n--- Dex Phase 3 Gate: still waiting on %s (%s/%s timeout) ---\n\n' "$BUSY_LABEL" "$(dx_format_duration "$BUSY_AGE")" "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
-        fi
-      else
-        if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
-          printf '\n--- Dex Phase 3 Gate: review pass still running (%s elapsed; timeout disabled) ---\n\n' "$(dx_format_duration "$BUSY_AGE")" >&2
-        else
-          printf '\n--- Dex Phase 3 Gate: review pass still running (%s/%s timeout) ---\n\n' "$(dx_format_duration "$BUSY_AGE")" "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
-        fi
-      fi
+    if [[ ! -f "$PHASE_BUSY_FILE" ]]; then
+      rm -f "$PHASE_BUSY_NOTICE_FILE"
+      dx_stop_json_block \
+        "The review wave finished. Continue dxreviewloop with its result before stopping again." \
+        "Dex · Review wave finished"
+      exit 0
     fi
 
-    if [[ $SHOULD_PRINT_BUSY_NOTICE -eq 1 ]]; then
-      BUSY_NOTICE_TMP="${PHASE_BUSY_NOTICE_FILE}.tmp.$$"
-      if ! printf '%s\t%s\n' "$(date +%s)" "$BUSY_LABEL" > "$BUSY_NOTICE_TMP" || ! command mv -f "$BUSY_NOTICE_TMP" "$PHASE_BUSY_NOTICE_FILE"; then
-        command rm -f "$BUSY_NOTICE_TMP" 2>/dev/null
-      fi
-
-      printf '\n%s\n\n' "--- Dex Phase 3 Gate: review pass in progress ---" >&2
-      printf '%s\n' "No audit iteration was counted, and no completion receipt is available while dxreviewloop waits for the review child." >&2
-      if [[ -n "$BUSY_LABEL" ]]; then
-        printf '%s\n' "" >&2
-        printf 'Current review work: %s\n' "$BUSY_LABEL" >&2
-      fi
-      printf '%s\n' "" >&2
-      printf 'This wait-state notice is throttled to once every %s unless the review pass changes or times out.\n' "$(dx_format_duration "$BUSY_NOTICE_INTERVAL")" >&2
-      if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
-        printf '%s\n' "Continue waiting for the current review pass. Its timeout is disabled, so Dex will not pause it based on elapsed time. Do not commit, push, create a PR, or start a later lifecycle phase while this review child can still edit files." >&2
-      else
-        printf 'Continue waiting for the current review pass. If this exceeds %s, Dex will pause Phase 3 for intervention. Do not commit, push, create a PR, or start a later lifecycle phase while this review child can still edit files.\n' "$(dx_format_duration "$BUSY_TIMEOUT")" >&2
-      fi
+    BUSY_AGE=$(( $(date +%s) - BUSY_EPOCH ))
+    if [[ "$BUSY_TIMEOUT" -eq 0 ]]; then
+      BUSY_WAIT_REASON="Review wave still running ($(dx_format_duration "$BUSY_AGE") elapsed; timeout is disabled). Continue waiting on the active dxreviewloop task without narrating or ending the turn."
+    else
+      BUSY_WAIT_REASON="Review wave still running ($(dx_format_duration "$BUSY_AGE")/$(dx_format_duration "$BUSY_TIMEOUT")). Continue waiting on the active dxreviewloop task without narrating or ending the turn."
     fi
-    exit 2
+    dx_stop_json_block "$BUSY_WAIT_REASON"
+    exit 0
   fi
 fi
 
@@ -1949,13 +1907,15 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
       exit 2
     fi
 
-    {
-      printf '\n%s\n\n' "--- Dex Phase Handoff: Phase ${CURRENT_PHASE} complete → Phase ${NEXT_PHASE} ($(dx_phase_name "$NEXT_PHASE")) ---"
+    HANDOFF_REASON=$(
+      printf '%s\n\n' "Dex Phase Handoff: Phase ${CURRENT_PHASE} complete → Phase ${NEXT_PHASE} ($(dx_phase_name "$NEXT_PHASE"))"
       printf '%s\n\n' "Continue in this same Claude session. Do not ask the user whether to proceed."
       dx_inline_phase_message "$NEXT_PHASE"
       printf '\n%s\n' "When Phase ${NEXT_PHASE} is genuinely complete, stop so the Stop hook can audit it."
-    } >&2
-    exit 2
+    )
+    dx_stop_json_block "$HANDOFF_REASON" \
+      "Dex · Phase ${CURRENT_PHASE} complete → Phase ${NEXT_PHASE} · $(dx_phase_name "$NEXT_PHASE")"
+    exit 0
   fi
 
   if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "6" ]]; then

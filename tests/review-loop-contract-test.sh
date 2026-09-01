@@ -18,8 +18,8 @@ git -C "$POLICY_REPO" config user.email "dex-test@example.com"
   printf '%s\n' '| Setting | Value |'
   printf '%s\n' '|---------|-------|'
   printf '%s\n' '| small_clean_passes | 1 |'
-  printf '%s\n' '| normal_clean_passes | 3 |'
-  printf '%s\n' '| complex_clean_passes | 6 |'
+  printf '%s\n' '| normal_clean_passes | 2 |'
+  printf '%s\n' '| complex_clean_passes | 3 |'
 } > "$POLICY_REPO/.dex/dex.md"
 git -C "$POLICY_REPO" add .dex/dex.md
 git -C "$POLICY_REPO" commit -qm "test: initialize review policy fixture"
@@ -200,10 +200,23 @@ PY
         dx_write_lifecycle_control "$parent_session" cancel "" user-prompt "" 3 ""
         dx_phase_busy_request_cancel "$parent_session" 3
       fi
+      local current_working
+      current_working=$(dx_review_working_fingerprint "$PWD") || return 96
+      if [[ "$current_working" != "$DEX_REVIEW_WORKING_FINGERPRINT" ]]; then
+        print -u2 -- "fixture changed the review working-tree fingerprint"
+        return 96
+      fi
+      if ! dx_review_baseline_valid "$DEX_REVIEW_BASELINE_FILE" \
+          "$DEX_REVIEW_SCOPE_FINGERPRINT" "$DEX_REVIEW_WORKING_FINGERPRINT" \
+          "$DEX_REVIEW_CRITERIA_BINDING" "$DEX_REVIEW_POLICY_BINDING"; then
+        print -u2 -- "fixture wrote an invalid deterministic baseline"
+        return 96
+      fi
     }
 
     assert_review_criteria_prompt() {
       local invocation="$*" criteria_path criteria_binding expected_pass_binding
+      local expected_baseline expected_metrics baseline_tmp
       dx_review_policy_binding_valid "${DEX_REVIEW_POLICY_BINDING:-}" || return 1
       dx_review_pass_id_valid "${DEX_REVIEW_PASS_ID:-}" || return 1
       expected_pass_binding=$(dx_review_pass_binding "$DEX_REVIEW_PASS_ID" \
@@ -213,6 +226,30 @@ PY
       [[ "$invocation" == *"$DEX_REVIEW_PASS_ID"* ]] || return 1
       [[ "$invocation" == *"$DEX_REVIEW_POLICY_BINDING"* ]] || return 1
       [[ "$invocation" == *"$DEX_REVIEW_PASS_BINDING"* ]] || return 1
+      [[ "$invocation" == *"parallel agents"* ]] || return 1
+      [[ "$invocation" != *"__REVIEW_"* ]] || return 1
+      expected_baseline=$(dx_review_baseline_file "$DEX_POLICY_SESSION_ID") || return 1
+      expected_metrics=$(dx_review_metrics_file "$DEX_SESSION_ID") || return 1
+      [[ "${DEX_REVIEW_BASELINE_FILE:-}" == "$expected_baseline" ]] || return 1
+      [[ "${DEX_REVIEW_METRICS_FILE:-}" == "$expected_metrics" ]] || return 1
+      [[ "${DEX_REVIEW_WORKING_FINGERPRINT:-}" =~ ^[a-f0-9]{64}$ ]] || return 1
+      case "${DEX_REVIEW_BASELINE_MODE:-}" in
+        fresh)
+          [[ "${DEX_REVIEW_BASELINE_BINDING:-}" == "fresh" ]] || return 1
+          baseline_tmp="${expected_baseline}.tmp.$$"
+          print -r -- "{\"version\":1,\"scope_fingerprint\":\"${DEX_REVIEW_SCOPE_FINGERPRINT}\",\"working_fingerprint\":\"${DEX_REVIEW_WORKING_FINGERPRINT}\",\"criteria_binding\":\"${DEX_REVIEW_CRITERIA_BINDING}\",\"policy_binding\":\"${DEX_REVIEW_POLICY_BINDING}\",\"commands\":[{\"name\":\"full test suite\",\"command\":\"bash tests/run-all.sh\",\"status\":\"pass\",\"duration_seconds\":12}]}" > "$baseline_tmp" || return 1
+          command mv -f "$baseline_tmp" "$expected_baseline" || return 1
+          ;;
+        reuse)
+          dx_review_baseline_valid "$expected_baseline" \
+            "$DEX_REVIEW_SCOPE_FINGERPRINT" "$DEX_REVIEW_WORKING_FINGERPRINT" \
+            "$DEX_REVIEW_CRITERIA_BINDING" "$DEX_REVIEW_POLICY_BINDING" || return 1
+          [[ "$(dx_review_baseline_hash "$expected_baseline")" == \
+            "$DEX_REVIEW_BASELINE_BINDING" ]] || return 1
+          ;;
+        *) return 1 ;;
+      esac
+      print -r -- "{\"version\":1,\"context_seconds\":1,\"checks_seconds\":2,\"scout_seconds\":3,\"verifier_seconds\":1}" > "$expected_metrics" || return 1
       criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
       if [[ -e "$criteria_path" ]]; then
         criteria_binding=$(dx_review_criteria_hash "$criteria_path") || return 1
@@ -314,7 +351,10 @@ PY
       dx_write_lifecycle_control "$(dx_session_id)" cancel "" terminal "" 3 ""
     fi
     review_result=0
-    if [[ "$TEST_REVIEW_SCENARIO" == "timeout-binding" ]]; then
+    if [[ "$TEST_REVIEW_SCENARIO" == "valid-two-waves" ]]; then
+      DEX_REVIEW_TIER=small DEX_REVIEW_CLEAN_PASSES=2 dxreviewloop \
+        || review_result=$?
+    elif [[ "$TEST_REVIEW_SCENARIO" == "timeout-binding" ]]; then
       DEX_REVIEW_TIER=small DEX_REVIEW_PASS_TIMEOUT=2400 dxreviewloop \
         || review_result=$?
     elif [[ "$TEST_REVIEW_SCENARIO" == "provider-timeout" ]]; then
@@ -356,6 +396,8 @@ run_case "claude-missing-completion" "claude" "missing-completion" 1 "completion
 run_case "claude-missing-evidence" "claude" "missing-evidence" 1 "evidence manifest missing or invalid"
 run_case "claude-blocked" "claude" "blocked" 1 "dxreviewloop blocked: review-tool-unavailable"
 run_case "claude-valid-hook" "claude" "valid-hook" 0 "Review complete: 1 consecutive clean pass." 1
+run_case "claude-valid-two-waves" "claude" "valid-two-waves" 0 \
+  "Review complete: 2 consecutive clean passes." 2
 run_case "claude-rotated-hook" "claude" "rotate-hook" 0 "Review complete: 1 consecutive clean pass." 1
 run_case "codex-empty-context" "codex" "missing-context" 1 "context pack missing or empty"
 run_case "codex-missing-hash" "codex" "missing-hash" 1 "findings hash missing or invalid"

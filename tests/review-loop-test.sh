@@ -1001,8 +1001,16 @@ PY
   if [[ "$name" == "pass-timeout" ]]; then
     watchdog_marker="$CASE_DIR/watchdog-fired"
     (
+      while kill -0 "$case_pid" 2>/dev/null; do
+        if grep -q '^pass-start[[:space:]]' "$CASE_CALLS" 2>/dev/null; then
+          break
+        fi
+        /bin/sleep 0.1
+      done
+      kill -0 "$case_pid" 2>/dev/null || exit 0
       /bin/sleep 12
-      if kill -0 "$case_pid" 2>/dev/null; then
+      if kill -0 "$case_pid" 2>/dev/null \
+        && ! grep -q '^  Exit reason: pass_timeout$' "$CASE_OUTPUT" 2>/dev/null; then
         : > "$watchdog_marker"
         terminate_test_process_tree "$case_pid" TERM
         /bin/sleep 1
@@ -1669,27 +1677,27 @@ assert_failure "repeated findings churn"
 assert_eq "3" "$(call_count pass)" "repeated findings churn pass count"
 assert_no_receipt "repeated findings churn"
 
-run_case "normal-gate" "normal" $'CLEAN\nCLEAN\nCLEAN'
+run_case "normal-gate" "normal" $'CLEAN\nCLEAN'
 assert_success "normal gate"
-assert_eq "3" "$(call_count pass)" "normal gate pass count"
+assert_eq "2" "$(call_count pass)" "normal gate pass count"
 assert_no_assessor "normal gate explicit tier"
-assert_receipt "normal" "3" "normal gate"
+assert_receipt "normal" "2" "normal gate"
 
-run_case "normal-lowered-target" "normal" $'CLEAN\nCLEAN' "" \
-  "standalone" "" "" "" "single" "derived" "" "" "2"
+run_case "normal-lowered-target" "normal" 'CLEAN' "" \
+  "standalone" "" "" "" "single" "derived" "" "" "1"
 assert_success "normal lowered target"
-assert_eq "2" "$(call_count pass)" "normal lowered target pass count"
+assert_eq "1" "$(call_count pass)" "normal lowered target pass count"
 assert_no_assessor "normal lowered target explicit tier"
-assert_receipt "normal" "2" "normal lowered target" active
-assert_contains "Assurance: WAIVED (2/3 clean passes required)" "$CASE_OUTPUT"
-assert_standalone_telemetry "completed" "2" \
+assert_receipt "normal" "1" "normal lowered target" active
+assert_contains "Assurance: WAIVED (1/2 clean passes required)" "$CASE_OUTPUT"
+assert_standalone_telemetry "completed" "1" \
   "normal lowered target telemetry" waived
 
-run_case "complex-gate" "complex" $'CLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN'
+run_case "complex-gate" "complex" $'CLEAN\nCLEAN\nCLEAN'
 assert_success "complex gate"
-assert_eq "6" "$(call_count pass)" "complex gate pass count"
+assert_eq "3" "$(call_count pass)" "complex gate pass count"
 assert_no_assessor "complex gate explicit tier"
-assert_receipt "complex" "6" "complex gate"
+assert_receipt "complex" "3" "complex gate"
 
 run_case "fix-reset" "small" $'CLEAN\nCLEAN\nFINDINGS_FIXED:1\nCLEAN\nCLEAN\nCLEAN' "" \
   "standalone" "" "" "" "single" "derived" "" "3"
@@ -1699,19 +1707,19 @@ assert_no_assessor "fix reset explicit tier"
 assert_receipt "small" "3" "fix reset"
 assert_standalone_telemetry "completed" "6" "fix reset telemetry"
 
-run_case "scope-refresh-codebase" "small" $'FINDINGS_FIXED_CLEAR_SCOPE:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
+run_case "scope-refresh-codebase" "small" $'FINDINGS_FIXED_CLEAR_SCOPE:1\nCLEAN\nCLEAN\nCLEAN' "" \
   "standalone" "" "" "expect-codebase"
 assert_success "scope refresh from changes to codebase"
-assert_eq "7" "$(call_count pass)" "scope refresh to codebase pass count"
-assert_eq "6" "$(call_count scope-refresh-codebase)" "scope refresh to codebase prompt count"
-assert_receipt "complex" "6" "scope refresh from changes to codebase"
+assert_eq "4" "$(call_count pass)" "scope refresh to codebase pass count"
+assert_eq "3" "$(call_count scope-refresh-codebase)" "scope refresh to codebase prompt count"
+assert_receipt "complex" "3" "scope refresh from changes to codebase"
 
-run_case "scope-refresh-changes" "complex" $'FINDINGS_FIXED_ADD_UNTRACKED:1\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN\nCLEAN' "" \
+run_case "scope-refresh-changes" "complex" $'FINDINGS_FIXED_ADD_UNTRACKED:1\nCLEAN\nCLEAN\nCLEAN' "" \
   "standalone" "clean-codebase" "" "expect-changes"
 assert_success "scope refresh from codebase to changes"
-assert_eq "7" "$(call_count pass)" "scope refresh to changes pass count"
-assert_eq "6" "$(call_count scope-refresh-changes)" "scope refresh to changes prompt count"
-assert_receipt "complex" "6" "scope refresh from codebase to changes"
+assert_eq "4" "$(call_count pass)" "scope refresh to changes pass count"
+assert_eq "3" "$(call_count scope-refresh-changes)" "scope refresh to changes prompt count"
+assert_receipt "complex" "3" "scope refresh from codebase to changes"
 
 run_case "findings-stop" "small" "FINDINGS:1"
 assert_failure "findings stop"
@@ -1741,7 +1749,7 @@ if ! grep -R -q '"reason":"pass_timeout"' "$CASE_DIR/runs" 2>/dev/null; then
   exit 1
 fi
 if [[ -e "$CASE_DIR/watchdog-fired" ]]; then
-  printf 'review pass timeout: external 12s watchdog terminated a stalled case\n' >&2
+  printf 'review pass timeout: external 12s watchdog terminated a stalled provider timeout\n' >&2
   show_case_output
   exit 1
 fi
@@ -1807,19 +1815,19 @@ assert_eq "6" "$(call_count pass)" "no default max pass count"
 assert_no_assessor "no default max explicit tier"
 assert_receipt "small" "1" "no default max"
 
-run_case "upward-escalation" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN\nCLEAN'
+run_case "upward-escalation" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN'
 assert_success "upward escalation"
-assert_eq "4" "$(call_count pass)" "upward escalation pass count"
+assert_eq "3" "$(call_count pass)" "upward escalation pass count"
 assert_no_assessor "upward escalation explicit tier"
-assert_receipt "normal" "3" "upward escalation"
-assert_standalone_telemetry "completed" "4" "upward escalation telemetry"
+assert_receipt "normal" "2" "upward escalation"
+assert_standalone_telemetry "completed" "3" "upward escalation telemetry"
 
-run_case "escalation-raises-override" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN\nCLEAN' "" \
+run_case "escalation-raises-override" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN' "" \
   "standalone" "" "" "" "single" "derived" "" "1"
 assert_success "escalation raises explicit gate to tier floor"
-assert_eq "4" "$(call_count pass)" "escalation raised gate pass count"
+assert_eq "3" "$(call_count pass)" "escalation raised gate pass count"
 assert_no_assessor "escalation raised gate explicit tier"
-assert_receipt "normal" "3" "escalation raised gate"
+assert_receipt "normal" "2" "escalation raised gate"
 
 run_concurrent_case
 

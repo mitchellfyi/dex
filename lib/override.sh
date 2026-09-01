@@ -35,7 +35,7 @@ dx_override_gate_supported() {
   case "$gate" in
     phase.timeout|phase.min-audits|loop.max-iterations|\
     loop.stall-timeout|loop.stall-escalate|review.clean-passes|\
-    review.pass-timeout|review.notice-interval|review.recheck-seconds|\
+    review.pass-timeout|review.recheck-seconds|\
     watch.pause-ttl|watch.cycle-timeout|watch.command-timeout|\
     complete.max-cycles|complete.wait-minutes|complete.ci-fix-attempts|\
     failure.attempts-per-strategy|failure.max-strategies|\
@@ -62,7 +62,7 @@ dx_override_gate_value_valid() {
       ;;
     phase.timeout|phase.min-audits|loop.max-iterations|\
     loop.stall-timeout|loop.stall-escalate|review.pass-timeout|\
-    review.notice-interval|review.recheck-seconds|watch.pause-ttl|\
+    review.recheck-seconds|watch.pause-ttl|\
     watch.cycle-timeout|watch.command-timeout|complete.max-cycles|\
     complete.wait-minutes|complete.ci-fix-attempts|\
     failure.attempts-per-strategy|failure.max-strategies|maintain.max-prs|\

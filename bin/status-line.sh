@@ -71,6 +71,31 @@ if [[ -f "$LOOP_FILE" ]]; then
   ITER=" | Audit ${ITER}/${MAX}"
 fi
 
+# Phase 3 live work is intentionally rendered here instead of as repeated
+# Stop-hook transcript messages. The busy-record parser validates every field
+# before any arithmetic is performed.
+REVIEW_WORK=""
+if [[ "$PHASE" == "3" ]]; then
+  BUSY_RECORD=$(__dx_phase_busy_record "$SESSION_ID" 3 2>/dev/null || true)
+  if [[ -n "$BUSY_RECORD" ]]; then
+    BUSY_REST="${BUSY_RECORD#*$'\n'}"
+    BUSY_EPOCH="${BUSY_REST%%$'\n'*}"
+    BUSY_REST="${BUSY_REST#*$'\n'}"
+    BUSY_REST="${BUSY_REST#*$'\n'}"
+    BUSY_REST="${BUSY_REST#*$'\n'}"
+    BUSY_TIMEOUT="${BUSY_REST%%$'\n'*}"
+    BUSY_LABEL="${BUSY_REST#*$'\n'}"
+    BUSY_NOW=$(date +%s)
+    BUSY_AGE=$((BUSY_NOW - BUSY_EPOCH))
+    [[ "$BUSY_AGE" -ge 0 ]] || BUSY_AGE=0
+    if [[ -n "$BUSY_TIMEOUT" && "$BUSY_TIMEOUT" -gt 0 ]]; then
+      REVIEW_WORK=" | ${BUSY_LABEL} | $(dx_format_duration "$BUSY_AGE")/$(dx_format_duration "$BUSY_TIMEOUT")"
+    else
+      REVIEW_WORK=" | ${BUSY_LABEL} | $(dx_format_duration "$BUSY_AGE") elapsed"
+    fi
+  fi
+fi
+
 # Elapsed time from times file
 ELAPSED=""
 TIMES_FILE=$(dx_times_file "$SESSION_ID")
@@ -100,5 +125,9 @@ if [[ "$PHASE" =~ ^[0-9]+$ ]] && [[ "$PHASE" -gt 6 ]]; then
     echo "Dex blocked | terminal commit incomplete${ELAPSED}"
   fi
 else
-  echo "Phase ${PHASE}/6${ITER}${ELAPSED}"
+  PHASE_LABEL=""
+  if [[ "$PHASE" =~ ^[0-6]$ ]]; then
+    PHASE_LABEL=" · $(dx_lifecycle_phase_label "$PHASE")"
+  fi
+  echo "Phase ${PHASE}/6${PHASE_LABEL}${ITER}${REVIEW_WORK}${ELAPSED}"
 fi

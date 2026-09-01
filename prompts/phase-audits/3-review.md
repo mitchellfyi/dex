@@ -125,4 +125,4 @@ All of these must be true before you stop:
   review after an action that changed the review scope.
 
 When those criteria are met, stop. The outer `/dxreviewloop` owns the selected
-tier's trusted consecutive `CLEAN` gate, which defaults to 1, 3, or 6 waves.
+tier's global consecutive `CLEAN` gate: 1, 2, or 3 waves.

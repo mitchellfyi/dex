@@ -249,10 +249,8 @@ REVIEW_REASON_CODES="<comma-separated-reason-codes>"
 dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIEW_REASON_CODES" "$PWD"
 ```
 
-The tier selects the trusted clean-wave policy from the committed default
-branch. The defaults are 1 for `small`, 3 for `normal`, and 6 for `complex`;
-repositories may configure monotonic values from 1 through 30 in `.dex/dex.md`
-`## Review Policy`. The persisted selection is bound to that resolved policy.
+The tier selects Dex's fixed global clean-wave policy: 1 for `small`, 2 for
+`normal`, and 3 for `complex`. The persisted selection is bound to that policy.
 Candidate-branch edits cannot lower the active gate, and the launch-only
 `DEX_REVIEW_CLEAN_PASSES` value can only raise it. An attributed
 `dx control override review.clean-passes <1-30>` may lower the effective target

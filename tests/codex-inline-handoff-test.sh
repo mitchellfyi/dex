@@ -139,7 +139,7 @@ dx_completion_write_receipt "$session_id" "$generation"
 receipt_fingerprint="$(dx_review_scope_fingerprint "$TMP_DIR/repo")"
 policy_record="$(dx_review_policy_resolve "$TMP_DIR/repo")"
 receipt_policy_binding="$(printf "%s\n" "$policy_record" | cut -f4)"
-for ledger_iteration in {1..6}; do
+for ledger_iteration in {1..3}; do
   pass_id="direct-clean-${ledger_iteration}"
   evidence_file="$TMP_DIR/direct-clean-${ledger_iteration}.evidence.json"
   context_file="$TMP_DIR/direct-clean-${ledger_iteration}.context.md"
@@ -150,7 +150,7 @@ for ledger_iteration in {1..6}; do
     "$receipt_fingerprint" "$approved_criteria_hash" "$receipt_policy_binding" \
     "$evidence_file" "$context_file"
 done
-if ! dx_review_write_receipt "$session_id" complex 6 6 "$TMP_DIR/repo" \
+if ! dx_review_write_receipt "$session_id" complex 3 3 "$TMP_DIR/repo" \
   "$approved_criteria_hash" "$receipt_policy_binding"; then
   printf "%s\n" "could not write the Phase 3 receipt fixture" >&2
   exit 1

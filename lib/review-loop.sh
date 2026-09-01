@@ -378,6 +378,13 @@ __dx_review_default_pass_timeout() {
     *) return 1 ;;
   esac
 }
+__dx_review_scout_count() {
+  case "${1:-}" in
+    light) printf '%s\n' "2" ;;
+    standard|thorough) printf '%s\n' "3" ;;
+    *) return 1 ;;
+  esac
+}
 # __dx_review_record_pause <run_id> <telemetry_session_id> <standalone>
 #   <session_id> <review_phase> <message> <run_status> <reason> [event fields ...]
 #
@@ -646,12 +653,17 @@ ${scope_source_detail}
 
 Use this review context pack path: \`__REVIEW_CONTEXT_FILE__\`
 Use this machine-readable evidence path: \`__PASS_EVIDENCE_FILE__\`
+Use this scope-bound deterministic baseline path: \`__REVIEW_BASELINE_FILE__\`
+Write per-stage timing telemetry to: \`__REVIEW_METRICS_FILE__\`
 Only after the review result, evidence, context, and findings hash are written, run this exact generation-bound command: \`__PASS_COMPLETION_COMMAND__\`
 The immutable scope fingerprint for this pass is: \`__SCOPE_FINGERPRINT__\`
+The immutable working-tree fingerprint for this pass is: \`__WORKING_FINGERPRINT__\`
 
 Independent pass ID: __REVIEW_PASS_ID__
 Trusted review-policy binding: __REVIEW_POLICY_BINDING__
 Scope, criteria, policy, and pass binding: __REVIEW_PASS_BINDING__
+Deterministic baseline mode: __REVIEW_BASELINE_MODE__
+Deterministic baseline binding: __REVIEW_BASELINE_BINDING__
 
 __REVIEW_CRITERIA_BLOCK__
 
@@ -660,7 +672,18 @@ Review depth profile for this pass: \`__REVIEW_PROFILE__\`.
 - \`standard\`: core sweep plus targeted domain sweeps for concrete changed surfaces, verifier pass.
 - \`thorough\`: all domain sweeps, verifier pass, batch fix, targeted recheck.
 
-Follow the audit prompt and \`prompts/review-wave.md\`: first materialize a compact context pack with \`## Scope\`, \`## Acceptance Criteria\`, \`## Deterministic Checks\`, \`## Review Coverage\`, and \`## Verification\` sections. Record \`Criteria binding: __REVIEW_CRITERIA_BINDING__\` exactly under \`## Acceptance Criteria\`. Then run deterministic checks; harvest candidate issues according to the depth profile; verify and deduplicate findings; batch-fix verified issues; re-check; and write the result and evidence files. Run in the current checkout; do not create or switch branches or worktrees.
+Follow the audit prompt and \`prompts/review-wave.md\`. First materialize a compact context pack with \`## Scope\`, \`## Acceptance Criteria\`, \`## Deterministic Checks\`, \`## Review Coverage\`, and \`## Verification\` sections. Record \`Criteria binding: __REVIEW_CRITERIA_BINDING__\` exactly under \`## Acceptance Criteria\`.
+
+Use the deterministic baseline only for passing commands that explicitly run the whole project's expensive test suite or equivalent all-target gate. In \`fresh\` mode, run those commands and atomically write valid version 1 baseline JSON when at least one qualifies. In \`reuse\` mode, reuse the bound passing commands instead of rerunning them. Every wave must still rerun fast static checks, lint, type checks, focused tests, generated-file checks, repro probes, and all checks affected by a fix. Ambiguous or partially scoped commands are never reusable.
+
+After deterministic checks, use provider-native parallel agents for independent read-only scouting. Run at most __REVIEW_SCOUT_COUNT__ applicable groups:
+1. correctness, contracts, and tests
+2. security, architecture, and devops
+3. frontend, performance, and observability
+
+The top-level wave is the only writer and verifier. Snapshot the checkout before and after scouting. If a scout changes it, restore nothing and write \`BLOCKED:scout-mutated-checkout\`. Retry one failed scout once; if the required coverage is still unavailable, write \`BLOCKED:review-scout-unavailable\`. If parallel agents are unavailable, run the same groups sequentially in this session. Merge their candidate inventories, verify and deduplicate findings, batch-fix safe verified issues, rerun affected checks, then write the result and evidence files.
+
+When \`DEX_REVIEW_BUSY_TOKEN\` is set, update the live stage with \`dx_phase_busy_update\` before context, checks, scouting, verification, and fixes. Keep the label in this form: \`Wave __REVIEW_ITERATION__ · <stage> · __REVIEW_CLEAN_BEFORE__/__REVIEW_REQUIRED_CLEAN__ clean\`. Run in the current checkout; do not create or switch branches or worktrees.
 
 Result semantics:
 - Write \`CLEAN\` only if this wave found zero verified findings and applied zero fixes.
@@ -674,7 +697,7 @@ When the approved requirements marker is N/A, treat plan-dependent sections as N
 
 ${scope_boundary}
 
-This is an independent pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. Judge only the current checkout and the scope supplied above.
+This is an independent semantic pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. The deterministic baseline is mechanical command evidence, not an earlier review conclusion. Judge semantic behavior only from the current checkout and the scope supplied above.
 
 After writing the review result signal, evidence JSON, context pack, and findings hash, run the exact command above, output \`${review_promise}\`, and then stop. That receipt only exits this review-wave pass; it does not make a non-CLEAN result count as clean.
 $(__dx_provider_prompt)"
@@ -798,7 +821,7 @@ dx_review_loop_run() {
     review_policy_binding review_policy_ref review_policy_oid <<< "$review_policy_record"
   if ! dx_review_policy_provenance_valid "$review_policy_ref" "$review_policy_oid" || \
      ! dx_review_policy_binding_valid "$review_policy_binding"; then
-    dx_error "The default branch has an invalid review policy. Fix the Review Policy table in .dex/dex.md."
+    dx_error "Dex's global review policy is invalid. Reinstall or repair the Dex runtime before starting review."
     if [[ $standalone_review_prompt -eq 0 ]]; then
       if ! __dx_review_preflight_pause "$session_id" \
         review-policy-invalid; then
@@ -1434,7 +1457,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   }
   # Environment and persisted selection values can raise the trusted default.
   # The attributed in-session override is then allowed to lower or raise the
-  # effective target without changing what the trusted policy says passed.
+  # effective target without changing what the global policy says passed.
   local required_clean="" default_required_clean="" trusted_required_clean=""
   local required_candidate=""
   trusted_required_clean=$(dx_review_policy_tier_clean_passes "$review_tier" \
@@ -1571,25 +1594,20 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     dx_info "Review wave timeout: $(dx_format_duration "$pass_timeout")."
   fi
 
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  DEX — dxreviewloop (${review_tier}, ${required_clean} clean passes)"
-  echo ""
-  echo "  Agent:  $(dx_agent_label "$provider_agent")"
-  echo "  Branch: ${branch}"
-  echo "  Scope:  ${scope_name} (${files_changed} files)"
-  echo "  Depth:  ${review_profile}"
-  echo "  Safety: no outer limit; structured pause gates enabled"
-  echo "  Input:  ${diff_cmd}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
+  dx_info "Review · ${review_tier}/${review_profile} · ${required_clean} clean wave(s) required"
+  dx_info "$(dx_agent_label "$provider_agent") · ${branch} · ${scope_name} (${files_changed} files)"
 
   local audit_file="$DEX_DIR/prompts/phase-audits/3-review.md" audit_prompt=""
   [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")
 
   local terminal_reason="" terminal_detail="" terminal_exit=1 parent_findings_file message_template=""
+  local review_baseline_file=""
   local terminal_selection_op="keep" terminal_state_op="write" terminal_preserve_credit=0
   parent_findings_file=$(dx_findings_file "$session_id")
+  review_baseline_file=$(dx_review_baseline_file "$session_id") || {
+    dx_error "Could not resolve the deterministic review baseline path."
+    return 1
+  }
 
   while :; do
     local live_required_clean=""
@@ -1661,9 +1679,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     }
 
     review_iteration=$((review_iteration + 1))
-    echo ""
-    echo "  Starting independent review wave (${clean_passes}/${required_clean} clean passes earned)"
-    echo ""
+    dx_info "Wave ${review_iteration} · starting · ${clean_passes}/${required_clean} clean"
 
     local pass_nonce="" pass_session_id="" pass_session_name=""
     pass_nonce=$(__dx_review_nonce)
@@ -1675,13 +1691,14 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     }
     current_review_child_session="$pass_session_id"
     pass_session_name="dxreview-wave-${pass_nonce}"
-    local review_context_file="" pass_criteria_file="" pass_evidence_file="" pass_result_file="" pass_findings_file=""
+    local review_context_file="" pass_criteria_file="" pass_evidence_file="" pass_result_file="" pass_findings_file="" pass_metrics_file=""
     local pass_generation="" pass_completion_command=""
     review_context_file=$(dx_review_context_file "$pass_session_id")
     pass_criteria_file=$(dx_review_criteria_file "$pass_session_id")
     pass_evidence_file=$(dx_review_evidence_file "$pass_session_id")
     pass_result_file=$(dx_review_result_file "$pass_session_id")
     pass_findings_file=$(dx_findings_file "$pass_session_id")
+    pass_metrics_file=$(dx_review_metrics_file "$pass_session_id")
 
     mkdir -p "$DX_LOOP_DIR"
     dx_cleanup_session "$pass_session_id"
@@ -1734,6 +1751,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     }
     message="${message//__REVIEW_CONTEXT_FILE__/$review_context_file}"
     message="${message//__PASS_EVIDENCE_FILE__/$pass_evidence_file}"
+    message="${message//__REVIEW_METRICS_FILE__/$pass_metrics_file}"
     message="${message//__PASS_COMPLETION_COMMAND__/$pass_completion_command}"
     message="${message//__REVIEW_CRITERIA_BLOCK__/$criteria_block}"
     message="${message//__REVIEW_CRITERIA_BINDING__/$review_criteria_binding}"
@@ -1742,6 +1760,12 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     local descriptor_before="" descriptor_after="" branch_before="" branch_after="" head_before="" head_after=""
     local pass_started="" pass_finished="" pass_duration="" clean_before="$clean_passes"
     local pass_tier="$review_tier" pass_profile="$review_profile" pass_binding=""
+    local scout_count=0 baseline_mode="fresh" baseline_binding="fresh"
+    local baseline_hash_before="none" baseline_hash_after="none"
+    local baseline_reused="false" baseline_contract_error=""
+    local baseline_summary="" baseline_commands=0 baseline_duration=0
+    local metrics_summary="" context_duration=0 checks_duration=0
+    local scout_duration=0 verifier_duration=0
     scope_before=$(dx_review_scope_fingerprint "$PWD") || {
       terminal_reason="scope_fingerprint_error"
       dx_cleanup_session "$pass_session_id"
@@ -1765,6 +1789,43 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
       current_review_child_session=""
       break
     }
+    scout_count=$(__dx_review_scout_count "$pass_profile") || {
+      terminal_reason="tier_resolution_error"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    }
+    if dx_review_baseline_valid "$review_baseline_file" "$scope_before" \
+      "$working_before" "$review_criteria_binding" \
+      "$review_policy_binding" 2>/dev/null; then
+      baseline_hash_before=$(dx_review_baseline_hash "$review_baseline_file") \
+        || baseline_hash_before="none"
+      if [[ "$baseline_hash_before" =~ ^[a-f0-9]{64}$ ]]; then
+        baseline_mode="reuse"
+        baseline_binding="$baseline_hash_before"
+        baseline_reused="true"
+      fi
+    elif [[ -L "$review_baseline_file" || -f "$review_baseline_file" ]]; then
+      rm -f "$review_baseline_file" 2>/dev/null || {
+        terminal_reason="baseline_state_invalid"
+        dx_cleanup_session "$pass_session_id"
+        current_review_child_session=""
+        break
+      }
+    elif [[ -e "$review_baseline_file" ]]; then
+      terminal_reason="baseline_state_invalid"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    fi
+    message="${message//__WORKING_FINGERPRINT__/$working_before}"
+    message="${message//__REVIEW_BASELINE_FILE__/$review_baseline_file}"
+    message="${message//__REVIEW_BASELINE_MODE__/$baseline_mode}"
+    message="${message//__REVIEW_BASELINE_BINDING__/$baseline_binding}"
+    message="${message//__REVIEW_SCOUT_COUNT__/$scout_count}"
+    message="${message//__REVIEW_ITERATION__/$review_iteration}"
+    message="${message//__REVIEW_CLEAN_BEFORE__/$clean_passes}"
+    message="${message//__REVIEW_REQUIRED_CLEAN__/$required_clean}"
     descriptor_before=$(dx_review_scope_descriptor "$PWD") || {
       terminal_reason="scope_fingerprint_error"
       dx_cleanup_session "$pass_session_id"
@@ -1775,13 +1836,13 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     head_before=$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' "UNBORN")
     pass_started=$(date +%s)
     __dx_review_emit_event "$review_run_id" "review.pass.started" "info" "Review pass started" "$review_phase" \
-      pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" clean_before_int="$clean_passes" required_clean_int="$required_clean" scope_fingerprint="$scope_before"
+      pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" clean_before_int="$clean_passes" required_clean_int="$required_clean" scope_fingerprint="$scope_before" baseline_reused_bool="$baseline_reused" baseline_binding="$baseline_binding" scout_count_int="$scout_count"
 
     parent_busy_token=""
     if [[ $standalone_review_prompt -eq 0 ]]; then
       local busy_write_status=0
       parent_busy_token=$(__dx_review_parent_busy_begin \
-        "$session_id" "independent review wave" "$pass_timeout_default") \
+        "$session_id" "Wave ${review_iteration} · context · ${clean_passes}/${required_clean} clean" "$pass_timeout") \
         || busy_write_status=$?
       if [[ "$busy_write_status" -ne 0 || -z "$parent_busy_token" ]]; then
         if [[ "$busy_write_status" -eq 2 ]]; then
@@ -1877,9 +1938,18 @@ ${message}"
       DEX_REVIEW_POLICY_BINDING="$review_policy_binding" \
       DEX_REVIEW_PASS_ID="$pass_nonce" \
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
+      DEX_REVIEW_BASELINE_FILE="$review_baseline_file" \
+      DEX_REVIEW_BASELINE_MODE="$baseline_mode" \
+      DEX_REVIEW_BASELINE_BINDING="$baseline_binding" \
+      DEX_REVIEW_WORKING_FINGERPRINT="$working_before" \
+      DEX_REVIEW_METRICS_FILE="$pass_metrics_file" \
+      DEX_REVIEW_BUSY_TOKEN="$parent_busy_token" \
+      DEX_REVIEW_WAVE_NUMBER="$review_iteration" \
+      DEX_REVIEW_CLEAN_BEFORE="$clean_passes" \
+      DEX_REVIEW_REQUIRED_CLEAN="$required_clean" \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-        "$pass_timeout_default" \
+        "$pass_timeout" \
         bash "$codex_wrapper" exec -- "$codex_message" \
         || exit_code=$?
     else
@@ -1900,9 +1970,18 @@ ${message}"
       DEX_REVIEW_POLICY_BINDING="$review_policy_binding" \
       DEX_REVIEW_PASS_ID="$pass_nonce" \
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
+      DEX_REVIEW_BASELINE_FILE="$review_baseline_file" \
+      DEX_REVIEW_BASELINE_MODE="$baseline_mode" \
+      DEX_REVIEW_BASELINE_BINDING="$baseline_binding" \
+      DEX_REVIEW_WORKING_FINGERPRINT="$working_before" \
+      DEX_REVIEW_METRICS_FILE="$pass_metrics_file" \
+      DEX_REVIEW_BUSY_TOKEN="$parent_busy_token" \
+      DEX_REVIEW_WAVE_NUMBER="$review_iteration" \
+      DEX_REVIEW_CLEAN_BEFORE="$clean_passes" \
+      DEX_REVIEW_REQUIRED_CLEAN="$required_clean" \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
-        "$pass_timeout_default" \
+        "$pass_timeout" \
         __dx_claude "${claude_args[@]}" "$message" \
         || exit_code=$?
     fi
@@ -1936,6 +2015,44 @@ ${message}"
     fi
     pass_finished=$(date +%s)
     pass_duration=$((pass_finished - pass_started))
+
+    if [[ "$baseline_mode" == "reuse" ]]; then
+      if ! dx_review_baseline_valid "$review_baseline_file" "$scope_before" \
+          "$working_before" "$review_criteria_binding" \
+          "$review_policy_binding" 2>/dev/null; then
+        baseline_contract_error="deterministic baseline changed or became invalid"
+      else
+        baseline_hash_after=$(dx_review_baseline_hash "$review_baseline_file" \
+          2>/dev/null || printf '%s\n' "none")
+        if [[ "$baseline_hash_after" != "$baseline_hash_before" ]]; then
+          baseline_contract_error="deterministic baseline changed or became invalid"
+        fi
+      fi
+    elif [[ -L "$review_baseline_file" || -f "$review_baseline_file" ]]; then
+      if dx_review_baseline_valid "$review_baseline_file" "$scope_before" \
+          "$working_before" "$review_criteria_binding" \
+          "$review_policy_binding" 2>/dev/null; then
+        baseline_hash_after=$(dx_review_baseline_hash "$review_baseline_file" \
+          2>/dev/null || printf '%s\n' "none")
+      else
+        baseline_contract_error="deterministic baseline is invalid"
+      fi
+    elif [[ -e "$review_baseline_file" ]]; then
+      baseline_contract_error="deterministic baseline is invalid"
+    fi
+    if [[ "$baseline_hash_after" =~ ^[a-f0-9]{64}$ ]]; then
+      baseline_summary=$(dx_review_baseline_summary "$review_baseline_file" \
+        2>/dev/null || true)
+      if [[ -n "$baseline_summary" ]]; then
+        IFS=$'\t' read -r baseline_commands baseline_duration <<< "$baseline_summary"
+      fi
+    fi
+    metrics_summary=$(dx_review_metrics_summary "$pass_metrics_file" \
+      2>/dev/null || true)
+    if [[ -n "$metrics_summary" ]]; then
+      IFS=$'\t' read -r context_duration checks_duration scout_duration \
+        verifier_duration <<< "$metrics_summary"
+    fi
 
     if [[ -n "$review_interrupt_reason" ]]; then
       dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
@@ -1991,7 +2108,7 @@ ${message}"
     local result="" findings_hash="" evidence_hash="" evidence_summary="" result_reason="invalid" criteria_intact=1
     local accepted_pass_generation=""
     local evidence_checks="not-recorded" evidence_verifier="not-recorded" evidence_coverage="none" evidence_valid_json=false
-    local evidence_findings=0 evidence_fixes=0 context_valid=0 evidence_valid=0 completion_valid=0 review_contract_error=""
+    local evidence_findings=0 evidence_fixes=0 context_valid=0 evidence_valid=0 completion_valid=0 review_contract_error="$baseline_contract_error"
     [[ -f "$pass_result_file" ]] && result=$(cat "$pass_result_file" 2>/dev/null || true)
     findings_hash=$(dx_review_read_findings_hash "$pass_findings_file" 2>/dev/null || true)
     evidence_hash=$(dx_review_evidence_hash "$pass_evidence_file" 2>/dev/null || true)
@@ -2019,7 +2136,9 @@ ${message}"
     __dx_review_criteria_intact "$session_id" "$pass_session_id" \
       "$review_criteria_binding" || criteria_intact=0
     if dx_review_result_valid "$result"; then
-      if [[ $completion_valid -ne 1 ]]; then
+      if [[ -n "$review_contract_error" ]]; then
+        :
+      elif [[ $completion_valid -ne 1 ]]; then
         review_contract_error="completion receipt missing"
       elif [[ $criteria_intact -ne 1 ]]; then
         review_contract_error="approved review criteria changed"
@@ -2127,6 +2246,7 @@ ${message}"
 
     if [[ -n "$review_contract_error" ]]; then
       case "$review_contract_error" in
+        "deterministic baseline changed or became invalid"|"deterministic baseline is invalid") terminal_reason="baseline_contract_invalid" ;;
         "completion receipt missing") terminal_reason="completion_receipt_missing" ;;
         "completion receipt could not be consumed"|"completion decision lock could not be released"|"completion decision lock unavailable") terminal_reason="completion_receipt_invalid" ;;
         "context pack missing or empty") terminal_reason="context_pack_missing" ;;
@@ -2157,6 +2277,12 @@ ${message}"
     fi
     [[ "$scope_after" != "$scope_before" ]] && scope_changed="true"
     [[ "$working_after" != "$working_before" ]] && working_changed="true"
+    if [[ "$working_changed" == "true" || "$scope_changed" == "true" ]]; then
+      rm -f "$review_baseline_file" 2>/dev/null || true
+      baseline_hash_after="none"
+      baseline_commands=0
+      baseline_duration=0
+    fi
 
     local result_kind="" result_count=0 event_severity="info"
     result_kind=$(dx_review_result_kind "$result")
@@ -2319,20 +2445,20 @@ ${message}"
       if [[ -z "$terminal_reason" ]]; then
         case "$transition_action" in
           count|complete)
-            echo "  Wave result: CLEAN (${clean_passes}/${required_clean})"
+            dx_ok "Wave ${review_iteration} · CLEAN · ${clean_passes}/${required_clean} clean"
             ;;
           reset_continue)
-            echo "  Wave result: ${result} — clean streak reset"
+            dx_info "Wave ${review_iteration} · ${result} · clean streak reset"
             ;;
           escalate_continue)
             if [[ "$result_kind" == "findings_fixed" ]]; then
               __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated after fixes" "$review_phase" \
                 from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration" reason_code="$transition_candidate_reasons"
-              echo "  Wave result: ${result} — clean streak reset"
+              dx_info "Wave ${review_iteration} · ${result} · clean streak reset"
             else
               __dx_review_emit_event "$review_run_id" "review.tier.escalated" "info" "Review tier escalated" "$review_phase" \
                 from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" iteration_int="$review_iteration"
-              echo "  Wave result: escalation to ${review_tier} (${required_clean} clean passes required)"
+              dx_warn "Wave ${review_iteration} · escalated to ${review_tier} · ${required_clean} clean required"
             fi
             ;;
           pause)
@@ -2367,7 +2493,7 @@ ${message}"
 
     [[ -n "$terminal_reason" ]] && event_severity="warn"
     __dx_review_emit_event "$review_run_id" "review.pass.finished" "$event_severity" "Review pass finished" "$review_phase" \
-      pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$result_kind" result_reason="$result_reason" findings_int="$result_count" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" scope_changed_bool="$scope_changed" working_changed_bool="$working_changed" provider_exit_int="$exit_code" terminal_reason="${terminal_reason:-none}" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_findings_int="$evidence_findings" evidence_fixes_int="$evidence_fixes" evidence_valid_bool=true
+      pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$result_kind" result_reason="$result_reason" findings_int="$result_count" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" scope_changed_bool="$scope_changed" working_changed_bool="$working_changed" provider_exit_int="$exit_code" terminal_reason="${terminal_reason:-none}" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_findings_int="$evidence_findings" evidence_fixes_int="$evidence_fixes" evidence_valid_bool=true baseline_reused_bool="$baseline_reused" baseline_binding="$baseline_hash_after" baseline_commands_int="$baseline_commands" baseline_duration_seconds_int="$baseline_duration" scout_count_int="$scout_count" context_duration_seconds_int="$context_duration" checks_duration_seconds_int="$checks_duration" scout_duration_seconds_int="$scout_duration" verifier_duration_seconds_int="$verifier_duration"
 
     dx_cleanup_session "$pass_session_id" 2>/dev/null || true
     [[ -n "$terminal_reason" ]] && break
@@ -2401,7 +2527,6 @@ ${message}"
     terminal_preserve_credit=1
   fi
 
-  echo ""
   local final_acceptance_rc=0 final_commit_rc=0 review_success_committed=0
   local review_runtime_finish_result=0 standalone_runtime_committed=0
   local second_acceptance_rc=0

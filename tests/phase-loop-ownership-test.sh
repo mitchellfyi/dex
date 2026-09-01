@@ -28,7 +28,7 @@ cd "$ROOT"
 unset DEX_LOOP_ACTIVE DEX_REVIEW_PASS_ACTIVE DEX_PHASE_HANDOFF DEX_LOOP_PHASE \
   DEX_LOOP_PROMISE DEX_LOOP_PROMPT DEX_LOOP_MIN_AUDITS DEX_LOOP_MAX_ITERATIONS \
   DEX_LOOP_STALL_TIMEOUT DEX_LOOP_STALL_ESCALATE DEX_COMPLETE_WAIT_MINUTES \
-  DEX_REVIEW_PASS_TIMEOUT DEX_REVIEW_PASS_NOTICE_INTERVAL \
+  DEX_REVIEW_PASS_TIMEOUT \
   DEX_REVIEW_PASS_RECHECK_SECONDS DEX_SESSION_ID
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-phase-loop-test.XXXXXX")"
@@ -525,7 +525,7 @@ set +e
 OUT="$(printf '{"session_id":"claude-dead-review-owner"}' | env \
   DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
   DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=3600 \
-  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
   bash "$HOOK" 2>&1)"
 RC=$?
 set -e
@@ -556,11 +556,13 @@ set +e
 OUT="$(printf '{"session_id":"claude-timeout-wait"}' | env \
   DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
   DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=900 \
-  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
   bash "$HOOK" 2>&1)"
 RC=$?
 set -e
-assert_rc "persisted timeout keeps a live review wave waiting" 2
+assert_rc "persisted timeout keeps a live review wave waiting" 0
+python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["decision"] == "block"; assert payload["suppressOutput"] is True; assert "systemMessage" not in payload' "$OUT" \
+  || fail "live review wait did not return quiet structured Stop output"
 assert_out_contains "dynamic timeout reports the selected deadline" "1h 0m"
 assert_out_lacks "dynamic timeout does not pause the wave" "review pass timeout reached"
 if [[ ! -e "$(dx_paused_file "$SID")" ]]; then report "dynamic timeout leaves lifecycle active" 0; else report "dynamic timeout leaves lifecycle active" 1; fi
@@ -579,7 +581,7 @@ set +e
 OUT="$(printf '{"session_id":"claude-timeout-pause"}' | env \
   DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
   DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=9999 \
-  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
   bash "$HOOK" 2>&1)"
 RC=$?
 set -e
@@ -602,11 +604,13 @@ set +e
 OUT="$(printf '{"session_id":"claude-timeout-disabled"}' | env \
   DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 \
   DEX_PHASE_HANDOFF=inline DEX_REVIEW_PASS_TIMEOUT=1 \
-  DEX_REVIEW_PASS_NOTICE_INTERVAL=0 DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
+  DEX_REVIEW_PASS_RECHECK_SECONDS=0 \
   bash "$HOOK" 2>&1)"
 RC=$?
 set -e
-assert_rc "persisted zero timeout keeps an old review wave waiting" 2
+assert_rc "persisted zero timeout keeps an old review wave waiting" 0
+python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["decision"] == "block"; assert payload["suppressOutput"] is True; assert "systemMessage" not in payload' "$OUT" \
+  || fail "disabled-timeout review wait did not return quiet structured Stop output"
 assert_out_contains "disabled timeout is reported accurately" "timeout is disabled"
 assert_out_lacks "disabled timeout does not pause the wave" "review pass timeout reached"
 if [[ ! -e "$(dx_paused_file "$SID")" ]]; then report "disabled timeout leaves lifecycle active" 0; else report "disabled timeout leaves lifecycle active" 1; fi
@@ -674,7 +678,9 @@ set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-1-criteria"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=1 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
 set -e
-assert_rc "valid Phase 1 criteria reach handoff" 2
+assert_rc "valid Phase 1 criteria reach handoff" 0
+python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["decision"] == "block"; assert "Phase 1" in payload["systemMessage"]; assert "Phase 2" in payload["systemMessage"]' "$OUT" \
+  || fail "Phase 1 handoff did not return structured Stop output"
 assert_out_contains "Phase 1 criteria emit Phase 2 handoff" "Phase Handoff: Phase 1 complete"
 assert_out_contains "Phase 2 handoff requires incremental pushes" "push immediately after every commit"
 assert_out_contains "Phase 2 handoff protects no-change branches" "stop the lifecycle as no-change"
@@ -729,7 +735,9 @@ set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{"session_id":"claude-phase-2-selection"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
 set -e
-assert_rc "current Phase 2 risk selection reaches handoff" 2
+assert_rc "current Phase 2 risk selection reaches handoff" 0
+python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["decision"] == "block"; assert "Phase 2" in payload["systemMessage"]; assert "Phase 3" in payload["systemMessage"]' "$OUT" \
+  || fail "Phase 2 handoff did not return structured Stop output"
 assert_out_contains "Phase 2 selection emits Phase 3 handoff" "Phase Handoff: Phase 2 complete"
 assert_out_contains "Phase 3 handoff forbids publishing" "Do not commit, push, or create a PR in Phase 3"
 assert_out_lacks "Phase 3 handoff does not push review fixes" "Push any accepted-fix commit"
@@ -770,13 +778,13 @@ dx_review_write_selection "$SID" normal lifecycle-agent bounded-production-chang
 RECEIPT_FINGERPRINT=$(dx_review_scope_fingerprint "$REVIEW_REPO")
 RECEIPT_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SID")
 RECEIPT_POLICY_BINDING=$(dx_review_policy_resolve "$REVIEW_REPO" | cut -f4)
-if dx_review_write_receipt "$SID" normal 3 3 "$REVIEW_REPO" \
+if dx_review_write_receipt "$SID" normal 2 2 "$REVIEW_REPO" \
   "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"; then
   report "receipt cannot be minted without clean-pass ledger" 1
 else
   report "receipt cannot be minted without clean-pass ledger" 0
 fi
-for ledger_iteration in 1 2 3; do
+for ledger_iteration in 1 2; do
   receipt_pass_id="phase-clean-${ledger_iteration}"
   receipt_evidence="$TMP_DIR/phase-clean-${ledger_iteration}.evidence.json"
   receipt_context="$TMP_DIR/phase-clean-${ledger_iteration}.context.md"
@@ -787,14 +795,16 @@ for ledger_iteration in 1 2 3; do
     "$RECEIPT_FINGERPRINT" "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING" \
     "$receipt_evidence" "$receipt_context"
 done
-dx_review_write_receipt "$SID" normal 3 3 "$REVIEW_REPO" \
+dx_review_write_receipt "$SID" normal 2 2 "$REVIEW_REPO" \
   "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"
 write_lifecycle_completion "$SID" 3
 set +e
 OUT="$(cd "$REVIEW_REPO" && printf '{\"session_id\":\"claude-phase-3-receipt\"}' | env DEX_SESSION_ID="$SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=3 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
 RC=$?
 set -e
-assert_rc "valid Phase 3 receipt reaches the handoff" 2
+assert_rc "valid Phase 3 receipt reaches the handoff" 0
+python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["decision"] == "block"; assert "Phase 3" in payload["systemMessage"]; assert "Phase 4" in payload["systemMessage"]' "$OUT" \
+  || fail "Phase 3 handoff did not return structured Stop output"
 assert_out_contains "valid receipt emits Phase 4 handoff" "Phase Handoff: Phase 3 complete"
 assert_out_contains "Phase 4 handoff publishes later repairs" "review fixes or verification left changes"
 assert_out_contains "Phase 4 handoff rejects empty PR branches" "user-direction path"
@@ -820,7 +830,7 @@ dx_review_write_selection "$SID" normal lifecycle-agent \
 RECEIPT_FINGERPRINT=$(dx_review_scope_fingerprint "$REVIEW_REPO")
 RECEIPT_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SID")
 RECEIPT_POLICY_BINDING=$(dx_review_policy_resolve "$REVIEW_REPO" | cut -f4)
-for ledger_iteration in 1 2 3; do
+for ledger_iteration in 1 2; do
   receipt_pass_id="phase-race-clean-${ledger_iteration}"
   receipt_evidence="$TMP_DIR/phase-race-clean-${ledger_iteration}.evidence.json"
   receipt_context="$TMP_DIR/phase-race-clean-${ledger_iteration}.context.md"
@@ -831,7 +841,7 @@ for ledger_iteration in 1 2 3; do
     "$RECEIPT_FINGERPRINT" "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING" \
     "$receipt_evidence" "$receipt_context"
 done
-dx_review_write_receipt "$SID" normal 3 3 "$REVIEW_REPO" \
+dx_review_write_receipt "$SID" normal 2 2 "$REVIEW_REPO" \
   "$RECEIPT_CRITERIA_BINDING" "$RECEIPT_POLICY_BINDING"
 write_lifecycle_completion "$SID" 3
 

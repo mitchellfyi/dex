@@ -1815,6 +1815,43 @@ dx_phase_busy_begin() {
   printf '%s\n' "$token"
 }
 
+# dx_phase_busy_update <session_id> <phase> <token> <label>
+# Refresh only the human-readable stage label. The original owner, token,
+# start time, and timeout stay bound to the active review child.
+dx_phase_busy_update() {
+  local session_id="$1" phase="$2" token="$3" label="$4"
+  local busy_file record record_version epoch current_token owner_pid timeout_value
+  local busy_record
+  dx_lifecycle_session_id_valid "$session_id" || return 1
+  [[ "$phase" =~ ^[0-6]$ ]] || return 1
+  [[ -n "$token" ]] || return 1
+  [[ -n "$label" && "$label" != *$'\n'* && "$label" != *$'\r'* \
+    && ${#label} -le 500 ]] || return 1
+  busy_file=$(dx_phase_busy_file "$session_id" "$phase") || return 1
+  record=$(__dx_phase_busy_record "$session_id" "$phase" 2>/dev/null) \
+    || return 1
+  record_version="${record%%$'\n'*}"
+  record="${record#*$'\n'}"
+  epoch="${record%%$'\n'*}"
+  record="${record#*$'\n'}"
+  current_token="${record%%$'\n'*}"
+  record="${record#*$'\n'}"
+  owner_pid="${record%%$'\n'*}"
+  record="${record#*$'\n'}"
+  timeout_value="${record%%$'\n'*}"
+  [[ "$current_token" == "$token" ]] || return 1
+  if [[ "$record_version" == "2" ]]; then
+    busy_record="dex-phase-busy-v2"$'\t'"${epoch}"$'\t'"${token}"$'\t'"${owner_pid}"$'\t'"timeout=${timeout_value}"$'\t'"${label}"
+  elif [[ "$record_version" == "1" ]]; then
+    busy_record="${epoch}"$'\t'"${token}"$'\t'"${owner_pid}"$'\t'"${label}"
+  else
+    return 1
+  fi
+  [[ "$(dx_phase_busy_token "$session_id" "$phase" 2>/dev/null)" == "$token" ]] \
+    || return 1
+  dx_lifecycle_atomic_write "$busy_file" "$busy_record"
+}
+
 dx_phase_busy_request_cancel() {
   local session_id="$1" phase="$2" token cancel_file cancel_rc=0
   token=$(dx_phase_busy_token "$session_id" "$phase")

@@ -26,8 +26,8 @@ git -C "$REVIEW_POLICY_REPO" config user.email "dex-test@example.com"
   printf '%s\n' '| Setting | Value |'
   printf '%s\n' '|---------|-------|'
   printf '%s\n' '| small_clean_passes | 1 |'
-  printf '%s\n' '| normal_clean_passes | 3 |'
-  printf '%s\n' '| complex_clean_passes | 6 |'
+  printf '%s\n' '| normal_clean_passes | 2 |'
+  printf '%s\n' '| complex_clean_passes | 3 |'
 } > "$REVIEW_POLICY_REPO/.dex/dex.md"
 git -C "$REVIEW_POLICY_REPO" add .dex/dex.md
 git -C "$REVIEW_POLICY_REPO" commit -qm "test: initialize review policy fixture"
@@ -187,8 +187,8 @@ zsh -fc '
   DEX_REVIEW_PROFILE=thorough dxreviewloop
 ' > "$TMP_DIR/review-profile-validation.out" 2>&1
 assert_contains "Invalid clean-pass requirement '0'." "$TMP_DIR/review-profile-validation.out"
-assert_contains "Review complete: 6 consecutive clean passes." "$TMP_DIR/review-profile-validation.out"
-if [[ "$(wc -l < "$TMP_DIR/review-calls.out" | tr -d ' ')" -ne 6 ]]; then
+assert_contains "Review complete: 3 consecutive clean passes." "$TMP_DIR/review-profile-validation.out"
+if [[ "$(wc -l < "$TMP_DIR/review-calls.out" | tr -d ' ')" -ne 3 ]]; then
   printf 'expected six review-wave calls with missing shell globals\n' >&2
   exit 1
 fi
