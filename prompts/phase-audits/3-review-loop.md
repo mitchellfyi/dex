@@ -48,7 +48,8 @@ All of these must be true:
   ledger row contains the unique pass identity, its bindings, and that
   attestation. Private, read-only proof copies remain available so receipt
   validation can revalidate each pass and recompute every attestation.
-- Any `FINDINGS_FIXED:N` result reset the clean counter, and review restarted
+- Any `FINDINGS_FIXED:N` result recorded its coherent accepted-fix checkpoints
+  in commits, pushed them, reset the clean counter, and restarted review
   against the updated full scope in another fresh session.
 - Any escalation raised the tier, reset the clean counter, and restarted review
   at the higher depth. The tier was never downgraded.
@@ -66,9 +67,12 @@ All of these must be true:
   selection, progress, and receipts before counting resumed.
 - Any criteria or trusted-policy binding change invalidated prior selection,
   progress, clean credit, and receipts before review resumed.
-- Phase 3 stays focused on review and fixes. Do not commit, push, or create a PR
-  during this phase. Phase 4 commits and publishes accepted review fixes after
-  final verification. Re-run `/dxreviewloop` after any code change.
+- Phase 3 stays focused on review and fixes. Each active wave commits and pushes
+  coherent accepted-fix checkpoints as it works, without waiting for Phase 4
+  or final verification. The wave must report failed or pending checks
+  honestly and keep working until its own result contract is satisfied. Do not
+  switch branches or create or update a PR. Re-run `/dxreviewloop` after any
+  code change.
 - Accepted review findings were reconciled under
   `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`.
 

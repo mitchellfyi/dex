@@ -7,7 +7,11 @@ Reference document for dex skills. Read when referenced by `/dxplan`, `/dximplem
 These defaults take priority over code-completion momentum, pattern
 consistency, and time pressure:
 
-1. **Verification failures block completion claims.** If the type checker, linter, or test runner fails → stop adding implementation work and fix it. Do not declare done. A human-requested commit, push, or PR action is still permitted, but report the failing gate accurately and keep remediation active.
+1. **Verification failures block completion and PR handoff, not working
+   history.** If the type checker, linter, or test runner fails, stop adding new
+   scope and fix it. Continue committing and pushing coherent checkpoints while
+   you work, report the failing gate accurately, and do not declare done or
+   hand the branch to the PR phase until required verification passes.
 2. **Parameterized queries only.** No string interpolation in database queries. No exceptions.
 3. **No hardcoded secrets.** Not in production code, not in tests, not "temporarily."
 4. **Tests must run before done.** "It should work" is not verification.
@@ -43,17 +47,22 @@ successful control command writes the audit record.
 
 ### Publishing Across Phases
 
-Lifecycle phases assign responsibility for git and pull-request actions. Phase
-2 owns routine implementation commits and pushes. Phase 3 does not commit,
-push, or create PRs; Phase 4 publishes review and verification repairs. Keep
-the verification state accurate: publishing does not make a failing gate green
-or satisfy a phase's completion criteria on its own.
+Lifecycle phases assign responsibility for work and pull-request actions, not
+exclusive permission to record Git history. Phase 2 commits and pushes
+implementation checkpoints. Phase 3 commits and pushes accepted review fixes
+as the active wave works, then completes the required rechecks. Phase 4 is the
+final PR gate and commits any repair checkpoints produced while making that
+gate pass. Phase 5 owns PR creation. Keep the verification state accurate:
+committing and pushing do not make a failing gate green or satisfy a phase's
+completion criteria on their own.
 
 Do not push a newly created local branch merely to establish upstream tracking.
 Wait until it contains at least one real branch-specific commit: a commit that
 is not already reachable from the lifecycle's starting base branch. Never use
-an empty bootstrap commit to make the branch publishable. During implementation,
-commit coherent green increments early and push immediately after every commit.
+an empty bootstrap commit to make the branch publishable. Throughout
+implementation, review, and verification, commit small coherent checkpoints
+early and often and push immediately after every commit. Do not wait for full
+verification, task completion, or phase completion to record meaningful work.
 
 ## AI Discipline
 
@@ -119,7 +128,10 @@ state is unchanged unless mutation is documented as part of the contract.
 
 These are recurring mistakes observed across many implementations. Check against this list before declaring done:
 
-- **Don't skip verification steps.** If the type checker, linter, or test runner fails, stop adding implementation work and fix it immediately. Do not move to the next task or declare done. If the user asks for a commit, push, or PR action before the fix lands, perform it without describing the failing gate as green, then return to remediation.
+- **Don't skip verification steps.** If the type checker, linter, or test runner
+  fails, stop adding new scope and fix it immediately. You may still commit and
+  push coherent checkpoints during remediation; describe the failing gate
+  honestly and do not move to PR handoff or declare done until it passes.
 - **Don't mix module systems.** Pick one module system per project and use it everywhere. Mixing module conventions in the same project causes subtle runtime errors that are hard to debug.
 - **Don't put all production code in a single file.** Separate the entry point (CLI parsing, route handling, UI rendering) from core logic (business rules, data operations), and separate I/O or storage from pure computation. Even small projects benefit from at least three source files — a monolithic approach prevents isolated testing and makes the codebase harder to navigate.
 - **Don't write tests that only cover happy paths.** For every success test, write at least one error/edge test. A test suite with 20 happy-path tests and zero error tests is worse than 10 tests with proper error coverage — it creates false confidence.

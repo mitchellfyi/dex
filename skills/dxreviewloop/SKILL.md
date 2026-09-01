@@ -143,8 +143,11 @@ Every wave must:
 3. Harvest candidates across the full supplied scope at the selected depth.
 4. Verify and deduplicate candidates before fixing.
 5. Batch-fix verified findings that are safe and in scope.
-6. Re-run affected checks and targeted review.
-7. Write one result signal, exactly one lowercase 16-character findings hash,
+6. When the caller permits publication, commit and push each coherent
+   accepted-fix checkpoint without waiting for the full wave or final PR
+   verification. Keep failed and pending checks explicit.
+7. Re-run affected checks and targeted review.
+8. Write one result signal, exactly one lowercase 16-character findings hash,
    and the exact generation-bound receipt supplied for that pass, then stop.
 
 Waves run with `DEX_REVIEW_PASS_ACTIVE=1`, a pass-scoped `DEX_SESSION_ID`, and

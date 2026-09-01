@@ -167,7 +167,7 @@ DISPLAY_SESSION="$DISPLAY_SESSION" TEST_REPO="$TEST_REPO" zsh -fc '
   source "$DEX_DIR/dx.sh"
   __dx_show_header ticket-progress 4 "$TEST_REPO" main "$DISPLAY_SESSION" worktree
 ' > "$DISPLAY_OUTPUT" 2>&1
-grep -Fq "✓ Setup  ◇ Plan  ↷ Implement  ? Review  → Verify & Commit" "$DISPLAY_OUTPUT"
+grep -Fq "✓ Setup  ◇ Plan  ↷ Implement  ? Review  → Verify" "$DISPLAY_OUTPUT"
 grep -Fq "↷ skipped by human" "$DISPLAY_OUTPUT"
 grep -Fq "◇ marked done by human" "$DISPLAY_OUTPUT"
 grep -Fq "? outcome not recorded" "$DISPLAY_OUTPUT"
@@ -280,7 +280,7 @@ run_hook "$RECOVERY_SESSION" 4
   "$(dx_phase_outcomes_file "$RECOVERY_SESSION")")" -eq 1 ]]
 [[ "$(awk -F '\t' '$2 == 2 && $3 == "skipped" { count++ } END { print count + 0 }' \
   "$(dx_phase_outcomes_file "$RECOVERY_SESSION")")" -eq 1 ]]
-grep -Fq "Phase 4 (Verify & Commit)" <<<"$HOOK_OUTPUT"
+grep -Fq "Phase 4 (Verify)" <<<"$HOOK_OUTPUT"
 
 run_hook "$RECOVERY_SESSION" 4
 [[ "$HOOK_STATUS" -eq 2 ]] || assert_at $LINENO

@@ -35,9 +35,13 @@ Fix anything found before proceeding.
 Review the implementation command history, `git status`, and the branch's
 commits relative to the default branch:
 
-- Coherent green increments were committed during implementation instead of
-  being held until Phase 4.
-- Focused tests and checks passed before each implementation commit.
+- The history records small, coherent checkpoints as the work developed
+  instead of collapsing several natural boundaries into one late commit.
+- Checkpoints were not held back merely because the task, full test suite,
+  phase, or final verification was incomplete. Focused checks were run when
+  useful, and failed, pending, or unrun checks were reported honestly.
+- Commits are logically understandable rather than arbitrary splits made only
+  to increase the commit count.
 - Every commit followed `prompts/commit-format.md`: specific-file staging,
   forbidden and sensitive file review, a conventional message, and Dex-only
   attribution.
@@ -180,7 +184,8 @@ ALL of these must be true before you stop:
 - The change was exercised end-to-end locally and passed the manual smoke
   test, or manual verification is explicitly N/A with a reason
 - No TODO/FIXME/debugging artifacts remain
-- Every implementation commit was pushed immediately after creation, local
+- The implementation history contains the natural coherent checkpoints created
+  during the work; every commit was pushed immediately after creation, local
   HEAD matches its upstream, and no empty bootstrap commit was used to publish
   the branch.
 - A newly created local branch with no branch-specific commit remains unpushed

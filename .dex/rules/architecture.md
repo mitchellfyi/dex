@@ -29,7 +29,7 @@ bare `.complete` marker does not authorize advancement. Direct human jumps and
 waivers are recorded separately from passed gates. The loop pauses for
 intervention after its configured audit limit, which defaults to 30.
 
-Phases: Plan → Implement → Review → Verify & Commit → PR → Complete
+Phases: Plan → Implement → Review → Verify → PR → Complete
 
 ## Session IDs
 

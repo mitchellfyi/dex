@@ -71,14 +71,16 @@ For each task in the approved plan:
    - Write a failing test first.
    - Write the minimum code to make it pass.
    - Refactor while keeping tests green.
-4. After each coherent Red-Green-Refactor increment, run its focused tests and
-   the deterministic checks relevant to the changed files. Fix failures before
-   committing. Read `prompts/commit-format.md` before the first commit and apply
-   its staging, forbidden-file, message, and Dex-attribution rules to every
-   commit.
-5. Commit and push the green increment immediately instead of holding changes
-   for the end of the task or Phase 4. Large tasks should produce more than one
-   commit when they contain independently coherent increments. For a new local
+4. As work reaches a small, coherent checkpoint, run a useful focused test or
+   deterministic check when practical. The result informs the next step but
+   does not decide whether the work may be committed. Read
+   `prompts/commit-format.md` before the first commit and apply its staging,
+   forbidden-file, message, and Dex-attribution rules to every commit.
+5. Commit and push each coherent checkpoint immediately. Do not wait for the
+   task, full test suite, phase, or final verification to finish, and do not
+   hide a known failing or unrun check. Large tasks should build their own
+   history through several natural checkpoints rather than one late commit;
+   do not split changes arbitrarily just to increase the count. For a new local
    branch with no upstream, the first real branch-specific commit establishes
    `origin/<current-branch>` as upstream; later commits push to that upstream.
    Never push the new branch before that commit, and never create an empty
@@ -306,12 +308,11 @@ Do not write this marker early. The Stop hook ignores `PHASE_2_COMPLETE` without
 
 ## Scope Boundaries
 
-Keep Phase 2 focused on implementation and its evidence. Phase 2 owns routine
-implementation commits and pushes; Phase 3 reviews without committing or
-pushing; Phase 4 owns final verification and commits any review or verification
-repair; Phase 5 owns pull-request work; and Phase 6 owns final ticket state.
-Record each pushed increment so the later phases continue from the current
-repository and PR state.
+Keep Phase 2 focused on implementation and its evidence. Record implementation
+checkpoints here; Phase 3 records accepted review fixes; Phase 4 runs the final
+PR gate and records any verification repairs; Phase 5 owns pull-request work;
+and Phase 6 owns final ticket state. Each phase should continue from the
+working history already pushed by the previous one.
 
 During implementation, avoid unrelated lifecycle administration:
 - Leave final ticket-state changes to Phase 6 unless the user directs otherwise.
@@ -321,7 +322,8 @@ During implementation, avoid unrelated lifecycle administration:
 You SHOULD:
 - Implement all planned tasks with TDD
 - Run quality checks on changed files after each task (format, lint, typecheck)
-- Commit coherent green increments early and push immediately after every commit
+- Commit coherent checkpoints early and often, push immediately after every
+  commit, and do not wait for full verification
 - Run the self-review loop (Step 5) and final implementation checks (Step 6)
 - Run `/dxuicapture` early, then capture a concise walkthrough or record a reasoned `SKIPPED`/`N/A` decision
 - Run the manual local smoke test (Step 8) before marking Phase 2 ready, cleaning up anything it starts or seeds

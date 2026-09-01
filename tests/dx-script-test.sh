@@ -64,8 +64,8 @@ zsh "$ROOT/dx.sh" --help > "$TMP_DIR/zsh-help.out"
 assert_contains "Dex" "$TMP_DIR/zsh-help.out"
 assert_contains "dx run --spec FILE" "$TMP_DIR/zsh-help.out"
 assert_contains "dxcd [number|name]" "$TMP_DIR/zsh-help.out"
-assert_contains "commit and push green increments" "$TMP_DIR/zsh-help.out"
-assert_contains "commit and push review or verification repairs" "$TMP_DIR/zsh-help.out"
+assert_contains "commit and push coherent checkpoints" "$TMP_DIR/zsh-help.out"
+assert_contains "final PR gate" "$TMP_DIR/zsh-help.out"
 assert_not_contains "dx rename" "$TMP_DIR/zsh-help.out"
 
 if zsh "$ROOT/dx.sh" > "$TMP_DIR/zsh-empty.out" 2>&1; then
@@ -85,15 +85,23 @@ assert_contains "Dex" "$TMP_DIR/source-help.out"
 
 DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; __dx_phase_message 2' > "$TMP_DIR/phase-2-message.out"
 assert_contains "Follow prompts/commit-format.md" "$TMP_DIR/phase-2-message.out"
+assert_contains "Do not wait for full verification" "$TMP_DIR/phase-2-message.out"
 assert_contains "push immediately after every commit" "$TMP_DIR/phase-2-message.out"
 assert_contains "stop the lifecycle as no-change" "$TMP_DIR/phase-2-message.out"
 
 DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; __dx_phase_message 3' > "$TMP_DIR/phase-3-message.out"
-assert_contains "Do not commit, push, or create a PR in Phase 3" "$TMP_DIR/phase-3-message.out"
-assert_not_contains "Push any accepted-fix commit" "$TMP_DIR/phase-3-message.out"
+assert_contains "Commit and push accepted review fixes" "$TMP_DIR/phase-3-message.out"
+assert_not_contains "Do not commit, push, or create a PR in Phase 3" "$TMP_DIR/phase-3-message.out"
 
 DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; __dx_phase_message 4' > "$TMP_DIR/phase-4-message.out"
-assert_contains "review fixes or verification left changes" "$TMP_DIR/phase-4-message.out"
+assert_contains "final PR gate" "$TMP_DIR/phase-4-message.out"
+assert_contains "commit and push each coherent repair checkpoint" "$TMP_DIR/phase-4-message.out"
+
+assert_contains "Verification is the PR gate, not a commit prerequisite" "$ROOT/prompts/commit-format.md"
+assert_contains "even while that test is failing" "$ROOT/prompts/commit-format.md"
+assert_not_contains "Never commit broken code or failing tests" "$ROOT/prompts/commit-format.md"
+assert_contains "Throughout implementation, review, and verification whenever" "$ROOT/skills/dxcommit/SKILL.md"
+assert_contains "before PR handoff" "$ROOT/skills/dxverify/SKILL.md"
 
 assert_contains "BRANCH_SPECIFIC_COUNT" "$ROOT/skills/dxpr/SKILL.md"
 assert_contains "Do not push the branch" "$ROOT/skills/dxpr/SKILL.md"

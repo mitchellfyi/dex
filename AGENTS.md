@@ -320,9 +320,12 @@ formatter; verification is static checks plus the test suite.
 CI runs static checks on Linux and the manifest test shards on Linux and macOS
 for every push to `main` and every pull request.
 
-Run `bash tests/check.sh` before committing, and at minimum the tests covering
-the surface you changed. The review-loop suites are slow (10+ minutes each);
-`tests/run-all.sh` parallelizes them, so prefer it over serial runs.
+Run `bash tests/check.sh` before PR handoff, and at minimum run the focused tests
+covering the surface you changed while you work. Commits are coherent working
+checkpoints and do not require the full suite to be green; report failing or
+pending checks honestly and keep repairing them. The review-loop suites are
+slow (10+ minutes each); `tests/run-all.sh` parallelizes them, so prefer it over
+serial runs.
 
 ### The serial lane
 

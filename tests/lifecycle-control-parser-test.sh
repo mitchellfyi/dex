@@ -87,9 +87,9 @@ grep -q "Commit, push, and PR actions remain available" <<< "$WAVE_PROMPT" \
 LIFECYCLE_WAVE_PROMPT=$(__dx_review_wave_message_template \
   "current change set" "main" "changes" "git diff" \
   "git diff --stat" "git diff --name-only" "REVIEW_PASS_COMPLETE" "lifecycle")
-grep -q "Do not commit, push, switch branches" <<< "$LIFECYCLE_WAVE_PROMPT" \
+grep -q "Commit and push coherent accepted fixes" <<< "$LIFECYCLE_WAVE_PROMPT" \
   || assert_at $LINENO
-if grep -q "Commit, push, and PR actions remain available" \
+if grep -q "Do not commit, push, switch branches" \
   <<< "$LIFECYCLE_WAVE_PROMPT"; then
   assert_at $LINENO
 fi

@@ -199,7 +199,7 @@ run_hook "$SID" 2
 [[ "$(cut -d: -f1 "$(dx_loop_config_file "$SID")")" == "4" ]] || assert_at $LINENO
 [[ ! -e "$(dx_lifecycle_control_file "$SID")" ]] || assert_at $LINENO
 [[ ! -e "$(dx_phase_busy_file "$SID" 3)" ]] || assert_at $LINENO
-grep -q "Phase 4 (Verify & Commit)" <<<"$OUT"
+grep -q "Phase 4 (Verify)" <<<"$OUT"
 
 # Phase publication precedes activation. If the active path is unsafe, the
 # target phase remains authoritative, its fresh generation is revoked, and

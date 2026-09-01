@@ -23,7 +23,7 @@ directory until promoted via a reviewable diff.
 | ID | Domain | Summary |
 |----|--------|---------|
 | M-001 | review-quality | Review specialists are read-only and must not enable project memory |
-| M-002 | workflow-operations | Each lifecycle phase owns its outputs strictly — no spillover |
+| M-002 | workflow-operations | Phase gates stay owned while Git history follows the work |
 | M-003 | workflow-operations | In-place lifecycle mode is a first-class peer to worktree mode |
 | M-004 | workflow-operations | Dex-owned global state must be tracked separately from user state |
 | M-005 | security-guards | Dangerous-command guards must use syntax-aware detection, not pattern matching |

@@ -1,4 +1,7 @@
-Before stopping, audit the verification results and commit quality.
+Before stopping, audit the final PR gate and commit quality. This phase does
+not reserve commits until verification is green: while repairing a failing
+gate, commit and push each coherent checkpoint as it forms, then continue the
+pipeline. The complete required pipeline must pass before Phase 5.
 
 Apply `prompts/issue-hygiene.md` when verification exposes material new
 requirements, a distinct defect, or stale issue/PR context. Do not create an
@@ -28,9 +31,9 @@ Review your commit history (`git log --oneline origin/<default-branch>..HEAD`):
 
 ## Step 2.5: `.dex/` in commits
 
-Phase 2 should already have committed and pushed any `.dex/` updates required
-by implementation. If review or final verification added further `.dex/`
-changes, commit them now, ideally as a separate
+Earlier phases should already have committed and pushed any `.dex/` updates
+required by implementation or review. If final verification added further
+`.dex/` changes, commit them as a coherent checkpoint, ideally as a separate
 `docs(.dex): sync project config` commit. Do not move an implementation-owned
 `.dex/` update into Phase 4 merely because it was left staged.
 
@@ -43,9 +46,12 @@ Run `git diff --stat origin/<default-branch>` and review:
 
 ## Step 4: Push
 
-Phase 2 should already have pushed each implementation commit. Confirm local
-HEAD matches `origin/<current-branch>`. If Phase 3 review fixes or final
-verification left changes, commit them atomically and push immediately.
+Earlier phases should already have pushed their implementation and review-fix
+checkpoints. Confirm local HEAD matches `origin/<current-branch>`. If final
+verification still left changes, split them only at natural logical boundaries,
+commit and push each coherent repair checkpoint immediately, and rerun the
+affected checks. Do not wait for the rest of the pipeline to pass before
+recording a checkpoint.
 
 If you pushed and got errors (e.g., remote rejection, hook failures), fix the issues and push again.
 

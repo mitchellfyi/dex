@@ -36,8 +36,11 @@ Path-specific review focus for Dex review waves.
 ## `skills/*/SKILL.md`
 
 - Skills must be codebase-agnostic and discover tooling at runtime.
-- Lifecycle skills must preserve phase ownership: no commits in Phase 3, no PR
-  creation before Phase 5, no external reviewer polling before Phase 6.
+- Lifecycle skills must preserve phase ownership without treating commits as a
+  final-verification privilege. Phase 2 records implementation checkpoints,
+  Phase 3 records accepted review fixes, and Phase 4 records verification
+  repairs. No PR creation occurs before Phase 5, and no external reviewer
+  polling occurs before Phase 6.
 - Skill instructions should avoid recursively invoking broader loops from inside
   already-looped phases.
 
@@ -52,7 +55,9 @@ Path-specific review focus for Dex review waves.
 
 ## Review waves (`prompts/review*.md`, `skills/dxreview*/`)
 
-- Review agents are read-only and must not edit files.
+- Risk assessors and specialist scouts are read-only. The primary review wave
+  may fix verified findings and, when its caller permits publication, commit
+  and push coherent accepted-fix checkpoints.
 - Review agents should not enable project memory; review waves must
   not create `.claude/agent-memory/` artifacts as a side effect.
 - Findings require exact evidence, a concrete trigger, and confidence >= 50.

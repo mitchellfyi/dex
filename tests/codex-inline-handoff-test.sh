@@ -560,6 +560,7 @@ ctx_file="$(__dx_build_system_context "repo" 2 "$session_id" "$TMP_DIR/repo" "wo
 grep -q "Direct Codex Phase Completion" "$ctx_file"
 grep -q "normal Phase 2 readiness gate" "$ctx_file"
 grep -q "Follow prompts/commit-format.md" "$ctx_file"
+grep -q "Do not wait for full verification" "$ctx_file"
 grep -q "push immediately after every commit" "$ctx_file"
 grep -q "stop the lifecycle as no-change" "$ctx_file"
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
@@ -575,14 +576,15 @@ grep -Fq "\`DEX_POLICY_SESSION_ID\`" "$ctx_file"
 grep -Fq "\`--session" "$ctx_file"
 
 ctx_file="$(__dx_build_system_context "repo" 3 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
-grep -q "Do not commit, push, or create a PR in Phase 3" "$ctx_file"
-if grep -q "Push any accepted-fix commit" "$ctx_file"; then
-  printf "%s\n" "Phase 3 context still tells the agent to publish review fixes" >&2
+grep -q "Commit and push accepted review fixes" "$ctx_file"
+if grep -q "Do not commit, push, or create a PR in Phase 3" "$ctx_file"; then
+  printf "%s\n" "Phase 3 context still defers review-fix history" >&2
   exit 1
 fi
 
 ctx_file="$(__dx_build_system_context "repo" 4 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
-grep -q "review or verification left changes" "$ctx_file"
+grep -q "final PR gate" "$ctx_file"
+grep -q "commit and push each coherent repair checkpoint" "$ctx_file"
 grep -q "user-direction path" "$ctx_file"
 '
 

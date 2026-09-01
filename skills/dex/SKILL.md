@@ -16,10 +16,11 @@ Orchestrate the full ticket lifecycle from planning through completion.
 
 The terminal `dx` lifecycle runs phases in the same Claude Code session. Each phase has an audit loop that critically reviews the work before allowing completion; when the phase passes, the Stop hook injects the next phase instructions directly into the current session.
 
-Phase 2 owns routine implementation commits and pushes. Phase 3 reviews and
-fixes without committing, pushing, or creating a PR. Phase 4 commits and pushes
-review or verification repairs, Phase 5 owns PR setup, and Phase 6 owns external
-review follow-through. Phase 3 must be quiescent before any later publication.
+Commits and pushes record the work as it happens: Phase 2 records implementation
+checkpoints, the active Phase 3 wave records accepted review fixes while the
+lifecycle parent remains quiescent, and Phase 4 records any final verification
+repairs. Verification is the PR gate, not a commit prerequisite. Phase 5 owns
+PR setup, and Phase 6 owns external review follow-through.
 
 Read `prompts/issue-hygiene.md` for the lifecycle-wide issue and PR contract.
 Phase 0 performs the full duplicate, relationship, and existing-PR search.
@@ -62,20 +63,24 @@ line, including when all fields are unchanged or N/A.
 ### Phase 2: Implement
 
 1. Invoke the Skill tool with `skill: "dximplement"` — work through tasks with TDD discipline. The plan approval was the go-ahead; do not pause to ask for permission.
-2. Commit early and often. After each coherent implementation increment is
-   green under its focused tests and checks, create an atomic conventional
-   commit and push it immediately. For a new local branch with no upstream, the
-   first real branch-specific commit establishes tracking; every later commit
-   is pushed as it is created. Never publish the new branch before that commit.
+2. Commit early and often. Whenever the current changes form a small, coherent
+   checkpoint, create an atomic conventional commit and push it immediately.
+   Run focused checks when useful, but do not wait for them to pass, for the
+   task to finish, or for final verification. Report failing or unrun checks
+   honestly, continue toward a verified branch, and use natural history
+   boundaries rather than arbitrary splits. For a new local branch with no
+   upstream, the first real branch-specific commit establishes tracking; every
+   later commit is pushed as it is created. Never publish the new branch before
+   that commit.
 3. Ask by default if ambiguous requirements, scope changes, or blocked dependencies arise. The active agent may use the attributed override/waiver contract when proceeding is justified.
 4. Invoke `/dxuicapture` early to decide whether visual proof would help. The agent may capture a concise walkthrough, record `SKIPPED` with a reason for a visible but disproportionate case, or record `N/A` when there is no browser impact. When capture is chosen, prefer a matched before/after flow, keep it under 90 seconds, and surface the temporary bundle after baseline and production.
 5. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
 6. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, implementation commits pushed, the manual smoke test passed or explicitly N/A, and an honest UI proof decision recorded. A reasoned `SKIPPED` decision is valid; it is not reported as a successful capture.
 7. **SCOPE**: focus on implementation, testing, incremental commits and pushes,
    and the UI proof decision. Ticket setup belongs to Phase 0, so only re-run it
-   here if Phase 0 left it incomplete. Phase 3 does not commit or push. Phase 4
-   owns final verification and commits any review or verification repairs,
-   while Phase 5 normally owns the PR description.
+   here if Phase 0 left it incomplete. Phase 3 records accepted review fixes,
+   Phase 4 owns the final PR verification gate, and Phase 5 normally owns the
+   PR description.
 8. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `small`, `normal`, or `complex`, with a
    deterministic set of reason codes. The tier selects Dex's fixed global
@@ -99,8 +104,10 @@ line, including when all fields are unchanged or N/A.
 2. Each `/dxreviewloop` iteration runs one full review wave in a fresh CLI
    session: compact context pack, deterministic checks, issue harvest, verifier
    triage when needed, batch fixes, and targeted recheck.
-3. Waves that find and fix issues write `FINDINGS_FIXED:N`, reset the clean
-   counter, and force the next iteration to re-review the full change set.
+3. Waves that find and fix issues commit and push coherent accepted-fix
+   checkpoints as they work, complete the required rechecks, write
+   `FINDINGS_FIXED:N`, reset the clean counter, and force the next iteration to
+   re-review the full change set.
 4. The loop uses the selected tier's global clean-wave requirement: 1 for
    `small`, 2 for `normal`, and 3 for `complex`. A candidate branch cannot
    lower the active gate, and the loop has no outer iteration
@@ -124,9 +131,10 @@ line, including when all fields are unchanged or N/A.
    Use this only for the dead-owner diagnosis. The command refuses live or
    malformed state and leaves Phase 3 paused; then follow the user's direction
    to `/dxresume` or `/dxskip`.
-8. **SCOPE**: focus on review and fixes. Do not commit, push, or create a PR in
-   Phase 3. Phase 4 commits and pushes accepted review fixes after final
-   verification; Phase 5 owns PR setup.
+8. **SCOPE**: focus on review and fixes. An active review wave owns its accepted
+   fixes: commit and push coherent checkpoints as they form, then complete the
+   required rechecks before reporting `FINDINGS_FIXED:N`. Do not switch branches
+   or create or update a PR. Phase 5 owns PR setup.
 9. Output `PHASE_3_COMPLETE` only when the current scope has a valid review
    receipt binding the approved criteria, trusted policy, attested clean
    ledger, and any lower-target override. Report whether the trusted target
@@ -135,14 +143,15 @@ line, including when all fields are unchanged or N/A.
     `prompts/issue-hygiene.md` once for accepted findings so waves cannot create
     duplicate follow-up issues.
 
-### Phase 4: Verify & Commit
+### Phase 4: Verify
 
 1. Run `/dxverify` — format, lint, typecheck, generate, test.
 2. Fix any failures. Re-run until all green, using the current retry defaults from `dx_failure_attempts_per_strategy` and `dx_failure_max_strategies` as described in `prompts/failure-recovery.md`.
-3. If Phase 3 review fixes or verification left changes, run `/dxcommit` to
-   create atomic conventional repair commits and push each one immediately.
-   Otherwise, confirm the implementation branch is clean and its HEAD is
-   already on origin.
+3. Treat this as the final PR gate, not the first opportunity to commit. As
+   verification repairs reach coherent checkpoints, run `/dxcommit` and push
+   each one immediately even while later checks are still pending or failing.
+   After the complete pipeline passes, confirm the branch is clean and its HEAD
+   is on origin.
 4. Output `PHASE_4_COMPLETE` when all checks pass and every branch-specific
    commit is pushed. A newly created local branch with no branch-specific
    commits cannot use the ordinary Phase 4 completion path; return to Phase 2's

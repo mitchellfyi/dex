@@ -25,7 +25,13 @@ Apply the criteria from `prompts/review.md` (12 review passes) and the principle
 - **Investigate first** — read the code, understand the context, check for prior art before changing anything.
 - **Make targeted fixes** — prefer small, focused changes over sweeping rewrites. Each change should be independently correct.
 - **Follow existing patterns** — match the project's conventions for naming, error handling, test structure, and code organisation.
-- **Verify your changes** — run the relevant quality checks after each meaningful change. Don't accumulate unverified work.
+- **Record the working history** — commit and push small coherent checkpoints
+  early and often. Do not wait for the entire task or final verification, and
+  do not split changes arbitrarily just to create more commits.
+- **Verify your changes** — run relevant checks as the work develops and make
+  the complete required pipeline pass before PR handoff. A failed or pending
+  check does not prevent a truthful checkpoint commit; keep its status explicit
+  and continue remediation.
 - **Stay in scope** — improve existing code, don't add new features or speculative abstractions.
 
 ## What NOT to Do

@@ -198,7 +198,7 @@ This project uses Dex for workflow automation.
 
 ## Autonomous workflow
 
-From the terminal, run `dx <ticket-number>` to start the full autonomous lifecycle (Plan → Implement → Review → Verify & Commit → PR → Complete) in an isolated worktree. You can also run `dx "description"` for freeform tasks, or `dx --no-worktree <ticket-or-description>` to set up the normal lifecycle branch in the current checkout without creating a worktree.
+From the terminal, run `dx <ticket-number>` to start the full autonomous lifecycle (Plan → Implement → Review → Verify → PR → Complete) in an isolated worktree. You can also run `dx "description"` for freeform tasks, or `dx --no-worktree <ticket-or-description>` to set up the normal lifecycle branch in the current checkout without creating a worktree.
 
 ## One-off prompt (no ticket)
 

@@ -85,9 +85,9 @@ Evidence: tracker comment or update record, or N/A.
 
 - Setup stayed focused on tracker, branch, and ticket bootstrap.
 - Planning and source work normally remain with Phases 1 and 2.
-- Phase 2 owns routine implementation commits and pushes. Phase 4 remains the
-  default owner of final verification and any resulting cleanup commit; Phase
-  5 remains the default owner of pull-request setup.
+- Phase 2 records implementation checkpoints, Phase 3 records accepted review
+  fixes, and Phase 4 runs final verification while recording any repair
+  checkpoints. Phase 5 remains the default owner of pull-request setup.
 - Any commit, push, or pull-request action requested during Phase 0 is recorded in the setup summary so later phases continue from the actual repository and PR state.
 
 ## 7. Ready Marker

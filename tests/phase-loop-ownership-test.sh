@@ -683,6 +683,7 @@ python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["de
   || fail "Phase 1 handoff did not return structured Stop output"
 assert_out_contains "Phase 1 criteria emit Phase 2 handoff" "Phase Handoff: Phase 1 complete"
 assert_out_contains "Phase 2 handoff requires incremental pushes" "push immediately after every commit"
+assert_out_contains "Phase 2 handoff does not wait for full verification" "Do not wait for full verification"
 assert_out_contains "Phase 2 handoff protects no-change branches" "stop the lifecycle as no-change"
 assert_file_eq "valid Phase 1 criteria advance to Phase 2" "$DX_STATE_DIR/$SID.phase" "2"
 if dx_review_read_criteria_approval "$SID" >/dev/null; then
@@ -739,8 +740,8 @@ assert_rc "current Phase 2 risk selection reaches handoff" 0
 python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["decision"] == "block"; assert "Phase 2" in payload["systemMessage"]; assert "Phase 3" in payload["systemMessage"]' "$OUT" \
   || fail "Phase 2 handoff did not return structured Stop output"
 assert_out_contains "Phase 2 selection emits Phase 3 handoff" "Phase Handoff: Phase 2 complete"
-assert_out_contains "Phase 3 handoff forbids publishing" "Do not commit, push, or create a PR in Phase 3"
-assert_out_lacks "Phase 3 handoff does not push review fixes" "Push any accepted-fix commit"
+assert_out_contains "Phase 3 handoff records accepted fixes" "Commit and push accepted review fixes"
+assert_out_lacks "Phase 3 handoff does not defer review-fix history" "Do not commit, push, or create a PR in Phase 3"
 assert_file_eq "Phase 2 selection advances to Phase 3" "$DX_STATE_DIR/$SID.phase" "3"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
@@ -806,7 +807,8 @@ assert_rc "valid Phase 3 receipt reaches the handoff" 0
 python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); assert payload["decision"] == "block"; assert "Phase 3" in payload["systemMessage"]; assert "Phase 4" in payload["systemMessage"]' "$OUT" \
   || fail "Phase 3 handoff did not return structured Stop output"
 assert_out_contains "valid receipt emits Phase 4 handoff" "Phase Handoff: Phase 3 complete"
-assert_out_contains "Phase 4 handoff publishes later repairs" "review fixes or verification left changes"
+assert_out_contains "Phase 4 handoff is the final PR gate" "final PR gate"
+assert_out_contains "Phase 4 handoff records repair checkpoints" "commit and push each coherent repair checkpoint"
 assert_out_contains "Phase 4 handoff rejects empty PR branches" "user-direction path"
 assert_file_eq "valid receipt advances to Phase 4" "$DX_STATE_DIR/$SID.phase" "4"
 if [[ ! -e "$(dx_review_proof_dir "$SID")" && ! -L "$(dx_review_proof_dir "$SID")" ]]; then

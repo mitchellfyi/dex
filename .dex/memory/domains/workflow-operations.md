@@ -3,22 +3,26 @@
 Durable lessons about the Dex lifecycle: phase ownership, in-place vs
 worktree branch modes, and shared global state Dex touches outside the repo.
 
-## M-002: Each lifecycle phase owns its outputs strictly — no spillover
+## M-002: Phase gates stay owned while Git history follows the work
 
 Domain: workflow-operations
 Status: active
 Scope: dx.sh phase routing, skills/dx*/SKILL.md, prompts/phase-audits/*.md, hooks/phase-loop.sh, hooks/user-prompt-submit.sh
 Applies to phases: plan, implement, review, verify, pr, complete
 Applies to paths: dx.sh, skills/, prompts/phase-audits/, hooks/phase-loop.sh, hooks/user-prompt-submit.sh
-Last verified: 2026-05-15
+Last verified: 2026-09-01
 Recheck when: a new phase is introduced, phase ownership changes, or phase audit prompts are rewritten
 
 Lesson:
-Dex's six-phase lifecycle (Plan → Implement → Review → Verify & Commit →
-PR → Complete) enforces strict ownership: no commits in Phase 3, no PR creation
-before Phase 5, no external reviewer polling before Phase 6, and no work begins
-in Phase 2 before plan approval finishes in Phase 1. Phase audit prompts and
-skills must not duplicate or cross another phase's gate.
+Dex's six-phase lifecycle (Plan → Implement → Review → Verify → PR → Complete)
+keeps each gate with its owning phase while Git history follows the work. Phase
+2 commits and pushes coherent implementation checkpoints. The active Phase 3
+wave may commit and push accepted review fixes after it has exclusive ownership
+of the checkout; the lifecycle parent remains quiescent while that child runs.
+Phase 4 is the final PR verification gate and records any repair checkpoints it
+produces. Phase 5 owns PR creation, and Phase 6 owns external reviewer polling.
+A full verification pass is not a prerequisite for committing or pushing, but
+it must pass before PR handoff.
 
 Evidence:
 - `c8f3660 fix(dex): defer draft PR creation to Phase 5 (/dxpr)` — Phase 5
@@ -33,6 +37,11 @@ Evidence:
   implementation` — handoff stays inside the lifecycle.
 - `1b2c00e fix: make dxreview dispatch to review loop` — `/dxreview` must
   dispatch into the review wave loop, not freelance.
+- `prompts/commit-format.md`, `skills/dxcommit/SKILL.md`, and
+  `skills/dxverify/SKILL.md` define commits as working-history checkpoints and
+  final verification as the PR gate.
+- `lib/review-loop.sh` gives the active lifecycle review wave its publication
+  boundary while continuing to forbid branch switches and PR changes.
 - `.dex/review-rules.md` § `skills/*/SKILL.md` and § `prompts/phase-audits/`
   already codify these constraints.
 
@@ -40,8 +49,13 @@ Future agent behavior:
 - When editing a lifecycle skill or phase-audit prompt, re-verify the phase
   boundaries in `dx.sh` and `hooks/phase-loop.sh` before changing what the
   skill or audit triggers.
+- Do not make a green full-suite result a prerequisite for a coherent commit or
+  push. Keep failing and pending checks explicit, and require the final
+  pipeline before PR handoff.
+- Only the active Phase 3 review wave records its accepted fixes. The lifecycle
+  parent must remain quiescent until the review-child fence clears.
 - A Phase 3 single-wave audit may complete with `FINDINGS_FIXED:N`; the outer
-  `/dxreviewloop` owns the three-consecutive-`CLEAN` gate.
+  `/dxreviewloop` owns the selected tier's consecutive-`CLEAN` gate.
 - Do not add PR creation, reviewer requests, draft-PR transitions, or external
   reviewer polling outside the phase that owns them.
 - When a new phase audit prompt is added, confirm its completion criteria match

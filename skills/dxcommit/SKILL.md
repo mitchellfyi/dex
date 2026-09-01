@@ -1,16 +1,20 @@
 ---
 name: "dxcommit"
-description: "Stage, commit, and push changes following the repo's commit discipline after verification passes."
+description: "Stage, commit, and push a coherent checkpoint whenever work reaches a useful history boundary."
 ---
 
 # Skill: dxcommit
 
-Stage, commit, and push changes following the repo's commit discipline.
+Stage, commit, and push coherent checkpoints following the repo's commit
+discipline.
 
 ## When to Use
 
-- After `/dxverify` passes all quality gates
-- When ready to push changes to the remote branch
+- Throughout implementation, review, and verification whenever the current
+  changes form a small, coherent checkpoint
+- After a focused check, even when broader or final verification is still
+  pending or currently failing
+- When a local commit exists but has not reached the remote branch
 
 ## Steps
 
@@ -26,6 +30,12 @@ the working tree is clean, check whether the current branch has an unpushed
 branch-specific commit from an earlier failed push. Continue to the push check
 when it does. Otherwise stop: do not publish a newly created branch merely to
 establish upstream tracking, and do not create an empty commit.
+
+Do not run or wait for the full verification pipeline merely to make the
+changes committable. Run a useful focused check when practical, preserve its
+actual result in the status report, and commit the coherent checkpoint whether
+that check passed, failed, or remains pending. Final verification gates PR
+handoff, not the existence of working-history commits.
 
 ### 2. Stage, Commit, and Push Each Group
 
@@ -72,3 +82,6 @@ For each logical group, finish all four steps before starting the next group:
 Confirm the working tree is clean, the current branch contains at least one
 branch-specific commit, and local HEAD matches `origin/<current-branch>`. A
 newly created branch with no branch-specific commits stays local.
+
+Do not confuse this sync check with final verification. It proves that the
+checkpoint was recorded and pushed, not that the branch is ready for a PR.

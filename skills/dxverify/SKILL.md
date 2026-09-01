@@ -1,11 +1,17 @@
 ---
 name: "dxverify"
-description: "Run and repair the full quality pipeline for a project. Use before committing or pushing, after implementation, when asked to verify code quality, or when dx test project delegates verification."
+description: "Run and repair the full quality pipeline before PR handoff, when asked to verify code quality, or when dx test project delegates verification."
 ---
 
 # Skill: dxverify
 
 Verify the current project against its declared quality contract.
+
+Verification is the final PR gate, not a prerequisite for commits or pushes.
+As repairs reach small coherent checkpoints, commit and push them instead of
+holding the entire repair set until the pipeline is green. Keep failed and
+pending checks explicit, continue remediation, and report success only after
+the complete required pipeline passes.
 
 Read `prompts/issue-hygiene.md`. Apply it only when verification reveals
 material new context, not for transient failures repaired within accepted
@@ -65,8 +71,10 @@ When a check fails:
 
 1. Diagnose the exact failure.
 2. Make the smallest valid fix.
-3. Rerun the failed check.
-4. Continue only after it passes.
+3. When that fix forms a coherent checkpoint, commit and push it without
+   waiting for the full pipeline.
+4. Rerun the failed check.
+5. Continue to the next gate only after it passes.
 
 On the second failure of the same check type, read
 `prompts/failure-recovery.md`, choose a different recovery strategy, and follow

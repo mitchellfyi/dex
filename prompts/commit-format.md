@@ -2,6 +2,19 @@
 
 Follows the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) specification.
 
+## Working History
+
+Verification is the PR gate, not a commit prerequisite. Build the branch
+history while doing the work: whenever the current changes form a small,
+coherent checkpoint, commit them and push the commit immediately. Do not wait
+for the task, phase, full test suite, or final verification to finish.
+
+A checkpoint may capture incomplete work or a state with a known failing
+check. Keep the commit logically understandable, describe what it actually
+changes, report any failing or unrun checks honestly, and continue toward a
+verified branch. Do not manufacture arbitrary splits, but do not collapse
+several natural checkpoints into one late commit either.
+
 ## Format
 
 ```
@@ -40,20 +53,35 @@ Never add Claude attribution, including `Co-Authored-By: Claude ...`, `Generated
 
 Each commit should be a single logical unit. Group related changes together:
 
+- A regression test that demonstrates the bug, even while that test is failing
+- The smallest implementation slice that changes the behavior
+- A refactor that preserves behavior
 - Schema/migration + corresponding model/entity/type changes
 - Service/business logic + its tests
 - API endpoint + request/response types
 - UI component + tests
 - Configuration changes
 
+These are examples, not required splits. Separate them when each checkpoint
+tells a useful part of the development story; keep them together when splitting
+would make either commit meaningless.
+
 ## Rules
 
-- Never commit broken code or failing tests.
+- Commit coherent checkpoints early and often, including during implementation,
+  review fixes, and verification repairs.
+- Run focused checks before a checkpoint when they are useful and reasonably
+  quick, but do not make a green check a prerequisite for recording the work.
+- Required verification must pass before PR handoff. Never claim that a
+  checkpoint or branch is green when checks failed or were not run.
+- Push immediately after every commit so the remote branch records the same
+  working history.
 - Never skip hooks (`--no-verify`).
 - Never amend commits that have already been pushed.
 - Never use `git add -A` or `git add .` — stage specific files.
 - Always include the Dex co-author trailer and no Claude attribution.
-- If unsure whether to split into multiple commits, prefer more granular commits.
+- Prefer a small logical commit when the history has a natural boundary; avoid
+  arbitrary splits that make the history harder to understand.
 
 ## Forbidden Files
 

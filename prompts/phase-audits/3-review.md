@@ -42,8 +42,13 @@ standalone `N/A`, do not reconstruct them from other state.
    - `thorough` (`complex` risk): all domain sweeps
 7. Run an explicit verifier pass over candidate findings.
 8. Batch-fix verified findings in severity order.
-9. Re-run deterministic checks and targeted review for changed surfaces.
-10. Write the review result signal.
+9. As accepted fixes form coherent checkpoints, commit and push them when the
+   caller permits publication. Do not wait for the entire wave or final
+   verification; keep any failed or pending check explicit and continue the
+   repair work. If a required push fails, write `BLOCKED:push-failed` rather
+   than pretending the checkpoint reached the remote.
+10. Re-run deterministic checks and targeted review for changed surfaces.
+11. Write the review result signal.
 
 ## Result Signal Rules
 
@@ -119,10 +124,11 @@ All of these must be true before you stop:
 - The review result signal file contains one allowed result value.
 - The context pack is non-empty and the findings file contains exactly one
   valid hash.
-- For lifecycle-bound criteria, no commit, push, branch switch, PR, or reviewer
-  action occurred; verified fixes remain in the working tree for Phase 4. For a
-  standalone review, reflect any such action in the context pack and re-run the
-  review after an action that changed the review scope.
+- For lifecycle-bound criteria, every accepted-fix checkpoint was committed
+  and pushed by the active wave, local HEAD matches its upstream, and no branch
+  switch, PR, or reviewer action occurred. For a standalone review, follow the
+  caller's publication boundary, reflect any Git or PR action in the context
+  pack, and re-run the review after an action that changed the review scope.
 
 When those criteria are met, stop. The outer `/dxreviewloop` owns the selected
 tier's global consecutive `CLEAN` gate: 1, 2, or 3 waves.

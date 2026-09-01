@@ -64,13 +64,13 @@ dx 1234
   |     Explore the ticket and codebase, propose an approach, wait for approval.
   |
   |-- Phase 2: Implement
-  |     Build with tests, commit and push green increments, prove criteria, then select review risk.
+  |     Build with tests, commit and push coherent checkpoints as work develops, prove criteria, then select review risk.
   |
   |-- Phase 3: Review
   |     Run fresh review-wave CLI sessions to the selected tier's global clean gate.
   |
-  |-- Phase 4: Verify + Commit
-  |     Run final gates, commit review or verification repairs, confirm the remote is current.
+  |-- Phase 4: Verify
+  |     Run the final PR gate, record repair checkpoints as needed, confirm the remote is current.
   |
   |-- Phase 5: PR
   |     Create the draft PR with description, reviewer routing, and visual handoff.
@@ -102,14 +102,17 @@ lowering it still requires that many independent clean waves and records the
 review phase as waived. A full `dx control waive review.clean-passes` skips the
 remaining review gate.
 
-Publishing follows phase ownership: Phase 2 publishes implementation commits,
-Phase 3 leaves review fixes in the working tree, Phase 4 publishes review and
-verification repairs, and Phase 5 owns PR creation. These boundaries are prompt
-contracts rather than hard Git restrictions. Human and agent controls can pause
-or stop Dex, change a phase/session runtime default, waive a named assurance
-gate, or jump to another phase. Every exception records its source and reason;
-skipped and waived outcomes stay separate from passed gates. See [session
-policy overrides](docs/autonomous-mode.md#session-policy-overrides).
+Git history follows the work rather than waiting for final verification. Phase
+2 commits and pushes small coherent implementation checkpoints, Phase 3 does
+the same for accepted review fixes, and Phase 4 records any repair checkpoints
+while making the final PR gate pass. A checkpoint may be incomplete or have a
+known failing check; Dex reports that state honestly and keeps working. It does
+not manufacture arbitrary splits, and it pushes every commit immediately.
+Phase 5 owns PR creation. Human and agent controls can pause or stop Dex, change
+a phase/session runtime default, waive a named assurance gate, or jump to
+another phase. Every exception records its source and reason; skipped and
+waived outcomes stay separate from passed gates. See [session policy
+overrides](docs/autonomous-mode.md#session-policy-overrides).
 
 The clean-pass bookkeeping is designed to stop a review loop drifting into a
 false pass — wrong scope, changed criteria, a reused result, a lost finding —

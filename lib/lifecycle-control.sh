@@ -24,7 +24,7 @@ dx_lifecycle_phase_label() {
     1) printf '%s\n' "Plan" ;;
     2) printf '%s\n' "Implement" ;;
     3) printf '%s\n' "Review" ;;
-    4) printf '%s\n' "Verify & Commit" ;;
+    4) printf '%s\n' "Verify" ;;
     5) printf '%s\n' "PR" ;;
     6) printf '%s\n' "Complete" ;;
     7) printf '%s\n' "Lifecycle complete" ;;

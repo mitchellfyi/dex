@@ -16,8 +16,9 @@ Phase 5 summary with the contract's exact `Issue/PR work:` line.
 
 ## When to Use
 
-- After `/dxcommit` has pushed all changes
-- When the implementation is complete and verified
+- After final verification passes and every working-history checkpoint has
+  been pushed
+- When the implementation is complete and ready for PR handoff
 
 ## Steps
 
