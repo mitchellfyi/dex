@@ -6,7 +6,9 @@ set -euo pipefail
 # This runs on every Bash tool call, so load only the modules it reads
 # (the status line uses the same fast path). A broken or partial install
 # must not surface here: this hook enhances output, it never gates it.
-DX_COMMON_MODULES="output rtk"
+# ui-capture is here for dx_tools_dir, which the managed-binary fallback in
+# rtk.sh calls when rtk is not already on PATH.
+DX_COMMON_MODULES="output ui-capture rtk"
 dex_common="${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 # A missing source target is fatal in bash even inside a guard, so probe it.
 if [[ ! -r "$dex_common" ]]; then

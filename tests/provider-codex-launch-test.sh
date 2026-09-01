@@ -204,7 +204,9 @@ fi
 grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
 grep -q -- "Initial phase: Phase 0 (Setup)." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Begin Phase 0: Setup" "$DEX_TEST_CODEX_PROMPT"
-grep -q -- "do not push it until Phase 2 creates the first real implementation commit" "$DEX_TEST_CODEX_PROMPT"
+# The defer-push rule as DX_PHASE_0_MESSAGE actually words it — the test
+# shipped asserting a draft phrasing no prompt ever emitted.
+grep -q -- "remains local until Phase 2's first real implementation commit" "$DEX_TEST_CODEX_PROMPT"
 if grep -q -- "push the current lifecycle branch and proceed" "$DEX_TEST_CODEX_PROMPT"; then
   printf '%s\n' "Phase 0 prompt still publishes an empty lifecycle branch" >&2
   exit 1
