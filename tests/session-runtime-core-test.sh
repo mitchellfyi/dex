@@ -295,7 +295,8 @@ else
   assert_eq "3" "$?" "replacement lock mutation result"
 fi
 assert_eq "$SWAP_RECORD_BEFORE" "$(<"$SWAP_FILE")" "record after rejected lock replacement"
-assert_eq "corrupt" "$(runtime_health "$SWAP_SID" "$SWAP_TOKEN")" "replacement lock health"
+# Public reads do not check lock lineage, so the untouched record still reports its live owner.
+assert_eq "live" "$(runtime_health "$SWAP_SID" "$SWAP_TOKEN")" "replacement lock health"
 kill "$LOCK_HOLDER_PID" 2>/dev/null || true
 wait "$LOCK_HOLDER_PID" 2>/dev/null || true
 
@@ -398,6 +399,100 @@ assert_no_file "$RECOVERY_FILE"
 assert_file "$RECOVERY_LOCK_FILE"
 assert_eq "legacy-unverifiable" "$(runtime_health "$RECOVERY_SID")" \
   "purged runtime health"
+
+# A record's stored lock identity goes stale without the record being wrong:
+# APFS hands each volume a new device number per boot, and a state directory
+# synced to another machine carries foreign device, inode, and generation
+# values. Such records must stay readable, recoverable, and restartable, and
+# the new lease must bind to the lock actually held.
+rewrite_lock_identity() { # <record-file> <device> <inode> <generation>
+  python3 - "$@" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+target, device, inode, generation = sys.argv[1:]
+with open(target, encoding="utf-8") as source:
+    record = json.load(source)
+record["lock_device"] = int(device)
+record["lock_inode"] = int(inode)
+record["lock_generation"] = generation
+descriptor, temporary = tempfile.mkstemp(dir=os.path.dirname(target))
+os.fchmod(descriptor, 0o600)
+with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+    json.dump(record, output, separators=(",", ":"))
+    output.write("\n")
+os.replace(temporary, target)
+PY
+}
+recorded_lock_identity() { # <record-file>
+  python3 - "$1" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    record = json.load(source)
+print(record["lock_device"], record["lock_inode"], record["lock_generation"])
+PY
+}
+live_lock_identity() { # <lock-file>
+  python3 - "$1" <<'PY'
+import os
+import sys
+metadata = os.lstat(sys.argv[1])
+with open(sys.argv[1], encoding="ascii") as source:
+    generation = source.read().split()[1]
+print(metadata.st_dev, metadata.st_ino, generation)
+PY
+}
+
+STALE_LOCK_WORKSPACE="$TMP_DIR/stale-lock-workspace"
+mkdir -p "$STALE_LOCK_WORKSPACE"
+STALE_LOCK_SID="$(dx_scoped_session_id worktree-runtime-stale-lock)"
+STALE_LOCK_FILE="$(dx_session_runtime_file "$STALE_LOCK_SID")"
+STALE_LOCK_LOCK_FILE="${STALE_LOCK_FILE}-lock"
+STALE_LOCK_TOKEN="$(dx_session_runtime_start \
+  "$STALE_LOCK_SID" claude "$STALE_LOCK_WORKSPACE" "$$")"
+dx_session_runtime_finish "$STALE_LOCK_SID" "$STALE_LOCK_TOKEN" stopped "$$"
+read -r LIVE_DEVICE LIVE_INODE LIVE_GENERATION <<<"$(live_lock_identity "$STALE_LOCK_LOCK_FILE")"
+
+# Same lock file, new device number: the machine rebooted.
+rewrite_lock_identity "$STALE_LOCK_FILE" "$((LIVE_DEVICE + 1))" "$LIVE_INODE" "$LIVE_GENERATION"
+assert_eq "dead" "$(runtime_health "$STALE_LOCK_SID")" "rebooted-device runtime health"
+assert_eq "stopped" "$(dx_session_runtime_field "$STALE_LOCK_SID" status)" \
+  "rebooted-device runtime status"
+STALE_LOCK_TOKEN="$(dx_session_runtime_start \
+  "$STALE_LOCK_SID" claude "$STALE_LOCK_WORKSPACE" "$$")"
+[[ "$STALE_LOCK_TOKEN" =~ ^[0-9a-f]{64}$ ]] || assert_at $LINENO
+assert_eq "live" "$(runtime_health "$STALE_LOCK_SID" "$STALE_LOCK_TOKEN")" \
+  "rebooted-device restart health"
+assert_eq "$(live_lock_identity "$STALE_LOCK_LOCK_FILE")" \
+  "$(recorded_lock_identity "$STALE_LOCK_FILE")" "restart bound the lease to the live lock"
+dx_session_runtime_finish "$STALE_LOCK_SID" "$STALE_LOCK_TOKEN" stopped "$$"
+
+# Foreign device, inode, and generation: the state directory came from another machine.
+FOREIGN_GENERATION="$(printf 'f%.0s' {1..32})"
+[[ "$FOREIGN_GENERATION" != "$LIVE_GENERATION" ]] || assert_at $LINENO
+rewrite_lock_identity "$STALE_LOCK_FILE" "$((LIVE_DEVICE + 7))" "$((LIVE_INODE + 7))" "$FOREIGN_GENERATION"
+assert_eq "dead" "$(runtime_health "$STALE_LOCK_SID")" "foreign-lock runtime health"
+STALE_LOCK_SNAPSHOT="$(dx_session_runtime_read "$STALE_LOCK_SID")"
+assert_contains "\"lock_generation\":\"$FOREIGN_GENERATION\"" <(printf '%s\n' "$STALE_LOCK_SNAPSHOT")
+STALE_LOCK_TOKEN="$(__dx_session_runtime_recovery_start_secure \
+  "$STALE_LOCK_SID" "$STALE_LOCK_SNAPSHOT" "$$" 3>&1)"
+[[ "$STALE_LOCK_TOKEN" =~ ^[0-9a-f]{64}$ ]] || assert_at $LINENO
+assert_eq "live" "$(runtime_health "$STALE_LOCK_SID" "$STALE_LOCK_TOKEN")" \
+  "foreign-lock recovery health"
+assert_eq "$(live_lock_identity "$STALE_LOCK_LOCK_FILE")" \
+  "$(recorded_lock_identity "$STALE_LOCK_FILE")" "recovery bound the lease to the live lock"
+dx_session_runtime_heartbeat "$STALE_LOCK_SID" "$STALE_LOCK_TOKEN" "$$"
+dx_session_runtime_finish "$STALE_LOCK_SID" "$STALE_LOCK_TOKEN" stopped "$$"
+rewrite_lock_identity "$STALE_LOCK_FILE" "$((LIVE_DEVICE + 7))" "$((LIVE_INODE + 7))" "$FOREIGN_GENERATION"
+STALE_LOCK_TOKEN="$(dx_session_runtime_start \
+  "$STALE_LOCK_SID" claude "$STALE_LOCK_WORKSPACE" "$$")"
+[[ "$STALE_LOCK_TOKEN" =~ ^[0-9a-f]{64}$ ]] || assert_at $LINENO
+assert_eq "$(live_lock_identity "$STALE_LOCK_LOCK_FILE")" \
+  "$(recorded_lock_identity "$STALE_LOCK_FILE")" "foreign-lock restart bound the lease to the live lock"
+dx_session_runtime_finish "$STALE_LOCK_SID" "$STALE_LOCK_TOKEN" stopped "$$"
 
 # A record that changes after selection cannot satisfy the recovery claim.
 STALE_RECOVERY_WORKSPACE="$TMP_DIR/stale-recovery-workspace"

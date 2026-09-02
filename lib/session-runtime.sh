@@ -857,6 +857,12 @@ def record_lock_identity(record):
     }
 
 
+# Lease mutations (heartbeat, finish, purge) and publication must hold the
+# lock the record was published under. Starts, recovery, and public reads
+# deliberately skip this check: state directories are synced between machines
+# and macOS assigns volumes a new device number on every boot, so a record's
+# stored lock identity often differs from the live lock while the record is
+# still the right one. A new lease binds to the lock held at that moment.
 def require_record_lock(record, observed_identity):
     if record_lock_identity(record) != observed_identity:
         raise RuntimeRecordError("runtime record is bound to another lock")
@@ -1197,11 +1203,7 @@ def recovery_snapshot_from_fd(descriptor):
 
 
 def validated_public_record(record_file, session_id, missing_ok=False):
-    record = trusted_read(record_file, session_id, missing_ok=missing_ok)
-    if record is None:
-        return None
-    require_record_lock(record, trusted_lock_identity(f"{record_file}-lock"))
-    return record
+    return trusted_read(record_file, session_id, missing_ok=missing_ok)
 
 
 operation = sys.argv[1]
@@ -1368,7 +1370,6 @@ try:
             previous = trusted_read(record_file, session_id, missing_ok=True)
             if previous is None:
                 fail("runtime record is required for recovery", 2)
-            require_record_lock(previous, held_identity)
             if public_record(previous) != expected_snapshot:
                 fail("runtime record changed before recovery", 2)
             if owner_health(previous) != "dead":
@@ -1440,12 +1441,10 @@ try:
         lease_token = None
         try:
             previous = trusted_read(record_file, session_id, missing_ok=True)
-            if previous is not None:
-                require_record_lock(previous, held_identity)
-                if previous["status"] == ACTIVE_STATE:
-                    previous_health = owner_health(previous)
-                    if previous_health in {"live", "unverifiable"}:
-                        fail("another process may still own this session", 2)
+            if previous is not None and previous["status"] == ACTIVE_STATE:
+                previous_health = owner_health(previous)
+                if previous_health in {"live", "unverifiable"}:
+                    fail("another process may still own this session", 2)
             owner_probe = process_probe(owner_pid)
             if owner_probe["health"] != "live" or owner_probe["identity"] is None:
                 raise RuntimeInputError("cannot establish a stable runtime process identity")
