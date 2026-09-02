@@ -196,6 +196,13 @@ Mention reviewers are notified in Phase 6. Two types:
 - \`request\` — native GitHub review request via Dex's reviewer helper
 - \`mention\` — \`@<handle>\` posted as a PR comment (for AI agents that watch mentions)
 
+These rows route notifications; they do not create approval requirements for
+Phase 6. Dex handles actionable feedback, but it can finish without a submitted
+review or approval. GitHub's target-branch rules still apply when a maintainer
+merges the PR. Copilot reviews are \`COMMENTED\` by default; when admins enable
+Copilot auto-approval, Dex reports the resulting \`APPROVED\` state without
+making it a Phase 6 requirement.
+
 When attaching request reviewers, Dex normalizes \`Copilot\`, \`@copilot\`,
 or Copilot aliases to GitHub CLI's special \`@copilot\` reviewer value. Normal
 GitHub usernames are passed without a leading \`@\`. If GitHub says a reviewer is

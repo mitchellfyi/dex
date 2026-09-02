@@ -124,7 +124,9 @@ All of these must be true before you stop:
 - PR scope matches the plan — no unrelated changes, nothing missing
 - The PR is ready for review (`gh pr view "$PR_NUM" --json isDraft -q .isDraft` returns `false`)
 - UI proof is attached for READY, has a warned local handoff when automatic attachment is unavailable/incomplete, or records SKIPPED/N/A with a reason
-- All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR (or the section is empty/`_none_`)
+- All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR,
+  or GitHub rejected them as non-requestable and Dex recorded the warning (or
+  the section is empty/`_none_`)
 - Issue and PR reconciliation followed `prompts/issue-hygiene.md`, and the
   summary contains `Issue/PR work:`
 

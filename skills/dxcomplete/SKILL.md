@@ -8,8 +8,8 @@ description: "Run Phase 6 of the Dex lifecycle: verify PR readiness, request rev
 Phase 6 of the autonomous lifecycle. Verifies that Phase 5 left the PR ready,
 repairs any remaining draft state, requests configured reviewers, posts
 `@mention` comments, monitors CI and reviews through `/dxwatchpr`, addresses
-failures, and closes the ticket once everything is green and approved. It never
-merges the PR.
+failures, and closes the ticket once CI is green and actionable review feedback
+is resolved. It never merges the PR.
 
 This skill runs as a **cycle loop** driven by `prompts/phase-audits/6-complete.md`. The Stop hook re-injects the audit prompt every iteration. Read `dx_complete_wait_minutes` and `dx_complete_max_cycles` each cycle so in-session overrides apply. Defaults are 5 minutes per cycle and 3 cycles before pausing for manual follow-up.
 
@@ -20,11 +20,11 @@ This skill runs as a **cycle loop** driven by `prompts/phase-audits/6-complete.m
 
 ## Autonomy Contract
 
-Phase 6 runs unattended until CI is green and configured reviewers approve, or
-until the bounded watch window or an explicit escalation condition is hit. Do
-not ask the user whether to continue between wait cycles. Waiting for
-CI/reviewers is handled by the Stop hook cycle loop and the current
-`dx_complete_wait_minutes` value.
+Phase 6 runs unattended until CI is green and actionable review feedback is
+resolved, or until the bounded watch window or an explicit escalation condition
+is hit. Do not ask the user whether to continue between wait cycles. Waiting for
+pending checks or feedback follow-up is handled by the Stop hook cycle loop and
+the current `dx_complete_wait_minutes` value.
 
 Before posting PR comments, ticket updates, or final prose summaries, invoke the
 `humanizer` skill. Preserve reviewer handles, PR numbers, ticket IDs, commands,
@@ -58,9 +58,10 @@ handles before calling `gh pr edit --add-reviewer`. This strips leading `@` from
 normal usernames but preserves GitHub CLI's special `@copilot` reviewer value.
 If GitHub says a reviewer is not requestable for this repository, log the
 warning and continue; do not pipe the error text into `jq`.
-Only reviewers successfully accepted by GitHub as native review requests gate
-completion approval. Non-requestable reviewers are warnings, not blockers.
-Keep the original `@` form for `@mention` comments.
+Reviewer rows route notifications; they do not create Dex-specific approval
+requirements. GitHub's aggregate `reviewDecision` is useful merge-readiness
+information, but Phase 6 does not merge and must not wait for an approval. Keep
+the original `@` form for `@mention` comments.
 
 If the section is missing, contains only the `_none_` placeholder, or both lists are empty, log a notice and skip the reviewer-related steps (the user has chosen not to assign anyone).
 
@@ -104,7 +105,9 @@ When setup runs:
 /loop 5m /dxwatchpr
 ```
 
-This checks CI status, fixes CI failures when appropriate, addresses review comments via `/dxprreview`, resolves clear review threads after replying, and cancels itself when checks are green and all successfully requested reviews are approved.
+This checks CI status, fixes CI failures when appropriate, addresses review
+comments via `/dxprreview`, resolves clear review threads after replying, and
+cancels itself when checks are green and actionable review feedback is resolved.
 
 If the user sends a direct prompt during Phase 6, the `UserPromptSubmit` hook pauses scheduled watcher cycles using `dx_watch_pause_ttl_seconds` (default `60m 0s`). During that pause the watcher skill must skip GitHub/CI commands until the user runs `/dxcomplete` or asks to resume watching.
 
@@ -113,17 +116,20 @@ Each scheduled watcher invocation uses `dx_watch_cycle_timeout_seconds` (default
 ### 4. Wait Window
 
 Each cycle reads `dx_complete_wait_minutes` (default 5) before waiting, so an
-in-session policy override applies to the next check. You don't sleep — you
-just stop, and the Stop hook re-injects the audit on the next iteration. The
-audit checks elapsed time and only authorizes outcome evaluation once the
-window has elapsed.
+in-session policy override applies to the next check. Evaluate the PR
+immediately on the first cycle; do not create an artificial reviewer wait. If
+that evaluation is not ready, record the cycle timestamp and stop. The Stop hook
+re-injects the audit after the wait window instead of making the agent sleep.
 
-### 5. Outcome Evaluation (after wait window)
+### 5. Outcome Evaluation (immediately, then after each wait window)
 
 Check overall PR state:
 
 ```bash
 gh pr checks "$PR_NUM"
+REVIEW_DECISION=$(gh pr view "$PR_NUM" --json reviewDecision --jq '.reviewDecision // ""')
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+REVIEW_STATE=$(dx_maintenance_pr_review_state "$REVIEW_DECISION") || REVIEW_STATE=unknown
 gh api repos/$(gh repo view --json nameWithOwner -q .nameWithOwner)/pulls/$PR_NUM/reviews
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api graphql --paginate \
@@ -143,18 +149,45 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
 }'
 ```
 
-- **All CI green AND all successfully requested `request` reviewers approved** → proceed to Step 6 (final verification + close).
+- **All CI green AND no actionable review feedback remains unresolved** → proceed to Step 6 (final verification + close), regardless of `REVIEW_STATE`.
 - **New commits were pushed** (e.g., `/dxwatchpr` fixed CI or `/dxprreview` addressed comments) → re-request reviewers and re-post the mention comment so reviewers know there's something new. Increment cycle, reset wait window.
-- **Cycle was idle** (no new commits, no new approvals, checks/reviews not green) → re-read `dx_complete_max_cycles`, increment cycle, and pause with the manual follow-up notice when the current budget is reached; otherwise keep waiting.
+- **Cycle was idle** (no new commits or review progress, checks are not green, or actionable feedback remains) → re-read `dx_complete_max_cycles`, increment cycle, and pause with the manual follow-up notice when the current budget is reached; otherwise keep waiting.
 - **Hard escalation** (3 same-check CI fails, scope change requested, secrets failure, architectural disagreement) → stop and escalate immediately with cited evidence.
+
+Use the review state for reporting and feedback routing, not as a completion
+gate:
+
+- `none`: no aggregate review decision is present.
+- `approved`: GitHub reports an approving review. This includes a Copilot
+  approval when repository and organization policy allow it to count.
+- `review-required`: GitHub still requires an approval for merge. Report it in
+  the handoff, but do not hold Phase 6 open for it.
+- `changes-requested`: inspect and address the underlying feedback or escalate
+  under the normal review rules. Once the feedback is handled and clear review
+  threads are resolved, a stale formal decision does not hold Phase 6 open;
+  report it for the maintainer.
+- `unknown`, a query failure, or any unrecognized value: report that merge review
+  state could not be determined. The review/comment/thread queries must still
+  succeed before claiming that feedback is resolved.
+
+Copilot submits `COMMENTED` reviews by default. If Copilot auto-approval is
+enabled, it may instead submit `APPROVED`; no Copilot-specific completion rule
+is needed. Its overview approval assessment is not a native approval. In every
+case, address substantive feedback and resolve clear review threads before
+closing the ticket.
 
 ### 6. Final Verification
 
 Once Case A in Step 5 is met:
 
 1. **CI**: All checks green (`gh pr checks $PR_NUM` reports all pass).
-2. **Reviews**: All successfully requested `request` reviewers approved, no unresolved comments.
-3. **Mention reviewers**: Best-effort — if a `mention` reviewer commented with an actionable concern, it should already have been addressed by `/dxprreview`, with clear review threads resolved after Dex replies. The mention reviewers don't gate completion via review state.
+2. **Reviews**: No unresolved actionable feedback or review threads remain.
+   Do not require a review, an approval, or a particular `reviewDecision` to
+   complete Phase 6; report merge-review state in the maintainer handoff.
+3. **Mention reviewers**: Best-effort — if a `mention` reviewer commented with
+   an actionable concern, it should already have been addressed by
+   `/dxprreview`, with clear review threads resolved after Dex replies. Mention
+   rows route notifications and do not create an approval gate.
 4. **Tasks**: All implementation tasks marked completed.
 
 If any condition is not met, return to Step 5 (do not advance to closure).
@@ -186,6 +219,7 @@ Tests: M new test cases
 Reviews:
   - <reviewer>: <status> (N comments addressed)
   ...
+Merge review state: <none|approved|review-required|changes-requested|unknown> (informational)
 
 CI: All checks green (X/X passed)
 Cycles: <cycle_count>
@@ -207,7 +241,8 @@ pauses and detaches the run while revoking its completion authorization. It
 does not create a completion receipt. Never substitute a raw pause marker or a
 generic lifecycle control command.
 
-If the 3-cycle watch window expires before checks and approvals are green, print:
+If the 3-cycle watch window expires before checks are green or actionable
+feedback is resolved, print:
 
 ```
 Autonomous PR monitoring paused after 3 idle 5-minute cycles.
@@ -225,5 +260,7 @@ Do not emit `DEX_TICKET_COMPLETE` on this timeout path.
   issue when it matches, automatically create a linked issue for concrete
   distinct work, and ask only when the classification or product choice is
   genuinely ambiguous.
-- The ticket should be marked "Done" (if a tracker is available) once CI and reviews are green; the actual merge happens only when a maintainer accepts the PR.
+- The ticket should be marked "Done" (if a tracker is available) once CI is
+  green and actionable review feedback is resolved. A missing review or approval
+  does not block Phase 6; the maintainer handles any merge-time approval rule.
 - Hard escalations (secrets, scope conflict, architectural disagreement, 3+ CI failures on the same check) stop the loop and surface a structured escalation to the user — never auto-resolve these.

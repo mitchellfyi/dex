@@ -189,7 +189,26 @@ fi
 
 ### 6. Evaluate Completion
 
-**All checks pass, all successfully requested reviews approved, no unresolved comments:**
+Read GitHub's aggregate review decision for the maintainer handoff:
+
+```bash
+REVIEW_DECISION=$(dx_watch_run_command "$SESSION_ID" gh pr view "$PR_NUM" \
+  --json reviewDecision --jq '.reviewDecision // ""')
+REVIEW_STATE=$(dx_maintenance_pr_review_state "$REVIEW_DECISION") || REVIEW_STATE=unknown
+```
+
+The review state does not gate Phase 6. `review-required`, a pending reviewer
+request, no submitted review, and no approval are all valid handoff states.
+`changes-requested` triggers another check for actionable feedback, but a stale
+formal decision does not block after the feedback is handled and clear threads
+are resolved. An unknown value or query failure is reported, while the separate
+review/comment/thread queries must still succeed before feedback can be called
+resolved. Copilot's default `COMMENTED` review does not block completion; an
+`APPROVED` Copilot review is reported and may satisfy GitHub's merge rule when
+repository and organization policy allow it.
+
+**All checks pass and no actionable comments or review threads remain
+unresolved, regardless of review or approval state:**
 1. Cancel the PR monitoring loop: use `CronDelete` with the job ID.
 2. Report:
    - Total checks: X (all passed)
@@ -200,7 +219,7 @@ fi
 
 Invoke the `humanizer` skill on any free-form PR comments or status prose before publishing or printing them. Preserve reviewer handles, check names, counts, SHAs, and commands exactly.
 
-**Checks pending, reviews pending, or comments unresolved:**
+**Checks pending or actionable comments unresolved:**
 - Do nothing further. Wait for the next loop invocation.
 
 ### 7. Escalation
@@ -226,6 +245,6 @@ The scheduled watcher uses Phase 6's current `dx_complete_max_cycles` and `dx_co
 - CI only runs after `gh pr ready`; draft PRs do not trigger CI.
 - A push during CI triggers a new run; the old run is cancelled automatically.
 - Some checks only run when specific paths change (check the project's CI configuration).
-- Automated reviewers typically respond within 5-10 minutes.
-- Human reviewers may take hours; the bounded watch window is intentionally short.
+- Automated reviewers typically respond within 5-10 minutes and human reviewers
+  may take hours, but Phase 6 does not wait solely for a review or approval.
 - Do not dismiss review comments. Always reply, even if the fix is trivial.

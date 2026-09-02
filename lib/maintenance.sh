@@ -393,11 +393,35 @@ dx_maintenance_normalize_reviewer() {
   stripped="${handle#@}"
   lower=$(printf '%s' "$stripped" | tr '[:upper:]' '[:lower:]')
   case "$lower" in
-    copilot|github-copilot|github-copilot-review)
+    copilot|github-copilot|github-copilot-review|copilot-pull-request-reviewer|copilot-pull-request-reviewer\[bot\])
       printf '%s\n' "@copilot"
       ;;
     *)
       printf '%s\n' "$stripped"
+      ;;
+  esac
+}
+
+# Translate GitHub's aggregate PullRequest.reviewDecision for Phase 6 reporting.
+# Approval is a merge concern rather than a Dex completion requirement.
+dx_maintenance_pr_review_state() {
+  local review_decision="${1:-}"
+  case "$review_decision" in
+    ""|null)
+      printf '%s\n' "none"
+      ;;
+    APPROVED)
+      printf '%s\n' "approved"
+      ;;
+    REVIEW_REQUIRED)
+      printf '%s\n' "review-required"
+      ;;
+    CHANGES_REQUESTED)
+      printf '%s\n' "changes-requested"
+      ;;
+    *)
+      printf '%s\n' "unknown"
+      return 2
       ;;
   esac
 }
@@ -451,7 +475,14 @@ import json
 import os
 import sys
 
-COPILOT_ALIASES = {"copilot", "github-copilot", "github-copilot-review", "github-copilot[bot]"}
+COPILOT_ALIASES = {
+    "copilot",
+    "github-copilot",
+    "github-copilot-review",
+    "github-copilot[bot]",
+    "copilot-pull-request-reviewer",
+    "copilot-pull-request-reviewer[bot]",
+}
 
 
 def normalize(value):

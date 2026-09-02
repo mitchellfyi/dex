@@ -53,7 +53,8 @@ reviewers, guards, and durable repo memory.
   under `~/.dex/runs/`.
 - **PR follow-through:** Dex can publish visual proof, mark a PR ready, request
   reviewers, watch CI and review comments, apply fixes, re-request review after
-  pushes, and close the ticket when approved.
+  pushes, and close the ticket once CI is green and actionable feedback is
+  resolved. Merge-time approval remains with GitHub and the maintainer.
 
 ## How The Loop Works
 

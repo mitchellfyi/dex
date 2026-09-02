@@ -530,7 +530,7 @@ EOF
       ;;
     6)
       cat <<'EOF'
-Begin Phase 6: Complete. Invoke the Skill tool with skill: "dxcomplete". Verify the PR is ready and repair any remaining draft state, request reviewers, post configured @mention comments, monitor CI/reviews through /dxwatchpr, address failures, and close the ticket when CI is green and configured reviewers approve. Do not merge the PR. Continue unattended until completion, the bounded watch window expires, or a real escalation condition is hit.
+Begin Phase 6: Complete. Invoke the Skill tool with skill: "dxcomplete". Verify the PR is ready and repair any remaining draft state, request reviewers, post configured @mention comments, monitor CI/reviews through /dxwatchpr, address failures, and close the ticket when CI is green and actionable review feedback is resolved. A missing review, pending request, or absent approval does not block Phase 6; report merge-review state for the maintainer. Do not merge the PR. Continue unattended until completion, the bounded watch window expires, or a real escalation condition is hit.
 EOF
       ;;
   esac

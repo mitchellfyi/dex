@@ -146,7 +146,21 @@ and untracked scope still matches.
 
 Phase 2 treats UI proof as an explicit agent judgment. `/dxuicapture` can produce a short before/after or after-only walkthrough when it improves the review, record a reasoned `SKIPPED` decision for a visible but disproportionate case, or record `N/A` when nothing changes in the browser. A human can request the full diff-aware capture at any time with `/dxproof` or its `/dxcapture` alias. Generated videos, screenshots, traces, captions, browser logs, and the handoff manifest stay under `~/.claude/.dex-artifacts/`; the lifecycle surfaces their status without turning capture into a hard product-correctness gate. For `READY` proof, Phase 5 attaches the current image/video bundle to the PR when GitHub CLI supports `--attach`. Older clients and incomplete uploads keep a visible local handoff. See [ui-capture.md](ui-capture.md).
 
-Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from `.dex/dex.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer. The autonomous loop re-reads `dx_complete_wait_minutes` (default 5) and `dx_complete_max_cycles` (default 3) each cycle, addresses failures through `/dxwatchpr` and `/dxprreview`, re-requests reviewers after each push, and closes the ticket once CI is green and all successfully requested reviewers approve. Reviewers GitHub says are not requestable for the repository are warnings, not approval gates. When the current idle budget is exhausted, it pauses with manual follow-up instructions. It never merges the PR.
+Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from
+`.dex/dex.md` to know who to notify. The autonomous loop re-reads
+`dx_complete_wait_minutes` (default 5) and `dx_complete_max_cycles` (default 3)
+each cycle, addresses failures through `/dxwatchpr` and `/dxprreview`, and
+re-requests reviewers after each push. It closes the ticket once CI is green
+and actionable review feedback is resolved. A missing review, pending request,
+absent approval, or GitHub `REVIEW_REQUIRED` merge decision does not block
+Phase 6; Dex reports that state for the maintainer because it never merges the
+PR. Reviewers GitHub says are not requestable are warnings.
+
+GitHub Copilot submits `COMMENTED` reviews by default. Its public-preview
+auto-approval can submit `APPROVED` reviews, and a separate policy decides
+whether those approvals satisfy merge requirements. Dex reports either state
+without making it a completion requirement. See GitHub's
+[Copilot code review documentation](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review#pull-request-approvals-from-copilot).
 
 DX maintain has a separate GitHub Actions path for background maintenance. The
 installed workflow can run on schedules, manual dispatch, trusted `issues`

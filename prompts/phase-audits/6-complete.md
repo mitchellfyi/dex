@@ -2,7 +2,8 @@ Phase 6 (Complete) is the bounded autonomous PR monitoring loop. Phase 5 should
 have left the PR ready for review; verify that state and repair it if an
 interrupted or pre-existing draft remains. Then request reviews, monitor CI and
 review comments through the PR watcher, address failures, and close the ticket
-once everyone has approved and CI is green. Do not merge the PR.
+once CI is green and actionable review feedback is resolved. Do not merge the
+PR.
 
 This phase runs as a **cycle loop**. Each cycle is one Stop hook iteration. Between cycles you wait — the loop infrastructure handles wall-clock time, not you.
 
@@ -65,8 +66,9 @@ For each `request`-type reviewer, normalize the handle with
 for Copilot review requests. This is idempotent when GitHub accepts the reviewer.
 If GitHub says a reviewer is not requestable for this repository, log the warning
 and continue. Do not pipe review-request command output into `jq`.
-Only reviewers successfully accepted by GitHub as native review requests gate
-completion approval. Non-requestable reviewers are warnings, not blockers.
+Reviewer rows route notifications; they do not create Dex-specific approval
+requirements. GitHub's aggregate `reviewDecision` is useful merge-readiness
+information, but Phase 6 does not merge and must not wait for an approval.
 
 ### Post mention comment (`mention` type)
 
@@ -108,10 +110,10 @@ WAIT_SECONDS=$((WAIT_MINUTES * 60))
 ```
 
 If `LAST_EPOCH -eq 0` (very first cycle — setup just ran):
-- Set `LAST_EPOCH=$NOW`.
-- Write `0:${LAST_EPOCH}` to the state file: `echo "0:${LAST_EPOCH}" > "$COMPLETE_STATE_FILE"`.
-- Stop. The wait window starts now; the next iteration will evaluate Outcome only after `WAIT_SECONDS` have elapsed.
-- Do NOT proceed to Outcome — there's nothing to evaluate yet.
+- Proceed directly to Outcome. Do not write the state file or wait merely to
+  give requested reviewers time to respond. If CI is already green and there is
+  no actionable review feedback, Phase 6 can complete without a review or
+  approval.
 
 If `ELAPSED -lt WAIT_SECONDS`, the wait window hasn't elapsed:
 - Confirm the watcher loop is still running (one `gh pr view --json` is fine; do NOT run `/dxprreview` directly here — that's the watcher's job).
@@ -122,12 +124,15 @@ If `ELAPSED -ge WAIT_SECONDS`, the cycle has matured — proceed to Outcome.
 
 ---
 
-## Outcome (after wait window matures)
+## Outcome (immediately on the first cycle, then after each wait window)
 
 Check overall PR state:
 
 ```bash
 gh pr checks "$PR_NUM"  # CI status
+REVIEW_DECISION=$(gh pr view "$PR_NUM" --json reviewDecision --jq '.reviewDecision // ""')
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+REVIEW_STATE=$(dx_maintenance_pr_review_state "$REVIEW_DECISION") || REVIEW_STATE=unknown
 gh api repos/$(gh repo view --json nameWithOwner -q .nameWithOwner)/pulls/$PR_NUM/reviews
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api graphql --paginate \
@@ -147,13 +152,35 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
 }'
 ```
 
-### Case A — All CI green and all successfully requested `request`-type reviewers have approved
+Use `REVIEW_STATE` for reporting and feedback routing, not as a completion gate:
 
-Note: `mention`-type reviewers (AI bots) do not issue native GitHub reviews and DO NOT gate completion via review state. Their substantive comments should already be addressed via `/dxprreview` during the cycle, with clear review threads resolved after Dex replies. Only successfully requested `request`-type reviewers' approval status matters for Case A.
+- `none`: no aggregate review decision is present.
+- `approved`: GitHub reports an approving review. This includes a Copilot
+  approval when repository and organization policy allow it to count.
+- `review-required`: GitHub still requires an approval for merge. Report it in
+  the handoff, but do not hold Phase 6 open for it.
+- `changes-requested`: inspect and address the underlying feedback or escalate
+  under the normal review rules. Once the feedback is handled and clear review
+  threads are resolved, a stale formal decision does not hold Phase 6 open;
+  report it for the maintainer.
+- `unknown`, a query failure, or any unrecognized value: report that merge review
+  state could not be determined. The review/comment/thread queries must still
+  succeed before claiming that feedback is resolved.
+
+Copilot submits `COMMENTED` reviews by default. If Copilot auto-approval is
+enabled, it may instead submit `APPROVED`; no Copilot-specific completion rule
+is needed. Its overview approval assessment is not a native approval.
+
+### Case A — All CI green and actionable review feedback is resolved
+
+Case A applies regardless of whether there is a review, an approval, or a
+`REVIEW_REQUIRED` merge decision. Request and mention rows only route
+notifications. Substantive comments should already have been addressed via
+`/dxprreview`, with clear review threads resolved after Dex replies.
 
 Update the ticket (if a tracker is configured — see `dex.md § Integrations`). Print the completion summary (per `skills/dxcomplete/SKILL.md`, the Print Summary step). Cycle is done — proceed to Termination.
 
-### Case B — Pending checks/reviews or unresolved comments, but progress was made
+### Case B — Pending checks or unresolved feedback, but progress was made
 
 If new commits were pushed during the cycle (`/dxwatchpr` fixed CI or `/dxprreview` addressed comments), re-trigger reviewers:
 
@@ -170,7 +197,8 @@ The cycle was idle. Re-read `MAX_CYCLES=$(dx_complete_max_cycles "${DEX_SESSION_
 
 Re-read `CI_FIX_ATTEMPTS=$(dx_complete_ci_fix_attempts "${DEX_SESSION_ID:-$(dx_session_id)}")`.
 Stop and escalate to the user immediately if:
-- The watcher has completed the current `MAX_CYCLES` idle-cycle budget without checks and approvals going green
+- The watcher has completed the current `MAX_CYCLES` idle-cycle budget without
+  checks going green or actionable review feedback being resolved
 - CI has failed the same check `CI_FIX_ATTEMPTS` times in a row (`/dxwatchpr` should already escalate)
 - A reviewer requested a scope change that affects other tickets
 - A secrets scan failed
@@ -198,10 +226,12 @@ same exact escalation command, and stop without writing a completion receipt.
 
 ## Termination
 
-Cycle ends successfully only when **Case A** is reached: CI green and all successfully requested reviewers approved. Completion means the ticket is closed and the local Dex worktree/branch can be removed; it never means merging the PR.
+Cycle ends successfully only when **Case A** is reached: CI is green and
+actionable review feedback is resolved. Completion means the ticket is closed
+and the local Dex worktree/branch can be removed; it never means merging the PR.
 
 Cycle pauses with escalation when:
-- `CYCLE >= MAX_CYCLES` and checks/approvals are not green
+- `CYCLE >= MAX_CYCLES` and checks are not green or actionable feedback remains
 - Hard escalation (see Case D)
 
 Only Case A may run the exact generation-bound completion command supplied by
@@ -214,9 +244,13 @@ or `/dxcomplete` to resume completion.
 ## Completion criteria (must all be true before writing the exact receipt)
 
 - The PR is no longer a draft (`gh pr view --json isDraft -q .isDraft` returns `false`)
-- All `request` reviewers have been requested at least once
+- Each configured `request` reviewer was attempted at least once; a
+  non-requestable reviewer has a recorded warning instead
 - One mention comment has been posted for `mention` reviewers (if any)
-- All CI checks green AND all successfully requested `request`-type reviewers approved AND ticket marked Done (if tracker configured). `mention`-type reviewers and non-requestable reviewers do NOT gate completion.
+- All CI checks are green, no actionable review feedback remains unresolved,
+  and the ticket is marked Done if a tracker is configured. A missing review,
+  pending request, absent approval, or `REVIEW_REQUIRED` merge decision does not
+  block Phase 6. Report merge-review state in the maintainer handoff.
 - Material CI and review findings were handled under
   `prompts/issue-hygiene.md`, and the terminal summary contains `Issue/PR work:`.
 

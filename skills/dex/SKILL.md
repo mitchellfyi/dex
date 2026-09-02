@@ -175,7 +175,10 @@ line, including when all fields are unchanged or N/A.
 4. Escalate by default when a loop reaches `dx_complete_ci_fix_attempts`, or encounters architectural review comments, a secrets scan failure, or a scope conflict. Ask for or record a justified waiver when an exception is appropriate.
 5. After each push: re-request `request` reviewers and post a fresh mention comment so reviewers know there's something new.
 6. After the current `dx_complete_max_cycles` value (default 3) is reached with no progress, escalate to the user.
-7. When CI green AND all successfully requested `request` reviewers have approved, run `/dxcomplete`'s final verification — update tracker to Done, print summary.
+7. When CI is green and actionable review feedback is resolved, run
+   `/dxcomplete`'s final verification. Reviewer requests and GitHub's
+   merge-time approval state do not gate Phase 6. Update the tracker to Done,
+   report review state for the maintainer, and print the summary.
 8. Apply `prompts/issue-hygiene.md` once to accepted CI or review discoveries;
    scheduled watcher cycles must not create duplicate follow-ups.
 9. Output `DEX_TICKET_COMPLETE` once verification passes.
@@ -246,8 +249,8 @@ When the session is started by `dx`, a Stop hook prevents premature exit and inj
 The phase audit loop continues until:
 1. **Completion promise**: Output `DEX_TICKET_COMPLETE` when ALL of these are true:
    - All tasks completed
-   - PR approved with all checks green
-   - All review comments addressed
+   - All PR checks green
+   - All actionable review feedback addressed; no review or approval is required
    - Ticket updated to Done (if tracker configured)
 2. **Max audit iterations reached** (default: 30) — safety net for the phase
    Stop-hook audit, separate from `/dxreviewloop`'s clean-pass loop

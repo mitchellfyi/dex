@@ -72,6 +72,23 @@ EOF
 
 assert_eq "report" "$(dx_maintenance_event_mode "$repo" issues "")" "invalid mode fallback"
 
+assert_eq "none" "$(dx_maintenance_pr_review_state "")" \
+  "missing GitHub review decision"
+assert_eq "none" "$(dx_maintenance_pr_review_state "null")" \
+  "JSON null review decision"
+assert_eq "approved" "$(dx_maintenance_pr_review_state "APPROVED")" \
+  "GitHub-approved review decision"
+assert_eq "review-required" "$(dx_maintenance_pr_review_state "REVIEW_REQUIRED")" \
+  "GitHub-required review decision"
+assert_eq "changes-requested" "$(dx_maintenance_pr_review_state "CHANGES_REQUESTED")" \
+  "GitHub changes-requested review decision"
+set +e
+unknown_review_state=$(dx_maintenance_pr_review_state "PENDING")
+unknown_review_state_rc=$?
+set -e
+assert_eq "unknown" "$unknown_review_state" "unknown GitHub review decision"
+assert_eq "2" "$unknown_review_state_rc" "unknown GitHub review decision exit status"
+
 cat > "$TMP_DIR/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -105,7 +122,7 @@ JSON
       ;;
     copilot)
       cat <<'JSON'
-{"user":{"login":"author"},"requested_reviewers":[{"login":"github-copilot"}],"requested_teams":[]}
+{"user":{"login":"author"},"requested_reviewers":[{"login":"copilot-pull-request-reviewer[bot]"}],"requested_teams":[]}
 JSON
       ;;
   esac
@@ -129,6 +146,9 @@ assert_contains "does not allow requesting the PR author" "$TMP_DIR/reviewer-aut
 
 GH_FAKE_PR_CASE=copilot dx_maintenance_request_reviewer 7 Copilot example/repo > "$TMP_DIR/reviewer-copilot.out" 2>&1
 assert_contains "pr edit 7 --repo example/repo --add-reviewer @copilot" "$GH_FAKE_CALLS"
+assert_eq "@copilot" \
+  "$(dx_maintenance_normalize_reviewer 'copilot-pull-request-reviewer[bot]')" \
+  "official Copilot reviewer identity normalization"
 
 # Reviewer handles reach gh as arguments, so flag-shaped values from repo
 # config must never be forwarded.
