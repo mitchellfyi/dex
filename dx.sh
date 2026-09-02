@@ -1450,6 +1450,7 @@ unalias __dx_configure_inline_phase 2>/dev/null; unfunction __dx_configure_inlin
 __dx_configure_inline_phase() {
   local step="$1" session_id="$2" generation config_file state_file current_phase
   local current_phase_rc=0
+  local control_file control_snapshot control_action control_source control_actor
   local provider_engine="${DX_PROVIDER_ENGINE:-}" provider_line provider_state
   config_file=$(dx_loop_config_file "$session_id")
   state_file=$(dx_state_file "$session_id")
@@ -1483,6 +1484,35 @@ __dx_configure_inline_phase() {
     dx_lifecycle_control_lock_release_checked "$session_id" \
       2>/dev/null || true
     return 1
+  fi
+  # A human pause or cancel receipt normally leaves with the provider that
+  # honored it. One left behind by a provider that never exited cleanly would
+  # detach this relaunch at its first stop. The relaunch is the human's newer
+  # instruction, and runtime ownership already proved that no live provider
+  # still depends on the receipt, so consume it here. Pending phase
+  # transitions stay for the Stop hook to apply.
+  control_file=$(dx_lifecycle_control_file "$session_id")
+  control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
+  if [[ -z "$control_snapshot" \
+    && ( -e "$control_file" || -L "$control_file" ) ]]; then
+    dx_lifecycle_control_lock_release_checked "$session_id" \
+      2>/dev/null || true
+    dx_warn "Dex found an unreadable or invalid lifecycle control receipt. Repair or remove it before relaunching this lifecycle."
+    return 1
+  fi
+  control_action=$(dx_lifecycle_control_value "$control_snapshot" action)
+  if [[ "$control_action" == "pause" || "$control_action" == "cancel" ]]; then
+    control_source=$(dx_lifecycle_control_value "$control_snapshot" source)
+    control_actor=$(dx_lifecycle_control_actor_label "$control_source")
+    dx_clear_lifecycle_control_unlocked "$session_id"
+    if [[ -e "$control_file" || -L "$control_file" ]]; then
+      dx_lifecycle_control_lock_release_checked "$session_id" \
+        2>/dev/null || true
+      return 1
+    fi
+    dx_run_log_append_for_session "$session_id" "info" "dx" \
+      "Relaunch consumed the ${control_actor} ${control_action} receipt and resumed Phase ${step}" \
+      2>/dev/null || true
   fi
   if ! dx_lifecycle_pause_clear_unlocked "$session_id"; then
     dx_lifecycle_control_lock_release_checked "$session_id" \
@@ -1825,11 +1855,14 @@ __dx_codex_direct_phase_handoff() {
     __dx_codex_transition_unlock "$session_id" invalid-pause || true
     [[ "$controls_only" == "control-only" ]] && return 3
     return 1
-  elif [[ "$pause_context_rc" -eq 0 ]]; then
+  elif [[ "$pause_context_rc" -eq 0 && "$controls_only" != "control-only" ]]; then
     __dx_abandon_completion_state "$session_id" 2>/dev/null || true
     __dx_codex_transition_unlock "$session_id" pause || return 1
     return 2
   fi
+  # Before launch, an earlier pause is history that the relaunch consumes.
+  # __dx_configure_inline_phase clears it under this same lock discipline once
+  # any pending phase transition below has been applied.
   control_action=$(dx_lifecycle_control_value "$control_snapshot" action)
   control_target=$(dx_lifecycle_control_value "$control_snapshot" target_phase)
   control_expected=$(dx_lifecycle_control_value "$control_snapshot" expected_phase)
@@ -1838,6 +1871,13 @@ __dx_codex_direct_phase_handoff() {
   control_generation=$(dx_lifecycle_control_value "$control_snapshot" generation)
   control_phase=$(dx_lifecycle_current_phase "$session_id")
   if [[ "$control_action" == "pause" || "$control_action" == "cancel" ]]; then
+    if [[ "$controls_only" == "control-only" ]]; then
+      # The provider this receipt addressed is gone, and the relaunch is the
+      # newer human instruction. __dx_configure_inline_phase consumes the
+      # receipt; a receipt found after a provider exits is still honored below.
+      __dx_codex_transition_unlock "$session_id" preflight || return 3
+      return 1
+    fi
     if ! dx_lifecycle_detach "$session_id" "manual-${control_action}" \
       "${control_source:-terminal}"; then
       dx_lifecycle_control_lock_release_checked "$session_id" \

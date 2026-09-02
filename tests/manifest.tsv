@@ -37,6 +37,7 @@ lifecycle-control-hook-test.sh	fast	all	600	hermetic
 lifecycle-control-loop-test.sh	fast	all	600	hermetic
 lifecycle-control-parser-test.sh	fast	all	600	hermetic
 lifecycle-progress-test.sh	fast	all	600	hermetic
+lifecycle-relaunch-control-test.sh	fast	all	600	hermetic
 lifecycle-terminal-event-test.sh	service	all	900	hermetic
 lock-test.sh	fast	all	600	hermetic
 log-command-test.sh	fast	all	600	hermetic

@@ -303,23 +303,23 @@ touch "$(dx_active_file "$session_id")"
 dx_write_lifecycle_control "$session_id" cancel "" terminal "" 2 ""
 
 __dx_claude() {
-  touch "$TMP_DIR/provider-launched-after-pause"
+  # Record what the relaunch left behind at the moment the provider started.
+  local launch_state="launched"
+  [[ -e "$(dx_lifecycle_control_file "$session_id")" ]] && launch_state+=" control"
+  [[ -e "$(dx_paused_file "$session_id")" ]] && launch_state+=" paused"
+  printf "%s\n" "$launch_state" > "$TMP_DIR/provider-launched-after-pause"
   return 97
 }
 
-if __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 2 "$state_file" "$times_file" \
-  "dx --agent codex test" "in-place" "$session_id" "test"; then
-  printf "%s\n" "paused direct Codex lifecycle reported success" >&2
-  exit 1
-else
-  wrapper_status=$?
-fi
-[[ "$wrapper_status" -eq 1 ]] || assert_at $LINENO
-[[ ! -f "$TMP_DIR/provider-launched-after-pause" ]] || assert_at $LINENO
-[[ -f "$(dx_paused_file "$session_id")" ]] || assert_at $LINENO
-[[ "$(dx_pause_state_read "$session_id" reason)" == "manual-cancel" ]] || assert_at $LINENO
+# The cancel receipt outlived the provider that should have honored it. The
+# relaunch is the newer human instruction: it consumes the receipt and starts
+# the provider instead of pausing again. A receipt found after a provider exits
+# is still honored; that path is covered above.
+__dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 2 "$state_file" "$times_file" \
+  "dx --agent codex test" "in-place" "$session_id" "test" || true
+[[ -f "$TMP_DIR/provider-launched-after-pause" ]] || assert_at $LINENO
+[[ "$(<"$TMP_DIR/provider-launched-after-pause")" == "launched" ]] || assert_at $LINENO
 [[ ! -f "$(dx_lifecycle_control_file "$session_id")" ]] || assert_at $LINENO
-[[ -f "$(dx_handoff_mode_file "$session_id")" ]] || assert_at $LINENO
 '
 
 zsh -fc '
