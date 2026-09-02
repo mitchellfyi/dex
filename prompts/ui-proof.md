@@ -190,3 +190,6 @@ Finish with the proof state, comparison base and commit, covered flows and
 viewports, and clickable absolute paths to `walkthrough.mp4`, `poster.png`,
 `captions.vtt`, `transcript.md`, `walkthrough.json`, and
 `visual-evidence.md`. Mention any `after_only` limitation or uncovered change.
+When the structured bundle is `READY`, also report the number of current
+image/video attachments recorded in `bundle.json`; Phase 5 owns publishing
+them to the PR and warning when the installed GitHub CLI cannot do so.

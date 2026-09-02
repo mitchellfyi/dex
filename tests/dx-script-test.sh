@@ -97,6 +97,17 @@ DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; __dx_phase_message 4' > "$TMP_
 assert_contains "final PR gate" "$TMP_DIR/phase-4-message.out"
 assert_contains "commit and push each coherent repair checkpoint" "$TMP_DIR/phase-4-message.out"
 
+assert_contains 'dx_github_pr_attachments_supported' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains 'attachment_fingerprint' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains '![<bundle alt>](<absolute local image path>)' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains '![](<absolute local video path>)' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains 'gh pr edit "$PR_NUM" --body-file "$PR_BODY_FILE" --attach' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains 'gh pr view "$PR_NUM" --json body -q .body > "$PR_BODY_FILE"' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains '50 files' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains 'partial upload' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains 'automatic attachment' "$ROOT/prompts/phase-audits/5-pr.md"
+assert_contains 'warned local handoff' "$ROOT/prompts/phase-audits/5-pr.md"
+
 assert_contains "Verification is the PR gate, not a commit prerequisite" "$ROOT/prompts/commit-format.md"
 assert_contains "even while that test is failing" "$ROOT/prompts/commit-format.md"
 assert_not_contains "Never commit broken code or failing tests" "$ROOT/prompts/commit-format.md"

@@ -41,6 +41,11 @@ dx_ui_capture_evidence_file() {
   printf '%s\n' "$(dx_ui_capture_session_dir "$session_id")/evidence.json"
 }
 
+dx_github_pr_attachments_supported() {
+  command -v gh >/dev/null 2>&1 || return 1
+  gh pr edit --help 2>/dev/null | grep -q -- '--attach'
+}
+
 dx_ui_capture_retention_days() {
   local days="${DX_UI_CAPTURE_RETENTION_DAYS:-30}"
   [[ "$days" =~ ^[1-9][0-9]*$ && "$days" -le 3650 ]] || days=30

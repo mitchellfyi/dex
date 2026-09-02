@@ -48,11 +48,29 @@ Check:
 
 Read `dx_ui_capture_summary "$SESSION_ID"` and carry the recorded judgment into the PR:
 
-- For `READY`, verify the MP4, poster, transcript, editable storyboard, captions, and manifest exist. Refresh the bundle with `/dxuicapture` only when later implementation changed what the walkthrough proves.
+- For `READY`, verify the MP4, poster, transcript, editable storyboard, captions, manifest, and bundle metadata exist. Refresh the bundle with `/dxuicapture` only when later implementation changed what the walkthrough proves.
 - For `SKIPPED` or `N/A`, preserve the reason and confirm it still matches the final diff.
 - For `MISSING` or `NEEDS_REVIEW`, invoke `/dxuicapture` to finish the decision. A reasoned skip remains valid; an unexplained state is not a useful handoff.
 
-Confirm no generated artifact is staged or committed. DexCode-connected runs register the compact bundle automatically. GitHub cannot render local paths, so give the human the local MP4 and poster links and tell them to drag those files into the PR body or a comment. Do not claim they were uploaded unless they were.
+Confirm no generated artifact is staged or committed. DexCode-connected runs
+register the compact bundle automatically.
+
+For `READY`, audit the automatic attachment result against `bundle.json`:
+
+- The PR body's `## Visual Evidence` section corresponds to the current
+  `attachment_fingerprint` and includes every current bundle image/video.
+- An `uploaded` marker is valid only when no local media references remain.
+- When more than 50 files exist, the body from each completed batch was reused
+  for the next batch so rewritten URLs were preserved.
+- A non-zero `gh` result was treated as a possible partial upload and the
+  published body was fetched before deciding what remained.
+- If `gh pr edit --attach` was unavailable or any file remained unresolved,
+  the PR and Phase 5 summary contain a warned local handoff. Do not claim those
+  files were uploaded.
+
+Automatic attachment is advisory, like the proof decision itself. A truthful
+warning and local handoff do not block Phase 5, but silent missing evidence or
+a false upload claim does.
 
 ## Step 5: Reviewer attachment
 
@@ -89,7 +107,7 @@ All of these must be true before you stop:
 - PR description attributes generation to Dex only, with no Claude Code generated-by footer
 - PR scope matches the plan — no unrelated changes, nothing missing
 - The PR state is recorded and matches the latest human instruction or workflow action
-- UI proof is handed off as READY with local links, SKIPPED with a reason, or N/A with a reason
+- UI proof is attached for READY, has a warned local handoff when automatic attachment is unavailable/incomplete, or records SKIPPED/N/A with a reason
 - All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR (or the section is empty/`_none_`)
 - Issue and PR reconciliation followed `prompts/issue-hygiene.md`, and the
   summary contains `Issue/PR work:`

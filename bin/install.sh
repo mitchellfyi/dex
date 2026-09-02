@@ -54,6 +54,8 @@ for required_tool in git python3 zsh; do
 done
 if ! command -v gh >/dev/null 2>&1; then
   dx_warn "GitHub CLI (gh) not found. PR creation, reviewer routing, and CI watching need it."
+elif ! dx_github_pr_attachments_supported; then
+  dx_warn "GitHub CLI does not support 'gh pr edit --attach'. Upgrade it to publish UI proof automatically."
 fi
 
 # Ensure ~/.claude directory exists (Claude Code normally creates it, but we

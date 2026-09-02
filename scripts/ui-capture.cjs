@@ -15,6 +15,8 @@ const ALLOWED_ACTION_KEYS = new Set([
 const ALLOWED_LOCATORS = new Set(['role', 'label', 'text', 'testid']);
 const ALLOWED_WAIT_STATES = new Set(['attached', 'detached', 'visible', 'hidden']);
 const VALID_STAGES = new Set(['before', 'after']);
+const PR_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.svg']);
+const PR_VIDEO_EXTENSIONS = new Set(['.mov', '.mp4', '.webm']);
 
 function fail(message) {
   throw new Error(message);
@@ -262,6 +264,101 @@ function orderedChapters(storyboard) {
 
 function stableHash(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function prMediaKind(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (PR_IMAGE_EXTENSIONS.has(extension)) return 'image';
+  if (PR_VIDEO_EXTENSIONS.has(extension)) return 'video';
+  return null;
+}
+
+function pathWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function regularMediaFile(root, candidate) {
+  if (!pathWithin(root, candidate) || !prMediaKind(candidate)) return false;
+  try {
+    const details = fs.lstatSync(candidate);
+    return details.isFile() && !details.isSymbolicLink() && details.size > 0
+      && pathWithin(fs.realpathSync(root), fs.realpathSync(candidate));
+  } catch (_) {
+    return false;
+  }
+}
+
+function mediaFilesUnder(root) {
+  const files = [];
+  function visit(directory) {
+    let entries;
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch (_) {
+      return;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(candidate);
+      } else if (entry.isFile() && regularMediaFile(root, candidate)) {
+        files.push(candidate);
+      }
+    }
+  }
+  visit(root);
+  return files;
+}
+
+function prAttachment(sessionDir, filePath, stage, title) {
+  const kind = prMediaKind(filePath);
+  const baseName = path.basename(filePath, path.extname(filePath)).replace(/[-_]+/gu, ' ').trim();
+  const imageAlt = stage === 'poster'
+    ? `${title} walkthrough poster`
+    : `${title} ${stage} ${baseName}`;
+  return {
+    path: path.resolve(filePath),
+    kind,
+    stage,
+    alt: kind === 'image' ? imageAlt.replace(/\s+/gu, ' ').trim() : '',
+    relative_path: path.relative(path.resolve(sessionDir), path.resolve(filePath)),
+  };
+}
+
+function prAttachmentInventory(sessionDir, storyboard, before, after, finalVideo, poster) {
+  const attachments = [];
+  const seen = new Set();
+  function add(filePath, stage, allowedRoot = sessionDir) {
+    const resolved = path.resolve(filePath);
+    if (seen.has(resolved) || !regularMediaFile(sessionDir, resolved)
+      || !regularMediaFile(allowedRoot, resolved)) return;
+    seen.add(resolved);
+    attachments.push(prAttachment(sessionDir, resolved, stage, storyboard.title));
+  }
+  add(finalVideo, 'walkthrough');
+  add(poster, 'poster');
+  for (const [stage, record] of [['before', before], ['after', after]]) {
+    if (!record || !pathWithin(sessionDir, record.directory)) continue;
+    const recordRoot = path.resolve(record.directory);
+    for (const result of Array.isArray(record.results) ? record.results : []) {
+      if (result && typeof result.screenshot === 'string') add(result.screenshot, stage, recordRoot);
+      for (const video of result && Array.isArray(result.videos) ? result.videos : []) add(video, stage, recordRoot);
+    }
+    for (const mediaFile of mediaFilesUnder(recordRoot)) add(mediaFile, stage, recordRoot);
+  }
+  const fingerprintInput = attachments.map((attachment) => ({
+    relative_path: attachment.relative_path,
+    kind: attachment.kind,
+    stage: attachment.stage,
+    sha256: crypto.createHash('sha256').update(fs.readFileSync(attachment.path)).digest('hex'),
+  }));
+  return {
+    attachments,
+    fingerprint: stableHash(fingerprintInput),
+  };
 }
 
 function stageHash(storyboard, stage) {
@@ -1034,6 +1131,7 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
 
   const afterResult = after && (after.results.find((item) => item.viewport === 'desktop') || after.results[0]);
   if (afterResult && afterResult.screenshot && fs.existsSync(afterResult.screenshot)) fs.copyFileSync(afterResult.screenshot, poster);
+  const prInventory = prAttachmentInventory(sessionDir, storyboard, before, after, finalVideo, poster);
 
   const manifestLines = [
     '# Visual Proof', '', `Status: ${status}`, `Title: ${storyboard.title}`, '', storyboard.summary, '',
@@ -1053,14 +1151,14 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     `- Suppressed selectors: ${storyboard.suppress.length > 0 ? storyboard.suppress.map((selector) => JSON.stringify(selector)).join(', ') : 'none'}`,
     '', '## How to test', '', storyboard.how_to_test, '',
     '## PR handoff', '',
-    '- Upload the MP4 and poster to the pull request by dragging them into the PR body or a comment.',
+    `- Phase 5 can attach ${prInventory.attachments.length} image/video file(s) to the pull request with GitHub CLI.`,
     '- Do not commit this bundle.', '',
   ];
   if (notes.length) manifestLines.push('## Notes', '', ...notes.map((note) => `- ${note}`), '');
   fs.writeFileSync(manifest, `${manifestLines.join('\n')}\n`);
 
   const result = {
-    version: 2,
+    version: 3,
     status,
     message: status === 'READY'
       ? `${requiresBefore ? 'Before/after' : 'After-only'} walkthrough ready (${narration.ok ? 'local narration' : 'captions only'})`
@@ -1083,6 +1181,8 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     after: after ? after.directory : '',
     duration_seconds: finalDurationSeconds,
     size_bytes: fs.existsSync(finalVideo) ? fs.statSync(finalVideo).size : 0,
+    attachments: prInventory.attachments,
+    attachment_fingerprint: prInventory.fingerprint,
     updated_at: new Date().toISOString(),
   };
   fs.writeFileSync(path.join(sessionDir, 'bundle.json'), `${JSON.stringify(result, null, 2)}\n`);

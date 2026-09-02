@@ -136,8 +136,14 @@ else
 fi
 if command -v gh &>/dev/null; then
   echo "  GitHub CLI: $(gh --version 2>/dev/null | head -1 || echo present)"
+  if dx_github_pr_attachments_supported; then
+    echo "  PR Media:   automatic attachments ready"
+  else
+    echo "  PR Media:   unavailable — upgrade GitHub CLI for --attach"
+  fi
 else
   echo "  GitHub CLI: not found — PR creation, reviewers, and CI watching need it"
+  echo "  PR Media:   unavailable — GitHub CLI is not installed"
 fi
 if ! command -v jq &>/dev/null; then
   echo "  jq:         not found (optional — 'dx config' skips MCP merges without it)"

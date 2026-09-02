@@ -58,6 +58,30 @@ assert_eq "$SESSION_DIR/evidence.json" "$EVIDENCE" "evidence path"
 assert_eq "30" "$(dx_ui_capture_retention_days)" "default retention"
 assert_eq "MISSING" "$(dx_ui_capture_status "$SID")" "missing evidence status"
 
+GH_BIN="$TMP_DIR/gh-bin"
+mkdir -p "$GH_BIN"
+cat > "$GH_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == "pr edit --help" ]]; then
+  printf '%s\n' '      --attach file   Attach an image or video file'
+  exit 0
+fi
+exit 1
+SH
+chmod +x "$GH_BIN/gh"
+PATH="$GH_BIN:$PATH" dx_github_pr_attachments_supported || assert_at $LINENO
+cat > "$GH_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == "pr edit --help" ]]; then
+  printf '%s\n' '      --body text   Set the new body'
+  exit 0
+fi
+exit 1
+SH
+chmod +x "$GH_BIN/gh"
+assert_rejected "GitHub CLI without --attach" env PATH="$GH_BIN:$PATH" bash -c \
+  'source "$DEX_DIR/lib/common.sh"; dx_github_pr_attachments_supported'
+
 TOOLS_DIR="$(dx_ui_capture_tools_dir)"
 mkdir -p "$TOOLS_DIR/node_modules/.bin" \
   "$TOOLS_DIR/node_modules/playwright" \
@@ -346,6 +370,23 @@ function addRecord(sessionDir, stage, hash) {
   const readyDir = path.join(producerRoot, 'ready');
   addRecord(readyDir, 'before', stageHash(storyboard, 'before'));
   addRecord(readyDir, 'after', stageHash(storyboard, 'after'));
+  const nestedBefore = path.join(readyDir, 'before-capture', 'steps');
+  fs.mkdirSync(nestedBefore, { recursive: true });
+  fs.writeFileSync(path.join(nestedBefore, 'confirmation.jpg'), 'nested image');
+  fs.writeFileSync(path.join(nestedBefore, 'browser.log'), 'not public media');
+  fs.writeFileSync(path.join(readyDir, 'after-capture', 'mobile.mov'), 'nested video');
+  fs.symlinkSync(path.join(readyDir, 'before-capture', 'desktop.png'), path.join(nestedBefore, 'linked.png'));
+  const outsideMediaDir = path.join(producerRoot, 'outside-media');
+  fs.mkdirSync(outsideMediaDir, { recursive: true });
+  fs.writeFileSync(path.join(outsideMediaDir, 'leak.png'), 'outside image');
+  fs.symlinkSync(outsideMediaDir, path.join(nestedBefore, 'outside'));
+  const readyBeforeMetadataPath = path.join(readyDir, 'before-capture', 'metadata.json');
+  const readyBeforeMetadata = JSON.parse(fs.readFileSync(readyBeforeMetadataPath, 'utf8'));
+  readyBeforeMetadata.results[0].videos.push(path.join(nestedBefore, 'outside', 'leak.png'));
+  fs.writeFileSync(readyBeforeMetadataPath, `${JSON.stringify(readyBeforeMetadata)}\n`);
+  const staleMediaDir = path.join(readyDir, 'stale-capture');
+  fs.mkdirSync(staleMediaDir, { recursive: true });
+  fs.writeFileSync(path.join(staleMediaDir, 'stale.png'), 'stale image');
   process.env.DX_UI_CAPTURE_FFMPEG = fakeFfmpeg;
   let result = await produceBundle(readyDir, storyboard, false);
   if (result.status !== 'READY' || !result.readiness_verified || result.narration !== 'captions-only') {
@@ -357,6 +398,46 @@ function addRecord(sessionDir, stage, hash) {
   }
   if (result.suppressed_selectors[0] !== '[data-dex-transient-toast]') {
     throw new Error('suppressed selectors were not recorded in the bundle');
+  }
+  const attachmentPaths = result.attachments.map((attachment) => attachment.path);
+  const expectedAttachments = [
+    path.join(readyDir, 'walkthrough.mp4'),
+    path.join(readyDir, 'poster.png'),
+    path.join(readyDir, 'before-capture', 'desktop.png'),
+    path.join(readyDir, 'before-capture', 'before.webm'),
+    path.join(nestedBefore, 'confirmation.jpg'),
+    path.join(readyDir, 'after-capture', 'desktop.png'),
+    path.join(readyDir, 'after-capture', 'after.webm'),
+    path.join(readyDir, 'after-capture', 'mobile.mov'),
+  ];
+  if (JSON.stringify(attachmentPaths) !== JSON.stringify(expectedAttachments)) {
+    throw new Error(`PR attachment inventory is incomplete or unstable: ${JSON.stringify(attachmentPaths)}`);
+  }
+  if (!/^[0-9a-f]{64}$/u.test(result.attachment_fingerprint)) {
+    throw new Error('PR attachment fingerprint is missing or malformed');
+  }
+  if (result.attachments.some((attachment) => attachment.path.endsWith('linked.png')
+    || attachment.path.endsWith('browser.log') || attachment.path.endsWith('stale.png')
+    || attachment.path.endsWith('leak.png'))) {
+    throw new Error('unsafe, unsupported, or stale media entered the PR attachment inventory');
+  }
+  if (result.attachments.find((attachment) => attachment.path.endsWith('confirmation.jpg')).alt
+    !== 'Save notification settings before confirmation') {
+    throw new Error('image attachment alt text does not describe its proof stage');
+  }
+  if (result.attachments.find((attachment) => attachment.path.endsWith('poster.png')).alt
+    !== 'Save notification settings walkthrough poster') {
+    throw new Error('poster attachment alt text is repetitive or unclear');
+  }
+  const initialAttachmentFingerprint = result.attachment_fingerprint;
+  result = await produceBundle(readyDir, storyboard, false);
+  if (result.attachment_fingerprint !== initialAttachmentFingerprint) {
+    throw new Error('unchanged PR attachments produced an unstable fingerprint');
+  }
+  fs.appendFileSync(path.join(nestedBefore, 'confirmation.jpg'), ' changed');
+  result = await produceBundle(readyDir, storyboard, false);
+  if (result.attachment_fingerprint === initialAttachmentFingerprint) {
+    throw new Error('changed PR attachment content did not update the fingerprint');
   }
 
   const mismatchedDir = path.join(producerRoot, 'mismatched-viewports');

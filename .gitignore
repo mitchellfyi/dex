@@ -11,6 +11,9 @@ node_modules/
 # Browser MCP scratch output from local UI work.
 .playwright-mcp/
 
+# Local CodeGraph index. The generated SQLite database is machine-specific.
+.codegraph/
+
 # Vendor skills installed via Claude plugins should never be committed.
 # Dex only ships its own dx*/dex skills. See AGENTS.md § Vendor skills.
 skills/figma-*/

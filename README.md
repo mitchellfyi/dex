@@ -46,12 +46,14 @@ reviewers, guards, and durable repo memory.
   typecheck, generation, and test commands instead of assuming one toolchain.
 - **UI proof:** `/dxproof` (also `/dxcapture`) reconstructs the branch baseline
   and records a captioned before/after walkthrough for the current UI diff.
+  Phase 5 attaches the current images and videos to the PR when GitHub CLI
+  supports `--attach`.
 - **Local run data:** Each provider-backed run gets a stable run ID,
   append-only JSONL events, redacted logs, summaries, and artifact metadata
   under `~/.dex/runs/`.
-- **PR follow-through:** Dex can mark a PR ready, request reviewers, watch CI and
-  review comments, apply fixes, re-request review after pushes, and close the
-  ticket when approved.
+- **PR follow-through:** Dex can publish visual proof, mark a PR ready, request
+  reviewers, watch CI and review comments, apply fixes, re-request review after
+  pushes, and close the ticket when approved.
 
 ## How The Loop Works
 
@@ -74,7 +76,7 @@ dx 1234
   |     Run the final PR gate, record repair checkpoints as needed, confirm the remote is current.
   |
   |-- Phase 5: PR
-  |     Create the draft PR with description, reviewer routing, and visual handoff.
+  |     Create the draft PR with description, reviewers, and attached visual proof.
   |
   `-- Phase 6: Complete
         Mark ready, watch CI/reviews, address feedback, close the ticket, clean up.
@@ -201,7 +203,8 @@ and choose the first issue to implement.
 - A git repository.
 - Python 3 (standard library only).
 - GitHub CLI (`gh`), signed in — required for PR creation, reviewer routing, CI
-  watching, and GitHub Issues ticket tracking.
+  watching, and GitHub Issues ticket tracking. `gh pr edit --attach` support is
+  required for automatic PR media; older releases keep a warned local handoff.
 - Optional: Node.js and npm, used for Playwright UI-capture tooling.
 - Optional: Codex CLI if you want the `codex-subscription` provider profile.
 - Optional: `jq`, used by `dx config` to merge MCP server settings; without it

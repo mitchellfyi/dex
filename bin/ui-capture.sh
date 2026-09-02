@@ -178,7 +178,7 @@ append_legacy_manifest() {
       printf '# Visual Evidence\n\n'
       printf 'Session: %s\n' "$session_id"
       printf 'PR: pending\n'
-      printf 'Upload note: drag the local files into the pull request body or a comment.\n'
+      printf 'PR note: Phase 5 attaches supported media automatically, with a warned local fallback.\n'
     } > "$tmp_file"
     command mv -f "$tmp_file" "$manifest_file"
   fi

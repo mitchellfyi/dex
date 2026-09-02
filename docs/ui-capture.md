@@ -53,7 +53,20 @@ The structured producer writes a compact bundle:
 
 Each raw run contains its screenshot, WebM source video, metadata, and console, page, network, and HTTP error logs. Failed runs retain their Playwright trace; successful runs retain it only when `--trace` is set. Set `DX_ARTIFACT_DIR` to move the root. Dex refuses an output directory inside the repository unless Git ignores it.
 
-Generated files are temporary evidence and must not be committed. During an active lifecycle, the compact bundle is also registered in the run journal. Each artifact carries its capture session and role, so DexCode can pair the walkthrough with its poster and captions. If DexCode sync is connected, normal run-artifact sync uploads the bundle and DexCode shows supported images and videos on the session page. Local paths still do not render on GitHub; the author drags the MP4 and poster into the PR body or a comment.
+Generated files are temporary evidence and must not be committed. During an active lifecycle, the compact bundle is also registered in the run journal. Each artifact carries its capture session and role, so DexCode can pair the walkthrough with its poster and captions. If DexCode sync is connected, normal run-artifact sync uploads the bundle and DexCode shows supported images and videos on the session page.
+
+For structured captures, bundle version 3 also records an ordered PR attachment
+inventory. It contains the final walkthrough and poster plus every image/video
+from the current matching before and after runs. Stale runs, traces, logs,
+captions, and editable sources stay local. Phase 5 uses `gh pr edit --attach` to
+rewrite those local references in the PR body's `## Visual Evidence` section.
+It uploads at most 50 files per command and preserves the rewritten body between
+batches. See [GitHub's attachment documentation](https://docs.github.com/github-cli/github-cli/attaching-files-with-github-cli).
+
+Automatic upload remains advisory. An older GitHub CLI, missing push access,
+an oversized file, or a partial upload produces a visible warning and retains
+local paths for the files that were not uploaded. Run `dx status` to check
+whether the installed GitHub CLI supports PR media attachments.
 
 An agent can use an existing project recorder, MCP browser, or another suitable tool and still join the evidence workflow:
 
@@ -248,4 +261,5 @@ Set `DX_UI_CAPTURE_RETENTION_DAYS` to an integer from 1 through 3650. Active bun
 | The MP4 is too large | Shorten the flow; Dex already attempts a higher-compression pass. |
 | A locator is ambiguous | Prefer an accessible role and exact name, then a label or stable test ID. |
 | The final state changed after capture | Edit the storyboard and run `dx ui-capture revise` with the affected URL. |
-| GitHub shows broken local links | Drag the MP4 and poster into the PR body or comment. |
+| PR media attachments are unavailable | Upgrade GitHub CLI until `dx status` reports `PR Media: automatic attachments ready`; Phase 5 keeps a warned local handoff in the meantime. |
+| A PR media upload is incomplete | Keep the files GitHub accepted, inspect the warning for unresolved local paths, and retry only those files. |

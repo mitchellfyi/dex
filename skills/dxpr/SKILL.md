@@ -77,26 +77,61 @@ dx_ui_capture_summary "$session_id"
 ```
 
 Rules:
-- `READY`: verify the MP4, poster, transcript, storyboard, and manifest exist. If UI code changed after production, invoke `dxuicapture` and use its judgment to refresh the bundle or record why a refresh adds no value. Put the status and upload guidance in the PR body.
+- `READY`: verify the MP4, poster, transcript, storyboard, captions, and manifest exist. If UI code changed after production, invoke `dxuicapture` and use its judgment to refresh the bundle or record why a refresh adds no value. Put the proof in the PR body's `## Visual Evidence` section.
 - `SKIPPED`: preserve the agent's reason in the PR description. Revisit the choice only when the final diff materially changed the visual scope.
 - `N/A`: preserve the reason and confirm the final diff still has no browser impact.
 - `MISSING` or `NEEDS_REVIEW`: invoke `dxuicapture` to make or finish the decision. Capture is still optional; leaving the decision unexplained is not useful to the author or reviewer.
 
-Keep every generated file under Dex's artifact directory. Never stage or commit it. DexCode-connected runs already register the compact bundle. GitHub cannot render local file paths, so give the human direct local links and tell them to drag the MP4 and poster into the PR body or a comment. Do not claim that an upload happened unless it did.
+Keep every generated file under Dex's artifact directory. Never stage or commit
+it. DexCode-connected runs already register the compact bundle.
+
+For `READY`, read `bundle.json`. Bundle version 3 provides an ordered
+`attachments` array and `attachment_fingerprint`. It contains the final
+walkthrough, poster, and every image/video from the matching before and after
+captures; it excludes stale captures, logs, traces, captions, and editable
+sources. For an older or custom bundle, fall back to the existing non-empty,
+non-symlinked `walkthrough.mp4` and `poster.png`. Reject any attachment outside
+the session directory. When the old bundle has no fingerprint, derive one as
+SHA-256 over the ordered attachment role, session-relative path, and file
+content so retries still have a stable identity.
+
+Render each attachment in `## Visual Evidence` with its local path before
+upload. Use these exact Markdown forms:
+
+```markdown
+![<bundle alt>](<absolute local image path>)
+
+![](<absolute local video path>)
+```
+
+The video reference must be the only content in its paragraph so GitHub
+rewrites it as a player. Add a marker in this form:
+
+```markdown
+<!-- dex-ui-proof:<attachment_fingerprint>:pending -->
+```
+
+Before replacing an existing visual-evidence section, read the current PR body.
+If it contains the same fingerprint with an `uploaded` state and no unresolved
+local media reference, preserve that section and skip the upload. This makes an
+unchanged Phase 5 retry idempotent. A different fingerprint replaces only the
+visual-evidence section; preserve every other part of the current PR body.
 
 ### 4. Create or Update the PR
 
 Read the commit format prompt (`prompts/commit-format.md`) for title format guidance.
 
-If a PR does not exist for the current branch, create it as a draft by default:
+Write the generated description to a private temporary `PR_BODY_FILE`; do not
+pass a large body by command substitution. Remove that exact temporary file on
+every exit. If a PR does not exist for the current branch, create it as a draft
+by default:
 
 ```bash
+PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/dex-pr-body.XXXXXX") || exit 1
+trap 'command rm -f -- "$PR_BODY_FILE"' EXIT
 PR_NUM=$(gh pr view --json number -q .number 2>/dev/null)
 if [[ -z "$PR_NUM" ]]; then
-  gh pr create --draft --title "<title>" --body "$(cat <<'EOF'
-<generated description>
-EOF
-)"
+  gh pr create --draft --title "<title>" --body-file "$PR_BODY_FILE"
   PR_NUM=$(gh pr view --json number -q .number)
 fi
 ```
@@ -106,13 +141,45 @@ ready state unless the user or active workflow calls for a state change. Phase 6
 remains the default owner of the ready transition.
 
 ```bash
-gh pr edit "$PR_NUM" --title "<title>" --body "$(cat <<'EOF'
-<generated description>
-EOF
-)"
+gh pr edit "$PR_NUM" --title "<title>" --body-file "$PR_BODY_FILE"
 ```
 
 Before either command, inspect the exact body text. If it contains Claude attribution, remove it. The built-in `warn-claude-attribution` guard will block PR create/edit/comment commands that still contain Claude generated-by or co-author text.
+
+#### Attach READY proof
+
+After the PR number exists, detect the capability from the installed command:
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+if dx_github_pr_attachments_supported; then
+  gh pr edit "$PR_NUM" --body-file "$PR_BODY_FILE" --attach "$attachment"
+fi
+```
+
+Build repeated `--attach` arguments from the unresolved local references in
+the bundle, not from a broad filesystem glob. GitHub accepts at most 50 files
+per command, so upload in batches of 50 files. After every batch, including a
+non-zero result, fetch the current body back into `PR_BODY_FILE`; GitHub can
+complete a partial upload before returning failure. Use the rewritten body as
+the input to the next batch so already-uploaded URLs stay intact. Never retry
+the whole original batch blindly because that can append duplicates.
+
+```bash
+gh pr view "$PR_NUM" --json body -q .body > "$PR_BODY_FILE"
+```
+
+When every local media reference has been rewritten, change the marker state
+from `pending` to `uploaded` and update the body once more. Verify the published
+body contains the matching uploaded marker and no local attachment path before
+claiming automatic attachment succeeded.
+
+If `dx_github_pr_attachments_supported` is false, authentication or push access
+is insufficient, a file exceeds GitHub's limits, or an upload fails, keep any
+files GitHub did upload. Replace each unresolved embed with a plain local-path
+handoff, set the marker state to `partial` or `unsupported`, and publish a clear
+warning in the Phase 5 summary. This warned local handoff is valid and does not
+block Phase 5. Never claim a partial upload was complete.
 
 ### 5. Attach Request-Type Reviewers
 

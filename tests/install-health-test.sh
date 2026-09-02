@@ -180,7 +180,7 @@ fi
 
 STATUS_BIN="$TMP_DIR/status-bin"
 mkdir -p "$STATUS_BIN"
-for command_name in bash basename find git grep python3 readlink tr wc; do
+for command_name in awk bash basename find git grep head python3 readlink sed tr wc; do
   command_path=$(command -v "$command_name")
   ln -s "$command_path" "$STATUS_BIN/$command_name"
 done
@@ -200,6 +200,31 @@ assert_status_row() {
 env PATH="$STATUS_BIN" bash "$ROOT/bin/status.sh" > "$TMP_DIR/status.out"
 assert_status_row "Hooks" "INCOMPLETE" "$TMP_DIR/status.out"
 assert_status_row "RTK" "disabled \\(DX_RTK_ENABLED=0\\)" "$TMP_DIR/status.out"
+assert_status_row "PR Media" "unavailable — GitHub CLI is not installed" "$TMP_DIR/status.out"
+
+cat > "$STATUS_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == "--version" ]]; then
+  printf '%s\n' 'gh version test'
+elif [[ "$*" == "pr edit --help" ]]; then
+  printf '%s\n' '      --body text   Set the pull request body'
+fi
+SH
+chmod +x "$STATUS_BIN/gh"
+env PATH="$STATUS_BIN" bash "$ROOT/bin/status.sh" > "$TMP_DIR/legacy-gh-status.out"
+assert_status_row "PR Media" "unavailable — upgrade GitHub CLI for --attach" "$TMP_DIR/legacy-gh-status.out"
+
+cat > "$STATUS_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == "--version" ]]; then
+  printf '%s\n' 'gh version test'
+elif [[ "$*" == "pr edit --help" ]]; then
+  printf '%s\n' '      --attach file   Attach an image or video file'
+fi
+SH
+chmod +x "$STATUS_BIN/gh"
+env PATH="$STATUS_BIN" bash "$ROOT/bin/status.sh" > "$TMP_DIR/current-gh-status.out"
+assert_status_row "PR Media" "automatic attachments ready" "$TMP_DIR/current-gh-status.out"
 
 dx_check_claude_dex_links() { return 0; }
 dx_check_codex_skill_links() { return 0; }

@@ -525,7 +525,7 @@ EOF
       ;;
     5)
       cat <<'EOF'
-Begin Phase 5: PR. Invoke the Skill tool with skill: "dxpr" to generate the PR description, prepare any UI visual evidence handoff, create or update the PR, and attach configured request reviewers. Ready-state changes, @mention comments, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop so the Stop hook can audit and advance.
+Begin Phase 5: PR. Invoke the Skill tool with skill: "dxpr" to generate the PR description, prepare the UI visual evidence handoff, create or update the PR, attach current UI proof media when GitHub CLI supports it, and attach configured request reviewers. Use a warned local handoff when automatic attachment is unavailable or incomplete. Ready-state changes, @mention comments, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop so the Stop hook can audit and advance.
 EOF
       ;;
     6)

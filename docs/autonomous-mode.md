@@ -56,7 +56,7 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 | 2. Implement | `2-implement.md` | Task completion, TDD verification, coherent checkpoint history pushed as work develops, UI proof decision, evidence table, Phase 3 risk selection |
 | 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves, accepted-fix checkpoints pushed, selected tier's global clean gate reached |
 | 4. Verify | `4-verify.md` | Final PR checks passing, verification repair checkpoints pushed, branch current on origin |
-| 5. PR | `5-pr.md` | Description quality, scope match, draft PR created with `request` reviewers attached |
+| 5. PR | `5-pr.md` | Description quality, scope match, current visual media attached or handed off with a warning, draft PR created with `request` reviewers attached |
 | 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor CI/reviews through `/dxwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
 
 During Phase 0, `dx_ticket_branch_prepare` resolves the branch name supplied by
@@ -144,7 +144,7 @@ with a concrete recovery step. State and receipts stay outside the repository
 and are accepted only while their independently hashed HEAD, staged, unstaged,
 and untracked scope still matches.
 
-Phase 2 treats UI proof as an explicit agent judgment. `/dxuicapture` can produce a short before/after or after-only walkthrough when it improves the review, record a reasoned `SKIPPED` decision for a visible but disproportionate case, or record `N/A` when nothing changes in the browser. A human can request the full diff-aware capture at any time with `/dxproof` or its `/dxcapture` alias. Generated videos, screenshots, traces, captions, browser logs, and the handoff manifest stay under `~/.claude/.dex-artifacts/`; the lifecycle surfaces their status without turning capture into a hard product-correctness gate. See [ui-capture.md](ui-capture.md).
+Phase 2 treats UI proof as an explicit agent judgment. `/dxuicapture` can produce a short before/after or after-only walkthrough when it improves the review, record a reasoned `SKIPPED` decision for a visible but disproportionate case, or record `N/A` when nothing changes in the browser. A human can request the full diff-aware capture at any time with `/dxproof` or its `/dxcapture` alias. Generated videos, screenshots, traces, captions, browser logs, and the handoff manifest stay under `~/.claude/.dex-artifacts/`; the lifecycle surfaces their status without turning capture into a hard product-correctness gate. For `READY` proof, Phase 5 attaches the current image/video bundle to the PR when GitHub CLI supports `--attach`. Older clients and incomplete uploads keep a visible local handoff. See [ui-capture.md](ui-capture.md).
 
 Phase 6 (Complete) is autonomous and bounded: it reads `## Reviewers` from `.dex/dex.md` to know who to request reviews from. The user is brought into the loop as a configured reviewer. The autonomous loop re-reads `dx_complete_wait_minutes` (default 5) and `dx_complete_max_cycles` (default 3) each cycle, addresses failures through `/dxwatchpr` and `/dxprreview`, re-requests reviewers after each push, and closes the ticket once CI is green and all successfully requested reviewers approve. Reviewers GitHub says are not requestable for the repository are warnings, not approval gates. When the current idle budget is exhausted, it pauses with manual follow-up instructions. It never merges the PR.
 
@@ -695,7 +695,7 @@ Phase state is stored in `~/.claude/.dex-phases/`:
   plus a persistent `.runtime-lock` inode used to serialize ownership and
   terminal status updates
 
-UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots, videos, traces, flow scripts, logs, and PR upload manifests stay out of git.
+UI artifacts are stored separately in `~/.claude/.dex-artifacts/` so screenshots, videos, traces, flow scripts, logs, and PR attachment manifests stay out of git. GitHub receives only the current images and videos selected by the bundle; diagnostic and editable artifacts remain local or in DexCode.
 
 ## Environment Variables
 
