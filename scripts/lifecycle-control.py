@@ -44,7 +44,20 @@ NEGATION_PATTERN = re.compile(
 META_PATTERN = re.compile(
     r"\b(?:add|build|document|explain|support|recogn(?:i[sz]e|ition)|detect|handle|parse|"
     r"test|example|phrase|wording|instruct(?:ed|ion)?|being\s+told|be\s+told|"
-    r"ability\s+to|(?:a|an|the|any|easy|clear|safe)\s+way\b|way\s+(?:for|to)\b)\b",
+    r"ability\s+to|(?:a|an|the|any|easy|clear|safe)\s+way\b|way\s+(?:for|to)\b|"
+    r"whether\s+(?:or\s+not\s+)?to)\b",
+    re.IGNORECASE,
+)
+
+# A clause that describes what some third party may do ("the user may stop
+# the lifecycle") is an option being explained, not an instruction. Dex's own
+# phase prompts use this voice, and they reach the prompt hook on every launch.
+# Second-person permission ("you may stop Dex") stays a direct instruction.
+THIRD_PARTY_OPTION_PATTERN = re.compile(
+    r"\b(?:user|human|person|people|operator|developer|engineer|maintainer|"
+    r"reviewer|owner|author)s?\s+"
+    r"(?:may|might|could|can|would|should|will|"
+    r"(?:is|are)\s+(?:free|able|allowed)\s+to)\b",
     re.IGNORECASE,
 )
 
@@ -54,9 +67,15 @@ CLAUSE_BOUNDARY_PATTERN = re.compile(
 )
 
 
+# Dex's prompts are markdown wrapped at 80 columns, so a lone newline in the
+# middle of a sentence is whitespace, not a clause boundary. A blank line, a
+# line that ends in punctuation, or a list or heading marker still ends one.
+SOFT_WRAP_PATTERN = re.compile(r"(?<![.!?:;\n])\n(?![\n\-*#>\d])")
+
+
 def current_clause_prefix(text: str, start: int, limit: int = 120) -> str:
     """Return only the clause that can modify the matched directive."""
-    prefix = text[max(0, start - limit) : start]
+    prefix = SOFT_WRAP_PATTERN.sub(" ", text[max(0, start - limit) : start])
     return CLAUSE_BOUNDARY_PATTERN.split(prefix)[-1]
 
 
@@ -87,7 +106,7 @@ def negated_before(text: str, start: int) -> bool:
 
 def meta_discussion(text: str, start: int) -> bool:
     prefix = current_clause_prefix(text, start)
-    return bool(META_PATTERN.search(prefix))
+    return bool(META_PATTERN.search(prefix) or THIRD_PARTY_OPTION_PATTERN.search(prefix))
 
 
 def phase_after_keyword(text: str, keyword_end: int) -> int | None:
@@ -216,15 +235,22 @@ def direct_jump_or_skip(text: str, current_phase: int | None) -> dict[str, objec
         if current_phase is not None:
             return result("complete", min(current_phase + 1, 7), text)
 
+    # "skip <phase>" is a control on its own. "mark <phase>" is only a control
+    # with a done/complete verdict: "mark the PR ready" is GitHub work, not a
+    # request to mark the PR phase finished.
     named_done = re.compile(
-        rf"\b(?:skip|mark)\s+(?:the\s+)?({PHASE_PATTERN})(?:\s+phase)?"
-        r"(?:\s+(?:as\s+)?(?:done|complete))?\b",
+        rf"\bskip\s+(?:the\s+)?({PHASE_PATTERN})(?:\s+phase)?"
+        r"(?:\s+(?:as\s+)?(?:done|complete))?\b|"
+        rf"\bmark\s+(?:the\s+)?({PHASE_PATTERN})(?:\s+phase)?"
+        r"\s+(?:as\s+)?(?:done|complete)\b",
         re.IGNORECASE,
     )
     for match in named_done.finditer(text):
         if negated_before(text, match.start()) or meta_discussion(text, match.start()):
             continue
-        phase = phase_from_text(match.group(1))
+        # PHASE_PATTERN carries its own digit group, so the alternatives' outer
+        # groups are 1 and 3.
+        phase = phase_from_text(match.group(1) or match.group(3))
         if phase is None:
             continue
         target = min(phase + 1, 7)
