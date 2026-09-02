@@ -1,13 +1,15 @@
 ---
 name: "dxpr"
-description: "Generate or update a PR description, create new pull requests as drafts by default, and attach request-type reviewers."
+description: "Generate or update a PR description, create or update the pull request, attach request-type reviewers, and mark the PR ready for review."
 ---
 
 # Skill: dxpr
 
-Generate or update a PR description and attach `request`-type reviewers. New
-pull requests default to draft; Phase 6 (`dxcomplete`) normally marks them ready
-and posts `@mention` comments.
+Generate or update a PR description, attach `request`-type reviewers, and leave
+the pull request ready for review. A new PR may be created as a draft while its
+metadata and reviewers are prepared, but Phase 5 must mark it ready before
+handoff. Phase 6 (`dxcomplete`) verifies readiness and posts `@mention`
+comments.
 
 Read and apply `prompts/issue-hygiene.md` before generating PR copy. Reconcile
 accepted scope and comment decisions into the working issue, related issues,
@@ -124,7 +126,7 @@ Read the commit format prompt (`prompts/commit-format.md`) for title format guid
 Write the generated description to a private temporary `PR_BODY_FILE`; do not
 pass a large body by command substitution. Remove that exact temporary file on
 every exit. If a PR does not exist for the current branch, create it as a draft
-by default:
+while its metadata and reviewer requests are prepared:
 
 ```bash
 PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/dex-pr-body.XXXXXX") || exit 1
@@ -136,9 +138,9 @@ if [[ -z "$PR_NUM" ]]; then
 fi
 ```
 
-If a PR already exists, update its title and body. Preserve its current draft or
-ready state unless the user or active workflow calls for a state change. Phase 6
-remains the default owner of the ready transition.
+If a PR already exists, update its title and body. Never move a ready PR back to
+draft. The readiness step below moves an existing draft PR forward before Phase
+5 completes.
 
 ```bash
 gh pr edit "$PR_NUM" --title "<title>" --body-file "$PR_BODY_FILE"
@@ -192,7 +194,7 @@ dx_maintenance_request_reviewer "$PR_NUM" "<handle>"
 
 Notes:
 - `dx_maintenance_request_reviewer` normalizes handles and wraps `gh pr edit --add-reviewer`; it is idempotent when GitHub accepts the reviewer.
-- GitHub does not send notifications for review requests while a PR is in draft. Attaching reviewers now ensures they are in place when the PR becomes ready.
+- GitHub does not send notifications for review requests while a PR is in draft. Attach reviewers before the readiness step so they are notified when the PR becomes ready.
 - Normalize `Copilot`, `@copilot`, or Copilot aliases to `@copilot`. GitHub CLI requires the special `@copilot` value for Copilot review requests.
 - If GitHub says the reviewer is not requestable for this repository (for example Copilot is unavailable or a user is not a collaborator), record the warning and continue; do not pipe the error text into `jq`.
 - Skip rows whose Type is `mention` — those are posted as PR comments by Phase 6, not added as review requests.
@@ -201,7 +203,25 @@ Notes:
 
 If the `## Reviewers` section is missing or empty, skip this step entirely.
 
-### 6. Update Ticket (if tracker configured)
+### 6. Mark the PR Ready for Review
+
+Before Phase 5 completes, mark the PR ready if it is still a draft, then verify
+the transition:
+
+```bash
+PR_DRAFT=$(gh pr view "$PR_NUM" --json isDraft -q .isDraft)
+if [[ "$PR_DRAFT" == "true" ]]; then
+  gh pr ready "$PR_NUM"
+fi
+PR_DRAFT=$(gh pr view "$PR_NUM" --json isDraft -q .isDraft)
+[[ "$PR_DRAFT" == "false" ]]
+```
+
+Do not report Phase 5 complete while the PR remains a draft. If GitHub refuses
+the transition, report the error and leave the lifecycle in Phase 5 so it can
+be retried.
+
+### 7. Update Ticket (if tracker configured)
 
 Before posting the implementation summary, invoke the `humanizer` skill on the
 draft. Preserve ticket IDs, PR links, file paths, commands, SHAs, and
@@ -209,7 +229,7 @@ verification details exactly.
 
 Add an implementation summary to the ticket via the configured tracker (see dex.md § Integrations) — what was implemented, key decisions, deviations from plan. If no tracker is configured, skip — the PR description covers this.
 
-### 7. Hand Off to Phase 6
+### 8. Hand Off to Phase 6
 
 Print a summary of the PR for the user:
 - PR link
@@ -221,14 +241,15 @@ Print a summary of the PR for the user:
 Then output:
 
 ```
-Phase 5 complete. PR state: <DRAFT|READY>. Request reviewers are attached.
-Phase 6 (Complete) will reconcile readiness and reviewer notifications, monitor
-CI/reviews, address comments, and close the ticket.
+Phase 5 complete. PR state: READY. Request reviewers are attached.
+Phase 6 (Complete) will verify readiness, reconcile reviewer notifications,
+monitor CI/reviews, address comments, and close the ticket.
 ```
 
-Readiness, `@mention` comments, and `/loop` monitoring normally begin in Phase
-6. If any happened earlier, record their current state so Phase 6 can continue
-idempotently.
+`@mention` comments and `/loop` monitoring normally begin in Phase 6. Record
+their current state if either happened earlier so Phase 6 can continue
+idempotently. Phase 6 also keeps a readiness check as recovery for interrupted
+or pre-existing draft PRs.
 
 ## Notes
 
@@ -236,4 +257,4 @@ idempotently.
 - Run PR titles and body copy through `humanizer` before publishing.
 - PR bodies should attribute lifecycle generation to Dex, not Claude Code. GitHub will still show the authenticated account as the actor that created the PR; Dex controls the body attribution.
 - If a ticket link is available, include it in the PR body for auto-linking.
-- New PRs default to draft so reviewers are not notified prematurely. Phase 6 normally moves them to ready and re-requests the same reviewers.
+- A new PR may be created as a draft while Phase 5 prepares its metadata and reviewer requests, but Phase 5 must mark it ready before handoff.

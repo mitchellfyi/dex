@@ -1,11 +1,15 @@
 ---
 name: "dxcomplete"
-description: "Run Phase 6 of the Dex lifecycle: ready the PR, request reviewers, monitor CI and reviews through the PR watcher, address failures, and close the ticket."
+description: "Run Phase 6 of the Dex lifecycle: verify PR readiness, request reviewers, monitor CI and reviews through the PR watcher, address failures, and close the ticket."
 ---
 
 # Skill: dxcomplete
 
-Phase 6 of the autonomous lifecycle. Marks the PR ready, requests configured reviewers, posts `@mention` comments, monitors CI and reviews through `/dxwatchpr`, addresses failures, and closes the ticket once everything is green and approved. It never merges the PR.
+Phase 6 of the autonomous lifecycle. Verifies that Phase 5 left the PR ready,
+repairs any remaining draft state, requests configured reviewers, posts
+`@mention` comments, monitors CI and reviews through `/dxwatchpr`, addresses
+failures, and closes the ticket once everything is green and approved. It never
+merges the PR.
 
 This skill runs as a **cycle loop** driven by `prompts/phase-audits/6-complete.md`. The Stop hook re-injects the audit prompt every iteration. Read `dx_complete_wait_minutes` and `dx_complete_max_cycles` each cycle so in-session overrides apply. Defaults are 5 minutes per cycle and 3 cycles before pausing for manual follow-up.
 
@@ -68,7 +72,7 @@ Check whether `dx_complete_state_file` exists. If it does NOT exist, perform set
 
 When setup runs:
 
-1. **Mark the PR ready** if it's still a draft:
+1. **Verify the PR is ready**, repairing an interrupted or pre-existing draft if needed:
    ```bash
    PR_NUM=$(gh pr view --json number -q .number)
    PR_DRAFT=$(gh pr view --json isDraft -q .isDraft)

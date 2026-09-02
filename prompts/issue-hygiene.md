@@ -62,10 +62,12 @@ erasing where the decision came from.
 
 For an existing open PR, update its title or body when accepted scope,
 implementation, related issues, risk, or verification has materially changed.
-Preserve its template, draft/ready state, reviewer requests, discussion, and
-accurate existing content. Reply to review comments through the review workflow
-rather than rewriting them. Run `humanizer` before posting issue descriptions,
-comments, PR copy, or summaries.
+Preserve its template, reviewer requests, discussion, and accurate existing
+content. Preserve its draft/ready state unless the active lifecycle phase
+explicitly requires a readiness transition; never move a ready PR back to
+draft. Reply to review comments through the review workflow rather than
+rewriting them. Run `humanizer` before posting issue descriptions, comments, PR
+copy, or summaries.
 
 Fresh isolated review children must not create or update external issues. They
 report concrete out-of-scope candidates with evidence; the lifecycle owner

@@ -12,6 +12,8 @@ assert_contains "Update an existing issue instead of creating a duplicate" "$CON
 assert_contains "same pull request" "$CONTRACT"
 assert_contains "Create a linked follow-up issue" "$CONTRACT"
 assert_contains "existing open PR" "$CONTRACT"
+assert_contains "active lifecycle phase" "$CONTRACT"
+assert_contains "never move a ready PR back to" "$CONTRACT"
 assert_contains "Issue/PR work:" "$CONTRACT"
 assert_contains "humanizer" "$CONTRACT"
 

@@ -56,8 +56,8 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 | 2. Implement | `2-implement.md` | Task completion, TDD verification, coherent checkpoint history pushed as work develops, UI proof decision, evidence table, Phase 3 risk selection |
 | 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves, accepted-fix checkpoints pushed, selected tier's global clean gate reached |
 | 4. Verify | `4-verify.md` | Final PR checks passing, verification repair checkpoints pushed, branch current on origin |
-| 5. PR | `5-pr.md` | Description quality, scope match, current visual media attached or handed off with a warning, draft PR created with `request` reviewers attached |
-| 6. Complete | `6-complete.md` | Cycle loop: mark ready, request reviewers, post mention comment, monitor CI/reviews through `/dxwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
+| 5. PR | `5-pr.md` | Description quality, scope match, current visual media attached or handed off with a warning, PR ready with `request` reviewers attached |
+| 6. Complete | `6-complete.md` | Cycle loop: verify readiness, request reviewers, post mention comment, monitor CI/reviews through `/dxwatchpr`, address failures, re-request after each push, close ticket, clean up local worktree/branch |
 
 During Phase 0, `dx_ticket_branch_prepare` resolves the branch name supplied by
 the tracker. If that branch exists on `origin`, Dex fetches its current tip and

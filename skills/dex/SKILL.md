@@ -161,15 +161,15 @@ line, including when all fields are unchanged or N/A.
 
 ### Phase 5: PR
 
-1. Run `/dxpr` — generate the PR description, refresh any UI after-capture handoff, create or update the PR, attach `request`-type reviewers from `dex.md § Reviewers`, and update the tracker if available. New PRs default to draft.
+1. Run `/dxpr` — generate the PR description, refresh any UI after-capture handoff, create or update the PR, attach `request`-type reviewers from `dex.md § Reviewers`, mark the PR ready for review, and update the tracker if available.
 2. Reconcile the working issue, related issues, and PR under
    `prompts/issue-hygiene.md` before finalizing its copy.
-3. Phase 6 normally owns marking the PR ready and posting `@mention` comments so reviewer notifications happen together. If the user directs either action in Phase 5, carry it out and record the updated PR state for Phase 6.
-4. Output `PHASE_5_COMPLETE` when the PR is current, its actual draft or ready state is recorded, and reviewers are attached.
+3. Phase 5 must leave the PR ready for review. Phase 6 verifies readiness and normally owns the `@mention` comments.
+4. Output `PHASE_5_COMPLETE` only when the PR is current, ready for review, and reviewers are attached.
 
 ### Phase 6: Complete (autonomous)
 
-1. Read `## Reviewers` from `dex.md`. On the first cycle: `gh pr ready`, re-sync `request` reviewers (idempotent), post one `@mention` comment listing all `mention` reviewers.
+1. Read `## Reviewers` from `dex.md`. On the first cycle: verify the PR is ready and use `gh pr ready` if recovery is needed, re-sync `request` reviewers (idempotent), and post one `@mention` comment listing all `mention` reviewers.
 2. Set up monitoring: `/loop 5m /dxwatchpr`. The PR watcher handles both CI failures and review feedback.
 3. Re-read `dx_complete_wait_minutes` (default 5) each cycle. The Stop hook re-injects the audit and only authorizes outcome evaluation once the current window has elapsed.
 4. Escalate by default when a loop reaches `dx_complete_ci_fix_attempts`, or encounters architectural review comments, a secrets scan failure, or a scope conflict. Ask for or record a justified waiver when an exception is appropriate.

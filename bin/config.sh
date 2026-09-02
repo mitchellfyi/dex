@@ -109,7 +109,7 @@ ask_yn "Datadog (observability + APM)?" "n" && DATADOG_STATUS="enabled"
 
 # ── Reviewers ───────────────────────────────────────────────────────────
 #
-# Phase 6 (Complete) marks the PR ready and assigns these reviewers.
+# Phase 5 (PR) attaches these reviewers, then marks the PR ready.
 # Two assignment types:
 #   request — native GitHub review request via Dex's reviewer helper
 #   mention — @<handle> posted as a PR comment   (for AI agents that watch mentions)
@@ -118,7 +118,7 @@ ask_yn "Datadog (observability + APM)?" "n" && DATADOG_STATUS="enabled"
 # If GitHub does not allow a reviewer on this repo, Dex warns and continues.
 
 echo ""
-echo "Reviewers (assigned in Phase 6 when PR is marked ready):"
+echo "Reviewers (attached in Phase 5 before the PR is marked ready):"
 
 valid_reviewer_handle() {
   local handle="${1#@}" segment
@@ -191,7 +191,8 @@ fi
 
 REVIEWERS="## Reviewers
 
-Reviewers assigned when the PR is marked ready for review (Phase 6). Two types:
+Request reviewers are attached before Phase 5 marks the PR ready for review.
+Mention reviewers are notified in Phase 6. Two types:
 - \`request\` — native GitHub review request via Dex's reviewer helper
 - \`mention\` — \`@<handle>\` posted as a PR comment (for AI agents that watch mentions)
 

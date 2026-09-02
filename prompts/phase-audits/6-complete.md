@@ -1,4 +1,8 @@
-Phase 6 (Complete) is the bounded autonomous PR monitoring loop. The PR was created in Phase 5; your job is to mark it ready, request reviews, monitor CI and review comments through the PR watcher, address failures, and close the ticket once everyone has approved and CI is green. Do not merge the PR.
+Phase 6 (Complete) is the bounded autonomous PR monitoring loop. Phase 5 should
+have left the PR ready for review; verify that state and repair it if an
+interrupted or pre-existing draft remains. Then request reviews, monitor CI and
+review comments through the PR watcher, address failures, and close the ticket
+once everyone has approved and CI is green. Do not merge the PR.
 
 This phase runs as a **cycle loop**. Each cycle is one Stop hook iteration. Between cycles you wait — the loop infrastructure handles wall-clock time, not you.
 
@@ -39,7 +43,7 @@ If `SETUP_DONE -eq 0` (state file did not exist — this is the very first invoc
 
 The state file is the canonical "setup has run" marker. Do NOT use `CYCLE -eq 0` as the gate — `CYCLE` stays at `0` for the entire first wait window (it only increments when Outcome runs after the window matures), so gating on `CYCLE` would re-run setup on every audit iteration during that window and post duplicate `@mention` comments.
 
-### Mark the PR ready for review
+### Verify the PR is ready for review
 
 ```bash
 PR_NUM=$(gh pr view --json number -q .number)

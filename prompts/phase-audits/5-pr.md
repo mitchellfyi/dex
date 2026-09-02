@@ -1,9 +1,9 @@
 Before stopping, audit the pull request quality.
 
-Phase 5 focuses on PR creation, description, ticket links, and attaching
-`request`-type reviewers from `dex.md § Reviewers`. Phase 6 normally handles
-readiness, `@mention` comments, monitoring, feedback, and ticket closure. These
-are workflow defaults, not publishing restrictions.
+Phase 5 focuses on PR creation, description, ticket links, attaching
+`request`-type reviewers from `dex.md § Reviewers`, and leaving the PR ready for
+review. Phase 6 verifies readiness and handles `@mention` comments, monitoring,
+feedback, and ticket closure.
 
 Apply `prompts/issue-hygiene.md` before finalizing PR copy. Reconcile the
 working issue, related issues, and any existing open PR so the title, body,
@@ -41,8 +41,9 @@ Check:
 - Is the PR targeting the correct base branch?
 - Are labels or tags applied if the project uses them?
 - Is the ticket linked (if tracker configured)?
-- The PR state is recorded accurately. Draft is the Phase 5 default; an existing
-  or human-requested ready PR is valid and must not be moved backward.
+- The PR is ready for review. A new or existing draft may stay draft while
+  Phase 5 prepares metadata and reviewer requests, but it must not remain draft
+  at handoff. Never move an existing ready PR backward.
 
 ## Step 4: UI proof handoff
 
@@ -99,6 +100,21 @@ If the `## Reviewers` section is missing or empty (or contains only the `_none_`
 Phase 6 normally posts `@mention` comments. If they were posted earlier, record
 that state so Phase 6 does not duplicate them.
 
+## Step 6: Ready for review
+
+Mark the PR ready if it is still a draft, then verify the result:
+
+```bash
+PR_DRAFT=$(gh pr view "$PR_NUM" --json isDraft -q .isDraft)
+if [[ "$PR_DRAFT" == "true" ]]; then
+  gh pr ready "$PR_NUM"
+fi
+gh pr view "$PR_NUM" --json isDraft -q .isDraft
+```
+
+The final command must return `false`. If it does not, keep Phase 5 open and
+report the failure instead of claiming completion.
+
 ## Completion criteria
 
 All of these must be true before you stop:
@@ -106,7 +122,7 @@ All of these must be true before you stop:
 - PR description title/body has passed through `humanizer`
 - PR description attributes generation to Dex only, with no Claude Code generated-by footer
 - PR scope matches the plan — no unrelated changes, nothing missing
-- The PR state is recorded and matches the latest human instruction or workflow action
+- The PR is ready for review (`gh pr view "$PR_NUM" --json isDraft -q .isDraft` returns `false`)
 - UI proof is attached for READY, has a warned local handoff when automatic attachment is unavailable/incomplete, or records SKIPPED/N/A with a reason
 - All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR (or the section is empty/`_none_`)
 - Issue and PR reconciliation followed `prompts/issue-hygiene.md`, and the

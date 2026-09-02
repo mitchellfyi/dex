@@ -76,10 +76,10 @@ dx 1234
   |     Run the final PR gate, record repair checkpoints as needed, confirm the remote is current.
   |
   |-- Phase 5: PR
-  |     Create the draft PR with description, reviewers, and attached visual proof.
+  |     Create the PR, attach visual proof and reviewers, then mark it ready.
   |
   `-- Phase 6: Complete
-        Mark ready, watch CI/reviews, address feedback, close the ticket, clean up.
+        Verify readiness, watch CI/reviews, address feedback, close the ticket, clean up.
 ```
 
 The important piece is the audit loop. When Claude tries to stop, Dex's Stop hook

@@ -97,6 +97,13 @@ DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; __dx_phase_message 4' > "$TMP_
 assert_contains "final PR gate" "$TMP_DIR/phase-4-message.out"
 assert_contains "commit and push each coherent repair checkpoint" "$TMP_DIR/phase-4-message.out"
 
+DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; __dx_phase_message 5' > "$TMP_DIR/phase-5-message.out"
+assert_contains "mark the PR ready for review" "$TMP_DIR/phase-5-message.out"
+assert_contains "Do not stop while the PR is still a draft" "$TMP_DIR/phase-5-message.out"
+assert_contains "mark the PR ready for review" "$ROOT/hooks/phase-loop.sh"
+assert_contains 'gh pr ready "$PR_NUM"' "$ROOT/skills/dxpr/SKILL.md"
+assert_contains "Phase 5 complete. PR state: READY" "$ROOT/skills/dxpr/SKILL.md"
+assert_contains 'must return `false`' "$ROOT/prompts/phase-audits/5-pr.md"
 assert_contains 'dx_github_pr_attachments_supported' "$ROOT/skills/dxpr/SKILL.md"
 assert_contains 'attachment_fingerprint' "$ROOT/skills/dxpr/SKILL.md"
 assert_contains '![<bundle alt>](<absolute local image path>)' "$ROOT/skills/dxpr/SKILL.md"

@@ -26,7 +26,7 @@ IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 run
    first real implementation commit. Do not create an empty bootstrap commit
    just to make the branch pushable. Phase 2 establishes upstream tracking after
    that first commit, then pushes every later commit as it is created. The
-   default workflow leaves draft PR creation to `/dxpr` in Phase 5. If the user
+   default workflow leaves PR creation and readiness to `/dxpr` in Phase 5. If the user
    asks for a PR during setup and the new branch has no branch-specific commits,
    report that it will be created after the first implementation commit.
 

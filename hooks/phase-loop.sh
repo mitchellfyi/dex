@@ -525,12 +525,12 @@ EOF
       ;;
     5)
       cat <<'EOF'
-Begin Phase 5: PR. Invoke the Skill tool with skill: "dxpr" to generate the PR description, prepare the UI visual evidence handoff, create or update the PR, attach current UI proof media when GitHub CLI supports it, and attach configured request reviewers. Use a warned local handoff when automatic attachment is unavailable or incomplete. Ready-state changes, @mention comments, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop so the Stop hook can audit and advance.
+Begin Phase 5: PR. Invoke the Skill tool with skill: "dxpr" to generate the PR description, create or update the PR, attach current UI proof media when GitHub CLI supports it, attach configured request reviewers, and mark the PR ready for review. Use a warned local handoff when automatic attachment is unavailable or incomplete. Do not stop while the PR is still a draft. @mention comments, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop so the Stop hook can audit and advance.
 EOF
       ;;
     6)
       cat <<'EOF'
-Begin Phase 6: Complete. Invoke the Skill tool with skill: "dxcomplete". Mark the PR ready, request reviewers, post configured @mention comments, monitor CI/reviews through /dxwatchpr, address failures, and close the ticket when CI is green and configured reviewers approve. Do not merge the PR. Continue unattended until completion, the bounded watch window expires, or a real escalation condition is hit.
+Begin Phase 6: Complete. Invoke the Skill tool with skill: "dxcomplete". Verify the PR is ready and repair any remaining draft state, request reviewers, post configured @mention comments, monitor CI/reviews through /dxwatchpr, address failures, and close the ticket when CI is green and configured reviewers approve. Do not merge the PR. Continue unattended until completion, the bounded watch window expires, or a real escalation condition is hit.
 EOF
       ;;
   esac

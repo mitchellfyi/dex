@@ -83,7 +83,8 @@ For ticket tracking: use the enabled tracker for all status updates, context gat
 
 ## Reviewers
 
-Request-type reviewers are attached in Phase 5 while the PR is still a draft; Phase 6 marks the PR ready, re-requests them, and posts mention comments. Two types:
+Request-type reviewers are attached before Phase 5 marks the PR ready. Phase 6
+verifies readiness, re-requests them, and posts mention comments. Two types:
 - `request` — native GitHub review request via Dex's `dx_maintenance_request_reviewer` helper
 - `mention` — `@<handle>` posted as a PR comment (for AI agents that watch mentions)
 
