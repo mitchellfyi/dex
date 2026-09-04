@@ -207,3 +207,56 @@ Future agent behavior:
   exceptions.
 - Exercise rebooted-device, foreign-state-directory, replaced-lock, stale-owner,
   and token-mismatch cases when changing runtime ownership semantics.
+
+## M-011: Interactive lifecycle resumes use exact provider conversation IDs
+
+Domain: workflow-operations
+Status: active
+Scope: interactive Claude and Codex lifecycle launch, provider session capture, resume, cleanup, and hook environment propagation
+Applies to phases: plan, implement, review, verify, pr, complete; lifecycle resume
+Applies to paths: dx.sh, bin/dxcodex.sh, lib/provider.sh, lib/session.sh, lib/session-catalog.sh, lib/session-management.sh, hooks/capture-provider-session.sh, hooks/session-end.sh, settings.json
+Last verified: 2026-09-04
+Recheck when: provider launch flags, Codex hook support, provider session-handle validation, resume selection, or session cleanup changes
+
+Lesson:
+Interactive lifecycle continuity is tied to the exact provider conversation,
+not merely a display name or the most recent conversation in a checkout. The
+SessionStart hook captures a validated Claude or Codex conversation ID in
+external Dex state with private permissions. Resume prefers that ID. Stable
+Claude session names and Codex's cwd-scoped last-session lookup are migration
+fallbacks only for lifecycle state created before capture existed. Codex's
+persistent app server may run hooks outside the launcher's inherited
+environment, so the interactive wrapper supplies a small allowlisted,
+non-secret Dex context in both hook commands and
+`shell_environment_policy.set`.
+
+Evidence:
+- Commit `17700b8 feat(lifecycle): bound reviews and resume Codex sessions`
+  adds `hooks/capture-provider-session.sh`, exact handle persistence and
+  cleanup in `lib/session.sh`, exact-first resume routing in `dx.sh`, and the
+  interactive `dxcodex.sh session` wrapper.
+- `settings.json` registers provider-session capture before ticket-context
+  loading on SessionStart.
+- `bin/dxcodex.sh` builds session-scoped SessionStart and Stop hooks and mirrors
+  the allowlisted Dex context into Codex's shell environment policy. It rejects
+  interactive launch under read-only delegation mode and keeps Dex ownership of
+  model, sandbox, hook-trust, and provider flags.
+- `tests/hook-input-test.sh`, `tests/provider-codex-launch-test.sh`,
+  `tests/lifecycle-relaunch-control-test.sh`, and
+  `tests/session-forget-test.sh` cover capture, launch configuration, exact
+  resume, legacy fallback, and cleanup.
+
+Future agent behavior:
+- Preserve exact-handle-first resume for both providers. Do not replace it with
+  a global or workspace-wide "last session" lookup.
+- Keep legacy fallbacks only for state that lacks a captured handle: the stable
+  Dex name for Claude and cwd-scoped last-session behavior for Codex.
+- Validate provider handles before writing or using them, store them outside
+  the checkout with private permissions, and delete them with the rest of the
+  session state.
+- When adding hook-required context for interactive Codex, add only non-secret
+  allowlisted values to both the generated hook command and
+  `shell_environment_policy.set`. Never propagate credentials.
+- Keep non-interactive delegation and interactive lifecycle launch policies
+  separate. Interactive Codex requires lifecycle hooks and dangerous bypass
+  flags; read-only internal launches remain ephemeral and sandboxed.

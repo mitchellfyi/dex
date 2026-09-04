@@ -18,9 +18,10 @@ contract. Every `tests/*-test.sh` file must have one sorted manifest row with
 its lane, platform, timeout, and isolation. `service` and `serial` tests run
 exclusively; only genuine wall-clock assertions belong in `serial`. Test
 assertions must use `[[ ... ]] || assert_at $LINENO` because a bare `[[ ... ]]`
-does not reliably trigger `set -e` under macOS Bash 3.2. Static checks cover all
-shipped shell, Python files and embedded Python, Node syntax, documentation
-links, and GitHub workflows when `actionlint` is installed.
+does not reliably trigger `set -e` under macOS Bash 3.2. `tests/check.sh` covers
+shipped shell, Python files and embedded Python, Node syntax, and GitHub
+workflows when `actionlint` is installed. Documentation links are checked by
+`tests/docs-consistency-test.sh` through the manifest-driven suite.
 
 Evidence:
 - Commit `a4ccca8 test(ci): make test execution manifest-driven` makes
@@ -32,9 +33,10 @@ Evidence:
 - Commits `c984eb6 test: run the tests that measure time in a lane of their own`
   and `6d01ce8 test(ci): isolate localhost service fixtures` separate resource
   contention from ordinary slow tests.
-- Commit `f5c1e5a test: close three static-coverage gaps` extends static checks
-  to tests and research Python, workflow shell via optional `actionlint`, and
-  documentation links.
+- Commit `f5c1e5a test: close three static-coverage gaps` extends
+  `tests/check.sh` to tests and research Python plus workflow shell through
+  optional `actionlint`; it extends `tests/docs-consistency-test.sh` to check
+  repository-local Markdown links.
 - Current `tests/run-all.sh`, `tests/check.sh`, `tests/manifest.tsv`, and
   `.github/workflows/ci.yml` implement these constraints on Linux and macOS.
 

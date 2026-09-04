@@ -47,8 +47,8 @@ Status: active
 Scope: lib/review.sh, lib/review-loop.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review-loop.md, prompts/phase-audits/3-review.md, skills/dximplement/SKILL.md, skills/dxreviewloop/SKILL.md, skills/dxreview/SKILL.md
 Applies to phases: review (Phase 3), prompt-loop
 Applies to paths: lib/review*.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review*.md, skills/dximplement/SKILL.md, skills/dxreview*/SKILL.md
-Last verified: 2026-09-03
-Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the dxreviewloop tier/gate/churn policy changes
+Last verified: 2026-09-04
+Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the dxreviewloop tier/gate/budget/churn policy changes
 
 Lesson:
 Dex review waves preserve six interlocking rules. First, each wave gets a fresh
@@ -62,7 +62,9 @@ fingerprints, clean counts, or telemetry. Fifth, only a wave that found zero
 verified findings and applied zero fixes writes `CLEAN`; any fix forces
 `FINDINGS_FIXED:N` and resets the outer clean-pass counter. Sixth, the Phase 2
 implementation agent selects `small`, `normal`, or `complex` review risk for the
-final scope, requiring 1, 2, or 3 consecutive clean waves.
+final scope, requiring 1, 2, or 3 consecutive clean waves and supplying a soft
+outer-wave budget of 3, 6, or 9 waves. The budget is operational rather than an
+assurance gate: spending it pauses review and preserves valid clean credit.
 
 Evidence:
 - Commit `4742c3f feat(review): add specialist review wave loop` body lists
@@ -90,6 +92,9 @@ Evidence:
 - Commit `e920421 fix(review): align tests with the v2 clean-pass policy and
   name the busy session` updates the remaining runtime, harness, and test
   consumers from the old 1/3/6 contract to the fixed 1/2/3 policy.
+- Commit `17700b8 feat(lifecycle): bound reviews and resume Codex sessions`
+  adds the 3/6/9 tier budgets, the attributed `review.max-waves` override, and
+  pause-without-completion behavior when the budget is spent.
 
 Future agent behavior:
 - When editing `prompts/review-wave.md` or
@@ -116,9 +121,11 @@ Future agent behavior:
 - Enforce pass timeouts around the provider process tree, then clear busy state
   and record a normalized pause. A timeout setting that is only displayed or
   polled by the Stop hook is not enough.
-- Do not add a routine outer review maximum. Residual findings, blockers, churn,
-  invalid results, and provider failures pause the loop. `DEX_REVIEW_MAX_ITERATIONS`
-  was the last such ceiling and no longer exists; do not reintroduce one.
+- Keep the tier's soft outer-wave budget separate from clean-pass assurance.
+  Re-read an attributed `review.max-waves` override between waves; spending the
+  budget pauses without issuing a completion receipt, weakening the clean gate,
+  or discarding valid clean credit. Do not reintroduce the removed
+  `DEX_REVIEW_MAX_ITERATIONS` ceiling.
 - When invoking review outside the lifecycle, still build the context pack
   before broad semantic exploration. Without an explicit tier/profile override,
   run the read-only risk assessor before the first wave.

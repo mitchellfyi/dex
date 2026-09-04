@@ -13,8 +13,8 @@ directory until promoted via a reviewable diff.
 
 | Domain | File | Loads For | Status |
 |--------|------|-----------|--------|
-| review-quality | domains/review-quality.md | Phase 3 review waves; editing `prompts/review-wave.md`, `prompts/review.md`, `prompts/review-risk-assessment.md`, `prompts/phase-audits/3-review*.md`, `lib/review*.sh`, or `skills/dxreview*/` | active |
-| workflow-operations | domains/workflow-operations.md | Lifecycle phase ownership, in-place vs worktree mode, runtime leases, and shared global config; editing `dx.sh` phase routing, `skills/dx*/SKILL.md`, `prompts/phase-audits/`, `hooks/phase-loop.sh`, install/config scripts, or session/runtime/branch state code | active |
+| review-quality | domains/review-quality.md | Phase 3 review waves; clean-pass and wave-budget policy; editing `prompts/review-wave.md`, `prompts/review.md`, `prompts/review-risk-assessment.md`, `prompts/phase-audits/3-review*.md`, `lib/review*.sh`, or `skills/dxreview*/` | active |
+| workflow-operations | domains/workflow-operations.md | Lifecycle phase ownership, in-place vs worktree mode, provider-session resume, runtime leases, and shared global config; editing `dx.sh` phase routing, `bin/dxcodex.sh`, `skills/dx*/SKILL.md`, `prompts/phase-audits/`, lifecycle hooks, install/config scripts, or session/runtime/branch state code | active |
 | security-guards | domains/security-guards.md | Editing `hooks/guard-handler.py`, `hooks/shell_parse.py`, `hooks/git-commit-target.py`, `hooks/guards/*.md`, or `.dex/guards/*.md`; adding any new dangerous-command detector | active |
 | architecture-decisions | domains/architecture-decisions.md | Adding or editing any skill, prompt, agent, or research harness; adding/reordering Claude Code hooks or editing `settings.json` hook arrays; reviewing portability across repositories | active |
 | verification-ci | domains/verification-ci.md | Editing `tests/`, `.github/workflows/ci.yml`, test assertions, manifest rows, runner lanes, or static-check coverage; implementation, review, verification, and maintenance | active |
@@ -29,10 +29,11 @@ directory until promoted via a reviewable diff.
 | M-004 | workflow-operations | Dex-owned global state must be tracked separately from user state |
 | M-005 | security-guards | Dangerous-command guards must use syntax-aware detection, not pattern matching |
 | M-006 | architecture-decisions | Dex skills and prompts must be codebase-agnostic and discover tooling at runtime |
-| M-007 | review-quality | Review waves must build context first, run deterministic checks before semantic review, isolate acceptance criteria, and only count true CLEAN waves |
+| M-007 | review-quality | Review waves isolate context, count only true CLEAN waves, and keep soft wave budgets separate from assurance |
 | M-008 | architecture-decisions | Bash PreToolUse hooks run guards-first and preserve block, warning, and enhancement failure contracts |
 | M-009 | verification-ci | Test manifest rows, runner lanes, and portable assertions are executable contracts |
 | M-010 | workflow-operations | Runtime lock lineage gates live-lease mutations, not durable reads, restart, or recovery |
+| M-011 | workflow-operations | Interactive lifecycle resumes use exact provider conversation IDs |
 
 ## Retrieval Rules
 

@@ -6,7 +6,7 @@ Hooks defined in `settings.json`, referenced by paths to Dex scripts:
 
 | Hook | Event | Script | Purpose |
 |------|-------|--------|---------|
-| SessionStart | Startup | `load-ticket-context.sh` | Load ticket context, detect focus areas |
+| SessionStart | Startup | `capture-provider-session.sh`, `load-ticket-context.sh` | Save the provider conversation ID; load ticket context and focus areas |
 | UserPromptSubmit | User prompt | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
 | PreToolUse | Before Bash/Edit/Write | `guard-handler.py` | Warn on risky patterns; the agent decides |
 | PreToolUse | Before Bash | `rtk-claude-hook.sh` | Fail-open RTK command rewrite; runs *after* `guard-handler.py` |
@@ -28,6 +28,12 @@ generation-bound completion receipt authorized for that session and phase. A
 bare `.complete` marker does not authorize advancement. Direct human jumps and
 waivers are recorded separately from passed gates. The loop pauses for
 intervention after its configured audit limit, which defaults to 30.
+
+The Phase 3 review loop has a separate soft outer-wave budget: 3 waves for
+`small`, 6 for `normal`, and 9 for `complex`. An attributed
+`review.max-waves` override may change that operational budget without changing
+the clean-pass assurance requirement. Spending the budget pauses review and
+preserves valid clean credit.
 
 Phases: Plan → Implement → Review → Verify → PR → Complete
 

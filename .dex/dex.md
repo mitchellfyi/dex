@@ -83,7 +83,9 @@ This repo uses `.dex/providers.json` to default Dex runs to the Codex agent.
 Model and effort are not pinned — each CLI uses its own session default. Use
 `dx --agent claude` for a one-run fallback to the built-in Claude subscription
 profile, or `dx --model <model>` to override the model passed to the selected
-agent.
+agent. Interactive lifecycles capture the exact Claude or Codex conversation ID
+at startup and use it for resume. Stable Claude session names and Codex's
+workspace-scoped `--last` behavior remain fallbacks for older lifecycle state.
 
 ## Reviewers
 
