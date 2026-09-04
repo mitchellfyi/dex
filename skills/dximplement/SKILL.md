@@ -199,6 +199,13 @@ update the evidence table with final pass/fail status. Do not invoke `/dxreview`
 from Phase 2; the dedicated Phase 3 `/dxreviewloop` handles adversarial review
 after implementation is complete.
 
+Once the final checkout content is committed, publish any passing project-wide
+expensive gates with `dx_review_baseline_publish`. Supply the exact command and
+measured duration for each gate. Do not include focused, partial, failed, or
+estimated evidence. If the checkout changes afterward, rerun the affected gate
+and replace the baseline from the final state. Phase 3 may reuse this evidence;
+it still reruns fast, focused, and fix-affected checks.
+
 ### 7. UI Proof Decision
 
 Invoke `dxuicapture` before Phase 2 completes and record one outcome:

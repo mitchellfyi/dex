@@ -57,6 +57,23 @@ branch, keep it unpushed and do not complete Phase 2. Ask the user whether to
 stop the lifecycle as no-change or choose an explicit lifecycle control action;
 do not advance into a PR flow that cannot complete.
 
+## Step 2.6: Publish Reusable Deterministic Evidence
+
+After the final checkout content is committed and every project-wide expensive
+gate has passed, publish those exact commands for Phase 3:
+
+```bash
+dx_review_baseline_publish "$SESSION_ID" "$PWD" \
+  "<short gate name>" "<exact command>" "<measured duration in seconds>" \
+  ["<next gate name>" "<exact command>" "<measured duration in seconds>" ...]
+```
+
+Only include commands that cover the whole project or every applicable target.
+Do not include focused tests, partial checks, failed commands, estimates, or a
+command that changed the checkout. If the content changes after publication,
+rerun the affected full gate and publish a new baseline from the final state.
+If no command qualifies, leave the baseline absent and say so in the evidence.
+
 ## Step 3: Evidence Table
 
 For each acceptance criterion from the plan, fill in the evidence table:

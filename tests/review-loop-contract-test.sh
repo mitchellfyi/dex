@@ -226,7 +226,14 @@ PY
       [[ "$invocation" == *"$DEX_REVIEW_PASS_ID"* ]] || return 1
       [[ "$invocation" == *"$DEX_REVIEW_POLICY_BINDING"* ]] || return 1
       [[ "$invocation" == *"$DEX_REVIEW_PASS_BINDING"* ]] || return 1
-      [[ "$invocation" == *"parallel agents"* ]] || return 1
+      [[ "$invocation" == *"scouts running at once"* ]] || return 1
+      [[ "${DEX_REVIEW_SCOUT_PARALLELISM:-}" =~ ^[1-3]$ ]] || return 1
+      [[ "${DEX_REVIEW_TEST_JOBS:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+      [[ "${DX_TEST_JOBS:-}" == "$DEX_REVIEW_TEST_JOBS" ]] || return 1
+      if [[ "$TEST_AGENT_HOST" == "claude" ]]; then
+        [[ " $invocation " == *" --no-chrome "* \
+          && " $invocation " != *" --chrome "* ]] || return 1
+      fi
       [[ "$invocation" != *"__REVIEW_"* ]] || return 1
       expected_baseline=$(dx_review_baseline_file "$DEX_POLICY_SESSION_ID") || return 1
       expected_metrics=$(dx_review_metrics_file "$DEX_SESSION_ID") || return 1
@@ -249,7 +256,10 @@ PY
           ;;
         *) return 1 ;;
       esac
-      print -r -- "{\"version\":1,\"context_seconds\":1,\"checks_seconds\":2,\"scout_seconds\":3,\"verifier_seconds\":1}" > "$expected_metrics" || return 1
+      local fixture_stage
+      for fixture_stage in context checks scout verifier fixes; do
+        dx_review_metrics_mark "$expected_metrics" "$fixture_stage" || return 1
+      done
       criteria_path=$(dx_review_criteria_file "$DEX_SESSION_ID")
       if [[ -e "$criteria_path" ]]; then
         criteria_binding=$(dx_review_criteria_hash "$criteria_path") || return 1
@@ -387,6 +397,31 @@ PY
     printf 'FAIL: %s ran an unexpected number of review waves\n' "$name" >&2
     [[ -f "$call_file" ]] && cat "$call_file" >&2
     exit 1
+  fi
+  if [[ "$name" == "claude-valid-hook" ]]; then
+    local event_file
+    event_file=$(find "$TMP_DIR/$name-runs" -name events.jsonl -type f \
+      -print | sed -n '1p')
+    [[ -n "$event_file" ]] || fail "valid review fixture did not write telemetry"
+    python3 - "$event_file" <<'PY'
+import json
+import sys
+
+events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+queued = next(event for event in events if event["type"] == "review.pass.queued")
+started = next(event for event in events if event["type"] == "review.pass.started")
+finished = next(event for event in events if event["type"] == "review.pass.finished")
+assert queued["sequence"] < started["sequence"] < finished["sequence"]
+for key in (
+    "capacity_limit", "capacity_active", "capacity_wait_seconds",
+    "scout_count", "scout_parallelism", "test_jobs",
+):
+    assert isinstance(started["data"][key], int), (key, started)
+assert finished["data"]["provider_failure_class"] == "none", finished
+assert finished["data"]["metrics_source"] == "wrapper-clock", finished
+assert finished["data"]["metrics_complete"] is True, finished
+assert isinstance(finished["data"]["fixes_duration_seconds"], int), finished
+PY
   fi
 }
 

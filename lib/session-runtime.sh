@@ -1241,6 +1241,27 @@ try:
             print("live")
         else:
             print("replaced")
+    elif operation == "owner-process-states":
+        if not arguments or len(arguments) % 2 != 0:
+            raise RuntimeInputError(
+                "owner-process-states requires PID and stable-identity pairs"
+            )
+        for raw_pid, expected_identity in zip(arguments[::2], arguments[1::2]):
+            owner_pid = parse_pid(raw_pid)
+            if not (
+                LINUX_ID_RE.fullmatch(expected_identity)
+                or DARWIN_ID_RE.fullmatch(expected_identity)
+            ):
+                raise RuntimeInputError("runtime owner process identity is invalid")
+            owner_probe = process_probe(owner_pid)
+            if owner_probe["health"] == "dead":
+                print("dead")
+            elif owner_probe["health"] != "live" or owner_probe["identity"] is None:
+                print("unverifiable")
+            elif owner_probe["identity"] == expected_identity:
+                print("live")
+            else:
+                print("replaced")
     elif operation == "owner-runtime-correlation":
         if len(arguments) != 4:
             raise RuntimeInputError(
@@ -1721,6 +1742,11 @@ __dx_session_runtime_owner_process_matches() { # <pid> <stable-identity>
 __dx_session_runtime_owner_process_state() { # <pid> <stable-identity>
   [[ $# -eq 2 && "$1" =~ ^[0-9]+$ ]] || return 3
   __dx_session_runtime_call owner-process-state "$1" "$2"
+}
+
+dx_session_runtime_process_states() { # <pid> <stable-identity> [...]
+  [[ $# -ge 2 && $(( $# % 2 )) -eq 0 ]] || return 3
+  __dx_session_runtime_call owner-process-states "$@"
 }
 
 __dx_session_runtime_owner_runtime_correlation() { # <session> <pid> <stable-identity>

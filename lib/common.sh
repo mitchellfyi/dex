@@ -8,7 +8,8 @@
 # Also sources: lib/lock.sh, lib/git.sh, lib/session.sh, lib/override.sh, lib/completion.sh,
 # lib/session-runtime.sh, lib/session-catalog.sh, lib/output.sh, lib/worktree.sh,
 # lib/provider.sh, lib/codex.sh, lib/dexcode.sh, lib/ui-capture.sh, lib/rtk.sh,
-# lib/events.sh, lib/review.sh, lib/review-policy.sh, lib/review-controller.sh, lib/review-loop.sh, lib/factory.sh,
+# lib/events.sh, lib/review.sh, lib/review-capacity.sh, lib/review-policy.sh,
+# lib/review-controller.sh, lib/review-loop.sh, lib/factory.sh,
 # lib/run-spec.sh, lib/agent-tools.sh, lib/maintenance.sh, lib/project-state.sh,
 # lib/lifecycle-control.sh, lib/session-management.sh, lib/attribution.sh, and
 # lib/worker.sh
@@ -149,6 +150,7 @@ __dx_require_lib ui-capture.sh
 __dx_require_lib rtk.sh
 __dx_require_lib events.sh
 __dx_require_lib review.sh
+__dx_require_lib review-capacity.sh
 __dx_require_lib review-policy.sh
 __dx_require_lib review-controller.sh
 __dx_require_lib review-loop.sh

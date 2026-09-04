@@ -104,8 +104,9 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`,
 `attribution.sh`, `codex.sh`, `completion.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
 `lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `override.sh`, `project-state.sh`,
-`provider.sh`, `review.sh`, `review-controller.sh`, `review-loop.sh`,
-`review-policy.sh`, `rtk.sh`, `run-spec.sh`, `session-catalog.sh`, `session-management.sh`,
+`provider.sh`, `review.sh`, `review-capacity.sh`, `review-controller.sh`,
+`review-loop.sh`, `review-policy.sh`, `rtk.sh`, `run-spec.sh`,
+`session-catalog.sh`, `session-management.sh`,
 `session-runtime.sh`, `session.sh`, `ui-capture.sh`,
 `worker.sh`, and `worktree.sh`.
 
@@ -467,7 +468,8 @@ prefer extracting it into `lib/` modules. The pattern:
 | `override.sh` | Session policy journal, validation, expiry, and effective-value resolution | `dx_override_set()`, `dx_override_clear()`, `dx_override_list()`, `dx_override_effective()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
 | `project-state.sh` | Init ownership snapshots and conservative project cleanup | `dx_project_state_begin()`, `dx_project_state_finalize()`, `dx_project_state_remove_managed()` |
-| `review.sh` | Scope-bound review selection/state, evidence, retained proofs, ledgers, receipts, result parsing, churn detection, and telemetry JSON | `dx_review_evidence_valid()`, `dx_review_ledger_valid()`, `dx_review_write_receipt()`, `dx_review_findings_churn_kind()`, `dx_review_event_json()` |
+| `review.sh` | Scope-bound review selection/state, evidence, deterministic baselines, wrapper-clock metrics, retained proofs, ledgers, receipts, result parsing, churn detection, and telemetry JSON | `dx_review_evidence_valid()`, `dx_review_baseline_publish()`, `dx_review_metrics_mark()`, `dx_review_ledger_valid()`, `dx_review_write_receipt()`, `dx_review_event_json()` |
+| `review-capacity.sh` | Host-wide FIFO admission, PID-reuse-safe stale-owner recovery, and CPU/memory-aware review-wave budgets | `dx_review_capacity_limit()`, `dx_review_capacity_wait()`, `dx_review_capacity_release()` |
 | `review-loop.sh` | The review loop itself plus its helpers: wave orchestration, tier assessment, run telemetry, pause and interrupt handling, scope snapshots. `dxreviewloop` in dx.sh is a thin wrapper over it | `dx_review_loop_run()`, `__dx_review_emit_event()`, `__dx_review_scope_snapshot()` |
 | `review-controller.sh` | Pure review-loop state transitions and atomic findings history | `dx_review_transition()`, `dx_review_findings_history_append()` |
 | `review-policy.sh` | Trusted default-branch clean-pass policy resolution and binding | `dx_review_policy_resolve()`, `dx_review_policy_for_tier()` |

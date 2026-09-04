@@ -189,6 +189,7 @@ runtime_contract_files=(
   lib/common.sh
   lib/completion.sh
   lib/override.sh
+  lib/review-capacity.sh
   lib/review.sh
   lib/review-controller.sh
   lib/review-loop.sh
@@ -215,6 +216,7 @@ assert_eq "$runtime_source_sha" "$runtime_sha" "runtime commit"
 [[ -x "$runtime_dir/bin/complete-receipt.sh" ]] || fail "sanitized completion writer is missing"
 [[ -f "$runtime_dir/lib/completion.sh" ]] || fail "sanitized completion runtime is missing"
 [[ -f "$runtime_dir/lib/review-loop.sh" ]] || fail "sanitized review loop runtime is missing"
+[[ -f "$runtime_dir/lib/review-capacity.sh" ]] || fail "sanitized review capacity runtime is missing"
 [[ -f "$runtime_dir/lib/session-catalog.sh" ]] || fail "sanitized session catalog runtime is missing"
 [[ -f "$runtime_dir/lib/session-runtime.sh" ]] || fail "sanitized session lease runtime is missing"
 [[ -x "$runtime_dir/bin/session-runtime-owner.sh" ]] || fail "sanitized runtime owner is missing"

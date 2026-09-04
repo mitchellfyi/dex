@@ -113,6 +113,14 @@ findings, and rechecks affected surfaces. Later reviewers receive no prior
 reports, findings, fingerprints, clean counts, telemetry, or stale conversation
 context.
 
+Review providers also share a host-wide FIFO admission gate across worktrees.
+Queue time does not consume the wave timeout and does not create a Phase 3 busy
+fence. A lease covers only the provider wave and is released before the next
+wave. Dex defaults to one active wave on ordinary developer machines and two on
+hosts with at least 16 CPUs and 48 GiB of memory. When two waves are allowed,
+each defaults to one scout at a time; a single active wave may use its full
+profile coverage in parallel. Test runners receive a per-wave job budget.
+
 Phase 1 also saves the approved objectives, acceptance criteria, and
 verification requirements in a strict JSON artifact. Lifecycle assessors and
 review waves receive a fresh child-scoped copy, never the parent path. The
@@ -147,6 +155,13 @@ process tree, clears the Phase 3 busy marker, records `pass_timeout`, and pauses
 with a concrete recovery step. State and receipts stay outside the repository
 and are accepted only while their independently hashed HEAD, staged, unstaged,
 and untracked scope still matches.
+
+After Phase 2 passes an expensive project-wide gate on the final checkout, it
+can publish the exact command and measured duration with
+`dx_review_baseline_publish`. The first review wave can reuse that bound
+mechanical evidence. Fast checks, focused tests, repro probes, and checks
+affected by a review fix always run again. Review stage durations come from
+wrapper-clocked transition marks rather than reviewer estimates.
 
 Phase 2 treats UI proof as an explicit agent judgment. `/dxuicapture` can produce a short before/after or after-only walkthrough when it improves the review, record a reasoned `SKIPPED` decision for a visible but disproportionate case, or record `N/A` when nothing changes in the browser. A human can request the full diff-aware capture at any time with `/dxproof` or its `/dxcapture` alias. Generated videos, screenshots, traces, captions, browser logs, and the handoff manifest stay under `~/.claude/.dex-artifacts/`; the lifecycle surfaces their status without turning capture into a hard product-correctness gate. For `READY` proof, Phase 5 attaches the current image/video bundle to the PR when GitHub CLI supports `--attach`. Older clients and incomplete uploads keep a visible local handoff. See [ui-capture.md](ui-capture.md).
 
@@ -774,6 +789,9 @@ use an override-bound lower target; other assurance gates use
 | `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Launch-only higher consecutive `CLEAN` requirement; use the attributed `review.clean-passes` session override to lower or change a running loop |
 | `DEX_REVIEW_PASS_TIMEOUT` | profile-based | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; defaults are 15 minutes for risk assessment and light waves, 30 minutes for standard waves, and 60 minutes for thorough waves; `0` disables the timeout |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
+| `DEX_REVIEW_MAX_ACTIVE_WAVES` | host-sized (`1` or `2`) | Host-wide active review-wave limit from 1 to 8; the automatic value is 2 only with at least 16 CPUs and 48 GiB of memory |
+| `DEX_REVIEW_SCOUT_PARALLELISM` | capacity-aware | Concurrent scouts per wave from 1 to 3; coverage groups that cannot run concurrently stay with the top-level reviewer |
+| `DEX_REVIEW_TEST_JOBS` | capacity-aware (max `4`) | Per-wave test-runner job limit from 1 to 32; also exported as `DX_TEST_JOBS` for Dex's manifest runner |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation. A cycle that outruns it hands the lease to the next tick; a watcher that exits hands it over immediately, without waiting out the budget. `0` means no budget, as it does for the phase timeouts |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |
 | `DEX_WATCH_PAUSE_TTL_SECONDS` | `3600` (1h 0m) | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt; set to 0 for no automatic expiry |

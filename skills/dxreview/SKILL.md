@@ -42,6 +42,12 @@ Follow `prompts/review-wave.md` as the source of truth. In one wave:
    affected checks and targeted review once.
 8. Write the review result signal and findings fingerprint.
 
+Treat `DEX_REVIEW_SCOUT_PARALLELISM` as a concurrency ceiling, not a coverage
+limit. If a scout cannot start because the provider is at capacity, cover its
+group in the top-level session instead of retrying it immediately. Keep project
+test runners within `DEX_REVIEW_TEST_JOBS`; Dex's runner receives the same value
+through `DX_TEST_JOBS`.
+
 Run in the current checkout. Do not run `dx <ticket-or-description>`, Phase 0
 setup, or any branch/worktree setup from this skill. Do not create, switch,
 rename, or delete branches or worktrees.

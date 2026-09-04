@@ -53,14 +53,66 @@ if dx_review_baseline_valid "$TMP_DIR/baseline-link" "$SCOPE" "$WORKING" "$CRITE
   fail "symlinked baseline was accepted"
 fi
 
+WRITTEN_FILE="$TMP_DIR/written-baseline.json"
+dx_review_baseline_write "$WRITTEN_FILE" "$SCOPE" "$WORKING" \
+  "$CRITERIA" "$POLICY" "full test suite" "bash tests/run-all.sh" 42
+dx_review_baseline_valid "$WRITTEN_FILE" "$SCOPE" "$WORKING" \
+  "$CRITERIA" "$POLICY" || fail "baseline writer produced invalid evidence"
+if dx_review_baseline_write "$WRITTEN_FILE" "$SCOPE" "$WORKING" \
+  "$CRITERIA" "$POLICY" "full test suite" "bash tests/run-all.sh" invalid; then
+  fail "baseline writer accepted an invalid duration"
+fi
+
+PUBLISH_REPO="$TMP_DIR/publish-repo"
+PUBLISH_SESSION="review-baseline-publish"
+git init -q -b main "$PUBLISH_REPO"
+git -C "$PUBLISH_REPO" config user.name "Dex Test"
+git -C "$PUBLISH_REPO" config user.email "dex-test@example.com"
+printf '%s\n' "baseline fixture" > "$PUBLISH_REPO/app.txt"
+git -C "$PUBLISH_REPO" add app.txt
+git -C "$PUBLISH_REPO" commit -qm "test: initialize baseline fixture"
+dx_review_baseline_publish "$PUBLISH_SESSION" "$PUBLISH_REPO" \
+  "full test suite" "bash tests/run-all.sh" 17
+PUBLISHED_FILE="$(dx_review_baseline_file "$PUBLISH_SESSION")"
+PUBLISHED_SCOPE="$(dx_review_scope_fingerprint "$PUBLISH_REPO")"
+PUBLISHED_WORKING="$(dx_review_working_fingerprint "$PUBLISH_REPO")"
+dx_review_baseline_valid "$PUBLISHED_FILE" "$PUBLISHED_SCOPE" \
+  "$PUBLISHED_WORKING" standalone "$POLICY" \
+  || fail "published implementation baseline was not reusable"
+
 printf '%s\n' '{"version":1,"context_seconds":3,"checks_seconds":42,"scout_seconds":7,"verifier_seconds":2}' > "$METRICS_FILE"
 dx_review_metrics_valid "$METRICS_FILE" \
   || fail "valid review stage metrics were rejected"
 assert_eq $'3\t42\t7\t2' "$(dx_review_metrics_summary "$METRICS_FILE")" \
   "stage metrics summary preserves each duration"
 
+dx_review_metrics_start "$METRICS_FILE"
+for review_stage in context checks scout verifier fixes; do
+  dx_review_metrics_mark "$METRICS_FILE" "$review_stage"
+done
+dx_review_metrics_finish "$METRICS_FILE"
+dx_review_metrics_valid "$METRICS_FILE" \
+  || fail "wrapper-clock review stage metrics were rejected"
+METRICS_DETAIL="$(dx_review_metrics_detailed_summary "$METRICS_FILE")"
+IFS=$'\t' read -r METRIC_CONTEXT METRIC_CHECKS METRIC_SCOUT METRIC_VERIFIER \
+  METRIC_FIXES METRIC_COMPLETE METRIC_SOURCE <<EOF
+$METRICS_DETAIL
+EOF
+for METRIC_VALUE in "$METRIC_CONTEXT" "$METRIC_CHECKS" "$METRIC_SCOUT" \
+    "$METRIC_VERIFIER" "$METRIC_FIXES"; do
+  [[ "$METRIC_VALUE" =~ ^[0-9]+$ ]] \
+    || fail "wrapper-clock stage metrics contained a non-integer duration"
+done
+[[ "$METRIC_COMPLETE" == "true" && "$METRIC_SOURCE" == "wrapper-clock" ]] \
+  || fail "wrapper-clock stage metrics lost their completeness or source"
+if dx_review_metrics_mark "$METRICS_FILE" checks; then
+  fail "finished wrapper-clock metrics accepted another stage"
+fi
+
 dx_cleanup_session "$SESSION_ID"
 [[ ! -e "$BASELINE_FILE" ]] || fail "session cleanup retained the deterministic baseline"
 [[ ! -e "$METRICS_FILE" ]] || fail "session cleanup retained review metrics"
+dx_cleanup_session "$PUBLISH_SESSION"
+[[ ! -e "$PUBLISHED_FILE" ]] || fail "session cleanup retained the published baseline"
 
 printf '%s\n' "review-baseline-test passed"

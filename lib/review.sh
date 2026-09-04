@@ -503,11 +503,205 @@ print(f"{len(commands)}\t{sum(item['duration_seconds'] for item in commands)}")
 PY
 }
 
-dx_review_metrics_valid() {
-  local metrics_file="$1"
+# dx_review_baseline_write <file> <scope> <working> <criteria> <policy>
+#   <name> <command> <duration> [<name> <command> <duration> ...]
+# Build the baseline JSON in one trusted helper instead of asking an agent to
+# hand-assemble the schema. The validator remains the final acceptance gate.
+dx_review_baseline_write() {
+  [[ $# -ge 8 && $((($# - 5) % 3)) -eq 0 ]] || return 1
+  local baseline_file="$1" scope_fingerprint="$2" working_fingerprint="$3"
+  local criteria_binding="$4" policy_binding="$5" payload
+  shift 5
+  [[ "$scope_fingerprint" =~ ^[a-f0-9]{64}$ \
+    && "$working_fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
+  dx_review_criteria_binding_valid "$criteria_binding" || return 1
+  dx_review_policy_binding_valid "$policy_binding" || return 1
+  payload=$(DX_REVIEW_BASELINE_SCOPE="$scope_fingerprint" \
+    DX_REVIEW_BASELINE_WORKING="$working_fingerprint" \
+    DX_REVIEW_BASELINE_CRITERIA="$criteria_binding" \
+    DX_REVIEW_BASELINE_POLICY="$policy_binding" \
+    python3 - "$@" <<'PY'
+import json
+import os
+import sys
+
+arguments = sys.argv[1:]
+commands = []
+for offset in range(0, len(arguments), 3):
+    name, command, raw_duration = arguments[offset:offset + 3]
+    try:
+        duration = int(raw_duration)
+    except ValueError:
+        raise SystemExit(1)
+    if (
+        not 1 <= len(name) <= 160
+        or name != name.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+        or not 1 <= len(command) <= 4096
+        or command != command.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in command)
+        or not 0 <= duration <= 999999999999999
+    ):
+        raise SystemExit(1)
+    commands.append({
+        "name": name,
+        "command": command,
+        "status": "pass",
+        "duration_seconds": duration,
+    })
+if not 1 <= len(commands) <= 64:
+    raise SystemExit(1)
+payload = {
+    "version": 1,
+    "scope_fingerprint": os.environ["DX_REVIEW_BASELINE_SCOPE"],
+    "working_fingerprint": os.environ["DX_REVIEW_BASELINE_WORKING"],
+    "criteria_binding": os.environ["DX_REVIEW_BASELINE_CRITERIA"],
+    "policy_binding": os.environ["DX_REVIEW_BASELINE_POLICY"],
+    "commands": commands,
+}
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+PY
+  ) || return 1
+  dx_review_write_atomic "$baseline_file" "$payload" || return 1
+  dx_review_baseline_valid "$baseline_file" "$scope_fingerprint" \
+    "$working_fingerprint" "$criteria_binding" "$policy_binding"
+}
+
+# dx_review_baseline_publish <session> <repo> <name> <command> <duration> [...]
+# Publish final implementation evidence for the first review wave. Lifecycle
+# sessions use their sealed criteria; standalone callers bind to `standalone`.
+dx_review_baseline_publish() {
+  [[ $# -ge 5 && $((($# - 2) % 3)) -eq 0 ]] || return 1
+  local session_id="$1" repo_dir="$2" criteria_binding="standalone"
+  local policy_record policy_small policy_normal policy_complex policy_binding
+  local policy_ref policy_oid scope_fingerprint working_fingerprint baseline_file
+  shift 2
+  dx_session_id_valid "$session_id" || return 1
+  [[ -d "$repo_dir" ]] || return 1
+  criteria_binding=$(dx_review_read_criteria_approval "$session_id" \
+    2>/dev/null || printf '%s\n' "standalone")
+  dx_review_criteria_binding_valid "$criteria_binding" || return 1
+  policy_record=$(dx_review_policy_resolve "$repo_dir") || return 1
+  IFS=$'\t' read -r policy_small policy_normal policy_complex policy_binding \
+    policy_ref policy_oid <<EOF
+$policy_record
+EOF
+  : "$policy_small" "$policy_normal" "$policy_complex"
+  dx_review_policy_provenance_valid "$policy_ref" "$policy_oid" || return 1
+  scope_fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
+  working_fingerprint=$(dx_review_working_fingerprint "$repo_dir") || return 1
+  baseline_file=$(dx_review_baseline_file "$session_id") || return 1
+  dx_review_baseline_write "$baseline_file" "$scope_fingerprint" \
+    "$working_fingerprint" "$criteria_binding" "$policy_binding" "$@"
+}
+
+dx_review_metrics_start() {
+  [[ $# -eq 1 ]] || return 1
+  local metrics_file="$1" payload
+  payload=$(python3 - <<'PY'
+import json
+import time
+
+print(json.dumps({
+    "version": 2,
+    "started_ms": time.time_ns() // 1_000_000,
+    "finished_ms": None,
+    "stages": [],
+}, sort_keys=True, separators=(",", ":")))
+PY
+  ) || return 1
+  dx_review_write_atomic "$metrics_file" "$payload"
+}
+
+dx_review_metrics_mark() {
+  [[ $# -eq 2 ]] || return 1
+  local metrics_file="$1" stage="$2" payload
+  case "$stage" in
+    context|checks|scout|verifier|fixes) ;;
+    *) return 1 ;;
+  esac
   __dx_review_regular_files_bounded 4096 "$metrics_file" || return 1
+  payload=$(python3 - "$metrics_file" "$stage" <<'PY'
+import json
+import sys
+import time
+
+order = ["context", "checks", "scout", "verifier", "fixes"]
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+stage = sys.argv[2]
+if (
+    not isinstance(payload, dict)
+    or set(payload) != {"version", "started_ms", "finished_ms", "stages"}
+    or payload["version"] != 2
+    or payload["finished_ms"] is not None
+    or isinstance(payload["started_ms"], bool)
+    or not isinstance(payload["started_ms"], int)
+    or not isinstance(payload["stages"], list)
+):
+    raise SystemExit(1)
+stages = payload["stages"]
+names = [item.get("stage") for item in stages if isinstance(item, dict)]
+if len(names) != len(stages) or names != order[:len(names)]:
+    raise SystemExit(1)
+if names and names[-1] == stage:
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    raise SystemExit(0)
+if len(names) >= len(order) or stage != order[len(names)]:
+    raise SystemExit(1)
+now_ms = max(time.time_ns() // 1_000_000, payload["started_ms"])
+if stages:
+    previous_ms = stages[-1].get("at_ms")
+    if isinstance(previous_ms, bool) or not isinstance(previous_ms, int):
+        raise SystemExit(1)
+    now_ms = max(now_ms, previous_ms)
+stages.append({"stage": stage, "at_ms": now_ms})
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+PY
+  ) || return 1
+  dx_review_write_atomic "$metrics_file" "$payload"
+}
+
+dx_review_metrics_finish() {
+  [[ $# -eq 1 ]] || return 1
+  local metrics_file="$1" payload version
+  dx_review_metrics_valid "$metrics_file" unfinished || return 1
+  version=$(python3 - "$metrics_file" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print(json.load(handle)["version"])
+PY
+  ) || return 1
+  [[ "$version" == "2" ]] || return 0
+  payload=$(python3 - "$metrics_file" <<'PY'
+import json
+import sys
+import time
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+last_ms = payload["started_ms"]
+if payload["stages"]:
+    last_ms = payload["stages"][-1]["at_ms"]
+payload["finished_ms"] = max(time.time_ns() // 1_000_000, last_ms)
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+PY
+  ) || return 1
+  dx_review_write_atomic "$metrics_file" "$payload"
+}
+
+dx_review_metrics_valid() {
+  [[ $# -eq 1 || ( $# -eq 2 && "$2" == "unfinished" ) ]] || return 1
+  local metrics_file="$1" allow_unfinished="${2:-}"
+  __dx_review_regular_files_bounded 4096 "$metrics_file" || return 1
+  DX_REVIEW_METRICS_ALLOW_UNFINISHED="$allow_unfinished" \
   python3 - "$metrics_file" <<'PY'
 import json
+import os
 import sys
 
 try:
@@ -516,24 +710,58 @@ try:
 except (OSError, UnicodeError, json.JSONDecodeError):
     raise SystemExit(1)
 
-keys = {
+legacy_keys = {
     "version",
     "context_seconds",
     "checks_seconds",
     "scout_seconds",
     "verifier_seconds",
 }
-if (
-    not isinstance(payload, dict)
-    or set(payload) != keys
-    or isinstance(payload["version"], bool)
-    or payload["version"] != 1
+if not isinstance(payload, dict) or isinstance(payload.get("version"), bool):
+    raise SystemExit(1)
+if payload["version"] == 1:
+    if set(payload) != legacy_keys:
+        raise SystemExit(1)
+    for key in legacy_keys - {"version"}:
+        value = payload[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 86400:
+            raise SystemExit(1)
+    raise SystemExit(0)
+if payload["version"] != 2 or set(payload) != {
+    "version", "started_ms", "finished_ms", "stages"
+}:
+    raise SystemExit(1)
+started_ms = payload["started_ms"]
+finished_ms = payload["finished_ms"]
+if isinstance(started_ms, bool) or not isinstance(started_ms, int) or started_ms < 0:
+    raise SystemExit(1)
+if finished_ms is None:
+    if os.environ["DX_REVIEW_METRICS_ALLOW_UNFINISHED"] != "unfinished":
+        raise SystemExit(1)
+elif (
+    isinstance(finished_ms, bool)
+    or not isinstance(finished_ms, int)
+    or finished_ms < started_ms
 ):
     raise SystemExit(1)
-for key in keys - {"version"}:
-    value = payload[key]
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 86400:
+order = ["context", "checks", "scout", "verifier", "fixes"]
+stages = payload["stages"]
+if not isinstance(stages, list) or len(stages) > len(order):
+    raise SystemExit(1)
+previous_ms = started_ms
+for index, item in enumerate(stages):
+    if not isinstance(item, dict) or set(item) != {"stage", "at_ms"}:
         raise SystemExit(1)
+    at_ms = item["at_ms"]
+    if (
+        item["stage"] != order[index]
+        or isinstance(at_ms, bool)
+        or not isinstance(at_ms, int)
+        or at_ms < previous_ms
+        or (finished_ms is not None and at_ms > finished_ms)
+    ):
+        raise SystemExit(1)
+    previous_ms = at_ms
 PY
 }
 
@@ -546,12 +774,55 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
-print("\t".join(str(payload[key]) for key in (
-    "context_seconds",
-    "checks_seconds",
-    "scout_seconds",
-    "verifier_seconds",
-)))
+if payload["version"] == 1:
+    print("\t".join(str(payload[key]) for key in (
+        "context_seconds",
+        "checks_seconds",
+        "scout_seconds",
+        "verifier_seconds",
+    )))
+    raise SystemExit(0)
+events = {item["stage"]: item["at_ms"] for item in payload["stages"]}
+finished_ms = payload["finished_ms"]
+boundaries = [
+    events.get("context"),
+    events.get("checks"),
+    events.get("scout"),
+    events.get("verifier"),
+    events.get("fixes", finished_ms),
+]
+durations = []
+for current, following in zip(boundaries, boundaries[1:]):
+    durations.append(0 if current is None or following is None else max(0, (following - current) // 1000))
+print("\t".join(str(value) for value in durations))
+PY
+}
+
+dx_review_metrics_detailed_summary() {
+  local metrics_file="$1"
+  dx_review_metrics_valid "$metrics_file" || return 1
+  python3 - "$metrics_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload["version"] == 1:
+    values = [payload[key] for key in (
+        "context_seconds", "checks_seconds", "scout_seconds", "verifier_seconds"
+    )]
+    print("\t".join(str(value) for value in values + [0, "false", "agent-reported"]))
+    raise SystemExit(0)
+order = ["context", "checks", "scout", "verifier", "fixes"]
+events = {item["stage"]: item["at_ms"] for item in payload["stages"]}
+finished_ms = payload["finished_ms"]
+durations = []
+for index, stage in enumerate(order):
+    current = events.get(stage)
+    following = events.get(order[index + 1]) if index + 1 < len(order) else finished_ms
+    durations.append(0 if current is None or following is None else max(0, (following - current) // 1000))
+complete = all(stage in events for stage in order)
+print("\t".join(str(value) for value in durations + [str(complete).lower(), "wrapper-clock"]))
 PY
 }
 
@@ -1355,45 +1626,46 @@ if os.environ["DX_REVIEW_FINGERPRINT_MODE"] == "scope":
         if not comparison_tree:
             raise SystemExit(1)
 
-    cached_paths = {
-        item
-        for item in git(
-            "diff", "--cached", "--name-only", "--no-renames", "-z", "--"
-        ).split(b"\0")
-        if item
-    }
-    worktree_paths = {
-        item
-        for item in git(
-            "diff", "--name-only", "--no-renames", "-z", "--"
-        ).split(b"\0")
-        if item
-    }
-    untracked_paths = {
-        item
-        for item in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
-        if item
-    }
+    def path_set(*arguments):
+        return {item for item in git(*arguments).split(b"\0") if item}
+
+    cached_paths = path_set(
+        "diff", "--cached", "--name-only", "--no-renames", "-z", "--"
+    )
+    worktree_paths = path_set(
+        "diff", "--name-only", "--no-renames", "-z", "--"
+    )
+    untracked_paths = path_set("ls-files", "--others", "--exclude-standard", "-z")
+
+    # The index already carries stable blob IDs for clean and staged files.
+    # Re-hash only paths whose final worktree content differs from the index.
+    # This keeps fingerprints independent of staging/commit transitions while
+    # avoiding a full checkout read on every review state validation.
+    index_entries = {}
+    for record in git("ls-files", "--stage", "-z").split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, raw_path = record.partition(b"\t")
+        fields = metadata.split()
+        if not separator or len(fields) != 3:
+            raise SystemExit(1)
+        file_mode, object_id, stage = fields
+        if stage == b"0":
+            index_entries[raw_path] = (file_mode, object_id)
 
     if comparison_tree:
-        paths = {
-            item
-            for item in git(
-                "diff", "--name-only", "--no-renames", "-z", merge_base, "HEAD", "--"
-            ).split(b"\0")
-            if item
-        }
+        paths = path_set(
+            "diff", "--name-only", "--no-renames", "-z", merge_base, "HEAD", "--"
+        )
         paths.update(cached_paths)
         paths.update(worktree_paths)
         paths.update(untracked_paths)
     else:
-        paths = {
-            item for item in git("ls-files", "-z").split(b"\0") if item
-        }
+        paths = set(index_entries)
         paths.update(untracked_paths)
 
     digest = hashlib.sha256()
-    digest.update(b"SCOPE_CONTENT_V2\0")
+    digest.update(b"SCOPE_CONTENT_V3\0")
     if comparison_tree:
         digest.update(b"COMPARISON_TREE\0" + comparison_tree + b"\0")
     else:
@@ -1401,36 +1673,35 @@ if os.environ["DX_REVIEW_FINGERPRINT_MODE"] == "scope":
 
     for raw_path in sorted(paths):
         path = root / os.fsdecode(raw_path)
+        if raw_path in index_entries and raw_path not in worktree_paths:
+            file_mode, object_id = index_entries[raw_path]
+            digest.update(
+                b"PATH\0"
+                + len(raw_path).to_bytes(8, "big")
+                + raw_path
+                + b"\0MODE\0"
+                + file_mode
+                + b"\0GIT_OBJECT\0"
+                + object_id
+            )
+            continue
         try:
             metadata = path.lstat()
         except FileNotFoundError:
-            if comparison_tree:
-                digest.update(
-                    b"PATH\0"
-                    + len(raw_path).to_bytes(8, "big")
-                    + raw_path
-                    + b"\0MISSING\0"
-                )
+            digest.update(
+                b"PATH\0"
+                + len(raw_path).to_bytes(8, "big")
+                + raw_path
+                + b"\0MISSING\0"
+            )
             continue
         except OSError:
-            metadata = None
+            raise SystemExit(1)
 
-        digest.update(b"PATH\0" + len(raw_path).to_bytes(8, "big") + raw_path)
-        if metadata is None:
-            digest.update(b"\0MODE\0UNREADABLE\0")
-        elif stat.S_ISLNK(metadata.st_mode):
-            digest.update(b"\0MODE\0" + b"120000" + b"\0TARGET\0" + os.fsencode(os.readlink(path)))
+        if stat.S_ISLNK(metadata.st_mode):
+            file_mode = b"120000"
         elif stat.S_ISREG(metadata.st_mode):
-            mode = b"100755" if metadata.st_mode & 0o111 else b"100644"
-            object_digest = hashlib.sha256()
-            try:
-                with path.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        object_digest.update(chunk)
-            except OSError:
-                object_digest = None
-            digest.update(b"\0MODE\0" + mode + b"\0CONTENT_SHA256\0")
-            digest.update(object_digest.digest() if object_digest else b"UNREADABLE")
+            file_mode = b"100755" if metadata.st_mode & 0o111 else b"100644"
         elif stat.S_ISDIR(metadata.st_mode):
             submodule_head = subprocess.run(
                 ["git", "-C", str(path), "rev-parse", "--verify", "HEAD"],
@@ -1450,8 +1721,24 @@ if os.environ["DX_REVIEW_FINGERPRINT_MODE"] == "scope":
                 + b"\0STATUS\0"
                 + submodule_status
             )
+            continue
         else:
-            digest.update(b"\0MODE\0SPECIAL\0")
+            raise SystemExit(1)
+        object_id = git(
+            "hash-object", "--path", os.fsdecode(raw_path), os.fsdecode(raw_path),
+            check=False,
+        ).strip()
+        if not object_id:
+            raise SystemExit(1)
+        digest.update(
+            b"PATH\0"
+            + len(raw_path).to_bytes(8, "big")
+            + raw_path
+            + b"\0MODE\0"
+            + file_mode
+            + b"\0GIT_OBJECT\0"
+            + object_id
+        )
 
     partial_paths = sorted(cached_paths & worktree_paths)
     if partial_paths:

@@ -119,7 +119,10 @@ Every wave still runs fast static checks, lint, type checks, focused tests,
 generated-file checks, repro probes, and checks affected by a fix. Never reuse
 an ambiguous, partially scoped, failed, or unavailable command. A fresh
 baseline is optional when no command qualifies. When one does, write it
-atomically with this exact shape:
+with `dx_review_baseline_write`; pass the supplied scope, working-tree,
+criteria, and policy bindings followed by each command's short name, exact
+command, and measured duration. The helper writes and validates this version 1
+shape atomically:
 
 ```json
 {
@@ -175,9 +178,10 @@ Collect all candidate issues before fixing anything.
 - `thorough` (`complex`): all domain sweeps across the full caller-supplied
   scope.
 
-Use provider-native parallel agents for independent, read-only scouting. The
-top-level wave remains the only writer and verifier. Use no more than three
-groups:
+Use provider-native agents for independent, read-only scouting. The caller's
+`DEX_REVIEW_SCOUT_PARALLELISM` value is the maximum number of scouts that may
+run at once; it does not reduce required coverage. The top-level wave remains
+the only writer and verifier. Use no more than three groups:
 
 1. correctness, contracts, and tests
 2. security, architecture, and devops
@@ -186,9 +190,9 @@ groups:
 Use the first two groups for `light`; use up to all three applicable groups for
 `standard` and `thorough`. Snapshot the checkout before and after scouting. If
 a scout changes it, restore nothing and write `BLOCKED:scout-mutated-checkout`.
-Retry a failed scout once. If required coverage is still unavailable, write
-`BLOCKED:review-scout-unavailable`. If the provider cannot run parallel agents,
-run the same groups sequentially in the top-level session.
+Do not immediately retry a scout after a provider or capacity failure. Cover
+that group sequentially in the top-level session. If required coverage is still
+unavailable, write `BLOCKED:review-scout-unavailable`.
 
 Construct breaking inputs, trace direct callers, and filter speculation.
 
@@ -257,10 +261,20 @@ counting the wave or retrying indefinitely.
 
 ## 7. Result Signal
 
-When `DEX_REVIEW_BUSY_TOKEN` is set, update the live stage before context,
-checks, scouting, verification, and fixes. The busy record is keyed under the
-parent lifecycle session — supplied as `DEX_POLICY_SESSION_ID`, not this
-wave's own `DEX_SESSION_ID` — so the exact call is:
+Before context, checks, scouting, verification, and fixes, mark the matching
+stage from `context`, `checks`, `scout`, `verifier`, and `fixes`:
+
+```bash
+dx_review_metrics_mark "$DEX_REVIEW_METRICS_FILE" "<stage>"
+```
+
+The wrapper owns, clocks, and finalizes this file. Do not replace it with
+self-reported durations. Mark `fixes` before the fix decision and result
+assembly even when the verified fix count is zero. When
+`DEX_REVIEW_BUSY_TOKEN` is set, also update the live stage. The busy record is
+keyed under the parent lifecycle session —
+supplied as `DEX_POLICY_SESSION_ID`, not this wave's own `DEX_SESSION_ID` — so
+the exact call is:
 
 ```bash
 dx_phase_busy_update "$DEX_POLICY_SESSION_ID" 3 "$DEX_REVIEW_BUSY_TOKEN" "<label>"
@@ -270,19 +284,6 @@ Keep the label in this form:
 
 ```text
 Wave <number> · <stage> · <clean-before>/<required-clean> clean
-```
-
-Before completing, atomically write optional stage timing telemetry to
-`DEX_REVIEW_METRICS_FILE` when that path is supplied:
-
-```json
-{
-  "version": 1,
-  "context_seconds": 0,
-  "checks_seconds": 0,
-  "scout_seconds": 0,
-  "verifier_seconds": 0
-}
 ```
 
 ```bash
