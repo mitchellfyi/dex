@@ -161,17 +161,18 @@ assert_eq $'KILL\tnone\t4343' "$(sed -n '3p' "$stale_pid_probe")" \
   "KILL uses only the fresh token scan"
 
 # A running supervisor re-reads the attributed policy instead of freezing the
-# value present at provider launch.
+# value present at provider launch. Leave enough room before the original
+# deadline for a loaded macOS runner to schedule the background policy writer.
 LIVE_TIMEOUT_SESSION="repo-live-timeout-main"
 (
   /bin/sleep 0.2
-  dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 4 phase 3 \
+  dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 8 phase 3 \
     human "Extend the running provider deadline" 0
 ) &
 live_writer_pid=$!
 set +e
-dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 2 3 1 \
-  /bin/sleep 3
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 4 3 1 \
+  /bin/sleep 6
 live_timeout_status=$?
 set -e
 wait "$live_writer_pid"
@@ -186,8 +187,8 @@ dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
 ) &
 live_writer_pid=$!
 set +e
-dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 2 3 1 \
-  /bin/sleep 3
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 4 3 1 \
+  /bin/sleep 6
 live_timeout_status=$?
 set -e
 wait "$live_writer_pid"
@@ -202,7 +203,7 @@ dx_override_clear "$LIVE_TIMEOUT_SESSION" review.pass-timeout phase 3 human \
 ) &
 live_writer_pid=$!
 set +e
-dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 5 3 1 \
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 8 3 1 \
   /bin/sleep 3
 live_timeout_status=$?
 set -e
@@ -218,8 +219,8 @@ dx_override_set "$LIVE_TIMEOUT_SESSION" review.pass-timeout 0 phase 3 human \
 ) &
 live_writer_pid=$!
 set +e
-dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 1 3 1 \
-  /bin/sleep 3
+dx_run_with_live_timeout "$LIVE_TIMEOUT_SESSION" review.pass-timeout 2 3 1 \
+  /bin/sleep 4
 live_timeout_status=$?
 set -e
 wait "$live_writer_pid"
