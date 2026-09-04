@@ -8,13 +8,15 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 - **Shell (bash/zsh-compatible):** `lib/*.sh` — shared libraries
 - **Python 3 (stdlib only):** `hooks/guard-handler.py` — guard evaluation engine;
   `hooks/git-commit-target.py` — commit detection; `hooks/shell_parse.py` — the
-  shell-command reading both share
+  shell-command reading both share; `scripts/*.py` — runtime helpers for
+  redaction, settings, lifecycle state, run logs, and project ownership
+- **Node (no dependencies):** `scripts/ui-capture.cjs` — Playwright UI-capture driver
 - **Markdown + YAML frontmatter:** Skills, agents, guards, prompts, rules
 
 ## Quality Gates
 | Check | Command | Scope |
 |-------|---------|-------|
-| Lint + syntax | `bash tests/check.sh` | shellcheck, `zsh -n dx.sh`, `bash -n` for lib/hooks/bin/tests, `py_compile`, inline-Python syntax, bare test assertions, zsh reserved names, `node --check` |
+| Lint + syntax | `bash tests/check.sh` | shellcheck, `zsh -n`, `bash -n` for shipped shell, `py_compile`, inline-Python syntax, bare test assertions, zsh reserved names, `node --check`, and optional `actionlint` |
 | Test | `bash tests/run-all.sh` | Manifest-driven suite with declared lanes, platforms, timeouts, and isolation |
 | Test (focused) | `bash tests/<name>-test.sh` | Single surface |
 | Format | N/A | No formatter configured |
@@ -28,7 +30,8 @@ dx.sh                Main shell functions (zsh only)
 settings.json        Claude Code hook definitions template
 install.sh           Quick-start installer wrapper
 bin/                 CLI scripts: install, uninstall, init, uninit, config, control, sessions, test, status, sync, maintain, log, tools, ui-capture, dxcodex, install-settings, status-line, activate-loop, complete-receipt, escalate, session-runtime-owner
-docs/                Extended docs: guards, autonomous mode, run specs, RTK token reduction
+docs/                Extended docs: guards, autonomous mode, run specs, events,
+                     factory security, UI capture, and RTK token reduction
 hooks/               Claude Code hooks + guard handler
   guards/            Built-in guard rules (8 rules)
 lib/                 Shared shell libraries sourced by common.sh, including
@@ -37,6 +40,7 @@ prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (0-6, two Phase 3 variants,
                      plus prompt-loop)
 research/            DX research and the isolated review-loop evaluation harness
+scripts/             Python runtime helpers and the Node UI-capture driver
 skills/              Lifecycle skills (20 total, linked into ~/.claude/skills/)
 .dex/                Per-project config (this directory)
   providers.json     Repo-local default agent/provider profile
@@ -83,9 +87,11 @@ agent.
 
 ## Reviewers
 
-Request-type reviewers are attached in Phase 5 while the PR is still a draft;
-Phase 6 marks the PR ready, re-requests them, and posts mention comments. Two
-types:
+Phase 5 may use a draft while preparing metadata, but it must attach
+request-type reviewers and leave the PR ready for review. Phase 6 repairs
+readiness if needed, reconciles reviewer notifications, and posts mention
+comments. Reviewer rows route notifications; they do not create a Phase 6
+approval gate. Two types:
 - `request` — native GitHub review request via Dex's reviewer helper
 - `mention` — `@<handle>` posted as a PR comment (for AI agents that watch mentions)
 

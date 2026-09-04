@@ -10,7 +10,7 @@ Status: active
 Scope: prompts/review-wave.md, prompts/review.md, skills/dxreview*/SKILL.md
 Applies to phases: review (Phase 3), prompt-loop
 Applies to paths: prompts/review-wave.md, prompts/review.md, skills/dxreview*/SKILL.md
-Last verified: 2026-05-20
+Last verified: 2026-09-03
 Recheck when: a new specialist reviewer is added, agent frontmatter schema changes, or `.claude/agent-memory/` semantics change
 
 Lesson:
@@ -24,8 +24,8 @@ Evidence:
   longer exist; review specialists now live in `prompts/review-wave.md` and the
   `skills/dxreview*/` skills. The read-only rule survived the move.
 - `hooks/guards/review-assessment-no-bash.md` and
-  `hooks/guards/review-assessment-no-file-edits.md` enforce it for the risk
-  assessor, blocking Bash and file edits while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`.
+  `hooks/guards/review-assessment-no-file-edits.md` surface violations for the
+  risk assessor as advisory warnings while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`.
 - `.dex/review-rules.md` codifies the rule for review-wave prompts and skills.
 - Commit `4742c3f feat(review): add specialist review wave loop` body lists a
   smoke-test fix for "read-only specialist memory behavior", confirming this
@@ -47,7 +47,7 @@ Status: active
 Scope: lib/review.sh, lib/review-loop.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review-loop.md, prompts/phase-audits/3-review.md, skills/dximplement/SKILL.md, skills/dxreviewloop/SKILL.md, skills/dxreview/SKILL.md
 Applies to phases: review (Phase 3), prompt-loop
 Applies to paths: lib/review*.sh, prompts/review-risk-assessment.md, prompts/review-wave.md, prompts/phase-audits/2-implement.md, prompts/phase-audits/3-review*.md, skills/dximplement/SKILL.md, skills/dxreview*/SKILL.md
-Last verified: 2026-08-07
+Last verified: 2026-09-03
 Recheck when: review wave architecture changes, the context-pack file path or session-id derivation changes, the CLEAN/FINDINGS_FIXED result semantics change, or the dxreviewloop tier/gate/churn policy changes
 
 Lesson:
@@ -62,7 +62,7 @@ fingerprints, clean counts, or telemetry. Fifth, only a wave that found zero
 verified findings and applied zero fixes writes `CLEAN`; any fix forces
 `FINDINGS_FIXED:N` and resets the outer clean-pass counter. Sixth, the Phase 2
 implementation agent selects `small`, `normal`, or `complex` review risk for the
-final scope, requiring 1, 3, or 6 consecutive clean waves.
+final scope, requiring 1, 2, or 3 consecutive clean waves.
 
 Evidence:
 - Commit `4742c3f feat(review): add specialist review wave loop` body lists
@@ -71,7 +71,7 @@ Evidence:
 - `prompts/review-wave.md` Step 1 requires context pack first; Step 2 requires
   deterministic checks before semantic review; Step 7 defines `CLEAN` result
   semantics.
-- `lib/review.sh` owns tier normalization, 1/3/6 gates, scope-bound selection,
+- `lib/review.sh` owns tier normalization, 1/2/3 gates, scope-bound selection,
   resumable state, success receipts, result validation, deterministic churn
   detection, and typed telemetry payload construction.
 - `prompts/review-risk-assessment.md` owns the ordered deterministic tier rubric;
@@ -87,6 +87,9 @@ Evidence:
   the review wave must cover the full diff, not a subset.
 - Commit `d868c38 fix: pause phase three while reviews run` confirms review
   waves must not race the calling phase.
+- Commit `e920421 fix(review): align tests with the v2 clean-pass policy and
+  name the busy session` updates the remaining runtime, harness, and test
+  consumers from the old 1/3/6 contract to the fixed 1/2/3 policy.
 
 Future agent behavior:
 - When editing `prompts/review-wave.md` or
@@ -100,7 +103,7 @@ Future agent behavior:
 - When a wave applies any fix, write `FINDINGS_FIXED:N`; never write `CLEAN`
   after applying a fix.
 - Select the highest matching risk tier after the final Phase 2 in-scope change:
-  `small` requires 1 clean wave, `normal` 3, and `complex` 6. Risk may escalate
+  `small` requires 1 clean wave, `normal` 2, and `complex` 3. Risk may escalate
   but never downgrade.
 - Keep Phase 2 selection mandatory in the normal lifecycle. A legacy or resumed
   lifecycle with no valid current-scope selection may recover through a fresh

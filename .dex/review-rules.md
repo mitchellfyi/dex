@@ -39,8 +39,9 @@ Path-specific review focus for Dex review waves.
 - Lifecycle skills must preserve phase ownership without treating commits as a
   final-verification privilege. Phase 2 records implementation checkpoints,
   Phase 3 records accepted review fixes, and Phase 4 records verification
-  repairs. No PR creation occurs before Phase 5, and no external reviewer
-  polling occurs before Phase 6.
+  repairs. No PR creation occurs before Phase 5; Phase 5 must leave the PR
+  ready for review; and no external reviewer polling occurs before Phase 6.
+  Reviewer rows are notification routes, not a Phase 6 approval gate.
 - Skill instructions should avoid recursively invoking broader loops from inside
   already-looped phases.
 
@@ -70,3 +71,5 @@ Path-specific review focus for Dex review waves.
   as `dx.sh`, skills, and phase-audit prompts.
 - Avoid documenting draft PR or external reviewer behavior as Phase 3 work;
   that belongs to Phase 5/6 and `/dxprreview`.
+- Keep Phase 5 readiness and Phase 6 approval/reporting semantics aligned with
+  `prompts/phase-audits/5-pr.md` and `prompts/phase-audits/6-complete.md`.

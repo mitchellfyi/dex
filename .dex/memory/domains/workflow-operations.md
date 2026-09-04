@@ -1,7 +1,8 @@
 # Workflow Operations
 
 Durable lessons about the Dex lifecycle: phase ownership, in-place vs
-worktree branch modes, and shared global state Dex touches outside the repo.
+worktree branch modes, runtime leases, and shared global state Dex touches
+outside the repo.
 
 ## M-002: Phase gates stay owned while Git history follows the work
 
@@ -10,7 +11,7 @@ Status: active
 Scope: dx.sh phase routing, skills/dx*/SKILL.md, prompts/phase-audits/*.md, hooks/phase-loop.sh, hooks/user-prompt-submit.sh
 Applies to phases: plan, implement, review, verify, pr, complete
 Applies to paths: dx.sh, skills/, prompts/phase-audits/, hooks/phase-loop.sh, hooks/user-prompt-submit.sh
-Last verified: 2026-09-01
+Last verified: 2026-09-03
 Recheck when: a new phase is introduced, phase ownership changes, or phase audit prompts are rewritten
 
 Lesson:
@@ -20,9 +21,11 @@ keeps each gate with its owning phase while Git history follows the work. Phase
 wave may commit and push accepted review fixes after it has exclusive ownership
 of the checkout; the lifecycle parent remains quiescent while that child runs.
 Phase 4 is the final PR verification gate and records any repair checkpoints it
-produces. Phase 5 owns PR creation, and Phase 6 owns external reviewer polling.
-A full verification pass is not a prerequisite for committing or pushing, but
-it must pass before PR handoff.
+produces. Phase 5 owns PR creation and must leave the PR ready for review.
+Phase 6 owns external reviewer polling and resolves actionable feedback, but a
+missing review or approval does not block completion. A full verification pass
+is not a prerequisite for committing or pushing, but it must pass before PR
+handoff.
 
 Evidence:
 - `c8f3660 fix(dex): defer draft PR creation to Phase 5 (/dxpr)` — Phase 5
@@ -37,6 +40,11 @@ Evidence:
   implementation` — handoff stays inside the lifecycle.
 - `1b2c00e fix: make dxreview dispatch to review loop` — `/dxreview` must
   dispatch into the review wave loop, not freelance.
+- `457697c feat(lifecycle): make Phase 5 publish ready PRs` — Phase 5 owns the
+  ready-for-review transition; Phase 6 keeps an idempotent repair path.
+- `ade235f fix(lifecycle): stop gating completion on PR approval` — reviewer
+  rows route notifications, while Phase 6 reports merge-review state without
+  waiting solely for an approval.
 - `prompts/commit-format.md`, `skills/dxcommit/SKILL.md`, and
   `skills/dxverify/SKILL.md` define commits as working-history checkpoints and
   final verification as the PR gate.
@@ -56,8 +64,9 @@ Future agent behavior:
   parent must remain quiescent until the review-child fence clears.
 - A Phase 3 single-wave audit may complete with `FINDINGS_FIXED:N`; the outer
   `/dxreviewloop` owns the selected tier's consecutive-`CLEAN` gate.
-- Do not add PR creation, reviewer requests, draft-PR transitions, or external
-  reviewer polling outside the phase that owns them.
+- Do not add PR creation, reviewer requests, readiness transitions, or external
+  reviewer polling outside the phase that owns them. Phase 5 must leave the PR
+  ready; Phase 6 may repair readiness but must not treat approval as its gate.
 - When a new phase audit prompt is added, confirm its completion criteria match
   the state/result files read by `dx.sh` and `hooks/phase-loop.sh`.
 
@@ -68,7 +77,7 @@ Status: active
 Scope: dx.sh lifecycle and cleanup helpers, bin/uninit.sh, hooks/session-end.sh, lib/session.sh, lib/worktree.sh
 Applies to phases: implement, verify, complete (cleanup paths), and any session lifecycle change
 Applies to paths: dx.sh, bin/uninit.sh, hooks/session-end.sh, lib/session.sh, lib/worktree.sh
-Last verified: 2026-05-15
+Last verified: 2026-09-03
 Recheck when: branch-mode handling changes, worktree creation/cleanup logic changes, or session ID derivation changes
 
 Lesson:
@@ -87,6 +96,9 @@ Evidence:
 - `088cc27 fix: scope session-end branch state`.
 - `39d811c fix: harden task lifecycle branch state`.
 - `c61b8b1 fix: recover inline hooks from stale phase env`.
+- `24d8a8f fix(lifecycle): let a dirty in-place checkout keep its pure branch
+  rename` confirms that dirty-tree rejection belongs only on operations that
+  move the working tree, not on in-place bookkeeping or a pure branch rename.
 - `dx.sh` line 218+ and 387+ branches explicitly on `workspace_mode == in-place`.
 
 Future agent behavior:
@@ -96,6 +108,9 @@ Future agent behavior:
   in-place sessions key off the branch name plus repo key, not a worktree path.
 - Cleanup logic must skip active in-place branches and handle branch renames
   without deleting state.
+- Permit an already-authorized dirty in-place checkout to record state or
+  rename its current branch without rejecting it merely for being dirty. Keep
+  dirty-tree checks on branch switches, fast-forward merges, and hard resets.
 - New session/branch state files must be cleaned up by `dx_cleanup_session`
   and legacy migration when appropriate (per `.dex/review-rules.md` §
   `lib/*.sh`).
@@ -140,3 +155,55 @@ Future agent behavior:
   clear error rather than degrading to a destructive overwrite.
 - Apply the same separation to any future shared global config (hooks,
   permissions, environment, MCP servers).
+
+## M-010: Runtime lock lineage gates mutations, not durable reads or recovery
+
+Domain: workflow-operations
+Status: active
+Scope: lifecycle runtime records, mutation locks, health checks, restart, and recovery
+Applies to phases: any lifecycle phase; session resume, recovery, cleanup, and maintenance
+Applies to paths: lib/session-runtime.sh, lib/session.sh, lib/session-management.sh, hooks/session-end.sh, tests/session-runtime*.sh
+Last verified: 2026-09-04
+Recheck when: the runtime record schema changes, lock identity fields change, a new runtime mutation is added, or restart/recovery ownership rules change
+
+Lesson:
+Runtime records are durable across reboots and state-directory moves, but their
+stored lock device, inode, and generation describe the lock held when the lease
+was published. macOS can change a volume's device number after reboot, and a
+synced state directory can carry an entirely foreign lock identity. Public
+reads, health checks, restart, and recovery therefore validate the record
+without requiring its old lock identity to match the current lock. A new lease
+must acquire the live mutation lock and bind the published record to that lock.
+Heartbeat, finish, purge, and publication mutate a live lease, so they must
+still require the record's lock lineage and authenticated owner token.
+
+Evidence:
+- Commit `8b28129 fix(runtime): resume records with stale lock identities after
+  reboots` separates durable reads, restart, and recovery from live-lease
+  mutation checks and adds rebooted-device and foreign-state-directory cases to
+  `tests/session-runtime-core-test.sh`.
+- `lib/session-runtime.sh` documents the split beside `require_record_lock()`:
+  publication and lease mutations require the recorded lineage; starts,
+  recovery, and public reads deliberately do not.
+- `publish_record()` verifies the held lock before and after its atomic write,
+  then checks the published record against the live lock. Heartbeat, finish,
+  and purge acquire that lock and authenticate the lease token and owner.
+- Commits `0affea8 fix(lock): record the acquiring process, not the top-level
+  shell` and `d7e2bcd fix: second-wave robustness pass over hooks, control, and
+  periphery` reinforce the same rule at callers: lock ownership belongs to the
+  process that acquires the lock, except where a documented command-substitution
+  boundary intentionally delegates ownership to its caller.
+
+Future agent behavior:
+- Do not reject a validated runtime record only because its stored lock device,
+  inode, or generation differs from the current lock during a public read,
+  restart, or dead-owner recovery.
+- Acquire and revalidate the live mutation lock before publishing a new lease,
+  and write that lock's current identity into the record.
+- Keep heartbeat, finish, purge, and any new live-lease mutation bound to the
+  recorded lock lineage, lease token, and stable process identity.
+- When passing a lock owner PID through a helper or command substitution, use
+  the process that actually owns the critical section and document deliberate
+  exceptions.
+- Exercise rebooted-device, foreign-state-directory, replaced-lock, stale-owner,
+  and token-mismatch cases when changing runtime ownership semantics.

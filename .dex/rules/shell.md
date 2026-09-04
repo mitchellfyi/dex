@@ -33,7 +33,7 @@ Sourcing `common.sh` automatically sources every other module in `lib/`:
 `maintenance.sh`, `output.sh`, `project-state.sh`, `provider.sh`, `review.sh`,
 `review-controller.sh`, `review-loop.sh`, `review-policy.sh`, `rtk.sh`,
 `run-spec.sh`, `session-catalog.sh`, `session-runtime.sh`, `session.sh`,
-`ui-capture.sh`, `worker.sh`, and `worktree.sh`.
+`session-management.sh`, `ui-capture.sh`, `worker.sh`, and `worktree.sh`.
 
 ## Output
 
