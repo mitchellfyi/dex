@@ -110,11 +110,13 @@ line, including when all fields are unchanged or N/A.
    re-review the full change set.
 4. The loop uses the selected tier's global clean-wave requirement: 1 for
    `small`, 2 for `normal`, and 3 for `complex`. A candidate branch cannot
-   lower the active gate, and the loop has no outer iteration
-   maximum. For an outlier, `dx control override review.clean-passes <1-30>`
-   keeps independent review while changing the target. A lower target is bound
-   to the attributed decision and records Phase 3 as waived. Use
-   `dx control waive review.clean-passes` only to skip the remaining waves.
+   lower the active gate. The soft outer-wave budgets are 3, 6, and 9. For an
+   outlier, `dx control override review.clean-passes <1-30>` keeps independent
+   review while changing the target. A lower target is bound to the attributed
+   decision and records Phase 3 as waived. Agents and humans may change the
+   operational budget with `dx control override review.max-waves <1-30>`;
+   exhausting it pauses without changing assurance. Use `dx control waive
+   review.clean-passes` only to skip the remaining waves.
 5. Prior review conclusions, findings, fingerprints, clean counts, and telemetry
    are never passed to a later reviewer.
 6. Each accepted wave supplies evidence version 3 with exact ordered criterion
@@ -256,9 +258,10 @@ The phase audit loop continues until:
    Stop-hook audit, separate from `/dxreviewloop`'s clean-pass loop
 3. **User interrupts** — the user can always take over
 
-The outer `/dxreviewloop` has no iteration maximum. It stops only after its
-clean gate succeeds or it reaches a blocker, residual finding, churn condition,
-provider failure, invalid result, user interruption, or direct intervention.
+The outer `/dxreviewloop` uses the selected tier's 3/6/9 soft wave budget. It
+stops after its clean gate succeeds, pauses when the budget is spent, or pauses
+for a blocker, residual finding, churn condition, provider failure, invalid
+result, user interruption, or direct intervention.
 
 ### When to output the completion promise
 

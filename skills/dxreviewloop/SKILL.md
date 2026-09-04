@@ -99,8 +99,11 @@ records Phase 3 as waived rather than claiming trusted policy passed. Use
 `dx control waive review.clean-passes` only to skip the remaining gate and
 advance without a clean-review receipt.
 
-There is no outer iteration limit. The loop continues until the clean-pass gate
-succeeds or a deterministic pause condition requires intervention.
+The outer loop has a soft wave budget of 3 for `small`, 6 for `normal`, and 9
+for `complex`. It re-reads `review.max-waves` between waves. An agent or human
+may change that value from 1 through 30 with an attributed override when the
+evidence warrants more or fewer attempts. Exhausting the budget pauses review,
+preserves valid clean credit, and never weakens or waives the clean-pass gate.
 
 ## Scope
 
@@ -256,7 +259,7 @@ Print:
 - Scope: full current change set | entire codebase
 - Risk tier: small | normal | complex
 - Review profile: light | standard | thorough
-- Iterations: N
+- Iterations: N / maximum
 - Consecutive clean: M / required
 - Findings fixed this run: K
 - Result: SUCCESS | PAUSED

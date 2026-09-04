@@ -46,3 +46,7 @@ Do not put free-form prose, paths, source excerpts, or secrets in the reason-cod
 field. The tier maps deterministically to the required consecutive clean waves:
 the caller resolves the exact requirement from the trusted review policy before
 the first wave.
+
+The same tier supplies a soft outer-wave budget of 3, 6, or 9 respectively.
+That budget is operational and may be changed through an attributed
+`review.max-waves` override without changing the assurance tier.

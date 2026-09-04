@@ -100,6 +100,10 @@ populate_full_state() { # <sid>
   printf 'terminal\n' > "$DX_STATE_DIR/${session_id}.terminal-commit"
   printf 'run-forget-happy\n' > "$(dx_run_id_file "$session_id")"
   dx_record_session_branch "$session_id" "$REPO_A"
+  dx_agent_session_handle_write "$session_id" claude \
+    01999999-1111-4222-8333-444444444444
+  dx_agent_session_handle_write "$session_id" codex \
+    01999999-aaaa-4bbb-8ccc-dddddddddddd
 
   for state_target in \
     "$(dx_loop_file "$session_id")" \

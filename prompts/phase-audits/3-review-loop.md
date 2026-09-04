@@ -33,6 +33,10 @@ All of these must be true:
   receipt remains bound to the global policy and override decision, and the
   phase outcome is `waived`. A full `dx control waive review.clean-passes`
   advances without a clean-review receipt.
+- The selected tier supplies a soft outer-wave budget: 3 for `small`, 6 for
+  `normal`, and 9 for `complex`. The loop re-reads an attributed
+  `review.max-waves` override between waves. Budget exhaustion pauses without
+  discarding valid clean credit and never counts as completion or a waiver.
 - Every counted clean result came from a fresh pass-scoped agent session that
   saw the current code and scope but no prior review reports, findings,
   fingerprints, clean-pass counts, telemetry, or stale conversation context.
@@ -76,8 +80,9 @@ All of these must be true:
 - Accepted review findings were reconciled under
   `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`.
 
-The outer review loop has no iteration maximum. It continues until the clean
-gate succeeds or a deterministic pause condition occurs.
+The outer review loop pauses when its soft wave budget is spent. An agent or
+human may raise `review.max-waves` with an attributed reason and resume when
+another wave is justified.
 
 If the Stop hook reports that an interrupt left a stale review fence whose
 owner PID is dead, do not delete the marker or wait for its timeout. Run the

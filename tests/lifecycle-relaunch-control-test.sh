@@ -56,6 +56,7 @@ run_relaunch() { # <session-id> <marker-file> <output-file> <agent>
       unfunction __dx_claude 2>/dev/null
       __dx_claude() {
         local marker_line="launched" engine_line=""
+        printf "%s\n" "$@" > "${TEST_MARKER}.args"
         [[ -e "$(dx_lifecycle_control_file "$TEST_SESSION_ID")" ]] && marker_line+=" control"
         [[ -e "$(dx_paused_file "$TEST_SESSION_ID")" ]] && marker_line+=" paused"
         [[ -e "$(dx_pause_state_file "$TEST_SESSION_ID")" ]] && marker_line+=" pause-state"
@@ -99,6 +100,8 @@ run_relaunch "$STALE_SID" "$STALE_MARKER" "$TMP_DIR/stale.out" claude || true
 assert_file "$STALE_MARKER"
 assert_eq "launched active engine=claude" "$(<"$STALE_MARKER")" \
   "stale cancel receipt and pause consumed before the provider started"
+assert_contains "--resume" "${STALE_MARKER}.args"
+assert_contains "relaunch-control" "${STALE_MARKER}.args"
 # The stub provider exits non-zero, so the wrapper pauses afterwards. That
 # pause must come from the provider exit, not from the consumed receipt.
 assert_not_contains "cancelled by direct human instruction" "$TMP_DIR/stale.out"
@@ -110,12 +113,18 @@ fi
 # A pending phase transition is the Stop hook's to apply; the relaunch keeps it.
 JUMP_SID="relaunch-pending-jump"
 seed_phase_two "$JUMP_SID"
+CLAUDE_SESSION_HANDLE="01999999-1111-4222-8333-444444444444"
+dx_agent_session_handle_write "$JUMP_SID" claude "$CLAUDE_SESSION_HANDLE"
 dx_write_lifecycle_control "$JUMP_SID" jump 4 terminal "" 2 ""
 JUMP_MARKER="$TMP_DIR/jump.marker"
 run_relaunch "$JUMP_SID" "$JUMP_MARKER" "$TMP_DIR/jump.out" claude || true
 assert_file "$JUMP_MARKER"
 assert_eq "launched control active engine=claude" "$(<"$JUMP_MARKER")" \
   "pending jump receipt preserved for the Stop hook"
+assert_contains "$CLAUDE_SESSION_HANDLE" "${JUMP_MARKER}.args"
+if grep -Fxq -- "relaunch-control" "${JUMP_MARKER}.args"; then
+  fail "exact Claude resume also passed the legacy session name"
+fi
 
 # An unreadable receipt is refused before any provider starts.
 BROKEN_SID="relaunch-broken-receipt"
@@ -129,9 +138,9 @@ assert_no_file "$BROKEN_MARKER"
 assert_contains "unreadable or invalid lifecycle control receipt" "$TMP_DIR/broken.out"
 assert_dir "$(dx_lifecycle_control_file "$BROKEN_SID")"
 
-# The direct Codex wrapper checks controls before launch on its own path. A
-# stale cancel and its pause are consumed there too; Codex keeps no activation
-# marker, so only the launch and the engine remain to record.
+# The interactive Codex launcher checks controls before launch on its own path.
+# A stale cancel and its pause are consumed there too, then its Stop hook is
+# activated before the session starts.
 CODEX_SID="relaunch-codex-stale-cancel"
 seed_phase_two "$CODEX_SID"
 printf 'engine=codex-plugin\nsession=%s\n' "$CODEX_SID" > "$(dx_provider_state_file "$CODEX_SID")"
@@ -140,8 +149,22 @@ dx_lifecycle_detach "$CODEX_SID" manual-cancel terminal
 CODEX_MARKER="$TMP_DIR/codex.marker"
 run_relaunch "$CODEX_SID" "$CODEX_MARKER" "$TMP_DIR/codex.out" codex || true
 assert_file "$CODEX_MARKER"
-assert_eq "launched engine=codex-plugin" "$(<"$CODEX_MARKER")" \
-  "direct Codex relaunch consumed the stale cancel receipt and pause"
+assert_eq "launched active engine=codex-plugin" "$(<"$CODEX_MARKER")" \
+  "interactive Codex relaunch consumed the stale cancel receipt and pause"
+assert_contains "--continue" "${CODEX_MARKER}.args"
 assert_not_contains "cancelled by direct human instruction" "$TMP_DIR/codex.out"
+
+# Once SessionStart has captured Codex's thread ID, relaunch uses that exact
+# conversation instead of whichever session happens to be newest in the cwd.
+CODEX_EXACT_SID="relaunch-codex-exact-session"
+CODEX_SESSION_HANDLE="01999999-aaaa-4bbb-8ccc-dddddddddddd"
+seed_phase_two "$CODEX_EXACT_SID"
+dx_agent_session_handle_write "$CODEX_EXACT_SID" codex "$CODEX_SESSION_HANDLE"
+CODEX_EXACT_MARKER="$TMP_DIR/codex-exact.marker"
+run_relaunch "$CODEX_EXACT_SID" "$CODEX_EXACT_MARKER" \
+  "$TMP_DIR/codex-exact.out" codex || true
+assert_file "$CODEX_EXACT_MARKER"
+assert_contains "$CODEX_SESSION_HANDLE" "${CODEX_EXACT_MARKER}.args"
+assert_not_contains "--continue" "${CODEX_EXACT_MARKER}.args"
 
 echo "lifecycle relaunch control tests passed"

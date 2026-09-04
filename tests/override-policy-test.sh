@@ -37,6 +37,10 @@ dx_override_set "$SESSION" review.clean-passes 2 phase 3 human \
 REVIEW_WAIVER_BINDING=$(dx_override_binding "$SESSION" review.clean-passes 2 3)
 [[ "$REVIEW_WAIVER_BINDING" =~ ^[a-f0-9]{64}$ ]] || assert_at $LINENO
 assert_rejected "$LINENO" dx_override_binding "$SESSION" review.clean-passes 3 3
+dx_override_set "$SESSION" review.max-waves 12 phase 3 agent \
+  "The latest wave fixed a verified issue, so another clean sequence is warranted" 0
+assert_eq "12" "$(dx_override_effective "$SESSION" review.max-waves 6 3)" \
+  "review wave budget override"
 
 dx_override_set "$SESSION" review.pass-timeout 3600 session - human \
   "Keep review waves roomy for this run" 0
@@ -107,6 +111,10 @@ assert_rejected "$LINENO" dx_override_set "$SESSION" loop.max-iterations 40 \
   phase 2 robot "Invalid source" 0
 assert_rejected "$LINENO" dx_override_set "$SESSION" loop.max-iterations many \
   phase 2 agent "Invalid known numeric gate" 0
+assert_rejected "$LINENO" dx_override_set "$SESSION" review.max-waves 0 \
+  phase 3 agent "Review wave budget must be positive" 0
+assert_rejected "$LINENO" dx_override_set "$SESSION" review.max-waves 31 \
+  phase 3 agent "Review wave budget stays within its supported range" 0
 assert_rejected "$LINENO" dx_override_set "$SESSION" maintain.max-surfaces 0 \
   session - agent "Positive maintenance limit required" 0
 assert_rejected "$LINENO" dx_override_set "$SESSION" guard.project-policy bypass \
@@ -126,6 +134,8 @@ grep -Fq $'waive\treview.clean-passes\twaived\tphase\t3\thuman\t0\tIndependent r
   "$(dx_override_file "$SESSION")" || assert_at $LINENO
 assert_rejected "$LINENO" dx_override_waive "$SESSION" \
   unsupported.imaginary-gate 3 human "Unknown waiver target"
+assert_rejected "$LINENO" dx_override_waive "$SESSION" review.max-waves 3 \
+  human "Review wave budgets may be changed but not waived"
 
 # Concurrent writers must not lose one another. Each writes a separate gate so
 # the final active inventory should contain all of them.

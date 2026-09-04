@@ -6,6 +6,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/capture-provider-session.sh\"",
+            "timeout": 30
+          },
+          {
+            "type": "command",
             "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/load-ticket-context.sh\""
           }
         ]

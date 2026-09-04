@@ -22,6 +22,15 @@ __dx_review_validate_gates() {
     return 1
   fi
 }
+__dx_review_validate_wave_budget() {
+  local maximum_waves="$1"
+  if ! __dx_review_is_positive_integer "$maximum_waves" \
+    || [[ ${#maximum_waves} -gt 2 ]] \
+    || [[ $((10#$maximum_waves)) -gt 30 ]]; then
+    dx_error "Invalid review wave budget '${maximum_waves:-<empty>}'. Use a whole number from 1 to 30."
+    return 1
+  fi
+}
 # __dx_review_phase_promise
 # Resolve the Phase 3 promise even when a child shell inherited functions only.
 __dx_review_phase_promise() {
@@ -360,6 +369,9 @@ __dx_review_pause_intervention() {
       ;;
     repeated_fingerprint|alternating_fingerprints|wave_reported_churn)
       printf '%s\n' "Inspect the repeating or oscillating fixes, stabilize the implementation, then rerun dxreviewloop."
+      ;;
+    wave_budget_exhausted)
+      printf '%s\n' "Raise the review.max-waves override with an attributed reason, then rerun dxreviewloop."
       ;;
     state_write_failed|selection_write_failed|receipt_write_failed)
       printf '%s\n' "Restore writable Dex state storage, then rerun dxreviewloop."
@@ -1464,6 +1476,22 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     return 1
   }
   required_clean=$((10#$required_clean))
+  local default_max_waves="" max_waves=""
+  default_max_waves=$(dx_review_policy_tier_max_waves "$review_tier") || {
+    dx_error "Could not resolve the review wave budget for tier '${review_tier}'."
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
+    return 1
+  }
+  max_waves=$(dx_override_effective "$session_id" review.max-waves \
+    "$default_max_waves" 3) || {
+    dx_error "The session override journal is unsafe or malformed."
+    return 1
+  }
+  __dx_review_validate_wave_budget "$max_waves" || {
+    [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed invalid_wave_budget "$session_id"
+    return 1
+  }
+  max_waves=$((10#$max_waves))
   if ! dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" \
     "$PWD" "$required_clean" "$review_criteria_binding" "$review_policy_binding"; then
     dx_error "Could not persist the review risk selection."
@@ -1473,7 +1501,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
 
   __dx_review_emit_event "$review_run_id" "review.tier.selected" "info" "Review tier selected" "$review_phase" \
     tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" source="$selection_source" reason_codes="$selection_reasons" \
-    policy_small_int="$review_policy_small" policy_normal_int="$review_policy_normal" policy_complex_int="$review_policy_complex"
+    policy_small_int="$review_policy_small" policy_normal_int="$review_policy_normal" policy_complex_int="$review_policy_complex" \
+    max_waves_int="$max_waves"
 
   local review_promise
   local review_start_lock_rc=0 review_start_cleanup_rc=0
@@ -1578,6 +1607,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   else
     dx_info "Review wave timeout: $(dx_format_duration "$pass_timeout")."
   fi
+  dx_info "Review wave budget: ${max_waves} waves."
 
   dx_info "Review · ${review_tier}/${review_profile} · ${required_clean} clean wave(s) required"
   dx_info "$(dx_agent_label "$provider_agent") · ${branch} · ${scope_name} (${files_changed} files)"
@@ -1620,6 +1650,35 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         trusted_required_clean_int="$default_required_clean"
     fi
     [[ $clean_passes -lt $required_clean ]] || break
+    local live_default_max_waves="" live_max_waves=""
+    live_default_max_waves=$(dx_review_policy_tier_max_waves "$review_tier") || {
+      terminal_reason="tier_resolution_error"
+      break
+    }
+    live_max_waves=$(dx_override_effective "$session_id" review.max-waves \
+      "$live_default_max_waves" 3) || {
+      terminal_reason="override_state_invalid"
+      break
+    }
+    if ! __dx_review_validate_wave_budget "$live_max_waves"; then
+      terminal_reason="invalid_wave_budget"
+      break
+    fi
+    live_max_waves=$((10#$live_max_waves))
+    default_max_waves="$live_default_max_waves"
+    if [[ "$live_max_waves" -ne "$max_waves" ]]; then
+      max_waves="$live_max_waves"
+      __dx_review_emit_event "$review_run_id" "review.wave_budget.changed" \
+        "warn" "Review wave budget changed" "$review_phase" \
+        max_waves_int="$max_waves" iteration_int="$review_iteration"
+      dx_info "Review wave budget changed: ${max_waves} waves."
+    fi
+    if [[ $review_iteration -ge $max_waves ]]; then
+      terminal_reason="wave_budget_exhausted"
+      terminal_detail="${review_iteration}/${max_waves}"
+      terminal_preserve_credit=1
+      break
+    fi
     pass_timeout=$(dx_override_effective "$session_id" review.pass-timeout \
       "$pass_timeout_default" 3) || {
       terminal_reason="override_state_invalid"
@@ -1664,7 +1723,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     }
 
     review_iteration=$((review_iteration + 1))
-    dx_info "Wave ${review_iteration} · starting · ${clean_passes}/${required_clean} clean"
+    dx_info "Wave ${review_iteration}/${max_waves} · starting · ${clean_passes}/${required_clean} clean"
 
     local pass_nonce="" pass_session_id="" pass_session_name=""
     pass_nonce=$(__dx_review_nonce)
@@ -2771,6 +2830,7 @@ ${message}"
       trusted_required_clean_int="$trusted_required_clean" \
       assurance_outcome="$assurance_outcome" \
       clean_passes_int="$clean_passes" iterations_int="$review_iteration" \
+      max_waves_int="$max_waves" \
       findings_fixed_int="$findings_fixed_total" \
       total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" \
       reason=clean_gate_reached
@@ -2780,7 +2840,7 @@ ${message}"
       dx_done "Review complete: ${clean_passes} consecutive clean ${clean_pass_noun}."
     fi
     echo "  Risk tier: ${review_tier} (${review_profile})"
-    echo "  Iterations: ${review_iteration}"
+    echo "  Iterations: ${review_iteration}/${max_waves}"
     echo "  Findings fixed: ${findings_fixed_total}"
     if [[ "$assurance_outcome" == "waived" ]]; then
       echo "  Assurance: WAIVED (${required_clean}/${trusted_required_clean} clean passes required)"
@@ -2838,13 +2898,13 @@ ${message}"
   fi
   trap - INT TERM HUP
   __dx_review_emit_event "$review_run_id" "review.paused" "warn" "Review paused" "$review_phase" \
-    tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason="${terminal_reason:-unknown}"
+    tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" clean_passes_int="$clean_passes" iterations_int="$review_iteration" max_waves_int="$max_waves" findings_fixed_int="$findings_fixed_total" total_duration_seconds_int="$(( $(date +%s) - review_started_epoch ))" reason="${terminal_reason:-unknown}"
   if [[ "$terminal_reason" == "blocked" && -n "$terminal_detail" ]]; then
     dx_error "dxreviewloop blocked: ${terminal_detail}"
   fi
   dx_info "Review paused: ${terminal_reason:-unknown}."
   echo "  Risk tier: ${review_tier} (${review_profile})"
-  echo "  Iterations: ${review_iteration}"
+  echo "  Iterations: ${review_iteration}/${max_waves}"
   echo "  Consecutive clean: ${clean_passes}/${required_clean}"
   echo "  Findings fixed: ${findings_fixed_total}"
   echo "  Result: PAUSED"

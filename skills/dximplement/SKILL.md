@@ -260,7 +260,8 @@ dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIE
 ```
 
 The tier selects Dex's fixed global clean-wave policy: 1 for `small`, 2 for
-`normal`, and 3 for `complex`. The persisted selection is bound to that policy.
+`normal`, and 3 for `complex`, plus a soft outer-wave budget of 3, 6, or 9.
+The persisted selection is bound to the clean-wave policy.
 Candidate-branch edits cannot lower the active gate, and the launch-only
 `DEX_REVIEW_CLEAN_PASSES` value can only raise it. An attributed
 `dx control override review.clean-passes <1-30>` may lower the effective target

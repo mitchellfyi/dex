@@ -22,6 +22,34 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
+CAPTURE_SID="provider-session-capture"
+CLAUDE_HANDLE="01999999-1111-4222-8333-444444444444"
+CODEX_HANDLE="01999999-aaaa-4bbb-8ccc-dddddddddddd"
+printf '%s\n' \
+  "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$CLAUDE_HANDLE\"}" \
+  | DEX_SESSION_ID="$CAPTURE_SID" DX_PROVIDER_ENGINE=claude \
+    bash "$ROOT/hooks/capture-provider-session.sh"
+assert_eq "$CLAUDE_HANDLE" \
+  "$(dx_agent_session_handle_read "$CAPTURE_SID" claude)" \
+  "captured Claude session ID"
+assert_eq "600" \
+  "$(dx_path_mode "$(dx_agent_session_handle_file "$CAPTURE_SID" claude)")" \
+  "Claude session ID permissions"
+
+printf '%s\n' \
+  "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$CODEX_HANDLE\"}" \
+  | DEX_SESSION_ID="$CAPTURE_SID" DX_PROVIDER_ENGINE=codex-plugin \
+    bash "$ROOT/hooks/capture-provider-session.sh"
+assert_eq "$CODEX_HANDLE" \
+  "$(dx_agent_session_handle_read "$CAPTURE_SID" codex)" \
+  "captured Codex session ID"
+
+INVALID_CAPTURE_SID="provider-session-invalid"
+printf '%s\n' '{"hook_event_name":"Stop","session_id":"../unsafe"}' \
+  | DEX_SESSION_ID="$INVALID_CAPTURE_SID" DX_PROVIDER_ENGINE=claude \
+    bash "$ROOT/hooks/capture-provider-session.sh"
+assert_no_file "$(dx_agent_session_handle_file "$INVALID_CAPTURE_SID" claude)"
+
 PAUSE_FILE=$(dx_watch_pause_file "$DEX_SESSION_ID")
 printf 'paused\n' > "$PAUSE_FILE"
 

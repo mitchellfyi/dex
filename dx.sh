@@ -1114,6 +1114,7 @@ __dx_build_system_context() {
   phase_label=$(__dx_phase_name "$step")
   local include_direct_codex_contract=0
   if [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" \
+    && "${DEX_HEADLESS_RUN:-0}" == "1" \
     && "$completion_generation" =~ ^[0-9a-f]{32}$ ]]; then
     include_direct_codex_contract=1
   fi
@@ -1134,7 +1135,7 @@ __dx_build_system_context() {
 
 This lifecycle is running in-place in the current checkout. No Dex worktree
 was created. Dex still prepared the normal lifecycle branch in this checkout
-before launching Claude. Treat existing files, staged changes, unstaged changes,
+before launching the agent. Treat existing files, staged changes, unstaged changes,
 and the current branch as user-owned context. Do not switch branches or create a
 new branch unless the ticket setup helper is resolving a tracker-provided branch.
 EOF
@@ -1183,9 +1184,9 @@ criteria consistently before the hook authorizes completion.
 Do NOT try to stop until you have genuinely completed all work for this phase.
 Premature stop attempts will be caught and you will be asked to continue.
 
-Do not create a bare .complete marker or invent a completion command. Claude
+Do not create a bare .complete marker or invent a completion command. Interactive
 sessions receive their exact receipt command from the Stop hook after the audit
-gate passes. Direct Codex sessions receive it in the phase contract below.
+gate passes. Headless Codex runs receive it in the phase contract below.
 EOF
 
   if [[ "$include_direct_codex_contract" -eq 1 ]]; then
@@ -1193,10 +1194,10 @@ EOF
       0|1|2)
         cat >> "$_ctx_tmp" <<'EOF'
 
-## Direct Codex Phase Completion
+## Headless Codex Phase Completion
 
-This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the completion receipt for you. First satisfy the
+This task is running through non-interactive Codex, so there is no Stop hook to
+write the completion receipt for you. First satisfy the
 EOF
         printf 'normal Phase %s readiness gate, then write this exact receipt before your\n' \
           "$step" >> "$_ctx_tmp"
@@ -1219,10 +1220,10 @@ EOF
       3|4|5)
         cat >> "$_ctx_tmp" <<'EOF'
 
-## Direct Codex Phase Completion
+## Headless Codex Phase Completion
 
-This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the completion receipt for you. After Phase
+This task is running through non-interactive Codex, so there is no Stop hook to
+write the completion receipt for you. After Phase
 EOF
         printf '%s is genuinely complete, write this exact receipt before your final response:\n' \
           "$step" >> "$_ctx_tmp"
@@ -1244,10 +1245,10 @@ EOF
       6)
         cat >> "$_ctx_tmp" <<'EOF'
 
-## Direct Codex Phase Completion
+## Headless Codex Phase Completion
 
-This session is running through the direct Codex provider, so there is no
-Claude Stop hook to write the completion receipt for you. If Phase 6 reaches
+This task is running through non-interactive Codex, so there is no Stop hook to
+write the completion receipt for you. If Phase 6 reaches
 the successful completion criteria, run the exact success command below before
 your final response. If Phase 6 hits a bounded wait or external blocker, run
 the exact generation-bound escalation command instead. Escalation pauses and
@@ -1445,8 +1446,8 @@ __dx_abandon_completion_state() {
 # __dx_configure_inline_phase <step> <session_id>
 # Prepare the Stop hook to audit the current phase and advance inline.
 # A new launch always gets a new generation, including resume and same-phase
-# retry launches. The printed value is the only generation a direct provider
-# may receive in its phase prompt.
+# retry launches. The printed value is also passed to headless providers that
+# cannot receive completion instructions from a Stop hook.
 unalias __dx_configure_inline_phase 2>/dev/null; unfunction __dx_configure_inline_phase 2>/dev/null
 __dx_configure_inline_phase() {
   local step="$1" session_id="$2" generation config_file state_file current_phase
@@ -1533,9 +1534,10 @@ __dx_configure_inline_phase() {
       2>/dev/null || true
     return 1
   fi
-  if [[ "$provider_engine" == "codex-plugin" ]]; then
-    # Direct Codex has no Stop hook, so file activation would let an unrelated
-    # Claude session claim this lifecycle. The wrapper owns the exact receipt.
+  if [[ "$provider_engine" == "codex-plugin" \
+    && "${DEX_HEADLESS_RUN:-0}" == "1" ]]; then
+    # Headless Codex has no Stop hook, so file activation would let an unrelated
+    # interactive session claim this lifecycle. The wrapper owns the receipt.
     rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
       2>/dev/null || true
   elif ! touch "$(dx_active_file "$session_id")"; then
@@ -1551,8 +1553,8 @@ __dx_configure_inline_phase() {
       2>/dev/null || true
     return 1
   fi
-  # Clear any ownership claim so the Claude session launched next can claim
-  # this loop (relaunch/--resume gets a fresh Claude session id).
+  # Clear any ownership claim so the next provider invocation can claim this
+  # loop. An exact resume may reclaim it with the same conversation ID.
   if ! rm -f "$(dx_owner_file "$session_id")" "$(dx_complete_file "$session_id")" \
     "$(dx_loop_file "$session_id")" "$(dx_findings_file "$session_id")" \
     "$(dx_watch_pause_file "$session_id")" \
@@ -2924,10 +2926,8 @@ PY
 # __dx_run_phases_inline <wt_name> <wt_dir> <default_branch> <start_step> <state_file> <times_file> <resume_hint> [workspace_mode] [session_id] [raw_input]
 #
 # Phase lifecycle entrypoint, and the same-session runner. The shell launches
-# Claude once; the Stop hook advances phases by updating state/config files and
-# injecting the next phase's instructions back into the existing session. This
-# avoids the Claude TUI handoff problem where a completed phase leaves the user
-# needing /exit + resume.
+# the selected interactive agent once; the Stop hook advances phases by updating
+# state/config files and injecting the next phase's instructions into that session.
 # Phase 6 (Complete) is autonomous: it verifies PR readiness, requests configured
 # reviewers (see dex.md § Reviewers), monitors CI/reviews, addresses comments,
 # and closes the ticket. The user is in the loop only as a configured reviewer.
@@ -2937,7 +2937,8 @@ __dx_run_phases_inline() {
   local state_file="$5" times_file="$6" resume_hint="$7"
   local workspace_mode="${8:-worktree}"
   local session_id="${9:-}" raw_input="${10:-}"
-  local claude_session_name workspace_cleanup_result=0
+  local claude_session_name agent_kind provider_session_handle=""
+  local provider_session_result=0 workspace_cleanup_result=0
   claude_session_name=$(__dx_claude_session_name "$workspace_mode" "$wt_name")
 
   [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
@@ -2961,6 +2962,20 @@ __dx_run_phases_inline() {
 
   local had_times_file=0
   [[ -f "$times_file" ]] && had_times_file=1
+
+  if [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" ]]; then
+    agent_kind="codex"
+  else
+    agent_kind="claude"
+  fi
+  if [[ "$had_times_file" -eq 1 ]]; then
+    provider_session_handle=$(dx_agent_session_handle_read \
+      "$session_id" "$agent_kind" 2>/dev/null) || provider_session_result=$?
+    if [[ "$provider_session_result" -eq 2 ]]; then
+      dx_error "Dex found unsafe or malformed ${agent_kind} session state. Repair it before resuming this lifecycle."
+      return 1
+    fi
+  fi
 
   __dx_show_header "$wt_name" "$step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
   __dx_record_session_branch "$session_id" "$wt_dir" || return 1
@@ -3060,8 +3075,21 @@ __dx_run_phases_inline() {
     return 1
   fi
 
-  local claude_args=("${DX_CLAUDE_FLAGS[@]}" -n "$claude_session_name")
-  [[ $had_times_file -eq 1 ]] && claude_args+=(--resume)
+  local claude_args=("${DX_CLAUDE_FLAGS[@]}")
+  if [[ "$had_times_file" -eq 0 ]]; then
+    claude_args+=(-n "$claude_session_name")
+  elif [[ -n "$provider_session_handle" ]]; then
+    claude_args+=(--resume "$provider_session_handle")
+  elif [[ "$agent_kind" == "claude" ]]; then
+    # Lifecycles started before exact handle capture still have Dex's stable
+    # startup name, which Claude resolves across this repository's worktrees.
+    claude_args+=(--resume "$claude_session_name")
+  else
+    # Older interactive Codex lifecycles have no captured thread ID. Keep their
+    # previous cwd-scoped fallback; new sessions always capture an exact ID.
+    dx_warn "No saved Codex session ID was found; resuming the most recent Codex session in this workspace."
+    claude_args+=(--continue)
+  fi
   claude_args+=(--append-system-prompt-file "$ctx_file")
   # DEX_DIR needs shell quoting inside the command string and JSON encoding
   # around it — an install path with a quote or backslash breaks hand-rolled
@@ -3342,9 +3370,9 @@ PY
 
   local terminal_data
   terminal_data=$(__dx_terminal_event_data "blocked" "session-exited" "$final_step" "$(__dx_phase_name "$final_step")" "" "$resume_hint")
-  dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Claude session exited before Dex lifecycle completed" "$final_step" "$terminal_data"
-  dx_run_log_append_for_session "$session_id" "warn" "dx" "Claude session exited before lifecycle completed at Phase ${final_step}"
-  dx_run_write_summary_for_session "$session_id" "blocked" "Claude session exited at Phase ${final_step}"
+  dx_event_emit_for_session "$session_id" "run.blocked" "warn" "Agent session exited before Dex lifecycle completed" "$final_step" "$terminal_data"
+  dx_run_log_append_for_session "$session_id" "warn" "dx" "Agent session exited before lifecycle completed at Phase ${final_step}"
+  dx_run_write_summary_for_session "$session_id" "blocked" "Agent session exited at Phase ${final_step}"
   dx_completion_abandon "$session_id" 2>/dev/null || true
   rm -f \
     "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
@@ -3353,7 +3381,7 @@ PY
   dx_provider_cleanup_session_state "$session_id"
   __dx_show_header "$wt_name" "$final_step" "$wt_dir" "$default_branch" "$session_id" "$workspace_mode"
   echo ""
-  echo "Claude session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
+  echo "Agent session exited at Phase ${final_step}: $(__dx_phase_name "$final_step")."
   echo "Resume with: ${resume_hint}"
   __dx_runtime_set_terminal blocked
   return 1
@@ -3909,6 +3937,7 @@ dx() {
   local use_worktree=1
   local dx_agent_flag=""
   local dx_model_flag=""
+  local -a dx_args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --agent)
@@ -3952,10 +3981,12 @@ dx() {
         shift
         ;;
       *)
-        break
+        dx_args+=("$1")
+        shift
         ;;
     esac
   done
+  set -- "${dx_args[@]}"
 
   if [[ -n "$dx_agent_flag" ]]; then
     dx_agent_flag=$(dx_agent_normalize "$dx_agent_flag") || return 1

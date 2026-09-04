@@ -2,7 +2,7 @@
 # Stop hook — Phase audit loop for quality-gated autonomous execution.
 #
 # Flow:
-#   1. Claude tries to stop → this hook runs
+#   1. The interactive agent tries to stop → this hook runs
 #   2. Apply pending human/agent control before considering automatic completion
 #   3. Validate the exact generation-bound receipt for this launch
 #   4. Check iteration count → pause/escalate
@@ -573,15 +573,15 @@ if [[ "$LOOP_ACTIVE" != "1" ]] && [[ ! -f "$ACTIVE_FILE" ]]; then
   exit 0
 fi
 
-# Claude Code sends the hook payload on stdin; session_id identifies the
-# concrete Claude session this Stop fired in. Used for the ownership guard
-# below — dx session ids are path-derived, so multiple Claude sessions in the
-# same checkout resolve the same SESSION_ID. Parsed only after the activation
-# check above so stops in non-Dex sessions never pay the python3 spawn.
+# The provider sends the hook payload on stdin; session_id identifies the
+# concrete agent session this Stop fired in. Used for the ownership guard
+# below — dx session ids are path-derived, so multiple sessions in the same
+# checkout resolve the same SESSION_ID. Parsed only after the activation check
+# above so stops in non-Dex sessions never pay the python3 spawn.
 HOOK_INPUT=$(cat 2>/dev/null || true)
-HOOK_CLAUDE_SESSION_ID=""
+HOOK_PROVIDER_SESSION_ID=""
 if [[ -n "$HOOK_INPUT" ]]; then
-  HOOK_CLAUDE_SESSION_ID=$(printf '%s' "$HOOK_INPUT" | python3 -c '
+  HOOK_PROVIDER_SESSION_ID=$(printf '%s' "$HOOK_INPUT" | python3 -c '
 import json, sys
 try:
     value = json.load(sys.stdin).get("session_id", "")
@@ -677,22 +677,22 @@ if [[ "$AUTHORITATIVE_PHASE" == "7" ]]; then
   exit 2
 fi
 
-# Ownership guard — SESSION_ID is path-derived, so a bystander Claude session
+# Ownership guard — SESSION_ID is path-derived, so a bystander agent session
 # opened in the same worktree/branch resolves the same id and would otherwise
 # be captured by this hook. Completed Phase 7 is handled first because merely
 # claiming it would create live state that invalidates the terminal proof.
-if [[ -n "$HOOK_CLAUDE_SESSION_ID" ]]; then
+if [[ -n "$HOOK_PROVIDER_SESSION_ID" ]]; then
   OWNER_ID=""
   [[ -f "$OWNER_FILE" ]] && OWNER_ID=$(cat "$OWNER_FILE" 2>/dev/null || echo "")
-  if [[ "$OWNER_ID" != "$HOOK_CLAUDE_SESSION_ID" ]]; then
+  if [[ "$OWNER_ID" != "$HOOK_PROVIDER_SESSION_ID" ]]; then
     if [[ "$LOOP_ACTIVE" == "1" && -n "${DEX_SESSION_ID:-}" ]]; then
-      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
+      printf '%s\n' "$HOOK_PROVIDER_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
     elif [[ -n "$OWNER_ID" ]]; then
       dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
         2>/dev/null || true
       exit 0
     else
-      printf '%s\n' "$HOOK_CLAUDE_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
+      printf '%s\n' "$HOOK_PROVIDER_SESSION_ID" > "$OWNER_FILE" 2>/dev/null || true
     fi
   fi
 fi
@@ -863,7 +863,7 @@ if [[ "$CONTROL_SOURCE" == "agent" || "$CONTROL_SOURCE" == "user-prompt" \
     esac
   fi
 fi
-if [[ -n "$CONTROL_OWNER" && ( -z "$HOOK_CLAUDE_SESSION_ID" || "$CONTROL_OWNER" != "$HOOK_CLAUDE_SESSION_ID" ) ]]; then
+if [[ -n "$CONTROL_OWNER" && ( -z "$HOOK_PROVIDER_SESSION_ID" || "$CONTROL_OWNER" != "$HOOK_PROVIDER_SESSION_ID" ) ]]; then
   CONTROL_VALID=0
 fi
 
@@ -1914,7 +1914,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
 
     HANDOFF_REASON=$(
       printf '%s\n\n' "Dex Phase Handoff: Phase ${CURRENT_PHASE} complete → Phase ${NEXT_PHASE} ($(dx_phase_name "$NEXT_PHASE"))"
-      printf '%s\n\n' "Continue in this same Claude session. Do not ask the user whether to proceed."
+      printf '%s\n\n' "Continue in this same agent session. Do not ask the user whether to proceed."
       dx_inline_phase_message "$NEXT_PHASE"
       printf '\n%s\n' "When Phase ${NEXT_PHASE} is genuinely complete, stop so the Stop hook can audit it."
     )

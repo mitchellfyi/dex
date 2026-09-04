@@ -29,6 +29,18 @@ dx_review_policy_tier_clean_passes() {
   esac
 }
 
+# This is an operational budget, not part of the clean-pass assurance binding.
+dx_review_policy_tier_max_waves() {
+  [[ $# -eq 1 ]] || return 1
+  local tier
+  tier=$(dx_review_normalize_tier "$1") || return 1
+  case "$tier" in
+    small) printf '%s\n' "3" ;;
+    normal) printf '%s\n' "6" ;;
+    complex) printf '%s\n' "9" ;;
+  esac
+}
+
 dx_review_policy_provenance_valid() {
   [[ $# -eq 2 ]] || return 1
   local trusted_ref="$1" trusted_oid="$2"

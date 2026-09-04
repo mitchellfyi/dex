@@ -25,6 +25,8 @@ phase_marker_pattern = re.compile(
 watch_lock_pattern = re.compile(r"^(.*)\.(?:ci|pr)\.watch-lock$")
 
 state_suffixes = {
+    ".claude-session",
+    ".codex-session",
     ".phase-outcomes",
     ".system-context",
     ".human-complete",

@@ -73,6 +73,10 @@ binding=$(dx_review_policy_binding 1 2 3)
 assert_eq "1" "$(dx_review_policy_tier_clean_passes small 1 2 3)" "small policy lookup"
 assert_eq "2" "$(dx_review_policy_tier_clean_passes standard 1 2 3)" "normal alias lookup"
 assert_eq "3" "$(dx_review_policy_tier_clean_passes high-risk 1 2 3)" "complex alias lookup"
+assert_eq "3" "$(dx_review_policy_tier_max_waves small)" "small wave budget"
+assert_eq "6" "$(dx_review_policy_tier_max_waves standard)" "normal wave budget"
+assert_eq "9" "$(dx_review_policy_tier_max_waves high-risk)" "complex wave budget"
+assert_rejected "$LINENO" dx_review_policy_tier_max_waves unknown
 IFS=$'\t' read -r tier_required tier_binding _ <<EOF
 $(dx_review_policy_for_tier "$repo" normal)
 EOF

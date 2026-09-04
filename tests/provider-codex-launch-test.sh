@@ -27,6 +27,23 @@ if [[ "${1:-}" == "login" && "${2:-}" == "status" ]]; then
   printf '%s\n' "Logged in with ChatGPT"
   exit 0
 fi
+if [[ "${1:-}" == "--help" ]]; then
+  printf '%s\n' "Usage: codex [OPTIONS] [PROMPT]"
+  printf '%s\n' "Optional user prompt to start the session"
+  printf '%s\n' "--dangerously-bypass-approvals-and-sandbox"
+  printf '%s\n' "--dangerously-bypass-hook-trust"
+  printf '%s\n' "resume"
+  exit 0
+fi
+if [[ "${1:-}" == "features" && "${2:-}" == "list" ]]; then
+  printf '%s\n' "hooks stable true"
+  exit 0
+fi
+if [[ "${1:-}" == "resume" && "${2:-}" == "--help" ]]; then
+  printf '%s\n' "Usage: codex resume [OPTIONS] [SESSION_ID] [PROMPT]"
+  printf '%s\n' "--last"
+  exit 0
+fi
 if [[ "${1:-}" == "exec" && "${2:-}" == "--help" ]]; then
   printf '%s\n' "--ignore-user-config"
   printf '%s\n' "--dangerously-bypass-approvals-and-sandbox"
@@ -45,6 +62,9 @@ if [[ "${1:-}" == "exec" ]]; then
   env | sort > "$DEX_TEST_CODEX_ENV"
   exit 0
 fi
+printf '%s\n' "$*" > "$DEX_TEST_CODEX_LAST_ARGS"
+printf '%s\n' "${*: -1}" > "$DEX_TEST_CODEX_PROMPT"
+env | sort > "$DEX_TEST_CODEX_ENV"
 exit 0
 SH
 chmod +x "$TMP_DIR/bin/codex"
@@ -137,6 +157,85 @@ if grep -q -- "DX_CODEX_READ_ONLY=" "$DEX_TEST_CODEX_ENV"; then
 fi
 grep -q -- "Assess the supplied context." "$DEX_TEST_CODEX_PROMPT"
 
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+: > "$DEX_TEST_CODEX_PROMPT"
+DEX_SESSION_ID=provider-codex-interactive \
+DEX_RUN_ID=run-provider-codex-interactive \
+DEX_LOOP_ACTIVE=1 \
+DEX_LOOP_PROMISE=PHASE_2_COMPLETE \
+DEX_LOOP_PHASE=2 \
+DEX_PHASE_HANDOFF=inline \
+DEX_LOOP_MAX_ITERATIONS=9 \
+DEX_REVIEW_PASS_TIMEOUT=901 \
+  bash "$ROOT/bin/dxcodex.sh" session -- "Work through the interactive lifecycle."
+if grep -q -- '^exec ' "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "interactive Codex session was launched through codex exec" >&2
+  exit 1
+fi
+grep -q -- "--dangerously-bypass-approvals-and-sandbox" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "--dangerously-bypass-hook-trust" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "features.hooks=true" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "hooks.SessionStart=" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "capture-provider-session.sh" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "hooks.Stop=" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "phase-loop.sh" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_SESSION_ID=provider-codex-interactive" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_RUN_ID=run-provider-codex-interactive" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_LOOP_ACTIVE=1" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_LOOP_PROMISE=PHASE_2_COMPLETE" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_LOOP_PHASE=2" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_PHASE_HANDOFF=inline" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_LOOP_MAX_ITERATIONS=9" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DEX_REVIEW_PASS_TIMEOUT=901" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DX_PROVIDER_ENGINE=codex-plugin" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DX_STATE_DIR=$TMP_DIR/state" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DX_LOOP_DIR=$TMP_DIR/loops" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "DX_RUN_ROOT=$TMP_DIR/runs" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "shell_environment_policy.set.DEX_SESSION_ID=\\\"provider-codex-interactive\\\"" \
+  "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "shell_environment_policy.set.DEX_LOOP_MAX_ITERATIONS=\\\"9\\\"" \
+  "$DEX_TEST_CODEX_LAST_ARGS"
+if grep -q -- "factory-secret\|factory-run-secret\|run-secret" \
+  "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "secret runtime values leaked into Codex hook configuration" >&2
+  exit 1
+fi
+grep -q -- "Work through the interactive lifecycle." "$DEX_TEST_CODEX_PROMPT"
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+bash "$ROOT/bin/dxcodex.sh" session --resume \
+  01999999-aaaa-bbbb-cccc-dddddddddddd -- "Continue the lifecycle."
+grep -q -- '^resume 01999999-aaaa-bbbb-cccc-dddddddddddd ' \
+  "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "Continue the lifecycle." "$DEX_TEST_CODEX_PROMPT"
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+bash "$ROOT/bin/dxcodex.sh" session --resume-last -- "Continue legacy lifecycle."
+grep -q -- '^resume --last ' "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "Continue legacy lifecycle." "$DEX_TEST_CODEX_PROMPT"
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+DEX_PHASE_HANDOFF=inline DEX_SESSION_ID=provider-codex-exact-resume \
+  dx_provider_claude --resume 01999999-aaaa-bbbb-cccc-dddddddddddd \
+    --append-system-prompt-file "$system_prompt" "Resume exact lifecycle."
+grep -q -- '^resume 01999999-aaaa-bbbb-cccc-dddddddddddd ' \
+  "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "Resume exact lifecycle." "$DEX_TEST_CODEX_PROMPT"
+
+set +e
+DX_PROVIDER_CODEX_WRAPPER=interactive \
+  dx_provider_codex exec --dangerously-bypass-approvals-and-sandbox \
+    --dangerously-bypass-hook-trust -c features.hooks=true \
+    -c 'hooks.Stop=[]' -- "not interactive" \
+    > "$TMP_DIR/interactive-exec.out" 2>&1
+interactive_exec_status=$?
+set -e
+if [[ "$interactive_exec_status" -ne 2 ]]; then
+  printf '%s\n' "interactive wrapper accepted codex exec" >&2
+  exit 1
+fi
+grep -q -- "must start a new session or resume" "$TMP_DIR/interactive-exec.out"
+
 set +e
 DX_CODEX_READ_ONLY=1 DX_PROVIDER_CODEX_WRAPPER=1 \
   dx_provider_codex exec --ignore-user-config --sandbox read-only --ephemeral \
@@ -196,12 +295,18 @@ fi
 : > "$DEX_TEST_CODEX_ARGS"
 : > "$DEX_TEST_CODEX_LAST_ARGS"
 : > "$DEX_TEST_CODEX_PROMPT"
+unset DX_AGENT_OVERRIDE
 DEXCODE_SYNC=0 zsh -fc 'source "$DEX_DIR/dx.sh"; cd "$DEX_TEST_REPO"; dx --agent codex --no-worktree "exercise codex setup"' > "$TMP_DIR/dx-agent-codex.out" 2>&1 || true
 if grep -q -- "claude should not be launched" "$TMP_DIR/dx-agent-codex.out"; then
   printf '%s\n' "dx --agent codex launched Claude instead of Codex" >&2
   exit 1
 fi
-grep -q -- "exec --ignore-user-config --dangerously-bypass-approvals-and-sandbox --" "$DEX_TEST_CODEX_LAST_ARGS"
+if grep -q -- '^exec ' "$DEX_TEST_CODEX_LAST_ARGS"; then
+  printf '%s\n' "dx --agent codex used non-interactive codex exec" >&2
+  exit 1
+fi
+grep -q -- "--dangerously-bypass-hook-trust" "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "hooks.Stop=" "$DEX_TEST_CODEX_LAST_ARGS"
 grep -q -- "Initial phase: Phase 0 (Setup)." "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "Begin Phase 0: Setup" "$DEX_TEST_CODEX_PROMPT"
 # The defer-push rule as DX_PHASE_0_MESSAGE actually words it — the test
@@ -209,6 +314,20 @@ grep -q -- "Begin Phase 0: Setup" "$DEX_TEST_CODEX_PROMPT"
 grep -q -- "remains local until Phase 2's first real implementation commit" "$DEX_TEST_CODEX_PROMPT"
 if grep -q -- "push the current lifecycle branch and proceed" "$DEX_TEST_CODEX_PROMPT"; then
   printf '%s\n' "Phase 0 prompt still publishes an empty lifecycle branch" >&2
+  exit 1
+fi
+
+: > "$DEX_TEST_CODEX_LAST_ARGS"
+: > "$DEX_TEST_CODEX_PROMPT"
+DEXCODE_SYNC=0 zsh -fc 'source "$DEX_DIR/dx.sh"; cd "$DEX_TEST_REPO"; dx "exercise codex setup" --agent codex --no-worktree' > "$TMP_DIR/dx-agent-codex-trailing.out" 2>&1 || true
+if grep -q -- "claude should not be launched" "$TMP_DIR/dx-agent-codex-trailing.out"; then
+  printf '%s\n' "trailing --agent codex launched Claude instead of Codex" >&2
+  exit 1
+fi
+grep -q -- '^resume --last ' "$DEX_TEST_CODEX_LAST_ARGS"
+grep -q -- "Original dx request: exercise codex setup" "$DEX_TEST_CODEX_PROMPT"
+if grep -q -- "--agent codex" "$DEX_TEST_CODEX_PROMPT"; then
+  printf '%s\n' "Dex provider flags leaked into the task description" >&2
   exit 1
 fi
 

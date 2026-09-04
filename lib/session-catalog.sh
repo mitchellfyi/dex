@@ -135,6 +135,8 @@ REVIEW_RECEIPT_RE = re.compile(
 
 EXACT_SUFFIXES = [
     (".cleanup-journal", "cleanup-journal"),
+    (".claude-session", "claude-session"),
+    (".codex-session", "codex-session"),
     (".review-receipt.revoked", "review-receipt-revoked"),
     (".review-criteria-approval", "review-criteria-approval"),
     (".review-selection.revoked", "review-selection-revoked"),

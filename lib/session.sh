@@ -1137,12 +1137,53 @@ dx_session_claim_release_checked() {
   return "$release_result"
 }
 
-# dx_owner_file <session_id> — Claude session id that owns this loop's state.
+# dx_owner_file <session_id> — provider session id that owns this loop's state.
 # Session IDs are derived from the repo+worktree/branch path, so an unrelated
-# Claude session opened in the same checkout resolves the same session_id. The
-# Stop hook records the owning Claude session id here and stays inert in any
+# agent session opened in the same checkout resolves the same session_id. The
+# Stop hook records the owning provider session id here and stays inert in any
 # other session, so bystander sessions are never captured by an active loop.
 dx_owner_file() { echo "${DX_LOOP_DIR}/${1}.owner"; }
+
+# Exact provider conversation handles captured by SessionStart hooks. Separate
+# files preserve each agent's history when a lifecycle switches providers.
+dx_agent_session_handle_file() { echo "${DX_STATE_DIR}/${1}.${2}-session"; }
+
+dx_agent_session_handle_valid() {
+  [[ $# -eq 1 ]] || return 1
+  local provider_handle="$1"
+  [[ -n "$provider_handle" && ${#provider_handle} -le 256 ]] || return 1
+  [[ "$provider_handle" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]]
+}
+
+dx_agent_session_handle_write() {
+  [[ $# -eq 3 ]] || return 1
+  local session_id="$1" agent_kind="$2" provider_handle="$3"
+  dx_session_id_valid "$session_id" || return 1
+  case "$agent_kind" in
+    claude|codex) ;;
+    *) return 1 ;;
+  esac
+  dx_agent_session_handle_valid "$provider_handle" || return 1
+  dx_session_private_atomic_write \
+    "$(dx_agent_session_handle_file "$session_id" "$agent_kind")" \
+    "$provider_handle"
+}
+
+dx_agent_session_handle_read() {
+  [[ $# -eq 2 ]] || return 2
+  local session_id="$1" agent_kind="$2" provider_handle="" read_result=0
+  dx_session_id_valid "$session_id" || return 2
+  case "$agent_kind" in
+    claude|codex) ;;
+    *) return 2 ;;
+  esac
+  provider_handle=$(dx_session_trusted_file_read \
+    "$(dx_agent_session_handle_file "$session_id" "$agent_kind")" 512) \
+    || read_result=$?
+  [[ "$read_result" -eq 0 ]] || return "$read_result"
+  dx_agent_session_handle_valid "$provider_handle" || return 2
+  printf '%s\n' "$provider_handle"
+}
 
 # dx_prompt_file <session_id>  — original prompt file path (for dxloop prompt persistence)
 dx_prompt_file() { echo "${DX_LOOP_DIR}/${1}.prompt"; }
@@ -2637,7 +2678,7 @@ dx_cleanup_session() {
   # `&&` here would make a missing state directory the function's exit status,
   # which contradicts the promise above and would abort a `set -e` caller.
   if [[ -d "$DX_STATE_DIR" ]]; then
-    rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" "${DX_STATE_DIR}/${sid}.terminal-commit" "${DX_STATE_DIR}/${sid}.overrides" 2>/dev/null || true
+    rm -f "$(dx_state_file "$sid")" "$(dx_times_file "$sid")" "$(dx_context_file "$sid")" "$(dx_log_file "$sid")" "$(dx_phase_outcomes_file "$sid")" "$(dx_branch_file "$sid")" "$(dx_meta_file "$sid")" "$(dx_agent_session_handle_file "$sid" claude)" "$(dx_agent_session_handle_file "$sid" codex)" "${DX_STATE_DIR}/${sid}.interventions" "${DX_STATE_DIR}/${sid}.human-complete" "${DX_STATE_DIR}/${sid}.terminal-commit" "${DX_STATE_DIR}/${sid}.overrides" 2>/dev/null || true
     rm -f "${DX_STATE_DIR}/${sid}.override-lock/owner" 2>/dev/null || true
     rmdir "${DX_STATE_DIR}/${sid}.override-lock" 2>/dev/null || true
   fi

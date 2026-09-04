@@ -34,7 +34,7 @@ dx_override_gate_supported() {
   local gate="$1"
   case "$gate" in
     phase.timeout|phase.min-audits|loop.max-iterations|\
-    loop.stall-timeout|loop.stall-escalate|review.clean-passes|\
+    loop.stall-timeout|loop.stall-escalate|review.clean-passes|review.max-waves|\
     review.pass-timeout|review.recheck-seconds|\
     watch.pause-ttl|watch.cycle-timeout|watch.command-timeout|\
     complete.max-cycles|complete.wait-minutes|complete.ci-fix-attempts|\
@@ -56,7 +56,7 @@ dx_override_gate_value_valid() {
   local gate="$1" value="$2"
   dx_override_gate_supported "$gate" || return 1
   case "$gate" in
-    review.clean-passes)
+    review.clean-passes|review.max-waves)
       [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 2 \
         && $((10#$value)) -le 30 ]]
       ;;
@@ -218,6 +218,7 @@ dx_override_waive() {
   dx_override_session_id_valid "$session_id" || return 2
   dx_override_gate_valid "$gate" || return 2
   dx_override_gate_supported "$gate" || return 2
+  [[ "$gate" != "review.max-waves" ]] || return 2
   dx_override_phase_valid "$phase" || return 2
   [[ "$phase" != "-" ]] || return 2
   [[ "$override_source" == "agent" || "$override_source" == "human" ]] \

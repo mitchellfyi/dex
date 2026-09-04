@@ -258,7 +258,7 @@ Dex exposes stable agent names (`claude`, `codex`) through `dx --agent`, while
 agent support behind that provider layer rather than branching on agent names
 throughout `dx.sh`.
 
-Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Codex delegation must go through `bin/dxcodex.sh`. Normal delegated work uses `--ignore-user-config` with `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto`. Internal read-only launches set `DX_CODEX_READ_ONLY=1` and use `--ignore-user-config --sandbox read-only --ephemeral` without the dangerous bypass flag. The wrapper works under any provider profile, so a Claude-engine run can hand individual tasks to Codex; only codex-plugin profiles resolve a `codex_model` override, other engines use the Codex session default. `dx --model <model>` targets the selected agent: Claude gets `claude --model`, while Codex gets `codex exec --model` through the wrapper.
+Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Every Codex launch must go through `bin/dxcodex.sh`. Interactive `dx` lifecycles use `codex [PROMPT]` (or `codex resume <session-id> [PROMPT]`) with `--dangerously-bypass-approvals-and-sandbox`, `--dangerously-bypass-hook-trust`, and session-scoped Dex `SessionStart` and `Stop` hooks. Codex's persistent app server may execute hooks outside the launcher's environment, so the wrapper must pass its allowlisted, non-secret Dex context both in the hook commands and through `shell_environment_policy.set`; do not add credentials to that context. Both interactive providers capture their exact conversation ID at startup for crash-safe resumption; Claude's stable Dex session name and Codex's cwd-scoped `--last` remain migration fallbacks for lifecycles created before capture was available. Normal non-interactive delegation uses `--ignore-user-config` with `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto`. Internal read-only launches set `DX_CODEX_READ_ONLY=1` and use `--ignore-user-config --sandbox read-only --ephemeral` without the dangerous bypass flag. The wrapper works under any provider profile, so a Claude-engine run can hand individual tasks to Codex; only codex-plugin profiles resolve a `codex_model` override, other engines use the Codex session default. `dx --model <model>` targets the selected agent through its native model flag.
 
 ### Hook integration
 
@@ -266,13 +266,13 @@ Hooks defined in `settings.json`, referenced by paths to Dex scripts:
 
 | Hook | Matcher | Script | Purpose |
 |------|---------|--------|---------|
-| SessionStart | `startup` | `load-ticket-context.sh` | Load ticket context, detect focus areas |
+| SessionStart | `startup` | `capture-provider-session.sh`, `load-ticket-context.sh` | Save the exact provider conversation ID, load ticket context, and detect focus areas |
 | UserPromptSubmit | (all) | `user-prompt-submit.sh` | Pause scheduled Phase 6 watchers during manual user work |
 | PreToolUse | `Bash` | `guard-handler.py` (`DEX_GUARD_EVENT=bash`) | Block/warn on dangerous commands |
 | PreToolUse | `Bash` | `rtk-claude-hook.sh` | Optional RTK output-filtering rewrite; runs after the guard and fails open |
 | PreToolUse | `Edit\|Write\|MultiEdit\|NotebookEdit` | `guard-handler.py` (`DEX_GUARD_EVENT=file`) | Block/warn on dangerous file edits |
 | PostToolUse | `Bash` | `post-commit-guard.sh` | Validate commit format via guards |
-| Stop | Claude tries to stop | `phase-loop.sh`, `stop-sound.sh` | Phase audit loop (when active) plus best-effort macOS sound notification |
+| Stop | Interactive agent tries to stop | `phase-loop.sh`, `stop-sound.sh` | Phase audit loop (when active) plus best-effort macOS sound notification |
 | PreCompact | Before compaction | `pre-compact.sh` | Preserve Dex context across compaction |
 | SessionEnd | Session ends | `session-end.sh` | Record session end metadata |
 
@@ -284,7 +284,7 @@ generation-bound completion receipt the hook authorized for that session and
 phase; a bare `.complete` marker is not authorization. A human or agent `done`,
 `waive`, or `jump` control records a waiver or skip instead of claiming the gate passed. The loop
 stops for intervention after its configured audit limit, which defaults to 30.
-For `dx` lifecycles, the hook advances phases inside the same Claude session by
+For `dx` lifecycles, the hook advances phases inside the same interactive provider session by
 updating phase state/config and injecting the next phase instructions. Phase 1
 is gated by `.phase-1.started` / `.phase-1.ready` markers from `dxplan`; the
 hook does not count plan audit iterations or expose the receipt command until
@@ -311,7 +311,7 @@ agent --reason ...` command instead of deleting state by hand. Use it only for
 the dead-owner diagnosis: it refuses live or malformed state, revokes
 completion, and leaves Phase 3 paused for `/dxresume` or `/dxskip`.
 
-The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. Dex maps those tiers to fixed global consecutive-clean requirements of 1, 2, and 3. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and global policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. The loop has no routine maximum and pauses on changed or partially covered criteria, residual findings, blockers, churn, invalid results, or provider failure.
+The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. Dex maps those tiers to fixed global consecutive-clean requirements of 1, 2, and 3, plus soft outer-wave budgets of 3, 6, and 9. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and global policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. Spending the wave budget pauses without a completion receipt or loss of valid clean credit. An attributed `review.max-waves` override may change the operational budget without changing clean-pass assurance. Changed or partially covered criteria, residual findings, blockers, churn, invalid results, and provider failures also pause the loop.
 
 ### Session IDs
 

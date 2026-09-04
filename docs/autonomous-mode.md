@@ -84,7 +84,8 @@ The review audit (Phase 3) is risk-selected. After the final Phase 2 in-scope
 change, the implementation agent applies the ordered rubric and records the
 highest matching tier with bounded reason codes. `small` maps to a `light`
 profile, `normal` maps to `standard`, and `complex` maps to `thorough`. The
-global consecutive clean-wave requirements are 1, 2, and 3. Trust boundaries;
+global consecutive clean-wave requirements are 1, 2, and 3, and the
+corresponding soft outer-wave budgets are 3, 6, and 9. Trust boundaries;
 authentication, authorization, permissions, secrets, payments, or destructive
 behavior; persistence, schemas, or migrations; public API, CLI, configuration,
 or compatibility contracts; concurrency or process lifecycle; hooks, guards,
@@ -133,7 +134,10 @@ that fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
 fresh review of the updated scope. A valid upward escalation also resets the
 counter. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid
 results, provider failures, and deterministic findings-fingerprint churn pause
-the loop. The outer review loop has no iteration maximum.
+the loop. Spending the selected tier's 3/6/9 wave budget also pauses the loop
+without discarding valid clean credit. An attributed `review.max-waves`
+override from an agent or human can change that operational budget while the
+loop is running; it does not lower the clean-pass assurance gate.
 
 Only one review loop may own a checkout at a time. The wrapper acquires an
 atomic checkout-scoped lock before it reads or writes review state and reclaims
@@ -188,7 +192,7 @@ When the user submits a direct prompt during Phase 6, the `UserPromptSubmit` hoo
 Each watcher cycle also has a runtime lock with a default budget of `2m 0s`. If a later `/loop` tick fires while the previous `/dxwatchpr` cycle is still within that budget, the later tick skips instead of starting overlapping GitHub or CI work. Individual watcher shell commands default to `0m 30s`.
 
 After Phase 1 approval, the Stop hook advances through normal Phase 2-5
-handoffs in the same Claude session without asking whether to continue. A phase pauses only when it hits an
+handoffs in the same interactive provider session without asking whether to continue. A phase pauses only when it hits an
 explicit escalation condition such as missing credentials/tooling, a destructive
 git decision, repeated failed fix attempts, a max phase-audit count, review
 findings/blockers/churn, or feedback that needs human judgement.
@@ -220,6 +224,10 @@ dx control clear-override watch.command-timeout --scope session \
 dx control override review.clean-passes 2 --source human \
   --reason "Two clean waves are sufficient for this unusually expensive scope"
 
+# Extend the operational review budget without changing clean-pass assurance.
+dx control override review.max-waves 12 --source agent \
+  --reason "The latest wave fixed a verified issue, so another clean sequence is warranted"
+
 # Skip the rest of an assurance gate and advance through the locked transition.
 dx control waive review.clean-passes --source agent \
   --reason "Provider failures prevent independent waves; direct review and deterministic checks are complete"
@@ -240,6 +248,7 @@ The built-in operational gates are:
 | `phase.min-audits` | Minimum Stop-hook audits before normal completion |
 | `loop.max-iterations`, `loop.stall-timeout`, `loop.stall-escalate` | Audit-loop attempt and stall budgets |
 | `review.clean-passes` | Effective target from 1 through 30; lowering the trusted tier target requires real clean waves and records Phase 3 as waived |
+| `review.max-waves` | Effective outer-wave budget from 1 through 30; defaults to 3/6/9 for small/normal/complex and pauses without changing assurance when exhausted |
 | `review.pass-timeout`, `review.recheck-seconds` | Review provider and quiet Phase 3 recheck budgets; `0` disables the provider deadline |
 | `watch.pause-ttl`, `watch.cycle-timeout`, `watch.command-timeout` | Phase 6 watcher pause, lease, and command budgets |
 | `complete.max-cycles`, `complete.wait-minutes` | Phase 6 idle-cycle and wait defaults |
@@ -260,7 +269,8 @@ labels an unverified check as passed.
 Provider deadlines for review, `dx sync`, and maintenance are live. Their
 supervisors re-read policy once per second, so increasing, shortening,
 disabling, clearing, or expiring an override affects the process already
-running. Isolated provider children receive the parent id as
+running. The review loop also re-reads `review.max-waves` between waves.
+Isolated provider children receive the parent id as
 `DEX_POLICY_SESSION_ID`; an agent inside one can target it with
 `dx control --session "$DEX_POLICY_SESSION_ID" ...`.
 
@@ -385,8 +395,9 @@ dxloop "add rate limiting"  # Same mechanism
 Claude using your session's default model and effort, unless
 `.dex/providers.json` or `~/.dex/providers.json` selects a provider profile
 that pins them. `dx --model <model>` passes the model to the selected agent:
-Claude receives it through `claude --model`, while Codex receives it through
-Dex's Codex wrapper as `codex exec --model`.
+Claude receives it through `claude --model`; interactive Codex lifecycles and
+non-interactive Codex delegation receive it through their native `--model`
+flag.
 
 **From inside an existing Claude Code session** (via `/dxloop` skill):
 The skill prepares a shell-safe terminal command for the dedicated `dxloop`
@@ -399,11 +410,11 @@ The wrappers create and retire `.active`, `.config`, and completion receipt
 state. Do not create or remove those files by hand.
 
 **Ownership.** Dex session ids are derived from the repo + worktree/branch path,
-so two Claude sessions opened in the same checkout resolve the same id. To keep
-a loop from capturing bystander sessions, the Stop hook records the owning
-Claude session id from the hook payload in an `.owner` file. Wrapper-launched
-Claude sessions have an explicit `DEX_SESSION_ID` and reclaim that ownership on
-each stop. Direct Codex runs do not publish an unowned `.active` marker; their
+so two provider sessions opened in the same checkout resolve the same id. To
+keep a loop from capturing bystander sessions, the Stop hook records the owning
+provider session id from the hook payload in an `.owner` file. Wrapper-launched
+sessions have an explicit `DEX_SESSION_ID` and reclaim that ownership on each
+stop. Headless Codex runs do not publish an unowned `.active` marker; their
 wrapper validates and consumes the receipt itself.
 
 **Review-wave passes.** Sessions launched with `DEX_REVIEW_PASS_ACTIVE=1`
@@ -508,7 +519,7 @@ Long-running sessions (especially Phase 2) can trigger conversation compaction w
 
 ## Phase Handoff
 
-Phases hand off inside the same Claude session. The Stop hook updates the phase state/config files, injects the next phase instructions, and exits with the hook-blocking status so Claude keeps working without requiring `/exit` or a manual resume.
+Phases hand off inside the same interactive provider session. The Stop hook updates the phase state/config files, injects the next phase instructions, and blocks the stop so the agent keeps working without requiring `/exit` or a manual resume.
 
 Phase 3 still gets independent review coverage because `/dxreviewloop` spawns
 fresh full-scope review waves and keeps prior review history outside each
@@ -590,7 +601,14 @@ Even in autonomous mode, Claude stops and escalates to the user for:
 
 ### Manual Override
 
-The user can always interrupt by providing input or pressing Ctrl+C. Phase state is saved so `dx 999` or `dx --resume` picks up where it left off.
+The user can always interrupt by providing input or pressing Ctrl+C. Phase
+state and the provider's exact conversation ID are saved so `dx 999` or
+`dx --resume` can restore both the lifecycle and its conversation after a
+crash. Older Claude lifecycles fall back to their stable Dex session name;
+older Codex lifecycles fall back to the most recent session in the workspace.
+For Codex, the launcher also pins the non-secret lifecycle context in its hook
+commands and shell environment policy. This keeps resumed hooks tied to the
+right Dex state even when Codex reuses a persistent app-server process.
 
 ### Session Diagnostics
 
@@ -601,6 +619,7 @@ sessions:
 ```bash
 dx sessions list
 dx sessions show ticket:999
+dx sessions resume ticket:999
 dx sessions doctor
 dx sessions list --all
 ```
@@ -631,7 +650,7 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - `.completion-receipt.<generation>` — the exact generated receipt accepted once for that expectation
 - `.completion-lock` — persistent per-session coordination inode for completion issue, consume, and revocation
 - `.complete` — legacy compatibility marker; migrated contexts do not treat it as authorization
-- `.active` — wrapper-managed activation marker for Claude Stop-hook sessions
+- `.active` — wrapper-managed activation marker for interactive Stop-hook sessions
 - `.prompt` — original freeform task or `dxloop` prompt, re-injected during audits and kept outside the git checkout
 - `.handoff-mode` — marker that this `dx` run should advance phases in-session
 - `.paused` — one-shot marker that lets an inline session exit after reporting a safety-net pause
@@ -641,7 +660,7 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - `.watch-lock` — per-watcher overlap lock that bounds one scheduled `/dxwatchpr` cycle
 - `.pause-state` — machine-readable reason/source for the current pause
 - `.complete-state` — Phase 6 cycle bookkeeping (`cycle:last_check_epoch`); the Stop hook holds its wait window from this
-- `.owner` — Claude session id that claimed the loop; bystander sessions in the same checkout stay inert
+- `.owner` — provider session id that claimed the loop; bystander sessions in the same checkout stay inert
 - `.phase-0.ready` — Phase 0 marker written after ticket setup; the Stop hook blocks the Phase 0 stop without it
 - `.phase-1.started` / `.phase-1.ready` — Phase 1 markers written by `dxplan`; the Stop hook does not count plan audit iterations until the approval marker exists
 - `.phase-2.ready` — Phase 2 marker written by `dximplement` only after every
@@ -695,6 +714,8 @@ Phase state is stored in `~/.claude/.dex-phases/`:
 - One `.times` file per worktree, tracking start times for elapsed calculations
 - One `.system-context` file per worktree, used by `--append-system-prompt-file` for compaction resilience (regenerated each phase, cleaned up by `SessionEnd` hook)
 - One `.branch` file per lifecycle session, used by in-place mode to resume on the correct branch after branch renames or shell navigation
+- One `.claude-session` or `.codex-session` file per lifecycle and provider,
+  storing the exact conversation ID captured by the `SessionStart` hook
 - One `.interventions` file per lifecycle session, recording human control receipts for audit without storing prompt text
 - One `.overrides` journal per lifecycle session, recording active, cleared,
   and waived agent/human policy decisions with scope, optional expiry, and
@@ -791,9 +812,10 @@ timeout it is enforcing. A retried command can change that fallback bound with
 ### Loop doesn't stop
 
 The phase Stop-hook audit pauses after `DEX_LOOP_MAX_ITERATIONS` attempts. The
-outer review loop intentionally has no routine maximum and continues until its
-clean gate succeeds or a deterministic pause condition occurs. Press Ctrl+C to
-interrupt immediately; unchanged review state can resume later.
+outer review loop uses the selected tier's 3/6/9 soft wave budget and pauses
+when it is spent. Raise `review.max-waves` with an attributed override when the
+evidence warrants another wave. Press Ctrl+C to interrupt immediately;
+unchanged review state can resume later.
 
 ### Phase handoff does not continue
 

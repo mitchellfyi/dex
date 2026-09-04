@@ -44,6 +44,7 @@ zsh -fc '
 source "$DEX_DIR/dx.sh"
 source "$DEX_DIR/tests/review-proof-fixture.sh"
 set -e
+export DEX_HEADLESS_RUN=1
 
 session_id="codex-inline-handoff"
 state_file="$(dx_state_file "$session_id")"
@@ -193,6 +194,7 @@ fi
 zsh -fc '
 source "$DEX_DIR/dx.sh"
 set -e
+export DEX_HEADLESS_RUN=1
 
 session_id="codex-inline-generation-binding"
 state_file="$(dx_state_file "$session_id")"
@@ -207,8 +209,8 @@ current_generation=$(__dx_configure_inline_phase 4 "$session_id")
 [[ ! -e "$(dx_active_file "$session_id")" \
   && ! -L "$(dx_active_file "$session_id")" ]] || assert_at $LINENO
 
-# A direct Codex lifecycle has no Stop hook. An unrelated Claude session in
-# the checkout must not be able to claim its exact completion context.
+# A headless Codex lifecycle has no Stop hook. An unrelated interactive session
+# in the checkout must not be able to claim its exact completion context.
 set +e
 bystander_output=$(printf "%s" "{\"session_id\":\"claude-bystander\"}" | env \
   DEX_SESSION_ID="$session_id" DEX_LOOP_ACTIVE=0 \
@@ -387,7 +389,7 @@ old_generation=$(__dx_configure_inline_phase 6 "$session_id")
 dx_completion_write_receipt "$session_id" "$old_generation"
 
 __dx_claude() {
-  local expect_context=0 context_file="" arg command_line receipt_session receipt_generation
+  local expect_context=0 context_file="" arg expectation receipt_generation
   for arg in "$@"; do
     if [[ "$expect_context" -eq 1 ]]; then
       context_file="$arg"
@@ -396,16 +398,15 @@ __dx_claude() {
       expect_context=1
     fi
   done
-  command_line=$(grep -Eo "bash \"[\$]DEX_DIR/bin/complete-receipt\\.sh\" \"[^\"]+\" \"[0-9a-f]{32}\"" "$context_file")
-  [[ "$(printf "%s\n" "$command_line" | wc -l | tr -d " ")" == "1" ]] || assert_at $LINENO
-  receipt_session=$(printf "%s\n" "$command_line" | cut -d\" -f4)
-  receipt_generation=$(printf "%s\n" "$command_line" | cut -d\" -f6)
-  [[ "$receipt_session" == "$session_id" ]] || assert_at $LINENO
+  ! grep -q "complete-receipt.sh" "$context_file" || assert_at $LINENO
+  [[ -f "$(dx_active_file "$session_id")" ]] || assert_at $LINENO
+  expectation=$(dx_completion_expectation_read "$session_id")
+  receipt_generation=$(printf "%s\n" "$expectation" | cut -f4)
   [[ "$receipt_generation" != "$old_generation" ]] || assert_at $LINENO
   # A stale pre-removal value must not impose a whole-session deadline. Phase
   # timeouts remain independently configurable and default to disabled.
   sleep 2
-  bash "$DEX_DIR/bin/complete-receipt.sh" "$receipt_session" "$receipt_generation"
+  dx_completion_write_receipt "$session_id" "$receipt_generation"
 }
 
 DEX_SESSION_TIMEOUT=1 __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 6 "$state_file" "$times_file" "dx --agent codex test" "in-place" "$session_id" "test"
@@ -533,12 +534,13 @@ source "$DEX_DIR/dx.sh"
 set -e
 
 export DX_PROVIDER_ENGINE=codex-plugin
+export DEX_HEADLESS_RUN=1
 session_id="codex-direct-context-marker"
 generation="0123456789abcdef0123456789abcdef"
 context_stderr="$TMP_DIR/context-build.stderr"
 ctx_file="$(__dx_build_system_context "repo" 4 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation" 2> "$context_stderr")"
 [[ ! -s "$context_stderr" ]] || assert_at $LINENO
-grep -q "Direct Codex Phase Completion" "$ctx_file"
+grep -q "Headless Codex Phase Completion" "$ctx_file"
 grep -Fq "bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"$session_id\" \"$generation\"" "$ctx_file"
 if grep -q "dx_complete_file" "$ctx_file"; then
   printf "%s\n" "direct context still exposes the legacy completion marker" >&2
@@ -557,7 +559,7 @@ if grep -q "dx_paused_file" "$ctx_file"; then
 fi
 
 ctx_file="$(__dx_build_system_context "repo" 2 "$session_id" "$TMP_DIR/repo" "worktree" "test" "$generation")"
-grep -q "Direct Codex Phase Completion" "$ctx_file"
+grep -q "Headless Codex Phase Completion" "$ctx_file"
 grep -q "normal Phase 2 readiness gate" "$ctx_file"
 grep -q "Follow prompts/commit-format.md" "$ctx_file"
 grep -q "Do not wait for full verification" "$ctx_file"

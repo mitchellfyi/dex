@@ -839,11 +839,41 @@ dx_provider_claude() {
         DX_EFFORT_OVERRIDE="${DX_EFFORT_OVERRIDE:-}"
         DX_CODEX_EFFORT="${DX_CODEX_EFFORT:-}"
       )
-      local codex_prompt
+      local codex_prompt codex_launch="exec" codex_arg
+      local codex_resume_handle="" codex_resume_last=0 codex_expect_resume=0
       codex_prompt=$(dx_provider_codex_prompt_from_claude_args "$@") || return 1
+      if [[ "${DEX_PHASE_HANDOFF:-}" == "inline" \
+        && "${DEX_HEADLESS_RUN:-0}" != "1" \
+        && "${DX_CODEX_READ_ONLY:-0}" != "1" ]]; then
+        codex_launch="session"
+      fi
+      local codex_wrapper_args=("$codex_launch")
+      if [[ "$codex_launch" == "session" ]]; then
+        for codex_arg in "$@"; do
+          if [[ "$codex_expect_resume" -eq 1 ]]; then
+            codex_resume_handle="$codex_arg"
+            codex_expect_resume=0
+          elif [[ "$codex_arg" == "--resume" ]]; then
+            codex_expect_resume=1
+          elif [[ "$codex_arg" == "--continue" ]]; then
+            codex_resume_last=1
+          fi
+        done
+        if [[ "$codex_expect_resume" -eq 1 \
+          || ( -n "$codex_resume_handle" && "$codex_resume_last" -eq 1 ) ]]; then
+          dx_error "Codex lifecycle launch received conflicting or incomplete resume arguments."
+          return 1
+        fi
+        if [[ -n "$codex_resume_handle" ]]; then
+          codex_wrapper_args+=(--resume "$codex_resume_handle")
+        elif [[ "$codex_resume_last" -eq 1 ]]; then
+          codex_wrapper_args+=(--resume-last)
+        fi
+      fi
+      codex_wrapper_args+=(-- "$codex_prompt")
       env \
         "${env_args[@]}" \
-        bash "$DEX_DIR/bin/dxcodex.sh" exec -- "$codex_prompt"
+        bash "$DEX_DIR/bin/dxcodex.sh" "${codex_wrapper_args[@]}"
       ;;
     claude)
       env_args+=(
@@ -896,7 +926,14 @@ dx_provider_codex_prompt_from_claude_args() {
         }
         shift 2
         ;;
-      -p|--print|--chrome|--dangerously-skip-permissions|--verbose|--include-partial-messages|--resume|--continue|--fork-session|--strict-mcp-config|--no-session-persistence)
+      --resume)
+        [[ $# -ge 2 ]] || {
+          dx_error "${arg} requires a session ID or name."
+          return 1
+        }
+        shift 2
+        ;;
+      -p|--print|--chrome|--dangerously-skip-permissions|--verbose|--include-partial-messages|--continue|--fork-session|--strict-mcp-config|--no-session-persistence)
         shift
         ;;
       --)
@@ -941,17 +978,23 @@ dx_provider_codex_prompt_from_claude_args() {
 }
 
 dx_provider_codex() {
-  if [[ "${DX_PROVIDER_CODEX_WRAPPER:-0}" == "1" ]]; then
-    dx_provider_codex_wrapper_args "$@" || return 2
-  elif ! dx_provider_codex_diagnostic_args "$@"; then
-    dx_error "Direct dx_provider_codex delegation is blocked."
-    # This one was never actually losing its line — the four callers that
-    # capture this function all pass diagnostic arguments and never reach
-    # here. Kept on stderr anyway, beside the error it belongs to, so the rule
-    # holds without an exception to remember.
-    dx_info "Use bin/dxcodex.sh so Dex can enforce Codex config, sandbox, and provider cleanup." >&2
-    return 2
-  fi
+  case "${DX_PROVIDER_CODEX_WRAPPER:-0}" in
+    1)
+      dx_provider_codex_wrapper_args "$@" || return 2
+      ;;
+    interactive)
+      dx_provider_codex_interactive_args "$@" || return 2
+      ;;
+    *)
+      if ! dx_provider_codex_diagnostic_args "$@"; then
+        dx_error "Direct dx_provider_codex delegation is blocked."
+        # Callers that capture this function pass diagnostic arguments and do
+        # not reach here. Keep the guidance beside its error on stderr.
+        dx_info "Use bin/dxcodex.sh so Dex can enforce Codex config, sandbox, and provider cleanup." >&2
+        return 2
+      fi
+      ;;
+  esac
 
   local env_args=()
   local _env_name
@@ -1021,6 +1064,13 @@ dx_provider_codex_diagnostic_args() {
             ;;
         esac
       done
+      return 1
+      ;;
+    resume)
+      shift || true
+      case "${1:-}" in
+        help|--help|-h) return 0 ;;
+      esac
       return 1
       ;;
   esac
@@ -1098,6 +1148,87 @@ dx_provider_codex_wrapper_args() {
   fi
 }
 
+dx_provider_codex_interactive_args() {
+  dx_provider_codex_read_only_mode_valid || return 1
+  if dx_provider_codex_read_only_enabled; then
+    dx_error "Interactive Dex Codex sessions cannot use read-only delegation mode."
+    return 1
+  fi
+
+  local saw_resume=0 saw_resume_id=0 saw_last=0 saw_dangerous_bypass=0
+  local saw_hook_trust=0 saw_hooks_enabled=0 saw_start_hook=0 saw_stop_hook=0
+  if [[ "${1:-}" == "resume" ]]; then
+    saw_resume=1
+    shift
+    if [[ "${1:-}" == "--last" ]]; then
+      saw_last=1
+      shift
+    elif dx_agent_session_handle_valid "${1:-}"; then
+      saw_resume_id=1
+      shift
+    else
+      dx_error "Resumed Dex Codex sessions require an exact session ID or --last."
+      return 1
+    fi
+  elif [[ "${1:-}" != "--dangerously-bypass-approvals-and-sandbox" \
+    && "${1:-}" != "--yolo" ]]; then
+    dx_error "Interactive Dex Codex launches must start a new session or resume the latest one."
+    return 1
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --)
+        break
+        ;;
+      --last) saw_last=1 ;;
+      --dangerously-bypass-approvals-and-sandbox|--yolo)
+        saw_dangerous_bypass=1
+        ;;
+      --dangerously-bypass-hook-trust)
+        saw_hook_trust=1
+        ;;
+      -c|--config)
+        shift
+        [[ $# -gt 0 ]] || break
+        case "$1" in
+          features.hooks=true) saw_hooks_enabled=1 ;;
+          hooks.SessionStart=*) saw_start_hook=1 ;;
+          hooks.Stop=*) saw_stop_hook=1 ;;
+        esac
+        ;;
+      -c=*|--config=*)
+        case "${1#*=}" in
+          features.hooks=true) saw_hooks_enabled=1 ;;
+          hooks.SessionStart=*) saw_start_hook=1 ;;
+          hooks.Stop=*) saw_stop_hook=1 ;;
+        esac
+        ;;
+      --ignore-user-config|--ephemeral|--sandbox|-s|--sandbox=*|-s=*)
+        dx_error "Interactive Dex Codex sessions received an incompatible exec or sandbox flag: $1"
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "$saw_resume" -eq 1 \
+    && $((saw_resume_id + saw_last)) -ne 1 ]]; then
+    dx_error "Resumed Dex Codex sessions require one exact session selector."
+    return 1
+  fi
+  if [[ "$saw_resume" -eq 0 \
+    && $((saw_resume_id + saw_last)) -ne 0 ]]; then
+    dx_error "A new Dex Codex session cannot use --last."
+    return 1
+  fi
+  if [[ "$saw_dangerous_bypass" -ne 1 || "$saw_hook_trust" -ne 1 \
+    || "$saw_hooks_enabled" -ne 1 || "$saw_start_hook" -ne 1 \
+    || "$saw_stop_hook" -ne 1 ]]; then
+    dx_error "Interactive Dex Codex sessions require autonomous permissions and Dex's trusted session hooks."
+    return 1
+  fi
+}
+
 # dx_provider_claude_diagnostic [claude args…]
 # Run `claude` under exactly the environment Dex would give it. Nothing calls
 # this and nothing should: it exists to be typed by hand when the question is
@@ -1165,6 +1296,37 @@ dx_provider_codex_required_flags_check() {
   return $failed
 }
 
+dx_provider_codex_interactive_required_flags_check() {
+  local codex_help codex_resume_help codex_features
+  codex_help=$(dx_provider_codex --help 2>&1 || true)
+  codex_resume_help=$(dx_provider_codex resume --help 2>&1 || true)
+  codex_features=$(dx_provider_codex features list 2>&1 || true)
+  local failed=0
+
+  if ! grep -Eq -- '^Usage: codex .*\[PROMPT\]' <<< "${codex_help}"; then
+    dx_error "Codex CLI does not support starting an interactive session with a prompt; upgrade Codex before using an interactive Dex lifecycle."
+    failed=1
+  fi
+  if ! grep -q -- "--dangerously-bypass-approvals-and-sandbox" \
+    <<< "${codex_help}"; then
+    dx_error "Codex CLI does not support autonomous interactive permissions; upgrade Codex before using an interactive Dex lifecycle."
+    failed=1
+  fi
+  if ! grep -q -- "--dangerously-bypass-hook-trust" <<< "${codex_help}"; then
+    dx_error "Codex CLI does not support trusted one-off hooks; upgrade Codex before using an interactive Dex lifecycle."
+    failed=1
+  fi
+  if ! grep -q -- "--last" <<< "${codex_resume_help}"; then
+    dx_error "Codex CLI does not support resuming the latest interactive session; upgrade Codex before using a resumable Dex lifecycle."
+    failed=1
+  fi
+  if ! grep -Eq -- '^hooks[[:space:]]+' <<< "${codex_features}"; then
+    dx_error "Codex CLI does not support lifecycle hooks; upgrade Codex before using an interactive Dex lifecycle."
+    failed=1
+  fi
+  return $failed
+}
+
 dx_provider_codex_ready_check() {
   dx_provider_codex_read_only_mode_valid || return 1
   if ! command -v codex >/dev/null 2>&1; then
@@ -1226,15 +1388,16 @@ Subscription-safety rules:
 - Do NOT set or use OpenAI/Anthropic API keys, gateway URLs, or provider routing env vars.
 - Use the existing signed-in Codex subscription session.
 - Do NOT run raw or nested Codex commands. Dex already applied
-  "--ignore-user-config", "--dangerously-bypass-approvals-and-sandbox",
-  sanitized environment variables, and any explicit model override.
+  its provider isolation, permission policy, sanitized environment variables,
+  and any explicit model override.
 - If Codex is missing or not logged in, stop and report that "dx provider doctor"
   or "/codex:setup" must be run.
 
 Execution guidance:
 - Use the tools available in this session to complete the supplied task.
 - Follow the task's receipt, marker, audit, verification, commit, and PR
-  requirements exactly; direct Codex sessions do not run Claude Stop hooks.
+  requirements exactly. Interactive lifecycle sessions use Dex's Stop hook to
+  audit work and advance phases without leaving the Codex session.
 EOF
   elif [[ "$DX_PROVIDER_ENGINE" == "anthropic-gateway" ]]; then
     cat <<EOF

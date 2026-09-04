@@ -275,6 +275,7 @@ run_case() {
   local pass_mode="${8:-}" invocation_mode="${9:-single}" session_mode="${10:-derived}"
   local pass_timeout="${11:-}" clean_override="${12:-}"
   local live_clean_override="${13:-}"
+  local max_waves_override="${14:-}"
   local case_pid="" watchdog_pid="" watchdog_marker=""
 
   CASE_NAME="$name"
@@ -353,6 +354,7 @@ run_case() {
   CASE_PASS_TIMEOUT="$pass_timeout" \
   CASE_CLEAN_OVERRIDE="$clean_override" \
   CASE_LIVE_CLEAN_OVERRIDE="$live_clean_override" \
+  CASE_MAX_WAVES_OVERRIDE="$max_waves_override" \
   DEX_FACTORY_SYNC=0 \
     zsh -fc '
       source "$DEX_DIR/dx.sh"
@@ -402,6 +404,11 @@ run_case() {
         dx_override_set "$CASE_SESSION_ID" review.clean-passes \
           "$CASE_LIVE_CLEAN_OVERRIDE" phase 3 human \
           "The fixture approves a reduced independent review target" 0
+      fi
+      if [[ -n "$CASE_MAX_WAVES_OVERRIDE" ]]; then
+        dx_override_set "$CASE_SESSION_ID" review.max-waves \
+          "$CASE_MAX_WAVES_OVERRIDE" phase 3 human \
+          "The fixture sets a bounded review wave budget" 0
       fi
 
       __dx_refresh_provider() {
@@ -805,6 +812,11 @@ PY
         printf "pass\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
           "$DEX_SESSION_ID" "$context_path" "$contamination" "$context_supplied" \
           "${DEX_REVIEW_TIER:-}" "${DEX_REVIEW_PROFILE:-}" "$result" "$criteria_path" "$criteria_ok" >> "$CASE_CALLS"
+        if [[ "$CASE_PASS_MODE" == "raise-wave-budget-after-third" \
+          && "$pass_index" -eq 3 ]]; then
+          dx_override_set "$CASE_SESSION_ID" review.max-waves 4 phase 3 agent \
+            "The third wave fixed a new verified issue" 0
+        fi
         return 0
       }
 
@@ -1629,7 +1641,7 @@ assert_no_receipt "resumable review pass timeout"
 assert_retained_credit "1" "resumable review pass timeout"
 
 run_case "resume-after-pass-timeout" "small" $'CLEAN\nCLEAN' "" \
-  "lifecycle" "resume-state" "" "timeout-once" "resume-between" "derived" "1" "3"
+  "lifecycle" "resume-state" "" "timeout-once" "resume-between" "derived" "1" "3" "" "4"
 assert_success "resume after review pass timeout"
 assert_eq "1" "$(call_count pass-start)" "resume after timeout launch count"
 assert_eq "2" "$(call_count pass)" "resume after timeout clean pass count"
@@ -1682,6 +1694,7 @@ assert_success "normal gate"
 assert_eq "2" "$(call_count pass)" "normal gate pass count"
 assert_no_assessor "normal gate explicit tier"
 assert_receipt "normal" "2" "normal gate"
+assert_contains "Review wave budget: 6 waves." "$CASE_OUTPUT"
 
 run_case "normal-lowered-target" "normal" 'CLEAN' "" \
   "standalone" "" "" "" "single" "derived" "" "" "1"
@@ -1698,9 +1711,10 @@ assert_success "complex gate"
 assert_eq "3" "$(call_count pass)" "complex gate pass count"
 assert_no_assessor "complex gate explicit tier"
 assert_receipt "complex" "3" "complex gate"
+assert_contains "Review wave budget: 9 waves." "$CASE_OUTPUT"
 
 run_case "fix-reset" "small" $'CLEAN\nCLEAN\nFINDINGS_FIXED:1\nCLEAN\nCLEAN\nCLEAN' "" \
-  "standalone" "" "" "" "single" "derived" "" "3"
+  "standalone" "" "" "" "single" "derived" "" "3" "" "6"
 assert_success "fix reset"
 assert_eq "6" "$(call_count pass)" "fix reset pass count"
 assert_no_assessor "fix reset explicit tier"
@@ -1809,11 +1823,36 @@ assert_eq "1" "$(call_count pass)" "churn stop pass count"
 assert_no_assessor "churn stop explicit tier"
 assert_no_receipt "churn stop"
 
-run_case "no-outer-max" "small" $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN'
-assert_success "no default max"
-assert_eq "6" "$(call_count pass)" "no default max pass count"
-assert_no_assessor "no default max explicit tier"
-assert_receipt "small" "1" "no default max"
+run_case "small-wave-budget-exhausted" "small" \
+  $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN'
+assert_failure "small wave budget exhausted"
+assert_eq "3" "$(call_count pass)" "small wave budget pass count"
+assert_no_assessor "small wave budget explicit tier"
+assert_no_receipt "small wave budget exhausted"
+assert_contains "Review paused: wave_budget_exhausted." "$CASE_OUTPUT"
+assert_contains "Iterations: 3/3" "$CASE_OUTPUT"
+
+run_case "success-at-wave-budget" "small" \
+  $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN'
+assert_success "success at wave budget"
+assert_eq "3" "$(call_count pass)" "success at wave budget pass count"
+assert_receipt "small" "1" "success at wave budget"
+
+run_case "live-wave-budget-extension" "small" \
+  $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN' "" \
+  "standalone" "" "" "raise-wave-budget-after-third"
+assert_success "live wave budget extension"
+assert_eq "4" "$(call_count pass)" "live wave budget extension pass count"
+assert_receipt "small" "1" "live wave budget extension"
+assert_contains "Review wave budget changed: 4 waves." "$CASE_OUTPUT"
+
+run_case "wave-budget-preserves-credit" "normal" $'CLEAN\nCLEAN' "" \
+  "standalone" "" "" "" "single" "derived" "" "" "" "1"
+assert_failure "wave budget preserves credit"
+assert_eq "1" "$(call_count pass)" "wave budget preserves credit pass count"
+assert_no_receipt "wave budget preserves credit"
+assert_retained_credit "1" "wave budget preserves credit"
+assert_contains "Consecutive clean: 1/2" "$CASE_OUTPUT"
 
 run_case "upward-escalation" "small" $'ESCALATE:normal:cross-module\nCLEAN\nCLEAN'
 assert_success "upward escalation"

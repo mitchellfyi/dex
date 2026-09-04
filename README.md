@@ -95,16 +95,19 @@ implementation agent selects `small`, `normal`, or `complex`. Dex requires 1,
 risk assessor. Every counted wave runs in a fresh context without prior review
 conclusions or telemetry.
 
-The review loop has no routine outer iteration limit. It continues until the
-clean gate succeeds. Residual findings, blockers, churn, invalid results, and
-provider failures pause the loop for intervention rather than being treated as
-clean or retried indefinitely. The 1/2/3 gates are global so review assurance
-does not vary by repository. `DEX_REVIEW_CLEAN_PASSES` can raise the launch gate
-but cannot lower it. An attributed
+The outer loop uses a soft wave budget of 3 for `small`, 6 for `normal`, and 9
+for `complex`. If the clean gate has not succeeded when the budget is spent,
+review pauses with its valid clean credit intact. Residual findings, blockers,
+churn, invalid results, and provider failures also pause instead of being
+treated as clean or retried indefinitely. The 1/2/3 clean gates are global so
+review assurance does not vary by repository. `DEX_REVIEW_CLEAN_PASSES` can
+raise the launch gate but cannot lower it. An attributed
 `dx control override review.clean-passes <1-30>` can change the live target;
 lowering it still requires that many independent clean waves and records the
-review phase as waived. A full `dx control waive review.clean-passes` skips the
-remaining review gate.
+review phase as waived. Agents and humans can change the operational budget
+with `dx control override review.max-waves <1-30>` without changing the
+clean-pass assurance result. A full `dx control waive review.clean-passes`
+skips the remaining review gate.
 
 Git history follows the work rather than waiting for final verification. Phase
 2 commits and pushes small coherent implementation checkpoints, Phase 3 does
@@ -146,8 +149,10 @@ dx control pause           # Pause, stop, or hand control back to a running life
 dx control recover review --reason "review owner stopped after interrupt"
 dx control override review.pass-timeout 2400 --source agent --reason "checks need longer"
 dx control override review.clean-passes 2 --source human --reason "two clean waves approved"
+dx control override review.max-waves 12 --source agent --reason "another clean sequence is warranted"
 dx control waive review.clean-passes --source human --reason "approved in this session"
 dx sessions list           # List trusted lifecycle sessions in this repository
+dx sessions resume ticket:999  # Resume a specific lifecycle and provider conversation
 dx sessions doctor         # Diagnose inconsistent, dead, or unsafe session state
 dx test                    # Test Dex here, or verify another initialized project
 dx log                     # Show recent run events and summaries
@@ -253,15 +258,24 @@ effort. You can override one run from the terminal:
 ```bash
 dx --agent claude --model claude-opus-4-7 1234
 dx --agent codex --model gpt-5.3-codex "add the export job"
+dx 1234 --agent codex
 ```
 
-For Codex runs, Claude Code remains the lifecycle harness because Dex relies on
-Claude Code hooks, skills, plan mode, and same-session handoff. Substantive
-coding and review work is delegated through Dex's Codex wrapper.
+Run-level flags may appear before or after the ticket or task.
+
+Interactive Codex lifecycles run directly in the Codex terminal UI. Dex adds
+session-scoped `SessionStart` and phase-audit `Stop` hooks for that invocation
+so setup, planning, implementation, review, verification, and completion stay
+in one session. The wrapper pins the non-secret Dex runtime context that those
+hooks need because Codex's persistent app server may not inherit the terminal
+environment. Dex saves the exact Claude or Codex conversation ID at startup, so
+restarting the same lifecycle resumes its existing conversation after a crash.
+Headless tasks and focused delegation still use `codex exec` through Dex's
+wrapper.
 
 - `claude-subscription` - direct Claude Code via Claude subscription auth.
-- `codex-subscription` - Claude remains the harness while coding/review work is
-  delegated through Dex's Codex wrapper using ChatGPT subscription auth.
+- `codex-subscription` - direct Codex CLI lifecycles and delegated Codex work
+  using ChatGPT subscription auth.
 
 ```bash
 dx provider list

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SessionEnd hook — records session end time and cleans up ephemeral state files.
-# Runs when a Claude Code session ends (cleanly or otherwise).
+# Runs when an interactive provider session ends (cleanly or otherwise).
 set -euo pipefail
 
 # shellcheck disable=SC2034  # read by lib/common.sh while it is sourced
@@ -9,8 +9,8 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 
-# A checkout-derived Dex session can be visible to more than one Claude
-# session. Only the Claude session that claimed the active loop may mutate its
+# A checkout-derived Dex session can be visible to more than one provider
+# session. Only the session that claimed the active loop may mutate its
 # state during SessionEnd. If the payload cannot prove ownership, leave the
 # state for the real owner or wrapper to clean up.
 OWNER_FILE=$(dx_owner_file "$SESSION_ID")
