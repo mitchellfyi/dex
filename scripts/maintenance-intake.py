@@ -163,22 +163,55 @@ def atomic_json(target, value):
             scratch.unlink(missing_ok=True)
 
 
+def focus(args):
+    """Describe the wrapper's ticket authority, fetching manual issue context."""
+    if args.intake_file:
+        record = json.loads(Path(args.intake_file).read_text(encoding="utf-8"))
+        if (record.get("version") != 1 or record.get("repo", "").casefold() != args.repo.casefold()
+                or record.get("issue_number") != args.issue_number or record.get("proceed") is not True
+                or not record.get("claim_url") or not record.get("request_id")):
+            raise IntakeError("The selected issue has no matching verified workflow claim.")
+        issue = json.loads(Path(args.intake_file).with_name("selected-issue.json").read_text(encoding="utf-8"))
+        authority = {"source": record["event"], "issue_number": args.issue_number,
+                     "request_id": record["request_id"], "claim_url": record["claim_url"]}
+    else:
+        issue = GitHub(args.repo).api(f"issues/{args.issue_number}")
+        authority = {"source": "manual --issue", "issue_number": args.issue_number}
+    if (not isinstance(issue, dict) or issue.get("number") != args.issue_number
+            or issue.get("state") != "open" or "pull_request" in issue):
+        raise IntakeError("The focused issue must be an open issue in this repository.")
+    if not args.intake_file:
+        issue["comments"] = GitHub(args.repo).pages(f"issues/{args.issue_number}/comments")
+    atomic_json(args.context_dir / "selected-issue.json", issue)
+    print(json.dumps(authority, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "claim"))
+    parser.add_argument("phase", choices=("prepare", "claim", "focus"))
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--label", required=True)
+    parser.add_argument("--label", default="")
     parser.add_argument("--maintenance-label", default="dex-maintenance")
-    parser.add_argument("--event", choices=("issues", "schedule", "workflow_dispatch"), required=True)
+    parser.add_argument("--event", choices=("issues", "schedule", "workflow_dispatch"), default="workflow_dispatch")
     parser.add_argument("--event-path", default="")
     parser.add_argument("--context-dir", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--config-error", default="")
     parser.add_argument("--disabled", action="store_true")
+    parser.add_argument("--issue-number", type=int, default=0)
+    parser.add_argument("--intake-file", default="")
     args = parser.parse_args()
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", args.repo, flags=re.ASCII) or args.limit < 1:
         parser.error("invalid repository or queue limit")
     args.context_dir.mkdir(parents=True, exist_ok=True)
+    if args.phase == "focus":
+        if not positive(args.issue_number):
+            parser.error("focus requires a positive issue number")
+        try:
+            focus(args)
+        except (IntakeError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            parser.exit(1, f"Ticket focus could not be verified: {exc}\n")
+        return
     state_file = args.context_dir / "intake.json"
     result = {"version": 1, "repo": args.repo, "event": args.event, "label": args.label,
               "proceed": args.event != "issues", "issue_number": None, "request_id": "",

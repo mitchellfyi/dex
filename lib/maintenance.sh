@@ -144,7 +144,7 @@ dx_maintenance_issue_intake() {
   local repo_root="$1" intake_phase="$2" event_name="$3" event_file="$4" context_dir="$5"
   local issue_label maintain_label issue_limit config_error="" config_count repo_slug
   local -a intake_args
-  intake_args=()
+  intake_args=(--event "$event_name")
   if [[ "$(dx_maintenance_config_value "$repo_root" enabled true)" != "true" ]]; then
     intake_args+=(--disabled)
   fi
@@ -167,8 +167,21 @@ dx_maintenance_issue_intake() {
   fi
   python3 "$DEX_DIR/scripts/maintenance-intake.py" "$intake_phase" \
     --repo "$repo_slug" --label "$issue_label" --maintenance-label "$maintain_label" \
-    --limit "$issue_limit" --event "$event_name" --event-path "$event_file" \
+    --limit "$issue_limit" --event-path "$event_file" \
     --context-dir "$context_dir" --config-error "$config_error" "${intake_args[@]}"
+}
+
+# An explicit local --issue is its own request. Workflow requests have already
+# been consumed by the trusted intake step before credentials are removed.
+dx_maintenance_issue_focus() {
+  local repo_root="$1" issue_number="$2" context_dir="$3" repo_slug
+  repo_slug="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
+  if [[ -z "$repo_slug" ]]; then
+    repo_slug=$(cd "$repo_root" && gh repo view --json nameWithOwner --jq .nameWithOwner) || return 1
+  fi
+  python3 "$DEX_DIR/scripts/maintenance-intake.py" focus --repo "$repo_slug" \
+    --issue-number "$issue_number" --context-dir "$context_dir" \
+    --intake-file "${DX_MAINTAIN_INTAKE_FILE:-}"
 }
 
 dx_maintenance_event_mode() {
