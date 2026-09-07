@@ -121,6 +121,11 @@ paths and technical constraints only where implementers need them. Do not force
 user-story templates, design patterns, architecture reports, or repeated summary
 comments onto straightforward tickets.
 
+Scale the writing to the change. A mechanical edit usually needs a sentence of
+scope, a few checks, and a short approach and effort note. State each constraint
+once; do not repeat it across outcome, criteria, implementation, and decisions.
+Keep investigation history in the session unless it changes how to do the work.
+
 ## Split, organise, and sequence
 
 Create sub-issues when smaller changes can be reviewed and tested separately,
@@ -205,8 +210,9 @@ approved reporting channel for those findings.
 Keep durable decisions and questions in the tracker. Before compaction, retain
 scope, processed/pending items, stakeholder identities, approvals, and write links
 in context; the launcher permits an atomic update of its temporary session context
-file, never a tracked repo file. There is no background watcher. Re-run triage
-after replies arrive.
+file, never a tracked repo file. Write to that path plus `.tmp`, then use Python's
+`os.replace` to replace it; shell aliases such as `mv -i` can stall an overwrite.
+There is no background watcher. Re-run triage after replies arrive.
 
 Finish with links to changed, created, duplicate, and related tickets; effort and
 delivery order; ready work and unresolved dependencies; named stakeholder questions;

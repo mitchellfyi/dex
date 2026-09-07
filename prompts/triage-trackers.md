@@ -35,6 +35,15 @@ issues are different scopes: resolve the project owner and number/ID, and retain
 repository identity for every issue. Do not silently turn project draft items
 into repository issues or treat PR items as editable tickets; report them separately.
 
+GitHub label descriptions allow at most 100 characters. For new default labels,
+use `Needs a decision before implementation planning.` for `triage:needs-info`
+and `Specified and estimated; dependencies may still block work.` for
+`triage:ready`. Confirm the destination label exists before replacing readiness
+labels. Preserve unrelated labels, check each write result, and re-read the final
+set; a later successful command does not erase an earlier failure. If replacement
+fails, reconcile labels with the ticket's actual readiness or report the incomplete
+update. Never leave a known-stale ready label on work that now needs information.
+
 Prefer native sub-issues and issue dependencies through supported CLI or official
 REST/GraphQL operations. Ordinary references or tasklists do not establish native
 blocking relationships. Use existing project or organisation estimate fields only
@@ -46,7 +55,8 @@ headings and useful metadata when editing their Markdown descriptions. For a
 project delivery sequence, use its existing editable overview/readme when available;
 otherwise provide a linked sequence in the session.
 
-Official references, checked during initial implementation planning:
+Official references:
+- [Labels](https://docs.github.com/en/rest/issues/labels#create-a-label)
 - [Sub-issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues)
 - [Dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies)
 - [Project fields](https://docs.github.com/en/issues/planning-and-tracking-with-projects/understanding-fields/about-single-select-fields)
