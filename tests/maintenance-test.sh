@@ -230,6 +230,14 @@ if normalized != template:
 print("maintenance workflow template matches the installed copy")
 PY
 
+printf '\n# repository customisation\n' >> "$workflow_target"
+assert_rejected "$LINENO" dx_maintenance_install_workflow "$repo" > "$TMP_DIR/workflow-preserve.out" 2>&1
+assert_contains "# repository customisation" "$workflow_target"
+dx_maintenance_install_workflow "$repo" 1 > "$TMP_DIR/workflow-replace.out"
+if grep -Fq "# repository customisation" "$workflow_target"; then
+  fail "explicit workflow replacement kept the old file"
+fi
+
 linked_repo="$TMP_DIR/linked-repo"
 linked_target="$TMP_DIR/linked-target"
 mkdir -p "$linked_repo/.dex" "$linked_target"

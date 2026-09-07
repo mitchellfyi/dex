@@ -233,7 +233,7 @@ Run `dx help` in the terminal for all available commands.
 | default_mode | report |
 | schedule_mode | report |
 | issue_mode | report |
-| issue_label | _none_ |
+| issue_label | dex-execute |
 | issue_queue_limit | 10 |
 | max_prs | 1 |
 | low_risk_fix_categories | docs, rules, guards, memory, tests |
@@ -246,6 +246,12 @@ maintainer expands this table. Set `issue_mode` or `schedule_mode` to
 `fix-scoped` only after configuring the GitHub workflow secrets and reviewing
 the categories. Set `auto_merge` to `true` only for repositories where GitHub
 branch protection or a merge queue should accept maintenance PRs automatically.
+
+Create the GitHub label `dex-execute` when ready to use ticket intake. Applying
+it deliberately requests one maintenance attempt; readiness labels do not.
+Remove and reapply it to retry. Set `issue_label` to `_none_` to pause automatic
+ticket intake. Installation does not create labels or enable GitHub workflows.
+See `docs/maintenance.md` in the Dex installation for setup and upgrade guidance.
 DEXMD
   dx_done "Created .dex/dex.md (minimal)"
 else

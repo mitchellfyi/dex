@@ -172,7 +172,18 @@ gitignore_repo=$(new_repo gitignore-repo)
 mkdir -p "$gitignore_repo/.dex"
 printf 'custom-cache/' > "$gitignore_repo/.dex/.gitignore"
 run_init_without_analysis "$gitignore_repo" "$TMP_DIR/gitignore-first.out"
+assert_contains "| issue_label | dex-execute |" "$gitignore_repo/.dex/dex.md"
+assert_contains "| default_mode | report |" "$gitignore_repo/.dex/dex.md"
+assert_contains "| schedule_mode | report |" "$gitignore_repo/.dex/dex.md"
+assert_contains "| issue_mode | report |" "$gitignore_repo/.dex/dex.md"
+python3 - "$gitignore_repo/.dex/dex.md" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+p.write_text(p.read_text().replace("| issue_label | dex-execute |", "| issue_label | custom-execute |"))
+PY
 run_init_without_analysis "$gitignore_repo" "$TMP_DIR/gitignore-second.out"
+assert_contains "| issue_label | custom-execute |" "$gitignore_repo/.dex/dex.md"
 [[ "$(grep -c '^worktrees/$' "$gitignore_repo/.dex/.gitignore")" -eq 1 ]] || {
   printf 'worktrees/ was not added exactly once\n' >&2
   exit 1
