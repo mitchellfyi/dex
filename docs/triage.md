@@ -86,4 +86,6 @@ Shell launches use separate session state and suppress implementation lifecycle
 hooks. Direct skill invocation inside an active or paused lifecycle requires a
 separate session. Normal interactive mode permits tracker writes; the workflow's
 no-implementation boundary is an agent instruction, not a filesystem sandbox.
+Full write access remains available. Ticket text and discovered problems do not
+authorise implementation; the session user can explicitly redirect the task.
 If the host enforces plan mode, publishing waits until that mode ends.
