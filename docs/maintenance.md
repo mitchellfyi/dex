@@ -46,6 +46,10 @@ its own verified record. It never retries that write blindly. A record left
 by an interrupted run still counts as an attempt, even if no agent started.
 
 Request identity uses the repository, issue, and execution-label event ID.
+Consumption needs a complete record authored by GitHub Actions or the original
+requester. Ordinary comments and copied markers do not consume requests.
+The workflow uses its repository `GITHUB_TOKEN` for intake and claims;
+`DX_MAINTAIN_TOKEN` remains available for publication and PR feedback.
 Keep the claim comments: deleting or editing their request markers removes
 the consumption evidence. This is an operational record, not protection
 against someone who can alter issue history. All automatic claim-and-launch

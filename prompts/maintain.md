@@ -120,9 +120,8 @@ skipped. Keep the configured mode, fix categories, and PR limit in both cases.
    - In `report` mode, do not patch.
    - In `propose`, prefer `.dex/`, docs, rules, guards, and memory updates.
    - In `fix-scoped`, patch only configured low-risk categories.
-   - When issue context is present and PR creation is allowed, keep a PR tied to
-     one actionable issue unless the invocation explicitly asks for broader
-     maintenance.
+   - When ticket execution is authorised and PR creation is allowed, tie ticket
+     work to that selected issue. Use repository evidence for independent fixes.
    - Do not bundle unrelated fixes.
 
 7. **Verify and prepare publication**
@@ -190,7 +189,13 @@ Repo: <owner/repo or local path>
 Base: <branch>@<sha>
 Workflow: <manual|DX maintain>
 Token mode: <GITHUB_TOKEN|DX_MAINTAIN_TOKEN|local gh|unknown>
-Issue context: <none|issue #n|open issue queue>
+Issue context: <none|selected issue #n>
+
+## Ticket Work
+- <authorised issue, request/claim reference and outcome, or why intake was skipped>
+
+## Independent Maintenance
+- <repository evidence and outcome, or none selected>
 
 ## Checked
 - <surface> — <why selected>

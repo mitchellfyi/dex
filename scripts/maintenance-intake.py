@@ -56,8 +56,21 @@ def marker(request_id):
     return f"<!-- dex-maintenance-request:v1:{request_id} -->"
 
 
-def consumed(comments, request_id):
-    return any(marker(request_id) in (comment.get("body") or "").splitlines() for comment in comments)
+def claim_record(comment, request_id, requester):
+    """Accept complete records from Actions or the already-verified requester.
+
+    Binding human records to the label applier avoids making old claims depend
+    on another user's changing repository permissions. Workflow claims use the
+    repository GITHUB_TOKEN, whose author is GitHub Actions.
+    """
+    user = comment.get("user") or {}
+    actor = user.get("login", "").casefold()
+    if actor != requester.casefold() and not (actor == "github-actions[bot]" and user.get("type") == "Bot"):
+        return False
+    lines = (comment.get("body") or "").splitlines()
+    return (positive(comment.get("id")) and bool(comment.get("html_url"))
+            and len(lines) == 4 and lines[1] == "" and lines[2] == marker(request_id)
+            and re.fullmatch(r"<!-- dex-maintenance-attempt:[0-9a-f]{32} -->", lines[3]) is not None)
 
 
 def request(github, number, label):
@@ -87,7 +100,7 @@ def request(github, number, label):
         raise IntakeError("The execution-label applier needs write, maintain, or admin access.")
     request_id = f"{github.repo.lower()}:{number}:{latest['id']}"
     comments = github.pages(f"issues/{number}/comments")
-    if consumed(comments, request_id):
+    if any(claim_record(comment, request_id, actor) for comment in comments):
         raise IntakeError("This request already used its attempt; remove and reapply the execution label to retry.")
     issue["comments"] = comments
     return {"issue_number": number, "request_id": request_id, "requester": actor,
@@ -112,7 +125,7 @@ def claim(github, candidate, label):
         # A timeout can follow a successful write. Never retry it blindly.
         pass
     comments = github.pages(f"issues/{current['issue_number']}/comments")
-    records = [item for item in comments if marker(current["request_id"]) in (item.get("body") or "").splitlines()]
+    records = [item for item in comments if claim_record(item, current["request_id"], current["requester"])]
     if len(records) != 1 or records[0].get("body") != body or not records[0].get("html_url"):
         raise IntakeError("The attempt claim could not be verified; no ticket work will launch. Check the issue before retrying.")
     current["issue"]["comments"] = comments
@@ -133,7 +146,8 @@ def select(github, args):
         number = (event.get("issue") or {}).get("number")
         if not positive(number):
             raise IntakeError("The issue event has no valid issue number.")
-        return request(github, number, args.label), []
+        candidate = request(github, number, args.label)
+        return candidate, [], [{key: value for key, value in candidate.items() if key != "issue"}]
     pending, skipped = [], []
     # Match labels literally: GitHub's labels query treats commas as separators.
     for issue in github.pages("issues?state=open&sort=created&direction=asc"):
@@ -147,7 +161,8 @@ def select(github, args):
             skipped.append({"issue_number": issue["number"], "reason": str(exc)})
     pending.sort(key=lambda item: (item["request_time"], item["issue_number"]))
     queue = pending[:args.limit]
-    return (queue[0] if queue else None), skipped
+    return ((queue[0] if queue else None), skipped,
+            [{key: value for key, value in item.items() if key != "issue"} for item in queue])
 
 
 def atomic_json(target, value):
@@ -215,7 +230,7 @@ def main():
     state_file = args.context_dir / "intake.json"
     result = {"version": 1, "repo": args.repo, "event": args.event, "label": args.label,
               "proceed": args.event != "issues", "issue_number": None, "request_id": "",
-              "requester": "", "claim_url": "", "reason": "No pending ticket requests.", "skipped": []}
+              "requester": "", "claim_url": "", "reason": "No pending ticket requests.", "skipped": [], "queue": []}
     try:
         if args.disabled:
             result["proceed"] = False
@@ -232,7 +247,7 @@ def main():
         except IntakeError as exc:
             raise IntakeError("Configure and create the execution label; its availability could not be verified.") from exc
         if args.phase == "prepare":
-            candidate, result["skipped"] = select(github, args)
+            candidate, result["skipped"], result["queue"] = select(github, args)
         else:
             candidate = json.loads(state_file.read_text(encoding="utf-8"))
             if any(candidate.get(key) != result[key] for key in ("version", "repo", "event", "label")):
@@ -240,6 +255,7 @@ def main():
             if candidate.get("claim_url"):
                 raise IntakeError("This invocation already claimed an attempt; reruns require a new request.")
             result["skipped"] = candidate.get("skipped", [])
+            result["queue"] = candidate.get("queue", [])
             candidate = claim(github, candidate, args.label) if candidate.get("issue_number") else None
         if candidate:
             issue = candidate.pop("issue", None)

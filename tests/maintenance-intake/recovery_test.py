@@ -4,6 +4,32 @@ from support import IntakeCase
 
 
 class RecoveryTests(IntakeCase):
+    def test_outsider_comment_marker_is_not_a_consumed_attempt(self):
+        selected = self.invoke()
+        self.db["comments"]["7"].append({"id": 20, "author_association": "NONE",
+                                         "user": {"login": "outsider", "type": "User"},
+                                         "body": f"<!-- dex-maintenance-request:v1:{selected['request_id']} -->"})
+        self.assertTrue(self.invoke()["proceed"])
+
+    def test_outsider_copy_of_complete_claim_is_not_consumption(self):
+        self.invoke()
+        self.invoke("claim")
+        self.db["comments"]["7"][0].update(user={"login": "outsider", "type": "User"}, author_association="NONE")
+        self.db["permissions"] = {"outsider": "read"}
+        self.assertTrue(self.invoke()["proceed"])
+
+    def test_original_requester_record_stays_consumed(self):
+        self.invoke()
+        self.invoke("claim")
+        self.db["comments"]["7"][0]["user"] = {"login": "owner", "type": "User"}
+        self.assertFalse(self.invoke()["proceed"])
+
+    def test_actions_name_on_a_user_record_is_not_bot_provenance(self):
+        self.invoke()
+        self.invoke("claim")
+        self.db["comments"]["7"][0]["user"]["type"] = "User"
+        self.assertTrue(self.invoke()["proceed"])
+
     def test_lost_post_response_is_reconciled_without_another_write(self):
         self.invoke()
         self.db["post_error"] = "accepted-but-disconnected"

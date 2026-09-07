@@ -21,7 +21,7 @@ if db.get("fail") and db["fail"] in endpoint:
 elif "/labels/" in endpoint:
     result = {"name": unquote(parts[-1])}
 elif "/collaborators/" in endpoint:
-    result = {"permission": db["permission"]}
+    result = {"permission": db.get("permissions", {}).get(unquote(parts[-2]), db["permission"])}
 elif len(parts) == 4 and parts[-1] == "issues":
     result = list(db["issues"].values())
 elif len(parts) >= 5 and parts[3] == "issues":
@@ -34,6 +34,7 @@ elif len(parts) >= 5 and parts[3] == "issues":
         if "--input" in args:
             payload = json.load(sys.stdin)
             result = {"id": len(db["comments"][key]) + 1, "body": payload["body"],
+                      "user": {"login": "github-actions[bot]", "type": "Bot"},
                       "html_url": "https://github.com/o/r/issues/7#issuecomment-1"}
             if db["post_error"] != "rejected":
                 db["comments"][key].append(result)

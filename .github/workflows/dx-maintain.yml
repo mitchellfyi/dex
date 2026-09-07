@@ -78,7 +78,7 @@ jobs:
         id: issue_intake
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.DX_MAINTAIN_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -159,7 +159,7 @@ jobs:
         id: issue_context
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.DX_MAINTAIN_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
         run: |

@@ -43,6 +43,7 @@ class WorkflowTests(IntakeCase):
         result = self.execute("Claim selected ticket request")
         self.assertTrue(result["claim_url"])
         self.assertIn("if: ${{ steps.provider.outputs.ready == 'true' }}", step("Claim selected ticket request")[0])
+        self.assertIn("GH_TOKEN: ${{ github.token }}", step("Claim selected ticket request")[0])
         workflow = (ROOT / ".github/workflows/dx-maintain.yml").read_text()
         self.assertLess(workflow.index("name: Resolve maintenance mode"), workflow.index("name: Claim selected ticket request"))
         self.assertIn("group: dx-maintain-${{ github.repository }}-nightly", workflow)
