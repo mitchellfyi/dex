@@ -439,6 +439,9 @@ dx_provider_write_session_state() {
   mkdir -p "$DX_LOOP_DIR" || return 1
   __dx_provider_write_state_file "$(dx_provider_state_file "$session_id")" "$session_id" || return 1
 
+  # Standalone triage must not replace a lifecycle's checkout provider alias.
+  [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]] && return 0
+
   local alias_id
   alias_id=$(dx_session_id 2>/dev/null || true)
   if [[ -n "$alias_id" && "$alias_id" != "$session_id" ]]; then
@@ -461,6 +464,8 @@ dx_provider_cleanup_session_state() {
   local session_id="$1" alias_id alias_file
   [[ -n "$session_id" ]] || return 0
   rm -f "$(dx_provider_state_file "$session_id")" 2>/dev/null
+
+  [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]] && return 0
 
   alias_id=$(dx_session_id 2>/dev/null || true)
   if [[ -n "$alias_id" && "$alias_id" != "$session_id" ]]; then

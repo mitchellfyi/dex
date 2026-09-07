@@ -30,7 +30,7 @@ zsh -fc '
     return 97
   }
 
-  for command_name in dxloop dxrefine dxcomplete dxreviewloop dxrm dxls dxcd dxclean; do
+  for command_name in dxloop dxtriage dxrefine dxcomplete dxreviewloop dxrm dxls dxcd dxclean; do
     "$command_name" --help > "$TEST_REPO/$command_name-help.out"
     grep -Fq "Usage:" "$TEST_REPO/$command_name-help.out"
   done

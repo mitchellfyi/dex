@@ -128,7 +128,7 @@ dx_review_capacity_enqueue session-blocker blocker
 dx_review_capacity_try_acquire session-blocker blocker 1
 cancel_file="$TMP_DIR/cancel"
 cancel_check() {
-  [[ -f "$cancel_file" ]]
+  [[ -f "$cancel_file" ]] || return 1
 }
 touch "$cancel_file"
 set +e

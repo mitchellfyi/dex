@@ -8,6 +8,11 @@ set -euo pipefail
 
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
+if [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]]; then
+  printf '%s\n' "Dex triage: preserve scope, processed/pending tickets, stakeholders, decisions, approvals, and write links before compaction."
+  printf '%s\n' "After compaction, re-read the triage skill and session context. Do not start implementation."
+fi
+
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
 CTX_FILE=$(dx_context_file "$SESSION_ID")
 

@@ -83,3 +83,19 @@ form, even when no tracker is configured or nothing changed:
 
 Use real identifiers and links when available. Do not claim an issue or PR was
 updated unless the write succeeded.
+
+## Standalone triage
+
+`dx triage`, `dx refine`, `/dxtriage`, and `/dxrefine` reuse the search,
+classification, evidence, content-preservation, and verification rules above.
+Their triage skill supplies the write-authority rules: selected ticket content
+can improve as work proceeds; concrete incidental findings and new sub-issues
+can be created after duplicate checks. Ask before reorganising existing tickets,
+changing their relationships, merging, closing, moving, or expanding an existing
+issue outside the selected scope. Ask the session user about open decisions
+before posting deferred questions with confirmed stakeholder mentions.
+
+Do not apply the lifecycle's same-PR implementation, plan-seal rotation, PR
+reconciliation, status-start, or phase handoff steps to triage. Linked PRs are
+read-only evidence. Report `PR unchanged` or `PR N/A` in the summary. Re-triage
+reads the current tracker and preserves prior question threads and decisions.

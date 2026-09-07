@@ -163,9 +163,9 @@ task_body = re.search(
 task_commands = set(re.findall(r"(?<![-\w])([a-z][a-z-]+)(?![\w-])", task_body)) - {
     "printf", "s", "n"
 }
-# refine is routed before the allowlist case, so it belongs in the typo list
+# refine and triage are routed before the allowlist case, so it belongs in the typo list
 # and not in the other one. The flag spellings never reach the typo check.
-expected_task = (cli_commands - {"--help", "-h"}) | {"refine"}
+expected_task = (cli_commands - {"--help", "-h"}) | {"refine", "triage"}
 if task_commands != expected_task:
     unmeasured = sorted(expected_task - task_commands)
     unknown = sorted(task_commands - expected_task)

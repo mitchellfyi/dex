@@ -3,6 +3,9 @@
 # Runs when an interactive provider session ends (cleanly or otherwise).
 set -euo pipefail
 
+# The triage launcher cleans only its own temporary files.
+[[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]] && exit 0
+
 # shellcheck disable=SC2034  # read by lib/common.sh while it is sourced
 DX_COMMON_MODULES="session"
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
