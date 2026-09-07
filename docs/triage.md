@@ -62,6 +62,10 @@ Equivalent existing readiness labels are reused. Otherwise Dex can create
 ticket may still depend on unfinished work. A material unanswered decision or an
 unverified implementation prevents readiness.
 
+Readiness does not request implementation. The maintenance workflow uses a
+separate execution label and allows one attempt per application. See
+[the maintenance handoff](maintenance.md) before enabling ticket intake.
+
 Default status handling leaves unanswered Linear intake in Triage and accepts
 clarified intake into its existing default backlog. Other statuses and GitHub
 open/closed state stay unchanged unless a project mapping or your approval says

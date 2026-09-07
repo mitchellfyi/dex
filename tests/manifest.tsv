@@ -41,6 +41,7 @@ lifecycle-relaunch-control-test.sh	fast	all	600	hermetic
 lifecycle-terminal-event-test.sh	service	all	900	hermetic
 lock-test.sh	fast	all	600	hermetic
 log-command-test.sh	fast	all	600	hermetic
+maintenance-intake-test.sh	fast	all	600	hermetic
 maintenance-state-test.sh	fast	all	600	hermetic
 maintenance-test.sh	slow	all	1200	hermetic
 output-format-test.sh	fast	all	600	hermetic

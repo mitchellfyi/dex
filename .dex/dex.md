@@ -145,6 +145,11 @@ GitHub to auto-merge it with the squash strategy. Publication is handled by the
 `dx maintain` CLI wrapper after the provider exits so GitHub write credentials
 are not exposed to the agent process.
 
+Automatic ticket intake is paused while `issue_label` is `_none_`. Readiness
+labels and ticket edits do not request maintenance. Explicit local
+`dx maintain --issue <number> --mode <mode>` remains available. Updating the
+workflow files does not enable the disabled GitHub workflows.
+
 ## Workflow
 Run `/dex` to begin the autonomous ticket lifecycle.
 Run `/dxsync` or `dx sync` to refresh repo memory after significant repo,

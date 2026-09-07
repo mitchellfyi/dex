@@ -172,7 +172,31 @@ gitignore_repo=$(new_repo gitignore-repo)
 mkdir -p "$gitignore_repo/.dex"
 printf 'custom-cache/' > "$gitignore_repo/.dex/.gitignore"
 run_init_without_analysis "$gitignore_repo" "$TMP_DIR/gitignore-first.out"
+assert_contains "| issue_label | dex-execute |" "$gitignore_repo/.dex/dex.md"
+assert_contains "| default_mode | report |" "$gitignore_repo/.dex/dex.md"
+assert_contains "| schedule_mode | report |" "$gitignore_repo/.dex/dex.md"
+assert_contains "| issue_mode | report |" "$gitignore_repo/.dex/dex.md"
+# Analysis rewrites the skeleton from a separate template. Both paths must
+# offer the same maintenance defaults so analysis cannot drop ticket intake.
+python3 - "$gitignore_repo/.dex/dex.md" "$ROOT/prompts/init-analysis.md" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+def maintenance_defaults(filename):
+    section = Path(filename).read_text().split("## Maintenance\n", 1)[1].split("\n## ", 1)[0]
+    return dict(re.findall(r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$", section, re.M))
+
+assert maintenance_defaults(sys.argv[1]) == maintenance_defaults(sys.argv[2]), "analysis and skeleton maintenance defaults differ"
+PY
+python3 - "$gitignore_repo/.dex/dex.md" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+p.write_text(p.read_text().replace("| issue_label | dex-execute |", "| issue_label | custom-execute |"))
+PY
 run_init_without_analysis "$gitignore_repo" "$TMP_DIR/gitignore-second.out"
+assert_contains "| issue_label | custom-execute |" "$gitignore_repo/.dex/dex.md"
 [[ "$(grep -c '^worktrees/$' "$gitignore_repo/.dex/.gitignore")" -eq 1 ]] || {
   printf 'worktrees/ was not added exactly once\n' >&2
   exit 1

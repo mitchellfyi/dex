@@ -182,12 +182,16 @@ without making it a completion requirement. See GitHub's
 [Copilot code review documentation](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review#pull-request-approvals-from-copilot).
 
 DX maintain has a separate GitHub Actions path for background maintenance. The
-installed workflow can run on schedules, manual dispatch, trusted `issues`
-events, and maintenance PR feedback. Issue and schedule modes are read from
-`.dex/dex.md` (`issue_mode`, `schedule_mode`, then `default_mode`). Issue event
-actors must have write, maintain, or admin access before Dex launches the
-provider. The workflow collects issue JSON before token scrubbing and passes it
-as untrusted context files to `dx maintain`.
+installed workflow can run on schedules, manual dispatch, execution-label
+applications, and maintenance PR feedback. Issue and schedule modes are read
+from `.dex/dex.md` (`issue_mode`, `schedule_mode`, then `default_mode`). Ticket
+intake checks the original label applier's write, maintain, or admin access and
+records one attempt per request before launch. Direct and scheduled runs share
+the same request record and concurrency group. The workflow collects the
+selected issue before token scrubbing and passes it as untrusted product
+context. Triage readiness does not request execution. See
+[maintenance setup and upgrades](maintenance.md) for queue, retry, and legacy
+configuration behaviour.
 
 Write-capable maintenance jobs consume a sealed bundle from the earlier
 credential-free provider job. Dex creates the state and patch files without

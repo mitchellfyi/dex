@@ -19,7 +19,7 @@ on:
   schedule:
     - cron: "17 2 * * *"
   issues:
-    types: [opened, edited, reopened, labeled]
+    types: [labeled]
   issue_comment:
     types: [created]
   pull_request_review:
@@ -40,11 +40,11 @@ jobs:
     timeout-minutes: 120
     outputs:
       mode: ${{ steps.mode.outputs.mode }}
-      should_publish: ${{ steps.mode.outputs.mode != 'report' && steps.provider.outputs.ready == 'true' && steps.issue_context.outputs.proceed != 'false' }}
+      should_publish: ${{ steps.mode.outputs.mode != 'report' && steps.provider.outputs.ready == 'true' && steps.issue_context.outputs.proceed == 'true' }}
     permissions:
       contents: read
       pull-requests: read
-      issues: read
+      issues: write
       actions: read
     concurrency:
       group: dx-maintain-${{ github.repository }}-nightly
@@ -74,7 +74,21 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dex-artifacts"
           chmod +x "$RUNNER_TEMP/dex/bin/"*.sh "$RUNNER_TEMP/dex/hooks/"*.sh "$RUNNER_TEMP/dex/hooks/"*.py
 
+      - name: Select pending ticket request
+        id: issue_intake
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          source "$DEX_DIR/lib/common.sh"
+          dx_maintenance_issue_intake "$PWD" prepare "$EVENT_NAME" "$GITHUB_EVENT_PATH" \
+            "$DX_ARTIFACT_DIR/maintenance/issue-intake"
+
       - name: Configure agent provider
+        if: ${{ steps.issue_intake.outputs.proceed == 'true' }}
         id: provider
         shell: bash
         env:
@@ -140,88 +154,22 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "::notice::DX maintain mode: $mode"
 
-      - name: Collect issue context
+      - name: Claim selected ticket request
         if: ${{ steps.provider.outputs.ready == 'true' }}
         id: issue_context
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.DX_MAINTAIN_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
-          ISSUE_NUMBER: ${{ github.event.issue.number || '' }}
         run: |
           set -euo pipefail
           source "$DEX_DIR/lib/common.sh"
-          set_output() {
-            printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"
-          }
-          context_dir="$RUNNER_TEMP/dx-maintain-issue-context"
-          mkdir -p "$context_dir"
-          set_output proceed true
-          set_output dir "$context_dir"
-          set_output issue_number "${ISSUE_NUMBER:-}"
-
-          issue_limit=$(dx_maintenance_config_value "$PWD" "issue_queue_limit" "10")
-          if [[ ! "$issue_limit" =~ ^[0-9]+$ || "$issue_limit" -lt 1 ]]; then
-            issue_limit=10
-          fi
-
-          if [[ "$EVENT_NAME" == "issues" ]]; then
-            if [[ -z "${ISSUE_NUMBER:-}" ]]; then
-              set_output proceed false
-              echo "::notice::Skipping DX maintain issue intake: issue number was not present in the event."
-              exit 0
-            fi
-            actor=$(python3 - "$GITHUB_EVENT_PATH" <<'PY'
-          import json
-          import sys
-          with open(sys.argv[1], "r", encoding="utf-8") as f:
-              event = json.load(f)
-          print(event.get("sender", {}).get("login") or "")
-          PY
-          )
-            if [[ -z "$actor" ]]; then
-              set_output proceed false
-              echo "::notice::Skipping DX maintain issue intake: event actor could not be determined."
-              exit 0
-            fi
-            permission=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${actor}/permission" --jq .permission 2>/dev/null || echo "")
-            case "$permission" in
-              admin|maintain|write) ;;
-              *)
-                set_output proceed false
-                echo "::notice::Skipping DX maintain issue intake: ${actor} has ${permission:-unknown} permission on ${GITHUB_REPOSITORY}; write, maintain, or admin is required."
-                exit 0
-                ;;
-            esac
-
-            issue_label=$(dx_maintenance_config_value "$PWD" "issue_label" "_none_")
-            if [[ -n "$issue_label" && "$issue_label" != "_none_" ]]; then
-              has_label=$(python3 - "$GITHUB_EVENT_PATH" "$issue_label" <<'PY'
-          import json
-          import sys
-          with open(sys.argv[1], "r", encoding="utf-8") as f:
-              event = json.load(f)
-          want = sys.argv[2]
-          labels = {item.get("name", "") for item in event.get("issue", {}).get("labels", [])}
-          print("yes" if want in labels else "no")
-          PY
-          )
-              if [[ "$has_label" != "yes" ]]; then
-                set_output proceed false
-                echo "::notice::Skipping DX maintain issue intake: issue #${ISSUE_NUMBER} is missing required label ${issue_label}."
-                exit 0
-              fi
-            fi
-
-            gh issue view "$ISSUE_NUMBER" --repo "$GH_REPO" --json number,title,body,author,labels,state,url,createdAt,updatedAt,comments > "$context_dir/issue-${ISSUE_NUMBER}.json"
-            printf '%s\n' "$ISSUE_NUMBER" > "$context_dir/focus-issue.txt"
-          else
-            gh issue list --repo "$GH_REPO" --state open --limit "$issue_limit" --json number,title,body,author,labels,state,url,createdAt,updatedAt > "$context_dir/open-issues.json" || printf '[]\n' > "$context_dir/open-issues.json"
-          fi
+          dx_maintenance_issue_intake "$PWD" claim "$EVENT_NAME" "$GITHUB_EVENT_PATH" \
+            "$DX_ARTIFACT_DIR/maintenance/issue-intake"
 
       - name: Record report-mode sync deferral
-        if: ${{ steps.provider.outputs.ready == 'true' && steps.issue_context.outputs.proceed != 'false' }}
+        if: ${{ steps.provider.outputs.ready == 'true' && steps.issue_context.outputs.proceed == 'true' }}
         shell: bash
         env:
           MODE: ${{ steps.mode.outputs.mode }}
@@ -242,7 +190,7 @@ jobs:
           } > "$report_dir/report.md"
 
       - name: Run DX maintain
-        if: ${{ steps.provider.outputs.ready == 'true' && steps.issue_context.outputs.proceed != 'false' }}
+        if: ${{ steps.provider.outputs.ready == 'true' && steps.issue_context.outputs.proceed == 'true' }}
         shell: bash
         env:
           GH_REPO: ${{ github.repository }}
@@ -251,6 +199,7 @@ jobs:
           SINCE: ${{ inputs.since || '' }}
           ISSUE_NUMBER: ${{ steps.issue_context.outputs.issue_number }}
           ISSUE_CONTEXT_DIR: ${{ steps.issue_context.outputs.dir }}
+          DX_MAINTAIN_INTAKE_FILE: ${{ steps.issue_context.outputs.dir }}/intake.json
         run: |
           set -euo pipefail
           if [[ "$MODE" != "report" ]]; then
@@ -267,7 +216,7 @@ jobs:
           if [[ -n "${ISSUE_CONTEXT_DIR:-}" ]]; then
             MAINTAIN_ARGS+=(--issue-context "$ISSUE_CONTEXT_DIR")
           fi
-          if [[ "$EVENT_NAME" == "issues" && -n "${ISSUE_NUMBER:-}" ]]; then
+          if [[ -n "${ISSUE_NUMBER:-}" ]]; then
             MAINTAIN_ARGS+=(--issue "$ISSUE_NUMBER")
           fi
           if [[ "$MODE" != "report" ]]; then

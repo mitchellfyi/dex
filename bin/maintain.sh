@@ -2026,6 +2026,7 @@ __dx_maintain_run() {
   local local_state_file
   local maintain_label branch_prefix allowed_categories
   local issue_number="" issue_context_dir="" issue_context_files=""
+  local issue_authority="none; independent repository maintenance only"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2262,6 +2263,13 @@ __dx_maintain_run() {
     MAINTAIN_LOCK_ACQUIRED=1
   fi
   provider_repo_root="$repo_root"
+  if [[ -n "$issue_number" ]]; then
+    issue_authority=$(dx_maintenance_issue_focus "$repo_root" "$issue_number" "$artifact_dir/issue-focus") || {
+      dx_error "Ticket focus could not be verified; maintenance did not start."
+      exit 1
+    }
+    issue_context_dir="$artifact_dir/issue-focus"
+  fi
   if [[ -n "$issue_context_dir" && -d "$issue_context_dir" ]]; then
     issue_context_files=$(find "$issue_context_dir" -maxdepth 1 -type f | LC_ALL=C sort | sed 's/^/- /' || true)
   fi
@@ -2305,6 +2313,7 @@ Maintenance label: $maintain_label
 Maintenance branch prefix: $branch_prefix
 Allowed fix categories: $allowed_categories
 Issue number: ${issue_number:-N/A}
+Ticket execution: $issue_authority
 Issue context:
 ${issue_context_files:-N/A}
 
