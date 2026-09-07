@@ -97,15 +97,16 @@ affected tickets rather than notifying the same person on every child.
 
 ## Prepare the tickets
 
-Update existing descriptions with established facts and accepted decisions as
-you go. Preserve useful material, template structure, links, checkboxes, and
-attribution. Link to comments that establish decisions. Keep unresolved choices
-explicit rather than presenting a guessed answer as an acceptance criterion.
+Update descriptions with established facts, scope, constraints, and acceptance
+criteria as you go. Preserve useful material, template structure, links,
+checkboxes, and attribution. Link to comments that establish decisions. Keep
+unresolved choices explicit rather than guessing an acceptance criterion.
 Edit the relevant sections in place instead of appending a second triage report
 that repeats them. Keep execution bookkeeping in the session summary; include a
 revision in a ticket only when it helps establish the implementation evidence.
 
-Supply what this ticket needs, omitting empty or unnecessary sections:
+Across the description, native fields, and plan comment, supply what this ticket
+needs, omitting empty or unnecessary sections:
 
 - Intended outcome and scope boundaries, understandable without reading code.
 - Observable acceptance criteria: a condition and expected result, including
@@ -113,6 +114,11 @@ Supply what this ticket needs, omitting empty or unnecessary sections:
 - Implementation instructions supported by inspected paths: existing components
   to reuse, necessary interface changes, constraints, and verification approach.
 - Effort, assumptions, uncertainty, and any blocker or outstanding decision.
+
+When planning is complete, post the approach and meaningful decisions as a concise
+comment using `prompts/issue-hygiene.md`. Keep current requirements and acceptance
+criteria in the description. A session awaiting answers may record the established
+plan and its unresolved parts; do not present provisional choices as agreed.
 
 Follow native estimate scales and team conventions. Otherwise use XS–XL with a
 short rationale: XS is a mechanical local change; S is a bounded change in one
@@ -159,10 +165,11 @@ links when available, otherwise explicit linked prose after any required approva
 Check proposed edges against known dependencies, including external blockers;
 flag cycles or inaccessible dependency chains before claiming a complete order.
 A parent-child relationship does not imply a blocker. Identify work that can
-proceed in parallel. Keep a concise delivery sequence on the parent or project
-overview, preserving unrelated project content. If that surface is unavailable,
-report the sequence in-session rather than creating a coordination ticket merely
-to store it. Do not change priorities, deadlines, or scheduling commitments.
+proceed in parallel. Put a concise delivery sequence in the parent's plan comment
+or the existing project overview, preserving unrelated project content. If that
+surface is unavailable, report the sequence in-session rather than creating a
+coordination ticket merely to store it. Do not change priorities, deadlines, or
+scheduling commitments.
 
 You may file separate issues for concrete incidental problems found outside the
 triaged work. Keep investigation bounded; do not turn this into a repo-wide audit.
@@ -188,7 +195,8 @@ deadlines, and scheduling commitments. Triage does not start or complete work.
 
 On a fresh invocation, read the tracker again, including current comments and
 relationships. Clear answers from confirmed decision-makers can update the
-description, criteria, estimates, and readiness. A newer comment does not
+description, criteria, estimates, and readiness. Publish changed planning decisions
+in a new comment linked to the prior plan and the answer. A newer comment does not
 automatically supersede accepted decisions. Flag contradictory replies or
 unclear authority for the session user; do not silently choose a side. Do not
 keep a ready label on a ticket with a newly identified blocking decision.
@@ -227,8 +235,7 @@ pending reorganisation approvals; and unprocessed or unverified scope. A triage
 session may finish awaiting people. Say so instead of claiming all tickets ready.
 Include the `Issue/PR work:` line from the hygiene contract, with PR unchanged/N/A.
 
-Do not copy that handoff onto the ticket. A public summary comment is useful
-only when it adds a decision or next action that readers would otherwise miss.
-Keep it to a few short sentences and link the updated plan. Do not repeat
-acceptance criteria, estimates, verification logs, or the session's audit line.
-Deferred stakeholder questions remain separate, concise follow-up comments.
+Link the plan comment in the handoff. Keep the full session handoff local; the
+ticket gets the concise plan and decision comment described above. Do not repeat
+unchanged plans, acceptance criteria, verification logs, or the session's audit
+line. Deferred stakeholder questions remain separate, concise follow-up comments.

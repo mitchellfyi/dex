@@ -54,11 +54,25 @@ approved security channel.
 
 ## Reconcile the working issue and PR
 
-Comments often contain the current decision while the issue description and PR
-body remain stale. Consolidate accepted clarifications into the working issue's
-description and acceptance criteria. Preserve useful history, identifiers,
-links, checkboxes, and attribution; cite the clarifying comment instead of
-erasing where the decision came from.
+Keep the issue description accurate: outcome, scope, established facts, essential
+constraints, and acceptance criteria. Update those sections when accepted
+clarifications change the requirements. Preserve useful history, identifiers,
+links, checkboxes, and attribution; link the comment that established a decision.
+
+When planning finishes, prefer a concise ticket comment for the agreed approach
+and decisions. Include the reason for meaningful choices, delivery order and
+dependencies, effort, and verification where needed. Link existing criteria or
+detailed plans rather than copying them. Keep the session audit and test logs out
+of the comment. This publication step uses the active workflow's approval rules.
+
+Read current comments before posting. Reuse an existing comment when it already
+records the same plan; unchanged re-triage or a retry needs no new comment. When
+the plan changes, add a short comment explaining what changed and why, linking
+the prior plan and authoritative replies. Preserve earlier discussion. Keep
+deferred stakeholder questions in separate follow-up comments. If comments are
+unavailable, use an existing supported surface and report the fallback; do not
+claim a comment was posted. Read back writes and reconcile ambiguous results
+before retrying.
 
 For an existing open PR, update its title or body when accepted scope,
 implementation, related issues, risk, or verification has materially changed.

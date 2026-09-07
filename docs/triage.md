@@ -39,9 +39,10 @@ tickets requires approval of a specific proposal, including relationship changes
 reparenting, merging, closing, or moving work. It also asks before expanding an
 existing ticket outside your selected scope. Approval is retained for that proposal.
 
-Descriptions stay concise. They contain the outcome, testable acceptance criteria,
-necessary implementation instructions, verification, effort, and open decisions.
-Technical details belong where the implementer needs them. Unrelated findings need
+Descriptions contain the current outcome, scope, testable acceptance criteria,
+and essential constraints. Completed plans and decisions go in concise comments,
+with the approach, effort, delivery order, and verification where needed. Technical
+details belong where the implementer needs them. Unrelated findings need
 evidence and bounded scope; triage does not become a whole-repository audit.
 
 The result links updated and created tickets, duplicates and related work, delivery
@@ -77,11 +78,15 @@ or custom fields.
 Run the same command after replies arrive. The agent reads current descriptions
 and discussions, incorporates clear answers, and updates the plan and readiness.
 Conflicting replies need a decision; the newest comment does not automatically
-win. Existing unanswered questions and stakeholder mentions are not repeated.
+win. Changed plans get a short comment explaining the change and linking the prior
+plan and reply. Unchanged plans, unanswered questions, and stakeholder mentions
+are not repeated.
 There is no background watcher.
 
 Use the repo's configured tracker and available authenticated tools. GitHub and
 Linear capability notes are in [the tracker guide](../prompts/triage-trackers.md).
+Its Linear section links official MCP, GraphQL schema/API, pagination, and product
+docs. Agents discover the available tools and current schema before using them.
 Native relationships and estimates are preferred; unsupported features use linked
 prose where possible, with limitations reported. With no tracker, the agent returns
 drafts in the session. It does not install integrations.

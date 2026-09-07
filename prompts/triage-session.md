@@ -13,8 +13,10 @@ do not enforce it by changing permissions or adding blocking guards. Small fixes
 and failing checks are planning evidence. An explicit redirection from the session
 user can change the task; acknowledge the new scope before acting on it.
 
-Publish established ticket improvements as you go. Ask the session user about
-open decisions first. Post a question only when they defer it to the ticket
+Publish established ticket improvements as you go. Keep descriptions accurate
+with clear acceptance criteria; post completed plans and changed decisions as
+concise comments. Reuse an existing comment when the plan is unchanged.
+Ask the session user about open decisions first. Post a question only when they defer it to the ticket
 and identify the stakeholder to tag. Ask before reorganising existing tickets,
 changing their relationships, merging, closing, or moving them. New sub-issues
 and concrete, deduplicated incidental findings are allowed by this workflow.
