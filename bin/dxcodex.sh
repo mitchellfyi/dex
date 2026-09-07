@@ -144,6 +144,8 @@ case "$subcmd" in
       "DEX_SESSION_ID=${DEX_SESSION_ID:-}"
       "DX_PROVIDER_ENGINE=codex-plugin"
     )
+    [[ -z "${DEX_TRIAGE_ACTIVE:-}" ]] \
+      || codex_hook_environment+=("DEX_TRIAGE_ACTIVE=$DEX_TRIAGE_ACTIVE")
     [[ -z "${DEX_RUN_ID:-}" ]] \
       || codex_hook_environment+=("DEX_RUN_ID=$DEX_RUN_ID")
     [[ -z "${DEX_LOOP_ACTIVE:-}" ]] \

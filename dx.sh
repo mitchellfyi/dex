@@ -191,8 +191,10 @@ __dx_cli() {
       echo "  dxcd [number|name]    Open a worktree, or the repo root with no argument"
       echo "  dxclean               Clean stale worktrees + gone branches"
       echo ""
-      echo "Refinement (pre-implementation):"
-      echo "  dx refine <N|description>  Refine a ticket — clarify with the user, raise risks, propose sub-tickets"
+      echo "Ticket triage (planning and organisation):"
+      echo "  dx triage [ticket]        Clarify, estimate, and organise tickets"
+      echo "  dx triage --project REF  Triage a tracker project"
+      echo "  dx refine [ticket]        Alias for dx triage"
       echo ""
       echo "Standalone completion (recovery / non-dx PRs):"
       echo "  dxcomplete             Monitor CI/reviews, address comments, close ticket"
@@ -3846,7 +3848,7 @@ unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/nul
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
     test config provider run control sessions ui-capture research install uninstall uninit status \
-    reload help revert log refine
+    reload help revert log triage refine
 }
 
 # Prints the nearest command within two edits, or nothing.
@@ -3928,7 +3930,7 @@ dx() {
     echo "       dx --no-worktree <task>"
     echo "       dx --resume        Resume the most recent session"
     echo "       dx --from-pr <N>   Resume session linked to a PR"
-    echo "       dx refine <N|description>  Refine a ticket before implementation"
+    echo "       dx triage [ticket] Clarify, estimate, and organise tickets"
     echo ""
     echo "       dx init|sync|maintain|tools|test|config|provider|run|ui-capture|research|install|uninstall|uninit|status|reload|help"
     return 1
@@ -3972,6 +3974,10 @@ dx() {
         fi
         shift
         ;;
+      --)
+        dx_args+=("$@")
+        break
+        ;;
       --no-worktree|--in-place|--here)
         use_worktree=0
         shift
@@ -4002,10 +4008,10 @@ dx() {
     return 1
   fi
 
-  # Refine subcommand — intercept before worktree setup (read-only flow)
-  if [[ "$1" == "refine" ]]; then
+  # Triage aliases run before lifecycle and worktree setup.
+  if [[ "$1" == "triage" || "$1" == "refine" ]]; then
     shift
-    dxrefine "$@"
+    dxtriage "$@"
     return $?
   fi
 
@@ -4499,111 +4505,16 @@ $(__dx_provider_prompt)"
   return $exit_code
 }
 
-# ─── dxrefine — standalone ticket refinement (pre-implementation) ─────────
-#
-# Single Claude session in plan mode. Drives the user through 3+ batches of
-# clarifying questions focused on high-level architecture and risks, then
-# presents a PO-grade refined ticket via ExitPlanMode. On approval, the
-# dxrefine skill posts architecture/risk comments and creates sub-tickets on
-# the configured tracker; the parent ticket's description is left untouched.
-#
-# No worktree, no commits, no branch rename. No phase-loop participation.
+# ─── Standalone ticket triage ──────────────────────────────────────────
+
+unalias dxtriage 2>/dev/null; unfunction dxtriage 2>/dev/null
+dxtriage() {
+  dx_triage_run "$@"
+}
 
 unalias dxrefine 2>/dev/null; unfunction dxrefine 2>/dev/null
 dxrefine() {
-  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
-    echo "Usage: dxrefine <NUMBER|description>"
-    echo "Refine a ticket or task through an interactive Claude planning session."
-    return 0
-  fi
-  if [[ $# -eq 0 ]]; then
-    echo "Usage: dxrefine <NUMBER>           (e.g. dxrefine 123, dxrefine ENG-123)"
-    echo "       dxrefine \"<description>\"    (e.g. dxrefine \"streaming export pipeline\")"
-    return 1
-  fi
-
-  __dx_refresh_provider || return 1
-
-  local provider_agent
-  provider_agent=$(__dx_resolved_provider_agent) || return 1
-  if [[ "$provider_agent" == "codex" ]]; then
-    dx_error "dxrefine requires an interactive Claude Code session for clarification and plan approval."
-    dx_info "The selected provider profile resolves to the non-interactive Codex CLI. Run 'dx --agent claude refine <ticket-or-description>'."
-    return 1
-  fi
-  __dx_require_resolved_provider_cli || return 1
-
-  # Must be in a git repo so the skill can read AGENTS.md and codebase context.
-  local repo_root
-  repo_root=$(dx_repo_root) || return 1
-
-  local raw_input="${(j: :)@}"
-
-  # Session label for the Claude session name — stable across invocations on
-  # the same input so the user can recognize it.
-  local session_label
-  if __dx_is_ticket "$raw_input"; then
-    session_label="ticket-${raw_input//[^0-9]/}"
-  else
-    local slug
-    slug=$(dx_slugify "${raw_input:0:40}")
-    session_label="${slug:-$(date +%s)}"
-  fi
-  local session_name="dxrefine-${session_label}"
-
-  # Unique state id so concurrent dxrefines don't collide on provider state.
-  local session_id
-  session_id="refine-$(dx_unique_session_id)"
-  dx_provider_cleanup_session_state "$session_id"
-
-  local branch
-  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  DEX — dxrefine (ticket refinement)"
-  echo ""
-  echo "  Branch: ${branch}"
-  echo "  Input:  ${raw_input:0:72}$([ ${#raw_input} -gt 72 ] && echo '...')"
-  echo "  Phase:  Refine (read-only until ExitPlanMode is approved)"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-
-  local plan_args=("${DX_PLAN_FLAGS[@]}" -n "$session_name")
-  plan_args+=(--append-system-prompt "You are in a dxrefine session — refinement only. Do NOT implement, do NOT commit, do NOT rename branches, do NOT set ticket status to In Progress. Stay in plan mode until you call ExitPlanMode. After approval, follow the dxrefine skill's write-back steps and stop.
-
-Project constraints:
-- Derive security, tenancy, scale, performance, and operational constraints from .dex/architecture.md, scoped .dex/memory/ entries, .dex/rules/, and code paths you read.
-- Do not assume the target repo is multi-tenant, compute-heavy, high-traffic, or CRUD-oriented unless the project context proves it.
-- If the project has tenant isolation, cascade recomputation, plugin boundaries, or other standing constraints, call them out with path-backed evidence.
-
-Anchor every claim about where something lives to a real path in this repo. Reuse beats invent — justify every 'new X' against the existing X you found.")
-
-  DEX_SESSION_ID="$session_id" \
-  DEX_DIR="$DEX_DIR" \
-  __dx_claude "${plan_args[@]}" \
-    "This is a TECHNICAL refinement, not product discovery.
-
-Input: ${raw_input}
-
-Pre-flight (BEFORE EnterPlanMode — plan mode is read-only, so the architecture-map file write must happen first):
- 0. Run: bash -lc 'test -f \"\$(git rev-parse --show-toplevel)/.dex/architecture.md\" && echo MAP_PRESENT || echo MAP_MISSING'
-    - If MAP_MISSING: invoke the Skill tool with skill: \"dxarchitect\" to bootstrap .dex/architecture.md (it writes the file directly; the user reviews and commits it themselves — the skill does NOT commit). Remember in working memory that the map was freshly built so you can flag it in the final summary.
-    - If MAP_PRESENT: continue.
-
-Now call EnterPlanMode, then invoke the Skill tool with skill: \"dxrefine\". Skill flow:
- 1. Gather ticket context (if a ticket id).
- 2. Read .dex/architecture.md (C4 levels 1-3) — this is the canonical current-state map and the source of valid Domain values for sub-tickets.
- 3. Ask the user at least four batches of clarifying questions covering scope, architecture & integration, scale & multi-tenancy, and operational risk. Skip PO-flavor probes (value hypothesis, user stories).
- 4. Identify the design patterns that fit, with each tied to a sub-ticket (or record '— none, all sub-tickets are mechanical' if genuinely mechanical).
- 5. Decompose into AT LEAST TWO sub-tickets, each tagged with a Domain (a C4 container or component name from the architecture map verbatim), a t-shirt size (XS/S/M/L/XL), and a dominant design pattern. Decomposition is the defining output of dxrefine — if the work cannot be split, bail out and tell the user to run dx <ticket> directly.
- 6. Present a /dxplan-style summary via ExitPlanMode, including a per-Domain rollup so the user can dispatch sub-tickets to owners.
- 7. After approval, create the sub-tickets (with Domain in body and as a label if the tracker supports it) and post five comments on the parent (architecture+component map, design patterns, risks, NFRs, open questions+decision log). Do NOT modify the parent ticket's description. If the architecture map was bootstrapped in step 0, remind the user to commit .dex/architecture.md themselves.
-$(__dx_provider_prompt)"
-
-  local exit_code=$?
-  dx_provider_cleanup_session_state "$session_id"
-  return $exit_code
+  dxtriage "$@"
 }
 
 # ─── dxcomplete — standalone Phase 6 (recovery / non-dx PRs) ───────────────

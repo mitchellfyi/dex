@@ -2748,7 +2748,7 @@ dx_cleanup_repo_sessions() {
 
   repo_key=$(dx_session_repo_key) || return 1
   if [[ -d "$DX_LOOP_DIR" ]]; then
-    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "triage-" "headless-invalid-"; do
       while IFS= read -r -d '' credit_path; do
         credit_session=$(__dx_review_credit_session_from_path "$credit_path") || return 1
         dx_review_ledger_reset "$credit_session" || return 1
@@ -2759,7 +2759,7 @@ dx_cleanup_repo_sessions() {
   fi
   for state_dir in "$DX_LOOP_DIR" "$DX_STATE_DIR"; do
     [[ -d "$state_dir" ]] || continue
-    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "triage-" "headless-invalid-"; do
       find "$state_dir" -maxdepth 1 -type f -name "${prefix}${repo_key}-*" \
         -exec rm -f {} + || return $?
     done
@@ -2783,7 +2783,7 @@ dx_cleanup_repo_sessions() {
 __dx_session_artifact_matches_checkout() {
   local artifact_name="$1" checkout_session="$2" prefix
 
-  for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+  for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "triage-" "headless-invalid-"; do
     case "$artifact_name" in
       "${prefix}${checkout_session}".*|"${prefix}${checkout_session}"-*) return 0 ;;
     esac
@@ -2828,7 +2828,7 @@ dx_cleanup_current_checkout_sessions() {
 
   for state_dir in "$DX_LOOP_DIR" "$DX_STATE_DIR"; do
     [[ -d "$state_dir" ]] || continue
-    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "headless-invalid-"; do
+    for prefix in "" "init-" "sync-" "maintain-" "from-pr-" "refine-" "triage-" "headless-invalid-"; do
       stem="${prefix}${base_session}"
       while IFS= read -r candidate; do
         name=$(basename "$candidate")

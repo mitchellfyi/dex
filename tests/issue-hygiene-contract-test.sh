@@ -23,7 +23,7 @@ for phase in 0-setup 1-plan 2-implement 3-review-loop 4-verify 5-pr 6-complete; 
   assert_contains "Issue/PR work:" "$phase_file"
 done
 
-for skill in dex dxplan dximplement dxreview dxreviewloop dxverify dxpr dxprreview dxcomplete dxwatchpr; do
+for skill in dxtriage dex dxplan dximplement dxreview dxreviewloop dxverify dxpr dxprreview dxcomplete dxwatchpr; do
   assert_contains "prompts/issue-hygiene.md" "$ROOT/skills/${skill}/SKILL.md"
 done
 

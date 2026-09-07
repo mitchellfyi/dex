@@ -333,7 +333,7 @@ assert_no_standalone_runtime_files() {
   fi
 }
 
-# dxloop and dxrefine require interactive Claude-only primitives. A resolved
+# dxloop requires interactive Claude-only primitives. A resolved
 # Codex profile must explain that contract before looking for ambient Claude.
 run_expect_failure "$TMP_DIR/dxloop-codex.out" \
   env DX_PROVIDER_PROFILE=codex-subscription zsh -fc \
@@ -341,15 +341,6 @@ run_expect_failure "$TMP_DIR/dxloop-codex.out" \
 grep -Fq "dxloop requires an interactive Claude Code session" "$TMP_DIR/dxloop-codex.out"
 if grep -Fq "Claude Code CLI not found" "$TMP_DIR/dxloop-codex.out"; then
   printf '%s\n' "dxloop reported ambient Claude detection instead of provider compatibility" >&2
-  exit 1
-fi
-
-run_expect_failure "$TMP_DIR/dxrefine-codex.out" \
-  env DX_PROVIDER_PROFILE=codex-subscription zsh -fc \
-  'source "$DEX_DIR/dx.sh"; cd "$TEST_REPO"; dxrefine "split this effort"'
-grep -Fq "dxrefine requires an interactive Claude Code session" "$TMP_DIR/dxrefine-codex.out"
-if grep -Fq "Claude Code CLI not found" "$TMP_DIR/dxrefine-codex.out"; then
-  printf '%s\n' "dxrefine reported ambient Claude detection instead of provider compatibility" >&2
   exit 1
 fi
 
@@ -749,7 +740,7 @@ source "$DEX_DIR/lib/common.sh"
 source "$TEST_PROVIDER_HELPER"
 
 joined_args="$*"
-if [[ "$joined_args" == *'skill: "dxrefine"'* ]]; then
+if [[ "$joined_args" == *'Invoke the dxtriage skill now.'* ]]; then
   exit 0
 elif [[ "$joined_args" == *"Call EnterPlanMode now, then run /dxplan"* ]]; then
   action="${TEST_CLAUDE_PLAN_RECEIPT:-complete}"

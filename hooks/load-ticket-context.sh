@@ -7,6 +7,11 @@ set -euo pipefail
 
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
+if [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]]; then
+  printf '%s\n' "Dex triage session: invoke /dxtriage. Do not start implementation or infer a target from the branch."
+  exit 0
+fi
+
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 # Sanitise the branch name before embedding it in template substitutions.
 # git branch names are constrained, but strip anything outside the safe set

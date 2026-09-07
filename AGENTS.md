@@ -108,7 +108,7 @@ Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`
 `review-loop.sh`, `review-policy.sh`, `rtk.sh`, `run-spec.sh`,
 `session-catalog.sh`, `session-management.sh`,
 `session-runtime.sh`, `session.sh`, `ui-capture.sh`,
-`worker.sh`, and `worktree.sh`.
+`triage.sh`, `worker.sh`, and `worktree.sh`.
 
 ### Output
 
@@ -481,6 +481,7 @@ prefer extracting it into `lib/` modules. The pattern:
 | `session-management.sh` | Strict internal lifecycle-session cleanup transactions | `__dx_session_management_cleanup_exact()` |
 | `output.sh` | Formatted user-facing output | `dx_done()`, `dx_ok()`, `dx_warn()`, `dx_error()`, etc. |
 | `ui-capture.sh` | Playwright/UI capture tooling, artifact paths, MCP bootstrap | `dx_install_ui_capture_tooling()`, `dx_ui_capture_run_dir()`, `dx_ui_capture_playwright_ready()` |
+| `triage.sh` | Standalone ticket triage arguments, provider launch, and isolated cleanup | `dx_triage_run()`, `dx_triage_cleanup()` |
 | `worker.sh` | DexCode worker registration and the poll/claim/lease/settle daemon | `dx_worker_command()`, `dx_worker_register()`, `dx_worker_daemon()` |
 | `worktree.sh` | Worktree management utilities | `dx_wt_branch()`, `dx_wt_remove()`, `dx_cleanup_last_session()`, `dx_cleanup_stale_files()` |
 

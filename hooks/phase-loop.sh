@@ -25,6 +25,9 @@
 # See: docs/autonomous-mode.md for full architecture documentation
 set -euo pipefail
 
+# Triage never owns implementation lifecycle state.
+[[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]] && exit 0
+
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 mkdir -p "$DX_LOOP_DIR"
 

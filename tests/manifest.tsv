@@ -93,6 +93,8 @@ test-manifest-test.sh	fast	all	600	hermetic
 ticket-branch-adoption-errors-test.sh	fast	all	600	hermetic
 ticket-branch-adoption-test.sh	fast	all	600	hermetic
 ticket-branch-instructions-test.sh	fast	all	600	hermetic
+triage-command-test.sh	fast	all	600	hermetic
+triage-hooks-test.sh	fast	all	600	hermetic
 ui-capture-test.sh	fast	all	600	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic

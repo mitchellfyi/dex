@@ -1,0 +1,43 @@
+[
+  {
+    "name": "single",
+    "request": "Triage APP-10 in this repo. Publish established improvements as you go.",
+    "tracker": "Linear",
+    "conventions": {"ready_label": "refined", "needs_info_label": "needs product", "estimate_scale": "tshirt", "default_status": "Backlog"},
+    "issues": [{"id": "APP-10", "title": "Explain rejected CSV uploads", "description": "When the header is missing email, show Missing email column and preserve the selected file. No other CSV behaviour changes.", "status": "Backlog", "assignee": "sam", "comments": [], "children": []}],
+    "code": {"revision": "abc123", "dirty": false, "src/upload.ts": "parseCsv rejects missing email header with MissingColumnError; UploadForm catches it with generic Upload failed and clears selectedFile in finally.", "tests/upload.test.ts": "Tests successful CSV upload and generic failure; no MissingColumnError coverage."},
+    "search_results": []
+  },
+  {
+    "name": "hierarchy",
+    "request": "Triage APP-20 and descendants. Ask before reorganising existing tickets. You may file concrete unrelated findings.",
+    "tracker": "Linear",
+    "issues": [
+      {"id": "APP-20", "title": "Account export", "description": "CSV export for admins. Retain export files 30 days.", "children": ["APP-21"], "status": "Backlog", "comments": [{"id": "c1", "author": "product-owner", "body": "Confirmed: retain exports 30 days."}, {"id": "c2", "author": "engineer", "body": "Could we retain them 7 days instead?"}]},
+      {"id": "APP-21", "title": "Export download button", "description": "Download the generated CSV.", "parent": "APP-20", "status": "Backlog"},
+      {"id": "APP-5", "title": "Generate account CSV", "description": "Generate CSV for admins with the same account fields and permissions as APP-20.", "parent": "APP-3", "status": "Backlog"}
+    ],
+    "code": {"revision": "def456", "dirty": false, "src/export.ts": "Existing queue can generate files; download requires that job to finish. No retention cleanup exists.", "src/date.ts": "formatDay uses getMonth() directly as the displayed month; getMonth() is zero-based.", "tests/date.test.ts": "January fixture expects month 0. Public format contract in docs says YYYY-MM-DD with 01 for January."},
+    "search_results": {"export_generation": ["APP-5"], "date_bug": []},
+    "user_answers": []
+  },
+  {
+    "name": "retriage",
+    "request": "Re-triage APP-30 after the reply. Product decisions for exports belong to Casey, Linear user u-casey. No new questions have been deferred.",
+    "tracker": "Linear",
+    "issues": [{"id": "APP-30", "title": "Export retention", "description": "Delete expired exports. Open question: retention period? Accessibility review required for the settings UI (added by the designer during this session).", "labels": ["triage:needs-info"], "comments": [{"id": "q1", "url": "fixture://APP-30/q1", "author": "triage-agent", "body": "Casey, how long should exports be kept?", "mentions": ["u-casey"]}, {"id": "a1", "url": "fixture://APP-30/a1", "author": "u-casey", "body": "30 days from creation. Delete on the next daily cleanup run. No settings UI in this release."}, {"id": "a2", "url": "fixture://APP-30/a2", "author": "engineer", "body": "I added logs to the existing cleanup worker."}], "children": ["APP-31"]}, {"id": "APP-31", "title": "Delete expired export files", "description": "Delete exports 30 days after creation during the daily cleanup.", "parent": "APP-30"}],
+    "prior_operation": {"action": "create_child", "title": "Delete expired export files", "response": "timeout; subsequent list returned APP-31"},
+    "code": {"revision": "123abc", "dirty": false, "src/cleanup.ts": "Daily worker exists with creation timestamps and deletion API; logs are present."},
+    "search_results": ["APP-31"]
+  },
+  {
+    "name": "project",
+    "request": "Triage the Release project. Publish improvements; ask before reorganising existing issues.",
+    "tracker": "GitHub",
+    "project": {"owner": "example", "number": 4, "pages": [{"items": ["web#1", "web#2"], "next": "p2"}, {"cursor": "p2", "items": ["api#8", "draft:d1", "pr:web#7"], "next": null}], "overview_writable": false},
+    "issues": [{"id": "web#1", "title": "Release dashboard", "children": ["web#2", "web#3"], "state": "OPEN"}, {"id": "web#2", "title": "New view", "blocked_by": ["web#3"], "state": "OPEN"}, {"id": "web#3", "title": "New filter", "blocked_by": ["web#2"], "state": "OPEN"}, {"id": "api#8", "error": "permission denied"}],
+    "capabilities": {"native_dependencies": true, "create_labels": false, "project_drafts": "read only"},
+    "code": {"revision": "654def", "dirty": false, "web/views.ts": "Dashboard and filter share view model.", "api": "repository unavailable"},
+    "search_results": []
+  }
+]

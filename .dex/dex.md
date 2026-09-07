@@ -41,7 +41,7 @@ prompts/             Prompt templates for skills/agents
                      plus prompt-loop)
 research/            DX research and the isolated review-loop evaluation harness
 scripts/             Python runtime helpers and the Node UI-capture driver
-skills/              Lifecycle skills (20 total, linked into ~/.claude/skills/)
+skills/              Lifecycle skills (21 total, linked into ~/.claude/skills/)
 .dex/                Per-project config (this directory)
   providers.json     Repo-local default agent/provider profile
 ```

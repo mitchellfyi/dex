@@ -32,6 +32,11 @@ That is the normal path — run it from zsh, since `source ~/.zshrc` and the
 project context so future runs know your stack, conventions, quality gates,
 reviewers, guards, and durable repo memory.
 
+To prepare tickets before starting implementation, run `dx triage 1234` or
+`dx triage --project "Project name"`. It clarifies requirements, estimates effort,
+checks related work, and organises tickets in your tracker. `dx refine` is an
+alias. See [ticket triage](docs/triage.md) for write permissions and re-triage.
+
 ## Why Use Dex
 
 - **Less babysitting:** Dex advances through plan, implementation, review,
