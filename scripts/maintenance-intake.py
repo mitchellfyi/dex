@@ -73,9 +73,10 @@ def claim_record(comment, request_id, requester):
             and re.fullmatch(r"<!-- dex-maintenance-attempt:[0-9a-f]{32} -->", lines[3]) is not None)
 
 
-def request(github, number, label):
+def request(github, number, label, issue=None, permissions=None):
     """Read current issue state, label history, requester access, and consumption."""
-    issue = github.api(f"issues/{number}")
+    if issue is None:
+        issue = github.api(f"issues/{number}")
     if (not isinstance(issue, dict) or issue.get("number") != number
             or issue.get("state") != "open" or "pull_request" in issue):
         raise IntakeError("The requested issue is closed, unavailable, or a pull request.")
@@ -95,7 +96,15 @@ def request(github, number, label):
     created = latest.get("created_at", "")
     if not isinstance(actor, str) or not actor or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", created):
         raise IntakeError("The request's original label applier or time is unavailable.")
-    permission = github.api(f"collaborators/{quote(actor, safe='')}/permission")
+    # Reuse permissions only within a queue scan. Claim calls omit the cache
+    # and re-read both the selected issue and its requester's access.
+    actor_key = actor.casefold()
+    if permissions is not None and actor_key in permissions:
+        permission = permissions[actor_key]
+    else:
+        permission = github.api(f"collaborators/{quote(actor, safe='')}/permission")
+        if permissions is not None:
+            permissions[actor_key] = permission
     if not isinstance(permission, dict) or permission.get("permission") not in ("admin", "maintain", "write"):
         raise IntakeError("The execution-label applier needs write, maintain, or admin access.")
     request_id = f"{github.repo.lower()}:{number}:{latest['id']}"
@@ -149,6 +158,7 @@ def select(github, args):
         candidate = request(github, number, args.label)
         return candidate, [], [{key: value for key, value in candidate.items() if key != "issue"}]
     pending, skipped = [], []
+    permissions = {}
     # Match labels literally: GitHub's labels query treats commas as separators.
     for issue in github.pages("issues?state=open&sort=created&direction=asc"):
         if ("pull_request" in issue or not positive(issue.get("number"))
@@ -156,7 +166,8 @@ def select(github, args):
                            for item in issue.get("labels", []))):
             continue
         try:
-            pending.append(request(github, issue["number"], args.label))
+            pending.append(request(github, issue["number"], args.label,
+                                   issue=issue, permissions=permissions))
         except IntakeError as exc:
             skipped.append({"issue_number": issue["number"], "reason": str(exc)})
     pending.sort(key=lambda item: (item["request_time"], item["issue_number"]))
