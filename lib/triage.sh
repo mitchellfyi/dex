@@ -76,7 +76,7 @@ dx_triage_run() (
     raw_input="$project_ref"
   fi
 
-  local repo_root provider_agent session_id context_file prompt exit_code=0
+  local repo_root provider_agent session_id context_file prompt claude_handle exit_code=0
   repo_root=$(dx_repo_root) || return 1
   cd "$repo_root" || return 1
   __dx_refresh_provider || return 1
@@ -116,7 +116,12 @@ Resolve its skill and prompt references against the Dex installation, not the ta
   if [[ "$provider_agent" == codex ]]; then
     bash "$DEX_DIR/bin/dxcodex.sh" session -- "$prompt" || exit_code=$?
   else
+    # Installed global hooks may predate conversation-ID capture. Assign the
+    # native ID here so this standalone session always has an exact record.
+    claude_handle=$(python3 -c 'import uuid; print(uuid.uuid4())') || return 1
+    dx_agent_session_handle_write "$session_id" claude "$claude_handle" || return 1
     dx_provider_claude "${DX_PLAN_FLAGS[@]}" -n "$session_id" \
+      --session-id "$claude_handle" \
       --append-system-prompt-file "$context_file" "$prompt" || exit_code=$?
   fi
   return "$exit_code"

@@ -41,6 +41,8 @@ import json, os, sys
 from pathlib import Path
 Path(os.environ['TEST_LOG']).write_text(json.dumps({
     'args': sys.argv[1:], 'cwd': os.getcwd(),
+    'claude_handle': (lambda p: p.read_text().strip() if p.exists() else None)(
+        Path(os.environ['DX_STATE_DIR']) / (os.environ['DEX_SESSION_ID'] + '.claude-session')),
     'env': {k: os.environ.get(k) for k in (
         'DEX_TRIAGE_ACTIVE', 'DEX_SESSION_ID', 'DEX_LOOP_ACTIVE',
         'DEX_LOOP_PHASE', 'DEX_PHASE_HANDOFF', 'DEX_RUN_ID')},
@@ -87,11 +89,13 @@ for entry in 'dx triage' 'dx refine' dxtriage dxrefine; do
   ' > "$TMP_DIR/output"
   assert_contains 'Usage: dx triage' "$TMP_DIR/output"
   python3 - "$TEST_LOG" <<'PY'
-import json, sys
+import json, sys, uuid
 v = json.load(open(sys.argv[1]))
 args, env = v['args'], v['env']
 assert '--dangerously-skip-permissions' in args
 assert args[args.index('--permission-mode') + 1] == 'bypassPermissions'
+assert '--session-id' in args, 'triage relies on globally installed Claude capture hooks'
+assert str(uuid.UUID(args[args.index('--session-id') + 1])) == v['claude_handle']
 assert '-p' not in args
 assert 'dxtriage' in args[-1]
 assert 'ENG-123 café $(touch INJECTED)' in args[-1]
