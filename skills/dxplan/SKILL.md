@@ -45,6 +45,8 @@ Use the integrations configured in dex.md § Integrations. Skip any that are "no
 
 **Ticket tracker:**
 - Read the ticket — title, description, acceptance criteria, relations, comments.
+- For Linear tool/API discovery, read the Linear section of
+  `prompts/triage-trackers.md`; this skill still governs lifecycle status and approval.
 - If no tracker is configured: gather requirements from the user's request, branch name, and local documentation.
 
 **Design tool** (if configured and ticket references design URLs):
@@ -276,12 +278,11 @@ When creating tracker items:
 - Apply the `humanizer` skill to every ticket title/body before creating it.
   Preserve file paths, commands, acceptance criteria, task numbering, risk
   labels, and verification commands exactly.
-- Parent ticket body should include the approved plan summary, acceptance
-  criteria, risks, and verification commands.
-- Sub-issue bodies should be small enough for a single `dx <ticket>` lifecycle
-  and include scope, dependencies, affected files, risk level, and verification
-  commands.
-- Linear: create issues through the configured Linear MCP. Use parent/child
+- Parent and sub-issue descriptions should contain the outcome, bounded scope,
+  acceptance criteria, and essential constraints. Keep each sub-issue small
+  enough for a single `dx <ticket>` lifecycle. Publish the approved approach,
+  decisions, dependencies, risks, and verification in plan comments under Step 8.
+- Linear: use the configured MCP or authenticated API. Use parent/child
   relations when the integration supports them.
 - GitHub Issues: create issues with `gh issue create`. Reference the parent
   issue in each child body. Use existing labels only; do not create labels.
@@ -313,7 +314,17 @@ skipped by the user.
 
 Before writing the plan summary, invoke the `humanizer` skill on the draft copy. Preserve task numbering, file paths, commands, ticket IDs, and acceptance criteria exactly.
 
-Add the plan summary to the existing or newly selected ticket via the configured tracker. If no tracker is configured, skip — the plan exists in the conversation and task list.
+After plan approval or headless execution authorization, post a concise plan
+comment on the existing or newly selected ticket. For parent/sub-issues created
+in Step 7, put the overall sequence on the parent and each child's approach on
+that child. Follow the publication contract in `prompts/issue-hygiene.md`: record
+meaningful decisions and their reasons, link detailed plans where available,
+and avoid repeating an unchanged plan. Correct the description and acceptance
+criteria where needed; keep the planning record in comments.
+
+If no tracker is configured or tracker write-back was skipped under Step 7, keep
+the plan in the conversation and task list. Report any unavailable comment
+operation or supported fallback without claiming publication succeeded.
 
 Report the resulting issue and PR changes with the exact `Issue/PR work:` line
 from `prompts/issue-hygiene.md`.

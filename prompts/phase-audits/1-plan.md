@@ -82,6 +82,14 @@ the contract's exact `Issue/PR work:` line.
      headless without explicit tracker write-back authorization, mark this check
      not applicable.
 
+11. TICKET PLAN — When tracker write-back applies, is the approved plan and its
+   meaningful decisions recorded in a concise comment, with a verified link?
+   - Keep the description accurate and acceptance criteria current. Reuse an
+     existing comment for an unchanged plan; report any unavailable operation
+     or supported fallback. Do not copy the session audit onto the ticket.
+   - If no tracker is configured or write-back was skipped, mark this check
+     not applicable.
+
 If you find gaps in any of the above, fix them and re-present the plan.
 
 **Completion criteria** — all must be true before you stop:

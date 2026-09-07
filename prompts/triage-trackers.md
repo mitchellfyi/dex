@@ -63,8 +63,22 @@ Official references:
 
 ## Linear
 
-Use the configured official integration and discover its actual operations and
-input schemas. Read team workflow states, labels, templates, estimate options,
+Prefer the configured authenticated MCP and discover its actual operations and input
+schemas. Consult the official MCP docs below; do not guess tool names or arguments.
+If the MCP or an operation is unavailable and authenticated API access exists, use Linear's
+GraphQL API at `https://api.linear.app/graphql`. Read its docs and current schema
+or use introspection to resolve issue/comment mutations, parent links, and issue
+relations. Existing credentials stay out of arguments and logs; for `curl`, pass
+authentication through `--config` on stdin. Follow the API's authentication docs:
+personal API keys and OAuth tokens use different authorization header formats.
+
+Follow cursor pagination for issues, comments, children, relations, and project
+membership. Use scoped filters and include archived results when needed for a
+duplicate search. Respect rate and query-complexity limits. Check GraphQL `errors`
+and the mutation's result even after HTTP 200, then read back the affected data.
+After an uncertain creation/comment result, reconcile before retrying.
+
+Read team workflow states, labels, templates, estimate options,
 project membership, and issue relations. Teams within one project may use different
 scales or workflow names; resolve IDs per team rather than copying display names.
 
@@ -79,6 +93,11 @@ do not assume a GitHub-style text handle will notify a Linear user. Never claim 
 notification was sent if the available tool cannot represent a real mention.
 
 Official references:
+- [Official MCP and available capabilities](https://linear.app/docs/mcp)
+- [GraphQL API, authentication, errors, and Markdown](https://linear.app/developers/graphql)
+- [Current GraphQL schema](https://studio.apollographql.com/public/Linear-API/schema/reference?variant=current)
+- [Pagination](https://linear.app/developers/pagination), [filtering](https://linear.app/developers/filtering), and [rate limits](https://linear.app/developers/rate-limiting)
+- [Issue comments](https://linear.app/docs/comment-on-issues)
 - [Triage](https://linear.app/docs/triage)
 - [Parent and sub-issues](https://linear.app/docs/parent-and-sub-issues)
 - [Issue relations](https://linear.app/docs/issue-relations)
