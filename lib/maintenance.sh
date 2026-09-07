@@ -138,6 +138,39 @@ dx_maintenance_config_value() {
   dx_maintenance_config_value_from_text "$content" "$key" "$default_value"
 }
 
+# Select or claim ticket work. Call both phases inside the workflow's shared
+# concurrency group; the claim comment persists across fresh runners.
+dx_maintenance_issue_intake() {
+  local repo_root="$1" intake_phase="$2" event_name="$3" event_file="$4" context_dir="$5"
+  local issue_label maintain_label issue_limit config_error="" config_count repo_slug
+  local -a intake_args
+  intake_args=()
+  if [[ "$(dx_maintenance_config_value "$repo_root" enabled true)" != "true" ]]; then
+    intake_args+=(--disabled)
+  fi
+  issue_label=$(dx_maintenance_config_value "$repo_root" issue_label "_none_")
+  maintain_label=$(dx_maintenance_config_value "$repo_root" label "dex-maintenance")
+  issue_limit=$(dx_maintenance_config_value "$repo_root" issue_queue_limit "10")
+  if [[ ! "$issue_limit" =~ ^[0-9]+$ || "$issue_limit" -lt 1 ]]; then
+    issue_limit=10
+  fi
+  config_count=$(awk -F'|' '
+    /^## Maintenance[[:space:]]*$/ { active = 1; next }
+    active && /^## / { active = 0 }
+    active && /^\|/ { key = $2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); if (key == "issue_label") count++ }
+    END { print count+0 }
+  ' "$repo_root/.dex/dex.md" 2>/dev/null) || config_count=0
+  [[ "$config_count" == 1 ]] || config_error="missing or repeated issue_label"
+  repo_slug="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
+  if [[ -z "$repo_slug" ]]; then
+    repo_slug=$(cd "$repo_root" && gh repo view --json nameWithOwner --jq .nameWithOwner) || return 1
+  fi
+  python3 "$DEX_DIR/scripts/maintenance-intake.py" "$intake_phase" \
+    --repo "$repo_slug" --label "$issue_label" --maintenance-label "$maintain_label" \
+    --limit "$issue_limit" --event "$event_name" --event-path "$event_file" \
+    --context-dir "$context_dir" --config-error "$config_error" "${intake_args[@]}"
+}
+
 dx_maintenance_event_mode() {
   local repo_root="$1" event_name="${2:-}" explicit_mode="${3:-}" mode
   if [[ -n "$explicit_mode" ]]; then
