@@ -256,6 +256,8 @@ def main():
                 raise IntakeError("This invocation already claimed an attempt; reruns require a new request.")
             result["skipped"] = candidate.get("skipped", [])
             result["queue"] = candidate.get("queue", [])
+            if not candidate.get("issue_number"):
+                result["reason"] = candidate.get("reason") or result["reason"]
             candidate = claim(github, candidate, args.label) if candidate.get("issue_number") else None
         if candidate:
             issue = candidate.pop("issue", None)

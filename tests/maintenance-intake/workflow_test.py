@@ -79,6 +79,18 @@ PY
         self.assertFalse(self.execute("Select pending ticket request")["proceed"])
         self.assertEqual([], self.db["comments"]["7"])
 
+    def test_intake_preserves_existing_enabled_value_semantics(self):
+        config = self.root / ".dex/dex.md"
+        original = config.read_text()
+        for value in ("true", "TRUE", "yes", "1", "on", "enabled", "false", "NO", "0", "Disabled"):
+            with self.subTest(value=value):
+                config.write_text(original + f"| enabled | {value} |\n")
+                result = self.execute("Select pending ticket request", event="schedule")
+                enabled = value.lower() not in ("false", "no", "0", "disabled")
+                self.assertEqual(enabled, result["proceed"])
+                self.assertEqual(7 if enabled else None, result["issue_number"])
+        self.assertEqual([], self.db["comments"]["7"])
+
     def test_manual_focus_bypasses_labels_without_consuming_queue_request(self):
         self.db["issues"]["7"]["labels"] = []
         (self.root / "db.json").write_text(json.dumps(self.db))

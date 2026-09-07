@@ -61,11 +61,15 @@ class QueueTests(IntakeCase):
 
     def test_unavailable_queue_reports_the_gap_without_unrestricted_context(self):
         self.db["fail"] = "issues?"
-        result = self.invoke(event="schedule")
-        self.assertTrue(result["proceed"])
-        self.assertIsNone(result["issue_number"])
-        self.assertIn("unavailable", result["reason"])
-        self.assertFalse((self.context / "selected-issue.json").exists())
+        for event in ("schedule", "workflow_dispatch"):
+            with self.subTest(event=event):
+                prepared = self.invoke(event=event)
+                result = self.invoke("claim", event=event)
+                self.assertTrue(result["proceed"])
+                self.assertIsNone(result["issue_number"])
+                self.assertIn("unavailable", result["reason"])
+                self.assertEqual(prepared["reason"], result["reason"])
+                self.assertFalse((self.context / "selected-issue.json").exists())
 
     def test_equal_request_times_use_issue_number(self):
         self.add_issue(6, 101)

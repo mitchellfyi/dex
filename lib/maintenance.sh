@@ -145,9 +145,9 @@ dx_maintenance_issue_intake() {
   local issue_label maintain_label issue_limit config_error="" config_count repo_slug
   local -a intake_args
   intake_args=(--event "$event_name")
-  if [[ "$(dx_maintenance_config_value "$repo_root" enabled true)" != "true" ]]; then
-    intake_args+=(--disabled)
-  fi
+  case "$(dx_maintenance_config_value "$repo_root" enabled true | tr '[:upper:]' '[:lower:]')" in
+    false|no|0|disabled) intake_args+=(--disabled) ;;
+  esac
   issue_label=$(dx_maintenance_config_value "$repo_root" issue_label "_none_")
   maintain_label=$(dx_maintenance_config_value "$repo_root" label "dex-maintenance")
   issue_limit=$(dx_maintenance_config_value "$repo_root" issue_queue_limit "10")
