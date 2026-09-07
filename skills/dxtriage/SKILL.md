@@ -221,8 +221,14 @@ file, never a tracked repo file. Write to that path plus `.tmp`, then use Python
 `os.replace` to replace it; shell aliases such as `mv -i` can stall an overwrite.
 There is no background watcher. Re-run triage after replies arrive.
 
-Finish with links to changed, created, duplicate, and related tickets; effort and
+Finish in the session with links to changed, created, duplicate, and related tickets; effort and
 delivery order; ready work and unresolved dependencies; named stakeholder questions;
 pending reorganisation approvals; and unprocessed or unverified scope. A triage
 session may finish awaiting people. Say so instead of claiming all tickets ready.
 Include the `Issue/PR work:` line from the hygiene contract, with PR unchanged/N/A.
+
+Do not copy that handoff onto the ticket. A public summary comment is useful
+only when it adds a decision or next action that readers would otherwise miss.
+Keep it to a few short sentences and link the updated plan. Do not repeat
+acceptance criteria, estimates, verification logs, or the session's audit line.
+Deferred stakeholder questions remain separate, concise follow-up comments.
