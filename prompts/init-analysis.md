@@ -44,6 +44,14 @@ Write these files:
 
 ### `.dex/dex.md`
 
+Read the existing `.dex/dex.md` before rewriting it. Preserve its Maintenance
+section, including custom values, `_none_`, and omitted settings; missing
+`issue_label` deliberately leaves legacy ticket intake paused. If an existing
+file has no Maintenance section, leave it absent. Use the defaults below only
+when creating a file that did not exist. The init launcher has already written
+these defaults for a new repository. Do not create labels or enable GitHub
+workflows during analysis.
+
 ```markdown
 # Dex — [Project Name]
 
@@ -125,9 +133,15 @@ current code before relying on them.
 | branch_prefix | dex/maintain/ |
 | label | dex-maintenance |
 | default_mode | report |
+| schedule_mode | report |
+| issue_mode | report |
+| issue_label | dex-execute |
+| issue_queue_limit | 10 |
 | max_prs | 1 |
 | low_risk_fix_categories | docs, rules, guards, memory, tests |
 | copilot_review | true |
+| auto_merge | false |
+| auto_merge_method | squash |
 
 `fix-scoped` may only patch the configured low-risk categories above, plus
 verification updates in matching test files, unless a repo maintainer expands
