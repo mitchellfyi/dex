@@ -14,7 +14,8 @@ git -C "$TMP_DIR/repo" init -q
 cd "$TMP_DIR/repo"
 # shellcheck source=lib/common.sh
 source "$ROOT/lib/common.sh"
-export DEX_SESSION_ID="$(dx_session_id)" DEX_TRIAGE_ACTIVE=1
+DEX_SESSION_ID="$(dx_session_id)"
+export DEX_SESSION_ID DEX_TRIAGE_ACTIVE=1
 export DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=6 DEX_PHASE_HANDOFF=inline
 printf 'original active lifecycle\n' > "$(dx_active_file "$DEX_SESSION_ID")"
 printf 'original context\n' > "$(dx_context_file "$DEX_SESSION_ID")"
@@ -46,7 +47,7 @@ assert_contains 'processed/pending tickets' "$TMP_DIR/compact"
 
 # The provider's checkout alias is shared with other sessions. Exercise this
 # under bash as well as the zsh launcher covered by triage-command-test.sh.
-DX_PROVIDER_ENGINE=claude
+export DX_PROVIDER_ENGINE=claude
 dx_provider_write_session_state "$DEX_SESSION_ID"
 alias_contents="$(cat "$(dx_provider_state_file "$DEX_SESSION_ID")")"
 dx_provider_write_session_state "triage-$DEX_SESSION_ID-fixture"

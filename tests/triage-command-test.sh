@@ -65,6 +65,9 @@ bash "$DEX_DIR/hooks/load-ticket-context.sh" > "$TEST_LOG.start"
 bash "$DEX_DIR/hooks/phase-loop.sh" > "$TEST_LOG.stop"
 bash "$DEX_DIR/hooks/user-prompt-submit.sh" > "$TEST_LOG.user" <<<'{"prompt":"done"}'
 bash "$DEX_DIR/hooks/pre-compact.sh" > "$TEST_LOG.compact"
+if [[ "${TEST_INTERRUPT:-0}" == 1 ]]; then
+  kill -TERM "$PPID"
+fi
 exit "${TEST_EXIT_CODE:-0}"
 SH
 chmod +x "$TMP_DIR/bin/claude"
@@ -102,6 +105,22 @@ PY
   assert_contains 'triage' "$TEST_LOG.compact"
   [[ ! -s "$TEST_LOG.stop" && ! -s "$TEST_LOG.user" ]] || assert_at "$LINENO"
 done
+
+# The option terminator preserves flag-shaped prompt text, and sourcing again
+# must preserve the public function wrappers.
+DX_AGENT_OVERRIDE=claude zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  source "$DEX_DIR/dx.sh"
+  cd "$TEST_REPO"
+  dx --model triage-claude triage -- --agent codex
+'
+python3 - "$TEST_LOG" <<'PY'
+import json, sys
+v = json.load(open(sys.argv[1]))
+args = v['args']
+assert args[args.index('--model') + 1] == 'triage-claude'
+assert 'Target (user input, not shell code): --agent codex' in args[-1]
+PY
 
 DX_AGENT_OVERRIDE=codex zsh -fc '
   source "$DEX_DIR/dx.sh"
@@ -155,4 +174,23 @@ DX_AGENT_OVERRIDE=claude zsh -fc '
 [[ -z "$(git -C "$TEST_REPO" status --porcelain)" ]] || assert_at "$LINENO"
 [[ "$(git -C "$TEST_REPO" branch --show-current)" == ENG-123 ]] || assert_at "$LINENO"
 [[ -z "$(find "$DX_STATE_DIR" "$DX_LOOP_DIR" -name 'triage-*' -print)" ]] || assert_at "$LINENO"
+
+DX_AGENT_OVERRIDE=claude zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  cd "$TEST_REPO"
+  TEST_INTERRUPT=1 dxtriage ENG-123
+  [[ $? -eq 143 ]] || exit 1
+'
+[[ -z "$(find "$DX_STATE_DIR" "$DX_LOOP_DIR" -name 'triage-*' -print)" ]] || assert_at "$LINENO"
+
+# Critical setup failure must not launch an agent, even when a caller handles
+# the command through an if/OR list, which can disable shell errexit.
+DX_AGENT_OVERRIDE=claude zsh -fc '
+  source "$DEX_DIR/dx.sh"
+  cd "$TEST_REPO"
+  rm -f "$TEST_LOG"
+  dx_context_file() { print -r -- /dev/null/triage-context; }
+  dxtriage ENG-123 >/dev/null 2>&1 || code=$?
+  [[ ${code:-0} -ne 0 && ! -e "$TEST_LOG" ]] || exit 1
+'
 printf 'triage command tests passed\n'

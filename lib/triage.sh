@@ -82,25 +82,36 @@ dx_triage_run() (
   __dx_refresh_provider || return 1
   __dx_require_resolved_provider_cli || return 1
   provider_agent=$(__dx_resolved_provider_agent) || return 1
-  session_id="triage-$(dx_unique_session_id)"
+  session_id=$(dx_unique_session_id) || return 1
+  session_id="triage-$session_id"
   export DEX_SESSION_ID="$session_id" DEX_TRIAGE_ACTIVE=1 DEX_LOOP_ACTIVE=0
   unset DEX_LOOP_PHASE DEX_LOOP_PROMISE DEX_PHASE_HANDOFF DEX_RUN_ID
   unset DEX_REVIEW_PASS_ACTIVE DEX_POLICY_SESSION_ID DX_CODEX_READ_ONLY
-  context_file=$(dx_context_file "$session_id")
+  context_file=$(dx_context_file "$session_id") || return 1
   trap 'dx_triage_cleanup "$session_id"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  mkdir -p "$DX_STATE_DIR"
   umask 077
-  prompt="$(cat "$DEX_DIR/prompts/triage-session.md")
+  mkdir -p "$DX_STATE_DIR" || return 1
+  if ! prompt=$(cat "$DEX_DIR/prompts/triage-session.md"); then
+    dx_error "Could not read the triage session instructions."
+    return 1
+  fi
+  prompt="$prompt
 
 Scope: $scope
 Target (user input, not shell code): ${raw_input:-[ask the user to select a target]}
 Session context: $context_file
+Dex installation: $DEX_DIR
 
-Invoke the dxtriage skill now."
-  printf '%s\n' "$prompt" > "${context_file}.tmp"
-  mv "${context_file}.tmp" "$context_file"
+Invoke the dxtriage skill now.
+If skill invocation is unavailable, read $DEX_DIR/skills/dxtriage/SKILL.md directly.
+Resolve its skill and prompt references against the Dex installation, not the target repo."
+  if ! printf '%s\n' "$prompt" > "${context_file}.tmp" \
+    || ! mv "${context_file}.tmp" "$context_file"; then
+    dx_error "Could not save the triage session context."
+    return 1
+  fi
   dx_info "Triage: ${raw_input:-select a target} ($scope; $provider_agent)"
   if [[ "$provider_agent" == codex ]]; then
     bash "$DEX_DIR/bin/dxcodex.sh" session -- "$prompt" || exit_code=$?

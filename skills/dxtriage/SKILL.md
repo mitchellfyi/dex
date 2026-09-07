@@ -9,6 +9,9 @@ Prepare tickets so a person or implementation agent can act on them. Work in
 the codebase's configured tracker using its available tools. `dx refine` and
 `/dxrefine` use this same workflow. `/dxplan` is a separate implementation phase.
 
+Resolve `skills/` and `prompts/` references against the Dex installation
+(`$DEX_DIR`, or the installation containing this skill), not the target repo.
+
 ## Session boundaries
 
 Only investigate, plan, organise, and communicate. Do not edit repository files,
@@ -91,6 +94,9 @@ Update existing descriptions with established facts and accepted decisions as
 you go. Preserve useful material, template structure, links, checkboxes, and
 attribution. Link to comments that establish decisions. Keep unresolved choices
 explicit rather than presenting a guessed answer as an acceptance criterion.
+Edit the relevant sections in place instead of appending a second triage report
+that repeats them. Keep execution bookkeeping in the session summary; include a
+revision in a ticket only when it helps establish the implementation evidence.
 
 Supply what this ticket needs, omitting empty or unnecessary sections:
 
