@@ -171,6 +171,9 @@ dx uninit                  # Remove Dex from the current repo
 
 `dx help` lists every command.
 
+Run standalone commands such as `dxreviewloop` directly in your shell, without
+a leading `dx`. `dx dxreviewloop` is rejected before any lifecycle is started.
+
 Inside Claude Code, run `/dxproof` to capture the current UI diff as a captioned
 before/after walkthrough. `/dxcapture` is the same command under an alias.
 

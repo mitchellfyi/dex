@@ -131,6 +131,72 @@ if DEX_DIR="$ROOT" zsh -fc 'source "$DEX_DIR/dx.sh"; dx rename' > "$TMP_DIR/rena
 fi
 assert_contains "'dx rename' is not a command" "$TMP_DIR/rename.out"
 
+# A standalone shell command after dx is a command mistake, not a new task.
+# Stop at dispatch: these stubs record any attempt to reach setup or review.
+run_dispatch_fixture() {
+  DEX_DIR="$ROOT" DX_TEST_CALLS="$TMP_DIR/dispatch-calls.out" \
+  zsh -fc '
+    source "$DEX_DIR/dx.sh"
+    __dx_confirm_task_word() { print -r -- typo-guard >> "$DX_TEST_CALLS"; }
+    __dx_refresh_provider() { print -r -- provider >> "$DX_TEST_CALLS"; return 91; }
+    __dx_setup_worktree() { print -r -- worktree >> "$DX_TEST_CALLS"; return 92; }
+    __dx_setup_in_place() { print -r -- in-place >> "$DX_TEST_CALLS"; return 93; }
+    __dx_run_with_runtime() { print -r -- lifecycle >> "$DX_TEST_CALLS"; return 94; }
+    dx_review_loop_run() { print -r -- "review:$*" >> "$DX_TEST_CALLS"; }
+    __dx_cli() { print -r -- "management:$*" >> "$DX_TEST_CALLS"; }
+    "$@"
+  ' dx-dispatch "$@" > "$TMP_DIR/dispatch.out" 2>&1
+}
+
+assert_standalone_rejected() {
+  local standalone_command="$1"
+  shift
+  : > "$TMP_DIR/dispatch-calls.out"
+  assert_rejected "nested $standalone_command" run_dispatch_fixture "$@"
+  assert_contains "is a standalone shell command" "$TMP_DIR/dispatch.out"
+  assert_contains "Run '$standalone_command' directly, without the leading 'dx'." \
+    "$TMP_DIR/dispatch.out"
+  assert_contains "Nothing started." "$TMP_DIR/dispatch.out"
+  [[ ! -s "$TMP_DIR/dispatch-calls.out" ]] || assert_at $LINENO
+}
+
+for standalone_command in dxreviewloop dxcomplete dxloop dxrm dxls dxcd dxclean dxtriage dxrefine; do
+  for dispatcher in dx dex dexter; do
+    assert_standalone_rejected "$standalone_command" "$dispatcher" "$standalone_command"
+  done
+done
+
+# Extra arguments, non-interactive calls, and global options must not bypass it.
+assert_standalone_rejected dxreviewloop dx dxreviewloop --help
+assert_standalone_rejected dxreviewloop dx dxreviewloop extra-argument
+assert_standalone_rejected dxreviewloop dx --agent codex --model test-model dxreviewloop
+assert_standalone_rejected dxreviewloop dx dxreviewloop --agent=claude --model=test-model
+for workspace_flag in --no-worktree --in-place --here --worktree; do
+  assert_standalone_rejected dxreviewloop dx "$workspace_flag" dxreviewloop
+done
+assert_standalone_rejected dxloop dx dxloop "fix the login bug"
+assert_standalone_rejected dxrm dx dxrm --all
+
+# Task text and ticket IDs still reach the provider boundary, where the fixture
+# stops them. Matching a substring or every dx-prefixed word would break these.
+for task_input in "fix dxreviewloop behavior" "dxreviewloop needs a fix" dxcustom refactor 123 ENG-456; do
+  : > "$TMP_DIR/dispatch-calls.out"
+  assert_rejected "fixture provider boundary" run_dispatch_fixture dx "$task_input"
+  assert_contains provider "$TMP_DIR/dispatch-calls.out"
+  assert_not_contains "standalone shell command" "$TMP_DIR/dispatch.out"
+done
+: > "$TMP_DIR/dispatch-calls.out"
+assert_rejected "unquoted task reaches provider" run_dispatch_fixture dx fix dxreviewloop behavior
+assert_contains provider "$TMP_DIR/dispatch-calls.out"
+
+# The real standalone entry point still forwards its arguments unchanged.
+: > "$TMP_DIR/dispatch-calls.out"
+run_dispatch_fixture dxreviewloop
+run_dispatch_fixture dxreviewloop --help
+run_dispatch_fixture dx help
+assert_eq $'review:\nreview:--help\nmanagement:help' "$(< "$TMP_DIR/dispatch-calls.out")" \
+  "standalone review and management dispatch"
+
 DEX_DIR="$ROOT" zsh -fc '
   source "$DEX_DIR/dx.sh"
   set -e

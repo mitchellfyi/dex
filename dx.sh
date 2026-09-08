@@ -3842,9 +3842,9 @@ __dx_show_header() {
 # subcommand looks like — so `dx statu` used to cut a worktree, a branch and a
 # full agent run without a word, instead of printing the status.
 #
-# Only a single bare word that is nearly a real command earns an interruption.
-# A multi-word description is unambiguous, a ticket is a ticket, and a word
-# resembling nothing is a task somebody meant to type.
+# For unknown words, only a single bare word that is nearly a real command
+# earns an interruption. A multi-word description is unambiguous, a ticket is
+# a ticket, and a word resembling nothing is a task somebody meant to type.
 #
 # Keep this list equal to the routing allowlist in dx() — minus the flag forms,
 # plus `refine`, which dx() intercepts before that case. Both, plus `dx help`,
@@ -4031,6 +4031,16 @@ dx() {
     init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
+      ;;
+  esac
+
+  # Standalone shell commands are not task descriptions. Reject the extra dx
+  # even without a terminal or with arguments, before any provider or setup.
+  case "$1" in
+    dxreviewloop|dxcomplete|dxloop|dxrm|dxls|dxcd|dxclean|dxtriage|dxrefine)
+      dx_error "'${1}' is a standalone shell command, not a 'dx' subcommand."
+      dx_info "Run '${1}' directly, without the leading 'dx'. Nothing started."
+      return 1
       ;;
   esac
 
