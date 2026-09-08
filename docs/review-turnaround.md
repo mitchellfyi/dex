@@ -70,8 +70,37 @@ outer wave deadline. Existing scout and test-job limits still apply.
 
 ## Verification
 
-Exercise cache hits and invalidation, failures, cancellation, concurrent
-execution, malformed reports, criterion coverage, and session cleanup in
-focused tests. Run the repository static checks and manifest suite. Manually
-exercise the real command and report interfaces, then run a real review in an
-isolated fixture repository to verify that the prompt follows the new flow.
+Verification on 2026-09-08:
+
+- `bash tests/check.sh`: all static checks passed.
+- `bash tests/run-all.sh`: 102 passed, 0 failed on macOS.
+- Final focused rerun of check caching/execution, reports, capacity, timeouts,
+  session forgetting, and the session catalog: 7 passed, 0 failed.
+- Both changed skills passed the skill validator.
+
+| Criterion | Implementation (`file:line`) | Test (`file:line`) | Status |
+|---|---|---|---|
+| Reuse requires matching bounded inputs | `scripts/review_checks.py:153` | `tests/review-check-cache-test.py:32`; `tests/review-check-runner-test.sh:127` | MET |
+| Failures and cancellation preserve their result without reusable success | `bin/review-check.sh:80`; `lib/session.sh:2061` | `tests/review-check-runner-test.sh:69` | MET |
+| Check admission is separate from model admission | `lib/review-capacity.sh:78` | `tests/review-check-runner-test.sh:110` | MET |
+| Prepared scope facts do not count as reviewed evidence | `lib/review.sh:1806` | `tests/review-report-test.sh:104` | MET |
+| Report automation retains criterion, receipt, and clean-wave gates | `bin/review-result.sh:24`; `prompts/review-wave.md:10` | `tests/review-report-test.sh:62`; `tests/review-loop-test.sh:1696` | MET |
+| Session cleanup removes new state; vendored runtimes contain the helpers | `lib/session.sh:2675` | `tests/session-forget-test.sh:178`; `tests/review-evaluation-harness-test.sh:235` | MET |
+
+Manual checks used an isolated Python fixture repository:
+
+- A real reviewer followed the updated skill, ran seven tests and independent
+  boundary probes, and published a clean report on its first attempt. The
+  existing evidence, completion-receipt, and metrics validators accepted it.
+- The public `dxreviewloop` command launched the installed Codex CLI and
+  completed a small-tier review with one independent clean wave and a valid
+  final receipt. No provider or review result was mocked in this run.
+- A snapshot-cacheable syntax check executed once, reused its result after
+  changing the provider conversation and wave IDs, then executed again after a
+  declared input changed.
+- Ten repeated public-runner timeout checks each returned 124. This exposed
+  and verified a fix for macOS Bash 3.2 cleanup replacing a timeout result with
+  exit 1 when an interrupted process left a temporary snapshot behind.
+
+These checks establish behavior, not a production speedup percentage. A
+before/after benchmark of a six-hour review was not run.

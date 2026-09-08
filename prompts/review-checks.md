@@ -34,15 +34,15 @@ list additional executables or tool files beyond
 `argv[0]`. Runtime libraries and interpreter packages also need coverage. When
 that inventory is impractical, use `never`.
 
-Snapshot-cacheable checks do not receive wave/session control metadata, including
-provider conversation IDs. Specs with `cache: "never"` retain that environment. All other
-environment values affect reuse, including unknown `DEX_*` settings. The
-timeout process token is reserved for cancellation, not application input.
+Snapshot-cacheable checks do not receive wave/session control metadata,
+including provider conversation IDs. Specs with `cache: "never"` retain that
+environment. All other environment values affect reuse, including unknown
+`DEX_*` settings. The timeout process token is reserved for cancellation, not
+application input.
 Use `never` for checks that require orchestration identity, mutable services,
 network responses, wall clocks, randomness, or uncaptured inputs. Formatters
 and generators that write source also use `never`, even if they restore it.
-Repro probes
-run with `never` so the verifier sees a fresh observation.
+Repro probes run with `never` so the verifier sees a fresh observation.
 
 A pass is reusable only if the checkout and declared inputs still match after
 execution. Failures and timeouts preserve the command's nonzero result and
