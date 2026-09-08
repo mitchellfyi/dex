@@ -23,14 +23,19 @@ source "$ROOT/lib/common.sh"
 
 assert_eq "2" "$(DEX_REVIEW_MAX_ACTIVE_WAVES=2 dx_review_capacity_limit)" \
   "explicit host review-wave capacity"
-assert_eq "1" "$(
+assert_eq "1" "$(DEX_REVIEW_MAX_ACTIVE_WAVES=1 dx_review_capacity_limit)" \
+  "single-wave rollback override"
+default_capacity="$(
   unset DEX_REVIEW_MAX_ACTIVE_WAVES
-  __dx_review_host_cpu_count() { printf '8\n'; }
-  __dx_review_host_memory_mebibytes() { printf '16384\n'; }
   dx_review_capacity_limit
-)" "preserve model admission and scout parallelism on a common developer host"
+)"
+assert_eq "3" "$default_capacity" "default host review-wave capacity"
+assert_eq "3" "$(DEX_REVIEW_MAX_ACTIVE_WAVES='' dx_review_capacity_limit)" \
+  "empty override uses the default"
 assert_eq "1" "$(DEX_REVIEW_MAX_ACTIVE_CHECKS=1 dx_review_check_capacity_limit)" \
   "separate deterministic check budget"
+assert_eq "1" "$(unset DEX_REVIEW_MAX_ACTIVE_CHECKS; dx_review_check_capacity_limit)" \
+  "default check budget remains one command"
 if DEX_REVIEW_MAX_ACTIVE_CHECKS=0 dx_review_check_capacity_limit; then
   fail "invalid check capacity was accepted"
 fi
@@ -47,6 +52,8 @@ assert_eq "3" "$(__dx_review_scout_parallelism 3 1)" \
   "single-wave scout parallelism"
 assert_eq "1" "$(__dx_review_scout_parallelism 3 2)" \
   "multi-wave scout parallelism"
+assert_eq "1" "$(__dx_review_scout_parallelism 3 "$default_capacity")" \
+  "three-wave admission retains the scout throttle"
 assert_eq "2" "$(DEX_REVIEW_SCOUT_PARALLELISM=2 __dx_review_scout_parallelism 3 1)" \
   "explicit scout parallelism"
 assert_eq "2" "$(DEX_REVIEW_SCOUT_PARALLELISM=3 __dx_review_scout_parallelism 2 1)" \
@@ -60,6 +67,8 @@ assert_eq "2" "$(DEX_REVIEW_TEST_JOBS=2 __dx_review_test_jobs 8)" \
   "explicit review test-job budget"
 assert_eq "2" "$(__dx_review_test_jobs 8 2)" \
   "test-job budget accounts for concurrent review waves"
+assert_eq "1" "$(__dx_review_test_jobs 8 "$default_capacity")" \
+  "three waves share the test-job budget on an eight-CPU host"
 if DEX_REVIEW_TEST_JOBS=0 __dx_review_test_jobs 8 >/dev/null 2>&1; then
   printf 'zero review test-job budget was accepted\n' >&2
   exit 1
@@ -96,6 +105,31 @@ dx_review_capacity_release second
 assert_eq "0" "$(dx_review_capacity_active_count)" \
   "review-wave leases released"
 
+# Three leases fit by default. A fourth waits until a slot is released, and
+# later callers cannot take that slot ahead of the oldest waiter.
+for slot in 1 2 3; do
+  dx_review_capacity_enqueue "session-default-$slot" "default-$slot"
+  dx_review_capacity_try_acquire "session-default-$slot" "default-$slot" "$default_capacity"
+done
+assert_eq "3" "$(dx_review_capacity_active_count)" "three default wave slots filled"
+dx_review_capacity_enqueue session-default-fourth default-fourth
+dx_review_capacity_enqueue session-default-fifth default-fifth
+claim_rc=0
+dx_review_capacity_try_acquire session-default-fourth default-fourth "$default_capacity" \
+  || claim_rc=$?
+assert_eq "1" "$claim_rc" "fourth wave waits for a slot"
+dx_review_capacity_release default-2
+claim_rc=0
+dx_review_capacity_try_acquire session-default-fifth default-fifth "$default_capacity" \
+  || claim_rc=$?
+assert_eq "1" "$claim_rc" "later waiter cannot bypass the fourth wave"
+dx_review_capacity_try_acquire session-default-fourth default-fourth "$default_capacity"
+assert_eq "3" "$(dx_review_capacity_active_count)" "released slot refilled without over-admission"
+for slot in default-1 default-3 default-fourth default-fifth; do
+  dx_review_capacity_release "$slot"
+done
+assert_eq "0" "$(dx_review_capacity_active_count)" "default-capacity records released"
+
 # A process that exits without releasing its lease must not strand the host.
 (
   dx_review_capacity_enqueue session-stale stale
@@ -116,7 +150,7 @@ for stress_index in 1 2 3 4 5 6 7 8; do
   (
     stress_token="stress-${stress_index}"
     DX_REVIEW_CAPACITY_RECHECK_SECONDS=1 \
-      dx_review_capacity_wait "session-${stress_token}" "$stress_token" 2
+      dx_review_capacity_wait "session-${stress_token}" "$stress_token" "$default_capacity"
     stress_active="$(dx_review_capacity_active_count)"
     printf '%s\t%s\n' "$stress_token" "$stress_active" >> "$stress_results"
     /bin/sleep 0.1
@@ -130,7 +164,7 @@ done
 assert_eq "8" "$(wc -l < "$stress_results" | tr -d ' ')" \
   "all concurrent review waiters acquired a lease"
 stress_max_active="$(awk -F '\t' 'BEGIN { max = 0 } $2 > max { max = $2 } END { print max }' "$stress_results")"
-[[ "$stress_max_active" -le 2 ]] || fail "host review capacity exceeded its configured limit"
+[[ "$stress_max_active" -le "$default_capacity" ]] || fail "host review capacity exceeded its configured limit"
 assert_eq "0" "$(dx_review_capacity_active_count)" \
   "concurrent review leases released"
 

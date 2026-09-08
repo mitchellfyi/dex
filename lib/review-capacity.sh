@@ -39,40 +39,13 @@ __dx_review_host_cpu_count() {
   printf '%s\n' "$cpu_count"
 }
 
-__dx_review_host_memory_mebibytes() {
-  local memory_bytes="" memory_mebibytes=""
-  memory_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
-  if [[ "$memory_bytes" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s\n' "$((memory_bytes / 1024 / 1024))"
-    return 0
-  fi
-  if [[ -r /proc/meminfo ]]; then
-    memory_mebibytes=$(awk '/^MemTotal:/ { print int($2 / 1024); exit }' \
-      /proc/meminfo 2>/dev/null || true)
-  fi
-  [[ "$memory_mebibytes" =~ ^[1-9][0-9]*$ ]] || return 1
-  printf '%s\n' "$memory_mebibytes"
-}
-
 # dx_review_capacity_limit
-# Keep existing model admission defaults: increasing this also reduces default
-# scout parallelism. Operators can tune it separately from check capacity.
+# Admit three independent reviews; heavy checks keep their separate budget.
+# Scout parallelism and test jobs remain bounded per wave.
 dx_review_capacity_limit() {
-  local configured_limit="${DEX_REVIEW_MAX_ACTIVE_WAVES:-}"
-  local cpu_count memory_mebibytes=""
-  if [[ -n "$configured_limit" ]]; then
-    [[ "$configured_limit" =~ ^[1-8]$ ]] || return 1
-    printf '%s\n' "$configured_limit"
-    return 0
-  fi
-  cpu_count=$(__dx_review_host_cpu_count) || return 1
-  memory_mebibytes=$(__dx_review_host_memory_mebibytes 2>/dev/null || true)
-  if [[ "$cpu_count" -ge 16 && "$memory_mebibytes" =~ ^[0-9]+$ \
-    && "$memory_mebibytes" -ge 49152 ]]; then
-    printf '%s\n' "2"
-  else
-    printf '%s\n' "1"
-  fi
+  local configured_limit="${DEX_REVIEW_MAX_ACTIVE_WAVES:-3}"
+  [[ "$configured_limit" =~ ^[1-8]$ ]] || return 1
+  printf '%s\n' "$configured_limit"
 }
 
 dx_review_check_capacity_limit() {

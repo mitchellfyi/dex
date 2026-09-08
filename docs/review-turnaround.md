@@ -12,8 +12,8 @@ The turnaround changes remove repeated mechanical work:
   and review policy still match. Failed, interrupted, and source-mutating
   commands never publish reusable evidence. Checks with unbounded inputs run
   every time.
-- Model sessions and check execution use separate host capacity pools. Existing
-  model admission defaults remain unchanged; the default check budget is one
+- Model sessions and check execution use separate host capacity pools. The
+  default model budget is three waves; the default check budget is one
   command. The checkout still has one review owner and one writer.
 - The wrapper prepares factual scope input for each reviewer. Reviewers still
   produce independent coverage and findings; previous conclusions are never
@@ -25,19 +25,21 @@ The turnaround changes remove repeated mechanical work:
 
 ## Design decisions
 
-Whole-wave concurrency is excluded from this change. The existing waves also
-launch scouts, so running three full waves concurrently multiplies resource
+Parallel confirmation waves within the same checkout remain excluded. Those
+waves also launch scouts, so running them concurrently multiplies resource
 use before there is evidence that the code is ready for confirmation. It also
 requires a new all-results acceptance transaction to prevent an early clean
 result from hiding a later finding. Sequential independent waves retain the
 existing receipt and recovery semantics while the reusable work and host
 queue bottlenecks are addressed.
 
-Automatic model concurrency also stays unchanged. Raising it lowers the
-default scout parallelism even when only one review is active, which can
-increase that review's turnaround time. The separate check pool lets operators
-tune model admission without multiplying test suites, but defaults should
-change only after measuring that tradeoff.
+Across separate checkouts, the default host limit is now three waves as a
+throughput trial. The heavy-check pool stays at one command. Existing
+per-wave safeguards stay in place: one concurrent scout at a multi-wave host
+limit, plus a CPU-aware test-job budget. These use the configured limit even
+when only one review is active, so a single review can take longer. Measure
+queue wait, wave duration, memory pressure, and provider throttling before
+concluding that overall turnaround improved.
 
 Caching is conservative: a source change invalidates the whole check entry.
 Inferring that a changed file cannot affect a check requires a complete
@@ -64,7 +66,11 @@ unchanged. The legacy baseline interface remains accepted, but new review
 instructions use the environment- and tool-bound runner instead.
 
 `DEX_REVIEW_MAX_ACTIVE_WAVES=1..8` and `DEX_REVIEW_MAX_ACTIVE_CHECKS=1..8`
-override the separate host budgets. `DEX_REVIEW_CHECK_TIMEOUT` defaults to 900
+override the separate host budgets, which default to three waves and one
+check command. Use `DEX_REVIEW_MAX_ACTIVE_WAVES=1` to return to single-wave
+admission. Reload the shell functions with `dx reload` for new invocations;
+loops already running keep the wave limit captured at startup.
+`DEX_REVIEW_CHECK_TIMEOUT` defaults to 900
 seconds for queue waiting and, separately, execution. It does not extend the
 outer wave deadline. Existing scout and test-job limits still apply.
 

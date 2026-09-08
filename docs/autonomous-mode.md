@@ -117,10 +117,11 @@ context.
 Review providers also share a host-wide FIFO admission gate across worktrees.
 Queue time does not consume the wave timeout and does not create a Phase 3 busy
 fence. A lease covers only the provider wave and is released before the next
-wave. Dex defaults to two active waves on hosts with at least 16 CPUs and 48 GiB
-of memory, and one on smaller hosts. When two waves are allowed,
-each defaults to one scout at a time; a single active wave may use its full
-profile coverage in parallel. Test runners receive a per-wave job budget.
+wave. Dex defaults to three active waves. Each defaults to one scout at a time;
+setting the host limit to one allows full profile scout parallelism. These
+budgets use the configured limit, not the current number of active waves.
+Test runners receive a CPU-aware per-wave job budget, so an eight-CPU host
+defaults to one test worker per wave with the three-wave limit.
 These are concurrent reviews of separate checkouts; waves for the same checkout
 remain sequential. Commands launched through `bin/review-check.sh` use a
 separate FIFO pool with one active command by default, so model concurrency
@@ -809,7 +810,7 @@ use an override-bound lower target; other assurance gates use
 | `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Launch-only higher consecutive `CLEAN` requirement; use the attributed `review.clean-passes` session override to lower or change a running loop |
 | `DEX_REVIEW_PASS_TIMEOUT` | profile-based | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; defaults are 15 minutes for risk assessment and light waves, 30 minutes for standard waves, and 60 minutes for thorough waves; `0` disables the timeout |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
-| `DEX_REVIEW_MAX_ACTIVE_WAVES` | host-sized (`1` or `2`) | Host-wide active review-wave limit from 1 to 8; the automatic value is 2 with at least 16 CPUs and 48 GiB of memory |
+| `DEX_REVIEW_MAX_ACTIVE_WAVES` | `3` | Host-wide active review-wave limit from 1 to 8 across separate checkouts; set to 1 to return to single-wave admission |
 | `DEX_REVIEW_MAX_ACTIVE_CHECKS` | `1` | Host-wide active commands through the review check runner, from 1 to 8; separate from model admission |
 | `DEX_REVIEW_CHECK_TIMEOUT` | `900` | Maximum seconds for check admission and, separately, command execution; the outer wave timeout still applies |
 | `DEX_REVIEW_SCOUT_PARALLELISM` | capacity-aware | Concurrent scouts per wave from 1 to 3; coverage groups that cannot run concurrently stay with the top-level reviewer |
