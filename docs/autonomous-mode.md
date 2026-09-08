@@ -107,8 +107,9 @@ not a replacement for the Phase 2 requirement.
 A standalone `dxreviewloop` invocation without an explicit tier/profile
 override starts with a read-only assessor that chooses and records the tier
 before the first wave. The assessment is not a clean pass. Each review wave then
-runs in a fresh pass-scoped CLI session, builds a new compact context pack, runs
-deterministic checks before semantic review, verifies findings, batch-fixes safe
+runs in a fresh pass-scoped CLI session, reads a wrapper-prepared factual scope
+inventory, runs or validates reuse of deterministic checks before semantic
+review, verifies findings, batch-fixes safe
 findings, and rechecks affected surfaces. Later reviewers receive no prior
 reports, findings, fingerprints, clean counts, telemetry, or stale conversation
 context.
@@ -116,10 +117,25 @@ context.
 Review providers also share a host-wide FIFO admission gate across worktrees.
 Queue time does not consume the wave timeout and does not create a Phase 3 busy
 fence. A lease covers only the provider wave and is released before the next
-wave. Dex defaults to one active wave on ordinary developer machines and two on
-hosts with at least 16 CPUs and 48 GiB of memory. When two waves are allowed,
+wave. Dex defaults to two active waves on hosts with at least 8 CPUs and 16 GiB
+of memory, and one on smaller hosts. When two waves are allowed,
 each defaults to one scout at a time; a single active wave may use its full
 profile coverage in parallel. Test runners receive a per-wave job budget.
+These are concurrent reviews of separate checkouts; waves for the same checkout
+remain sequential. Commands launched through `bin/review-check.sh` use a
+separate FIFO pool with one active command by default, so model concurrency
+does not require concurrent test suites.
+
+The check runner executes an explicit argument-array spec. Deterministic
+commands can opt into reuse bound to the checkout, working directory,
+environment, executable bytes, declared external inputs, criteria, and policy.
+Any changed input invalidates reuse; failed or interrupted commands publish
+nothing. Checks with unbounded inputs run without caching. A structured report
+publisher derives artifact hashes and references from the reviewer's actual
+conclusions, validates the existing evidence contract, and writes the exact
+authorized completion receipt last. It cannot replace missing criterion
+evidence or count a fixed wave as clean. See [Review turnaround](review-turnaround.md)
+for the design and helper interfaces.
 
 Phase 1 also saves the approved objectives, acceptance criteria, and
 verification requirements in a strict JSON artifact. Lifecycle assessors and
@@ -793,7 +809,9 @@ use an override-bound lower target; other assurance gates use
 | `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Launch-only higher consecutive `CLEAN` requirement; use the attributed `review.clean-passes` session override to lower or change a running loop |
 | `DEX_REVIEW_PASS_TIMEOUT` | profile-based | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; defaults are 15 minutes for risk assessment and light waves, 30 minutes for standard waves, and 60 minutes for thorough waves; `0` disables the timeout |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
-| `DEX_REVIEW_MAX_ACTIVE_WAVES` | host-sized (`1` or `2`) | Host-wide active review-wave limit from 1 to 8; the automatic value is 2 only with at least 16 CPUs and 48 GiB of memory |
+| `DEX_REVIEW_MAX_ACTIVE_WAVES` | host-sized (`1` or `2`) | Host-wide active review-wave limit from 1 to 8; the automatic value is 2 with at least 8 CPUs and 16 GiB of memory |
+| `DEX_REVIEW_MAX_ACTIVE_CHECKS` | `1` | Host-wide active commands through the review check runner, from 1 to 8; separate from model admission |
+| `DEX_REVIEW_CHECK_TIMEOUT` | `900` | Maximum seconds for check admission and, separately, command execution; the outer wave timeout still applies |
 | `DEX_REVIEW_SCOUT_PARALLELISM` | capacity-aware | Concurrent scouts per wave from 1 to 3; coverage groups that cannot run concurrently stay with the top-level reviewer |
 | `DEX_REVIEW_TEST_JOBS` | capacity-aware (max `4`) | Per-wave test-runner job limit from 1 to 32; also exported as `DX_TEST_JOBS` for Dex's manifest runner |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation. A cycle that outruns it hands the lease to the next tick; a watcher that exits hands it over immediately, without waiting out the budget. `0` means no budget, as it does for the phase timeouts |

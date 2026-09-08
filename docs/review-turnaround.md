@@ -12,8 +12,10 @@ The turnaround changes remove repeated mechanical work:
   and review policy still match. Failed, interrupted, and source-mutating
   commands never publish reusable evidence. Checks with unbounded inputs run
   every time.
-- Model sessions and check execution use separate host capacity pools. The
-  checkout still has one review owner and one writer.
+- Model sessions and check execution use separate host capacity pools. Hosts
+  with at least 8 CPUs and 16 GiB RAM admit two model waves, smaller hosts one.
+  The default check budget is one command. The checkout still has one review
+  owner and one writer.
 - The wrapper prepares factual scope input for each reviewer. Reviewers still
   produce independent coverage and findings; previous conclusions are never
   reused as context.
@@ -38,7 +40,28 @@ dependency model, which Dex cannot assume in an arbitrary repository.
 Toolchain and ignored dependency inputs must be declared when they are not
 already covered by the executable and checkout fingerprints. Network state,
 clocks, randomness, mutable services, and unbounded external inputs are reasons
-to run a check without reuse.
+to run a check without reuse. Reuse does not replace independent semantic
+review, and these same-UID receipts detect drift rather than forgery.
+
+## Interfaces
+
+Review agents use [the check spec](../prompts/review-checks.md) and
+`bash "$DEX_DIR/bin/review-check.sh" <check-spec.json>`. Reuse is opt-in per
+command. The runner reports whether it executed or reused the check, along
+with its duration and queue wait. Cache entries stay in private global Dex
+state under the parent review session and are removed by session cleanup.
+
+Reviewers supply [one structured report](../prompts/review-report.md) to
+`bash "$DEX_DIR/bin/review-result.sh" <report.json> <authorized-generation>`.
+The report contains conclusions and evidence; code derives the bookkeeping.
+Existing version-3 artifacts and generation-bound receipt validation are
+unchanged. The legacy baseline interface remains accepted, but new review
+instructions use the environment- and tool-bound runner instead.
+
+`DEX_REVIEW_MAX_ACTIVE_WAVES=1..8` and `DEX_REVIEW_MAX_ACTIVE_CHECKS=1..8`
+override the separate host budgets. `DEX_REVIEW_CHECK_TIMEOUT` defaults to 900
+seconds for queue waiting and, separately, execution. It does not extend the
+outer wave deadline. Existing scout and test-job limits still apply.
 
 ## Verification
 

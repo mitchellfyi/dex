@@ -197,6 +197,7 @@ runtime_contract_files=(
   lib/review-loop.sh
   lib/review-policy.sh
   lib/session-catalog.sh
+  lib/session-management.sh
   lib/session-runtime.sh
   lib/session.sh
   scripts/review_checks.py

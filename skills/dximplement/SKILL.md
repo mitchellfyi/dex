@@ -203,8 +203,10 @@ Once the final checkout content is committed, publish any passing project-wide
 expensive gates with `dx_review_baseline_publish`. Supply the exact command and
 measured duration for each gate. Do not include focused, partial, failed, or
 estimated evidence. If the checkout changes afterward, rerun the affected gate
-and replace the baseline from the final state. Phase 3 may reuse this evidence;
-it still reruns fast, focused, and fix-affected checks.
+and replace the baseline from the final state. Older Phase 3 clients may reuse
+this evidence. Current review waves establish environment- and tool-bound
+receipts through `prompts/review-checks.md`; they do not rely on the legacy
+baseline alone. Reuse never excuses a check whose inputs changed after a fix.
 
 ### 7. UI Proof Decision
 

@@ -146,6 +146,10 @@ EXACT_SUFFIXES = [
     (".phase-outcomes", "phase-outcomes"),
     (".review-selection", "review-selection"),
     (".review-context", "review-context"),
+    (".review-input.md", "review-input"),
+    (".review-checks", "review-checks"),
+    (".review-report", "review-report"),
+    (".review-publish-lock", "review-publish-lock"),
     (".review-receipt", "review-receipt"),
     (".review-result", "review-result"),
     (".review-ledger", "review-ledger"),
@@ -421,7 +425,7 @@ def artifact_is_unsafe(entry, family, location):
         return True
     if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o022:
         return True
-    directory_families = {"review-proofs", "control-lock"}
+    directory_families = {"review-proofs", "control-lock", "review-checks", "review-report", "review-publish-lock"}
     if family in directory_families:
         return not stat.S_ISDIR(metadata.st_mode)
     return not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1

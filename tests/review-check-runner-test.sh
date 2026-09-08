@@ -29,7 +29,7 @@ for name, script, mode in [
     ('failed', 'echo ran >> "$1"; exit 7', 'snapshot'),
     ('mutating', 'echo ran >> "$1"; echo change >> app.txt', 'snapshot'),
     ('never', 'echo ran >> "$1"', 'never'),
-    ('timeout', 'sleep 30; echo ran >> "$1"', 'snapshot'),
+    ('timeout', 'echo $$ > "$1.pid"; sleep 30; echo ran >> "$1"', 'snapshot'),
 ]:
     (root / (name + '.json')).write_text(json.dumps({
         'name': name, 'argv': ['bash', '-c', script, 'check', str(root / (name + '.runs'))],
@@ -51,9 +51,9 @@ for check_kind in failed never mutating; do
     check_exit=0
     run_check "$check_kind" >/dev/null || check_exit=$?
     if [[ "$check_kind" == failed ]]; then
-      assert_eq 7 "$check_exit" 'failure preserved'
+      assert_eq 7 "$check_exit" "failure preserved on run $iteration"
     else
-      assert_eq 0 "$check_exit" 'successful command preserved'
+      assert_eq 0 "$check_exit" "successful command preserved on run $iteration"
     fi
   done
   assert_eq 2 "$(wc -l < "$TMP_DIR/$check_kind.runs" | tr -d ' ')" "$check_kind is never reused"
@@ -63,6 +63,35 @@ DEX_REVIEW_CHECK_TIMEOUT=1 run_check timeout >/dev/null || check_exit=$?
 assert_eq 124 "$check_exit" 'timeout preserved'
 [[ ! -e "$TMP_DIR/timeout.runs" ]] || assert_at $LINENO
 assert_eq 0 "$(DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_active_count)" 'command lease released'
+
+# Queue deadlines are failures, not evidence that a check ran.
+DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_enqueue queue-holder queue-holder
+DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_try_acquire queue-holder queue-holder 1
+check_exit=0
+DEX_REVIEW_CHECK_TIMEOUT=1 run_check never >/dev/null || check_exit=$?
+assert_eq 124 "$check_exit" 'queue timeout preserved'
+DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_release queue-holder
+
+# Interrupt the public runner after its command has started.
+rm -f "$TMP_DIR/timeout.runs.pid"
+DEX_REVIEW_CHECK_TIMEOUT=60 bash "$ROOT/bin/review-check.sh" "$TMP_DIR/timeout.json" > "$TMP_DIR/cancel.log" &
+cancel_runner_pid=$!
+attempt=0
+while [[ ! -s "$TMP_DIR/timeout.runs.pid" && "$attempt" -lt 300 ]]; do
+  sleep 0.1
+  attempt=$((attempt + 1))
+done
+[[ -s "$TMP_DIR/timeout.runs.pid" ]] || assert_at $LINENO
+cancel_command_pid=$(cat "$TMP_DIR/timeout.runs.pid")
+kill -TERM "$cancel_runner_pid"
+check_exit=0
+wait "$cancel_runner_pid" || check_exit=$?
+assert_eq 143 "$check_exit" 'interruption status preserved'
+if kill -0 "$cancel_command_pid" 2>/dev/null; then
+  fail 'interrupted command survived runner cleanup'
+fi
+[[ ! -e "$TMP_DIR/timeout.runs" ]] || assert_at $LINENO
+assert_eq 0 "$(DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_active_count)" 'interrupted lease released'
 
 # A busy model pool does not prevent deterministic work in the check pool.
 dx_review_capacity_enqueue model-session model-owner
@@ -79,6 +108,27 @@ second_pid=$!
 wait "$first_pid"
 wait "$second_pid"
 assert_eq 4 "$(wc -l < "$TMP_DIR/passing.runs" | tr -d ' ')" 'queued request rechecks cache'
-dx_cleanup_session review-check-owner
+git add app.txt
+git commit -qm 'test: checkpoint cache fixture'
+git update-index --assume-unchanged app.txt
+run_check passing >/dev/null
+printf '%s\n' hidden-change >> app.txt
+run_check passing >/dev/null
+assert_eq 6 "$(wc -l < "$TMP_DIR/passing.runs" | tr -d ' ')" 'reuse checks actual bytes even when git status hides a modification'
+mkdir nested
+printf '%s\n' nested-original > nested/input.txt
+git add nested/input.txt
+git commit -qm 'test: add nested fixture'
+git update-index --assume-unchanged nested/input.txt
+cd nested
+run_check passing >/dev/null
+printf '%s\n' nested-change >> input.txt
+run_check passing >/dev/null
+assert_eq 8 "$(wc -l < "$TMP_DIR/passing.runs" | tr -d ' ')" 'nested command checks root-relative source bytes'
+if command -v zsh >/dev/null 2>&1; then
+  zsh -fc 'source "$DEX_DIR/lib/common.sh"; dx_cleanup_session review-check-owner'
+else
+  dx_cleanup_session review-check-owner
+fi
 [[ ! -e "$(dx_review_check_cache_dir review-check-owner)" ]] || assert_at $LINENO
 printf '%s\n' 'review check runner tests passed'

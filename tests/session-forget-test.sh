@@ -124,6 +124,7 @@ populate_full_state() { # <sid>
     "$(dx_review_state_file "$session_id")" \
     "$(dx_review_result_file "$session_id")" \
     "$(dx_review_context_file "$session_id")" \
+    "$(dx_review_input_file "$session_id")" \
     "$(dx_review_criteria_file "$session_id")" \
     "$(dx_review_criteria_approval_file "$session_id")" \
     "$(dx_review_evidence_file "$session_id")" \
@@ -137,6 +138,11 @@ populate_full_state() { # <sid>
   printf 'ledger\n' > "$(dx_review_ledger_file "$session_id")"
   mkdir -p "$(dx_review_proof_dir "$session_id")/1"
   printf 'proof\n' > "$(dx_review_proof_dir "$session_id")/1/evidence.json"
+  mkdir -p "$(dx_review_check_cache_dir "$session_id")" "$DX_LOOP_DIR/$session_id.review-report" \
+    "$DX_LOOP_DIR/$session_id.review-publish-lock"
+  printf 'cache\n' > "$(dx_review_check_cache_dir "$session_id")/fixture.json"
+  printf 'report\n' > "$DX_LOOP_DIR/$session_id.review-report/context"
+  printf 'stale\n' > "$DX_LOOP_DIR/$session_id.review-publish-lock/owner"
   for state_target in \
     "$(dx_phase_started_file "$session_id" 0)" \
     "$(dx_phase_ready_file "$session_id" 0)" \

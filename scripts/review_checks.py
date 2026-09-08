@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 
@@ -18,6 +19,7 @@ class CheckError(ValueError):
 # Remove orchestration metadata from the command as well as its fingerprint.
 # An unknown variable remains an input, including user-defined DEX_* settings.
 CONTROL_ENV = {
+    "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
     "_", "SHLVL", "OLDPWD", "DEX_SESSION_ID", "DEX_POLICY_SESSION_ID",
     "DEX_RUN_ID", "DEX_PHASE_HANDOFF", "DEX_LOOP_ACTIVE", "DEX_LOOP_PHASE",
     "DEX_LOOP_PROMISE", "DEX_LOOP_PROMPT", "DEX_REVIEW_PASS_ACTIVE",
@@ -33,8 +35,10 @@ CONTROL_ENV = {
 }
 
 
-def execution_environment(environment):
+def execution_environment(environment, reusable=True):
     """Keep check inputs stable without exposing review-child control state."""
+    if not reusable:
+        return dict(environment)
     return {key: value for key, value in environment.items() if key not in CONTROL_ENV}
 
 
@@ -115,7 +119,32 @@ def digest_path(filename, digest, ancestors=(), budget=None):
         raise CheckError("Declared input is missing or unreadable") from exc
 
 
-def fingerprint(spec, bindings, environment):
+def digest_checkout(digest, budget):
+    """Check actual source bytes, including files hidden by Git index hints."""
+    def git(*args):
+        completed = subprocess.run(["git", *args], check=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        if len(completed.stdout) > 16 * 1024 * 1024:
+            raise CheckError("Checkout inventory exceeds the reuse limit")
+        return completed.stdout
+
+    try:
+        root = Path(os.fsdecode(git("rev-parse", "--show-toplevel").rstrip(b"\n")))
+        entries = git("-C", str(root), "ls-files", "--stage", "-z").split(b"\0")
+        if any(entry.startswith(b"160000 ") for entry in entries):
+            raise CheckError("Submodule checkouts run without cache reuse")
+        paths = git("-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z").split(b"\0")
+        for raw in sorted(set(paths) - {b""}):
+            target = root / os.fsdecode(raw)
+            if not target.exists() and not target.is_symlink():
+                digest.update(b"MISSING\0" + len(raw).to_bytes(8, "big") + raw)
+            else:
+                digest_path(target, digest, budget=budget)
+    except subprocess.SubprocessError as exc:
+        raise CheckError("Could not fingerprint the complete checkout") from exc
+
+
+def fingerprint(spec, bindings, environment, include_checkout=False):
     """Bind a check to its command, checkout, tools, and effective environment."""
     validate_spec(spec)
     if len(bindings) != 4 or any(not re.fullmatch(
@@ -132,6 +161,8 @@ def fingerprint(spec, bindings, environment):
                list(os.uname())]
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode())
     budget = [100000, 1024 * 1024 * 1024]
+    if include_checkout:
+        digest_checkout(digest, budget)
     for filename in sorted(set(spec["inputs"])):
         digest_path(Path(filename).absolute(), digest, budget=budget)
     for name in sorted(set([spec["argv"][0]] + spec["tools"])):
@@ -197,11 +228,12 @@ def main(arguments):
         elif operation == "slot":
             print(hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest())
         elif operation == "key":
-            print(fingerprint(spec, args[1:], os.environ))
+            print(fingerprint(spec, args[1:], os.environ, include_checkout=True))
         elif operation == "execute":
             # Preserve the supervisor's inherited descriptor for descendant
             # cancellation on macOS, and avoid an extra process around tests.
-            os.execvpe(spec["argv"][0], spec["argv"], execution_environment(os.environ))
+            os.execvpe(spec["argv"][0], spec["argv"],
+                       execution_environment(os.environ, reusable=spec["cache"] == "snapshot"))
         elif operation == "cached":
             duration = cached(args[0], args[1])
             if duration is None:

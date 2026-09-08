@@ -2660,10 +2660,26 @@ dx_record_session_branch() {
   [[ "$saved_branch" == "$branch" ]]
 }
 
+# Remove flat review scratch directories after the session owner is quiescent.
+dx_review_work_files_cleanup() {
+  local sid="$1" work_suffix work_dir work_entry
+  dx_session_id_valid "$sid" || return 2
+  for work_suffix in review-checks review-report review-publish-lock; do
+    work_dir="$DX_LOOP_DIR/$sid.$work_suffix"
+    [[ -e "$work_dir" || -L "$work_dir" ]] || continue
+    [[ -d "$work_dir" && ! -L "$work_dir" ]] || return 1
+    while IFS= read -r -d '' work_entry; do
+      command rm -f "$work_entry" || return 1
+    done < <(find "$work_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+    # Nested directories and symlinks are not expected or followed.
+    rmdir "$work_dir" || return 1
+  done
+}
+
 # dx_cleanup_session <session_id>
 # Remove all loop and phase state files for a session. Safe to call when dirs don't exist.
 dx_cleanup_session() {
-  local sid="$1" completion_revoke_result=0 check_cache check_entry
+  local sid="$1" completion_revoke_result=0
   dx_session_id_valid "$sid" || return 2
   if command -v dx_completion_cleanup >/dev/null 2>&1; then
     if ! dx_completion_cleanup "$sid" 2>/dev/null; then
@@ -2672,14 +2688,7 @@ dx_cleanup_session() {
   fi
   if [[ -d "$DX_LOOP_DIR" ]]; then
     command rm -f "$(dx_review_input_file "$sid")"
-    check_cache=$(dx_review_check_cache_dir "$sid")
-    if [[ -d "$check_cache" && ! -L "$check_cache" ]]; then
-      for check_entry in "$check_cache"/*.json "$check_cache"/spec.*; do
-        [[ -f "$check_entry" && ! -L "$check_entry" ]] || continue
-        command rm -f "$check_entry"
-      done
-      rmdir "$check_cache" 2>/dev/null || true
-    fi
+    dx_review_work_files_cleanup "$sid" || completion_revoke_result=1
     dx_review_ledger_reset "$sid" 2>/dev/null || true
     rm -f "$(dx_loop_file "$sid")" "$(dx_complete_file "$sid")" "$(dx_active_file "$sid")" "$(dx_owner_file "$sid")" "$(dx_prompt_file "$sid")" "$(dx_findings_file "$sid")" "$(dx_debt_file "$sid")" "$(dx_loop_config_file "$sid")" "$(dx_handoff_mode_file "$sid")" "$(dx_paused_file "$sid")" "$(dx_pause_state_file "$sid")" "$(dx_watch_pause_file "$sid")" "${DX_LOOP_DIR}/${sid}.control" "$(dx_watch_lock_file "$sid" ci)" "$(dx_watch_lock_file "$sid" pr)" "$(dx_review_state_file "$sid")" "$(dx_review_result_file "$sid")" "$(dx_review_context_file "$sid")" "$(dx_review_baseline_file "$sid")" "$(dx_review_metrics_file "$sid")" "$(dx_review_criteria_file "$sid")" "$(dx_review_criteria_approval_file "$sid")" "$(dx_review_evidence_file "$sid")" "$(dx_review_selection_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-selection.revoked" "$(dx_review_receipt_file "$sid")" "${DX_LOOP_DIR}/${sid}.review-receipt.revoked" "$(dx_complete_state_file "$sid")" "$(dx_provider_state_file "$sid")" 2>/dev/null
     rm -f "${DX_LOOP_DIR}/${sid}.control-lock/owner" 2>/dev/null || true

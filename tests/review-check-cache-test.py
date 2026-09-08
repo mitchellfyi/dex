@@ -70,9 +70,16 @@ class ReviewCheckCacheTest(unittest.TestCase):
         self.assertNotEqual(original, self.key())
 
     def test_child_session_metadata_does_not_invalidate(self):
-        before = {"PATH": os.environ["PATH"], "DEX_SESSION_ID": "pass-one"}
-        after = {"PATH": os.environ["PATH"], "DEX_SESSION_ID": "pass-two"}
+        before = {"PATH": os.environ["PATH"], "DEX_SESSION_ID": "pass-one",
+                  "CODEX_THREAD_ID": "thread-one", "CODEX_SESSION_ID": "session-one"}
+        after = {"PATH": os.environ["PATH"], "DEX_SESSION_ID": "pass-two",
+                 "CODEX_THREAD_ID": "thread-two", "CODEX_SESSION_ID": "session-two"}
         self.assertEqual(self.key(environment=before), self.key(environment=after))
+
+    def test_uncached_command_retains_orchestration_environment(self):
+        environment = {"DEX_SESSION_ID": "fixture", "CODEX_THREAD_ID": "thread"}
+        self.assertEqual(environment, checks.execution_environment(environment, reusable=False))
+        self.assertEqual({}, checks.execution_environment(environment))
 
     def test_unknown_environment_variables_do_invalidate(self):
         before = {"PATH": os.environ["PATH"], "DEX_CUSTOM_CHECK_SETTING": "one"}

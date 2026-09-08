@@ -10,13 +10,17 @@ report_session="${DEX_SESSION_ID:-}"
 dx_session_id_valid "$report_session" || exit 2
 report_generation="$2"
 [[ "$report_generation" =~ ^[a-f0-9]{32}$ ]] || exit 2
-report_scratch=$(mktemp -d "$DX_LOOP_DIR/$report_session.report.XXXXXX")
+report_scratch="$DX_LOOP_DIR/$report_session.review-report"
+mkdir "$report_scratch"
 report_cleanup() {
   command rm -f "$report_scratch/context" "$report_scratch/evidence" \
     "$report_scratch/findings" "$report_scratch/result"
   rmdir "$report_scratch"
 }
 trap report_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 report_publish() {
   local hashes pass_binding result target source_name
   [[ "$(dx_completion_current_generation "$report_session" child review-pass 3)" == "$report_generation" ]] || return 1

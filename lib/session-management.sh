@@ -51,6 +51,10 @@ loop_suffixes = {
     ".review-evidence.json",
     ".review-selection",
     ".review-context",
+    ".review-input.md",
+    ".review-checks",
+    ".review-report",
+    ".review-publish-lock",
     ".review-receipt",
     ".review-result",
     ".review-ledger",
@@ -75,7 +79,7 @@ loop_suffixes = {
     ".config",
 }
 all_suffixes = sorted(state_suffixes | loop_suffixes, key=len, reverse=True)
-directory_suffixes = {".review-proofs", ".control-lock"}
+directory_suffixes = {".review-proofs", ".control-lock", ".review-checks", ".review-report", ".review-publish-lock"}
 private_lock_suffixes = {".runtime-lock", ".completion-lock", ".cleanup-journal"}
 preserved_payload_suffixes = {
     ".runtime",
@@ -1464,6 +1468,7 @@ __dx_session_management_remove_one() { # <sid>
   __dx_session_management_ensure_brakes "$session_id" || return 1
   __dx_session_management_revoke_completion "$session_id" || return 1
   dx_review_ledger_reset "$session_id" || return 1
+  dx_review_work_files_cleanup "$session_id" || return 1
   __dx_session_management_retire_phase_three "$session_id" || return 1
   __dx_session_management_artifacts remove-payload "$session_id"
 }
