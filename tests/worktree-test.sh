@@ -8,6 +8,7 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-worktree-test.XXXXXX")"
 
 cleanup() {
   git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-61" >/dev/null 2>&1 || true
+  git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/ticket-62" >/dev/null 2>&1 || true
   git -C "$TMP_DIR/repo" worktree remove --force "$TMP_DIR/repo/.dex/worktrees/task-completed-cleanup" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
 }
@@ -38,6 +39,9 @@ git -C "$repo" add README.md
 git -C "$repo" commit -q -m init
 git -C "$repo" worktree add -q "$wt" -b worktree-ticket-61 HEAD
 
+repo_claude_project=$(dx_claude_project_dir "$repo")
+mkdir -p "$repo_claude_project"
+
 dx_wt_is_registered "$repo" "$wt"
 plain_dir="$repo/.dex/worktrees/task-plain"
 mkdir -p "$plain_dir"
@@ -48,6 +52,8 @@ fi
 
 dx_link_claude_to_worktree "$repo" "$wt"
 [[ -L "$wt/.claude" ]] || assert_at $LINENO
+wt_claude_project=$(dx_claude_project_dir "$wt")
+[[ -L "$wt_claude_project" ]] || assert_at $LINENO
 
 status="$(git -C "$wt" status --short)"
 if grep -Fq ".claude" <<< "${status}"; then
@@ -64,6 +70,17 @@ grep -Fxq ".claude/*" "$exclude_file"
 dx_link_claude_to_worktree "$repo" "$wt"
 [[ "$(grep -Fxc ".claude" "$exclude_file")" -eq 1 ]] || assert_at $LINENO
 [[ "$(grep -Fxc ".claude/*" "$exclude_file")" -eq 1 ]] || assert_at $LINENO
+
+# Codex has its own project configuration and must not create Claude-specific
+# links or print Claude setup messages.
+codex_wt="$repo/.dex/worktrees/ticket-62"
+git -C "$repo" worktree add -q "$codex_wt" -b worktree-ticket-62 HEAD
+codex_link_output=$(DX_PROVIDER_ENGINE=codex-plugin \
+  dx_link_claude_to_worktree "$repo" "$codex_wt")
+[[ -z "$codex_link_output" ]] || assert_at $LINENO
+[[ ! -e "$codex_wt/.claude" ]] || assert_at $LINENO
+codex_claude_project=$(dx_claude_project_dir "$codex_wt")
+[[ ! -e "$codex_claude_project" ]] || assert_at $LINENO
 
 # dx_wt_remove falls back to `rm -rf`, so it must refuse anything that is not a
 # directory inside .dex/worktrees — a repository root reaching it is unrecoverable.

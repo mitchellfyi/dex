@@ -102,10 +102,13 @@ dx_exclude_claude_artifacts() {
 }
 
 # dx_link_claude_to_worktree <repo_root> <wt_dir>
-# Create symlinks so the worktree shares .claude/ config and MCP auth
-# with the main repo. Idempotent and non-fatal.
+# For Claude-backed sessions, share .claude/ config and MCP auth with the main
+# repo. Codex keeps its own project data, so it does not need these links.
+# Idempotent and non-fatal.
 dx_link_claude_to_worktree() {
   local repo_root="$1" wt_dir="$2"
+
+  [[ "${DX_PROVIDER_ENGINE:-}" != "codex-plugin" ]] || return 0
 
   dx_exclude_claude_artifacts "$wt_dir"
 

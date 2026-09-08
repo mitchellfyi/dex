@@ -2369,6 +2369,9 @@ __dx_run_with_runtime() {
   local session_id="$1" workspace_dir="$2" callback_name="$3"
   shift 3
   local provider_name owner_start_result=0 owner_handle="" owner_pid=""
+  # Dex owns and reaps the runtime supervisor and phase watchdog. Keep zsh
+  # from presenting those internal processes as interactive shell jobs.
+  setopt localoptions nomonitor
   provider_name=$(__dx_resolved_provider_agent) || {
     __dx_startup_claim_release || true
     return 1
@@ -2402,6 +2405,8 @@ __dx_run_with_recovered_runtime() {
   local session_id="$1" runtime_snapshot="$2" callback_name="$3"
   shift 3
   local recovery_result=0 owner_handle="" owner_pid=""
+  # Recovery launches the same supervisor and watchdog as a new lifecycle.
+  setopt localoptions nomonitor
   __dx_session_runtime_owner_recovery_start \
     "$session_id" "$runtime_snapshot" || recovery_result=$?
   if [[ "$recovery_result" -ne 0 ]]; then

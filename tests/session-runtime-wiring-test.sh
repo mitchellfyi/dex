@@ -191,4 +191,67 @@ for signal_attempt in 1 2 3 4 5 6 7 8; do
     "signalled wrapper health attempt ${signal_attempt}"
 done
 
+# Interactive zsh normally announces every background child as "[job] pid".
+# The lifecycle wrapper must hide its internal supervisor while preserving the
+# caller's job-control setting.
+python3 - "$ROOT/dx.sh" <<'PY'
+import errno
+import os
+import pty
+import re
+import shlex
+import sys
+
+dx_path = shlex.quote(sys.argv[1])
+command = f'''
+source {dx_path}
+__dx_resolved_provider_agent() {{ print -r -- codex; }}
+__dx_startup_claim_release() {{ return 0; }}
+dx_session_runtime_owner_start() {{
+  sleep 0.1 &
+  DX_SESSION_RUNTIME_OWNER_PID=$!
+  DX_SESSION_RUNTIME_OWNER_HANDLE=test-handle
+}}
+__dx_run_with_runtime_owner_handle() {{
+  local owner_pid=$2 callback_name=$3
+  shift 3
+  "$callback_name" "$@"
+  local callback_result=$?
+  wait "$owner_pid"
+  return "$callback_result"
+}}
+__test_runtime_callback() {{ print -r -- "inside:$options[monitor]"; }}
+print -r -- "before:$options[monitor]"
+__dx_run_with_runtime session /tmp __test_runtime_callback
+print -r -- "after:$options[monitor]"
+'''
+
+child_pid, master_fd = pty.fork()
+if child_pid == 0:
+    os.execvp("zsh", ["zsh", "-fic", command])
+
+chunks = []
+while True:
+    try:
+        data = os.read(master_fd, 4096)
+    except OSError as exc:
+        if exc.errno == errno.EIO:
+            break
+        raise
+    if not data:
+        break
+    chunks.append(data)
+os.close(master_fd)
+_, wait_status = os.waitpid(child_pid, 0)
+output = b"".join(chunks).decode("utf-8", errors="replace")
+exit_code = os.waitstatus_to_exitcode(wait_status)
+
+if exit_code != 0:
+    raise SystemExit(f"interactive runtime fixture failed ({exit_code}):\n{output}")
+if "before:on" not in output or "inside:off" not in output or "after:on" not in output:
+    raise SystemExit(f"runtime wrapper did not scope job control correctly:\n{output}")
+if re.search(r"(?m)^\[[0-9]+\]", output):
+    raise SystemExit(f"runtime wrapper leaked a zsh job notice:\n{output}")
+PY
+
 printf 'session runtime wiring tests passed\n'
