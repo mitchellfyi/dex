@@ -120,31 +120,25 @@ not invent best-practice claims without a source.
 
 ### 2.4 Surface Assumptions and Ask the User
 
-**Bar: if you cannot answer with 100% confidence from the ticket, codebase, or related docs, ask the user.** Do not silently make decisions on the user's behalf — even when the decision seems obvious to you. The user's domain context, deadlines, downstream coordination, and prior decisions are invisible from inside the codebase.
+**Use confidence and consequence, not a 100% certainty threshold.** Resolve factual questions from the ticket, codebase, and related docs first. When that context supports a high-confidence recommendation within the requested scope, adopt it in the plan and briefly explain why. Do not ask the user merely to confirm a well-supported recommendation.
 
-Before defining the target state, list every:
+Before defining the target state, identify material:
 
-- **Assumption** you're making about scope, behaviour, or constraints
-- **Concern** about ambiguity, conflicting requirements, or risk
-- **Unknown** you couldn't resolve from the materials at hand
+- **Assumptions** you're making about scope, behaviour, or constraints
+- **Concerns** about ambiguity, conflicting requirements, or risk
+- **Unknowns** you couldn't resolve from the materials at hand
 
-For each one, ask: "Could I be wrong about this?" If your confidence is below 100%, surface it to the user.
+**Ask when a significant assumption, missing or conflicting requirement, or low-confidence interpretation could change the approach or outcome.** Pay particular attention to scope, public contracts, observable behaviour, performance budgets, security, visible UX, and choices that are costly to reverse. A familiar code pattern alone does not resolve missing product intent.
+
+High confidence does not authorize overriding an explicit user choice, expanding scope, taking an otherwise unauthorized external action, or bypassing plan approval.
 
 **How to ask:**
-- Use the `AskUserQuestion` tool to batch related clarifying questions. If the UI/tool limits each batch (for example, 3 questions), that is only a per-call limit, not a total planning limit.
-- Ask as many batches as needed. There is no expected or preferred maximum question count. Keep asking until every material assumption, concern, and unknown is either answered by the user, resolved from authoritative context, explicitly deferred by the user, or proven fully reversible during implementation.
-- After each answer, re-check assumptions, risks, and unknowns; if new ones appear, ask another batch before drafting or presenting the plan.
-- Group related questions in one call when possible, but do not suppress lower-priority questions just because the current batch is full.
-- For genuinely free-form questions where options don't fit, ask in plain text.
 
-**Acceptable to skip asking only when:**
-- The assumption is universally true (e.g., "the codebase uses Git")
-- The decision is fully reversible during implementation with no downstream cost (no contract change, no schema change, no visible behaviour shift)
-- The unknown is implementation detail that can be deferred to TDD discovery without affecting the plan
+- Batch related questions using the available question tool, or ask in plain text. Include a recommendation and its rationale when you have one.
+- After each answer, refine the plan and ask again only if material uncertainty remains or new consequential gaps appear. There is no required question count; a tool's batch limit is not a reason to leave a consequential gap unresolved.
+- Defer implementation details to TDD discovery when they do not affect the plan or carry downstream cost.
 
-**Always ask** when the unknown affects: scope, contract (types, schemas, APIs), naming of public symbols, behaviour the user can observe, performance budgets, security posture, or visible UX.
-
-After the user answers, refine the plan. If new unknowns surface, ask again. Iterate until you can articulate every plan decision as either "the user said X", "the docs/code prove X", "the user explicitly deferred X", or "this is universally safe / fully reversible during implementation". Do not stop at an arbitrary question count, because the goal is not to ask a small number of questions; the goal is to remove unresolved assumptions. Do not present the final plan until every material assumption has been answered, explicitly deferred by the user, resolved from authoritative context, or proven fully reversible during implementation. Residual assumptions that survive this loop must be listed verbatim in Step 6 alongside the plan.
+Before presenting the final plan, resolve consequential gaps from context or user answers, or obtain explicit user deferral. In Step 6, distinguish supported recommendations you adopted from user decisions and deferred unknowns; do not hide unresolved requirements inside implementation details.
 
 ### 2.5 Define the Target State
 
@@ -212,8 +206,8 @@ Before presenting the plan, verify it against these quality gates:
 4. **BETTER-WAY CHECK** — Did you challenge the literal requested implementation against alternatives, current best practice, and holistic codebase fit? If the plan simply implements the first idea without comparison, go back to Step 2.3.
 5. **DEPENDENCIES** — Are tasks correctly ordered? Would any task fail if run before another? Are shared types/interfaces created before consumers?
 6. **SCOPE** — Is the plan minimal and focused? Remove any task not required by the acceptance criteria. Do not plan for hypothetical future work.
-7. **RISKS** — Are unknowns identified? For each risk, is there a mitigation, fallback, or explicit user acceptance? If any risk changes scope, behavior, contracts, security, performance, or visible UX, surface it to the user before presenting the plan.
-8. **ASSUMPTIONS** — Has every <100%-confidence assumption been surfaced to the user via Step 2.4 and answered? List the assumptions you made; for each, name the source: "user said X" or "universally safe / fully reversible". If you cannot name a source, you skipped Step 2.4 — go back and ask another batch.
+7. **RISKS** — Are unknowns identified? For each risk, is there a mitigation, fallback, or explicit user acceptance? Ask about unresolved consequential risks under Step 2.4; document understood risks and their mitigations in the plan.
+8. **ASSUMPTIONS** — Are adopted recommendations supported by the requirements and inspected context, with a brief rationale? Have significant assumptions, requirement gaps, and low-confidence interpretations that could change the outcome been resolved or explicitly deferred by the user? Apply Step 2.4; do not ask solely because certainty is below 100%.
 
 If any gate fails, fix the plan before proceeding.
 
@@ -234,11 +228,11 @@ Include:
 - **Approach recommendation** — the chosen approach, alternatives rejected,
   why the choice fits this codebase, and any external sources that materially
   changed the plan
-- **Assumptions surfaced and answered** — list each assumption resolved in Step 2.4 with a one-line note on what the user told you (so they can sanity-check)
+- **Decisions and assumptions** — briefly list supported recommendations adopted in Step 2.4 with their rationale, and distinguish any decisions supplied by the user
 - **Residual unknowns or open decisions** — anything that survived Step 2.4 (e.g., implementation details deferred to TDD); flag explicitly so the user can correct course
 - Risks identified, with mitigation/fallback or explicit user acceptance
 
-If the previous step ended with no answered questions, double-check Step 2.4 — a non-trivial change with zero assumptions usually means assumptions were made silently.
+No clarification questions are needed when the requirements and inspected context support the plan without consequential gaps. The user can still review your recommendations when approving the plan.
 
 When running in plan mode (e.g., via `dx` Phase 1 or `dxloop`), present the plan via `ExitPlanMode`. The user approves or rejects through the plan mode UI.
 

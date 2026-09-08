@@ -55,15 +55,12 @@ the contract's exact `Issue/PR work:` line.
 7. RISKS — Are unknowns identified?
    - For each risk, is there a mitigation strategy or fallback?
    - Are there questions that need answers before implementation can start?
-   - If a risk affects scope, contracts, observable behaviour, performance, security, or visible UX, has the user answered or explicitly accepted it?
+   - Were unresolved consequential risks clarified under Step 2.4 of `skills/dxplan/SKILL.md`, and understood risks documented with their mitigations?
 
-8. ASSUMPTIONS — Has every <100%-confidence assumption been surfaced to the user and answered?
-   - List each assumption you made; for each, name the source: "user said X", "docs/code prove X", "user explicitly deferred X", or "universally safe / fully reversible during implementation".
-   - If you cannot name a source for any assumption, you skipped the assumption-surfacing step. Use the `AskUserQuestion` tool now (it works in plan mode) to ask before proceeding.
-   - If the tool/UI limits each question batch, ask another batch after the user answers. The batch limit is not a total limit, and there is no preferred maximum number of batches.
-   - Keep asking until every material assumption, concern, and unknown is answered, resolved from authoritative context, explicitly deferred by the user, or proven fully reversible during implementation. Do not present the plan with unresolved assumptions hidden inside implementation details.
-   - Bar: if you cannot answer with 100% confidence from the ticket, codebase, or related docs, ask. Do NOT silently make decisions on the user's behalf — even when the decision seems obvious.
-   - Always ask when the unknown affects scope, contracts (types/schemas/APIs), naming of public symbols, observable behaviour, performance budgets, security, or visible UX.
+8. ASSUMPTIONS — Were questions reserved for consequential gaps rather than routine recommendations?
+   - Apply Step 2.4 of `skills/dxplan/SKILL.md`: adopt high-confidence, in-scope recommendations supported by the requirements and inspected context, and state the rationale in the plan. Do not reopen a supported decision merely because no clarification question was asked.
+   - Ask about significant assumptions, missing or conflicting requirements, and low-confidence interpretations that could change the approach or outcome. Resolve consequential gaps from context or user answers, or obtain explicit user deferral; do not hide them inside implementation details.
+   - Distinguish adopted recommendations, user decisions, and deferred unknowns. High confidence does not authorize overriding explicit choices, expanding scope, unauthorized external actions, or bypassing plan approval.
 
 9. USER APPROVAL — Has the user explicitly approved this plan?
    - If this is a headless `dx run` session and the run spec has `workflow.requires_plan_approval: false`, the run spec is the approval source. Confirm the plan covers the spec and proceed after the normal plan quality checks pass.
@@ -100,9 +97,8 @@ If you find gaps in any of the above, fix them and re-present the plan.
 - Current best-practice claims are backed by primary sources or explicitly
   marked as unavailable when online research tools were not available
 - Every material risk has a mitigation, fallback, or explicit user acceptance
-- Every <100%-confidence assumption has been surfaced and answered, resolved
-  from authoritative context, explicitly deferred by the user, or labelled
-  "fully reversible during implementation"
+- Adopted recommendations have a clear basis in requirements and inspected
+  context; consequential gaps are resolved or explicitly deferred by the user
 - The user has explicitly approved the plan, or a headless run spec with `workflow.requires_plan_approval: false` authorizes it
 - The approved objectives, acceptance criteria, and verification requirements
   are preserved in a valid `dx_review_criteria_file` artifact for Phase 3
