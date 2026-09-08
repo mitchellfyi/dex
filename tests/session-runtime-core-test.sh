@@ -197,6 +197,61 @@ else
 fi
 write_proc_identity 424242
 
+# Linux can finish lstat on the old inode after an atomic replacement unlinks
+# it. Retry that snapshot, but still reject unsafe replacements and endless churn.
+UNLINKED_SID="$(dx_scoped_session_id worktree-runtime-unlinked-read)"
+UNLINKED_TOKEN="$(dx_session_runtime_start "$UNLINKED_SID" codex "$WORKSPACE" "$$")"
+UNLINKED_FILE="$(dx_session_runtime_file "$UNLINKED_SID")"
+UNLINKED_LOG="$TMP_DIR/unlinked-read.log"
+UNLINKED_IDENTITY="$(dx_session_runtime_process_identity "$$")"
+
+prepare_unlinked_read() {
+  cp "$UNLINKED_FILE" "$UNLINKED_FILE.next"
+  : > "$UNLINKED_LOG"
+}
+
+unlinked_read() {
+  PYTHONPATH="$ROOT/tests/fixtures/runtime-read-race" \
+  DX_TEST_RUNTIME_READ_TARGET="$UNLINKED_FILE" \
+  DX_TEST_RUNTIME_READ_LOG="$UNLINKED_LOG" "$@"
+}
+
+prepare_unlinked_read
+assert_eq "live" "$(unlinked_read runtime_health "$UNLINKED_SID" "$UNLINKED_TOKEN")" \
+  "health after an unlinked stat snapshot"
+assert_eq "1" "$(wc -l < "$UNLINKED_LOG" | tr -d '[:space:]')" "unlinked snapshot exercised"
+prepare_unlinked_read
+assert_eq "running" "$(unlinked_read dx_session_runtime_field "$UNLINKED_SID" status)" \
+  "field after an unlinked stat snapshot"
+prepare_unlinked_read
+UNLINKED_JSON="$(unlinked_read dx_session_runtime_read "$UNLINKED_SID")"
+assert_contains "\"session_id\":\"$UNLINKED_SID\"" <(printf '%s\n' "$UNLINKED_JSON")
+assert_not_contains "$UNLINKED_TOKEN" <(printf '%s\n' "$UNLINKED_JSON")
+prepare_unlinked_read
+assert_eq $'running\tlive' \
+  "$(unlinked_read __dx_session_runtime_owner_runtime_correlation \
+    "$UNLINKED_SID" "$$" "$UNLINKED_IDENTITY")" "correlation after an unlinked stat snapshot"
+
+prepare_unlinked_read
+UNLINKED_RESULT=0
+DX_TEST_RUNTIME_READ_RACE=always \
+  unlinked_read dx_session_runtime_read "$UNLINKED_SID" \
+  > "$TMP_DIR/unlinked-churn.out" 2> "$TMP_DIR/unlinked-churn.err" || UNLINKED_RESULT=$?
+assert_eq "3" "$UNLINKED_RESULT" "persistent unlinked snapshots fail closed"
+assert_eq "8" "$(wc -l < "$UNLINKED_LOG" | tr -d '[:space:]')" "bounded unlinked read attempts"
+assert_contains "runtime record changed repeatedly" "$TMP_DIR/unlinked-churn.err"
+assert_not_contains "$UNLINKED_TOKEN" "$TMP_DIR/unlinked-churn.out"
+
+prepare_unlinked_read
+chmod 644 "$UNLINKED_FILE.next"
+assert_eq "corrupt" "$(unlinked_read runtime_health "$UNLINKED_SID")" \
+  "unsafe permissions after an unlinked snapshot"
+chmod 600 "$UNLINKED_FILE"
+prepare_unlinked_read
+ln "$UNLINKED_FILE.next" "$TMP_DIR/unlinked-hardlink"
+assert_eq "corrupt" "$(unlinked_read runtime_health "$UNLINKED_SID")" \
+  "hard-linked replacement after an unlinked snapshot"
+
 # Readers should see complete snapshots while heartbeat replaces records atomically.
 CHURN_SID="$(dx_scoped_session_id worktree-ticket-churn)"
 CHURN_TOKEN="$(dx_session_runtime_start "$CHURN_SID" codex "$WORKSPACE" "$$")"

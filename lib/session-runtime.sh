@@ -585,14 +585,17 @@ def trusted_read(record_file, expected_session, missing_ok=False):
             raise
         except OSError as exc:
             raise RuntimeRecordError(f"cannot inspect runtime record: {exc}")
-        validate_private_regular(before, "runtime record")
-
         open_flags = os.O_RDONLY
         open_flags |= getattr(os, "O_CLOEXEC", 0)
         open_flags |= getattr(os, "O_NOFOLLOW", 0)
         open_flags |= getattr(os, "O_NONBLOCK", 0)
         descriptor = None
         try:
+            # A concurrent rename can unlink the inode while lstat finishes.
+            # Retry its stale snapshot without accepting a zero-link record.
+            if stat.S_ISREG(before.st_mode) and before.st_nlink == 0:
+                raise TransientReadError("runtime record was replaced while inspecting")
+            validate_private_regular(before, "runtime record")
             try:
                 descriptor = os.open(record_file, open_flags)
             except FileNotFoundError as exc:

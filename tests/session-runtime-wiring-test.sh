@@ -24,6 +24,9 @@ wait_for_file() {
     sleep 0.05
     attempt=$((attempt + 1))
   done
+  if [[ ! -s "$target_file" && -f "${target_file%.ready}.output" ]]; then
+    cat "${target_file%.ready}.output" >&2
+  fi
   assert_file "$target_file"
 }
 
