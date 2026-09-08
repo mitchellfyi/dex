@@ -241,9 +241,7 @@ if find "$runtime_dir" \( -path '*/hidden/*' -o -path '*/canonical_fix/*' -o -in
   fail "runtime contains hidden evaluation material"
 fi
 for scenario in "${scenarios[@]}"; do
-  if rg -l -F "$scenario" "$runtime_dir" >/dev/null 2>&1; then
-    fail "runtime content exposes scenario id: $scenario"
-  fi
+  assert_tree_not_contains "$scenario" "$runtime_dir"
 done
 
 cleanup_probe_root="$TMP_DIR/dex-review-trial.cleanup-hardlink"
@@ -516,9 +514,7 @@ assert all(row == {
     "prior_capture_visible": False,
 } for row in observations[1:]), observations
 PY
-if rg -l 'review-eval-secret-sentinel' "$smoke_result" >/dev/null 2>&1; then
-  fail "provider credentials were persisted in smoke artifacts"
-fi
+assert_tree_not_contains 'review-eval-secret-sentinel' "$smoke_result"
 
 python3 - "$smoke_result/assessment.jsonl" <<'PY'
 import json

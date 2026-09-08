@@ -83,6 +83,19 @@ assert_not_contains() {
   fi
 }
 
+# assert_tree_not_contains <needle> <directory>
+# Only grep's no-match result proves absence; an unreadable tree is a failure.
+assert_tree_not_contains() {
+  local needle="$1" directory="$2" search_exit=0
+  [[ -d "$directory" ]] || fail "could not search directory: $directory"
+  grep -rFl -- "$needle" "$directory" >/dev/null || search_exit=$?
+  case "$search_exit" in
+    1) return 0 ;;
+    0) fail "unexpected text in $directory: $needle" ;;
+    *) fail "could not search directory: $directory (exit $search_exit)" ;;
+  esac
+}
+
 # assert_rejected <label> <command...> — the command must fail
 assert_rejected() {
   local label="$1"

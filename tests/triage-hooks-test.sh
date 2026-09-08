@@ -38,7 +38,7 @@ for hook in phase-loop user-prompt-submit session-end; do
 done
 bash "$ROOT/hooks/load-ticket-context.sh" > "$TMP_DIR/start"
 assert_contains 'triage' "$TMP_DIR/start"
-if rg -q 'Phase 0|set.*In Progress|Use /dex to begin' "$TMP_DIR/start"; then
+if grep -Eq 'Phase 0|set.*In Progress|Use /dex to begin' "$TMP_DIR/start"; then
   assert_at "$LINENO" 'triage received implementation intake'
 fi
 bash "$ROOT/hooks/pre-compact.sh" > "$TMP_DIR/compact"

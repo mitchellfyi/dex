@@ -14,6 +14,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Negative tree assertions inspect hidden files and distinguish a clean search
+# from a failed search. They must work with the standard CI toolchain.
+assertion_tree="$TMP_DIR/assertion-tree"
+mkdir -p "$assertion_tree/nested"
+printf 'ordinary output\n' > "$assertion_tree/nested/output"
+assert_tree_not_contains 'forbidden-sentinel' "$assertion_tree"
+printf 'forbidden-sentinel\n' > "$assertion_tree/nested/.hidden"
+assert_rejected 'hidden forbidden content' bash -c \
+  'source "$1/tests/helpers.sh"; assert_tree_not_contains forbidden-sentinel "$2"' \
+  check "$ROOT" "$assertion_tree" > "$TMP_DIR/hidden-search.out" 2>&1
+assert_contains 'unexpected text' "$TMP_DIR/hidden-search.out"
+assert_rejected 'missing search directory' bash -c \
+  'source "$1/tests/helpers.sh"; assert_tree_not_contains forbidden-sentinel "$2"' \
+  check "$ROOT" "$TMP_DIR/missing" > "$TMP_DIR/missing-search.out" 2>&1
+assert_contains 'could not search' "$TMP_DIR/missing-search.out"
+assert_rejected 'failed search command' bash -c \
+  'source "$1/tests/helpers.sh"; grep() { return 2; }; assert_tree_not_contains forbidden-sentinel "$2"' \
+  check "$ROOT" "$assertion_tree" > "$TMP_DIR/failed-search.out" 2>&1
+assert_contains 'could not search' "$TMP_DIR/failed-search.out"
+
 # Local HTTP fixtures must not wait for reverse DNS before they can publish
 # their ephemeral port. Hosted macOS runners can otherwise stall at bind time.
 PYTHONPATH="$ROOT/tests${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'

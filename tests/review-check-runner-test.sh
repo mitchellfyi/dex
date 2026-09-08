@@ -50,7 +50,7 @@ run_check() { bash "$ROOT/bin/review-check.sh" "$TMP_DIR/$1.json"; }
 run_check passing > "$TMP_DIR/first.log"
 DEX_SESSION_ID=review-check-pass-two run_check passing > "$TMP_DIR/second.log"
 assert_eq 1 "$(wc -l < "$TMP_DIR/passing.runs" | tr -d ' ')" 'same check reused across independent waves'
-rg -q 'reused passing check' "$TMP_DIR/second.log" || assert_at $LINENO
+assert_contains 'reused passing check' "$TMP_DIR/second.log"
 printf '%s\n' changed >> app.txt
 run_check passing >/dev/null
 assert_eq 2 "$(wc -l < "$TMP_DIR/passing.runs" | tr -d ' ')" 'changed checkout invalidates'
