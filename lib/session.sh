@@ -2060,9 +2060,20 @@ __dx_timeout_stop_watchdog() {
 
 __dx_timeout_remove_state() {
   local temp_dir="${1:-}" marker_file="${2:-}" token_file="${3:-}"
-  local candidate_file="${4:-}"
-  command rm -f "$marker_file" "$token_file" "$candidate_file" 2>/dev/null || true
-  [[ -n "$temp_dir" ]] && command rmdir "$temp_dir" 2>/dev/null || true
+  local candidate_file="${4:-}" candidate_tmp
+  # A second signal can interrupt the command's EXIT snapshot before rename.
+  if [[ -n "$candidate_file" && "${candidate_file%/*}" == "$temp_dir" && -d "$temp_dir" ]]; then
+    while IFS= read -r -d '' candidate_tmp; do
+      (command rm -f "$candidate_tmp") 2>/dev/null || true
+    done < <(find "$temp_dir" -mindepth 1 -maxdepth 1 -type f \
+      -name "${candidate_file##*/}.tmp.*" -print0 2>/dev/null)
+  fi
+  # Bash 3.2 can apply errexit to `command` even behind `|| true`. Isolate
+  # best-effort cleanup so it cannot turn a timeout or signal into exit 1.
+  (command rm -f "$marker_file" "$token_file" "$candidate_file") 2>/dev/null || true
+  if [[ -n "$temp_dir" ]]; then
+    (command rmdir "$temp_dir") 2>/dev/null || true
+  fi
 }
 
 __dx_timeout_abort() {

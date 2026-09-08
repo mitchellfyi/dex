@@ -714,6 +714,8 @@ __dx_review_wave_message_template() {
 
 ${scope_source_detail}
 
+Resolve Dex-owned \`skills/...\` and \`prompts/...\` paths against \`${DEX_DIR}\`, not the reviewed checkout.
+
 - Scope input: \`${diff_cmd}\`
 - Stat:        \`${stat_cmd}\`
 - File names:  \`${name_cmd}\`
@@ -2105,7 +2107,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
 
 Use Codex directly. Do not launch Claude and do not rely on Claude Stop hooks.
 If an instruction says to run /dxreview --single-pass, implement that by reading
-skills/dxreview/SKILL.md and prompts/review-wave.md and performing the same
+${DEX_DIR}/skills/dxreview/SKILL.md and ${DEX_DIR}/prompts/review-wave.md and performing the same
 single-pass review-wave contract yourself.
 
 Dex review waves cover the requested review domains inside this CLI pass.

@@ -17,7 +17,10 @@ mkdir -p "$check_cache"
 chmod 700 "$check_cache"
 check_token="check-$$-${RANDOM}"
 check_helper="$DEX_DIR/scripts/review_checks.py"
-check_limit=$(dx_review_check_capacity_limit)
+check_limit=$(dx_review_check_capacity_limit) || {
+  dx_error "Invalid check capacity; use DEX_REVIEW_MAX_ACTIVE_CHECKS=1..8"
+  exit 2
+}
 check_timeout="${DEX_REVIEW_CHECK_TIMEOUT:-900}"
 [[ "$check_timeout" =~ ^[1-9][0-9]*$ && ${#check_timeout} -le 6 ]] || exit 2
 check_spec=$(mktemp "$check_cache/spec.XXXXXX")
@@ -35,11 +38,17 @@ trap 'exit 129' HUP
 # Snapshot the spec once so a changed file cannot switch the executed command.
 __dx_review_regular_files_bounded 262144 "$1" || exit 2
 cp "$1" "$check_spec"
-check_name=$(python3 "$check_helper" name "$check_spec")
-check_slot=$(python3 "$check_helper" slot "$check_spec")
+check_description=$(python3 "$check_helper" describe "$check_spec")
+IFS=$'\t' read -r check_name check_mode check_slot <<EOF
+$check_description
+EOF
 check_receipt="$check_cache/$check_slot.json"
 check_key() {
   local check_scope check_working
+  if [[ "$check_mode" == never ]]; then
+    printf '%s\n' never
+    return 0
+  fi
   check_scope=$(dx_review_scope_fingerprint "$check_repo") || return 1
   check_working=$(dx_review_working_fingerprint "$check_repo") || return 1
   python3 "$check_helper" key "$check_spec" "$check_scope" "$check_working" \

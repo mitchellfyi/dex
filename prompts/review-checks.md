@@ -35,7 +35,7 @@ list additional executables or tool files beyond
 that inventory is impractical, use `never`.
 
 Snapshot-cacheable checks do not receive wave/session control metadata, including
-provider conversation IDs. Uncached checks retain that environment. All other
+provider conversation IDs. Specs with `cache: "never"` retain that environment. All other
 environment values affect reuse, including unknown `DEX_*` settings. The
 timeout process token is reserved for cancellation, not application input.
 Use `never` for checks that require orchestration identity, mutable services,

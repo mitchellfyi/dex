@@ -12,10 +12,9 @@ The turnaround changes remove repeated mechanical work:
   and review policy still match. Failed, interrupted, and source-mutating
   commands never publish reusable evidence. Checks with unbounded inputs run
   every time.
-- Model sessions and check execution use separate host capacity pools. Hosts
-  with at least 8 CPUs and 16 GiB RAM admit two model waves, smaller hosts one.
-  The default check budget is one command. The checkout still has one review
-  owner and one writer.
+- Model sessions and check execution use separate host capacity pools. Existing
+  model admission defaults remain unchanged; the default check budget is one
+  command. The checkout still has one review owner and one writer.
 - The wrapper prepares factual scope input for each reviewer. Reviewers still
   produce independent coverage and findings; previous conclusions are never
   reused as context.
@@ -33,6 +32,12 @@ requires a new all-results acceptance transaction to prevent an early clean
 result from hiding a later finding. Sequential independent waves retain the
 existing receipt and recovery semantics while the reusable work and host
 queue bottlenecks are addressed.
+
+Automatic model concurrency also stays unchanged. Raising it lowers the
+default scout parallelism even when only one review is active, which can
+increase that review's turnaround time. The separate check pool lets operators
+tune model admission without multiplying test suites, but defaults should
+change only after measuring that tradeoff.
 
 Caching is conservative: a source change invalidates the whole check entry.
 Inferring that a changed file cannot affect a check requires a complete

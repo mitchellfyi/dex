@@ -10,6 +10,16 @@ export DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity" DEX_REVIEW_MAX_ACTIVE_CHECKS=1
 export DEX_SESSION_ID=review-check-pass-one DEX_REVIEW_CHECK_CACHE_SESSION=review-check-owner
 export DEX_REVIEW_CRITERIA_BINDING=standalone
 source "$ROOT/lib/common.sh"
+mkdir -p "$TMP_DIR/timeout-cleanup"
+printf '%s\n' snapshot > "$TMP_DIR/timeout-cleanup/candidates.tmp.123"
+printf '%s\n' keep > "$TMP_DIR/timeout-cleanup/unexpected"
+cleanup_exit=0
+bash -c 'set -euo pipefail; source "$DEX_DIR/lib/common.sh";
+  __dx_timeout_remove_state "$1" "$1/expired" "$1/token" "$1/candidates"' \
+  check "$TMP_DIR/timeout-cleanup" || cleanup_exit=$?
+assert_eq 0 "$cleanup_exit" 'best-effort timeout cleanup cannot replace the command result'
+[[ ! -e "$TMP_DIR/timeout-cleanup/candidates.tmp.123" ]] || assert_at $LINENO
+[[ -f "$TMP_DIR/timeout-cleanup/unexpected" ]] || assert_at $LINENO
 export DEX_REVIEW_POLICY_BINDING
 DEX_REVIEW_POLICY_BINDING=$(dx_review_policy_binding 1 2 3)
 git init -q -b main "$TMP_DIR/repo"
@@ -59,7 +69,11 @@ for check_kind in failed never mutating; do
   assert_eq 2 "$(wc -l < "$TMP_DIR/$check_kind.runs" | tr -d ' ')" "$check_kind is never reused"
 done
 check_exit=0
-DEX_REVIEW_CHECK_TIMEOUT=1 run_check timeout >/dev/null || check_exit=$?
+DEX_REVIEW_CHECK_TIMEOUT=1 bash -x "$ROOT/bin/review-check.sh" "$TMP_DIR/timeout.json" \
+  > "$TMP_DIR/timeout.log" 2>&1 || check_exit=$?
+if [[ "$check_exit" -ne 124 ]]; then
+  tail -n 240 "$TMP_DIR/timeout.log"
+fi
 assert_eq 124 "$check_exit" 'timeout preserved'
 [[ ! -e "$TMP_DIR/timeout.runs" ]] || assert_at $LINENO
 assert_eq 0 "$(DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_active_count)" 'command lease released'

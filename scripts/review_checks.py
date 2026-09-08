@@ -107,7 +107,11 @@ def digest_path(filename, digest, ancestors=(), budget=None):
                 opened = os.fstat(stream.fileno())
                 if (opened.st_dev, opened.st_ino) != identity or not stat.S_ISREG(opened.st_mode):
                     raise CheckError("Declared input changed during fingerprinting")
+                total = 0
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    total += len(block)
+                    if total > info.st_size:
+                        raise CheckError("Declared input grew during fingerprinting")
                     digest.update(block)
                 after = os.fstat(stream.fileno())
                 if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
@@ -136,7 +140,9 @@ def digest_checkout(digest, budget):
         paths = git("-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z").split(b"\0")
         for raw in sorted(set(paths) - {b""}):
             target = root / os.fsdecode(raw)
-            if not target.exists() and not target.is_symlink():
+            try:
+                target.lstat()
+            except FileNotFoundError:
                 digest.update(b"MISSING\0" + len(raw).to_bytes(8, "big") + raw)
             else:
                 digest_path(target, digest, budget=budget)
@@ -221,9 +227,12 @@ def main(arguments):
     """Internal shell-runner interface; command arguments are never evaluated."""
     try:
         operation, *args = arguments
-        if operation in ("name", "slot", "key", "execute"):
+        if operation in ("describe", "name", "slot", "key", "execute"):
             spec = validate_spec(regular_json(args[0]))
-        if operation == "name":
+        if operation == "describe":
+            slot = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+            print(f"{spec['name']}\t{spec['cache']}\t{slot}")
+        elif operation == "name":
             print(spec["name"])
         elif operation == "slot":
             print(hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest())

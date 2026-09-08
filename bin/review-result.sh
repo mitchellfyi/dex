@@ -58,4 +58,6 @@ report_publish() {
   dx_completion_write_receipt "$report_session" "$report_generation" || return 1
   dx_ok "Review report validated and published: $result"
 }
-dx_lock_with "$DX_LOOP_DIR/$report_session.review-publish-lock" "publish-$$-$RANDOM" 30 report_publish "$1"
+report_exit=0
+dx_lock_with "$DX_LOOP_DIR/$report_session.review-publish-lock" "publish-$$-$RANDOM" 30 report_publish "$1" || report_exit=$?
+exit "$report_exit"

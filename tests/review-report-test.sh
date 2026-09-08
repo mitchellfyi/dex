@@ -62,6 +62,7 @@ publish() { bash "$ROOT/bin/review-result.sh" "$TMP_DIR/report.json" "$generatio
 for invalid in false-clean missing-coverage failed-checks unverified; do
   write_report "$invalid"
   assert_rejected "$invalid rejected" publish
+  [[ ! -e "$DX_LOOP_DIR/$DEX_SESSION_ID.review-publish-lock" ]] || assert_at $LINENO
   assert_rejected 'no premature receipt' dx_completion_receipt_present "$DEX_SESSION_ID"
   [[ ! -e "$(dx_review_result_file "$DEX_SESSION_ID")" ]] || assert_at $LINENO
 done
