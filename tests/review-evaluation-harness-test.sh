@@ -183,6 +183,8 @@ cp "$ROOT/research/review-loop/launch.zsh" "$runtime_source/research/review-loop
 cp "$ROOT/research/review-loop/agent-observer.sh" "$runtime_source/research/review-loop/agent-observer.sh"
 runtime_contract_files=(
   bin/complete-receipt.sh
+  bin/review-check.sh
+  bin/review-result.sh
   bin/session-runtime-owner.sh
   dx.sh
   hooks/user-prompt-submit.sh
@@ -196,6 +198,10 @@ runtime_contract_files=(
   lib/review-policy.sh
   lib/session-catalog.sh
   lib/session-runtime.sh
+  lib/session.sh
+  scripts/review_checks.py
+  scripts/review_input.py
+  scripts/review_report.py
 )
 for runtime_contract_file in "${runtime_contract_files[@]}"; do
   cp "$ROOT/$runtime_contract_file" "$runtime_source/$runtime_contract_file"
@@ -217,6 +223,9 @@ assert_eq "$runtime_source_sha" "$runtime_sha" "runtime commit"
 [[ -f "$runtime_dir/lib/completion.sh" ]] || fail "sanitized completion runtime is missing"
 [[ -f "$runtime_dir/lib/review-loop.sh" ]] || fail "sanitized review loop runtime is missing"
 [[ -f "$runtime_dir/lib/review-capacity.sh" ]] || fail "sanitized review capacity runtime is missing"
+[[ -x "$runtime_dir/bin/review-check.sh" && -x "$runtime_dir/bin/review-result.sh" ]] || fail "sanitized review helpers are missing"
+[[ -f "$runtime_dir/scripts/review_checks.py" && -f "$runtime_dir/scripts/review_input.py" \
+  && -f "$runtime_dir/scripts/review_report.py" ]] || fail "sanitized review Python helpers are missing"
 [[ -f "$runtime_dir/lib/session-catalog.sh" ]] || fail "sanitized session catalog runtime is missing"
 [[ -f "$runtime_dir/lib/session-runtime.sh" ]] || fail "sanitized session lease runtime is missing"
 [[ -x "$runtime_dir/bin/session-runtime-owner.sh" ]] || fail "sanitized runtime owner is missing"

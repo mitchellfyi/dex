@@ -23,6 +23,17 @@ source "$ROOT/lib/common.sh"
 
 assert_eq "2" "$(DEX_REVIEW_MAX_ACTIVE_WAVES=2 dx_review_capacity_limit)" \
   "explicit host review-wave capacity"
+assert_eq "2" "$(
+  unset DEX_REVIEW_MAX_ACTIVE_WAVES
+  __dx_review_host_cpu_count() { printf '8\n'; }
+  __dx_review_host_memory_mebibytes() { printf '16384\n'; }
+  dx_review_capacity_limit
+)" "model waves on a common developer host"
+assert_eq "1" "$(DEX_REVIEW_MAX_ACTIVE_CHECKS=1 dx_review_check_capacity_limit)" \
+  "separate deterministic check budget"
+if DEX_REVIEW_MAX_ACTIVE_CHECKS=0 dx_review_check_capacity_limit; then
+  fail "invalid check capacity was accepted"
+fi
 if DEX_REVIEW_MAX_ACTIVE_WAVES=0 dx_review_capacity_limit >/dev/null 2>&1; then
   printf 'zero host review-wave capacity was accepted\n' >&2
   exit 1

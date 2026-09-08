@@ -28,8 +28,8 @@ Follow `prompts/review-wave.md` as the source of truth. In one wave:
 
 1. Review the caller-supplied full current change set. When no change set
    exists, review the supplied whole-codebase inventory.
-2. Build a new compact context pack before broad exploration.
-3. Run deterministic checks before semantic review.
+2. Read the wrapper's fresh factual input pack and keep compact review notes.
+3. Run deterministic checks through the runner in `prompts/review-checks.md`.
 4. Create lightweight repro probes for suspected correctness, contract, or
    regression findings when the repo has runnable tests or scripts.
 5. Harvest candidate issues at the supplied profile:
@@ -40,7 +40,8 @@ Follow `prompts/review-wave.md` as the source of truth. In one wave:
 6. Verify, deduplicate, and rank candidates before changing code.
 7. Batch-fix all verified findings that are safe and in scope, then rerun
    affected checks and targeted review once.
-8. Write the review result signal and findings fingerprint.
+8. Publish one report using `prompts/review-report.md`; its helper validates
+   the evidence and writes the result, findings fingerprint, and receipt.
 
 Treat `DEX_REVIEW_SCOUT_PARALLELISM` as a concurrency ceiling, not a coverage
 limit. If a scout cannot start because the provider is at capacity, cover its
@@ -64,11 +65,9 @@ objective, acceptance criterion, and verification requirement. When the
 binding is `standalone`, no criteria file should exist and plan-dependent
 evidence is `N/A`.
 
-Before writing evidence version 3, derive the ordered item hashes with
-`dx_review_criteria_coverage_json` only after accounting for every supplied
-item. Record an outcome and substantive context-pack evidence reference for
-each item, then copy the wrapper-supplied policy and pass bindings exactly. The
-wrapper recomputes all bindings and hashes and rejects partial, stale, or
+Account for every supplied criterion. Record an explicit outcome and
+substantive evidence for each item. The report publisher derives the ordered
+hashes, references, and bindings; the wrapper still rejects partial, stale, or
 marker-only evidence.
 
 Collect all candidate issues before fixing anything. This fresh review-wave CLI
@@ -86,14 +85,8 @@ state.
 
 ## Result Signal
 
-When `DEX_SESSION_ID` is available, write exactly one result:
-
-```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
-SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
-[[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
-echo "<result>" > "$(dx_review_result_file "$SESSION_ID")"
-```
+Supply exactly one result to the report publisher. Use only the current
+wave's authorized generation; the helper writes its receipt last.
 
 Allowed results:
 

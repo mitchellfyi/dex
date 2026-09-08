@@ -1803,6 +1803,18 @@ dx_review_working_fingerprint() {
   __dx_review_fingerprint "${1:-$PWD}" working
 }
 
+dx_review_input_write() {
+  [[ $# -eq 4 ]] || return 1
+  local input_session="$1" input_repo="$2" input_scope="$3" input_working="$4"
+  local input_descriptor input_content input_file
+  input_file=$(dx_review_input_file "$input_session") || return 1
+  [[ "$input_scope" =~ ^[a-f0-9]{64}$ && "$input_working" =~ ^[a-f0-9]{64}$ ]] || return 1
+  input_descriptor=$(dx_review_scope_descriptor "$input_repo") || return 1
+  input_content=$(python3 "$DEX_DIR/scripts/review_input.py" "$input_repo" \
+    "$input_descriptor" "$input_scope" "$input_working") || return 1
+  dx_review_write_atomic "$input_file" "$input_content"
+}
+
 dx_review_write_atomic() {
   local target="$1" content="$2" tmp_file
   mkdir -p "$(dirname "$target")" || return 1

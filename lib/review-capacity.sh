@@ -55,8 +55,8 @@ __dx_review_host_memory_mebibytes() {
 }
 
 # dx_review_capacity_limit
-# One wave is conservative enough for common 8-core/32-GiB developer hosts.
-# Larger workers may run two; operators can set an explicit limit from 1 to 8.
+# Checks have their own lease pool. Two model waves fit common developer hosts;
+# smaller hosts stay at one. Operators can set an explicit limit from 1 to 8.
 dx_review_capacity_limit() {
   local configured_limit="${DEX_REVIEW_MAX_ACTIVE_WAVES:-}"
   local cpu_count memory_mebibytes=""
@@ -67,12 +67,18 @@ dx_review_capacity_limit() {
   fi
   cpu_count=$(__dx_review_host_cpu_count) || return 1
   memory_mebibytes=$(__dx_review_host_memory_mebibytes 2>/dev/null || true)
-  if [[ "$cpu_count" -ge 16 && "$memory_mebibytes" =~ ^[0-9]+$ \
-    && "$memory_mebibytes" -ge 49152 ]]; then
+  if [[ "$cpu_count" -ge 8 && "$memory_mebibytes" =~ ^[0-9]+$ \
+    && "$memory_mebibytes" -ge 16384 ]]; then
     printf '%s\n' "2"
   else
     printf '%s\n' "1"
   fi
+}
+
+dx_review_check_capacity_limit() {
+  local check_limit="${DEX_REVIEW_MAX_ACTIVE_CHECKS:-1}"
+  [[ "$check_limit" =~ ^[1-8]$ ]] || return 1
+  printf '%s\n' "$check_limit"
 }
 
 __dx_review_capacity_record() {

@@ -722,7 +722,7 @@ Use this review context pack path: \`__REVIEW_CONTEXT_FILE__\`
 Use this machine-readable evidence path: \`__PASS_EVIDENCE_FILE__\`
 Use this scope-bound deterministic baseline path: \`__REVIEW_BASELINE_FILE__\`
 Mark per-stage timing telemetry in: \`__REVIEW_METRICS_FILE__\`
-Only after the review result, evidence, context, and findings hash are written, run this exact generation-bound command: \`__PASS_COMPLETION_COMMAND__\`
+The report publisher writes the receipt last. For manual artifact compatibility only, use this exact generation-bound command after writing the result, evidence, context, and findings hash: \`__PASS_COMPLETION_COMMAND__\`
 The immutable scope fingerprint for this pass is: \`__SCOPE_FINGERPRINT__\`
 The immutable working-tree fingerprint for this pass is: \`__WORKING_FINGERPRINT__\`
 
@@ -761,7 +761,7 @@ ${scope_boundary}
 
 This is an independent semantic pass. Do not read parent review state, telemetry, findings histories, earlier result files, or earlier context packs. The deterministic baseline is mechanical command evidence, not an earlier review conclusion. Judge semantic behavior only from the current checkout and the scope supplied above.
 
-After writing the review result signal, evidence JSON, context pack, and findings hash, run the exact command above, output \`${review_promise}\`, and then stop. That receipt only exits this review-wave pass; it does not make a non-CLEAN result count as clean.
+After publishing the report (or completing the manual artifact interface above), output \`${review_promise}\` and stop. That receipt only exits this review-wave pass; it does not make a non-CLEAN result count as clean.
 $(__dx_provider_prompt)"
 }
 
@@ -1924,6 +1924,21 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
       current_review_child_session=""
       break
     }
+    if ! dx_review_input_write "$pass_session_id" "$PWD" "$scope_before" "$working_before"; then
+      terminal_reason="review_input_write_failed"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    fi
+    local pass_input_file
+    pass_input_file=$(dx_review_input_file "$pass_session_id")
+    message="${message}
+
+Fresh factual scope input: ${pass_input_file}
+Read it before broad exploration. It is not a completed review context pack.
+Run checks through bash \"\$DEX_DIR/bin/review-check.sh\" <check-spec.json>.
+Use DEX_REVIEW_CHECK_CACHE_SESSION=${session_id} for snapshot-bound command reuse.
+Prefer the structured report publisher in prompts/review-report.md; the authorized generation is ${pass_generation}."
     scout_count=$(__dx_review_scout_count "$pass_profile") || {
       terminal_reason="tier_resolution_error"
       dx_cleanup_session "$pass_session_id"
@@ -2136,6 +2151,8 @@ ${message}"
       DEX_REVIEW_POLICY_BINDING="$review_policy_binding" \
       DEX_REVIEW_PASS_ID="$pass_nonce" \
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
+      DEX_REVIEW_INPUT_FILE="$pass_input_file" \
+      DEX_REVIEW_CHECK_CACHE_SESSION="$session_id" \
       DEX_REVIEW_BASELINE_FILE="$review_baseline_file" \
       DEX_REVIEW_BASELINE_MODE="$baseline_mode" \
       DEX_REVIEW_BASELINE_BINDING="$baseline_binding" \
@@ -2175,6 +2192,8 @@ ${message}"
       DEX_REVIEW_POLICY_BINDING="$review_policy_binding" \
       DEX_REVIEW_PASS_ID="$pass_nonce" \
       DEX_REVIEW_PASS_BINDING="$pass_binding" \
+      DEX_REVIEW_INPUT_FILE="$pass_input_file" \
+      DEX_REVIEW_CHECK_CACHE_SESSION="$session_id" \
       DEX_REVIEW_BASELINE_FILE="$review_baseline_file" \
       DEX_REVIEW_BASELINE_MODE="$baseline_mode" \
       DEX_REVIEW_BASELINE_BINDING="$baseline_binding" \

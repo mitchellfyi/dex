@@ -60,6 +60,7 @@ research-score-test.sh	fast	all	600	hermetic
 review-baseline-test.sh	fast	all	600	hermetic
 review-capacity-test.sh	fast	all	600	hermetic
 review-check-cache-test.sh	fast	all	600	hermetic
+review-check-runner-test.sh	fast	all	600	hermetic
 review-controller-integration-test.sh	fast	all	600	hermetic
 review-controller-test.sh	fast	all	600	hermetic
 review-evaluation-harness-test.sh	serial	all	1200	hermetic
@@ -68,6 +69,7 @@ review-loop-contract-test.sh	fast	all	600	hermetic
 review-loop-test.sh	serial	all	1800	hermetic
 review-policy-config-test.sh	fast	all	600	hermetic
 review-policy-test.sh	slow	all	1200	hermetic
+review-report-test.sh	fast	all	600	hermetic
 review-timeout-test.sh	serial	all	1200	hermetic
 rtk-install-test.sh	fast	all	600	hermetic
 rtk-uninstall-test.sh	fast	all	600	hermetic

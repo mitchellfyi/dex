@@ -17,7 +17,7 @@ current run.
   turns, or unrelated ticket context.
 - A scope-bound deterministic baseline is mechanical command evidence, not a
   prior review conclusion. Reuse it only under the rules below.
-- Build the context pack before broad exploration or domain-specific review.
+- Read the fresh factual input pack before broad exploration; keep compact review notes.
 - Run deterministic checks before semantic review.
 - The review wave runs in one CLI session.
 - Do not create or switch worktrees or branches. A review wave runs in the
@@ -61,34 +61,16 @@ suffix. `ESCALATE_THOROUGH:reason` is accepted only as a legacy alias for
 
 ## 1. Context Pack
 
-Create or refresh the context pack in global Dex state:
+Read `DEX_REVIEW_INPUT_FILE` when supplied. It contains the current file
+inventory and diff commands, prepared by the wrapper without prior findings.
+Use it for orientation; it is not evidence that the scope has been reviewed.
+Read project instructions and the pass-scoped criteria, then keep compact notes
+as you inspect code. Do not copy old review conclusions or repeatedly rebuild
+the same inventory.
 
-```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
-SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
-[[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
-REVIEW_CONTEXT_FILE="$(dx_review_context_file "$SESSION_ID")"
-mkdir -p "$(dirname "$REVIEW_CONTEXT_FILE")"
-```
-
-First write a non-empty skeleton with supplied diff/stat/name commands, changed
-files, risk tier, profile, and acceptance criteria or `N/A`. Under
-`## Acceptance Criteria`, write the exact `Criteria binding: ...` value supplied
-by the wrapper; then verify the pack:
-
-```bash
-test -s "$REVIEW_CONTEXT_FILE"
-sed -n '1,80p' "$REVIEW_CONTEXT_FILE"
-```
-
-Use these exact top-level sections so the wrapper can reject placeholder
-context packs:
-
-- `## Scope`
-- `## Acceptance Criteria`
-- `## Deterministic Checks`
-- `## Review Coverage`
-- `## Verification`
+The report publisher creates the final context pack from those notes. It keeps
+the required Scope, Acceptance Criteria, Deterministic Checks, Review Coverage,
+and Verification sections and the exact criteria binding.
 
 Within them, record:
 
@@ -106,41 +88,22 @@ Run available scoped checks first: format/check, lint, typecheck, targeted tests
 generated-code freshness, shell syntax/`shellcheck`, and CI/config validation
 when relevant. Mechanical fixes make the wave non-`CLEAN`.
 
-The wrapper may supply `DEX_REVIEW_BASELINE_FILE` and one of two modes:
+Run checks through `bash "$DEX_DIR/bin/review-check.sh" <check-spec.json>`.
+Read `prompts/review-checks.md` for the short command spec and reuse rules.
+The runner owns command execution, input validation, cache lookup, and host
+check capacity. Invoke it in every wave; a matching passing receipt can avoid
+running the command again, including fast static and focused checks.
 
-- `fresh`: run every applicable check. If an expensive command explicitly runs
-  the whole project's test suite or equivalent all-target gate, record its
-  passing result in the baseline.
-- `reuse`: validate the baseline with `dx_review_baseline_valid` against the
-  supplied scope, working-tree, criteria, and policy bindings. Reuse only the
-  listed project-wide commands instead of rerunning them.
+Reuse is opt-in, not an assumption that all tests are deterministic. Declare
+ignored dependencies and external tool/config inputs. Use `cache: "never"`
+for repro probes, network/service-dependent checks, clocks, randomness, or
+inputs that cannot be bounded. A fix invalidates reuse for the entire checkout.
+Never skip an affected recheck on the strength of a pre-fix receipt.
 
-Every wave still runs fast static checks, lint, type checks, focused tests,
-generated-file checks, repro probes, and checks affected by a fix. Never reuse
-an ambiguous, partially scoped, failed, or unavailable command. A fresh
-baseline is optional when no command qualifies. When one does, write it
-with `dx_review_baseline_write`; pass the supplied scope, working-tree,
-criteria, and policy bindings followed by each command's short name, exact
-command, and measured duration. The helper writes and validates this version 1
-shape atomically:
-
-```json
-{
-  "version": 1,
-  "scope_fingerprint": "<DEX_REVIEW_SCOPE_FINGERPRINT>",
-  "working_fingerprint": "<DEX_REVIEW_WORKING_FINGERPRINT>",
-  "criteria_binding": "<DEX_REVIEW_CRITERIA_BINDING>",
-  "policy_binding": "<DEX_REVIEW_POLICY_BINDING>",
-  "commands": [
-    {
-      "name": "full test suite",
-      "command": "<exact command>",
-      "status": "pass",
-      "duration_seconds": 42
-    }
-  ]
-}
-```
+Legacy `DEX_REVIEW_BASELINE_FILE` evidence remains readable by older callers,
+but it does not bind the command environment or tool bytes. For this workflow,
+use the runner to establish stronger evidence instead of manually publishing or
+relying on a legacy baseline.
 
 `CLEAN` and `FINDINGS_FIXED:N` require all applicable deterministic checks to
 pass. If a required check fails, is only partially run, or cannot be run, use a
@@ -286,110 +249,21 @@ Keep the label in this form:
 Wave <number> · <stage> · <clean-before>/<required-clean> clean
 ```
 
-```bash
-source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
-SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
-[[ -n "$SESSION_ID" ]] || { echo "ERROR: empty session id — refusing to write unkeyed state" >&2; exit 1; }
-echo "<result>" > "$(dx_review_result_file "$SESSION_ID")"
-FINDINGS_HASH=$(printf '%s\n' "<sorted verified finding descriptions or EMPTY>" | dx_review_hash_findings)
-echo "$FINDINGS_HASH" > "$(dx_findings_file "$SESSION_ID")"
-```
+Read `prompts/review-report.md` and write one structured report. Supply the
+actual result, verified findings, fixes, coverage, check status, verifier
+conclusion, and an outcome with substantive evidence for every criterion.
+The publisher derives item hashes, evidence references, pass bindings, and the
+findings fingerprint, then runs the existing evidence validator before writing
+the generation-bound completion receipt last.
 
-After reviewing every supplied requirement, derive the exact ordered item
-hashes from the pass-scoped artifact:
+`CLEAN` and `FINDINGS_FIXED:N` still require all applicable checks and the
+verifier to pass, all required domains to be covered, and every supplied
+criterion to be `met`. A fix always produces a non-clean wave. If report
+validation fails, correct the missing or inconsistent evidence; do not weaken
+the result, forge a receipt, or repeat a full review merely to fix formatting.
 
-```bash
-CRITERIA_HASHES="$(dx_review_criteria_coverage_json "${DEX_REVIEW_CRITERIA_BINDING:-standalone}" "${DEX_REVIEW_CRITERIA_FILE:-}")" || exit 1
-```
-
-Each hash represents one objective, acceptance criterion, or verification
-requirement at its original position. Do not remove, reorder, or invent entries.
-For standalone review, all three arrays are empty.
-
-For every supplied item, add one to eight evidence references to the context
-pack. Each reference must be a separate line in this exact form:
-
-```text
-Evidence-Ref: criteria:<section>:<1-based-index>:<slug> | <kind> | <substantive detail>
-```
-
-`section` is `objectives`, `acceptance_criteria`, or
-`verification_requirements`. `slug` is a unique lowercase identifier of up to
-64 characters using letters, digits, `.`, `_`, or `-`. `kind` is `analysis`,
-`command`, `file`, or `test`. The detail must state the concrete observation,
-path and behavior, or command result that supports the outcome, in 12 to 500
-characters; placeholders such as `N/A`, `none`, `TBD`, or `TODO` are invalid. Put the marker portion,
-starting with `criteria:`, in that item's `evidence_refs` array. Every
-`Evidence-Ref` line must be referenced once, and every manifest reference must
-have one matching context line. Standalone review has no criteria evidence
-references.
-
-Write a versioned JSON evidence manifest to
-`$(dx_review_evidence_file "$SESSION_ID")` with exactly these fields:
-
-```json
-{
-  "version": 3,
-  "scope_fingerprint": "<64 lowercase hex characters supplied by the wrapper>",
-  "criteria_binding": "<supplied SHA-256 binding or standalone>",
-  "policy_binding": "<DEX_REVIEW_POLICY_BINDING supplied by the wrapper>",
-  "pass_binding": "<DEX_REVIEW_PASS_BINDING supplied by the wrapper>",
-  "criteria_evidence": {
-    "objectives": [
-      {
-        "item_hash": "<the objective hash at this position>",
-        "outcome": "met",
-        "evidence_refs": ["criteria:objectives:1:scope-analysis"]
-      }
-    ],
-    "acceptance_criteria": [
-      {
-        "item_hash": "<the acceptance-criterion hash at this position>",
-        "outcome": "met",
-        "evidence_refs": ["criteria:acceptance_criteria:1:contract-test"]
-      }
-    ],
-    "verification_requirements": [
-      {
-        "item_hash": "<the verification-requirement hash at this position>",
-        "outcome": "met",
-        "evidence_refs": ["criteria:verification_requirements:1:focused-check"]
-      }
-    ]
-  },
-  "deterministic_checks": "pass",
-  "coverage": ["correctness", "security", "contracts", "tests", "architecture"],
-  "verifier": "pass",
-  "verified_findings": 0,
-  "fixes_applied": 0
-}
-```
-
-Allowed item outcomes are `met`, `not_met`, `blocked`, and `not_applicable`.
-`CLEAN` and `FINDINGS_FIXED:N` require every supplied item to be `met`.
-`FINDINGS:N` requires at least one `not_met` or `blocked` item when lifecycle
-criteria are supplied, and `BLOCKED:reason-code` requires at least one
-`blocked` item. Allowed check states are `pass`, `partial`, `fail`, and
-`unavailable`; allowed verifier states are `pass`, `fail`, and `not-run`.
-Coverage values are
-`correctness`, `security`, `contracts`, `tests`, `architecture`, `frontend`,
-`devops`, `performance`, and `observability`. A thorough clean/fixed pass lists
-all nine domains; light and standard clean/fixed passes list the five core
-domains plus any targeted domains actually reviewed. Counts must agree with
-the result. Copy `DEX_REVIEW_POLICY_BINDING` and `DEX_REVIEW_PASS_BINDING`
-exactly. The wrapper recomputes the pass binding and every item hash from the
-immutable inputs, validates each evidence reference against the context pack,
-and attests the manifest, context, result, profile, and findings fingerprint
-together. It rejects omitted, added, reordered, stale, or incorrectly bound
-evidence.
-
-The wave is incomplete until the context pack contains substantive text and the
-required sections, the evidence manifest validates, and the findings file
-contains exactly one lowercase 16-character hash. Replace the findings file for
-this pass; the outer loop appends validated hashes to its own history when
-needed.
-The hash is transient orchestration state. Do not print it, put it in the
-context pack or telemetry, or expose it to a later review-wave agent.
+The findings fingerprint remains transient orchestration state. Never print it
+or expose it to another reviewer. The publisher does not read previous reports.
 
 Final output:
 
