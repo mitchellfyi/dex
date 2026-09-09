@@ -127,6 +127,13 @@ PY
       fi
       print -r -- "$DEX_SESSION_ID" >> "$TEST_REVIEW_CALL_FILE"
       case "$TEST_REVIEW_SCENARIO" in
+        harness-receipt-loss-findings)
+          result=CLEAN
+          if [[ "$(wc -l < "$TEST_REVIEW_CALL_FILE" | tr -d " ")" == 2 ]]; then
+            result="FINDINGS:1"
+            findings=1
+          fi
+          ;;
         blocked)
           result="BLOCKED:review-tool-unavailable"
           ;;
@@ -173,6 +180,13 @@ PY
       fi
 
       case "$TEST_REVIEW_SCENARIO" in
+        harness-receipt-loss-findings)
+          if [[ "$findings" -gt 0 ]]; then
+            print -r -- 0123456789abcdef > "$(dx_findings_file "$DEX_SESSION_ID")"
+          else
+            dx_review_empty_findings_hash > "$(dx_findings_file "$DEX_SESSION_ID")"
+          fi
+          ;;
         missing-hash)
           ;;
         multiple-hashes)
@@ -199,6 +213,15 @@ PY
         parent_session=$(dx_session_id)
         dx_write_lifecycle_control "$parent_session" cancel "" user-prompt "" 3 ""
         dx_phase_busy_request_cancel "$parent_session" 3
+      fi
+      if [[ "$TEST_REVIEW_SCENARIO" == "operational-override" ]]; then
+        parent_session=$(__dx_review_standalone_session_id "$(dx_session_id)")
+        dx_override_set "$parent_session" review.max-waves 9 phase 3 agent \
+          "Extend the budget while the wave returns" 0 || return 96
+      fi
+      if [[ "$TEST_REVIEW_SCENARIO" == harness-receipt-loss* \
+        && "$(wc -l < "$TEST_REVIEW_CALL_FILE" | tr -d " ")" == 2 ]]; then
+        dx_lifecycle_completion_brake "$DEX_SESSION_ID" invalid-completion-context phase-loop || return 96
       fi
       local current_working
       current_working=$(dx_review_working_fingerprint "$PWD") || return 96
@@ -373,7 +396,7 @@ PY
         return 0
       }
     fi
-    if [[ "$TEST_REVIEW_SCENARIO" == "valid-two-waves" ]]; then
+    if [[ "$TEST_REVIEW_SCENARIO" == "valid-two-waves" || "$TEST_REVIEW_SCENARIO" == harness-receipt-loss* ]]; then
       DEX_REVIEW_TIER=small DEX_REVIEW_CLEAN_PASSES=2 dxreviewloop \
         || review_result=$?
     elif [[ "$TEST_REVIEW_SCENARIO" == "timeout-binding" ]]; then
@@ -414,6 +437,34 @@ PY
     printf 'FAIL: %s ran an unexpected number of review waves\n' "$name" >&2
     [[ -f "$call_file" ]] && cat "$call_file" >&2
     exit 1
+  fi
+  if [[ "$scenario" == "missing-completion" || "$scenario" == harness-receipt-loss* ]]; then
+    python3 - "$TMP_DIR/$name-loops" "$scenario" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+bundles = list(root.glob("*.review-diagnostics/*/manifest.json"))
+assert len(bundles) == 1, bundles
+data = json.loads(bundles[0].read_text())
+assert data["reason"] == "completion_receipt_missing", data
+expected_result = "FINDINGS:1" if sys.argv[2].endswith("-findings") else "CLEAN"
+assert (bundles[0].parent / "review-result").read_text().strip() == expected_result
+assert (bundles[0].parent / "review-context").stat().st_size > 0
+assert "completion-receipt" in data["missing"], data
+if sys.argv[2] == "harness-receipt-loss":
+    states = list(root.glob("*.review-state"))
+    assert len(states) == 1, states
+    assert states[0].read_text().split("\t")[4] == "1", states[0].read_text()
+    ledgers = list(root.glob("*.review-ledger"))
+    assert len(ledgers) == 1 and len(ledgers[0].read_text().splitlines()) == 1, ledgers
+    assert not list(root.glob("*.review-receipt"))
+elif sys.argv[2] == "harness-receipt-loss-findings":
+    states = list(root.glob("*.review-state"))
+    assert len(states) == 1 and states[0].read_text().split("\t")[4] == "0", states
+    assert not list(root.glob("*.review-ledger"))
+    assert not list(root.glob("*.review-receipt"))
+PY
   fi
   if [[ "$name" == "claude-valid-hook" ]]; then
     local event_file
@@ -459,6 +510,12 @@ run_case "claude-recover-checkpoint" "claude" "recover-checkpoint" 0 \
   "Recovered the accepted review wave from its retained checkpoint." 1
 run_case "codex-recover-checkpoint" "codex" "recover-checkpoint" 0 \
   "Recovered the accepted review wave from its retained checkpoint." 1
+run_case "claude-operational-override" "claude" "operational-override" 0 "Review complete: 1 consecutive clean pass." 1
+run_case "codex-operational-override" "codex" "operational-override" 0 "Review complete: 1 consecutive clean pass." 1
+run_case "claude-harness-receipt-loss" "claude" "harness-receipt-loss" 1 "Consecutive clean: 1/2" 2
+run_case "codex-harness-receipt-loss" "codex" "harness-receipt-loss" 1 "Consecutive clean: 1/2" 2
+run_case "claude-harness-receipt-loss-findings" "claude" "harness-receipt-loss-findings" 1 "Consecutive clean: 0/2" 2
+run_case "codex-harness-receipt-loss-findings" "codex" "harness-receipt-loss-findings" 1 "Consecutive clean: 0/2" 2
 run_case "claude-timeout-binding" "claude" "timeout-binding" 0 \
   "Review complete: 1 consecutive clean pass." 1
 run_case "codex-timeout-binding" "codex" "timeout-binding" 0 \

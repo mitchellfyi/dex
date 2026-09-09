@@ -13,6 +13,18 @@ for shell_name in bash zsh; do
     source "$DEX_DIR/lib/common.sh"
     command -v dx_review_transition >/dev/null
     command -v dx_review_findings_history_append >/dev/null
+    preview_dir=$(mktemp -d)
+    trap "rm -rf \"$preview_dir\"" EXIT
+    history_file="$preview_dir/history"
+    [[ "$(dx_review_findings_history_preview "$history_file" 1111111111111111)" == none ]] || exit 1
+    [[ ! -e "$history_file" ]] || exit 1
+    dx_review_findings_history_append "$history_file" 1111111111111111
+    dx_review_findings_history_append "$history_file" 1111111111111111
+    [[ "$(dx_review_findings_history_preview "$history_file" 1111111111111111)" == repeated_fingerprint ]] || exit 1
+    [[ "$(wc -l < "$history_file" | tr -d " ")" == 2 ]] || exit 1
+    printf "%s\n" 1111111111111111 2222222222222222 1111111111111111 > "$history_file"
+    [[ "$(dx_review_findings_history_preview "$history_file" 2222222222222222)" == alternating_fingerprints ]] || exit 1
+    [[ "$(wc -l < "$history_file" | tr -d " ")" == 3 ]] || exit 1
   '
 done
 

@@ -195,6 +195,7 @@ runtime_contract_files=(
   lib/review.sh
   lib/review-controller.sh
   lib/review-acceptance.sh
+  lib/review-diagnostics.sh
   lib/review-loop.sh
   lib/review-policy.sh
   lib/session-catalog.sh
@@ -204,6 +205,7 @@ runtime_contract_files=(
   scripts/review_checks.py
   scripts/review_input.py
   scripts/review_acceptance.py
+  scripts/review_diagnostics.py
   scripts/review_report.py
 )
 for runtime_contract_file in "${runtime_contract_files[@]}"; do

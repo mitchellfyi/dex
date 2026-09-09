@@ -426,6 +426,11 @@ populate_all_state_families() { # <sid>
 EXHAUSTIVE_SID="$(cd "$REPO" && dx_scoped_session_id branch-cleanup-exhaustive)"
 make_terminal_session "$EXHAUSTIVE_SID" "$REPO"
 populate_all_state_families "$EXHAUSTIVE_SID"
+mkdir -p "$DX_LOOP_DIR/$EXHAUSTIVE_SID.review-acceptance/before" \
+  "$DX_LOOP_DIR/$EXHAUSTIVE_SID.review-diagnostics/wave"
+printf 'retained\n' > "$DX_LOOP_DIR/$EXHAUSTIVE_SID.review-acceptance/before/context.md"
+printf '{}\n' > "$DX_LOOP_DIR/$EXHAUSTIVE_SID.review-diagnostics/wave/manifest.json"
+printf '{}\n' > "$DX_LOOP_DIR/$EXHAUSTIVE_SID.review-control.json"
 mkdir -p "$DX_RUN_ROOT/run_exhaustive"
 printf 'journal\n' > "$DX_RUN_ROOT/run_exhaustive/events.jsonl"
 NEIGHBOR_SID="${EXHAUSTIVE_SID}-neighbor"

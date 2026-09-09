@@ -60,6 +60,8 @@ loop_suffixes = {
     ".review-ledger",
     ".review-proofs",
     ".review-acceptance",
+    ".review-control.json",
+    ".review-diagnostics",
     ".complete-state",
     ".handoff-mode",
     ".pause-state",
@@ -80,7 +82,7 @@ loop_suffixes = {
     ".config",
 }
 all_suffixes = sorted(state_suffixes | loop_suffixes, key=len, reverse=True)
-directory_suffixes = {".review-proofs", ".review-acceptance", ".control-lock", ".review-checks", ".review-report", ".review-publish-lock"}
+directory_suffixes = {".review-proofs", ".review-acceptance", ".review-diagnostics", ".control-lock", ".review-checks", ".review-report", ".review-publish-lock"}
 private_lock_suffixes = {".runtime-lock", ".completion-lock", ".cleanup-journal"}
 preserved_payload_suffixes = {
     ".runtime",

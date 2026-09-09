@@ -105,6 +105,7 @@ Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`
 `attribution.sh`, `codex.sh`, `completion.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
 `lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `override.sh`, `project-state.sh`,
 `provider.sh`, `review.sh`, `review-capacity.sh`, `review-controller.sh`,
+`review-acceptance.sh`, `review-diagnostics.sh`,
 `review-loop.sh`, `review-policy.sh`, `rtk.sh`, `run-spec.sh`,
 `session-catalog.sh`, `session-management.sh`,
 `session-runtime.sh`, `session.sh`, `ui-capture.sh`,
@@ -473,6 +474,7 @@ prefer extracting it into `lib/` modules. The pattern:
 | `review-loop.sh` | The review loop itself plus its helpers: wave orchestration, tier assessment, run telemetry, pause and interrupt handling, scope snapshots. `dxreviewloop` in dx.sh is a thin wrapper over it | `dx_review_loop_run()`, `__dx_review_emit_event()`, `__dx_review_scope_snapshot()` |
 | `review-controller.sh` | Pure review-loop state transitions and atomic findings history | `dx_review_transition()`, `dx_review_findings_history_append()` |
 | `review-acceptance.sh` | Durable wave handoff, retained authorization, and idempotent parent checkpoint recovery | `dx_review_acceptance_begin()`, `dx_review_acceptance_finish()` |
+| `review-diagnostics.sh` | Bounded failure evidence retained before child cleanup | `__dx_review_cleanup_pass()` |
 | `review-policy.sh` | Trusted default-branch clean-pass policy resolution and binding | `dx_review_policy_resolve()`, `dx_review_policy_for_tier()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
 | `run-spec.sh` | Structured headless run spec validation, fetch, normalization, and journal prep | `dx_run_spec_normalize()`, `dx_run_spec_fetch()`, `dx_run_spec_prepare_journal()` |

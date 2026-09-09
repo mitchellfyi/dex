@@ -189,6 +189,14 @@ the retained proof and current bindings before reinstalling the same checkpoint.
 Recovery preserves clean credit and fix counts without launching the wave again.
 Changed scope, criteria, policy, or pending lifecycle controls block recovery.
 
+When a wave fails, Dex retains up to four private diagnostic bundles per review
+session before cleaning up the child. Each bundle records the result, context,
+evidence, metrics, receipt state, and control details that were available, with
+hashes and an explicit list of missing or unreadable files. These copies do not
+authorize completion. A diagnosed receipt loss can preserve earlier clean credit
+only when the interrupted wave reports CLEAN and the earlier proofs still
+validate against the current bindings. Reported findings reset the streak.
+
 After Phase 2 passes an expensive project-wide gate on the final checkout, it
 can publish the exact command and measured duration with
 `dx_review_baseline_publish`. The first review wave can reuse that bound
@@ -737,6 +745,11 @@ Loop state is stored in `~/.claude/.dex-loops/`:
 - `.review-acceptance/` — interrupted wave handoff: exact generation and retained
   authorization, evidence, previous parent state, and the sealed checkpoint to
   install; recovered before another assessor or wave can start
+- `.review-diagnostics/` — the four most recent failed-wave bundles, capped at
+  2 MiB of copied artifacts per bundle and removed by session cleanup
+- `.review-control.json` — the most recent rejected control decision, including
+  the decision point, action, source, and generation; operational overrides alone
+  do not create a control request
 - `.review-evidence.json` — pass-scoped evidence version 3 with exact ordered
   criterion hashes, outcomes, substantive context references, and policy and
   pass bindings; the child copy is removed after validation

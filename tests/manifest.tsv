@@ -63,8 +63,10 @@ review-capacity-test.sh	fast	all	600	hermetic
 review-check-cache-test.sh	fast	all	600	hermetic
 review-check-runner-test.sh	fast	all	600	hermetic
 review-child-stop-test.sh	fast	all	600	hermetic
+review-control-decision-test.sh	fast	all	600	hermetic
 review-controller-integration-test.sh	fast	all	600	hermetic
 review-controller-test.sh	fast	all	600	hermetic
+review-diagnostics-test.sh	fast	all	600	hermetic
 review-evaluation-harness-test.sh	serial	all	1200	hermetic
 review-evidence-v3-test.sh	slow	all	1200	hermetic
 review-loop-contract-test.sh	fast	all	600	hermetic

@@ -2963,7 +2963,7 @@ dx_review_hash_findings() {
   python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])'
 }
 
-dx_review_findings_churn_kind() {
+__dx_review_findings_churn_value() {
   local findings_file="$1"
   [[ -f "$findings_file" ]] || return 1
   tail -n 4 "$findings_file" 2>/dev/null | awk '
@@ -2977,9 +2977,16 @@ dx_review_findings_churn_kind() {
         print "alternating_fingerprints"
         exit 0
       }
-      exit 1
+      print "none"
     }
   '
+}
+
+dx_review_findings_churn_kind() {
+  local churn_value
+  churn_value=$(__dx_review_findings_churn_value "$1") || return 1
+  [[ "$churn_value" != none ]] || return 1
+  printf '%s\n' "$churn_value"
 }
 
 dx_review_event_json() {

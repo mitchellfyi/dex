@@ -117,6 +117,36 @@ __dx_review_parent_lock_reject() {
     2>/dev/null || true
   return 1
 }
+
+__dx_review_control_decision() {
+  local session_id="$1" decision_point="$2" reason="$3" snapshot="${4:-}"
+  local action="none" control_source="unknown" generation="unknown" target_phase="-" record
+  if [[ "$reason" == pending-control ]]; then
+    action=$(dx_lifecycle_control_value "$snapshot" action)
+    control_source=$(dx_lifecycle_control_value "$snapshot" source)
+    generation=$(dx_lifecycle_control_value "$snapshot" generation)
+    target_phase=$(dx_lifecycle_control_value "$snapshot" target_phase)
+    case "$action" in
+      pause|cancel) reason=stop-request ;;
+      resume|complete|jump) reason=transition-request ;;
+      *) action=invalid; reason=invalid-control ;;
+    esac
+    case "$control_source" in agent|terminal|user-prompt) ;; *) control_source=unknown; reason=invalid-control ;; esac
+    if [[ ! "$generation" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
+      generation=unknown
+      reason=invalid-control
+    fi
+    [[ "$target_phase" =~ ^[0-7]$ ]] || target_phase="-"
+  fi
+  record=$(dx_review_event_json decision_point="$decision_point" reason="$reason" \
+    action="$action" source="$control_source" generation="$generation" target_phase="$target_phase") || return 1
+  dx_review_write_atomic "$DX_LOOP_DIR/$session_id.review-control.json" "$record" || return 1
+  __dx_review_emit_event "${review_run_id:-}" review.control.observed info \
+    "Review lifecycle control observed" 3 decision_point="$decision_point" reason="$reason" \
+    action="$action" source="$control_source" generation="$generation" target_phase="$target_phase"
+  dx_warn "Review control at ${decision_point}: ${reason}; action=${action}, source=${control_source}, generation=${generation}." >&2
+}
+
 __dx_review_parent_busy_finish() {
   local session_id="$1" busy_token="$2"
   [[ -n "$busy_token" ]] || return 1
@@ -144,11 +174,19 @@ __dx_review_parent_busy_begin() {
   fi
   if [[ -n "$control_snapshot" || -e "$control_file" || -L "$control_file" \
     || "$parent_phase" != "3" || "$pause_context_rc" -eq 0 ]]; then
+    if [[ -n "$control_snapshot" || -e "$control_file" || -L "$control_file" ]]; then
+      __dx_review_control_decision "$session_id" wave-start pending-control "$control_snapshot" || true
+    elif [[ "$pause_context_rc" -eq 0 ]]; then
+      __dx_review_control_decision "$session_id" wave-start paused || true
+    else
+      __dx_review_control_decision "$session_id" wave-start phase-changed || true
+    fi
     __dx_review_parent_lock_reject "$session_id" 0 \
       || reject_rc=$?
     return "$reject_rc"
   fi
   if [[ -e "$busy_file" || -L "$busy_file" ]]; then
+    __dx_review_control_decision "$session_id" wave-start review-child-active || true
     __dx_review_parent_lock_reject "$session_id" 0 || reject_rc=$?
     return "$reject_rc"
   fi
@@ -235,6 +273,7 @@ __dx_review_parent_acceptance_lock() {
   dx_lifecycle_control_lock_acquire "$session_id" || return 1
   control_snapshot=$(dx_lifecycle_control_snapshot_unlocked "$session_id")
   if [[ -n "$control_snapshot" || -e "$control_file" || -L "$control_file" ]]; then
+    __dx_review_control_decision "$session_id" acceptance pending-control "$control_snapshot" || true
     __dx_review_parent_lock_reject "$session_id" || reject_rc=$?
     return "$reject_rc"
   fi
@@ -249,6 +288,7 @@ __dx_review_parent_acceptance_lock() {
     fi
     return 1
   elif [[ "$pause_context_rc" -eq 0 ]]; then
+    __dx_review_control_decision "$session_id" acceptance paused || true
     __dx_review_parent_lock_reject "$session_id" "$standalone" \
       || reject_rc=$?
     return "$reject_rc"
@@ -257,6 +297,7 @@ __dx_review_parent_acceptance_lock() {
     parent_phase=$(dx_lifecycle_current_phase "$session_id")
     if [[ "$parent_phase" != "3" ]] \
       || dx_phase_busy_cancel_requested "$session_id" 3; then
+      __dx_review_control_decision "$session_id" acceptance phase-changed-or-child-cancelled || true
       __dx_review_parent_lock_reject "$session_id" "$standalone" \
         || reject_rc=$?
       return "$reject_rc"
@@ -1859,11 +1900,11 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     pass_metrics_file=$(dx_review_metrics_file "$pass_session_id")
 
     mkdir -p "$DX_LOOP_DIR"
-    dx_cleanup_session "$pass_session_id"
+    __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
     if ! __dx_review_write_child_provenance "$session_id" "$pass_session_id" pass; then
       terminal_reason="review_child_provenance_failed"
       clean_passes=0
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -1871,7 +1912,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
        ! dx_review_copy_criteria "$parent_criteria_file" "$pass_criteria_file" "$review_criteria_binding"; then
       terminal_reason="review_criteria_copy_failed"
       clean_passes=0
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -1880,7 +1921,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     if [[ ! "$pass_generation" =~ ^[0-9a-f]{32}$ ]]; then
       terminal_reason="completion_activation_failed"
       clean_passes=0
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -1892,7 +1933,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         "$standalone_prompt_content"; then
       terminal_reason="prompt_state_write_failed"
       clean_passes=0
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -1903,7 +1944,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     criteria_block=$(__dx_review_criteria_prompt "$pass_session_id" "$review_criteria_binding") || {
       terminal_reason="prompt_render_error"
       clean_passes=0
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     }
@@ -1929,13 +1970,13 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     descriptor_before="${descriptor_mode}"$'\t'"${comparison_ref}"$'\t'"${comparison_oid}"$'\t'"${committed_base}"
     boundary_before=$(dx_review_scope_boundary "$descriptor_before") || {
       terminal_reason="scope_fingerprint_error"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     }
     scope_before=$(dx_review_scope_fingerprint "$PWD" "$descriptor_before") || {
       terminal_reason="scope_fingerprint_error"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     }
@@ -1943,7 +1984,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     pass_binding=$(dx_review_pass_binding "$pass_nonce" "$scope_before" \
       "$review_criteria_binding" "$review_policy_binding") || {
       terminal_reason="pass_binding_error"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     }
@@ -1952,13 +1993,13 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     message="${message//__REVIEW_PASS_BINDING__/$pass_binding}"
     working_before=$(dx_review_working_fingerprint "$PWD") || {
       terminal_reason="scope_fingerprint_error"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     }
     if ! dx_review_input_write "$pass_session_id" "$PWD" "$scope_before" "$working_before" "$descriptor_before"; then
       terminal_reason="review_input_write_failed"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -1973,14 +2014,14 @@ Use DEX_REVIEW_CHECK_CACHE_SESSION=${session_id} for snapshot-bound command reus
 Prefer the structured report publisher in prompts/review-report.md; the authorized generation is ${pass_generation}."
     scout_count=$(__dx_review_scout_count "$pass_profile") || {
       terminal_reason="tier_resolution_error"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     }
     scout_parallelism=$(__dx_review_scout_parallelism "$scout_count" \
       "$review_capacity_limit") || {
       terminal_reason="invalid_capacity_configuration"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     }
@@ -1997,13 +2038,13 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
     elif [[ -L "$review_baseline_file" || -f "$review_baseline_file" ]]; then
       rm -f "$review_baseline_file" 2>/dev/null || {
         terminal_reason="baseline_state_invalid"
-        dx_cleanup_session "$pass_session_id"
+        __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
         current_review_child_session=""
         break
       }
     elif [[ -e "$review_baseline_file" ]]; then
       terminal_reason="baseline_state_invalid"
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -2031,7 +2072,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
       if [[ "$capacity_wait_status" -eq 125 \
         && -n "$review_interrupt_reason" ]]; then
         dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-        dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+        __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
         current_review_child_session=""
         __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
           "$standalone_review_prompt" "$session_id" "$review_phase" \
@@ -2045,7 +2086,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
         terminal_reason="capacity_state_invalid"
       fi
       terminal_preserve_credit=1
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -2059,7 +2100,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
         2>/dev/null || true
       terminal_reason="metrics_state_invalid"
       terminal_preserve_credit=1
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -2082,7 +2123,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
           terminal_reason="busy_marker_write_failed"
         fi
         terminal_preserve_credit=1
-        dx_cleanup_session "$pass_session_id"
+        __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
         current_review_child_session=""
         break
       fi
@@ -2100,7 +2141,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
       # this checkpoint clears it like the post-wave ones do — cleanup_session
       # alone leaves the alias-session provider file behind.
       dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
         "$standalone_review_prompt" "$session_id" "$review_phase" \
         "Review interrupted" blocked "$review_interrupt_reason" || true
@@ -2119,7 +2160,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
       fi
       terminal_reason="runtime_owner_lost"
       clean_passes=0
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
@@ -2262,6 +2303,7 @@ ${message}"
       review_control_snapshot=$(dx_lifecycle_control_snapshot "$session_id")
       review_control_action=$(dx_lifecycle_control_value "$review_control_snapshot" action)
       if [[ "$review_control_action" == "pause" || "$review_control_action" == "cancel" ]]; then
+        __dx_review_control_decision "$session_id" wave-return pending-control "$review_control_snapshot" || true
         review_intervention_requested=1
       fi
 
@@ -2322,7 +2364,7 @@ ${message}"
 
     if [[ -n "$review_interrupt_reason" ]]; then
       dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       current_review_child_session=""
       __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
         "$standalone_review_prompt" "$session_id" "$review_phase" \
@@ -2331,10 +2373,10 @@ ${message}"
     fi
 
     if [[ $review_child_fence_lost -eq 1 ]]; then
-      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
-      current_review_child_session=""
       terminal_reason="review_child_fence_lost"
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
+      current_review_child_session=""
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "error" \
         "Review child ownership was lost before acceptance" "$review_phase" \
@@ -2350,16 +2392,16 @@ ${message}"
       terminal_reason="runtime_owner_lost"
       clean_passes=0
       dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-      dx_cleanup_session "$pass_session_id"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
       break
     fi
 
     if [[ $review_intervention_requested -eq 1 ]]; then
-      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
-      current_review_child_session=""
       terminal_reason="human_intervention"
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
+      current_review_child_session=""
       terminal_preserve_credit=1
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass stopped by human intervention" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" provider_exit_int="$exit_code" terminal_reason=human_intervention
@@ -2422,7 +2464,7 @@ ${message}"
     local pass_acceptance_status=0 pass_checkpoint_committed=0
     if [[ -n "$review_interrupt_reason" ]]; then
       dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       current_review_child_session=""
       __dx_review_record_pause "$review_run_id" "$telemetry_session_id" \
         "$standalone_review_prompt" "$session_id" "$review_phase" \
@@ -2430,10 +2472,10 @@ ${message}"
       return "$review_interrupt_exit"
     fi
     if [[ $review_intervention_requested -eq 1 ]]; then
-      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
-      current_review_child_session=""
       terminal_reason="human_intervention"
+      dx_provider_cleanup_session_state "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
+      current_review_child_session=""
       terminal_preserve_credit=1
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" \
         "Review pass stopped by human intervention" "$review_phase" \
@@ -2460,7 +2502,7 @@ ${message}"
         capacity_limit_int="$review_capacity_limit" \
         capacity_active_int="$capacity_active" \
         capacity_wait_seconds_int="$capacity_wait_seconds"
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       break
     fi
 
@@ -2469,7 +2511,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=review_criteria_changed result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=review_criteria_changed evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       break
     fi
 
@@ -2478,7 +2520,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=pass_audit_limit result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=pass_audit_limit evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       break
     fi
 
@@ -2492,7 +2534,7 @@ ${message}"
       terminal_preserve_credit=1
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$terminal_reason" result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" provider_exit_int="$exit_code" provider_failure_class="$provider_failure_class" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       break
     fi
 
@@ -2501,7 +2543,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=invalid result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=invalid_result evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool=false
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       break
     fi
 
@@ -2516,10 +2558,23 @@ ${message}"
         *) terminal_reason="findings_hash_invalid" ;;
       esac
       dx_warn "Review pass returned incomplete state: ${review_contract_error}."
-      clean_passes=0
+      # A diagnosed hook failure can preserve earlier, independently attested
+      # credit. This wave still earns nothing without its original receipt.
+      if [[ "$terminal_reason" == completion_receipt_missing \
+        && "$result" == CLEAN \
+        && "$criteria_intact" -eq 1 && "$context_valid" -eq 1 && "$evidence_valid" -eq 1 \
+        && "$(dx_pause_state_read "$pass_session_id" reason 2>/dev/null || true)" == invalid-completion-context \
+        && "$(dx_pause_state_read "$pass_session_id" source 2>/dev/null || true)" == phase-loop ]] \
+        && dx_review_findings_hash_valid "$pass_findings_file" \
+        && dx_review_pass_attestation "$pass_evidence_file" "$review_context_file" \
+          "$result" "$pass_profile" "$findings_hash" "$pass_binding" >/dev/null; then
+        terminal_preserve_credit=1
+      else
+        clean_passes=0
+      fi
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
-        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=incomplete_evidence result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+        pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=incomplete_evidence result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" provider_exit_int="$exit_code" terminal_reason="$terminal_reason" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool="$evidence_valid_json"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       break
     fi
 
@@ -2534,7 +2589,7 @@ ${message}"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
         pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind=scope_fingerprint_error result_reason="$result_reason" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int=0 provider_exit_int="$exit_code" terminal_reason=scope_fingerprint_error evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_valid_bool=true
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
       break
     fi
     [[ "$scope_after" != "$scope_before" ]] && scope_changed="true"
@@ -2809,7 +2864,7 @@ ${message}"
       pass_id="$pass_nonce" tier="$pass_tier" profile="$pass_profile" iteration_int="$review_iteration" result_kind="$result_kind" result_reason="$result_reason" findings_int="$result_count" duration_seconds_int="$pass_duration" clean_before_int="$clean_before" clean_after_int="$clean_passes" scope_changed_bool="$scope_changed" working_changed_bool="$working_changed" provider_exit_int="$exit_code" provider_failure_class="$provider_failure_class" terminal_reason="${terminal_reason:-none}" evidence_hash="$evidence_hash" deterministic_checks="$evidence_checks" verifier="$evidence_verifier" coverage="$evidence_coverage" evidence_findings_int="$evidence_findings" evidence_fixes_int="$evidence_fixes" evidence_valid_bool=true baseline_reused_bool="$baseline_reused" baseline_binding="$baseline_hash_after" baseline_commands_int="$baseline_commands" baseline_duration_seconds_int="$baseline_duration" scout_count_int="$scout_count" scout_parallelism_int="$scout_parallelism" capacity_limit_int="$review_capacity_limit" capacity_active_int="$capacity_active" capacity_wait_seconds_int="$capacity_wait_seconds" test_jobs_int="$review_test_jobs" metrics_complete_bool="$metrics_complete" metrics_source="$metrics_source" context_duration_seconds_int="$context_duration" checks_duration_seconds_int="$checks_duration" scout_duration_seconds_int="$scout_duration" verifier_duration_seconds_int="$verifier_duration" fixes_duration_seconds_int="$fixes_duration"
 
     if ! dx_review_acceptance_pending "$session_id"; then
-      dx_cleanup_session "$pass_session_id" 2>/dev/null || true
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}" 2>/dev/null || true
     fi
     [[ -n "$terminal_reason" ]] && break
   done

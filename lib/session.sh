@@ -2673,7 +2673,7 @@ dx_record_session_branch() {
 
 # Remove review scratch directories after the session owner is quiescent.
 dx_review_work_files_cleanup() {
-  local sid="$1" work_suffix work_dir work_entry
+  local sid="$1" work_suffix work_dir work_entry work_helper
   dx_session_id_valid "$sid" || return 2
   for work_suffix in review-checks review-report review-publish-lock; do
     work_dir="$DX_LOOP_DIR/$sid.$work_suffix"
@@ -2685,9 +2685,14 @@ dx_review_work_files_cleanup() {
     # Nested directories and symlinks are not expected or followed.
     rmdir "$work_dir" || return 1
   done
-  if dx_review_acceptance_pending "$sid"; then
-    __dx_review_acceptance_store remove "$sid" || return 1
-  fi
+  # Lightweight session commands do not load the review orchestration modules.
+  for work_suffix in review-acceptance review-diagnostics; do
+    work_dir="$DX_LOOP_DIR/$sid.$work_suffix"
+    [[ -e "$work_dir" || -L "$work_dir" ]] || continue
+    work_helper="${work_suffix//-/_}.py"
+    python3 "$DEX_DIR/scripts/$work_helper" remove "$DX_LOOP_DIR" "$sid" || return 1
+  done
+  command rm -f "$DX_LOOP_DIR/$sid.review-control.json" || return 1
   return 0
 }
 

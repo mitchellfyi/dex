@@ -178,7 +178,7 @@ dx_review_findings_history_preview() {
     dx_review_findings_history_append "$preview_dir/findings" "$findings_hash" || preview_rc=1
   fi
   if [[ "$preview_rc" -eq 0 ]]; then
-    churn_kind=$(dx_review_findings_churn_kind "$preview_dir/findings") || preview_rc=1
+    churn_kind=$(__dx_review_findings_churn_value "$preview_dir/findings") || preview_rc=1
   fi
   command rm -rf "$preview_dir" || preview_rc=1
   [[ "$preview_rc" -eq 0 ]] || return 1
