@@ -249,6 +249,11 @@ Keep the label in this form:
 Wave <number> · <stage> · <clean-before>/<required-clean> clean
 ```
 
+Before publishing completion, finish and collect every required check and
+review task. Cancel disposable timers, probes, and other wave-owned background
+tasks that are no longer needed. A late task notification must not trigger a
+second review or another completion command.
+
 Read `prompts/review-report.md` and write one structured report. Supply the
 actual result, verified findings, fixes, coverage, check status, verifier
 conclusion, and an outcome with substantive evidence for every criterion.

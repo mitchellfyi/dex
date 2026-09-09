@@ -576,6 +576,13 @@ if [[ "$LOOP_ACTIVE" != "1" ]] && [[ ! -f "$ACTIVE_FILE" ]]; then
   exit 0
 fi
 
+# A review child is activated by its wrapper. Its inherited environment can
+# outlive completion when a background task delivers another Stop event.
+if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" \
+  && ! -e "$ACTIVE_FILE" && ! -L "$ACTIVE_FILE" ]]; then
+  exit 0
+fi
+
 # The provider sends the hook payload on stdin; session_id identifies the
 # concrete agent session this Stop fired in. Used for the ownership guard
 # below — dx session ids are path-derived, so multiple sessions in the same
@@ -622,6 +629,13 @@ CONTROL_FILE=$(dx_lifecycle_control_file "$SESSION_ID")
 if ! dx_lifecycle_control_lock_acquire "$SESSION_ID"; then
   printf '\n%s\n' "Dex is already applying lifecycle state; stop again after it finishes." >&2
   exit 2
+fi
+
+# Activation may have been retired while this Stop waited for the lock.
+if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" \
+  && ! -e "$ACTIVE_FILE" && ! -L "$ACTIVE_FILE" ]]; then
+  dx_lifecycle_control_lock_release_checked "$SESSION_ID" || exit 2
+  exit 0
 fi
 
 # Read control before pause handling. A pending human transition is allowed to
@@ -2029,7 +2043,8 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
   if [[ "${DEX_REVIEW_PASS_ACTIVE:-}" == "1" ]]; then
     # || true on the terminal removals: a failed rm under set -e would abort
     # before the success JSON below and leave ACTIVE_FILE reactivating the loop.
-    rm -f "$STATE_FILE" "$CONFIG_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")" || true
+    # The parent retires the config with the receipt after accepting the pass.
+    rm -f "$STATE_FILE" "$PAUSED_FILE" "$(dx_phase_started_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_ready_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_file "$SESSION_ID" "$CURRENT_PHASE")" "$(dx_phase_busy_notice_file "$SESSION_ID" "$CURRENT_PHASE")" || true
   else
     if ! dx_lifecycle_control_lock_acquire "$SESSION_ID"; then
       printf '\n%s\n' "Dex is already applying lifecycle state; stop again after it finishes." >&2
