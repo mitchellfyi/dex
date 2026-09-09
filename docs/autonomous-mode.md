@@ -189,6 +189,11 @@ the retained proof and current bindings before reinstalling the same checkpoint.
 Recovery preserves clean credit and fix counts without launching the wave again.
 Changed scope, criteria, policy, or pending lifecycle controls block recovery.
 
+Completed review state remains available until the final receipt is written.
+If publication fails, the loop reports failure and retains independently
+validated clean credit. A retry can finish publication from that saved state
+without another assessor or review wave while its bindings still match.
+
 When a wave fails, Dex retains up to four private diagnostic bundles per review
 session before cleaning up the child. Each bundle records the result, context,
 evidence, metrics, receipt state, and control details that were available, with

@@ -1213,6 +1213,10 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     fi
     dx_info "Recovered the accepted review wave from its retained checkpoint."
     review_recovered_checkpoint=1
+  elif dx_review_completed_state_valid "$session_id" "$repo_root" \
+    "$review_criteria_binding" "$review_policy_binding"; then
+    dx_info "Resuming the saved review checkpoint."
+    review_recovered_checkpoint=1
   fi
 
   local review_tier="" review_profile="" selection_source="" selection_reasons="" selection_required="" selection_fingerprint="" selection_binding="" selection_policy_binding=""
@@ -2897,10 +2901,11 @@ ${message}"
     terminal_preserve_credit=1
   fi
 
-  local final_acceptance_rc=0 final_commit_rc=0 review_success_committed=0
+  local final_acceptance_rc=0 final_commit_rc=0 review_success_committed=0 final_credited_clean=0
   local review_runtime_finish_result=0 standalone_runtime_committed=0
   local second_acceptance_rc=0
   if [[ $clean_passes -ge $required_clean && -z "$terminal_reason" ]]; then
+    final_credited_clean="$clean_passes"
     __dx_review_parent_acceptance_lock "$session_id" \
       "$standalone_review_prompt" || final_acceptance_rc=$?
     if [[ "$final_acceptance_rc" -eq 0 ]]; then
@@ -2924,10 +2929,6 @@ ${message}"
         if ! dx_review_revoke_receipt "$session_id" \
           || ! dx_review_receipt_authorization_absent "$session_id"; then
           terminal_reason="receipt_revocation_failed"
-          final_commit_rc=1
-        elif ! rm -f "$(dx_review_state_file "$session_id")" \
-          "$parent_findings_file" 2>/dev/null; then
-          terminal_reason="review_state_cleanup_failed"
           final_commit_rc=1
         elif [[ -z "$review_runtime_owner_handle" ]]; then
           terminal_reason="runtime_finish_failed"
@@ -3044,6 +3045,10 @@ ${message}"
               "$review_criteria_binding" "$review_policy_binding"; then
               terminal_reason="receipt_write_failed"
               final_commit_rc=1
+            elif ! rm -f "$(dx_review_state_file "$session_id")" \
+              "$parent_findings_file" 2>/dev/null; then
+              terminal_reason="review_state_cleanup_failed"
+              final_commit_rc=1
             elif ! dx_review_receipt_valid "$session_id" "$PWD" \
               "$review_criteria_binding" "$review_policy_binding"; then
               terminal_reason="receipt_validation_failed"
@@ -3129,6 +3134,17 @@ ${message}"
       terminal_reason="completion_decision_lock_unavailable"
       clean_passes=0
     fi
+  fi
+
+  # Publication failures do not undo an accepted wave. The pause path below
+  # revalidates its ledger against current bindings before retaining credit.
+  if [[ "$review_success_committed" -ne 1 && "$final_credited_clean" -gt 0 ]]; then
+    case "$terminal_reason" in
+      runtime_finish_failed|receipt_write_failed|receipt_validation_failed|receipt_revocation_failed|review_state_cleanup_failed|completion_decision_lock_release_failed|completion_decision_lock_unavailable|review_checkout_lock_release_failed)
+        clean_passes="$final_credited_clean"
+        terminal_preserve_credit=1
+        ;;
+    esac
   fi
 
   if [[ "$review_success_committed" -eq 1 ]]; then

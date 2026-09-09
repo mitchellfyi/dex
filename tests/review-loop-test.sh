@@ -942,6 +942,9 @@ PY
           local finish_handle="$1" finish_state="$2"
           if [[ "$finish_state" == "completed" \
             && ! -e "$CASE_ROOT/runtime-finish-published" ]]; then
+            if [[ ! -f "$(dx_review_state_file "$CASE_SESSION_ID")" ]]; then
+              : >| "$CASE_ROOT/runtime-finish-lost-review-state"
+            fi
             __test_dx_session_runtime_owner_finish "$@" || return $?
             if [[ ! -d "$(dx_lifecycle_control_lock_dir "$CASE_SESSION_ID")" \
               || ! -e "$(dx_review_receipt_revocation_file "$CASE_SESSION_ID")" ]]; then
@@ -956,6 +959,17 @@ PY
             return 1
           fi
           __test_dx_session_runtime_owner_finish "$@"
+        }
+      fi
+
+      if [[ "$CASE_PASS_MODE" == "receipt-write-fail-once" ]]; then
+        functions -c dx_review_write_receipt __test_dx_review_write_receipt
+        dx_review_write_receipt() {
+          if [[ ! -e "$CASE_ROOT/receipt-write-failed" ]]; then
+            : >| "$CASE_ROOT/receipt-write-failed"
+            return 1
+          fi
+          __test_dx_review_write_receipt "$@"
         }
       fi
 
@@ -1310,6 +1324,7 @@ assert_eq "1" "$(call_count pass)" \
   "runtime finish post-publication failure pass count"
 assert_file "$CASE_DIR/runtime-finish-published"
 assert_no_file "$CASE_DIR/runtime-finish-exposed-completion"
+assert_no_file "$CASE_DIR/runtime-finish-lost-review-state"
 if [[ -e "$CASE_DIR/runtime-finish-catalog-failed" ]]; then
   printf 'runtime finish catalog lookup failed:\n' >&2
   sed -n '1,120p' "$CASE_DIR/runtime-finish-catalog.error" >&2
@@ -1330,6 +1345,26 @@ RUNTIME_FINISH_STATE=$(DEX_DIR="$ROOT" HOME="$CASE_HOME" \
   _ "$CASE_SESSION_ID")
 assert_eq "completed" "$RUNTIME_FINISH_STATE" \
   "runtime finish post-publication failure durable runtime state"
+assert_eq "1" "$(cut -f5 "$CASE_LOOP_DIR/$CASE_SESSION_ID.review-state")" \
+  "runtime finish failure preserves accepted clean credit"
+
+run_case "runtime-finish-retry" "" "CLEAN" "small" \
+  "standalone" "one-pass-policy" "" \
+  "runtime-finish-after-publish-fail" "twice"
+assert_success "runtime finish retry"
+assert_eq "1" "$(call_count pass)" "runtime finish retry reuses its accepted wave"
+assert_eq "1" "$(call_count assessor)" "runtime finish retry reuses its risk selection"
+assert_no_file "$CASE_DIR/runtime-finish-lost-review-state"
+assert_no_file "$CASE_DIR/runtime-finish-exposed-completion"
+assert_receipt small 1 "runtime finish retry"
+
+run_case "receipt-write-retry" "" "CLEAN" "small" \
+  "standalone" "one-pass-policy" "" "receipt-write-fail-once" "twice"
+assert_success "receipt write retry"
+assert_eq "1" "$(call_count pass)" "receipt write retry reuses its accepted wave"
+assert_eq "1" "$(call_count assessor)" "receipt write retry reuses its risk selection"
+assert_file "$CASE_DIR/receipt-write-failed"
+assert_receipt small 1 "receipt write retry"
 
 for checkout_release_mode in standalone lifecycle; do
   run_case "${checkout_release_mode}-checkout-release-signal" "small" \
@@ -1587,6 +1622,8 @@ for acceptance_failure_stage in start pass final; do
     $'CLEAN\nCLEAN' "" standalone one-pass-policy "" \
     "unlock-${acceptance_failure_stage}-once" twice
   assert_success "standalone ${acceptance_failure_stage} unlock retry"
+  assert_eq "1" "$(call_count pass)" \
+    "standalone ${acceptance_failure_stage} retry does not repeat an accepted wave"
   assert_eq "1" "$(awk -F '\t' \
     '$1 == "invocation" && $2 == "first" && $3 != "0" { count++ } \
      END { print count + 0 }' "$CASE_CALLS")" \

@@ -2138,6 +2138,20 @@ EOF
     "$tier" "$required_clean" "$iteration" "$clean_count" "$fingerprint" "$criteria_binding" "$policy_binding"
 }
 
+dx_review_completed_state_valid() {
+  [[ $# -eq 4 ]] || return 1
+  local session_id="$1" repo_dir="$2" expected_binding="$3" expected_policy="$4" record
+  local tier required_clean iteration clean_count fingerprint criteria_binding policy_binding
+  __dx_review_read_private_record "$(dx_review_state_file "$session_id")" 4096 >/dev/null || return 1
+  record=$(dx_review_read_state "$session_id" "$repo_dir" "$expected_binding" "$expected_policy") || return 1
+  IFS=$'\t' read -r tier required_clean iteration clean_count fingerprint criteria_binding policy_binding <<< "$record"
+  : "$iteration"
+  [[ $((10#$clean_count)) -ge $((10#$required_clean)) ]] || return 1
+  dx_review_selection_valid "$session_id" "$repo_dir" "$expected_binding" "$expected_policy" || return 1
+  dx_review_ledger_valid "$session_id" "$clean_count" "$fingerprint" "$criteria_binding" \
+    "$policy_binding" "$(dx_review_tier_profile "$tier")"
+}
+
 # Read only after validating the state and its retained ledger for this scope.
 dx_review_state_fixed_total() {
   local state_record total
