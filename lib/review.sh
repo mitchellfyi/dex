@@ -2068,10 +2068,12 @@ dx_review_write_state() {
   local session_id="$1" requested_tier="$2" required_clean="$3" iteration="$4" clean_count="$5" repo_dir="${6:-$PWD}"
   local expected_binding="${7:-}" expected_policy_binding="${8:-}" tier tier_min fingerprint state_file criteria_binding
   local policy_record policy_binding override_binding
+  local findings_fixed_total="${9:-0}"
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
   dx_review_is_nonnegative_integer "$clean_count" || return 1
+  dx_review_is_nonnegative_integer "$findings_fixed_total" || return 1
   policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
   IFS=$'\t' read -r tier_min policy_binding _ <<EOF
 $policy_record
@@ -2082,26 +2084,31 @@ EOF
   else
     override_binding="-"
   fi
-  [[ $((10#$clean_count)) -lt $((10#$required_clean)) ]] || return 1
+  # Keep completed credit through receipt publication and later target changes.
   [[ $((10#$clean_count)) -le $((10#$iteration)) ]] || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   state_file=$(dx_review_state_file "$session_id") || return 1
-  dx_review_write_atomic "$state_file" "4"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"$'\t'"${override_binding}"
+  dx_review_write_atomic "$state_file" "5"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"$'\t'"${override_binding}"$'\t'"${findings_fixed_total}"
 }
 
 dx_review_read_state() {
   local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" expected_policy_binding="${4:-}" state_file raw
   local version tier tier_min required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding extra current_fingerprint current_binding
   local policy_record current_policy_binding
+  local findings_fixed_total=""
   state_file=$(dx_review_state_file "$session_id") || return 1
   [[ -f "$state_file" ]] || return 1
   raw=$(cat "$state_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding extra <<EOF
+  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding findings_fixed_total extra <<EOF
 $raw
 EOF
-  [[ "$version" == "4" ]] || return 1
+  case "$version" in
+    4) [[ -z "$findings_fixed_total" ]] || return 1 ;;
+    5) dx_review_is_nonnegative_integer "$findings_fixed_total" || return 1 ;;
+    *) return 1 ;;
+  esac
   [[ -z "$extra" ]] || return 1
   tier=$(dx_review_normalize_tier "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
@@ -2120,7 +2127,6 @@ EOF
   else
     [[ "$override_binding" == "-" ]] || return 1
   fi
-  [[ $((10#$clean_count)) -lt $((10#$required_clean)) ]] || return 1
   [[ $((10#$clean_count)) -le $((10#$iteration)) ]] || return 1
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   current_fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
@@ -2130,6 +2136,16 @@ EOF
   [[ "$current_binding" == "$criteria_binding" ]] || return 1
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$tier" "$required_clean" "$iteration" "$clean_count" "$fingerprint" "$criteria_binding" "$policy_binding"
+}
+
+# Read only after validating the state and its retained ledger for this scope.
+dx_review_state_fixed_total() {
+  local state_record total
+  state_record=$(__dx_review_read_private_record "$(dx_review_state_file "$1")" 4096) || return 1
+  total=$(printf '%s\n' "$state_record" | cut -f10)
+  [[ -n "$total" ]] || total=0
+  dx_review_is_nonnegative_integer "$total" || return 1
+  printf '%s\n' "$total"
 }
 
 # Private retained evidence for every clean row in the parent session ledger.

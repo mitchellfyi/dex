@@ -472,6 +472,7 @@ prefer extracting it into `lib/` modules. The pattern:
 | `review-capacity.sh` | Host-wide FIFO admission, PID-reuse-safe stale-owner recovery, and separate review/check capacity limits | `dx_review_capacity_limit()`, `dx_review_capacity_wait()`, `dx_review_capacity_release()` |
 | `review-loop.sh` | The review loop itself plus its helpers: wave orchestration, tier assessment, run telemetry, pause and interrupt handling, scope snapshots. `dxreviewloop` in dx.sh is a thin wrapper over it | `dx_review_loop_run()`, `__dx_review_emit_event()`, `__dx_review_scope_snapshot()` |
 | `review-controller.sh` | Pure review-loop state transitions and atomic findings history | `dx_review_transition()`, `dx_review_findings_history_append()` |
+| `review-acceptance.sh` | Durable wave handoff, retained authorization, and idempotent parent checkpoint recovery | `dx_review_acceptance_begin()`, `dx_review_acceptance_finish()` |
 | `review-policy.sh` | Trusted default-branch clean-pass policy resolution and binding | `dx_review_policy_resolve()`, `dx_review_policy_for_tier()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
 | `run-spec.sh` | Structured headless run spec validation, fetch, normalization, and journal prep | `dx_run_spec_normalize()`, `dx_run_spec_fetch()`, `dx_run_spec_prepare_journal()` |

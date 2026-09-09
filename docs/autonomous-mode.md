@@ -179,6 +179,16 @@ the wave runs without resetting clean credit if that merge base and reviewed
 content remain unchanged. A changed comparison ref, merge base, branch, or
 reviewed content still invalidates the affected evidence.
 
+A completed review child retires its activation marker and keeps its receipt
+context for the parent. Later Stop notifications leave that completion alone.
+The parent validates the wave, current scope, and lifecycle controls before
+recording a private acceptance checkpoint. It installs the checkpoint before
+consuming the child's exact generation, then removes the handoff after releasing
+the control lock. If that sequence is interrupted, the next invocation validates
+the retained proof and current bindings before reinstalling the same checkpoint.
+Recovery preserves clean credit and fix counts without launching the wave again.
+Changed scope, criteria, policy, or pending lifecycle controls block recovery.
+
 After Phase 2 passes an expensive project-wide gate on the final checkout, it
 can publish the exact command and measured duration with
 `dx_review_baseline_publish`. The first review wave can reuse that bound
@@ -721,8 +731,12 @@ Loop state is stored in `~/.claude/.dex-loops/`:
   scope fingerprint, criteria binding, and trusted policy binding recorded
   before the first wave and rebound after review fixes
 - `.review-state` — selected tier, required clean count, iteration, clean count,
-  scope fingerprint, criteria binding, and trusted policy binding used to
-  resume an unchanged review
+  cumulative fix count, scope fingerprint, criteria binding, and trusted policy
+  binding used to resume an unchanged review, including a completed clean gate
+  whose final receipt has not yet been published
+- `.review-acceptance/` — interrupted wave handoff: exact generation and retained
+  authorization, evidence, previous parent state, and the sealed checkpoint to
+  install; recovered before another assessor or wave can start
 - `.review-evidence.json` — pass-scoped evidence version 3 with exact ordered
   criterion hashes, outcomes, substantive context references, and policy and
   pass bindings; the child copy is removed after validation

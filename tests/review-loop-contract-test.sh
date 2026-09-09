@@ -361,6 +361,18 @@ PY
       dx_write_lifecycle_control "$(dx_session_id)" cancel "" terminal "" 3 ""
     fi
     review_result=0
+    if [[ "$TEST_REVIEW_SCENARIO" == "recover-checkpoint" ]]; then
+      __dx_review_acceptance_store() {
+        local operation="$1" acceptance_session="$2"
+        shift 2
+        python3 "$DEX_DIR/scripts/review_acceptance.py" "$operation" "$DX_LOOP_DIR" "$acceptance_session" "$@" || return $?
+        if [[ "$operation" == install && ! -f "$DX_LOOP_DIR/interrupted-install" ]]; then
+          : > "$DX_LOOP_DIR/interrupted-install"
+          return 71
+        fi
+        return 0
+      }
+    fi
     if [[ "$TEST_REVIEW_SCENARIO" == "valid-two-waves" ]]; then
       DEX_REVIEW_TIER=small DEX_REVIEW_CLEAN_PASSES=2 dxreviewloop \
         || review_result=$?
@@ -371,6 +383,11 @@ PY
       DEX_REVIEW_TIER=small DEX_REVIEW_PASS_TIMEOUT=1 dxreviewloop \
         || review_result=$?
     else
+      DEX_REVIEW_TIER=small dxreviewloop || review_result=$?
+    fi
+    if [[ "$TEST_REVIEW_SCENARIO" == "recover-checkpoint" ]]; then
+      [[ "$review_result" -ne 0 ]] || return 96
+      review_result=0
       DEX_REVIEW_TIER=small dxreviewloop || review_result=$?
     fi
     if [[ -n "${parent_runtime_handle:-}" ]]; then
@@ -438,6 +455,10 @@ run_case "codex-empty-context" "codex" "missing-context" 1 "context pack missing
 run_case "codex-missing-hash" "codex" "missing-hash" 1 "findings hash missing or invalid"
 run_case "codex-missing-completion" "codex" "missing-completion" 1 "completion receipt missing"
 run_case "codex-valid" "codex" "valid" 0 "Review complete: 1 consecutive clean pass." 1
+run_case "claude-recover-checkpoint" "claude" "recover-checkpoint" 0 \
+  "Recovered the accepted review wave from its retained checkpoint." 1
+run_case "codex-recover-checkpoint" "codex" "recover-checkpoint" 0 \
+  "Recovered the accepted review wave from its retained checkpoint." 1
 run_case "claude-timeout-binding" "claude" "timeout-binding" 0 \
   "Review complete: 1 consecutive clean pass." 1
 run_case "codex-timeout-binding" "codex" "timeout-binding" 0 \

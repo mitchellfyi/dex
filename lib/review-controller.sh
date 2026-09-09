@@ -166,6 +166,25 @@ dx_review_transition() {
   esac
 }
 
+# Inspect the proposed history without changing the parent's accepted state.
+dx_review_findings_history_preview() {
+  local history_file="$1" findings_hash="$2" preview_dir history="" churn_kind preview_rc=0
+  preview_dir=$(mktemp -d "${TMPDIR:-/tmp}/dex-review-history.XXXXXX") || return 1
+  if [[ -e "$history_file" || -L "$history_file" ]]; then
+    history=$(__dx_review_read_private_record "$history_file" 4096) || preview_rc=1
+    [[ "$preview_rc" -ne 0 ]] || printf '%s\n' "$history" > "$preview_dir/findings" || preview_rc=1
+  fi
+  if [[ "$preview_rc" -eq 0 ]]; then
+    dx_review_findings_history_append "$preview_dir/findings" "$findings_hash" || preview_rc=1
+  fi
+  if [[ "$preview_rc" -eq 0 ]]; then
+    churn_kind=$(dx_review_findings_churn_kind "$preview_dir/findings") || preview_rc=1
+  fi
+  command rm -rf "$preview_dir" || preview_rc=1
+  [[ "$preview_rc" -eq 0 ]] || return 1
+  printf '%s\n' "$churn_kind"
+}
+
 # dx_review_findings_history_append <history-file> <findings-hash>
 # Append a validated hash atomically and retain only the four newest entries.
 dx_review_findings_history_append() {

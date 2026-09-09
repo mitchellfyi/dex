@@ -2671,7 +2671,7 @@ dx_record_session_branch() {
   [[ "$saved_branch" == "$branch" ]]
 }
 
-# Remove flat review scratch directories after the session owner is quiescent.
+# Remove review scratch directories after the session owner is quiescent.
 dx_review_work_files_cleanup() {
   local sid="$1" work_suffix work_dir work_entry
   dx_session_id_valid "$sid" || return 2
@@ -2685,6 +2685,10 @@ dx_review_work_files_cleanup() {
     # Nested directories and symlinks are not expected or followed.
     rmdir "$work_dir" || return 1
   done
+  if dx_review_acceptance_pending "$sid"; then
+    __dx_review_acceptance_store remove "$sid" || return 1
+  fi
+  return 0
 }
 
 # dx_cleanup_session <session_id>

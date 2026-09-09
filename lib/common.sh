@@ -153,6 +153,7 @@ __dx_require_lib review.sh
 __dx_require_lib review-capacity.sh
 __dx_require_lib review-policy.sh
 __dx_require_lib review-controller.sh
+__dx_require_lib review-acceptance.sh
 __dx_require_lib review-loop.sh
 __dx_require_lib factory.sh
 __dx_require_lib run-spec.sh

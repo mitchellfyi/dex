@@ -566,7 +566,7 @@ dx_cleanup_session "$standalone_session_id"
 
 dx_review_write_state "$session_id" normal "$policy_normal" 4 1 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
-[[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "4" ]] || {
+[[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "5" ]] || {
   printf 'state was not written with the current policy-bound schema\n' >&2
   exit 1
 }
@@ -592,9 +592,10 @@ assert_rejected "state below tier gate" dx_review_write_state \
 assert_rejected "state clean exceeds iteration" dx_review_write_state \
   "$session_id" normal "$policy_normal" 1 2 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
-assert_rejected "completed state is not resumable" dx_review_write_state \
+dx_review_write_state \
   "$session_id" normal "$policy_normal" "$policy_normal" "$policy_normal" "$REPO" \
   "$session_criteria_hash" "$policy_binding"
+dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding" >/dev/null
 
 assert_rejected "small receipt below trusted policy gate" dx_review_write_receipt \
   "$session_id" small "$((policy_small - 1))" "$((policy_small - 1))" \

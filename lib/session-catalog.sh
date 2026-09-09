@@ -154,6 +154,7 @@ EXACT_SUFFIXES = [
     (".review-result", "review-result"),
     (".review-ledger", "review-ledger"),
     (".review-proofs", "review-proofs"),
+    (".review-acceptance", "review-acceptance"),
     (".complete-state", "complete-state"),
     (".system-context", "system-context"),
     (".handoff-mode", "handoff-mode"),
@@ -425,7 +426,7 @@ def artifact_is_unsafe(entry, family, location):
         return True
     if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o022:
         return True
-    directory_families = {"review-proofs", "control-lock", "review-checks", "review-report", "review-publish-lock"}
+    directory_families = {"review-proofs", "review-acceptance", "control-lock", "review-checks", "review-report", "review-publish-lock"}
     if family in directory_families:
         return not stat.S_ISDIR(metadata.st_mode)
     return not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
@@ -976,6 +977,7 @@ def standalone_review_complete_valid(session_id, families):
     if not families.intersection(review_families):
         return None
     brake_families = {
+        "review-acceptance",
         "review-receipt-revoked",
         "review-selection-revoked",
         "review-state",

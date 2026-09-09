@@ -57,6 +57,7 @@ public-command-args-test.sh	fast	all	600	hermetic
 push-guards-test.sh	fast	all	600	hermetic
 research-orchestrate-args-test.sh	fast	all	600	hermetic
 research-score-test.sh	fast	all	600	hermetic
+review-acceptance-test.sh	fast	all	600	hermetic
 review-baseline-test.sh	fast	all	600	hermetic
 review-capacity-test.sh	fast	all	600	hermetic
 review-check-cache-test.sh	fast	all	600	hermetic
