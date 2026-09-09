@@ -614,8 +614,6 @@ __dx_review_scope_snapshot() {
   if [[ "$descriptor_mode" == "changes" ]]; then
     has_committed=1
     committed_ref="${committed_base}..HEAD"
-  else
-    committed_base="-"
   fi
 
   git diff --cached --quiet 2>/dev/null || has_staged=1
@@ -1894,6 +1892,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
 
     local scope_before="" scope_after="" scope_changed="false" working_before="" working_after="" working_changed="false"
     local descriptor_before="" descriptor_after="" branch_before="" branch_after="" head_before="" head_after=""
+    local boundary_before="" boundary_after=""
     local pass_started="" pass_finished="" pass_duration="" clean_before="$clean_passes"
     local pass_tier="$review_tier" pass_profile="$review_profile" pass_binding=""
     local scout_count=0 scout_parallelism=0 baseline_mode="fresh" baseline_binding="fresh"
@@ -1903,7 +1902,14 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     local metrics_summary="" context_duration=0 checks_duration=0
     local scout_duration=0 verifier_duration=0 fixes_duration=0
     local metrics_complete="false" metrics_source="none"
-    scope_before=$(dx_review_scope_fingerprint "$PWD") || {
+    descriptor_before="${descriptor_mode}"$'\t'"${comparison_ref}"$'\t'"${comparison_oid}"$'\t'"${committed_base}"
+    boundary_before=$(dx_review_scope_boundary "$descriptor_before") || {
+      terminal_reason="scope_fingerprint_error"
+      dx_cleanup_session "$pass_session_id"
+      current_review_child_session=""
+      break
+    }
+    scope_before=$(dx_review_scope_fingerprint "$PWD" "$descriptor_before") || {
       terminal_reason="scope_fingerprint_error"
       dx_cleanup_session "$pass_session_id"
       current_review_child_session=""
@@ -1926,7 +1932,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
       current_review_child_session=""
       break
     }
-    if ! dx_review_input_write "$pass_session_id" "$PWD" "$scope_before" "$working_before"; then
+    if ! dx_review_input_write "$pass_session_id" "$PWD" "$scope_before" "$working_before" "$descriptor_before"; then
       terminal_reason="review_input_write_failed"
       dx_cleanup_session "$pass_session_id"
       current_review_child_session=""
@@ -1987,12 +1993,6 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
     message="${message//__REVIEW_ITERATION__/$review_iteration}"
     message="${message//__REVIEW_CLEAN_BEFORE__/$clean_passes}"
     message="${message//__REVIEW_REQUIRED_CLEAN__/$required_clean}"
-    descriptor_before=$(dx_review_scope_descriptor "$PWD") || {
-      terminal_reason="scope_fingerprint_error"
-      dx_cleanup_session "$pass_session_id"
-      current_review_child_session=""
-      break
-    }
     branch_before=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s\n' "DETACHED")
     head_before=$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' "UNBORN")
     local capacity_wait_seconds=0 capacity_active=0 capacity_wait_status=0
@@ -2521,12 +2521,13 @@ ${message}"
       break
     fi
 
-    scope_after=$(dx_review_scope_fingerprint "$PWD" 2>/dev/null || true)
-    working_after=$(dx_review_working_fingerprint "$PWD" 2>/dev/null || true)
     descriptor_after=$(dx_review_scope_descriptor "$PWD" 2>/dev/null || true)
+    boundary_after=$(dx_review_scope_boundary "$descriptor_after" 2>/dev/null || true)
+    scope_after=$(dx_review_scope_fingerprint "$PWD" "$descriptor_after" 2>/dev/null || true)
+    working_after=$(dx_review_working_fingerprint "$PWD" 2>/dev/null || true)
     branch_after=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s\n' "DETACHED")
     head_after=$(git rev-parse --verify HEAD 2>/dev/null || printf '%s\n' "UNBORN")
-    if [[ -z "$scope_after" || -z "$working_after" || -z "$descriptor_after" || -z "$head_after" ]]; then
+    if [[ -z "$scope_after" || -z "$working_after" || -z "$boundary_after" || -z "$head_after" ]]; then
       terminal_reason="scope_fingerprint_error"
       clean_passes=0
       __dx_review_emit_event "$review_run_id" "review.pass.finished" "warn" "Review pass failed" "$review_phase" \
@@ -2556,7 +2557,7 @@ ${message}"
         clean_passes=0
       fi
     fi
-    if [[ -z "$terminal_reason" && "$descriptor_after" != "$descriptor_before" ]]; then
+    if [[ -z "$terminal_reason" && "$boundary_after" != "$boundary_before" ]]; then
       terminal_reason="scope_boundary_changed"
       clean_passes=0
     fi

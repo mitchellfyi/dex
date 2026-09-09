@@ -700,6 +700,14 @@ PY
         } >| "$context_path"
         printf "%s\n%s\n%s\n" "$sentinel" "$context_path" "$criteria_path" >> "$CASE_SENTINELS"
         case "$result" in
+          CLEAN_REMOTE_ADVANCE)
+            local remote_tip remote_tree
+            remote_tip=$(git -C "$CASE_REPO" rev-parse refs/remotes/origin/main)
+            remote_tree=$(git -C "$CASE_REPO" rev-parse "${remote_tip}^{tree}")
+            remote_tip=$(printf "Unrelated upstream advance\n" | git -C "$CASE_REPO" commit-tree "$remote_tree" -p "$remote_tip")
+            git -C "$CASE_REPO" update-ref refs/remotes/origin/main "$remote_tip"
+            result="CLEAN"
+            ;;
           CLEAN_MUTATED)
             printf "invalid-clean-mutation\n" >> "$CASE_REPO/app.txt"
             result="CLEAN"
@@ -1673,6 +1681,12 @@ run_case "committed-fix-changed-boundary" "small" "FINDINGS_FIXED_COMMIT_BOUNDAR
 assert_failure "committed fix with changed boundary"
 assert_eq "1" "$(call_count pass)" "committed fix with changed boundary pass count"
 assert_no_receipt "committed fix with changed boundary"
+
+run_case "remote-advance-during-clean" "normal" $'CLEAN_REMOTE_ADVANCE\nCLEAN_REMOTE_ADVANCE' "" \
+  "standalone" "committed-change"
+assert_success "remote advancement with stable merge base"
+assert_eq "2" "$(call_count pass)" "remote advancement clean wave count"
+assert_receipt "normal" "2" "remote advancement with stable merge base"
 
 run_case "empty-commit-fix" "small" "FINDINGS_FIXED_EMPTY_COMMIT:1"
 assert_failure "empty commit fix"

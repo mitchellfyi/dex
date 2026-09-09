@@ -453,15 +453,29 @@ moving_advanced_oid=$(git -C "$MOVING_REF_REPO" rev-parse HEAD)
 git -C "$MOVING_REF_REPO" switch -q feature
 git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_base_oid"
 moving_before=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
+moving_descriptor_before=$(dx_review_scope_descriptor "$MOVING_REF_REPO")
+moving_boundary_before=$(dx_review_scope_boundary "$moving_descriptor_before")
 dx_review_write_selection moving-ref small environment operator-override \
   "$MOVING_REF_REPO" "$policy_small" standalone "$policy_binding"
 git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_advanced_oid"
 moving_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
+moving_descriptor_after=$(dx_review_scope_descriptor "$MOVING_REF_REPO")
+assert_eq "$moving_boundary_before" "$(dx_review_scope_boundary "$moving_descriptor_after")" \
+  "remote tip movement preserves the wave boundary"
+[[ "$moving_descriptor_before" != "$moving_descriptor_after" ]] || assert_at "$LINENO"
 assert_eq "$moving_before" "$moving_after" \
   "comparison movement with unchanged merge base preserves scope fingerprint"
 dx_review_selection_valid moving-ref "$MOVING_REF_REPO" standalone "$policy_binding"
 moving_feature_oid=$(git -C "$MOVING_REF_REPO" rev-parse HEAD)
 git -C "$MOVING_REF_REPO" update-ref refs/remotes/origin/main "$moving_feature_oid"
+assert_eq "$moving_before" "$(dx_review_scope_fingerprint "$MOVING_REF_REPO" "$moving_descriptor_before")" \
+  "captured descriptor pins the fingerprint to the reviewed base"
+dx_review_input_write moving-input "$MOVING_REF_REPO" "$moving_before" \
+  "$(dx_review_working_fingerprint "$MOVING_REF_REPO")" "$moving_descriptor_before"
+assert_contains "$moving_base_oid" "$(dx_review_input_file moving-input)"
+[[ "$moving_boundary_before" != "$(dx_review_scope_boundary "$(dx_review_scope_descriptor "$MOVING_REF_REPO")")" ]] || assert_at "$LINENO"
+assert_rejected "malformed descriptor has no boundary" dx_review_scope_boundary $'changes\torigin/main'
+assert_rejected "extra descriptor field has no boundary" dx_review_scope_boundary "${moving_descriptor_before}"$'\textra'
 moving_material_after=$(dx_review_scope_fingerprint "$MOVING_REF_REPO")
 [[ "$moving_before" != "$moving_material_after" ]] || {
   printf 'material comparison-base change did not alter the scope fingerprint\n' >&2

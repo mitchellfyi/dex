@@ -1498,6 +1498,22 @@ dx_review_scope_descriptor() {
   printf '%s\n' $'none\t-\t-\t-'
 }
 
+# Compare the actual review boundary; the remote tip is diagnostic metadata.
+dx_review_scope_boundary() {
+  local descriptor="${1:-}" scope_mode comparison_ref comparison_oid merge_base extra
+  IFS=$'\t' read -r scope_mode comparison_ref comparison_oid merge_base extra <<< "$descriptor"
+  case "$scope_mode" in changes|none) ;; *) return 1 ;; esac
+  [[ -n "$comparison_ref" && -z "$extra" && "$descriptor" != *$'\n'* && "$descriptor" != *$'\r'* ]] || return 1
+  if [[ "$comparison_ref" == "-" ]]; then
+    [[ "$scope_mode" == "none" && "$comparison_oid" == "-" && "$merge_base" == "-" ]] || return 1
+  else
+    [[ "$comparison_oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ \
+      && "$merge_base" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || return 1
+  fi
+  [[ "$descriptor" == "${scope_mode}"$'\t'"${comparison_ref}"$'\t'"${comparison_oid}"$'\t'"${merge_base}" ]] || return 1
+  printf '%s\t%s\t%s\n' "$scope_mode" "$comparison_ref" "$merge_base"
+}
+
 # dx_review_scope_minimum_tier <repo_dir> — deterministic safety floor
 dx_review_scope_minimum_tier() {
   local repo_dir="${1:-$PWD}" descriptor
@@ -1571,9 +1587,12 @@ PY
 }
 
 __dx_review_fingerprint() {
-  local repo_dir="${1:-$PWD}" fingerprint_mode="${2:-scope}" descriptor=""
+  local repo_dir="${1:-$PWD}" fingerprint_mode="${2:-scope}" descriptor="${3:-}"
   if [[ "$fingerprint_mode" == "scope" ]]; then
-    descriptor=$(dx_review_scope_descriptor "$repo_dir") || return 1
+    if [[ -z "$descriptor" ]]; then
+      descriptor=$(dx_review_scope_descriptor "$repo_dir") || return 1
+    fi
+    dx_review_scope_boundary "$descriptor" >/dev/null || return 1
   elif [[ "$fingerprint_mode" != "working" ]]; then
     return 1
   fi
@@ -1796,7 +1815,7 @@ PY
 }
 
 dx_review_scope_fingerprint() {
-  __dx_review_fingerprint "${1:-$PWD}" scope
+  __dx_review_fingerprint "${1:-$PWD}" scope "${2:-}"
 }
 
 dx_review_working_fingerprint() {
@@ -1804,12 +1823,15 @@ dx_review_working_fingerprint() {
 }
 
 dx_review_input_write() {
-  [[ $# -eq 4 ]] || return 1
+  [[ $# -eq 4 || $# -eq 5 ]] || return 1
   local input_session="$1" input_repo="$2" input_scope="$3" input_working="$4"
-  local input_descriptor input_content input_file
+  local input_descriptor="${5:-}" input_content input_file
   input_file=$(dx_review_input_file "$input_session") || return 1
   [[ "$input_scope" =~ ^[a-f0-9]{64}$ && "$input_working" =~ ^[a-f0-9]{64}$ ]] || return 1
-  input_descriptor=$(dx_review_scope_descriptor "$input_repo") || return 1
+  if [[ -z "$input_descriptor" ]]; then
+    input_descriptor=$(dx_review_scope_descriptor "$input_repo") || return 1
+  fi
+  dx_review_scope_boundary "$input_descriptor" >/dev/null || return 1
   input_content=$(python3 "$DEX_DIR/scripts/review_input.py" "$input_repo" \
     "$input_descriptor" "$input_scope" "$input_working") || return 1
   dx_review_write_atomic "$input_file" "$input_content"

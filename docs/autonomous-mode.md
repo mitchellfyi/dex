@@ -173,6 +173,12 @@ with a concrete recovery step. State and receipts stay outside the repository
 and are accepted only while their independently hashed HEAD, staged, unstaged,
 and untracked scope still matches.
 
+Each wave captures its comparison ref and merge base once for its prompt,
+factual inputs, and scope fingerprint. A remote-tracking tip can advance while
+the wave runs without resetting clean credit if that merge base and reviewed
+content remain unchanged. A changed comparison ref, merge base, branch, or
+reviewed content still invalidates the affected evidence.
+
 After Phase 2 passes an expensive project-wide gate on the final checkout, it
 can publish the exact command and measured duration with
 `dx_review_baseline_publish`. The first review wave can reuse that bound
