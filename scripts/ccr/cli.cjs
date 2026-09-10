@@ -136,6 +136,10 @@ async function modelCommand(action, args, options) {
   if (action === 'discover') {
     adapter.idle(); const account = state.getAccount(args[0]); const models = await onboarding.discover(account);
     await configure(config => { for (const model of models) { const old = config.models.findIndex(item => item.id === model.id); if (old >= 0) config.models[old] = model; else config.models.push(model); } }, true);
+    await state.locked('accounts', () => {
+      const items = state.accounts(); const current = state.getAccount(account.id, items);
+      current.model_ids = models.map(model => model.id); state.saveAccounts(items);
+    });
     if (await adapter.health()) { await adapter.stop(); await adapter.start(); } return models;
   }
   if (action !== 'add' || !/^(anthropic|openai)\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/.test(args[0] || '')) throw new Error('Use dx model add <provider/model> --context <tokens> --tools [--images].');
@@ -197,6 +201,11 @@ async function main(args) {
   const [group, ...rest] = args;
   if (group === 'launch') { process.exitCode = await launch(rest[0] === '--' ? rest.slice(1) : rest); return; }
   const options = parse(rest); const [action, ...values] = options.positional;
+  if (options.json && ((group === 'router' && action === 'setup')
+    || (group === 'account' && ((action === 'add' && (!values[0] || !options.name || !options.yes))
+      || (['remove', 'reauth'].includes(action) && !options.yes))))) {
+    throw new Error('--json requires explicit account choices and --yes; run router setup interactively without --json.');
+  }
   const arity = group === 'accounts' ? [0, 0] : group === 'router' ? [0, 0]
     : group === 'account' ? (action === 'rename' ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
       : group === 'model' ? (['list', 'current', undefined].includes(action) ? [0, 0] : [1, 1])

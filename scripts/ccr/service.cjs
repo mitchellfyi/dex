@@ -79,8 +79,9 @@ class RouterService {
     if (method === 'register') return state.locked('sessions', () => {
       if (!state.config().enabled) throw new Error('CCR routing is disabled. Run dx router setup.');
       const id = state.checkedId(params.id);
-      const old = state.read(state.sessionFile(id), {});
-      if (active(old)) throw new Error('This Dex session already has a running routed agent.');
+      const saved = state.read(state.sessionFile(id), {});
+      if (active(saved)) throw new Error('This Dex session already has a running routed agent.');
+      const old = params.resume === false ? {} : saved;
       if (params.run_id && (!/^run_[A-Za-z0-9._-]{1,196}$/.test(params.run_id) || params.run_id.includes('..'))) throw new Error('Invalid Dex run ID.');
       if (typeof params.token !== 'string' || params.token.length < 32 || !processIdentity(params.owner_pid)) throw new Error('Invalid session authentication or process owner.');
       const session = { ...old, version: 1, id, active: true, owner_pid: params.owner_pid, owner_identity: processIdentity(params.owner_pid), auth_hash: state.hash(params.token), run_id: params.run_id || null, run_root: params.run_root || null, phase_file: params.phase_file || null, context_limit: policy.contextLimit(state.config()), cwd: params.cwd, fixed_phase: params.fixed_phase, conversation_id: params.conversation_id || old.conversation_id || null };

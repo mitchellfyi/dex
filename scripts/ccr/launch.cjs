@@ -18,7 +18,8 @@ function launchArguments(args) {
     if (arg.startsWith('--fallback-model=') || arg.startsWith('--permission-mode=')) continue;
     if (arg !== '--dangerously-skip-permissions') forwarded.push(arg);
   }
-  return { requested, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
+  const resume = args.some(arg => ['--resume', '--continue', '-r', '-c'].includes(arg) || arg.startsWith('--resume=')) && !args.includes('--fork-session');
+  return { requested, resume, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
 }
 function launchEnvironment(settings, token, session, original = process.env) {
   const env = { ...original };
@@ -42,7 +43,7 @@ async function launch(args) {
   const interactive = process.env.DEX_PHASE_HANDOFF === 'inline' && process.env.DEX_HEADLESS_RUN !== '1' && !args.includes('-p') && !args.includes('--print');
   const id = interactive && lifecycle ? lifecycle : `${(lifecycle || 'standalone').slice(0, 150)}.${state.token().slice(0, 12)}`;
   const phaseFile = lifecycle ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(lifecycle)}.phase`) : null;
-  const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile,
+  const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile, resume: parsed.resume,
     model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined) });
   let monitoring = false; let failures = 0; let recoveries = 0; let stopped = false;
   const watchdog = setInterval(async () => {

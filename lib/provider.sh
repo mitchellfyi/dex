@@ -656,7 +656,7 @@ dx_provider_apply() {
     claude|codex-plugin|anthropic-gateway|ccr) ;;
     *)
       dx_error "Provider profile ${DX_PROVIDER_PROFILE_RESOLVED} has unsupported engine: ${DX_PROVIDER_ENGINE}"
-      dx_info "Supported engines: claude, codex-plugin, anthropic-gateway"
+      dx_info "Supported engines: claude, codex-plugin, anthropic-gateway, ccr"
       return 1
       ;;
   esac

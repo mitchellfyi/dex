@@ -54,6 +54,9 @@ The confirmed renewable credential moves to macOS Keychain on macOS or an
 owner-only file on Linux. Dex removes its temporary native login. There are no
 upstream API-key fields. `--yes` skips the identity confirmation for scripted
 registration; the provider's login still requires the account owner.
+For `--json` registration, supply the provider, `--name` and `--yes`. Native
+login and installation progress go to stderr, leaving stdout for the JSON
+result. Run the setup wizard interactively without `--json`.
 
 ## Accounts and quota
 
@@ -273,3 +276,6 @@ compatibility. OAuth is not a general-purpose provider API entitlement.
 
 Browser proof: N/A. No CCR browser UI components are changed. Terminal and
 protocol flows have isolated integration coverage.
+
+See the [implementation evidence](plans/subscription-routing-acceptance.md)
+for the verified scope and the remaining live-subscription checks.

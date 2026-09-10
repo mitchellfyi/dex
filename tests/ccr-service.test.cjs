@@ -83,3 +83,13 @@ test('session state and its scoped route survive a stopped extension and re-regi
   const replacement = await register(); assert.equal((await send(token)).status, 401); assert.equal((await send(replacement, {}, { 'x-claude-code-session-id': 'conversation-one' })).status, 200);
   assert.equal(state.read(state.sessionFile('session')).conversation_id, 'conversation-one'); assert.equal(state.read(state.sessionFile('session')).current_model, 'openai/test');
 });
+test('a fresh conversation at a reused Dex ID does not inherit the previous conversation or override', async () => {
+  const token = await register(); await service.control('route', { action: 'use', model: 'openai/test', session: 'session' });
+  await send(token, {}, { 'x-claude-code-session-id': 'conversation-one' });
+  await service.control('finish', { id: 'session', token });
+  const replacement = await register('session', { resume: false });
+  const response = await send(replacement, {}, { 'x-claude-code-session-id': 'conversation-two' });
+  assert.equal(response.status, 200, await response.text());
+  assert.equal(state.read(state.sessionFile('session')).current_model, 'anthropic/test');
+  assert.equal(state.read(state.sessionFile('session')).override, undefined);
+});

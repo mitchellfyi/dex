@@ -51,6 +51,33 @@ test('model catalogue preserves unknown context provenance and modality', () => 
   assert.equal(models[0].capabilities.images, true); assert.equal(models[0].context_source, 'provider');
   assert.equal(models[1].context_source, 'conservative-default');
 });
+test('explicit discovery refreshes account eligibility as well as the shared catalogue', async t => {
+  state.saveAccounts([{ id: 'one', name: 'Main', provider: 'openai', enabled: true, model_ids: ['openai/old'] }]);
+  const models = onboarding.catalogue('openai', { models: [{ slug: 'new', context_window: 128000 }] });
+  t.mock.method(onboarding, 'discover', async () => models);
+  await cli.modelCommand('discover', ['Main'], {});
+  assert.deepEqual(state.getAccount('Main').model_ids, ['openai/new']);
+  assert.equal(state.config().models[0].id, 'openai/new');
+});
+test('temporary native files are removed even when Keychain cleanup fails', () => {
+  const login = path.join(directory, 'login'); fs.mkdirSync(login);
+  fs.writeFileSync(path.join(login, 'native.json'), 'synthetic');
+  assert.throws(() => onboarding.cleanupNative('anthropic', login, null, () => { throw new Error('Keychain unavailable'); }, 'darwin'), /Keychain unavailable/);
+  assert.equal(fs.existsSync(login), false);
+});
+test('native login progress stays on stderr for machine-readable command output', () => {
+  const bin = path.join(directory, 'login-bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf "synthetic login progress\\n"\n', { mode: 0o700 });
+  const script = `require(${JSON.stringify(path.resolve('scripts/ccr/onboarding.cjs'))}).nativeLogin('anthropic', ${JSON.stringify(directory)}, false)`;
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, ''); assert.match(result.stderr, /synthetic login progress/);
+});
+test('JSON commands reject missing interactive choices before printing prompts', () => {
+  for (const args of [['account', 'add', '--json'], ['account', 'remove', 'Main', '--json'], ['router', 'setup', '--json']]) {
+    const result = spawnSync(process.execPath, ['scripts/ccr/cli.cjs', ...args], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0); assert.equal(result.stdout, ''); assert.match(result.stderr, /--json/);
+  }
+});
 test('account identity and names cannot inject terminal or shell commands', async () => {
   assert.throws(() => onboarding.accountName('bad\x1b[2J'), /name/);
   assert.throws(() => onboarding.accountName('$(whoami)'), /name/);
@@ -60,6 +87,10 @@ test('account identity and names cannot inject terminal or shell commands', asyn
 test('launch uses private transport env and keeps native credentials out of argv', () => {
   const parsed = launchArguments(['--model', 'openai/test', '--fallback-model', 'opus', '-p', 'task']);
   assert.equal(parsed.requested, 'openai/test'); assert.equal(parsed.args.filter(arg => arg === '--model').length, 1);
+  assert.equal(parsed.resume, false);
+  assert.equal(launchArguments(['--resume', 'conversation-one']).resume, true);
+  assert.equal(launchArguments(['--continue']).resume, true);
+  assert.equal(launchArguments(['--resume', 'conversation-one', '--fork-session']).resume, false);
   assert.ok(parsed.args.includes('bypassPermissions'));
   const env = launchEnvironment({ gateway: 'http://127.0.0.1:1234' }, 'synthetic-session-token', { id: 'run1', context_limit: 128000 }, { ANTHROPIC_API_KEY: 'bad', OPENAI_API_KEY: 'bad', CCR_WEB_AUTH_TOKEN: 'bad', PATH: '/bin' });
   assert.equal(env.ANTHROPIC_API_KEY, undefined); assert.equal(env.CCR_WEB_AUTH_TOKEN, undefined);
@@ -94,6 +125,30 @@ test('auth-only Codex wrapper reaches native login without requiring an existing
 test('native credential helper dispatches stdin operations without positional arguments', () => {
   const result = spawnSync('python3', ['scripts/ccr/native.py'], { input: JSON.stringify({ operation: 'read', service: 'forbidden', account: 'test' }), encoding: 'utf8' });
   assert.notEqual(result.status, 0); assert.match(result.stderr, /ValueError/); assert.doesNotMatch(result.stderr, /IndexError/);
+});
+test('the CCR provider resolves as Claude and captures the native resume handle', () => {
+  const env = { ...process.env, DEX_DIR: path.resolve('.'), DX_STATE_DIR: path.join(directory, 'phases'), DX_LOOP_DIR: path.join(directory, 'loops'), DEX_SESSION_ID: 'ccr-capture', DX_PROVIDER_ENGINE: 'ccr', DX_PROVIDER_PROFILE: 'ccr-subscription', DX_AGENT_OVERRIDE: '' };
+  fs.mkdirSync(env.DX_STATE_DIR, { mode: 0o700 }); fs.mkdirSync(env.DX_LOOP_DIR, { mode: 0o700 });
+  const profile = spawnSync('bash', ['-c', 'source "$DEX_DIR/lib/common.sh"; dx_provider_apply; printf "%s/%s/%s" "$DX_PROVIDER_ENGINE" "$DX_PROVIDER_AGENT" "$DX_CLAUDE_MODEL"'], { encoding: 'utf8', env });
+  assert.equal(profile.status, 0, profile.stderr); assert.equal(profile.stdout, 'ccr/claude/dex/active');
+  const capture = spawnSync('bash', ['hooks/capture-provider-session.sh'], { encoding: 'utf8', env, input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'conversation-native-123' }) });
+  assert.equal(capture.status, 0, capture.stderr);
+  assert.equal(fs.readFileSync(path.join(env.DX_STATE_DIR, 'ccr-capture.claude-session'), 'utf8').trim(), 'conversation-native-123');
+});
+test('routing help and direct setup help do not require Node', () => {
+  const bin = path.join(directory, 'no-node'); fs.mkdirSync(bin);
+  const marker = path.join(directory, 'node-called'); fs.writeFileSync(path.join(bin, 'node'), `#!/bin/sh\ntouch '${marker}'\nexit 99\n`, { mode: 0o700 });
+  const env = { ...process.env, DEX_DIR: path.resolve('.'), PATH: `${bin}:${process.env.PATH}` };
+  for (const script of ['bin/router.sh', 'bin/setup.sh']) {
+    const result = spawnSync('bash', [script, '--help'], { encoding: 'utf8', env }); assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /Usage:/);
+  }
+  assert.equal(fs.existsSync(marker), false);
+});
+test('cached status line reports usage without reading provider credentials', () => {
+  state.saveAccounts([{ id: 'one', name: 'Main', usage: { observed_at: Date.now(), windows: [{ name: '5h', remaining_ratio: 0.4 }] } }]);
+  state.write(state.sessionFile('current'), { current_account: 'one', current_model: 'openai/test' });
+  const result = spawnSync('python3', ['scripts/router-status.py'], { encoding: 'utf8', env: { ...process.env, DX_ROUTER_SESSION_ID: 'current' } });
+  assert.equal(result.status, 0); assert.match(result.stdout, /openai\/test \/ Main \/ 5h 40%/);
 });
 test('CLI errors and machine output work from a separate process', () => {
   const run = args => spawnSync(process.execPath, [path.resolve('scripts/ccr/cli.cjs'), ...args], { encoding: 'utf8', env: { ...process.env, DEX_ROUTER_HOME: directory } });

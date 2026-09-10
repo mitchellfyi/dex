@@ -35,7 +35,7 @@ async function install() {
     state.privateDir(directory);
     for (const name of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(__dirname, 'runtime-package', name), path.join(directory, name));
     await new Promise((resolve, reject) => {
-      const child = spawn('npm', ['ci', '--no-audit', '--no-fund'], { cwd: directory, stdio: 'inherit', env: nativeEnv('anthropic', path.join(state.root(), 'unused-auth')) });
+      const child = spawn('npm', ['ci', '--no-audit', '--no-fund'], { cwd: directory, stdio: ['inherit', process.stderr, 'inherit'], env: nativeEnv('anthropic', path.join(state.root(), 'unused-auth')) });
       child.once('error', reject); child.once('exit', code => code === 0 ? resolve() : reject(new Error('CCR installation failed. Run dx router install to retry.')));
     });
     verifyRuntime(directory);

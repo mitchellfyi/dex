@@ -35,7 +35,7 @@ async function nativeLogin(provider, directory, device) {
   const env = nativeEnv(provider, directory);
   env.DEX_DIR = path.resolve(__dirname, '../..'); env.DEX_ROUTER_AUTH_HOME = directory; env.DEX_ROUTER_HOME = state.root();
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env, stdio: 'inherit' });
+    const child = spawn(command, args, { env, stdio: ['inherit', process.stderr, 'inherit'] });
     child.once('error', () => reject(new Error(`The ${provider === 'anthropic' ? 'Claude Code' : 'Codex'} login helper is missing. Install its official CLI, then retry dx account add.`)));
     child.once('exit', code => code === 0 ? resolve() : reject(new Error('Login was cancelled or failed. Your existing accounts are unchanged.')));
   });
@@ -67,11 +67,17 @@ async function register({ provider, name, device = false, reauth, confirm = asyn
       return account;
     }));
   } finally {
+    cleanupNative(provider, directory, native);
+  }
+}
+function cleanupNative(provider, directory, native, removeCredential = keychain, platform = process.platform) {
+  try {
     // Only the temporary native login belongs to this operation.
-    if (process.platform === 'darwin' && provider === 'anthropic') {
+    if (platform === 'darwin' && provider === 'anthropic') {
       const service = native?.native_service || `Claude Code-credentials-${state.hash(directory.normalize('NFC')).slice(0, 8)}`;
-      keychain('delete', service, process.env.USER || os.userInfo().username);
+      removeCredential('delete', service, process.env.USER || os.userInfo().username);
     }
+  } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
@@ -112,4 +118,4 @@ async function discover(account, broker = new AccountBroker()) {
   if (!response.ok) throw new Error('Model discovery is unavailable. Use dx model add with a model available to this subscription.');
   return catalogue(account.provider, await response.json());
 }
-module.exports = { accountName, identity, loginCommand, nativeLogin, register, changeAccount, catalogue, discover };
+module.exports = { accountName, identity, loginCommand, nativeLogin, register, cleanupNative, changeAccount, catalogue, discover };
