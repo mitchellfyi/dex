@@ -4,6 +4,9 @@ Refresh Dex's project context and repo memory by re-reading the current
 codebase and promoting verified observations into reviewable `.dex/`
 context files.
 
+Apply `humanizer` to generated documentation and summaries. Please remove all
+mannered prose. Preserve exact evidence, commands, paths, and required structure.
+
 The core rule: raw observations are not trusted memory. They become durable only
 after evidence, scope, current-code verification, and a reviewable diff.
 

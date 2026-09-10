@@ -81,6 +81,7 @@ verification, task completion, or phase completion to record meaningful work.
 
 ### Humanized Writing
 
+- Please remove all mannered prose.
 - Before writing or publishing user-facing prose, markdown copy, docs, release notes, PR descriptions, issue/ticket bodies, review replies, or tracker/GitHub comments, invoke the `humanizer` skill and apply its final-pass checklist.
 - Before adding or editing code comments or doc comments, apply `humanizer` in code-comment mode: plain, technical, short, and focused on why, invariants, edge cases, or public API contracts.
 - Preserve required templates, exact commands, paths, identifiers, checkboxes, code blocks, and attribution footers while humanizing surrounding prose.

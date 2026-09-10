@@ -81,7 +81,7 @@ content. Preserve its draft/ready state unless the active lifecycle phase
 explicitly requires a readiness transition; never move a ready PR back to
 draft. Reply to review comments through the review workflow rather than
 rewriting them. Run `humanizer` before posting issue descriptions, comments, PR
-copy, or summaries.
+copy, or summaries. Please remove all mannered prose.
 
 Fresh isolated review children must not create or update external issues. They
 report concrete out-of-scope candidates with evidence; the lifecycle owner

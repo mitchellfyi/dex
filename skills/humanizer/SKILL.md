@@ -7,7 +7,12 @@ description: "Humanize AI-sounding prose while preserving meaning and technical 
 
 Edit prose so it sounds like a competent person wrote it. This skill is a final writing pass, not a license to add color, facts, sources, or opinions the draft did not support.
 
+Please remove all mannered prose. Use literal, specific language instead of
+decorative metaphors or flourishes. Split dense sentences and paragraphs without
+losing technical detail.
+
 This skill is adapted from `blader/humanizer` (MIT), which is based on Wikipedia's "Signs of AI writing" guide maintained by WikiProject AI Cleanup.
+The instruction to remove mannered prose follows [Anthropic's writing density guidance](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1#writing-density).
 
 ## Workflow
 

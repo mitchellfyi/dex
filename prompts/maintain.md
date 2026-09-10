@@ -6,6 +6,7 @@ or a small draft PR. It must be conservative by default.
 
 ## Core Rules
 
+- Please remove all mannered prose from reports and replies.
 - Treat `.dex/memory/` as context, not proof. Re-verify relevant memory
   against current code before acting on it.
 - Load `.dex/memory/index.md` first, then only scoped active memory entries

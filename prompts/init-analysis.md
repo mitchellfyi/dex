@@ -2,6 +2,9 @@
 
 Analyze this codebase and generate project-specific Dex configuration. Write all output files to `.dex/` in the current repo.
 
+Apply `humanizer` to generated documentation and summaries. Please remove all
+mannered prose. Preserve exact commands, paths, identifiers, and required structure.
+
 ## Step 1: Analyze the Codebase
 
 Explore the repo to understand:

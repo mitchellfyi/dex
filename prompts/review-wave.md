@@ -30,6 +30,9 @@ current run.
 
 ## Concise Style
 
+Please remove all mannered prose. Preserve exact evidence, JSON fields, and
+result markers when editing explanations and findings.
+
 Write for transfer, not narration. Prefer paths, symbols, command summaries,
 file:line evidence, and JSON lines. Omit greetings, status prose, repeated rules,
 passing logs, unchanged code, and duplicate findings. Keep command output in the

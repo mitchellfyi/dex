@@ -71,6 +71,8 @@ would make either commit meaningless.
 
 ## Rules
 
+- Apply `humanizer` to commit subjects and bodies. Please remove all mannered
+  prose. Preserve technical identifiers and the required attribution trailer.
 - Commit coherent checkpoints early and often, including during implementation,
   review fixes, and verification repairs.
 - Run focused checks before a checkpoint when they are useful and reasonably

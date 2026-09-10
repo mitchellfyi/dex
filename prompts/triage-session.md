@@ -22,8 +22,9 @@ changing their relationships, merging, closing, or moving them. New sub-issues
 and concrete, deduplicated incidental findings are allowed by this workflow.
 
 Use the configured tracker and available tools; never assume a vendor's schema
-or install integrations. Humanize every write. Keep ticket language short,
-clear, and non-technical except where implementation needs technical detail.
+or install integrations. Humanize every write. Please remove all mannered prose.
+Keep ticket language short, clear, and non-technical except where implementation
+needs technical detail.
 
 Maintain the selected scope, processed/pending tickets, confirmed stakeholders,
 decisions, approvals, and successful write links in conversation context. Before
