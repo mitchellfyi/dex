@@ -98,7 +98,7 @@ class AccountBroker {
     if (this.refreshes.has(account.id)) return this.refreshes.get(account.id);
     const operation = state.locked(`credential-${state.checkedId(account.id)}`, async () => {
       let credentials = this.store.get(account.id);
-      if (!credentials) throw new Error('Account credentials are missing. Run dx account reauth.');
+      if (!credentials) { const error = new Error('Account credentials are missing. Run dx account reauth.'); error.reauth = true; throw error; }
       if (!force && credentials.expires_at > this.now() + 60000) return credentials;
       const provider = PROVIDERS[account.provider];
       if (!provider) throw new Error('Unsupported OAuth provider.');

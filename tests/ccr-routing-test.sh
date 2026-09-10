@@ -8,4 +8,4 @@ if ! command -v node >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.v
   printf '%s\n' 'SKIP: optional CCR tests require Node 22+'
   exit 0
 fi
-node --test tests/ccr-accounts.test.cjs tests/ccr-policy.test.cjs tests/ccr-cli.test.cjs tests/ccr-runtime.test.cjs
+node --test tests/ccr-accounts.test.cjs tests/ccr-policy.test.cjs tests/ccr-cli.test.cjs tests/ccr-service.test.cjs tests/ccr-runtime.test.cjs

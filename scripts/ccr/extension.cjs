@@ -5,7 +5,7 @@ const { RouterService } = require('./service.cjs');
 
 function createExtension(options = {}) { return {
   async setup(ctx) {
-    const settings = state.read(state.stateFile('backend'));
+    const settings = state.backend();
     const service = new RouterService({ gateway: settings.gateway, clientKey: settings.client_key, ...options });
     await service.start();
     ctx.registerGatewayRoute({ id: 'dex-subscription-session', pathPrefix: '/plugins/dex/', auth: 'none', handler: (request, response) => service.handle(request, response) });

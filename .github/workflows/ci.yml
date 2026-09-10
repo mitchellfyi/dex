@@ -13,6 +13,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test-ccr:
+    name: Optional CCR contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      # actions/setup-node v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+      - name: Install pinned optional runtime
+        run: npm ci --prefix scripts/ccr/runtime-package --no-audit --no-fund
+      - name: Exercise real CCR with local synthetic providers
+        env:
+          DEX_CCR_INTEGRATION_RUNTIME: scripts/ccr/runtime-package
+        run: bash tests/ccr-routing-test.sh
+
   check:
     name: Static checks
     runs-on: ubuntu-latest

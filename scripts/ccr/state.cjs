@@ -55,6 +55,16 @@ function checkedId(value) {
 }
 
 function stateFile(kind) { return path.join(root(), `${checkedId(kind)}.json`); }
+function backend(fallback) {
+  const metadata = read(stateFile('backend'), fallback);
+  if (!metadata) return metadata;
+  return { ...metadata, ...read(path.join(root(), 'credentials', 'local-transport.json')) };
+}
+function saveBackend(settings) {
+  const { management_key, client_key, ...metadata } = settings;
+  write(path.join(root(), 'credentials', 'local-transport.json'), { management_key, client_key });
+  write(stateFile('backend'), metadata);
+}
 function config() {
   const data = read(stateFile('config'), { version: VERSION, enabled: false, models: [], phases: {} });
   if (data.version !== VERSION || !Array.isArray(data.models) || !data.phases || typeof data.enabled !== 'boolean') throw new Error('Unsupported router configuration.');
@@ -95,4 +105,4 @@ async function locked(name, action) {
   } finally { child.stdin.end(); }
 }
 
-module.exports = { VERSION, root, token, hash, privateDir, read, write, checkedId, stateFile, config, accounts, saveAccounts, sessionFile, sessions, getAccount, locked };
+module.exports = { VERSION, root, token, hash, privateDir, read, write, checkedId, stateFile, backend, saveBackend, config, accounts, saveAccounts, sessionFile, sessions, getAccount, locked };

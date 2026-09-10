@@ -40,10 +40,24 @@ async function launch(args) {
   const token = state.token();
   const lifecycle = process.env.DEX_SESSION_ID;
   const interactive = process.env.DEX_PHASE_HANDOFF === 'inline' && process.env.DEX_HEADLESS_RUN !== '1' && !args.includes('-p') && !args.includes('--print');
-  const id = interactive && lifecycle ? lifecycle : `${lifecycle || 'standalone'}.${state.token().slice(0, 12)}`;
+  const id = interactive && lifecycle ? lifecycle : `${(lifecycle || 'standalone').slice(0, 150)}.${state.token().slice(0, 12)}`;
   const phaseFile = lifecycle ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(lifecycle)}.phase`) : null;
-  const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, phase_file: phaseFile,
+  const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile,
     model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined) });
+  let monitoring = false; let failures = 0; let recoveries = 0; let stopped = false;
+  const watchdog = setInterval(async () => {
+    if (monitoring || stopped || recoveries >= 2) return;
+    monitoring = true;
+    try {
+      if (await adapter.health(true)) { failures = 0; return; }
+      if (++failures < 3) return;
+      recoveries++; failures = 0;
+      process.stderr.write('[info]  Recovering the local CCR gateway; this conversation is preserved.\n');
+      await adapter.start({ recovery: true });
+    } catch { process.stderr.write('[warn]  CCR recovery failed. Run dx router doctor; resume the conversation after recovery.\n'); }
+    finally { monitoring = false; }
+  }, 3000);
+  watchdog.unref();
   try {
     return await new Promise((resolve, reject) => {
       const child = spawn('claude', parsed.args, { stdio: 'inherit', env: launchEnvironment(settings, token, session) });
@@ -54,6 +68,9 @@ async function launch(args) {
       child.once('error', error => { cleanup(); reject(error); });
       child.once('exit', (code, signal) => { cleanup(); resolve(code ?? (signal === 'SIGINT' ? 130 : 143)); });
     });
-  } finally { try { await ipc.call('finish', { id, token }); } catch { /* Owner death also invalidates the session capability. */ } }
+  } finally {
+    stopped = true; clearInterval(watchdog);
+    try { await ipc.call('finish', { id, token }); } catch { /* Owner death also invalidates the session capability. */ }
+  }
 }
 module.exports = { launchArguments, launchEnvironment, launch };

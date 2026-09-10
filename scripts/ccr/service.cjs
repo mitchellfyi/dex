@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, spawn } = require('node:child_process');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const state = require('./state.cjs');
@@ -13,7 +13,7 @@ const { AccountBroker, authHeaders } = require('./accounts.cjs');
 
 function processIdentity(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return '';
-  const result = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 2000 });
+  const result = spawnSync('bash', [path.resolve(__dirname, '../../bin/router-runtime.sh'), 'identity', String(pid)], { encoding: 'utf8', timeout: 3000, env: { ...process.env, DEX_DIR: path.resolve(__dirname, '../..') } });
   return result.status === 0 ? result.stdout.trim() : '';
 }
 function active(session) { return session.active === true && Boolean(session.owner_identity) && processIdentity(session.owner_pid) === session.owner_identity; }
@@ -26,7 +26,17 @@ function event(session, type, fields) {
   const file = path.join(state.root(), 'events.jsonl');
   state.privateDir(state.root());
   const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
-  try { fs.writeSync(fd, `${JSON.stringify(row)}\n`); } finally { fs.closeSync(fd); }
+  try {
+    const metadata = fs.fstatSync(fd);
+    if (!metadata.isFile() || metadata.uid !== process.getuid() || (metadata.mode & 0o077)) throw new Error('Unsafe routing event journal.');
+    fs.writeSync(fd, `${JSON.stringify(row)}\n`);
+  } finally { fs.closeSync(fd); }
+  if (session?.run_id) {
+    const child = spawn('bash', [path.resolve(__dirname, '../../bin/router-runtime.sh'), 'event', session.run_id, type, String(fields.phase ?? session.phase ?? ''), JSON.stringify({ router_session_id: session.id, ...fields })], {
+      stdio: 'ignore', timeout: 10000, env: { ...process.env, DEX_DIR: path.resolve(__dirname, '../..'), ...(session.run_root ? { DX_RUN_ROOT: session.run_root } : {}) }
+    });
+    child.on('error', () => {});
+  }
   return row;
 }
 
@@ -71,8 +81,9 @@ class RouterService {
       const id = state.checkedId(params.id);
       const old = state.read(state.sessionFile(id), {});
       if (active(old)) throw new Error('This Dex session already has a running routed agent.');
+      if (params.run_id && (!/^run_[A-Za-z0-9._-]{1,196}$/.test(params.run_id) || params.run_id.includes('..'))) throw new Error('Invalid Dex run ID.');
       if (typeof params.token !== 'string' || params.token.length < 32 || !processIdentity(params.owner_pid)) throw new Error('Invalid session authentication or process owner.');
-      const session = { ...old, version: 1, id, active: true, owner_pid: params.owner_pid, owner_identity: processIdentity(params.owner_pid), auth_hash: state.hash(params.token), run_id: params.run_id || null, phase_file: params.phase_file || null, context_limit: policy.contextLimit(state.config()), cwd: params.cwd, fixed_phase: params.fixed_phase, conversation_id: params.conversation_id || old.conversation_id || null };
+      const session = { ...old, version: 1, id, active: true, owner_pid: params.owner_pid, owner_identity: processIdentity(params.owner_pid), auth_hash: state.hash(params.token), run_id: params.run_id || null, run_root: params.run_root || null, phase_file: params.phase_file || null, context_limit: policy.contextLimit(state.config()), cwd: params.cwd, fixed_phase: params.fixed_phase, conversation_id: params.conversation_id || old.conversation_id || null };
       if (params.model) session.override = { model: policy.model(state.config(), params.model).id, scope: 'session', fallbacks: [] };
       policy.route(state.config(), session);
       state.write(state.sessionFile(id), session);
@@ -193,9 +204,10 @@ class RouterService {
             }
             this.tickets.delete(ticket);
             let payload; try { payload = JSON.parse(bytes); } catch { payload = {}; }
-            const problem = policy.failure(upstream.status, payload, upstream.headers);
+            let problem = policy.failure(upstream.status, payload, upstream.headers);
             if (upstream.status === 401 && authRetry === 0) {
-              try { credentials = await this.broker.access(choice.account, true); continue; } catch { /* Record the exhausted authentication attempt below. */ }
+              try { credentials = await this.broker.access(choice.account, true); continue; }
+              catch (error) { if (!error.reauth) problem = { retry: true, reason: 'refresh-unavailable', until: Date.now() + 10000 }; }
             }
             if (!problem.retry) { ipc.json(response, upstream.status, { error: { type: 'invalid_request_error', message: 'The provider rejected this request. Check the selected model and supported content.', provider_status: upstream.status } }); return; }
             await this.updateAccount(choice.account.id, item => {
@@ -209,9 +221,10 @@ class RouterService {
           await state.locked('sessions', () => {
             const current = state.read(state.sessionFile(session.id));
             current.current_account = choice.account.id; current.current_model = choice.model.id; current.phase = selected.phase;
+            delete current.paused_reason;
             state.write(state.sessionFile(session.id), current);
           });
-          event(session, 'route.selected', { account_id: choice.account.id, model: choice.model.id, phase: selected.phase });
+          if (session.current_account !== choice.account.id || session.current_model !== choice.model.id || session.phase !== selected.phase) event(session, 'route.selected', { account_id: choice.account.id, model: choice.model.id, phase: selected.phase });
           response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store', 'x-dex-model': choice.model.id });
           try { if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), response); else response.end(); }
           finally { this.tickets.delete(ticket); }
@@ -220,7 +233,13 @@ class RouterService {
       }
       throw new Error('All eligible routes are unavailable. Your session is preserved; use dx accounts or dx route use to recover.');
     } catch (error) {
-      if (session) event(session, 'route.paused', { reason: response.headersSent ? 'partial-response' : 'no-completed-response' });
+      if (session) {
+        const reason = response.headersSent ? 'partial-response' : 'no-completed-response';
+        try {
+          await state.locked('sessions', () => { const current = state.read(state.sessionFile(session.id)); current.paused_reason = reason; state.write(state.sessionFile(session.id), current); });
+          event(session, 'route.paused', { reason });
+        } catch { /* An unsafe journal must not leave the HTTP request unresolved. */ }
+      }
       if (!response.headersSent && !response.destroyed) ipc.json(response, session ? 503 : 401, { error: { type: 'api_error', message: error.message } });
       else response.destroy();
     } finally { this.inFlight.delete(controller); response.off('close', abort); }

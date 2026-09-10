@@ -260,6 +260,12 @@ every run.
 
 ## Provider Profiles
 
+Dex can optionally run Claude Code through CCR with several subscription OAuth
+accounts, quota display, account fallback and phase-based model selection. Run
+`dx setup --router` to add it, or keep using the direct Claude and Codex profiles.
+See [subscription routing](docs/subscription-routing.md) for account setup,
+supported behavior and the compatibility checks.
+
 Dex defaults to the `claude` agent using your session's default model and
 effort. You can override one run from the terminal:
 

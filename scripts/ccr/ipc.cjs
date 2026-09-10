@@ -1,13 +1,14 @@
 'use strict';
 const http = require('node:http');
 const path = require('node:path');
-const os = require('node:os');
 const state = require('./state.cjs');
 
 // Unix socket paths are short on macOS. The private directory authenticates
 // local callers by UID; session credentials authenticate model requests.
 function socketPath() {
-  const dir = path.join(os.tmpdir(), `dex-ccr-${process.getuid()}-${state.hash(state.root()).slice(0,16)}`);
+  // TMPDIR may be an arbitrarily deep worktree/test directory. macOS accepts
+  // at most 104 bytes for a Unix socket path, so use a private short directory.
+  const dir = path.join('/tmp', `dex-ccr-${process.getuid()}-${state.hash(state.root()).slice(0,16)}`);
   state.privateDir(dir);
   return path.join(dir, 'control.sock');
 }

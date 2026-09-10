@@ -125,5 +125,10 @@ else
   if [[ "$PHASE" =~ ^[0-6]$ ]]; then
     PHASE_LABEL=" · $(dx_lifecycle_phase_label "$PHASE")"
   fi
-  echo "Phase ${PHASE}/6${PHASE_LABEL}${ITER}${REVIEW_WORK}${ELAPSED}"
+  ROUTE_LABEL=""
+  if [[ -n "${DX_ROUTER_SESSION_ID:-}" ]]; then
+    ROUTE_LABEL=$(python3 "$DEX_DIR/scripts/router-status.py" 2>/dev/null || true)
+    [[ -z "$ROUTE_LABEL" ]] || ROUTE_LABEL=" | $ROUTE_LABEL"
+  fi
+  echo "Phase ${PHASE}/6${PHASE_LABEL}${ITER}${REVIEW_WORK}${ELAPSED}${ROUTE_LABEL}"
 fi

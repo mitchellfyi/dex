@@ -37,6 +37,39 @@ async function question(prompt, fallback) {
 }
 async function confirm(prompt, yes) { return yes || /^y(es)?$/i.test(await question(`${prompt} (y/N)`, 'n')); }
 function display(value, json) { if (json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`); else if (typeof value === 'string') out(value); else process.stdout.write(`${JSON.stringify(value, null, 2)}\n`); }
+function render(group, action, value, options) {
+  if (options.json || typeof value === 'string') { display(value, options.json); return; }
+  if (value?.session && value.route) {
+    const session = value.session; const account = state.accounts().find(item => item.id === session.current_account);
+    out(`Session  ${session.id}`); out(`Phase    ${value.route.phase} (${policy.PHASES[value.route.phase]})`);
+    out(`Policy   ${session.override ? `${session.override.scope} override` : 'configured phases'}`);
+    out(`Selected ${value.route.models.map(model => model.id).join(' -> ')}`);
+    out(`Last used ${session.current_model || 'pending'}${account ? ` / ${account.name}` : ''}`);
+    if (session.pinned_account) out(`Pinned   ${state.getAccount(session.pinned_account).name}`);
+    if (session.paused_reason) out(`Paused   ${session.paused_reason}; inspect dx accounts`);
+    return;
+  }
+  if (group === 'model' && Array.isArray(value)) {
+    if (!value.length) out('No models registered. Add an account, or run dx model add.');
+    for (const model of value) out(`${model.id.padEnd(42)} context ${model.context_window} (${model.context_source || 'configured'})${model.capabilities?.images ? '; images' : ''}`);
+    return;
+  }
+  if ((group === 'route' && ['configure', 'policy'].includes(action)) && value?.phases) {
+    out(`Default  ${value.default_model || 'not selected'}`);
+    for (let phase = 0; phase <= 6; phase++) { const route = value.phases[phase] || { model: value.default_model }; out(`${phase} ${policy.PHASES[phase].padEnd(10)} ${[route.model, ...(route.fallbacks || [])].join(' -> ')}${route.effort ? `; effort ${route.effort}` : ''}`); }
+    return;
+  }
+  if (group === 'account' && value?.name) {
+    out(`${value.name} / ${value.provider}`); out(`Status   ${value.enabled ? value.status || 'ready' : 'disabled'}`); out(`Identity ${value.identity || value.id}`);
+    return;
+  }
+  if (group === 'router' && value?.release) {
+    out(`CCR ${value.release} / ${value.health}`); out(`Routing ${value.enabled ? 'enabled' : 'disabled'}; ${value.accounts} accounts; ${value.models} models; ${value.active_sessions} active sessions`);
+    out(`Credentials: ${value.credential_store}`); if (!value.installed) out('Run dx router setup to install the optional runtime.');
+    return;
+  }
+  display(value, false);
+}
 async function configure(change, catalogueChange = false) {
   return state.locked('runtime', () => state.locked('config', () => {
     if (catalogueChange) adapter.idle();
@@ -67,7 +100,7 @@ async function accounts(options) {
   } while (options.watch);
 }
 async function addAccount(provider, options, previous) {
-  if (!provider) { out('1. Anthropic Claude\n2. OpenAI ChatGPT / Codex'); provider = (await question('Provider', '1')) === '2' ? 'openai' : 'anthropic'; }
+  if (!provider) { out('1. Anthropic Claude'); out('2. OpenAI ChatGPT / Codex'); const selected = await question('Provider', '1'); if (!['1', '2'].includes(selected)) throw new Error('Choose 1 or 2.'); provider = selected === '2' ? 'openai' : 'anthropic'; }
   const name = options.name || previous?.name || await question('Account name', `${provider}-${state.accounts().filter(item => item.provider === provider).length + 1}`);
   info(`Opening ${provider} subscription login. Existing accounts stay signed in.`);
   const result = await onboarding.register({ provider, name, device: options.device, reauth: previous?.id, confirm: identity => confirm(`Register ${clean(identity)} as ${clean(name)}?`, options.yes) });
@@ -145,6 +178,7 @@ async function routerCommand(action, options) {
   if (action === 'enable') { await configure(config => { policy.contextLimit(config); config.enabled = true; }); await adapter.start(); return 'CCR routing enabled.'; }
   if (action === 'disable') { await configure(config => { config.enabled = false; }); return 'CCR routing disabled for new sessions. Running sessions can finish. Select dx provider use claude-subscription for direct launches.'; }
   if (action === 'stop') return adapter.stop();
+  if (action === 'ui') { await adapter.openUI(); return 'Opened the private CCR dashboard. Dex account and routing settings are managed by dx commands.'; }
   if (action === 'restart') { await adapter.stop(); await adapter.start(); return 'CCR restarted.'; }
   if (action === 'start') { if (!state.config().enabled) throw new Error('Run dx router setup or enable first.'); await adapter.start(); return 'CCR started.'; }
   if (action === 'update') { adapter.idle(); await adapter.install(); return `Using tested release ${adapter.RELEASE}. CCR upgrades ship with Dex after contract tests pass.`; }
@@ -163,6 +197,12 @@ async function main(args) {
   const [group, ...rest] = args;
   if (group === 'launch') { process.exitCode = await launch(rest[0] === '--' ? rest.slice(1) : rest); return; }
   const options = parse(rest); const [action, ...values] = options.positional;
+  const arity = group === 'accounts' ? [0, 0] : group === 'router' ? [0, 0]
+    : group === 'account' ? (action === 'rename' ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
+      : group === 'model' ? (['list', 'current', undefined].includes(action) ? [0, 0] : [1, 1])
+        : group === 'route' ? (['status', 'policy', 'unpin-account', undefined].includes(action) ? [0, 0] : [1, 1]) : [0, 0];
+  const provided = group === 'accounts' ? options.positional.length : values.length;
+  if (provided < arity[0] || provided > arity[1]) throw new Error(`Unexpected arguments for dx ${group}${action ? ` ${action}` : ''}. Run dx ${group} --help.`);
   let result;
   if (group === 'accounts') { await accounts(options); return; }
   if (group === 'account') result = await accountCommand(action || 'list', values, options);
@@ -170,7 +210,7 @@ async function main(args) {
   else if (group === 'route') result = await routeCommand(action || 'status', values, options);
   else if (group === 'router') result = await routerCommand(action || 'status', options);
   else throw new Error('Unknown subscription routing command.');
-  if (result !== undefined) display(result, options.json);
+  if (result !== undefined) render(group, action || (group === 'model' ? 'list' : 'status'), result, options);
 }
 if (require.main === module) {
   process.umask(0o077);

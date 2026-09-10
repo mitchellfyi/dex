@@ -7,7 +7,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-Usage: dx router <setup|install|start|stop|restart|status|doctor|enable|disable|update>
+Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disable|update>
        dx account add [anthropic|openai] [--name <name>] [--device] [--yes]
        dx account <show|rename|enable|disable|reauth|remove|doctor> <name>
        dx accounts [--watch|--json]
