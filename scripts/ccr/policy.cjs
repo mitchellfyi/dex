@@ -14,14 +14,19 @@ function model(config, id) {
 }
 
 function phase(session) {
-  if (session.fixed_phase !== undefined) return session.fixed_phase;
+  if (session.fixed_phase !== undefined) {
+    if (!Number.isInteger(session.fixed_phase) || session.fixed_phase < 0 || session.fixed_phase > 6) throw new Error('Invalid fixed phase.');
+    return session.fixed_phase;
+  }
   if (!session.phase_file) return 0;
   try {
+    const metadata = fs.lstatSync(session.phase_file);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.uid !== process.getuid() || (metadata.mode & 0o022) || metadata.size > 32) throw new Error('Unsafe lifecycle phase file.');
     const value = fs.readFileSync(session.phase_file, 'utf8').trim();
     if (!/^[0-6]$/.test(value)) throw new Error('Invalid lifecycle phase.');
     return Number(value);
   } catch (error) {
-    if (error.code === 'ENOENT') return 0;
+    if (error.code === 'ENOENT') throw new Error('Lifecycle phase is missing. Resume the Dex lifecycle before continuing.');
     throw error;
   }
 }
@@ -47,14 +52,17 @@ function contextLimit(config) {
 function candidates(items, selection, session, now = Date.now()) {
   const result = [];
   for (const target of selection.models) {
+    const windows = account => account.usage && now - account.usage.observed_at < 120000 && !account.usage_error
+      ? account.usage.windows.filter(window => (!window.model_pool || target.id.includes(window.model_pool)) && (!window.resets_at || window.resets_at > now)) : [];
     const available = items.filter(item => item.enabled && item.provider === target.provider && item.status !== 'reauth-required'
       && (!selection.pinned || item.id === selection.pinned)
+      && (!item.model_ids || item.model_ids.includes(target.id))
+      && !windows(item).some(window => window.remaining_ratio === 0)
       && !(item.cooldown_until > now) && !(item.model_cooldowns?.[target.id] > now));
     available.sort((a, b) => {
       if (a.id === session.current_account) return -1;
       if (b.id === session.current_account) return 1;
-      const remaining = account => account.usage && now - account.usage.observed_at < 120000
-        ? Math.min(...account.usage.windows.map(window => window.remaining_ratio ?? 1), 1) : 0.5;
+      const remaining = account => windows(account).length ? Math.min(...windows(account).map(window => window.remaining_ratio ?? 1), 1) : 0.5;
       return remaining(b) - remaining(a) || a.created_at - b.created_at;
     });
     for (const account of available) result.push({ account, model: target, effort: selection.effort });
@@ -88,8 +96,9 @@ function validateRequest(body, target) {
   }
   visit(body.messages);
   if (body.tools?.length && capabilities.tools !== true) throw new Error('The selected model has no verified tool support.');
-  // A conservative bound protects manual requests as well as Claude's compaction.
-  if (Buffer.byteLength(JSON.stringify(body)) > target.context_window * 4) throw new Error('The conversation exceeds this route’s context budget. Compact it before switching.');
+  // This is a payload guard, not a tokenizer. Native compaction uses the smallest
+  // configured context window; providers remain authoritative about token limits.
+  if (Buffer.byteLength(JSON.stringify(body)) > target.context_window * 4) throw new Error('The conversation exceeds this route’s payload budget. Compact it before switching.');
 }
 
 module.exports = { PHASES, model, phase, route, contextLimit, candidates, failure, validateRequest };

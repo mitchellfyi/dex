@@ -4,6 +4,7 @@
 # run in parallel. Use `shared` isolation only when a test must inherit state.
 attribution-test.sh	slow	all	1200	hermetic
 attribution-worktree-test.sh	fast	all	600	hermetic
+ccr-routing-test.sh	fast	all	600	hermetic
 checkpoint-test.sh	fast	all	600	hermetic
 cli-help-test.sh	fast	all	600	hermetic
 cli-numeric-validation-test.sh	fast	all	600	hermetic

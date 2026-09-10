@@ -64,7 +64,7 @@ def keychain(operation, service, account, value=None):
 
 
 def main():
-    if sys.argv[1] == "lock":
+    if len(sys.argv) > 1 and sys.argv[1] == "lock":
         fd = os.open(sys.argv[2], os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:

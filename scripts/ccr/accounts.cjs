@@ -39,13 +39,14 @@ function normalizeTokens(provider, raw) {
   const refresh = tokens.refreshToken || tokens.refresh_token;
   if (typeof access !== 'string' || !access || typeof refresh !== 'string' || !refresh) throw new Error('A renewable subscription OAuth login is required. API keys are not supported.');
   const claims = jwt(tokens.id_token || access);
+  const expiry = Number(tokens.expiresAt || tokens.expires_at || jwt(access).exp * 1000);
   return {
     access_token: access, refresh_token: refresh,
-    expires_at: Number(tokens.expiresAt || tokens.expires_at || jwt(access).exp * 1000) || Date.now() + 3600000,
+    expires_at: Number.isFinite(expiry) && expiry > 0 ? (expiry < 100000000000 ? expiry * 1000 : expiry) : Date.now() + 3600000,
     account_id: tokens.account_id || claims['https://api.openai.com/auth']?.chatgpt_account_id,
     subject: claims.sub,
     email: claims.email || claims['https://api.openai.com/profile']?.email,
-    scope: tokens.scopes?.join(' ') || tokens.scope
+    scope: Array.isArray(tokens.scopes) ? tokens.scopes.join(' ') : tokens.scope
   };
 }
 
@@ -124,10 +125,12 @@ class AccountBroker {
     if (account.usage && this.now() - account.usage.observed_at < 30000) return account.usage;
     if (this.usageRequests.has(account.id)) return this.usageRequests.get(account.id);
     const operation = (async () => {
-      const credentials = await this.access(account);
-      const response = await this.fetch(PROVIDERS[account.provider].usage, {
+      let credentials = await this.access(account);
+      const request = () => this.fetch(PROVIDERS[account.provider].usage, {
         headers: authHeaders(account.provider, credentials), redirect: 'error', signal: AbortSignal.timeout(15000)
       });
+      let response = await request();
+      if (response.status === 401) { await response.body?.cancel(); credentials = await this.access(account, true); response = await request(); }
       if (!response.ok) throw new Error('Quota information is temporarily unavailable.');
       return normalizeUsage(account.provider, await response.json(), this.now());
     })();

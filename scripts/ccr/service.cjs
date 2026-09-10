@@ -53,9 +53,12 @@ class RouterService {
     fs.chmodSync(socket, 0o600);
     this.timer = setInterval(() => { for (const [key, value] of this.tickets) if (value.expires < Date.now()) this.tickets.delete(key); }, 30000);
     this.timer.unref();
+    this.quotaTimer = setInterval(() => { this.control('usage', {}).catch(() => {}); }, 60000);
+    this.quotaTimer.unref();
   }
   async stop() {
     clearInterval(this.timer);
+    clearInterval(this.quotaTimer);
     for (const controller of this.inFlight) controller.abort();
     this.tickets.clear();
     if (this.server) await new Promise(resolve => this.server.close(resolve));
@@ -90,7 +93,7 @@ class RouterService {
       const selected = params.account ? [state.getAccount(params.account)] : state.accounts();
       await Promise.all(selected.filter(item => item.enabled).map(async account => {
         try { const usage = await this.broker.usage(account); await this.updateAccount(account.id, item => { item.usage = usage; delete item.usage_error; }); }
-        catch { await this.updateAccount(account.id, item => { item.usage_error = 'unavailable'; }); }
+        catch (error) { await this.updateAccount(account.id, item => { item.usage_error = 'unavailable'; if (error.reauth) item.status = 'reauth-required'; }); }
       }));
       return state.accounts();
     }
@@ -140,8 +143,9 @@ class RouterService {
       const conversation = request.headers['x-claude-code-session-id'];
       if (conversation) {
         state.checkedId(conversation);
-        if (session.conversation_id && session.conversation_id !== conversation) throw new Error('Claude conversation does not match its Dex session.');
-        await state.locked('sessions', () => { const current = state.read(state.sessionFile(session.id)); current.conversation_id = conversation; state.write(state.sessionFile(session.id), current); });
+        const childRequest = Boolean(request.headers['x-claude-code-parent-agent-id']);
+        if (!childRequest && session.conversation_id && session.conversation_id !== conversation) throw new Error('Claude conversation does not match its Dex session.');
+        if (!childRequest) await state.locked('sessions', () => { const current = state.read(state.sessionFile(session.id)); current.conversation_id = conversation; state.write(state.sessionFile(session.id), current); });
       }
       const selected = policy.route(state.config(), session);
       // Native /model is an explicit request override; dex/active follows policy.
@@ -182,7 +186,11 @@ class RouterService {
             break;
           }
           if (!upstream.ok) {
-            const bytes = await upstream.text();
+            let bytes = '';
+            if (upstream.body) for await (const chunk of upstream.body) {
+              bytes += Buffer.from(chunk).toString('utf8');
+              if (Buffer.byteLength(bytes) > 65536) { bytes = ''; break; }
+            }
             this.tickets.delete(ticket);
             let payload; try { payload = JSON.parse(bytes); } catch { payload = {}; }
             const problem = policy.failure(upstream.status, payload, upstream.headers);
