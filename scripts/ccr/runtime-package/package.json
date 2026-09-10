@@ -1,0 +1,8 @@
+{
+  "name": "dex-ccr-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "engines": { "node": ">=22" },
+  "dependencies": { "@musistudio/claude-code-router": "3.1.0" },
+  "overrides": { "@the-next-ai/ai-gateway": "1.0.21" }
+}
