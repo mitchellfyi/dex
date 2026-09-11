@@ -58,7 +58,7 @@ if command -v python3 >/dev/null 2>&1; then
   # tests/*.py mostly self-check by running below, but import-only fixtures
   # (dex_test_http.py) and research/*.py otherwise surface a syntax error as
   # an opaque test failure instead of a named one.
-  python3 -m py_compile "$ROOT"/hooks/*.py "$ROOT"/scripts/*.py \
+  python3 -m py_compile "$ROOT"/hooks/*.py "$ROOT"/scripts/*.py "$ROOT"/scripts/ccr/*.py \
     "$ROOT"/tests/*.py "$ROOT"/research/*.py \
     "$ROOT"/research/review-loop/scenarios/*/hidden/oracle.py \
     || fail "python3 -m py_compile"
@@ -108,6 +108,9 @@ fi
 
 if command -v node >/dev/null 2>&1; then
   node --check "$ROOT/scripts/ui-capture.cjs" || fail "node --check scripts/ui-capture.cjs"
+  for ccr_script in "$ROOT"/scripts/ccr/*.cjs "$ROOT"/tests/ccr-*.test.cjs; do
+    node --check "$ccr_script" || fail "node --check $ccr_script"
+  done
 else
   printf 'SKIP node syntax (node not installed)\n'
 fi

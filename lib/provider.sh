@@ -60,7 +60,7 @@ import re
 import sys
 from urllib.parse import urlparse
 
-BUILTINS = {"claude-subscription", "codex-subscription"}
+BUILTINS = {"claude-subscription", "codex-subscription", "ccr-subscription"}
 KNOWN_KEYS = {
     "engine",
     "auth",
@@ -224,6 +224,9 @@ __dx_provider_builtin_get() {
     claude-subscription:auth) printf '%s\n' "subscription" ;;
     codex-subscription:engine) printf '%s\n' "codex-plugin" ;;
     codex-subscription:auth) printf '%s\n' "chatgpt-subscription" ;;
+    ccr-subscription:engine) printf '%s\n' "ccr" ;;
+    ccr-subscription:auth) printf '%s\n' "subscription" ;;
+    ccr-subscription:model|ccr-subscription:plan_model|ccr-subscription:haiku_model) printf '%s\n' "dex/active" ;;
     *) return 1 ;;
   esac
 }
@@ -514,7 +517,7 @@ dx_agent_default_profile() {
 
 dx_agent_for_engine() {
   case "$1" in
-    claude|anthropic-gateway) printf '%s\n' "claude" ;;
+    claude|anthropic-gateway|ccr) printf '%s\n' "claude" ;;
     codex-plugin) printf '%s\n' "codex" ;;
     *) return 1 ;;
   esac
@@ -650,10 +653,10 @@ dx_provider_apply() {
     return 1
   fi
   case "$DX_PROVIDER_ENGINE" in
-    claude|codex-plugin|anthropic-gateway) ;;
+    claude|codex-plugin|anthropic-gateway|ccr) ;;
     *)
       dx_error "Provider profile ${DX_PROVIDER_PROFILE_RESOLVED} has unsupported engine: ${DX_PROVIDER_ENGINE}"
-      dx_info "Supported engines: claude, codex-plugin, anthropic-gateway"
+      dx_info "Supported engines: claude, codex-plugin, anthropic-gateway, ccr"
       return 1
       ;;
   esac
@@ -781,6 +784,11 @@ dx_provider_claude() {
   env_args+=(CLAUDE_CODE_STOP_HOOK_BLOCK_CAP="${CLAUDE_CODE_STOP_HOOK_BLOCK_CAP:-1000}")
 
   case "$DX_PROVIDER_ENGINE" in
+    ccr)
+      # shellcheck disable=SC1091
+      source "$DEX_DIR/lib/router.sh"
+      dx_router_launch "$@"
+      ;;
     anthropic-gateway)
       local token=""
       if [[ -n "${DX_PROVIDER_AUTH_ENV:-}" ]]; then
@@ -984,6 +992,11 @@ dx_provider_codex_prompt_from_claude_args() {
 
 dx_provider_codex() {
   case "${DX_PROVIDER_CODEX_WRAPPER:-0}" in
+    auth-login)
+      [[ $# -eq 3 || ( $# -eq 4 && "${4:-}" == "--device-auth" ) ]] || return 2
+      [[ "$1" == "-c" && "$2" == 'cli_auth_credentials_store="file"' && "$3" == "login" ]] || return 2
+      [[ -n "${DEX_ROUTER_AUTH_HOME:-}" && "${CODEX_HOME:-}" == "$DEX_ROUTER_AUTH_HOME" ]] || return 2
+      ;;
     1)
       dx_provider_codex_wrapper_args "$@" || return 2
       ;;
@@ -1362,11 +1375,14 @@ dx_provider_agent_ready_check() {
     codex-plugin)
       dx_provider_codex_ready_check
       ;;
-    claude|anthropic-gateway)
+    claude|anthropic-gateway|ccr)
       if ! command -v claude >/dev/null 2>&1; then
         dx_error "Claude Code CLI not found; the ${DX_PROVIDER_PROFILE_RESOLVED:-selected} profile cannot launch work."
         dx_info "Install Claude Code, then run 'dx provider doctor'."
         return 1
+      fi
+      if [[ "$DX_PROVIDER_ENGINE" == "ccr" ]]; then
+        bash "$DEX_DIR/bin/router.sh" router check || return 1
       fi
       ;;
     *)
@@ -1404,6 +1420,15 @@ Execution guidance:
   requirements exactly. Interactive lifecycle sessions use Dex's Stop hook to
   audit work and advance phases without leaving the Codex session.
 EOF
+  elif [[ "$DX_PROVIDER_ENGINE" == "ccr" ]]; then
+    cat <<'EOF'
+
+Dex routes this Claude Code session through its subscription account pool.
+Use `dx route status` or `/dxroute` to inspect the active route. Use
+`dx route use provider/model` or `/dxmodel` to change the next request.
+Keep account credentials and routing environment variables unchanged.
+Artifacts that belong to the task must be saved in the local workspace.
+EOF
   elif [[ "$DX_PROVIDER_ENGINE" == "anthropic-gateway" ]]; then
     cat <<EOF
 
@@ -1425,6 +1450,7 @@ dx_provider_list() {
   printf '%s\n' "Built-in profiles:"
   printf '  %s\n' "claude-subscription     Claude Code with Claude subscription OAuth"
   printf '  %s\n' "codex-subscription      Codex CLI with ChatGPT subscription authentication"
+  printf '  %s\n' "ccr-subscription        Optional CCR account pools inside Claude Code"
 
   local repo_config
   repo_config=$(dx_provider_repo_config 2>/dev/null || true)
@@ -1592,6 +1618,10 @@ dx_provider_doctor() {
   fi
 
   case "$DX_PROVIDER_ENGINE" in
+    ccr)
+      bash "$DEX_DIR/bin/router.sh" router doctor || failed=1
+      bash "$DEX_DIR/bin/router.sh" router check || failed=1
+      ;;
     claude|codex-plugin)
       if [[ "${DX_ALLOW_API_BILLED_AUTH:-0}" == "1" ]]; then
         dx_warn "API/gateway billing env vars allowed by DX_ALLOW_API_BILLED_AUTH=1"

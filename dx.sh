@@ -85,6 +85,8 @@ __dx_cli() {
     test)      bash "$DEX_DIR/bin/test.sh" "$@" ;;
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
     provider)  dx_provider_command "$@" ;;
+    setup)     bash "$DEX_DIR/bin/setup.sh" "$@" ;;
+    router|account|accounts|model|route) bash "$DEX_DIR/bin/router.sh" "$cmd" "$@" ;;
     run)       __dx_run_spec_cli "$@" ;;
     control)   bash "$DEX_DIR/bin/control.sh" "$@" ;;
     sessions)  bash "$DEX_DIR/bin/sessions.sh" "$@" ;;
@@ -160,6 +162,10 @@ __dx_cli() {
       echo "  dx test             Run Dex checks or verify the current project"
       echo "  dx config           Configure integrations (ticket tracker, Figma, etc.)"
       echo "  dx provider         Configure provider/model execution profiles"
+      echo "  dx setup            Choose direct agents or optional CCR routing"
+      echo "  dx accounts         Show subscription accounts and quota"
+      echo "  dx router setup     Add optional CCR account pools and model routing"
+      echo "  dx route            Inspect or change a running session's model"
       echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
       echo "  dx run --spec-url URL --run-token TOKEN"
       echo "  dx control          Pause, stop, advance, jump, or resume the current lifecycle"
@@ -4028,7 +4034,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$1" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;

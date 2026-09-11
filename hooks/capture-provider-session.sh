@@ -32,7 +32,7 @@ dx_agent_session_handle_valid "$PROVIDER_SESSION_ID" || exit 0
 
 case "${DX_PROVIDER_ENGINE:-}" in
   codex-plugin) AGENT_KIND="codex" ;;
-  claude|anthropic-gateway) AGENT_KIND="claude" ;;
+  claude|anthropic-gateway|ccr) AGENT_KIND="claude" ;;
   *) exit 0 ;;
 esac
 

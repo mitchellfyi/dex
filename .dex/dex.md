@@ -11,6 +11,9 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
   shell-command reading both share; `scripts/*.py` — runtime helpers for
   redaction, settings, lifecycle state, run logs, and project ownership
 - **Node (no dependencies):** `scripts/ui-capture.cjs` — Playwright UI-capture driver
+- **Optional Node 22+ runtime:** `scripts/ccr/` — Dex's subscription account and
+  routing extension for pinned Claude Code Router. Direct provider profiles do
+  not load it. Its dependency lock is in `scripts/ccr/runtime-package/`.
 - **Markdown + YAML frontmatter:** Skills, agents, guards, prompts, rules
 
 ## Quality Gates
@@ -19,6 +22,7 @@ Dex lives at <https://dexcode.ai> and is owned and run by Synthetic Industry (<h
 | Lint + syntax | `bash tests/check.sh` | shellcheck, `zsh -n`, `bash -n` for shipped shell, `py_compile`, inline-Python syntax, bare test assertions, zsh reserved names, `node --check`, and optional `actionlint` |
 | Test | `bash tests/run-all.sh` | Manifest-driven suite with declared lanes, platforms, timeouts, and isolation |
 | Test (focused) | `bash tests/<name>-test.sh` | Single surface |
+| CCR contract | `DEX_CCR_INTEGRATION_RUNTIME=scripts/ccr/runtime-package bash tests/ccr-routing-test.sh` | After `npm ci --prefix scripts/ccr/runtime-package`; synthetic providers, no real OAuth credentials |
 | Format | N/A | No formatter configured |
 | Typecheck | N/A | Not applicable (shell/Python) |
 | Generate | N/A | No code generation |
@@ -40,8 +44,8 @@ prompts/             Prompt templates for skills/agents
   phase-audits/      Phase-specific audit prompts (0-6, two Phase 3 variants,
                      plus prompt-loop)
 research/            DX research and the isolated review-loop evaluation harness
-scripts/             Python runtime helpers and the Node UI-capture driver
-skills/              Lifecycle skills (21 total, linked into ~/.claude/skills/)
+scripts/             Python runtime helpers, the Node UI-capture driver, and optional CCR extension
+skills/              Lifecycle and routing skills (linked into ~/.claude/skills/)
 .dex/                Per-project config (this directory)
   providers.json     Repo-local default agent/provider profile
 ```
@@ -58,6 +62,7 @@ skills/              Lifecycle skills (21 total, linked into ~/.claude/skills/)
 | Integration | Tool | Status |
 |-------------|------|--------|
 | Ticket tracker | GitHub Issues (`gh`) | enabled |
+| Subscription routing | Optional CCR + Dex extension | opt-in; see `docs/subscription-routing.md` |
 | Design | Figma MCP | not configured |
 | Error monitoring (Sentry) | Sentry MCP | not configured |
 | Error monitoring (Honeybadger) | Honeybadger MCP | not configured |

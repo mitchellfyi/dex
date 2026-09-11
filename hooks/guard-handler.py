@@ -212,8 +212,9 @@ GUARD_EVAL_TIMEOUT_SECONDS = 2
 PROVIDER_BUILTIN_ENGINES = {
     'claude-subscription': 'claude',
     'codex-subscription': 'codex-plugin',
+    'ccr-subscription': 'ccr',
 }
-PROVIDER_ENGINES = {'claude', 'codex-plugin', 'anthropic-gateway'}
+PROVIDER_ENGINES = {'claude', 'codex-plugin', 'anthropic-gateway', 'ccr'}
 
 BREAK_GLASS_COMMANDS = {
     'pause', 'detach', 'stop', 'cancel', 'done', 'complete', 'jump', 'phase',

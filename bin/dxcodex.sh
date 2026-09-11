@@ -9,6 +9,7 @@ usage() {
   printf '%s\n' "Usage: dxcodex.sh exec [--] [prompt]"
   printf '%s\n' "       dxcodex.sh session [--resume <session-id>|--resume-last] [--] [prompt]"
   printf '%s\n' "       dxcodex.sh review [--uncommitted|--base <branch>|--commit <sha>] [prompt]"
+  printf '%s\n' "       dxcodex.sh auth-login [--device-auth] (Dex account wizard only)"
 }
 
 reject_owned_option() {
@@ -79,6 +80,16 @@ case "$subcmd" in
   help|--help|-h)
     usage
     exit 0
+    ;;
+  auth-login)
+    [[ -n "${DEX_ROUTER_AUTH_HOME:-}" && "${CODEX_HOME:-}" == "$DEX_ROUTER_AUTH_HOME" ]] || {
+      dx_error "Subscription login requires an isolated home from dx account add."
+      exit 2
+    }
+    [[ $# -eq 0 || ( $# -eq 1 && "$1" == "--device-auth" ) ]] || { usage >&2; exit 2; }
+    command -v codex >/dev/null 2>&1 || { dx_error "Install the official Codex CLI to sign in to OpenAI."; exit 1; }
+    DX_PROVIDER_CODEX_WRAPPER=auth-login dx_provider_codex -c 'cli_auth_credentials_store="file"' login "$@"
+    exit $?
     ;;
 esac
 
