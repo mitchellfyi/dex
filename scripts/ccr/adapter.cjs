@@ -15,11 +15,25 @@ const runtime = () => path.join(state.root(), 'runtimes', RELEASE);
 const entry = directory => path.join(directory, 'node_modules', '@musistudio', 'claude-code-router', 'dist', 'main', 'cli.js');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function availablePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer(); server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); });
-  });
+async function availablePorts() {
+  // CCR 3.1.0 probes the core at gateway + 1 in compatibility mode, even when
+  // corePort differs. Reserve that pair together; Linux ephemeral ports vary.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const servers = [];
+    const reserve = port => new Promise((resolve, reject) => {
+      const server = net.createServer(); servers.push(server); server.once('error', reject);
+      server.listen(port, '127.0.0.1', () => resolve(server.address().port));
+    });
+    try {
+      const gateway_port = await reserve(0);
+      if (gateway_port === 65535) continue;
+      const core_port = await reserve(gateway_port + 1);
+      const management_port = await reserve(0);
+      return { gateway_port, core_port, management_port };
+    } catch (error) { if (error.code !== 'EADDRINUSE') throw error; }
+    finally { await Promise.all(servers.filter(server => server.listening).map(server => new Promise(resolve => server.close(resolve)))); }
+  }
+  throw new Error('No adjacent local gateway ports are available. Retry dx router start.');
 }
 function idle() {
   if (state.sessions().some(active)) throw new Error('Routed sessions are active. Finish them before changing the CCR runtime or model catalogue.');
@@ -105,7 +119,7 @@ async function start({ directory = runtime(), endpoints, extension, recovery = f
       if (!recovery) throw new Error('CCR is running without its extension. Run dx router stop, then start.');
       await stopOwned(previous);
     }
-    const settings = recovery ? { ...previous } : { version: 1, release: RELEASE, management_port: await availablePort(), gateway_port: await availablePort(), core_port: await availablePort(), management_key: state.token(), client_key: state.token() };
+    const settings = recovery ? { ...previous } : { version: 1, release: RELEASE, ...await availablePorts(), management_key: state.token(), client_key: state.token() };
     settings.runtime_directory = directory;
     settings.management = `http://127.0.0.1:${settings.management_port}`; settings.gateway = `http://127.0.0.1:${settings.gateway_port}`;
     state.saveBackend(settings);
@@ -158,4 +172,4 @@ async function openUI() {
     child.once('exit', code => { if (code === 0) resolve(); else { server.close(); reject(new Error('Could not open the CCR dashboard.')); } });
   });
 }
-module.exports = { RELEASE, runtime, availablePort, idle, install, verifyRuntime, rpc, managedConfig, health, start, stop, stopOwned, openUI };
+module.exports = { RELEASE, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, start, stop, stopOwned, openUI };

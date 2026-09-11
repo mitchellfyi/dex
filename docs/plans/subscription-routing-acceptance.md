@@ -69,3 +69,13 @@ Hosting artifacts, remote DexCode account controls and a classifier model are
 outside this release. See the [DexCode handoff](dexcode-subscription-routing.md).
 
 Suggested review risk: `complex`; reasons: `security-sensitive,public-contract,concurrency,shell-hooks-ci,cross-module`.
+
+## Linux startup follow-up, 2026-09-11
+
+The first main CI run exposed CCR's compatibility-mode port assumption: its
+health check uses the gateway port plus one, even when a different core port
+is configured. Linux allocated nonconsecutive ephemeral ports and startup
+failed. Dex now reserves the adjacent gateway/core pair together and allocates
+a separate management port. The real-runtime contract reproduced the failure
+in a Node 22 Linux container and passed after this change. All 46 routing tests,
+including the native Claude smoke, also passed again on macOS.
