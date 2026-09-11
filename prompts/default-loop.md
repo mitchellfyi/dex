@@ -16,7 +16,7 @@ Prioritise improvements in this order:
 4. **Test gaps** — untested public functions, missing edge case coverage, brittle tests
 5. **Performance** — N+1 queries, unbounded loops, missing pagination, unnecessary allocations
 6. **Code quality** — dead code, stale comments, unnecessary complexity, inconsistent patterns
-7. **Documentation** — undocumented public APIs, missing "why" comments on non-obvious logic
+7. **Documentation** — public APIs missing a contract, non-obvious logic missing its "why"
 
 ## How to Work
 

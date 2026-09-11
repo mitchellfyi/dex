@@ -25,6 +25,7 @@ Quick scan for obvious issues (the Review phase will do deep analysis):
 - No TODO/FIXME/HACK left behind (unless intentionally deferred and documented)
 - No console.log/print debugging statements left in production code
 - No commented-out code blocks
+- No comment that restates the code, API docs included
 - Code compiles/transpiles without errors
 - No obvious runtime errors (undefined variables, missing imports, broken references)
 
