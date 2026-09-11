@@ -164,6 +164,8 @@ __dx_cli() {
       echo "  dx provider         Configure provider/model execution profiles"
       echo "  dx setup            Choose direct agents or optional CCR routing"
       echo "  dx accounts         Show subscription accounts and quota"
+      echo "  dx account add      Register another subscription account"
+      echo "  dx model list       List models available to registered accounts"
       echo "  dx router setup     Add optional CCR account pools and model routing"
       echo "  dx route            Inspect or change a running session's model"
       echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
@@ -3859,7 +3861,7 @@ unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/nul
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
     test config provider run control sessions ui-capture research install uninstall uninit status \
-    reload help revert log triage refine
+    reload help revert log triage refine setup account accounts model route router
 }
 
 # Prints the nearest command within two edits, or nothing.

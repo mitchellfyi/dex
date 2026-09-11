@@ -84,8 +84,9 @@ function accountRows(items) {
     const usage = account.usage;
     const fresh = usage && Date.now() - usage.observed_at < 120000 && !account.usage_error;
     const windows = usage?.windows || [];
+    const exhausted = fresh && windows.some(window => !window.model_pool && window.remaining_ratio === 0 && (!window.resets_at || window.resets_at > Date.now()));
     const windowText = window => `${window.name} ${Math.round(window.remaining_ratio * 100)}% left${fresh ? '' : ' (stale)'}${window.resets_at ? `; reset ${new Date(window.resets_at).toLocaleString()}` : ''}`;
-    const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required' : account.cooldown_until > Date.now() ? `cooldown until ${new Date(account.cooldown_until).toLocaleTimeString()}` : 'ready';
+    const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required' : account.cooldown_until > Date.now() ? `cooldown until ${new Date(account.cooldown_until).toLocaleTimeString()}` : exhausted ? 'quota exhausted' : 'ready';
     return `${account.name.padEnd(22)} ${account.provider.padEnd(10)} ${status}\n  ${windows.length ? windows.map(windowText).join(' | ') : 'Quota unknown; no provider reading available.'}`;
   });
 }

@@ -24,6 +24,16 @@ test('empty account and status commands work without starting CCR', async () => 
   assert.equal(status.enabled, false); assert.equal(status.health, 'stopped'); assert.equal(status.installed, false);
   assert.deepEqual(cli.accountRows([]), []);
 });
+test('dashboard distinguishes current account exhaustion from stale and model-only quotas', () => {
+  const account = { name: 'Main', provider: 'anthropic', enabled: true, usage: { observed_at: Date.now(), windows: [{ name: 'weekly', remaining_ratio: 0 }] } };
+  assert.match(cli.accountRows([account])[0], /quota exhausted/);
+  account.usage.windows[0].model_pool = 'opus';
+  assert.doesNotMatch(cli.accountRows([account])[0], /quota exhausted/);
+  delete account.usage.windows[0].model_pool;
+  account.usage.observed_at -= 180000;
+  assert.doesNotMatch(cli.accountRows([account])[0], /quota exhausted/);
+  assert.match(cli.accountRows([account])[0], /stale/);
+});
 test('model registration and phase configuration preserve explicit fallbacks', async () => {
   const options = { context: '128000', tools: true, fallback: [] };
   await cli.modelCommand('add', ['anthropic/claude-test'], options);
@@ -58,6 +68,20 @@ test('explicit discovery refreshes account eligibility as well as the shared cat
   await cli.modelCommand('discover', ['Main'], {});
   assert.deepEqual(state.getAccount('Main').model_ids, ['openai/new']);
   assert.equal(state.config().models[0].id, 'openai/new');
+});
+test('OpenAI discovery uses the installed Codex version instead of hiding newer models', async () => {
+  const broker = { access: async () => ({ access_token: 'synthetic' }) };
+  const fetchCatalogue = async endpoint => {
+    const version = new URL(endpoint).searchParams.get('client_version');
+    return Response.json({ models: [{ slug: version === '0.153.4' ? 'current-model' : 'legacy-model' }] });
+  };
+  const models = await onboarding.discover({ provider: 'openai' }, broker, fetchCatalogue, () => '0.153.4');
+  assert.equal(models[0].id, 'openai/current-model');
+  await onboarding.discover({ provider: 'anthropic' }, broker, async () => Response.json({ data: [] }), () => { throw new Error('Codex is not needed for Anthropic'); });
+  assert.equal(onboarding.codexVersion(() => ({ status: 0, stdout: 'codex-cli 0.153.4\n' })), '0.153.4');
+  for (const result of [{ status: 1 }, { status: 0, stdout: 'not Codex' }, { status: 0, stdout: 'codex-cli 0.153.4&unexpected=value' }]) {
+    assert.throws(() => onboarding.codexVersion(() => result), /official Codex CLI/);
+  }
 });
 test('temporary native files are removed even when Keychain cleanup fails', () => {
   const login = path.join(directory, 'login'); fs.mkdirSync(login);

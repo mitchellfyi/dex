@@ -79,3 +79,43 @@ failed. Dex now reserves the adjacent gateway/core pair together and allocates
 a separate management port. The real-runtime contract reproduced the failure
 in a Node 22 Linux container and passed after this change. All 46 routing tests,
 including the native Claude smoke, also passed again on macOS.
+
+## Live machine verification, 2026-09-11
+
+The owner completed separate native Claude and ChatGPT subscription logins.
+Dex registered both globally with renewable credentials in macOS Keychain.
+The original native CLI logins remain separate. Model discovery returned 11
+Anthropic models and eight OpenAI models. The live check exposed an old Codex
+client version in discovery: the backend returned only two models for that
+version. Discovery now reads the installed CLI version; a regression test
+covers version filtering and an unavailable or malformed version response.
+
+Provider quota reported the Claude account's weekly allowance exhausted, so
+the configured fallback selected OpenAI before making an Anthropic request.
+Three real turns ran in one Claude Code conversation, using GPT-5.6 Luna and
+GPT-5.6 Sol, and retained a marker across a model switch. This does not prove
+a live Anthropic response or rotation between two Anthropic accounts.
+
+A separate real GPT-6 Astra turn executed a Bash tool and created and read a
+local text artifact through Claude Code. The artifact content matched the
+expected marker. The temporary verification directory was removed. DexCode
+run `run_20260911T132629Z_69357_039c0fa4` reached completed state on the live
+site with `route.session_started` and `route.selected` in its timeline.
+
+The global `ccr-subscription` profile resolves outside a repository and in the
+DexCode.ai checkout. Explicit repository defaults still take precedence. The
+live quota payload also showed that OpenAI's primary window can be weekly;
+the dashboard now uses the returned window duration and labels current
+account-wide exhaustion instead of showing the account as ready.
+
+Main CI found missing account/model help entries, typo-confirmation command
+names and the router module in the AGENTS table. Those entries were added;
+the existing documentation and public-command checks pass locally.
+
+Both providers accepted an explicit OAuth refresh through the Dex broker and
+returned renewable credentials, which were saved back to Keychain. Automatic
+refresh at expiry remains covered by the synthetic tests. Two-account
+Anthropic rotation is still unverified against live subscriptions.
+
+After these fixes, all 49 routing tests passed with the pinned runtime and
+native Claude smoke enabled, with no skips. Static checks passed again.

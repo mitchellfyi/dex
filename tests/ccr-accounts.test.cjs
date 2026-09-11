@@ -31,6 +31,12 @@ test('quota preserves unknown data instead of inventing percentages', () => {
   assert.equal(normalizeUsage('anthropic', { five_hour: { utilization: 42, resets_at: '2026-09-10T12:00:00Z' } }).windows[0].remaining_ratio, 0.58);
   assert.deepEqual(normalizeUsage('anthropic', { five_hour: { utilization: 999 } }).windows, []);
 });
+test('OpenAI primary quota can be a weekly window', () => {
+  const usage = normalizeUsage('openai', { rate_limit: { primary_window: { used_percent: 57, limit_window_seconds: 604800, reset_at: 1789644431 }, secondary_window: null } });
+  assert.equal(usage.windows[0].name, 'weekly');
+  assert.equal(usage.windows[0].remaining_ratio, 0.43);
+  assert.equal(normalizeUsage('openai', { rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000 } } }).windows[0].name, '5h');
+});
 test('concurrent refresh is shared and rotated credentials survive broker restart', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-refresh-'));
   const prior = process.env.DEX_ROUTER_HOME; process.env.DEX_ROUTER_HOME = dir;

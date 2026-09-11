@@ -16,6 +16,9 @@ Subscription endpoints and provider eligibility can change independently of Dex.
 Install Node.js 22 or newer and the official Claude Code CLI. OpenAI account
 registration also needs the official Codex CLI as a login helper. Codex is not
 used as the engineering runtime for this profile.
+OpenAI model discovery reads the installed Codex version because the subscription
+backend filters its catalogue by client version. Keep the CLI current when
+refreshing the model list.
 
 ```sh
 dx setup --router

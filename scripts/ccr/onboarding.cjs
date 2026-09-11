@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const state = require('./state.cjs');
 const { CredentialStore, AccountBroker, nativeEnv, readNative, authHeaders, keychain } = require('./accounts.cjs');
 
@@ -111,11 +111,18 @@ function catalogue(provider, payload) {
       efforts: item.supported_reasoning_levels?.map(level => level.reasoning_effort || level.effort).filter(Boolean) || [], observed_at: Date.now() };
   }).filter(Boolean);
 }
-async function discover(account, broker = new AccountBroker()) {
+function codexVersion(run = spawnSync) {
+  const result = run('codex', ['--version'], { encoding: 'utf8', timeout: 5000, maxBuffer: 4096 });
+  const version = result.status === 0 && result.stdout?.trim().match(/^codex-cli (\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)$/)?.[1];
+  if (!version) throw new Error('Install or update the official Codex CLI to discover this subscription’s models.');
+  return version;
+}
+async function discover(account, broker = new AccountBroker(), fetchImpl = fetch, version = codexVersion) {
   const credentials = await broker.access(account);
-  const endpoint = account.provider === 'anthropic' ? 'https://api.anthropic.com/v1/models' : 'https://chatgpt.com/backend-api/codex/models?client_version=0.114.0';
-  const response = await fetch(endpoint, { headers: { ...authHeaders(account.provider, credentials), 'anthropic-version': '2023-06-01' }, redirect: 'error', signal: AbortSignal.timeout(15000) });
+  // Codex filters its catalogue by client version; an old value hides new models.
+  const endpoint = account.provider === 'anthropic' ? 'https://api.anthropic.com/v1/models' : `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(version())}`;
+  const response = await fetchImpl(endpoint, { headers: { ...authHeaders(account.provider, credentials), 'anthropic-version': '2023-06-01' }, redirect: 'error', signal: AbortSignal.timeout(15000) });
   if (!response.ok) throw new Error('Model discovery is unavailable. Use dx model add with a model available to this subscription.');
   return catalogue(account.provider, await response.json());
 }
-module.exports = { accountName, identity, loginCommand, nativeLogin, register, cleanupNative, changeAccount, catalogue, discover };
+module.exports = { accountName, identity, loginCommand, nativeLogin, register, cleanupNative, changeAccount, catalogue, codexVersion, discover };

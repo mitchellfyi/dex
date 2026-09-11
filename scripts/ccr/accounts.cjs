@@ -84,7 +84,8 @@ function normalizeUsage(provider, data, now = Date.now()) {
   } else {
     for (const [field, name] of [['primary_window', 'session'], ['secondary_window', 'weekly']]) {
       const raw = data.rate_limit?.[field];
-      add(name, raw, raw?.used_percent, raw?.reset_at);
+      const period = ({ 18000: '5h', 86400: 'daily', 604800: 'weekly' })[raw?.limit_window_seconds] || name;
+      add(period, raw, raw?.used_percent, raw?.reset_at);
     }
   }
   return { observed_at: now, source: 'provider', confidence: windows.length ? 'provider-derived' : 'unknown', windows };

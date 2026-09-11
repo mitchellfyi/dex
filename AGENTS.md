@@ -477,6 +477,7 @@ prefer extracting it into `lib/` modules. The pattern:
 | `review-diagnostics.sh` | Bounded failure evidence retained before child cleanup | `__dx_review_cleanup_pass()` |
 | `review-policy.sh` | Trusted default-branch clean-pass policy resolution and binding | `dx_review_policy_resolve()`, `dx_review_policy_for_tier()` |
 | `rtk.sh` | RTK token-reduction bootstrap and checks | `dx_install_rtk_tooling()`, `dx_check_rtk_tooling()`, `dx_rtk_resolved_binary()` |
+| `router.sh` | Lazy optional CCR CLI and provider launch bridge | `dx_router_node_check()`, `dx_router_command()`, `dx_router_launch()` |
 | `run-spec.sh` | Structured headless run spec validation, fetch, normalization, and journal prep | `dx_run_spec_normalize()`, `dx_run_spec_fetch()`, `dx_run_spec_prepare_journal()` |
 | `session-catalog.sh` | Read-only, repo-scoped lifecycle inventory and exact selector resolution | `dx_session_catalog_records()`, `dx_session_catalog_record()`, `dx_session_catalog_select()` |
 | `session-runtime.sh` | PID-reuse-safe lifecycle runtime leases and health | `dx_session_runtime_start()`, `dx_session_runtime_heartbeat()`, `dx_session_runtime_finish()` |
