@@ -121,6 +121,15 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     await ipc.call('route', { session: 'test-session', action: 'auto' }); secondLimited = true;
     const fallback = await send(); assert.equal(fallback.status, 200); assert.match(await fallback.text(), /OpenAI answer/);
     assert.deepEqual(calls.slice(-2).map(call => call.headers.authorization), ['Bearer synthetic-b', 'Bearer synthetic-c']);
+    await ipc.call('finish', { id: 'test-session', token });
+    await adapter.stop();
+    const previousKey = settings.client_key;
+    const restarted = await adapter.start({ directory: path.resolve(process.env.DEX_CCR_INTEGRATION_RUNTIME), endpoints: { anthropic: endpoint, openai: endpoint }, extension });
+    assert.notEqual(restarted.client_key, previousKey);
+    Object.assign(settings, restarted);
+    await ipc.call('register', { id: 'test-session', token, owner_pid: process.pid, resume: true });
+    const afterRestart = await send();
+    assert.equal(afterRestart.status, 200); assert.match(await afterRestart.text(), /OpenAI answer/);
   } finally {
     try { await ipc.call('finish', { id: 'test-session', token }); } catch { /* Startup may have failed. */ }
     await adapter.stop(); await new Promise(resolve => upstream.close(resolve));

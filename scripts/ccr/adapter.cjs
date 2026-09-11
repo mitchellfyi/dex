@@ -129,7 +129,7 @@ async function start({ directory = runtime(), endpoints, extension, recovery = f
       state.write(path.join(env.CCR_INTERNAL_HOME_DIR, '.claude-code-router', 'config.json'), managedConfig({}, settings, state.config(), endpoints, extension));
     }
     // CCR logs can contain provider bodies. Discard them; Dex records redacted events.
-    const child = spawn(process.execPath, [executable, 'serve', '--host', '127.0.0.1', '--port', String(settings.management_port), '--no-open'], { detached: true, stdio: 'ignore', env, cwd: state.root() });
+    const child = spawn(process.execPath, [executable, 'serve', '--host', '127.0.0.1', '--port', String(settings.management_port), '--no-open', '--no-gateway'], { detached: true, stdio: 'ignore', env, cwd: state.root() });
     await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     settings.pid = child.pid; settings.owner_identity = processIdentity(child.pid); state.saveBackend(settings); child.unref();
     try {
@@ -139,9 +139,11 @@ async function start({ directory = runtime(), endpoints, extension, recovery = f
         try { base = await rpc(settings, 'getConfig', [], 500); break; } catch { await delay(100); }
       }
       if (!base) throw new Error('CCR management did not start. Run dx router doctor.');
+      // Apply this launch's ports before starting CCR's saved gateway.
       await rpc(settings, 'saveConfig', [managedConfig(base, settings, state.config(), endpoints, extension), { applyProfile: false }]);
       // CCR persists transport keys through a separate RPC; saveConfig ignores them.
       await rpc(settings, 'saveApiKeys', [[{ id: 'dex-local', name: 'Dex local transport', key: settings.client_key, createdAt: new Date().toISOString() }]]);
+      await rpc(settings, 'startGateway');
       for (let count = 0; count < 100; count++) { if (await health(true)) return settings; await delay(100); }
       throw new Error('CCR did not load the Dex extension. Run dx router doctor.');
     } catch (error) { await stopOwned(settings); throw error; }

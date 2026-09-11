@@ -119,3 +119,11 @@ Anthropic rotation is still unverified against live subscriptions.
 
 After these fixes, all 49 routing tests passed with the pinned runtime and
 native Claude smoke enabled, with no skips. Static checks passed again.
+
+The final manual restart exposed a saved-configuration startup issue. CCR's
+default `serve` command starts the old gateway before Dex replaces its ports
+and transport key. Dex now starts management with `--no-gateway`, saves the
+launch configuration and explicitly starts the gateway. The runtime contract
+reproduced the failure, then passed a stop/start with saved configuration and
+a real request after the fix. All 49 tests passed again, including native
+Claude and recovery; the configured global router also restarted successfully.
