@@ -157,7 +157,7 @@ After all tasks are completed, run a focused implementation inventory to catch
 issues before the dedicated Phase 3 review loop takes over.
 
 **Step 1 — Build the inventory (find only, no fixes):**
-Walk through all changed files and build a numbered findings list. For each file, check: correctness (try to break it), design (workarounds, complexity), documentation (non-obvious logic explained?), and consistency (patterns match across files). Record each issue as `[INV-N] file:line | description`. Do NOT fix anything yet.
+Walk through all changed files and build a numbered findings list. For each file, check: correctness (try to break it), design (workarounds, complexity), documentation (exactly what the code cannot), and consistency (patterns match across files). Record each issue as `[INV-N] file:line | description`. Do NOT fix anything yet.
 
 **Step 2 — Batch fix:**
 Fix all items from the inventory in severity order (high first).

@@ -57,8 +57,7 @@ For each acceptance criterion from Step 1, trace the implementing code end-to-en
 - Unused imports, dead code, commented-out code?
 - N+1 queries, unbounded loops, performance anti-patterns?
 - Does every new public function/method have a corresponding test?
-- Non-obvious logic has a "why" comment? Complex regexes explained? Magic numbers named?
-- New public APIs have doc comments?
+- Non-obvious logic, dense patterns and public APIs: a comment only for what the code cannot, none that restates it? Magic values named as constants?
 
 ### Pass C: Security
 

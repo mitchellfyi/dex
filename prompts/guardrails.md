@@ -83,8 +83,8 @@ verification, task completion, or phase completion to record meaningful work.
 
 - Please remove all mannered prose.
 - Before writing or publishing user-facing prose, markdown copy, docs, release notes, PR descriptions, issue/ticket bodies, review replies, or tracker/GitHub comments, invoke the `humanizer` skill and apply its final-pass checklist.
-- Before adding or editing code comments or doc comments, apply `humanizer` in code-comment mode: plain, technical, short, and focused on why, invariants, edge cases, or public API contracts.
-- Preserve required templates, exact commands, paths, identifiers, checkboxes, code blocks, and attribution footers while humanizing surrounding prose.
+- Apply `humanizer` in code-comment mode to code and doc comments you add or edit: keep only what the code cannot — the why, the invariant, the edge case — or what a public contract needs. A convention the project documents or enforces wins.
+- Preserve required templates, exact commands, paths, identifiers, checkboxes, code blocks, attribution footers, and any comment a script, test, or tool reads, requires, publishes, or runs. Grep the tree for a comment's literal text before deleting or rewording it.
 
 ### Research Before Implementing
 
@@ -222,7 +222,7 @@ When creating a standalone library, package, or module:
 - **Exact requested API first**: If the prompt names specific functions, commands, classes, modules, file paths, or package layout, implement those exact public entry points before adding broader abstractions. Extra helpers are fine only after the requested surface exists and is tested.
 - **README.md**: Always include a README documenting what the library does, usage with code examples, and the rationale behind non-obvious design decisions. Treat it as a required deliverable, not a final polish task. Draft it once the public API is stable enough to describe, then refine it after verification so a time-bounded run does not ship an undocumented library.
 - **Conventional naming**: Export the primary API using the most natural name for the domain. Avoid abbreviations in public exports.
-- **Doc comments on all exports**: Every exported function, type, and constant must have a documentation comment following the language's convention.
+- **Doc comments on all exports**: Every exported function, type, and constant must have a documentation comment following the language's convention, saying only what the declaration cannot.
 
 ### String and Character Handling
 

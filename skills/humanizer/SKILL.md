@@ -40,7 +40,8 @@ The instruction to remove mannered prose follows [Anthropic's writing density gu
 - Keep comments technical, plain, and short.
 - Explain why the code exists, what invariant it protects, or what edge case it handles.
 - Do not add personality, jokes, hype, or redundant "what the next line does" narration.
-- Preserve required public API documentation and parameter/return detail.
+- Preserve required API docs; keep only what the declaration cannot.
+- When one fact is enough, write one line rather than a block.
 
 **UI and product copy**
 - Use the user's language where available.
@@ -69,5 +70,5 @@ The instruction to remove mannered prose follows [Anthropic's writing density gu
 - Would a senior engineer actually write this sentence?
 - Does every sentence carry a fact, decision, instruction, or useful transition?
 - Did the rewrite remove required nuance or precision? If so, restore it.
-- Are code comments explaining why, not narrating what?
+- Does every code comment carry what the code cannot, or what a public contract needs?
 - Are all links, commands, paths, IDs, checkboxes, and markdown tables still valid?

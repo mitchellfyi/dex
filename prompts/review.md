@@ -188,7 +188,7 @@ Follow the project's established conventions (check AGENTS.md, CLAUDE.md, linter
 
 - No dead code, debug logging, commented-out code, or debug artifacts (`console.log`, `print`, `dbg!`, `binding.pry`, `fmt.Println`, etc.)
 - Type safety: avoid escape hatches (language-specific: `any`, `as`, `@ts-ignore`, `unsafe`, `# type: ignore`, `interface{}`/`any` in Go, etc.) without justification
-- Comments explain "why", never "what" — no redundant comments. Doc comments on exported APIs are an exception (they explain "what" for callers).
+- Comments carry what the code cannot — restating the code is a finding. Doc comments are judged in Pass I.
 - No TODO comments without a linked ticket
 - DRY applied to _knowledge_, not just code that looks similar (two functions doing different things that happen to have similar shape should NOT be merged)
 - YAGNI — no speculative features, no unused abstractions, no "we might need this later"
@@ -237,14 +237,12 @@ Reject prose-only criteria ("works correctly", "is performant") — they should 
 
 ## Pass I: Documentation Quality
 
-Code should be self-documenting, but non-obvious logic needs explanation:
+A comment earns its place only when it carries what the code cannot. Flag a comment the change adds or edits that restates the code, and these gaps:
 
-- Functions/methods with complex control flow (nested conditionals, state machines, multi-step transformations) must have a comment explaining **why**, not what
-- New public APIs (exported functions, HTTP endpoints, CLI commands) need doc comments with parameter/return descriptions and at least one example
-- Complex regular expressions must have a comment explaining what they match and why that pattern was chosen
-- Magic numbers and magic strings must be extracted to named constants, or have an inline comment explaining the value (with a source if it's a spec value, e.g., `// max length per RFC 5321 §4.5.3.1.6`)
-- Non-trivial algorithms should cite the algorithm name or link to the source/reference (e.g., "// Fisher-Yates shuffle" or "// See RFC 5322 §3.4")
-- If a code block implements a workaround for a known issue, it must link to the issue/ticket
+- Why a complex control flow or a complex regular expression is shaped as it is, and what that expression matches
+- The name or source of a non-trivial algorithm, and the issue or ticket a workaround links to
+- A magic number or string not extracted to a named constant and kept inline without its meaning or spec source (e.g., `// max length per RFC 5321 §4.5.3.1.6`)
+- A new public API (exported function, HTTP endpoint, CLI command) without doc comments carrying what the declaration cannot, or an example where the call shape is not obvious from it
 - **Architectural decisions of substance** should be captured in an ADR or similar (`docs/adr/`, `decisions/`) — flag if the change introduces a new abstraction without recording why
 - **Changelog/release notes** — user-facing changes should land in the project's changelog file if one exists
 - **README/getting-started updates** — new commands, new env vars, or new setup steps should be reflected in the project's quickstart docs
