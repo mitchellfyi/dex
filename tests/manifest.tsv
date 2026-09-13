@@ -52,6 +52,7 @@ phase-loop-ownership-test.sh	slow	all	1200	hermetic
 portability-test.sh	fast	all	600	hermetic
 post-commit-guard-test.sh	fast	all	600	hermetic
 private-file-test.sh	fast	all	600	hermetic
+prompt-session-test.sh	fast	all	600	hermetic
 provider-codex-launch-test.sh	fast	all	600	hermetic
 provider-command-test.sh	fast	all	600	hermetic
 public-command-args-test.sh	fast	all	600	hermetic

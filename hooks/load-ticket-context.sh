@@ -7,6 +7,11 @@ set -euo pipefail
 
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
+if [[ "${DEX_SESSION_ONLY:-0}" == 1 ]]; then
+  dx_info "Dex session only: follow the user's prompt directly. No ticket intake or lifecycle is active."
+  exit 0
+fi
+
 if [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]]; then
   printf '%s\n' "Dex triage session: invoke /dxtriage. Do not start implementation or infer a target from the branch."
   exit 0

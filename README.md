@@ -1,9 +1,9 @@
 # Dex
 
-Dex turns Claude Code into a ticket-to-PR workflow runner. Give it a ticket
-number or a task description and it plans the work, implements it in an isolated
-branch/worktree, reviews it until clean, verifies it, opens a PR, watches CI and
-review feedback, and cleans up when the PR is ready.
+Dex opens coding sessions and runs ticket-to-PR workflows with Claude Code or
+Codex. Give it a prompt to choose a session or a full workflow. Give it a ticket
+number to plan the work, implement it in an isolated branch/worktree, review it
+until clean, verify it, open a PR, and follow CI and review feedback.
 
 It is built for teams that want AI coding work to finish with the same discipline
 they expect from a senior engineer: scoped plans, local quality gates, review
@@ -22,7 +22,7 @@ dx status
 cd ~/work/myproject
 dx init
 
-# Start a ticket or free-form task
+# Start a ticket workflow, or choose how to use a prompt
 dx 1234
 dx "add account export"
 ```
@@ -31,6 +31,31 @@ That is the normal path — run it from zsh, since `source ~/.zshrc` and the
 `dx` function only work there (see Requirements). `dx init` creates `.dex/`
 project context so future runs know your stack, conventions, quality gates,
 reviewers, guards, and durable repo memory.
+
+For a free-form prompt, Dex asks before starting anything:
+
+```text
+1. Session only (default)
+2. Full Dex workflow
+Choice [1] (q to cancel):
+```
+
+Press Enter to open the selected agent with your prompt in the current
+checkout. Choose 2 for intake, planning, implementation, review, verification,
+and PR completion. Use an explicit flag to skip the menu:
+
+```bash
+dx --session "explain how authentication works"
+dx --workflow "add account export"
+```
+
+Session-only mode uses your selected profile, including CCR's account pool.
+It does not create a worktree, switch branches, or start Dex phase audits.
+The agent can still read and edit files as your prompt requires.
+
+Ticket IDs (`dx 1234`, `dx ENG-123`), resume commands, and explicit workspace
+flags such as `--no-worktree` select the workflow directly. Without a terminal,
+free-form prompts require `--session` or `--workflow`; Dex will not guess.
 
 To prepare tickets before starting implementation, run `dx triage 1234` or
 `dx triage --project "Project name"`. It clarifies requirements, estimates effort,
@@ -141,7 +166,9 @@ dx status                  # Show global and project setup
 dx init                    # Analyze the current repo and create .dex/
 dx sync                    # Refresh durable repo memory and rules
 dx 1234                    # Run the full lifecycle for a ticket
-dx "task description"      # Run the full lifecycle for a free-form task
+dx "task description"      # Choose session only (default) or the full workflow
+dx --session "prompt"      # Open the selected agent in this checkout
+dx --workflow "task"       # Run intake and the full lifecycle for a free-form task
 dx --agent codex --model gpt-5.3-codex "fix flaky import"
 dx --no-worktree 1234      # Run the lifecycle in the current checkout
 dx run --spec run-spec.json # Run from a structured headless run spec
@@ -176,11 +203,10 @@ dx uninit                  # Remove Dex from the current repo
 Run standalone commands such as `dxreviewloop` directly in your shell, without
 a leading `dx`. `dx dxreviewloop` is rejected before any lifecycle is started.
 
-`dx "task description"` starts the full lifecycle. For a standalone task with
-plan approval and an audited implementation loop, use
-`dxloop "task description"` with a Claude or CCR profile. For a plain
-conversation, `claude "example prompt"` uses Claude's own login. Dex currently
-has no public command for a plain chat through its CCR account pool.
+`dx --session "prompt"` opens a plain session using your selected provider.
+For a standalone task with plan approval and an audited implementation loop,
+use `dxloop "task description"` with a Claude or CCR profile. `dx --workflow`
+runs the complete lifecycle, including ticket intake and PR completion.
 
 Inside Claude Code, run `/dxproof` to capture the current UI diff as a captioned
 before/after walkthrough. `/dxcapture` is the same command under an alias.
@@ -210,10 +236,14 @@ touching the others, which a single cross-organisation token could not offer.
 
 `dex` and `dexter` are aliases for `dx`.
 
-For `dx "task description"`, Phase 1 first produces an implementation plan.
-When a ticket tracker is configured, Dex asks after plan approval whether to
-continue directly, create a parent ticket, or create a parent plus sub-issues
-and choose the first issue to implement.
+When you choose the full workflow for a prompt, Phase 0 clarifies its scope,
+checks related issues and PRs, and reuses a suitable existing issue. If it
+needs a new issue, Dex shows the proposed title, acceptance criteria and
+estimate and asks before creating it. For a proposed split, you approve the
+issues and select which one to implement. You can decline creation and
+continue without an issue, or stop. Without a configured tracker, Dex keeps
+the request in the session. Planning then honors that intake decision and
+continues through the usual approval and quality gates.
 
 ## Requirements
 

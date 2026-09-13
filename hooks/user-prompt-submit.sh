@@ -2,8 +2,8 @@
 # UserPromptSubmit hook — honor direct human lifecycle control and pause Phase 6 watchers.
 set -euo pipefail
 
-# Triage never owns implementation lifecycle state.
-[[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]] && exit 0
+# Standalone sessions never own implementation lifecycle state.
+[[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 || "${DEX_SESSION_ONLY:-0}" == 1 ]] && exit 0
 
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 

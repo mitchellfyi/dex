@@ -69,6 +69,9 @@ the contract's exact `Issue/PR work:` line.
 10. FREEFORM TRACKER INTAKE — If this is a freeform `dx "<task>"` request and
    `.dex/dex.md § Integrations` has an enabled ticket tracker, did you complete
    or explicitly skip the tracker intake gate from `skills/dxplan/SKILL.md`?
+   - A completed Phase 0 `intake_decision` satisfies this gate. Honor its
+     selected issue or decision to proceed without tracker write-back; do not
+     ask the same question again. Reused existing issues are valid outcomes.
    - The acceptable outcomes are: user chose to continue without tracker
      write-back; a parent ticket was created and selected; or a parent plus
      sub-issues were created and the user selected the first implementation

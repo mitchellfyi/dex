@@ -7,8 +7,11 @@ const ipc = require('./ipc.cjs');
 
 function launchArguments(args) {
   const forwarded = []; let requested;
+  const delimiter = args.indexOf('--');
+  const options = delimiter < 0 ? args : args.slice(0, delimiter);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
+    if (arg === '--') { forwarded.push(...args.slice(index)); break; }
     if (['--model', '--fallback-model', '--permission-mode'].includes(arg)) {
       if (!args[index + 1]) throw new Error(`${arg} requires a value.`);
       if (arg === '--model' && args[index + 1] !== 'dex/active') requested = args[index + 1];
@@ -18,7 +21,7 @@ function launchArguments(args) {
     if (arg.startsWith('--fallback-model=') || arg.startsWith('--permission-mode=')) continue;
     if (arg !== '--dangerously-skip-permissions') forwarded.push(arg);
   }
-  const resume = args.some(arg => ['--resume', '--continue', '-r', '-c'].includes(arg) || arg.startsWith('--resume=')) && !args.includes('--fork-session');
+  const resume = options.some(arg => ['--resume', '--continue', '-r', '-c'].includes(arg) || arg.startsWith('--resume=')) && !options.includes('--fork-session');
   return { requested, resume, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
 }
 function launchEnvironment(settings, token, session, original = process.env) {
@@ -42,7 +45,7 @@ async function launch(args) {
   const lifecycle = process.env.DEX_SESSION_ID;
   const interactive = process.env.DEX_PHASE_HANDOFF === 'inline' && process.env.DEX_HEADLESS_RUN !== '1' && !args.includes('-p') && !args.includes('--print');
   const id = interactive && lifecycle ? lifecycle : `${(lifecycle || 'standalone').slice(0, 150)}.${state.token().slice(0, 12)}`;
-  const phaseFile = lifecycle ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(lifecycle)}.phase`) : null;
+  const phaseFile = lifecycle && process.env.DEX_SESSION_ONLY !== '1' ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(lifecycle)}.phase`) : null;
   const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile, resume: parsed.resume,
     model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined) });
   let monitoring = false; let failures = 0; let recoveries = 0; let stopped = false;

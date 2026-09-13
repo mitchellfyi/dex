@@ -9,10 +9,49 @@ const state = require('../scripts/ccr/state.cjs');
 const cli = require('../scripts/ccr/cli.cjs');
 const onboarding = require('../scripts/ccr/onboarding.cjs');
 const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
-const { launchArguments, launchEnvironment } = require('../scripts/ccr/launch.cjs');
+const { launchArguments, launchEnvironment, launch } = require('../scripts/ccr/launch.cjs');
+const adapter = require('../scripts/ccr/adapter.cjs');
+const ipc = require('../scripts/ccr/ipc.cjs');
+const policy = require('../scripts/ccr/policy.cjs');
 let directory;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-cli-')); process.env.DEX_ROUTER_HOME = directory; });
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+test('prompt-only launch treats text after the option terminator literally', () => {
+  for (const prompt of ['--model', '--model=unrelated', '--resume', '--fork-session']) {
+    const result = launchArguments(['--model', 'anthropic/test', '--', prompt]);
+    assert.equal(result.requested, 'anthropic/test');
+    assert.equal(result.resume, false);
+    assert.deepEqual(result.args.slice(-2), ['--', prompt]);
+  }
+  assert.equal(launchArguments(['--resume', 'conversation', '--', '--fork-session']).resume, true);
+});
+
+test('standalone sessions launch without phase files while workflows follow their phase', async t => {
+  const saved = Object.fromEntries(['PATH', 'DEX_SESSION_ID', 'DEX_SESSION_ONLY', 'DX_STATE_DIR'].map(key => [key, process.env[key]]));
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const bin = path.join(directory, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  Object.assign(process.env, { PATH: `${bin}:${process.env.PATH}`, DEX_SESSION_ID: 'prompt-test', DEX_SESSION_ONLY: '1', DX_STATE_DIR: directory });
+  const config = { models: [{ id: 'anthropic/test', context_window: 64000 }], phases: {}, default_model: 'anthropic/test' };
+  const phases = [];
+  t.mock.method(adapter, 'start', async () => ({ gateway: 'http://127.0.0.1:1234' }));
+  t.mock.method(ipc, 'call', async (method, fields) => {
+    if (method !== 'register') return {};
+    phases.push(policy.route(config, fields).phase);
+    return { id: fields.id, context_limit: 64000 };
+  });
+  assert.equal(await launch(['--', 'example prompt']), 0);
+  process.env.DEX_SESSION_ID = 'workflow-test';
+  process.env.DEX_SESSION_ONLY = '0';
+  fs.writeFileSync(path.join(directory, 'workflow-test.phase'), '3\n', { mode: 0o600 });
+  assert.equal(await launch(['--', 'continue the workflow']), 0);
+  assert.deepEqual(phases, [0, 3]);
+});
 
 test('CLI rejects missing and unknown option values', () => {
   assert.throws(() => cli.parse(['--session']), /requires/);

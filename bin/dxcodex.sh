@@ -97,6 +97,10 @@ esac
 # so `dx --agent codex --model <model>` reaches this wrapper through Claude.
 # Any provider profile may delegate through this wrapper; codex-plugin profiles
 # resolve a codex_model override, other engines use the Codex session default.
+if [[ "${DEX_LOOP_ACTIVE:-0}" == 1 || "${DEX_REVIEW_PASS_ACTIVE:-0}" == 1 \
+  || "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == 1 || "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]]; then
+  unset DEX_SESSION_ONLY
+fi
 unset DX_CODEX_MODEL
 unset DX_CODEX_EFFORT
 dx_provider_apply
@@ -157,6 +161,8 @@ case "$subcmd" in
     )
     [[ -z "${DEX_TRIAGE_ACTIVE:-}" ]] \
       || codex_hook_environment+=("DEX_TRIAGE_ACTIVE=$DEX_TRIAGE_ACTIVE")
+    [[ -z "${DEX_SESSION_ONLY:-}" ]] \
+      || codex_hook_environment+=("DEX_SESSION_ONLY=$DEX_SESSION_ONLY")
     [[ -z "${DEX_RUN_ID:-}" ]] \
       || codex_hook_environment+=("DEX_RUN_ID=$DEX_RUN_ID")
     [[ -z "${DEX_LOOP_ACTIVE:-}" ]] \

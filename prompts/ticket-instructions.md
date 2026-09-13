@@ -1,5 +1,10 @@
 IMPORTANT: These steps run in Phase 0 (Setup) of the `dx` lifecycle. Phase 0 runs in NORMAL mode (no plan mode), so you can write to git and the tracker before Phase 1 begins. Use the ticket tracker configured in dex.md § Integrations. If no tracker is configured, skip tracker steps. Do NOT call `EnterPlanMode` during this phase.
 
+For a free-form request, first complete `prompts/freeform-intake.md`: clarify
+the scope, check related issues, and ask before creating an issue. Use the
+selected issue in place of `{{TICKET_NUM}}` below. If the user chose to continue
+without an issue, treat ticket-specific steps as N/A and keep the task branch.
+
 1. Gather ticket context from the configured ticket tracker:
 
    - Read ticket {{TICKET_NUM}} — title, description, acceptance criteria, and relations.

@@ -10,6 +10,14 @@ relationship search, reconciliation of accepted decisions into the working
 issue, and reconciliation of any existing open PR. End the phase summary with
 the exact `Issue/PR work:` line required by that contract.
 
+For a free-form workflow, verify `prompts/freeform-intake.md` was completed:
+the request was clarified, duplicate candidates were checked, and any new
+issue was created only after the user approved its draft. Session metadata
+records `intake_decision` and the selected issue when applicable. If the user
+chose to continue without an issue, ticket-specific items below are N/A; the
+setup summary must state that decision. No tracker and headless runs follow
+the intake prompt's explicit exceptions.
+
 ## 1. Ticket Read
 
 - The ticket was fetched from the configured tracker (see `.dex/dex.md` § Integrations).

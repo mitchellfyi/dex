@@ -136,7 +136,10 @@ are not tokenizers. Providers remain authoritative about token limits.
 
 ## Switching in one session
 
-Continue launching Dex tasks normally with `ccr-subscription` selected.
+With `ccr-subscription` selected, choose session only or the full workflow
+when running `dx "a prompt"`. Use `dx --session "a prompt"` for a plain
+conversation through the account pool, or `dx --workflow "a task"` for the
+full lifecycle. Ticket IDs continue to start their workflows directly.
 
 ```sh
 dx route status

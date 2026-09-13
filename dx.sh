@@ -11,7 +11,7 @@
 #
 # Provides:
 #   dx <number>             Start/resume the full autonomous lifecycle (Plan → Complete) for a ticket
-#   dx "description"        Same, for a task without a ticket
+#   dx "description"       Choose session only (default) or the full workflow
 #   dx --agent codex <task> Use a different agent for this invocation
 #   dx --model <model>      Pass a model override to the selected agent
 #   dx --resume             Resume the most recent session
@@ -146,6 +146,9 @@ __dx_cli() {
       echo "Global options:"
       echo "  --agent <claude|codex>  Use this agent for the current invocation"
       echo "  --model <model>         Pass this model to the selected agent"
+      echo "  --session               Open a prompt-only session in this checkout"
+      echo "  --workflow              Run a prompt through the full ticket-to-PR workflow"
+      echo "  Free-form prompts ask which mode to use; Enter selects session only."
       echo ""
       echo "Commands:"
       echo "  dx install          Global install (skills, hooks, zshrc)"
@@ -185,7 +188,7 @@ __dx_cli() {
       echo ""
       echo "Worktree commands:"
       echo "  dx <number>            Run autonomous lifecycle (Plan → Complete) for a ticket"
-      echo "  dx \"<description>\"     Same, for a task without a ticket"
+      echo "  dx \"<description>\"     Choose session only (default) or the full workflow"
       echo "                         (a single word that looks like a mistyped command asks first)"
       echo "  dx --agent codex --model gpt-5.3-codex \"<task>\""
       echo "  dx --no-worktree <task> Run lifecycle in the current checkout instead"
@@ -372,7 +375,7 @@ DX_PHASE_MESSAGES=(\
 
 Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill tool with skill: \"dxplan\" (or /dxplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dxplan skill unless the skill explicitly instructs you to.
 
-The dxplan skill writes the required Phase 1 lifecycle markers. For freeform \`dx \"<task>\"\` requests with a configured tracker, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues and select the first implementation ticket. After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
+The dxplan skill writes the required Phase 1 lifecycle markers. Honor the Phase 0 intake_decision and selected issue; do not repeat issue creation or ask for the same approval. For freeform \`dx \"<task>\"\` requests with a configured tracker and no recorded intake decision, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues and select the first implementation ticket. After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
 
 For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact. Phase focus: implementation, testing, and trustworthy proof. Follow prompts/commit-format.md. Commit small coherent checkpoints early and often, and push immediately after every commit. Do not wait for full verification, task completion, or phase completion; keep failed and pending checks explicit and continue toward a verified branch. Use natural history boundaries rather than arbitrary splits. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If the approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 is the final PR gate. When done, stop — the audit loop will verify your work." \
@@ -383,7 +386,7 @@ For headless dx run sessions with workflow.requires_plan_approval=false, the run
 )
 
 DX_PHASE_0_TIMEOUT="0"
-DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md (printed at SessionStart) end to end before doing anything else: (a) read the ticket from the configured tracker, including comments; (b) apply prompts/issue-hygiene.md to search for duplicates and related work, reconcile accepted decisions into the ticket, and reconcile any existing open PR; (c) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (d) run dx_ticket_branch_prepare with the tracker's git branch name so an eligible branch already on origin is fetched and tracked while a genuinely new branch remains local until Phase 2's first real implementation commit; never create an empty bootstrap commit; new PR creation is normally deferred until Phase 5; (e) set ticket status to In Progress; (f) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, keep the current lifecycle branch local until its first implementation commit. Phase focus: ticket setup. Planning, implementation commits, and pushes begin in later phases. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
+DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md end to end. For a free-form workflow, first read prompts/freeform-intake.md: clarify scope, search related issues, ask before creating an issue, and record intake_decision before continuing ticket setup: (a) read the ticket from the configured tracker, including comments; (b) apply prompts/issue-hygiene.md to search for duplicates and related work, reconcile accepted decisions into the ticket, and reconcile any existing open PR; (c) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (d) run dx_ticket_branch_prepare with the tracker's git branch name so an eligible branch already on origin is fetched and tracked while a genuinely new branch remains local until Phase 2's first real implementation commit; never create an empty bootstrap commit; new PR creation is normally deferred until Phase 5; (e) set ticket status to In Progress; (f) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, keep the current lifecycle branch local until its first implementation commit. Phase focus: ticket setup. Planning, implementation commits, and pushes begin in later phases. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
 
 # Thin wrappers over the shared phase tables in lib/lifecycle-control.sh; the
 # __dx_ names stay because dx.sh uses them throughout.
@@ -2324,6 +2327,7 @@ unalias __dx_run_with_runtime 2>/dev/null; unfunction __dx_run_with_runtime 2>/d
 unalias __dx_run_with_runtime_owner_handle 2>/dev/null; unfunction __dx_run_with_runtime_owner_handle 2>/dev/null
 __dx_run_with_runtime_owner_handle() {
   local owner_handle="$1" owner_pid="$2" callback_name="$3"
+  local -x DEX_SESSION_ONLY=0
   shift 3
   local callback_result=1 owner_finish_result=0
   local runtime_cleanup_command=""
@@ -3917,12 +3921,10 @@ __dx_confirm_task_word() {
   [[ -n "$suggestion" ]] || return 0
 
   dx_warn "'${raw}' is not a Dex command, so Dex would run it as a task description."
-  dx_info "That starts a full lifecycle: a new worktree, a new branch, and an agent run."
+  dx_info "Choose session only or the full workflow for a prompt; use --session or --workflow to select explicitly."
   dx_info "Did you mean 'dx ${suggestion}'?"
   if [[ ! -t 0 || ! -t 1 ]]; then
-    # Nothing to ask, and refusing here would break a script that has always
-    # been allowed to pass a one-word task. The warning above is the record.
-    dx_info "Not a terminal — continuing as a task description."
+    # The dispatcher still requires an explicit mode for a non-terminal prompt.
     return 0
   fi
   printf "Run '%s' as a task description? [y/N]: " "$raw"
@@ -3934,11 +3936,35 @@ __dx_confirm_task_word() {
   return 1
 }
 
+unalias __dx_choose_prompt_mode 2>/dev/null; unfunction __dx_choose_prompt_mode 2>/dev/null
+__dx_choose_prompt_mode() {
+  local answer
+  dx_info "How would you like to run this prompt?" >&2
+  printf '%s\n' \
+    "  1. Session only (default): open the selected agent in this checkout" \
+    "  2. Full Dex workflow: triage, ticket intake, plan, implement, review, and PR" >&2
+  while true; do
+    printf 'Choice [1] (q to cancel): ' >&2
+    if ! read -r answer; then
+      dx_info "Nothing started." >&2
+      return 1
+    fi
+    case "$answer" in
+      ""|1) printf '%s\n' session; return 0 ;;
+      2) printf '%s\n' workflow; return 0 ;;
+      q|Q) dx_info "Nothing started." >&2; return 1 ;;
+      *) dx_warn "Enter 1 for session only, 2 for the full workflow, or q to cancel." ;;
+    esac
+  done
+}
+
 unalias dx 2>/dev/null; unfunction dx 2>/dev/null
 dx() {
   if [[ $# -eq 0 ]]; then
     echo "Usage: dx <NUMBER>        (e.g. dx 999, dx ENG-999)"
     echo "       dx \"<description>\" (e.g. dx \"fix login bug\")"
+    echo "       dx --session \"<prompt>\"   Open a session in the current checkout"
+    echo "       dx --workflow \"<task>\"    Run the full ticket-to-PR workflow"
     echo "       dx --agent codex --model gpt-5.3-codex \"<task>\""
     echo "       dx --no-worktree <task>"
     echo "       dx --resume        Resume the most recent session"
@@ -3950,11 +3976,20 @@ dx() {
   fi
 
   local use_worktree=1
+  local dx_prompt_mode="" dx_workspace_flag=0 dx_literal_prompt=0
   local dx_agent_flag=""
   local dx_model_flag=""
   local -a dx_args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --session|--workflow)
+        if [[ -n "$dx_prompt_mode" && "$dx_prompt_mode" != "${1#--}" ]]; then
+          dx_error "Choose either --session or --workflow."
+          return 2
+        fi
+        dx_prompt_mode="${1#--}"
+        shift
+        ;;
       --agent)
         if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
           dx_error "Usage: dx --agent <claude|codex> <command-or-task>"
@@ -3988,15 +4023,21 @@ dx() {
         shift
         ;;
       --)
+        if [[ ${#dx_args[@]} -eq 0 ]]; then
+          dx_literal_prompt=1
+          shift
+        fi
         dx_args+=("$@")
         break
         ;;
       --no-worktree|--in-place|--here)
         use_worktree=0
+        dx_workspace_flag=1
         shift
         ;;
       --worktree)
         use_worktree=1
+        dx_workspace_flag=1
         shift
         ;;
       *)
@@ -4021,21 +4062,26 @@ dx() {
     return 1
   fi
 
+  local dx_command_input="$1"
+  if [[ "$dx_literal_prompt" -eq 1 \
+    || ( -n "$dx_prompt_mode" && "$1" != --help && "$1" != -h ) ]]; then
+    dx_command_input=""
+  fi
   # Triage aliases run before lifecycle and worktree setup.
-  if [[ "$1" == "triage" || "$1" == "refine" ]]; then
+  if [[ "$dx_command_input" == "triage" || "$dx_command_input" == "refine" ]]; then
     shift
     dxtriage "$@"
     return $?
   fi
 
   # Branch naming is part of lifecycle setup, not a standalone command.
-  if [[ "$1" == "rename" ]]; then
+  if [[ "$dx_command_input" == "rename" ]]; then
     dx_error "'dx rename' is not a command. Dex names lifecycle branches during ticket setup."
     return 1
   fi
 
   # Route management subcommands to the internal Dex dispatcher.
-  case "$1" in
+  case "$dx_command_input" in
     init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
@@ -4044,7 +4090,7 @@ dx() {
 
   # Standalone shell commands are not task descriptions. Reject the extra dx
   # even without a terminal or with arguments, before any provider or setup.
-  case "$1" in
+  case "$dx_command_input" in
     dxreviewloop|dxcomplete|dxloop|dxrm|dxls|dxcd|dxclean|dxtriage|dxrefine)
       dx_error "'${1}' is a standalone shell command, not a 'dx' subcommand."
       dx_info "Run '${1}' directly, without the leading 'dx'. Nothing started."
@@ -4052,14 +4098,42 @@ dx() {
       ;;
   esac
 
-  # Everything below this point runs the lifecycle. A single word that is
-  # nearly a command is almost certainly a typo, so confirm before spending.
-  __dx_confirm_task_word "$1" "$#" || return 1
+  local raw_input="${(j: :)@}"
+  if [[ -z "$raw_input" ]]; then
+    dx_error "Supply a prompt or ticket."
+    return 2
+  fi
+  if [[ -z "$dx_prompt_mode" && "$dx_literal_prompt" -eq 0 ]]; then
+    __dx_confirm_task_word "$1" "$#" || return 1
+    if [[ "$1" == --resume || "$1" == --from-pr ]] \
+      || __dx_is_ticket "$raw_input"; then
+      dx_prompt_mode=workflow
+    fi
+  fi
+  if [[ -z "$dx_prompt_mode" && "$dx_workspace_flag" -eq 1 ]]; then
+    dx_prompt_mode=workflow
+  fi
+  if [[ -z "$dx_prompt_mode" ]]; then
+    if [[ ! -t 0 || ! -t 1 ]]; then
+      dx_error "Choose --session or --workflow for a free-form prompt without a terminal."
+      return 2
+    fi
+    dx_prompt_mode=$(__dx_choose_prompt_mode) || return $?
+  fi
+  if [[ "$dx_prompt_mode" == session ]]; then
+    if [[ "$dx_workspace_flag" -eq 1 ]]; then
+      dx_error "Workspace flags apply to --workflow. A session uses the current checkout."
+      return 2
+    fi
+    dx_provider_session "$raw_input"
+    return $?
+  fi
 
+  local -x DEX_SESSION_ONLY=0
   __dx_refresh_provider || return 1
 
   # Resume mode — find most recent session and continue from tracked phase
-  if [[ "$1" == "--resume" ]]; then
+  if [[ "$dx_literal_prompt" -eq 0 && "$1" == "--resume" ]]; then
     local last_session_file="$DX_STATE_DIR/last-session"
     if [[ ! -f "$last_session_file" ]]; then
       dx_error "No previous session found."
@@ -4079,7 +4153,7 @@ dx() {
   fi
 
   # PR-linked mode — resume a session associated with a GitHub PR
-  if [[ "$1" == "--from-pr" ]]; then
+  if [[ "$dx_literal_prompt" -eq 0 && "$1" == "--from-pr" ]]; then
     if [[ -z "${2:-}" ]]; then
       echo "Usage: dx --from-pr <PR_NUMBER|URL>"
       return 1
@@ -4099,8 +4173,6 @@ dx() {
   fi
 
   # Normal mode — setup workspace and run phased lifecycle
-  local raw_input="${(j: :)@}"  # zsh: join all args with spaces
-
   if [[ $use_worktree -eq 1 ]]; then
     if ! __dx_setup_worktree "$raw_input"; then
       return 1
@@ -4161,6 +4233,7 @@ dx() {
 
   # ── Phase loop ──
   local resume_hint="dx ${raw_input}"
+  [[ $_dx_is_task -eq 1 ]] && resume_hint="dx --workflow ${(q)raw_input}"
   [[ "$_dx_workspace_mode" == "in-place" ]] && resume_hint="dx --no-worktree ${raw_input}"
   cd "$_dx_wt_dir" 2>/dev/null || {
     __dx_startup_claim_release || true
@@ -4286,7 +4359,7 @@ dxloop() {
   provider_agent=$(__dx_resolved_provider_agent) || return 1
   if [[ "$provider_agent" == "codex" ]]; then
     dx_error "dxloop requires an interactive Claude Code session for plan approval and session resume."
-    dx_info "The selected provider profile resolves to the non-interactive Codex CLI. Run 'DX_AGENT=claude dxloop <prompt>', or use 'dx --agent codex <task>' for the direct Codex lifecycle."
+    dx_info "Use 'DX_AGENT=claude dxloop <prompt>', or 'dx --agent codex --workflow <task>' for the direct Codex lifecycle."
     return 1
   fi
   __dx_require_resolved_provider_cli || return 1

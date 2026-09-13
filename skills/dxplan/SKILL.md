@@ -245,9 +245,16 @@ When running under terminal `dx` Phase 1, approval is the handoff signal to the 
 
 ### 7. Tracker Intake Gate for Freeform Requests
 
-If this Phase 1 plan came from a freeform `dx "<task>"` request rather than an
-existing ticket id, run this gate after `ExitPlanMode` is approved and before
-writing the Phase 1 ready marker.
+If this Phase 1 plan came from a freeform workflow request rather than an
+existing ticket id, check the Phase 0 `intake_decision` in session metadata.
+For `existing` or `created`, use the recorded ticket. For `declined` or
+`unavailable`, honor the recorded decision to continue without tracker
+write-back. Do not repeat intake or issue creation unless the user changes
+that decision or the scope requires a new decision.
+
+When no intake decision was recorded (for example, a resumed older lifecycle),
+run the gate below after `ExitPlanMode` is approved and before writing the
+Phase 1 ready marker.
 
 First, check `.dex/dex.md § Integrations`:
 - If the ticket tracker is `not configured`, skip this gate and continue.

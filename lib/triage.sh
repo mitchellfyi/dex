@@ -85,6 +85,7 @@ dx_triage_run() (
   session_id=$(dx_unique_session_id) || return 1
   session_id="triage-$session_id"
   export DEX_SESSION_ID="$session_id" DEX_TRIAGE_ACTIVE=1 DEX_LOOP_ACTIVE=0
+  unset DEX_SESSION_ONLY
   unset DEX_LOOP_PHASE DEX_LOOP_PROMISE DEX_PHASE_HANDOFF DEX_RUN_ID
   unset DEX_REVIEW_PASS_ACTIVE DEX_POLICY_SESSION_ID DX_CODEX_READ_ONLY
   context_file=$(dx_context_file "$session_id") || return 1

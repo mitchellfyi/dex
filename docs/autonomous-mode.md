@@ -6,6 +6,18 @@ hook injects a phase-specific audit prompt that critically reviews the work.
 Normal advancement requires the exact generation-bound completion receipt Dex
 authorized for that session and phase.
 
+Free-form `dx "a prompt"` launches ask you to choose session only (the default)
+or this workflow. `dx --session` and `dx --workflow` select directly; scripts
+without a terminal must choose explicitly. Ticket IDs and workspace flags
+continue to select the workflow. Session-only launches use the selected
+provider in the current checkout with isolated state and no phase audits.
+
+For a free-form workflow, Phase 0 follows `prompts/freeform-intake.md` before
+ticket setup. It clarifies scope, searches existing issues, and asks before
+creating an issue. The recorded `intake_decision` carries the selected issue
+or decision to proceed without one into Phase 1, so planning does not repeat
+the same approval question.
+
 ## How It Works
 
 ```

@@ -246,6 +246,7 @@ Stored in `prompts/`. Skills reference them by plain repo-relative path, e.g.
 - `commit-format.md` — Conventional Commits specification
 - `pr-description.md` — PR description template
 - `ticket-instructions.md` — Ticket intake workflow (injected by SessionStart hook)
+- `freeform-intake.md` — Phase 0 prompt triage, issue creation approval, and recorded intake decision
 - `issue-hygiene.md` — Lifecycle-wide duplicate search, issue/PR reconciliation,
   linked follow-up creation, external-write ownership, and phase reporting
 - `init-analysis.md` — Codebase analysis prompt (used by `dx init`)
@@ -320,6 +321,14 @@ The outer review loop is separate. In the normal flow, the Phase 2 agent selects
 Derived from a stable repo key plus worktree names (`worktree-<name>`) or branch names (fallback). Used to key all state files. Path-based derivation makes worktree sessions stable across branch renames while the repo key prevents cross-repo collisions in the global state directories.
 
 ### Worktree isolation
+
+Free-form `dx "<prompt>"` requests first choose session only (default) or the
+full workflow. `--session` and `--workflow` bypass the menu; non-terminal
+prompts require a mode. Ticket IDs and workspace flags select the lifecycle.
+Session-only runs use the current checkout and selected provider without
+worktree creation or phase audits. `DEX_SESSION_ONLY=1` suppresses ticket
+intake and lifecycle hooks; its unique `prompt-` state must not overwrite
+the checkout's provider alias or the last lifecycle session.
 
 Each ticket gets its own git worktree in `.dex/worktrees/`. The `dx` shell function manages creation, cleanup, and resumption.
 

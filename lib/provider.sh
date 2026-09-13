@@ -442,8 +442,8 @@ dx_provider_write_session_state() {
   mkdir -p "$DX_LOOP_DIR" || return 1
   __dx_provider_write_state_file "$(dx_provider_state_file "$session_id")" "$session_id" || return 1
 
-  # Standalone triage must not replace a lifecycle's checkout provider alias.
-  [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]] && return 0
+  # Standalone sessions must not replace a lifecycle's checkout provider alias.
+  [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 || "${DEX_SESSION_ONLY:-0}" == 1 ]] && return 0
 
   local alias_id
   alias_id=$(dx_session_id 2>/dev/null || true)
@@ -468,7 +468,7 @@ dx_provider_cleanup_session_state() {
   [[ -n "$session_id" ]] || return 0
   rm -f "$(dx_provider_state_file "$session_id")" 2>/dev/null
 
-  [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]] && return 0
+  [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 || "${DEX_SESSION_ONLY:-0}" == 1 ]] && return 0
 
   alias_id=$(dx_session_id 2>/dev/null || true)
   if [[ -n "$alias_id" && "$alias_id" != "$session_id" ]]; then
@@ -764,6 +764,10 @@ EOF
 }
 
 dx_provider_claude() {
+  if [[ "${DEX_LOOP_ACTIVE:-0}" == 1 || "${DEX_REVIEW_PASS_ACTIVE:-0}" == 1 \
+    || "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == 1 || "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]]; then
+    local -x DEX_SESSION_ONLY=0
+  fi
   [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
   if [[ -n "${DEX_SESSION_ID:-}" ]]; then
     dx_provider_write_session_state "$DEX_SESSION_ID" || return 1
@@ -1500,6 +1504,41 @@ PY
   dx_info "CCR subscription accounts: dx accounts"
   dx_info "Add another account: dx account add"
 }
+
+dx_provider_session_cleanup() {
+  local session_id="$1"
+  dx_provider_cleanup_session_state "$session_id"
+  rm -f "$(dx_agent_session_handle_file "$session_id" claude)" \
+    "$(dx_agent_session_handle_file "$session_id" codex)"
+}
+
+# Keep standalone session state and environment out of the caller's lifecycle.
+dx_provider_session() (
+  set -euo pipefail
+  local prompt="$1" session_id provider_agent claude_handle exit_code=0
+  session_id="prompt-$(dx_unique_session_id)"
+  export DEX_SESSION_ID="$session_id" DEX_SESSION_ONLY=1 DEX_LOOP_ACTIVE=0
+  unset DEX_LOOP_PHASE DEX_LOOP_PROMISE DEX_PHASE_HANDOFF DEX_RUN_ID
+  unset DEX_TRIAGE_ACTIVE DEX_REVIEW_PASS_ACTIVE DEX_REVIEW_ASSESSMENT_ACTIVE
+  unset DEX_POLICY_SESSION_ID DX_CODEX_READ_ONLY DX_ROUTER_SESSION_ID
+  unset DEX_HEADLESS_RUN DEX_HEADLESS_RUN_SPEC_FILE DEX_HEADLESS_REQUIRES_PLAN_APPROVAL
+  __dx_refresh_provider || return 1
+  __dx_require_resolved_provider_cli || return 1
+  provider_agent=$(__dx_resolved_provider_agent) || return 1
+  trap 'dx_provider_session_cleanup "$session_id"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  dx_info "Session only: $DX_PROVIDER_PROFILE_RESOLVED (current checkout)"
+  if [[ "$provider_agent" == codex ]]; then
+    bash "$DEX_DIR/bin/dxcodex.sh" session -- "$prompt" || exit_code=$?
+  else
+    claude_handle=$(python3 -c 'import uuid; print(uuid.uuid4())') || return 1
+    dx_agent_session_handle_write "$session_id" claude "$claude_handle" || return 1
+    dx_provider_claude "${DX_CLAUDE_FLAGS[@]}" --session-id "$claude_handle" \
+      -- "$prompt" || exit_code=$?
+  fi
+  return "$exit_code"
+)
 
 dx_provider_current() {
   dx_provider_apply || return 1

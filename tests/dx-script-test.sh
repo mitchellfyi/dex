@@ -181,12 +181,12 @@ assert_standalone_rejected dxrm dx dxrm --all
 # stops them. Matching a substring or every dx-prefixed word would break these.
 for task_input in "fix dxreviewloop behavior" "dxreviewloop needs a fix" dxcustom refactor 123 ENG-456; do
   : > "$TMP_DIR/dispatch-calls.out"
-  assert_rejected "fixture provider boundary" run_dispatch_fixture dx "$task_input"
+  assert_rejected "fixture provider boundary" run_dispatch_fixture dx --workflow "$task_input"
   assert_contains provider "$TMP_DIR/dispatch-calls.out"
   assert_not_contains "standalone shell command" "$TMP_DIR/dispatch.out"
 done
 : > "$TMP_DIR/dispatch-calls.out"
-assert_rejected "unquoted task reaches provider" run_dispatch_fixture dx fix dxreviewloop behavior
+assert_rejected "unquoted task reaches provider" run_dispatch_fixture dx --workflow fix dxreviewloop behavior
 assert_contains provider "$TMP_DIR/dispatch-calls.out"
 
 # The real standalone entry point still forwards its arguments unchanged.
