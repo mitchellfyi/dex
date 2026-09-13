@@ -54,6 +54,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh shellcheck
+      - name: Install actionlint
+        env:
+          GOBIN: ${{ runner.temp }}/actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$GOBIN" >> "$GITHUB_PATH"
       - name: Run static checks
         run: bash tests/check.sh
 

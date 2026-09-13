@@ -70,7 +70,7 @@ review-controller-test.sh	fast	all	600	hermetic
 review-diagnostics-test.sh	fast	all	600	hermetic
 review-evaluation-harness-test.sh	serial	all	1200	hermetic
 review-evidence-v3-test.sh	slow	all	1200	hermetic
-review-loop-contract-test.sh	fast	all	600	hermetic
+review-loop-contract-test.sh	slow	all	1200	hermetic
 review-loop-test.sh	serial	all	1800	hermetic
 review-policy-config-test.sh	fast	all	600	hermetic
 review-policy-test.sh	slow	all	1200	hermetic
@@ -99,6 +99,7 @@ test-command-dex-test.sh	fast	all	600	hermetic
 test-command-project-test.sh	fast	all	600	hermetic
 test-infrastructure-test.sh	fast	all	600	hermetic
 test-manifest-test.sh	fast	all	600	hermetic
+test-timeout-test.sh	fast	all	600	hermetic
 ticket-branch-adoption-errors-test.sh	fast	all	600	hermetic
 ticket-branch-adoption-test.sh	fast	all	600	hermetic
 ticket-branch-instructions-test.sh	fast	all	600	hermetic

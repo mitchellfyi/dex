@@ -18,6 +18,7 @@
 #   DX_TEST_PLATFORM  linux or macos (default: detected)
 #   DX_TEST_SHARD     one-based index/total, such as 1/2 (default: 1/1)
 #   DX_TEST_REPORT_DIR optional output directory exposed to hermetic test fixtures
+# Fixtures receive DX_TEST_CASE_LOG_DIR for logs retained beside their output.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -112,11 +113,6 @@ if [[ -n "$missing" ]]; then
   printf 'missing required tools:%s\n' "$missing" >&2
   exit 1
 fi
-if ! command -v timeout >/dev/null 2>&1 && ! command -v perl >/dev/null 2>&1; then
-  printf 'missing required timeout tool: install timeout or perl\n' >&2
-  exit 1
-fi
-
 declared_names="$RUN_STATE_DIR/declared-names"
 manifest_records="$RUN_STATE_DIR/manifest-records"
 : > "$declared_names"
@@ -294,6 +290,7 @@ printf 'running service tests alone, up to %s fast/slow tests in parallel, then 
 while IFS= read -r name; do
   [[ -n "$name" ]] || continue
   rm -f "$LOG_DIR/$name.rc" "$LOG_DIR/$name.log"
+  rm -rf "${LOG_DIR:?}/${name%.sh}"
 done < "$selected_names"
 
 run_one() {
@@ -350,22 +347,20 @@ run_one() {
         "GIT_CONFIG_NOSYSTEM=1"
         "GIT_TERMINAL_PROMPT=0"
         "DX_TEST_REPORT_DIR=${DX_TEST_REPORT_DIR:-}"
+        "DX_TEST_CASE_LOG_DIR=$LOG_DIR/${name%.sh}"
         "DEX_TEST_CURRENT_NAME=$name"
         bash "$SUITE_DIR/$name")
     fi
   else
-    test_command=(env "DEX_TEST_CURRENT_NAME=$name" bash "$SUITE_DIR/$name")
+    test_command=(env "DEX_TEST_CURRENT_NAME=$name"
+      "DX_TEST_CASE_LOG_DIR=$LOG_DIR/${name%.sh}" bash "$SUITE_DIR/$name")
   fi
 
   # </dev/null keeps a test from consuming the runner's own manifest stream.
   if [[ "$setup_failed" -eq 1 ]]; then
     rc=2
-  elif command -v timeout >/dev/null 2>&1; then
-    timeout "$effective_timeout" "${test_command[@]}" \
-      > "$LOG_DIR/$name.log" 2>&1 </dev/null
-    rc=$?
   else
-    perl -e 'alarm shift; exec @ARGV' "$effective_timeout" "${test_command[@]}" \
+    python3 "$ROOT/tests/test-timeout.py" "$effective_timeout" "${test_command[@]}" \
       > "$LOG_DIR/$name.log" 2>&1 </dev/null
     rc=$?
   fi

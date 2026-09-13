@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tests/helpers.sh
 source "$ROOT/tests/helpers.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-loop-contract-test.XXXXXX")"
+CASE_LOG_DIR="${DX_TEST_CASE_LOG_DIR:-$TMP_DIR/cases}"
+mkdir -p "$CASE_LOG_DIR"
 export HOME="$TMP_DIR/home"
 export DX_RUN_ROOT="$TMP_DIR/runs"
 POLICY_REPO="$TMP_DIR/repo"
@@ -34,7 +36,10 @@ trap cleanup EXIT
 run_case() { # <name> <host> <scenario> <expected-rc> <expected-text> [expected-waves]
   local name="$1" host="$2" scenario="$3" expected_rc="$4" expected_text="$5"
   local expected_waves="${6:-1}"
-  local output_file="$TMP_DIR/$name.out" call_file="$TMP_DIR/$name.calls" rc
+  local output_file="$CASE_LOG_DIR/$name.out" call_file="$TMP_DIR/$name.calls" rc
+  local started_epoch
+  started_epoch=$(date +%s)
+  printf 'RUN %s\n' "$name"
 
   set +e
   DEX_DIR="$ROOT" \
@@ -491,6 +496,7 @@ assert finished["data"]["metrics_complete"] is True, finished
 assert isinstance(finished["data"]["fixes_duration_seconds"], int), finished
 PY
   fi
+  printf 'PASS %s (%ss)\n' "$name" "$(( $(date +%s) - started_epoch ))"
 }
 
 run_case "claude-empty-context" "claude" "missing-context" 1 "context pack missing or empty"

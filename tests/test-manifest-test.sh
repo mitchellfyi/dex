@@ -36,7 +36,7 @@ apply_fixture() {
 }
 
 apply_fixture "a-hermetic-test.sh" \
-  'printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$XDG_CONFIG_HOME" "$CODEX_HOME" "$DX_STATE_DIR" "$ZDOTDIR" "$DX_MAINTENANCE_DIR" "$DX_RTK_INSTALL_DIR" "$GIT_CONFIG_GLOBAL" > "$DX_TEST_REPORT_DIR/a.env"; printf "%s|%s|%s|%s|%s\n" "${DX_PARENT_SECRET-unset}" "${GITHUB_TOKEN-unset}" "${OPENAI_API_KEY-unset}" "${DX_PROVIDER_PROFILE-unset}" "${SSH_AUTH_SOCK-unset}" > "$DX_TEST_REPORT_DIR/a.parent-env"'
+  'printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$XDG_CONFIG_HOME" "$CODEX_HOME" "$DX_STATE_DIR" "$ZDOTDIR" "$DX_MAINTENANCE_DIR" "$DX_RTK_INSTALL_DIR" "$GIT_CONFIG_GLOBAL" > "$DX_TEST_REPORT_DIR/a.env"; printf "%s|%s|%s|%s|%s\n" "${DX_PARENT_SECRET-unset}" "${GITHUB_TOKEN-unset}" "${OPENAI_API_KEY-unset}" "${DX_PROVIDER_PROFILE-unset}" "${SSH_AUTH_SOCK-unset}" > "$DX_TEST_REPORT_DIR/a.parent-env"; mkdir -p "$DX_TEST_CASE_LOG_DIR"; printf "case details\n" > "$DX_TEST_CASE_LOG_DIR/case.log"'
 apply_fixture "b-hermetic-test.sh" \
   'printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$XDG_CONFIG_HOME" "$CODEX_HOME" "$DX_STATE_DIR" "$ZDOTDIR" "$DX_MAINTENANCE_DIR" "$DX_RTK_INSTALL_DIR" "$GIT_CONFIG_GLOBAL" > "$DX_TEST_REPORT_DIR/b.env"'
 apply_fixture "c-shared-test.sh" \
@@ -90,6 +90,7 @@ assert_eq "linux" "$(cat "$good_report/platform")" "platform selection"
 assert_eq "isolated" "$(cat "$good_report/zsh-result")" "zsh startup isolation"
 assert_eq "unset|unset|unset|unset|unset" "$(cat "$good_report/a.parent-env")" \
   "hermetic parent environment"
+assert_contains 'case details' "$TMP_DIR/good-logs/a-hermetic-test/case.log"
 assert_not_contains "macos" "$good_report/platform"
 assert_not_contains "$shared_home" "$good_report/a.env"
 assert_not_contains "$shared_home" "$good_report/b.env"
@@ -101,6 +102,7 @@ fi
 
 # Reusing a log directory must not count result files from an earlier run.
 mkdir -p "$TMP_DIR/reused-report"
+printf 'stale case output\n' > "$TMP_DIR/good-logs/a-hermetic-test/stale.log"
 DX_TEST_SUITE_DIR="$suite_dir" \
 DX_TEST_MANIFEST="$fixture_manifest" \
 DX_TEST_LOG_DIR="$TMP_DIR/good-logs" \
@@ -108,6 +110,8 @@ DX_TEST_PLATFORM=linux \
 DX_TEST_REPORT_DIR="$TMP_DIR/reused-report" \
   bash "$ROOT/tests/run-all.sh" a-hermetic > "$TMP_DIR/reused.out"
 assert_contains "== 1 passed, 0 failed ==" "$TMP_DIR/reused.out"
+assert_no_file "$TMP_DIR/good-logs/a-hermetic-test/stale.log"
+assert_contains 'case details' "$TMP_DIR/good-logs/a-hermetic-test/case.log"
 
 # Lane and shard selection use the validated manifest order. With four Linux
 # fast tests, shard 2/2 contains the second and fourth entries.
