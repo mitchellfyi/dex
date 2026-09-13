@@ -41,12 +41,25 @@ dx provider use --repo ccr-subscription
 CCR global default to direct Claude; an existing direct Codex default is kept.
 Use `dx router setup` to configure routing without changing your default profile.
 
+## Add more accounts
+
+Use `dx account add` for each additional subscription login. You can keep
+multiple Anthropic accounts, multiple OpenAI accounts, or a mix. Rerunning
+setup skips account registration once an account exists.
+
 ```sh
-dx account add anthropic --name main
 dx account add anthropic --name backup
 dx account add openai --name chatgpt
 dx accounts
 ```
+
+Run `dx account add` with no arguments to choose the provider and name
+interactively. Names such as `backup` and `chatgpt` identify accounts in the
+CCR pool. The `ccr-subscription` profile selects that pool when launching Dex.
+`dx provider list` shows profiles and their defaults, with `*` beside the
+current selection; `dx accounts` shows the registered logins and quota.
+Repository defaults take precedence over the global default, so use
+`dx provider current` in the repository where you intend to run a task.
 
 Each login gets an isolated temporary native configuration. If the browser
 selects an already registered account, Dex names that duplicate and keeps the
@@ -62,6 +75,8 @@ login and installation progress go to stderr, leaving stdout for the JSON
 result. Run the setup wizard interactively without `--json`.
 
 ## Accounts and quota
+
+In the examples below, replace `main` and `backup` with names from `dx accounts`.
 
 ```sh
 dx accounts --watch

@@ -612,7 +612,7 @@ dx_provider_apply() {
       if [[ -n "$explicit_engine" ]]; then
         if [[ "$explicit_engine" == "anthropic-gateway" ]] && ! dx_provider_repo_gateway_allowed; then
           dx_error "Repo provider profile ${DX_PROVIDER_PROFILE_RESOLVED} uses gateway/API routing and requires DX_ALLOW_REPO_GATEWAY_PROVIDER=1."
-          dx_info "Define gateway profiles in ~/.dex/providers.json, or set DX_ALLOW_REPO_GATEWAY_PROVIDER=1 for an explicit one-off repo profile opt-in."
+          dx_info "Define gateway profiles in ~/.dex/providers.json, or set DX_ALLOW_REPO_GATEWAY_PROVIDER=1 for an explicit one-off repo profile opt-in." >&2
           return 1
         fi
         preferred_source="repo"
@@ -643,20 +643,20 @@ dx_provider_apply() {
     else
       dx_error "Unknown provider profile: $DX_PROVIDER_PROFILE_RESOLVED"
     fi
-    dx_info "Run 'dx provider list' to see available profiles."
+    dx_info "Run 'dx provider list' to see available profiles." >&2
     return 1
   fi
   DX_PROVIDER_ENGINE=$(dx_provider_get "$DX_PROVIDER_PROFILE_RESOLVED" "engine" "$DX_PROVIDER_SOURCE" 2>/dev/null || true)
   if [[ -z "$DX_PROVIDER_ENGINE" ]]; then
     dx_error "Unknown provider profile: $DX_PROVIDER_PROFILE_RESOLVED"
-    dx_info "Run 'dx provider list' to see available profiles."
+    dx_info "Run 'dx provider list' to see available profiles." >&2
     return 1
   fi
   case "$DX_PROVIDER_ENGINE" in
     claude|codex-plugin|anthropic-gateway|ccr) ;;
     *)
       dx_error "Provider profile ${DX_PROVIDER_PROFILE_RESOLVED} has unsupported engine: ${DX_PROVIDER_ENGINE}"
-      dx_info "Supported engines: claude, codex-plugin, anthropic-gateway, ccr"
+      dx_info "Supported engines: claude, codex-plugin, anthropic-gateway, ccr" >&2
       return 1
       ;;
   esac
@@ -1443,28 +1443,62 @@ EOF
 
 dx_provider_list() {
   dx_provider_validate_config_files || return 1
+  local repo_config global_default repo_default selection selected_profile="" selected_source=""
+  repo_config=$(dx_provider_repo_config 2>/dev/null || true)
+  global_default=$(__dx_provider_json_default "$DX_PROVIDER_GLOBAL_CONFIG" 2>/dev/null || true)
+  repo_default=$(__dx_provider_json_default "$repo_config" 2>/dev/null || true)
+  if selection=$(dx_provider_apply && printf '%s\n%s\n' "$DX_PROVIDER_PROFILE_RESOLVED" "$DX_PROVIDER_SOURCE"); then
+    selected_profile="${selection%%$'\n'*}"
+    selected_source="${selection#*$'\n'}"
+  else
+    dx_warn "Could not resolve the selected profile. Run dx provider current for details."
+  fi
+  dx_info "Global default: ${global_default:-claude-subscription (built-in fallback)}"
+  if [[ -n "$repo_default" ]]; then
+    dx_info "Repository default: $repo_default"
+  fi
+  dx_info "Selected profile: ${selected_profile:-unresolved}"
+  printf '\n'
   printf '%s\n' "Agents:"
   printf '  %s\n' "claude                  Direct Claude Code lifecycle agent"
   printf '  %s\n' "codex                   Direct Codex CLI lifecycle agent"
   printf '\n'
-  printf '%s\n' "Built-in profiles:"
-  printf '  %s\n' "claude-subscription     Claude Code with Claude subscription OAuth"
-  printf '  %s\n' "codex-subscription      Codex CLI with ChatGPT subscription authentication"
-  printf '  %s\n' "ccr-subscription        Optional CCR account pools inside Claude Code"
+  printf '%s\n' "Built-in profiles (* selected for this command):"
+  python3 - "$selected_profile" "$selected_source" "$repo_config" "$DX_PROVIDER_GLOBAL_CONFIG" <<'PY' || return 1
+import json, os, sys
 
-  local repo_config
-  repo_config=$(dx_provider_repo_config 2>/dev/null || true)
-  for file in "$repo_config" "$DX_PROVIDER_GLOBAL_CONFIG"; do
-    [[ -n "$file" && -f "$file" ]] || continue
-    printf '\n%s\n' "Profiles in $file:"
-    python3 -c '
-import json, sys
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-    data = json.load(f)
-for name in sorted(data.get("profiles", {})):
-    print(f"  {name}")
-' "$file" 2>/dev/null || dx_warn "Could not parse $file"
-  done
+selected, selected_source, repo_file, global_file = sys.argv[1:]
+configs = []
+for scope, file in (("repo", repo_file), ("global", global_file)):
+    data = {}
+    if file and os.path.isfile(file):
+        with open(file, encoding="utf-8") as stream:
+            data = json.load(stream)
+    configs.append((scope, file, data))
+
+def row(name, source, description=""):
+    marker = "*" if (name, source) == (selected, selected_source) else " "
+    labels = []
+    for scope, file, data in configs:
+        default = data.get("default") or ("claude-subscription" if scope == "global" else "")
+        if name == default and source in ("builtin:", f"{scope}:{file}"):
+            labels.append(f"{scope} default")
+    suffix = f" [{', '.join(labels)}]" if labels else ""
+    print(f"  {marker} {name:<23} {description}{suffix}".rstrip())
+
+row("claude-subscription", "builtin:", "Claude Code with Claude subscription OAuth")
+row("codex-subscription", "builtin:", "Codex CLI with ChatGPT subscription authentication")
+row("ccr-subscription", "builtin:", "Optional CCR account pools inside Claude Code")
+for scope, file, data in configs:
+    profiles = data.get("profiles", {})
+    if profiles:
+        print(f"\nCustom profiles in {file}:")
+        for name in sorted(profiles):
+            row(name, f"{scope}:{file}")
+PY
+  printf '\n'
+  dx_info "CCR subscription accounts: dx accounts"
+  dx_info "Add another account: dx account add"
 }
 
 dx_provider_current() {
@@ -1809,11 +1843,14 @@ dx_provider_command() {
       printf '%s\n' "  dx --model <model> <command-or-task>"
       printf '%s\n' ""
       printf '%s\n' "Commands:"
-      printf '%s\n' "  list                    Show built-in and configured profiles"
+      printf '%s\n' "  list                    Show profiles, defaults, and current selection"
       printf '%s\n' "  current                 Show the resolved active profile"
       printf '%s\n' "  use <profile>           Set the global default profile"
       printf '%s\n' "  use --repo <profile>    Set the current repo default profile"
       printf '%s\n' "  doctor                  Check subscription-safety and local tooling"
+      printf '\n'
+      dx_info "CCR subscription accounts: dx accounts"
+      dx_info "Add another account: dx account add"
       ;;
     *)
       dx_error "Unknown provider command: $subcmd"

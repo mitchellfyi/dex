@@ -131,6 +131,62 @@ cd "$TMP_DIR/repo"
 assert_fails_with "Reason: profile 'broken' has unknown key 'unknown_field'" \
   dx_provider_command list
 
+# The selection marker follows resolution; default labels describe saved settings.
+rm -f "$TMP_DIR/repo/.dex/providers.json"
+(
+  unset DX_PROVIDER_PROFILE DX_AGENT DX_AGENT_OVERRIDE DX_MODEL DX_MODEL_OVERRIDE DX_EFFORT DX_EFFORT_OVERRIDE
+  list_file="$TMP_DIR/provider-list.txt"
+  repo_config=$(dx_provider_repo_config)
+  dx_provider_command list > "$list_file"
+  assert_contains "Global default: claude-subscription (built-in fallback)" "$list_file"
+  assert_contains "Selected profile: claude-subscription" "$list_file"
+  grep -Eq '^  \* claude-subscription .*\[global default\]$' "$list_file"
+  assert_contains "CCR subscription accounts: dx accounts" "$list_file"
+  assert_contains "Add another account: dx account add" "$list_file"
+
+  dx_provider_command use ccr-subscription >/dev/null
+  dx_provider_command list > "$list_file"
+  assert_contains "Global default: ccr-subscription" "$list_file"
+  grep -Eq '^  \* ccr-subscription .*\[global default\]$' "$list_file"
+  [[ $(grep -c 'profiles in ' "$list_file") == 0 ]] || assert_at $LINENO
+
+  dx_provider_command use --repo codex-subscription >/dev/null
+  dx_provider_command list > "$list_file"
+  assert_contains "Repository default: codex-subscription" "$list_file"
+  grep -Eq '^  \* codex-subscription .*\[repo default\]$' "$list_file"
+  grep -Eq '^    ccr-subscription .*\[global default\]$' "$list_file"
+
+  DX_PROVIDER_PROFILE=claude-subscription dx_provider_command list > "$list_file"
+  grep -Eq '^  \* claude-subscription ' "$list_file"
+  grep -Eq '^    codex-subscription .*\[repo default\]$' "$list_file"
+  DX_AGENT_OVERRIDE=claude dx_provider_command list > "$list_file"
+  grep -Eq '^  \* ccr-subscription .*\[global default\]$' "$list_file"
+
+  # Same-named custom profiles must only mark the selected definition.
+  for config_file in "$DX_PROVIDER_GLOBAL_CONFIG" "$TMP_DIR/repo/.dex/providers.json"; do
+    cat > "$config_file" <<'JSON'
+{"profiles":{"shared":{"engine":"claude","auth":"subscription"}}}
+JSON
+  done
+  dx_provider_command use shared >/dev/null
+  dx_provider_command list > "$list_file"
+  grep -FA1 "Custom profiles in $DX_PROVIDER_GLOBAL_CONFIG:" "$list_file" | grep -Eq '^  \* shared .*\[global default\]$'
+  [[ $(grep -c '^  \* ' "$list_file") == 1 ]] || assert_at $LINENO
+
+  dx_provider_command use --repo shared >/dev/null
+  dx_provider_command list > "$list_file"
+  grep -FA1 "Custom profiles in $repo_config:" "$list_file" | grep -Eq '^  \* shared .*\[repo default\]$'
+  [[ $(grep -c '^  \* ' "$list_file") == 1 ]] || assert_at $LINENO
+
+  # A bad override must leave the list available for finding a valid profile.
+  DX_PROVIDER_PROFILE=missing-profile dx_provider_command list > "$list_file" 2>&1
+  assert_contains "Run 'dx provider list' to see available profiles." "$list_file"
+  assert_contains "Selected profile: unresolved" "$list_file"
+  assert_contains "Custom profiles in $DX_PROVIDER_GLOBAL_CONFIG:" "$list_file"
+  [[ $(grep -c '^  \* ' "$list_file") == 0 ]] || assert_at $LINENO
+)
+rm -f "$DX_PROVIDER_GLOBAL_CONFIG" "$TMP_DIR/repo/.dex/providers.json"
+
 # Gateway profiles with api-token auth must launch through BSD env, where
 # options must precede NAME=VALUE operands (regression: a -u flag appended
 # after the assignments made every gateway launch exit 127 on macOS).

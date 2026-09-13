@@ -149,7 +149,9 @@ dx --resume                # Resume the lifecycle for the current workspace
 dx --from-pr 42            # Start a lifecycle from an existing pull request
 dxreviewloop               # Resolve risk (or honor an override), then review to its clean gate
 dxcomplete                 # Resume PR completion for the current branch
+dx provider list           # List profiles, mark the selection, and show defaults
 dx provider current        # Show active agent/provider/model resolution
+dx accounts                # Show CCR subscription accounts and quota
 dx control pause           # Pause, stop, or hand control back to a running lifecycle
 dx control recover review --reason "review owner stopped after interrupt"
 dx control override review.pass-timeout 2400 --source agent --reason "checks need longer"
@@ -173,6 +175,12 @@ dx uninit                  # Remove Dex from the current repo
 
 Run standalone commands such as `dxreviewloop` directly in your shell, without
 a leading `dx`. `dx dxreviewloop` is rejected before any lifecycle is started.
+
+`dx "task description"` starts the full lifecycle. For a standalone task with
+plan approval and an audited implementation loop, use
+`dxloop "task description"` with a Claude or CCR profile. For a plain
+conversation, `claude "example prompt"` uses Claude's own login. Dex currently
+has no public command for a plain chat through its CCR account pool.
 
 Inside Claude Code, run `/dxproof` to capture the current UI diff as a captioned
 before/after walkthrough. `/dxcapture` is the same command under an alias.
@@ -260,14 +268,99 @@ every run.
 
 ## Provider Profiles
 
-Dex can optionally run Claude Code through CCR with several subscription OAuth
-accounts, quota display, account fallback and phase-based model selection. Run
-`dx setup --router` to add it, or keep using the direct Claude and Codex profiles.
-See [subscription routing](docs/subscription-routing.md) for account setup,
-supported behavior and the compatibility checks.
+A **profile** chooses how Dex launches its agent. A CCR **account** is a named
+subscription login, such as `work`, `personal` or `chatgpt`. One
+`ccr-subscription` profile can use several Anthropic and OpenAI accounts.
 
-Dex defaults to the `claude` agent using your session's default model and
-effort. You can override one run from the terminal:
+| Profile | Agent and authentication |
+|---|---|
+| `claude-subscription` | Direct Claude Code using its existing Claude subscription login |
+| `codex-subscription` | Direct Codex CLI using its existing ChatGPT subscription login |
+| `ccr-subscription` | Claude Code through Claude Code Router (CCR), using the accounts added with `dx account add` |
+
+```bash
+dx provider list                          # * marks the selected profile; labels show defaults
+dx provider current                       # Show the effective agent, profile, and model
+dx provider use codex-subscription         # Set the global default
+dx provider use --repo codex-subscription   # Set the default for this repository
+```
+
+`dx provider list` shows the global default and any repository default. Each
+default is labelled beside its profile, and `*` marks the profile selected for
+the current command. Account names appear in `dx accounts`.
+
+Repository defaults in `.dex/providers.json` take precedence over the global
+default in `~/.dex/providers.json`. With neither set, Dex uses
+`claude-subscription`. Selecting a built-in profile saves a default without
+adding a custom profile definition.
+
+### Set up CCR and add accounts
+
+CCR is optional and requires Node.js 22+ and Claude Code. Adding an OpenAI
+account also requires the Codex CLI for login. The routed agent remains
+Claude Code, including when it uses an OpenAI model.
+
+```bash
+dx setup --router
+```
+
+Setup installs CCR, registers your first account, discovers its models and asks
+you to choose a default model. It selects `ccr-subscription` as the global
+profile. In a repository with its own default, also run
+`dx provider use --repo ccr-subscription`.
+
+Add each additional account with `dx account add`. You can add several accounts
+from the same provider, accounts from both providers, or both:
+
+```bash
+dx account add anthropic --name backup
+dx account add openai --name chatgpt
+dx accounts                             # Account state and available quota
+dx accounts --watch                     # Refresh the account dashboard
+```
+
+Each command opens a separate login and asks you to confirm the identity being
+registered. Existing accounts stay signed in. `dx account add` with no arguments
+prompts for the provider and account name. Rerunning setup skips account
+registration once an account exists; use `dx account add` to grow the pool.
+
+### Choose models and use the pool
+
+```bash
+dx model list                           # Available provider/model IDs
+dx route policy                         # Default model and routes for each phase
+dx router status                        # Router health and account/model counts
+```
+
+The model chosen during setup initially serves all seven lifecycle phases.
+For each request, CCR routing selects an eligible account for that model and
+can switch accounts when quota is exhausted. Adding an OpenAI account makes
+its models available; choose one in your routing policy to use it.
+
+Use IDs from `dx model list` in place of the placeholders below:
+
+```bash
+dx route configure 'anthropic/<model-id>'  # Set the model for all phases
+dx route configure 'openai/<model-id>' --phase implement \
+  --fallback 'anthropic/<model-id>'        # Use OpenAI for implementation, with Claude fallback
+dx route policy
+dx 1234                                 # Launch the usual Dex lifecycle with this policy
+```
+
+Cross-provider fallback requires an explicit `--fallback` route. Configure
+models before starting a lifecycle: its context budget is fixed at launch.
+See [subscription routing](docs/subscription-routing.md) for account pins,
+changes during a session, quota recovery and compatibility limits. The
+integration is experimental; live subscription access depends on provider
+eligibility and model entitlement.
+
+### Direct agents and overrides
+
+Switch the global default back to a direct profile with
+`dx provider use claude-subscription` or `dx provider use codex-subscription`.
+Use `--repo` to change an existing repository default too.
+
+Override the agent or model for one invocation from the terminal:
 
 ```bash
 dx --agent claude --model claude-opus-4-7 1234
@@ -275,31 +368,17 @@ dx --agent codex --model gpt-5.3-codex "add the export job"
 dx 1234 --agent codex
 ```
 
-Run-level flags may appear before or after the ticket or task.
+Run-level flags may appear before or after the ticket or task and leave saved
+defaults unchanged. `--agent claude` keeps a configured CCR profile when it is
+the matching default; select `claude-subscription` to use the direct profile.
+Direct profiles use their CLI's session model and effort defaults unless
+overridden. `dx provider doctor` checks authentication and local tooling.
 
-Interactive Codex lifecycles run directly in the Codex terminal UI. Dex adds
-session-scoped `SessionStart` and phase-audit `Stop` hooks for that invocation
-so setup, planning, implementation, review, verification, and completion stay
-in one session. The wrapper pins the non-secret Dex runtime context that those
-hooks need because Codex's persistent app server may not inherit the terminal
-environment. Dex saves the exact Claude or Codex conversation ID at startup, so
-restarting the same lifecycle resumes its existing conversation after a crash.
-Headless tasks and focused delegation still use `codex exec` through Dex's
-wrapper.
-
-- `claude-subscription` - direct Claude Code via Claude subscription auth.
-- `codex-subscription` - direct Codex CLI lifecycles and delegated Codex work
-  using ChatGPT subscription auth.
-
-```bash
-dx provider list
-dx provider use codex-subscription
-dx provider use --repo codex-subscription
-dx provider doctor
-```
-
-Repo defaults live in `.dex/providers.json`; user defaults live in
-`~/.dex/providers.json`. CLI flags win for the current invocation only.
+Interactive Codex lifecycles run in the Codex terminal UI, with Dex hooks
+keeping all lifecycle phases in one session. Dex saves the exact Claude or
+Codex conversation ID so resuming a lifecycle can reopen its conversation
+after a crash. Headless tasks and focused delegation use `codex exec` through
+Dex's wrapper.
 
 Subscription-safe profiles strip API-provider environment variables from
 launched subprocesses and require Dex-managed wrappers for delegated Codex work.
@@ -335,6 +414,8 @@ independent repository maintenance remains available. See
   journals, and the optional DexCode sync.
 - [RTK token reduction](docs/rtk-token-reduction.md) covers the optional
   output-filtering CLI and how to disable it.
+- [Subscription routing](docs/subscription-routing.md) covers CCR setup,
+  multiple accounts, model policy, quota and recovery.
 
 ## Contributing
 
