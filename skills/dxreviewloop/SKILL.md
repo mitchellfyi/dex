@@ -9,6 +9,36 @@ Run `/dxreview --single-pass` in fresh review-wave sessions until the selected
 risk tier reaches its consecutive `CLEAN` gate. This is the default Review
 phase used by `dx`.
 
+## Launch the Review Loop
+
+Loading this skill does not start review. Launch the production runner once
+from the current checkout:
+
+```bash
+zsh -f -c '
+  source "${DEX_DIR:?DEX_DIR must point to the Dex installation}/dx.sh" || exit 1
+  dxreviewloop
+'
+```
+
+`dxreviewloop` is a zsh function in `dx.sh`; its implementation is
+`dx_review_loop_run` in `lib/review-loop.sh`. Sourcing the installed file loads
+the current definition even when the parent shell has an older one. If
+`DEX_DIR` is missing, resolve the installed skill's symlink to find the Dex
+root and export it before launching. Preserve the inherited `DEX_SESSION_ID`,
+provider selection, and state-directory variables for lifecycle runs.
+
+The wrapper selects risk, launches fresh review waves, manages the clean-pass
+gate, and writes the final receipt. Use it directly; `research/review-loop/`
+contains benchmark tooling, and there is no production review-loop script in
+`bin/`.
+
+Keep the owning session alive while the runner works. If the shell tool
+yields a running job, retain its handle and continue waiting on that job.
+Host-capacity queue messages mean the loop is waiting for a review slot.
+Report the runner's actual result and receipt; starting a job or reaching a
+tool timeout is not a successful review.
+
 Read `prompts/issue-hygiene.md` for tracker ownership. Fresh review-wave
 children never create or update external issues. They return concrete
 out-of-scope candidates with evidence; after accepting a finding, the lifecycle
