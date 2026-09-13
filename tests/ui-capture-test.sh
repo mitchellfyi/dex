@@ -62,8 +62,13 @@ GH_BIN="$TMP_DIR/gh-bin"
 mkdir -p "$GH_BIN"
 cat > "$GH_BIN/gh" <<'SH'
 #!/usr/bin/env bash
+set -euo pipefail
 if [[ "$*" == "pr edit --help" ]]; then
   printf '%s\n' '      --attach file   Attach an image or video file'
+  # Write past the pipe buffer so a reader that exits at --attach breaks gh.
+  for ((help_line=0; help_line<1024; help_line++)); do
+    printf '%4096s\n' ''
+  done
   exit 0
 fi
 exit 1
@@ -80,7 +85,7 @@ exit 1
 SH
 chmod +x "$GH_BIN/gh"
 assert_rejected "GitHub CLI without --attach" env PATH="$GH_BIN:$PATH" bash -c \
-  'source "$DEX_DIR/lib/common.sh"; dx_github_pr_attachments_supported'
+  'set -euo pipefail; source "$DEX_DIR/lib/common.sh"; dx_github_pr_attachments_supported'
 
 TOOLS_DIR="$(dx_ui_capture_tools_dir)"
 mkdir -p "$TOOLS_DIR/node_modules/.bin" \

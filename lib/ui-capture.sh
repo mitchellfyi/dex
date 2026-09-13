@@ -43,7 +43,9 @@ dx_ui_capture_evidence_file() {
 
 dx_github_pr_attachments_supported() {
   command -v gh >/dev/null 2>&1 || return 1
-  gh pr edit --help 2>/dev/null | grep -q -- '--attach'
+  local help_text
+  help_text=$(gh pr edit --help 2>/dev/null) || true
+  [[ "$help_text" == *"--attach"* ]]
 }
 
 dx_ui_capture_retention_days() {
