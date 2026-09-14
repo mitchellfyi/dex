@@ -37,6 +37,7 @@ test('auth, quota, temporary failures and malformed requests are distinct', () =
   assert.equal(policy.failure(401).reauth, true);
   assert.equal(policy.failure(429, {}, { 'retry-after': '120' }, 1000).until, 121000);
   assert.equal(policy.failure(503).retry, true);
+  for (const code of [408, 409, 500, 502, 503, 504, 529]) assert.equal(policy.failure(code).modelOnly, true);
   for (const code of [400, 403, 404, 422]) assert.equal(policy.failure(code).retry, false);
 });
 test('model-only quota rejection does not exhaust the whole account', () => {

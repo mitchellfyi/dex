@@ -61,7 +61,7 @@ function blockers(account, target, now = Date.now()) {
   const result = usageWindows(account, target, now).filter(window => window.remaining_ratio === 0)
     .map(window => ({ reason: 'quota-exhausted', window: window.name, until: window.resets_at }));
   if (account.cooldown_until > now) result.push({ reason: account.cooldown_reason || 'cooldown', until: account.cooldown_until });
-  if (account.model_cooldowns?.[target.id] > now) result.push({ reason: 'rate-limit', until: account.model_cooldowns[target.id] });
+  if (account.model_cooldowns?.[target.id] > now) result.push({ reason: account.model_cooldown_reasons?.[target.id] || 'rate-limit', until: account.model_cooldowns[target.id] });
   return result;
 }
 
@@ -134,7 +134,7 @@ function failure(status, payload = {}, headers = {}, now = Date.now()) {
     // Shared exhausted quota windows exclude the account separately.
     return { retry: true, reason: 'rate-limit', until: Math.max(now + 1000, Number.isFinite(reset) && reset > now ? reset : now + (Number.isFinite(delay) ? delay : 60000)), modelOnly: true };
   }
-  if ([408, 409, 500, 502, 503, 504, 529].includes(status)) return { retry: true, reason: 'temporary', until: now + 10000 };
+  if ([408, 409, 500, 502, 503, 504, 529].includes(status)) return { retry: true, reason: 'temporary', until: now + 10000, modelOnly: true };
   return { retry: false, reason: status === 403 ? 'forbidden' : 'request-rejected' };
 }
 

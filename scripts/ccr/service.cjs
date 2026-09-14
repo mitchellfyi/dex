@@ -155,7 +155,12 @@ class RouterService {
   async markUnavailable(accountId, modelId, problem) {
     await this.updateAccount(accountId, item => {
       if (problem.reauth) item.status = 'reauth-required';
-      else if (problem.modelOnly) item.model_cooldowns = { ...item.model_cooldowns, [modelId]: Math.max(item.model_cooldowns?.[modelId] || 0, problem.until) };
+      else if (problem.modelOnly) {
+        if (!(item.model_cooldowns?.[modelId] > problem.until)) {
+          item.model_cooldowns = { ...item.model_cooldowns, [modelId]: problem.until };
+          item.model_cooldown_reasons = { ...item.model_cooldown_reasons, [modelId]: problem.reason };
+        }
+      }
       else if (!(item.cooldown_until > problem.until)) { item.cooldown_until = problem.until; item.cooldown_reason = problem.reason; }
     });
   }

@@ -93,18 +93,19 @@ test('all exhausted accounts preserve route state without claiming a successful 
   assert.equal((await send(token)).status, 503); assert.equal(calls.length, 2, 'retries during cooldown do not call the provider');
   const session = state.read(state.sessionFile('session')); assert.equal(session.active, true); assert.equal(session.paused_reason, 'no-completed-response');
 });
-for (const protocol of ['messages', 'responses']) test(`${protocol} uses another model after both primary accounts hit a generic rate limit`, async () => {
+for (const protocol of ['messages', 'responses']) for (const errorStatus of [429, 503, 529]) test(`${protocol} uses another model after both primary accounts return ${errorStatus}`, async () => {
   const config = state.config(); config.models.push({ ...config.models[0], id: 'anthropic/fallback' });
   config.phases[0] = { model: 'anthropic/test', fallbacks: ['anthropic/fallback'] }; state.write(state.stateFile('config'), config);
   const token = await register(); endpoint = endpoint.replace('/messages', `/${protocol}`);
   reply = options => JSON.parse(options.body).model === 'dex-anthropic/test'
-    ? new Response(JSON.stringify({ error: { type: 'rate_limit_error' } }), { status: 429, headers: { 'retry-after': '60' } })
+    ? new Response('{}', { status: errorStatus, headers: { 'retry-after': '60' } })
     : new Response(JSON.stringify({ content: [{ type: 'text', text: 'fallback answer' }] }));
   const extra = protocol === 'responses' ? { input: 'hello' } : {};
   assert.equal((await send(token, extra)).status, 200);
   assert.deepEqual(calls.map(call => call.model), ['dex-anthropic/test', 'dex-anthropic/test', 'dex-anthropic/fallback']);
   const accounts = state.accounts().filter(account => account.provider === 'anthropic');
   assert.ok(accounts.every(account => account.model_cooldowns['anthropic/test'] > Date.now() && !account.cooldown_until));
+  assert.ok(accounts.every(account => account.model_cooldown_reasons['anthropic/test'] === (errorStatus === 429 ? 'rate-limit' : 'temporary')));
   const next = await send(token, extra);
   assert.equal(next.status, 200);
   assert.equal(next.headers.get('x-dex-model'), 'anthropic/fallback');
@@ -115,17 +116,17 @@ for (const protocol of ['messages', 'responses']) test(`${protocol} uses another
   assert.equal((await send(token, extra)).headers.get('x-dex-model'), 'anthropic/test', 'the primary model is retried when cooldown ends');
   const events = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   const failures = events.filter(event => event.type === 'account.failover');
-  assert.ok(failures.every(event => event.data.scope === 'model' && event.data.provider_status === 429 && event.data.retry_at > Date.now()));
+  assert.ok(failures.every(event => event.data.scope === 'model' && event.data.provider_status === errorStatus && event.data.retry_at > Date.now()));
   assert.equal(failures.length, 2);
 });
 test('fallbacks recheck account-wide failures before trying another model', async () => {
   const config = state.config(); config.models.push({ ...config.models[0], id: 'anthropic/fallback' });
   config.phases[0] = { model: 'anthropic/test', fallbacks: ['anthropic/fallback'] }; state.write(state.stateFile('config'), config);
-  const token = await register(); reply = () => new Response('{}', { status: 503 });
+  const token = await register(); reply = () => { throw new Error('Synthetic connection failure'); };
   const response = await send(token);
   assert.equal(response.status, 503); assert.equal(calls.length, 2);
   assert.ok(Number(response.headers.get('retry-after')) <= 10);
-  assert.match((await response.json()).error.message, /temporary provider error/);
+  assert.match((await response.json()).error.message, /connection failed/);
 });
 test('login failures name the affected accounts without inventing a retry time', async () => {
   const token = await register();

@@ -251,11 +251,12 @@ available model to execute.
 
 For each model, Dex tries eligible accounts before moving to the next model.
 It prefers the current account, then fresh quota headroom. It excludes disabled
-identities, expired logins, exhausted windows and accounts in cooldown. A rate-limit
-response cools only the requested model on that account, including when the
-provider does not identify the limit's scope. Other configured fallback models
-can still be tried. A fresh exhausted quota window shared by all models excludes
-the whole account; a model-specific window excludes only matching models.
+identities, expired logins, exhausted windows and accounts in cooldown. Rate limits
+and temporary provider errors cool only the requested model on that account,
+including when the provider does not identify the limit's scope. Other configured
+fallback models can still be tried. Connection and login failures affect the
+whole account. A fresh exhausted quota window shared by all models excludes the
+whole account; a model-specific window excludes only matching models.
 
 When no route is available, the error names each model and account with its
 reason: rate limit, temporary provider error, exhausted quota, disabled account,
