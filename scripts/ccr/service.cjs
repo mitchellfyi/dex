@@ -10,6 +10,17 @@ const state = require('./state.cjs');
 const policy = require('./policy.cjs');
 const ipc = require('./ipc.cjs');
 const { AccountBroker, authHeaders } = require('./accounts.cjs');
+const { CodexCatalog } = require('./codex-catalog.cjs');
+
+// Failover events keep the provider's own explanation (a quota window versus a
+// rejected converted request) as a short cleaned excerpt; bodies never land in
+// the journal.
+function providerError(payload) {
+  const error = payload?.error;
+  if (!error || typeof error !== 'object') return null;
+  const clean = value => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').slice(0, 200) : null;
+  return { type: clean(error.type), message: clean(error.message) };
+}
 
 function processIdentity(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return '';
@@ -45,6 +56,8 @@ class RouterService {
     this.gateway = gateway; this.clientKey = clientKey; this.broker = broker; this.fetch = fetchImpl;
     this.tickets = new Map(); this.inFlight = new Set(); this.server = null;
     this.ownerIdentity = processIdentity(process.pid);
+    // Delegate lazily: tests and recovery swap the broker and fetch after construction.
+    this.codexCatalog = new CodexCatalog({ broker: { access: (...args) => this.broker.access(...args) }, fetchImpl: (...args) => this.fetch(...args) });
   }
   async start() {
     const socket = ipc.socketPath();
@@ -182,6 +195,11 @@ class RouterService {
     try {
       session = this.authenticate(request);
       if (request.method === 'GET' && /\/models(?:\?|$)/.test(request.url)) {
+        // Codex identifies itself with client_version and reads its own catalogue shape.
+        const version = new URL(request.url, 'http://127.0.0.1').searchParams.get('client_version');
+        if (session.client === 'codex' || version) {
+          ipc.json(response, 200, await this.codexCatalog.models({ session, selected: policy.route(state.config(), session), accounts: state.accounts(), version })); return;
+        }
         ipc.json(response, 200, { data: state.config().models.map(item => ({ id: item.id, type: 'model', display_name: item.id })) }); return;
       }
       const protocol = /\/v1\/responses(?:\?|$)/.test(request.url) ? 'responses' : 'messages';
@@ -190,9 +208,18 @@ class RouterService {
       const conversation = request.headers['x-claude-code-session-id'];
       if (conversation) {
         state.checkedId(conversation);
+        // /clear, /resume and forks move a running client to another conversation.
+        // The launch capability owns the session; the conversation is bookkeeping
+        // that lets a resumed launch keep its route. Subagents keep the parent's.
         const childRequest = Boolean(request.headers['x-claude-code-parent-agent-id']);
-        if (!childRequest && session.conversation_id && session.conversation_id !== conversation) throw new Error('Claude conversation does not match its Dex session.');
-        if (!childRequest) await state.locked('sessions', () => { const current = state.read(state.sessionFile(session.id)); current.conversation_id = conversation; state.write(state.sessionFile(session.id), current); });
+        if (!childRequest && session.conversation_id !== conversation) {
+          await state.locked('sessions', () => {
+            const current = state.read(state.sessionFile(session.id));
+            const previous = current.conversation_id || null;
+            current.conversation_id = conversation; state.write(state.sessionFile(session.id), current);
+            if (previous && previous !== conversation) event(session, 'route.conversation_changed', { from: previous, to: conversation });
+          });
+        }
       }
       const selected = policy.route(state.config(), session);
       // Native /model is an explicit request override; dex/active follows policy.
@@ -203,18 +230,19 @@ class RouterService {
         selected.models = [policy.model(config, matches[0]?.id || body.model)];
         if (selected.models[0].context_window < session.context_limit) throw new Error('Compact and restart before selecting a smaller context model.');
       }
-      const choices = policy.candidates(state.accounts(), selected, session);
-      if (!choices.length) throw policy.unavailable(state.accounts(), selected);
+      const choices = policy.candidates(state.accounts(), selected, session, Date.now(), protocol);
+      if (!choices.length) throw policy.unavailable(state.accounts(), selected, Date.now(), protocol);
       for (const choice of choices) {
         if (controller.signal.aborted) return;
         // Earlier attempts or concurrent sessions may have excluded this account.
         const account = state.accounts().find(item => item.id === choice.account.id);
-        if (!account || policy.blockers(account, choice.model).length) continue;
+        if (!account || policy.blockers(account, choice.model, Date.now(), protocol).length) continue;
         policy.validateRequest(body, choice.model, protocol);
+        const cooldownKey = policy.cooldownKey(choice.model, protocol);
         let credentials;
         try { credentials = await this.broker.access(account); }
         catch (error) {
-          await this.markUnavailable(account.id, choice.model.id, { reauth: error.reauth, reason: 'refresh-unavailable', until: Date.now() + 10000 });
+          await this.markUnavailable(account.id, cooldownKey, { reauth: error.reauth, reason: 'refresh-unavailable', until: Date.now() + 10000 });
           event(session, 'account.unavailable', { account_id: choice.account.id, reason: error.reauth ? 'reauth-required' : 'refresh-unavailable' });
           continue;
         }
@@ -235,7 +263,7 @@ class RouterService {
           } catch (error) {
             this.tickets.delete(ticket);
             if (controller.signal.aborted) return;
-            await this.markUnavailable(account.id, choice.model.id, { reason: 'connection-failed', until: Date.now() + 10000 });
+            await this.markUnavailable(account.id, cooldownKey, { reason: 'connection-failed', until: Date.now() + 10000 });
             event(session, 'router.request_failed', { reason: 'connection-failed', account_id: choice.account.id });
             break;
           }
@@ -253,9 +281,9 @@ class RouterService {
               catch (error) { if (!error.reauth) problem = { retry: true, reason: 'refresh-unavailable', until: Date.now() + 10000 }; }
             }
             if (!problem.retry) { ipc.json(response, upstream.status, { error: { type: 'invalid_request_error', message: 'The provider rejected this request. Check the selected model and supported content.', provider_status: upstream.status } }); return; }
-            await this.markUnavailable(account.id, choice.model.id, problem);
-            event(session, 'account.failover', { account_id: account.id, model: choice.model.id, reason: problem.reason,
-              provider_status: upstream.status, scope: problem.modelOnly ? 'model' : 'account', retry_at: problem.until || null });
+            await this.markUnavailable(account.id, cooldownKey, problem);
+            event(session, 'account.failover', { account_id: account.id, model: choice.model.id, protocol, reason: problem.reason,
+              provider_status: upstream.status, provider_error: providerError(payload), scope: problem.modelOnly ? 'model' : 'account', retry_at: problem.until || null });
             break;
           }
           await state.locked('sessions', () => {
@@ -271,7 +299,7 @@ class RouterService {
           return;
         }
       }
-      throw policy.unavailable(state.accounts(), selected);
+      throw policy.unavailable(state.accounts(), selected, Date.now(), protocol);
     } catch (error) {
       if (session) {
         const reason = response.headersSent ? 'partial-response' : 'no-completed-response';

@@ -4,7 +4,13 @@ const fs = require('node:fs');
 const state = require('./state.cjs');
 
 const PHASES = ['setup', 'plan', 'implement', 'review', 'verify', 'pr', 'complete'];
+// The lifecycle writes 7 once Phase 6 has a verified terminal commit. The
+// session keeps talking (final summary, follow-up questions) on the complete
+// route; 7 is never configurable on its own.
+const TERMINAL_PHASE = 7;
 const MODEL = /^(anthropic|openai)\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
+// Wire protocol each provider speaks without CCR conversion.
+const NATIVE_PROTOCOL = { anthropic: 'messages', openai: 'responses' };
 
 function model(config, id) {
   if (typeof id !== 'string' || !MODEL.test(id)) throw new Error('Use a model listed by dx model list.');
@@ -15,7 +21,7 @@ function model(config, id) {
 
 function phase(session) {
   if (session.fixed_phase !== undefined) {
-    if (!Number.isInteger(session.fixed_phase) || session.fixed_phase < 0 || session.fixed_phase > 6) throw new Error('Invalid fixed phase.');
+    if (!Number.isInteger(session.fixed_phase) || session.fixed_phase < 0 || session.fixed_phase > TERMINAL_PHASE) throw new Error('Invalid fixed phase.');
     return session.fixed_phase;
   }
   if (!session.phase_file) return 0;
@@ -23,7 +29,7 @@ function phase(session) {
     const metadata = fs.lstatSync(session.phase_file);
     if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.uid !== process.getuid() || (metadata.mode & 0o022) || metadata.size > 32) throw new Error('Unsafe lifecycle phase file.');
     const value = fs.readFileSync(session.phase_file, 'utf8').trim();
-    if (!/^[0-6]$/.test(value)) throw new Error('Invalid lifecycle phase.');
+    if (!/^[0-7]$/.test(value)) throw new Error('Invalid lifecycle phase.');
     return Number(value);
   } catch (error) {
     if (error.code === 'ENOENT') throw new Error('Lifecycle phase is missing. Resume the Dex lifecycle before continuing.');
@@ -33,9 +39,10 @@ function phase(session) {
 
 function route(config, session) {
   const current = phase(session);
+  const policyPhase = Math.min(current, PHASES.length - 1);
   const override = session.override;
-  const choice = override && (override.scope === 'session' || override.phase === current)
-    ? override : config.phases[current] || config.phases[PHASES[current]] || { model: config.default_model, fallbacks: [] };
+  const choice = override && (override.scope === 'session' || override.phase === current || override.phase === policyPhase)
+    ? override : config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
   const ids = [choice.model, ...(choice.fallbacks || [])];
   const models = [...new Set(ids)].map(id => model(config, id));
   if (session.context_limit && models.some(item => item.context_window < session.context_limit)) throw new Error('This route has a smaller context window than the running session. Start a new session with this policy.');
@@ -54,24 +61,34 @@ function usageWindows(account, target, now) {
     ? account.usage.windows.filter(window => (!window.model_pool || target.id.includes(window.model_pool)) && (!window.resets_at || window.resets_at > now)) : [];
 }
 
-function blockers(account, target, now = Date.now()) {
+// A provider rejection only proves that this account cannot serve the model
+// over the protocol that was used. Requests CCR converts between wire formats
+// (Codex Responses to Claude, Claude Messages to OpenAI) fail for their own
+// reasons, so they cool down separately from native traffic on the same
+// account and model.
+function cooldownKey(target, protocol) {
+  return protocol && protocol !== NATIVE_PROTOCOL[target.provider] ? `${target.id}@${protocol}` : target.id;
+}
+
+function blockers(account, target, now = Date.now(), protocol) {
   if (!account.enabled) return [{ reason: 'disabled' }];
   if (account.status === 'reauth-required') return [{ reason: 'reauth-required' }];
   if (account.model_ids && !account.model_ids.includes(target.id)) return [{ reason: 'model-unavailable' }];
   const result = usageWindows(account, target, now).filter(window => window.remaining_ratio === 0)
     .map(window => ({ reason: 'quota-exhausted', window: window.name, until: window.resets_at }));
   if (account.cooldown_until > now) result.push({ reason: account.cooldown_reason || 'cooldown', until: account.cooldown_until });
-  if (account.model_cooldowns?.[target.id] > now) result.push({ reason: account.model_cooldown_reasons?.[target.id] || 'rate-limit', until: account.model_cooldowns[target.id] });
+  const key = cooldownKey(target, protocol);
+  if (account.model_cooldowns?.[key] > now) result.push({ reason: account.model_cooldown_reasons?.[key] || 'rate-limit', until: account.model_cooldowns[key] });
   return result;
 }
 
-function candidates(items, selection, session, now = Date.now()) {
+function candidates(items, selection, session, now = Date.now(), protocol) {
   const result = [];
   for (const target of selection.models) {
     const windows = account => usageWindows(account, target, now);
     const available = items.filter(item => item.provider === target.provider
       && (!selection.pinned || item.id === selection.pinned)
-      && !blockers(item, target, now).length);
+      && !blockers(item, target, now, protocol).length);
     available.sort((a, b) => {
       if (a.id === session.current_account) return -1;
       if (b.id === session.current_account) return 1;
@@ -93,7 +110,7 @@ function retryIn(until, now = Date.now()) {
   return hours < 24 ? `${hours}h` : `${Math.ceil(hours / 24)}d`;
 }
 
-function unavailable(items, selection, now = Date.now()) {
+function unavailable(items, selection, now = Date.now(), protocol) {
   const clean = value => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
   const labels = { disabled: 'disabled', 'reauth-required': 'login needs renewal', 'model-unavailable': 'model not available on this account',
     'rate-limit': 'rate limited', temporary: 'temporary provider error', 'connection-failed': 'provider connection failed',
@@ -102,7 +119,7 @@ function unavailable(items, selection, now = Date.now()) {
   const summaries = (selection.pinned ? selection.models.slice(0, 1) : selection.models).map(target => {
     const pool = items.filter(item => item.provider === target.provider && (!selection.pinned || item.id === selection.pinned));
     const accounts = pool.map(account => {
-      const blocked = blockers(account, target, now);
+      const blocked = blockers(account, target, now, protocol);
       if (blocked.length && blocked.every(item => Number.isFinite(item.until) && item.until > now)) waits.push(Math.max(...blocked.map(item => item.until)));
       const explanation = blocked.map(item => {
         reasons.add(item.reason);
@@ -118,6 +135,10 @@ function unavailable(items, selection, now = Date.now()) {
   if (retryAfter) advice.push(`Retry in ${retryAfter}s.`);
   if (selection.pinned) advice.push('Account pinning restricts failover. Use dx route unpin-account to restore it.');
   else if (selection.models.length === 1) advice.push('No fallback models are configured for this route.');
+  if (protocol && !selection.models.some(target => NATIVE_PROTOCOL[target.provider] === protocol)) {
+    const provider = Object.keys(NATIVE_PROTOCOL).find(name => NATIVE_PROTOCOL[name] === protocol);
+    advice.push(`Every model on this route needs CCR ${protocol} conversion. Add a ${provider} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>.`);
+  }
   if (reasons.has('reauth-required')) advice.push('Renew the affected login with dx account reauth <name>.');
   if (reasons.has('disabled')) advice.push('Enable an account with dx account enable <name>.');
   advice.push('Inspect dx accounts --live or select another model with dx route use.');
@@ -158,4 +179,4 @@ function validateRequest(body, target, protocol = 'messages') {
   if (Buffer.byteLength(JSON.stringify(body)) > target.context_window * 4) throw new Error('The conversation exceeds this route’s payload budget. Compact it before switching.');
 }
 
-module.exports = { PHASES, model, phase, route, contextLimit, candidates, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, phase, route, contextLimit, cooldownKey, candidates, blockers, retryIn, unavailable, failure, validateRequest };

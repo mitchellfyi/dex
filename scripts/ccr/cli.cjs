@@ -46,7 +46,7 @@ function render(group, action, value, options) {
   if (value?.session && value.route) {
     const session = value.session; const account = state.accounts().find(item => item.id === session.current_account);
     const rows = [
-      ['Session', session.id], ['Phase', `${value.route.phase} (${policy.PHASES[value.route.phase]})`],
+      ['Session', session.id], ['Phase', `${value.route.phase} (${policy.PHASES[value.route.phase] || 'lifecycle complete'})`],
       ['Policy', session.override ? `${session.override.scope} override` : 'configured phases'],
       ['Selected', value.route.models.map(model => model.id).join(' -> ')],
       ['Last used', `${session.current_model || 'pending'}${account ? ` / ${account.name}` : ''}`]

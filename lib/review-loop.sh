@@ -407,7 +407,11 @@ __dx_review_pause_intervention() {
       printf '%s\n' "Fix the hanging review wave or set a longer review.pass-timeout session override, then rerun dxreviewloop."
       ;;
     provider_error)
-      printf '%s\n' "Restore the selected provider CLI and authentication, then rerun dxreviewloop."
+      if [[ "${DX_PROVIDER_ENGINE:-}" == "ccr" ]]; then
+        printf '%s\n' "Check the routed launch above and dx router doctor (the review pass could not start or was refused by the Dex router), then rerun dxreviewloop."
+      else
+        printf '%s\n' "Restore the selected provider CLI and authentication, then rerun dxreviewloop."
+      fi
       ;;
     capacity_state_invalid|invalid_capacity_configuration)
       printf '%s\n' "Repair the host review-capacity state or configuration, then rerun dxreviewloop."

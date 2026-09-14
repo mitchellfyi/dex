@@ -24,16 +24,23 @@ function launchArguments(args) {
   const resume = options.some(arg => ['--resume', '--continue', '-r', '-c'].includes(arg) || arg.startsWith('--resume=')) && !options.includes('--fork-session');
   return { requested, resume, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
 }
-function launchEnvironment(settings, token, session, original = process.env) {
+// Native routing installs an apiKeyHelper in Claude's user settings. Claude
+// warns when that helper and ANTHROPIC_AUTH_TOKEN are both present, so a routed
+// launch hands its token to the helper instead (native.cjs returns it).
+function apiKeyHelperConfigured(original = process.env) {
+  const file = path.join(original.CLAUDE_CONFIG_DIR || path.join(require('node:os').homedir(), '.claude'), 'settings.json');
+  try { return typeof JSON.parse(require('node:fs').readFileSync(file, 'utf8')).apiKeyHelper === 'string'; } catch { return false; }
+}
+function launchEnvironment(settings, token, session, original = process.env, helper = apiKeyHelperConfigured(original)) {
   const env = { ...original };
-  for (const name of Object.keys(env)) if (/^(ANTHROPIC_|OPENAI_|AZURE_OPENAI_|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_API_KEY_HELPER|CLAUDE_CODE_USE_|CLAUDE_CODE_SUBAGENT_MODEL|CCR_)/.test(name)) delete env[name];
+  for (const name of Object.keys(env)) if (/^(ANTHROPIC_|OPENAI_|AZURE_OPENAI_|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_API_KEY_HELPER|CLAUDE_CODE_USE_|CLAUDE_CODE_SUBAGENT_MODEL|CCR_|DX_ROUTER_SESSION_)/.test(name)) delete env[name];
   Object.assign(env, {
-    ANTHROPIC_BASE_URL: `${settings.gateway}/plugins/dex`, ANTHROPIC_AUTH_TOKEN: token,
+    ANTHROPIC_BASE_URL: `${settings.gateway}/plugins/dex`, ...(helper ? {} : { ANTHROPIC_AUTH_TOKEN: token }),
     ANTHROPIC_CUSTOM_MODEL_OPTION: 'dex/active', ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: 'Dex automatic route',
     ANTHROPIC_DEFAULT_OPUS_MODEL: 'dex/active', ANTHROPIC_DEFAULT_SONNET_MODEL: 'dex/active', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'dex/active',
     CLAUDE_CODE_SUBAGENT_MODEL: 'dex/active', CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(session.context_limit),
     CLAUDE_CODE_STOP_HOOK_BLOCK_CAP: original.CLAUDE_CODE_STOP_HOOK_BLOCK_CAP || '1000',
-    DX_ROUTER_SESSION_ID: session.id, DX_PROVIDER_ENGINE: 'ccr', DX_PROVIDER_AGENT: 'claude', DX_PROVIDER_PROFILE: 'ccr-subscription',
+    DX_ROUTER_SESSION_ID: session.id, DX_ROUTER_SESSION_TOKEN: token, DX_PROVIDER_ENGINE: 'ccr', DX_PROVIDER_AGENT: 'claude', DX_PROVIDER_PROFILE: 'ccr-subscription',
     DEX_ROUTER_HOME: state.root()
   });
   return env;
@@ -70,7 +77,10 @@ async function launch(args) {
   const lifecycle = process.env.DEX_SESSION_ID;
   const interactive = process.env.DEX_PHASE_HANDOFF === 'inline' && process.env.DEX_HEADLESS_RUN !== '1' && !args.includes('-p') && !args.includes('--print');
   const id = interactive && lifecycle ? lifecycle : `${(lifecycle || 'standalone').slice(0, 150)}.${state.token().slice(0, 12)}`;
-  const phaseFile = lifecycle && process.env.DEX_SESSION_ONLY !== '1' ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(lifecycle)}.phase`) : null;
+  // Review waves and assessments run under their own session ID but follow the
+  // lifecycle that spawned them; only that policy session has a phase file.
+  const policySession = process.env.DEX_POLICY_SESSION_ID || lifecycle;
+  const phaseFile = policySession && process.env.DEX_SESSION_ONLY !== '1' ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(policySession)}.phase`) : null;
   const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile, resume: parsed.resume,
     model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined) });
   const monitor = gatewayMonitor(session);

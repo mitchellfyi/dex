@@ -59,11 +59,25 @@ Codex running a Claude model through CCR's Responses-to-Messages conversion.
 `--model` and native model selectors can choose a configured model explicitly;
 that request uses the chosen model's account pool.
 
+Codex reads its model catalogue from the gateway. Dex answers with a `dex/active`
+entry that mirrors the metadata of the first OpenAI model on the route, read
+from the same ChatGPT catalogue that `dx model discover` uses, so Codex keeps
+its `apply_patch` tool, skills instructions and reasoning levels. A route with
+no OpenAI model gets GPT-5 family defaults. Codex still warns about missing
+model metadata when the gateway is unreachable at startup.
+
 These are ordinary native sessions with their existing conversation history,
 permissions and CLI options. They do not start a Dex lifecycle. Authentication
 helpers start CCR when needed and obtain a local capability tied to the client
 process. Provider credentials remain in Dex's account store. `dx accounts --live`
 shows the same pool used by these sessions and Dex workflows.
+
+A Dex lifecycle launched while native routing is enabled hands its own session
+capability to the same Claude helper instead of setting `ANTHROPIC_AUTH_TOKEN`,
+so Claude does not warn about two authentication sources. Inside a routed
+session, `/clear`, `/resume` or a fork moves that session to the new
+conversation; the routing journal records `route.conversation_changed` and the
+route, override and account pin carry over.
 
 Setup requires Python 3.11+ and native clients that support command-based gateway
 authentication, including the Codex `model_providers.<id>.auth` configuration.
@@ -206,6 +220,11 @@ This applies to all seven phases and native Claude/Codex sessions using
 `dex/active`. Dex tries the accounts that can serve Fable before trying Opus.
 An explicit model override or account pin restricts this automatic fallback.
 
+After Phase 6 records its terminal commit, the lifecycle marks the session
+complete (phase 7). The conversation keeps the `complete` route for its final
+summary and any follow-up. Review-wave passes and assessments launched by a
+lifecycle run under their own session IDs but follow that lifecycle's phase.
+
 If discovery is unavailable, register a model supported by your subscription:
 
 ```sh
@@ -264,6 +283,15 @@ including when the provider does not identify the limit's scope. Other configure
 fallback models can still be tried. Connection and login failures affect the
 whole account. A fresh exhausted quota window shared by all models excludes the
 whole account; a model-specific window excludes only matching models.
+
+A request that CCR converts between wire formats (Codex Responses to a Claude
+model, or Claude Messages to an OpenAI model) cools down separately from native
+traffic. A converted Codex request that is rejected does not block a Claude
+Code session using the same account and model; the account table lists such
+cooldowns with the protocol, for example `claude-opus-5@responses`. When every
+model on a route needs conversion, the error says so and names the
+`dx route configure` command that adds a native model. Failover events in the
+routing journal keep a short excerpt of the provider's own error.
 
 When no route is available, the error names each model and account with its
 reason: rate limit, temporary provider error, exhausted quota, disabled account,

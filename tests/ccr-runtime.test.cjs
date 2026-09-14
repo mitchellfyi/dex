@@ -106,7 +106,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       const nativeConfig = { claude_file: path.join(nativeHome, 'claude/settings.json'), codex_file: path.join(nativeHome, 'codex/config.toml') };
       require('../scripts/ccr/native.cjs').clientSettings('enable', nativeConfig, settings);
       const env = { ...process.env, DEX_DIR: path.resolve('.'), CODEX_HOME: path.dirname(nativeConfig.codex_file), CLAUDE_CONFIG_DIR: path.dirname(nativeConfig.claude_file), CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DEX_SESSION_ONLY: '1', DX_PROVIDER_PROFILE: 'codex-subscription', TERM: 'xterm-256color', DX_STATE_DIR: path.join(nativeHome, 'phases'), DX_LOOP_DIR: path.join(nativeHome, 'loops') };
-      for (const key of Object.keys(env)) if (/^(ANTHROPIC_|OPENAI_|DEX_LOOP_|DEX_REVIEW_|DEX_PHASE_|DX_MODEL|DX_CLAUDE_|DX_CODEX_|CLAUDE_CODE_OAUTH_TOKEN)/.test(key) || ['DEX_SESSION_ID', 'DEX_RUN_ID', 'DX_ROUTER_SESSION_ID', 'CLAUDECODE'].includes(key)) delete env[key];
+      for (const key of Object.keys(env)) if (/^(ANTHROPIC_|OPENAI_|DEX_LOOP_|DEX_REVIEW_|DEX_PHASE_|DX_MODEL|DX_CLAUDE_|DX_CODEX_|CLAUDE_CODE_OAUTH_TOKEN)/.test(key) || ['DEX_SESSION_ID', 'DEX_RUN_ID', 'DX_ROUTER_SESSION_ID', 'DX_ROUTER_SESSION_TOKEN', 'CLAUDECODE'].includes(key)) delete env[key];
       const runNative = (executable, args) => new Promise((resolve, reject) => {
         const child = spawn(executable, args, { cwd: nativeHome, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 });
         let stdout = ''; let stderr = '';

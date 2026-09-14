@@ -29,7 +29,7 @@ test('prompt-only launch treats text after the option terminator literally', () 
 });
 
 test('standalone sessions launch without phase files while workflows follow their phase', async t => {
-  const saved = Object.fromEntries(['PATH', 'DEX_SESSION_ID', 'DEX_SESSION_ONLY', 'DX_STATE_DIR'].map(key => [key, process.env[key]]));
+  const saved = Object.fromEntries(['PATH', 'DEX_SESSION_ID', 'DEX_SESSION_ONLY', 'DEX_POLICY_SESSION_ID', 'DX_STATE_DIR'].map(key => [key, process.env[key]]));
   t.after(() => {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
@@ -51,7 +51,14 @@ test('standalone sessions launch without phase files while workflows follow thei
   process.env.DEX_SESSION_ONLY = '0';
   fs.writeFileSync(path.join(directory, 'workflow-test.phase'), '3\n', { mode: 0o600 });
   assert.equal(await launch(['--', 'continue the workflow']), 0);
-  assert.deepEqual(phases, [0, 3]);
+  // A review-wave pass has its own session ID but no phase file of its own.
+  process.env.DEX_SESSION_ID = 'workflow-test-pass-1';
+  process.env.DEX_POLICY_SESSION_ID = 'workflow-test';
+  assert.equal(await launch(['-p', '--', 'review the change set']), 0);
+  fs.writeFileSync(path.join(directory, 'workflow-test.phase'), '7\n', { mode: 0o600 });
+  delete process.env.DEX_POLICY_SESSION_ID; process.env.DEX_SESSION_ID = 'workflow-test';
+  assert.equal(await launch(['--', 'present the final summary']), 0);
+  assert.deepEqual(phases, [0, 3, 3, 7]);
 });
 
 test('CLI rejects missing and unknown option values', () => {
@@ -358,10 +365,17 @@ test('launch uses private transport env and keeps native credentials out of argv
   assert.equal(launchArguments(['--continue']).resume, true);
   assert.equal(launchArguments(['--resume', 'conversation-one', '--fork-session']).resume, false);
   assert.ok(parsed.args.includes('bypassPermissions'));
-  const env = launchEnvironment({ gateway: 'http://127.0.0.1:1234' }, 'synthetic-session-token', { id: 'run1', context_limit: 128000 }, { ANTHROPIC_API_KEY: 'bad', OPENAI_API_KEY: 'bad', CCR_WEB_AUTH_TOKEN: 'bad', PATH: '/bin' });
+  const original = { ANTHROPIC_API_KEY: 'bad', OPENAI_API_KEY: 'bad', CCR_WEB_AUTH_TOKEN: 'bad', DX_ROUTER_SESSION_TOKEN: 'parent-session-token', PATH: '/bin', CLAUDE_CONFIG_DIR: directory };
+  const env = launchEnvironment({ gateway: 'http://127.0.0.1:1234' }, 'synthetic-session-token', { id: 'run1', context_limit: 128000 }, original);
   assert.equal(env.ANTHROPIC_API_KEY, undefined); assert.equal(env.CCR_WEB_AUTH_TOKEN, undefined);
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'synthetic-session-token'); assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '128000');
+  assert.equal(env.DX_ROUTER_SESSION_TOKEN, 'synthetic-session-token'); assert.equal(env.DX_ROUTER_SESSION_ID, 'run1');
   assert.equal(parsed.args.includes('synthetic-session-token'), false);
+  // With the native apiKeyHelper installed, Claude gets the capability from the helper only.
+  fs.writeFileSync(path.join(directory, 'settings.json'), JSON.stringify({ apiKeyHelper: 'node native.cjs auth claude' }));
+  const helped = launchEnvironment({ gateway: 'http://127.0.0.1:1234' }, 'synthetic-session-token', { id: 'run1', context_limit: 128000 }, original);
+  assert.equal(helped.ANTHROPIC_AUTH_TOKEN, undefined); assert.equal(helped.DX_ROUTER_SESSION_TOKEN, 'synthetic-session-token');
+  assert.equal(helped.ANTHROPIC_BASE_URL, 'http://127.0.0.1:1234/plugins/dex');
 });
 test('native login uses only official subscription commands', () => {
   assert.deepEqual(onboarding.loginCommand('anthropic'), ['claude', ['auth', 'login', '--claudeai']]);

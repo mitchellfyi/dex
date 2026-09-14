@@ -51,8 +51,74 @@ test('native credentials are stable per client process and use the configured fa
   const session = state.read(state.sessionFile(`native-codex-${process.pid}`));
   assert.equal(session.current_model, 'openai/test'); assert.equal(session.override, undefined);
   assert.equal(session.auth_hash, state.hash(first.token)); assert.equal(JSON.stringify(session).includes(first.token), false);
+  // The converted Codex requests cooled the Claude accounts for Responses only.
+  const anthropic = state.accounts().filter(account => account.provider === 'anthropic');
+  assert.ok(anthropic.every(account => account.model_cooldowns['anthropic/test@responses'] > Date.now() && account.model_cooldowns['anthropic/test'] === undefined));
+  const events = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).filter(event => event.type === 'account.failover');
+  assert.deepEqual(events.map(event => [event.data.protocol, event.data.provider_error]), [['responses', null], ['responses', null]]);
+  endpoint = endpoint.replace('/responses', '/messages');
+  const claude = await service.control('native-auth', { ...params, client: 'claude' });
+  assert.equal((await send(claude.token)).status, 200);
+  assert.equal(calls.at(-1).model, 'dex-anthropic/test', 'native Claude traffic is not blocked by the Codex conversion failures');
   config.native.enabled = false; state.write(state.stateFile('config'), config);
   assert.deepEqual(await service.control('native-auth', params), first, 'running clients can finish after disabling native defaults');
+});
+
+test('Codex reads a catalogue that mirrors the routed OpenAI model under the dex/active alias', async () => {
+  const config = state.config(); config.native = { enabled: true }; config.phases[0] = { model: 'anthropic/test', fallbacks: ['openai/test'] }; state.write(state.stateFile('config'), config);
+  const { token } = await service.control('native-auth', { client: 'codex', owner_pid: process.pid });
+  const urls = [];
+  const upstream = { slug: 'test', display_name: 'Test', description: 'upstream', default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'high', description: 'h' }], shell_type: 'unified_exec', visibility: 'list', supported_in_api: true, priority: 3, upgrade: null, support_verbosity: true, default_verbosity: 'low', apply_patch_tool_type: 'freeform', truncation_policy: { mode: 'tokens', limit: 10000 }, supports_image_detail_original: true, context_window: 272000, max_context_window: 272000, experimental_supported_tools: [], model_messages: { instructions_template: 'upstream instructions' } };
+  service.fetch = async url => { urls.push(url); return new Response(JSON.stringify({ models: [upstream, { slug: 'other', display_name: 'Other' }] })); };
+  const catalogue = async (query = '?client_version=0.154.0', bearer = token) => fetch(endpoint.replace('/v1/messages', `/v1/models${query}`), { headers: { authorization: `Bearer ${bearer}` } });
+  let response = await catalogue(); assert.equal(response.status, 200);
+  let body = await response.json();
+  assert.equal(body.models[0].slug, 'dex/active');
+  assert.equal(body.models[0].display_name, 'Dex automatic route');
+  assert.equal(body.models[0].apply_patch_tool_type, 'freeform');
+  assert.equal(body.models[0].default_reasoning_level, 'high', 'metadata comes from the routed OpenAI model');
+  assert.equal(body.models[0].model_messages.instructions_template, 'upstream instructions');
+  assert.equal(body.models[0].context_window, 128000); assert.equal(body.models[0].max_context_window, 128000);
+  assert.deepEqual(body.models.slice(1).map(item => item.slug), ['test', 'other']);
+  assert.equal(refreshes.at(-1).id, 'three', 'the OpenAI account fetched the catalogue');
+  assert.match(urls[0], /chatgpt\.com\/backend-api\/codex\/models\?client_version=0\.154\.0$/);
+  await catalogue(); assert.equal(urls.length, 1, 'the upstream catalogue is cached');
+  // Without an OpenAI model on the route Codex still gets full native tooling.
+  config.phases[0] = { model: 'anthropic/test', fallbacks: [] }; state.write(state.stateFile('config'), config);
+  body = await (await catalogue()).json();
+  assert.equal(body.models.length, 1); assert.equal(body.models[0].slug, 'dex/active');
+  assert.equal(body.models[0].apply_patch_tool_type, 'freeform'); assert.equal(body.models[0].include_skills_usage_instructions, true);
+  assert.ok(body.models[0].supported_reasoning_levels.some(level => level.effort === 'xhigh'));
+  assert.equal(urls.length, 1);
+  // Claude keeps the Messages catalogue shape.
+  const claude = await register();
+  body = await (await catalogue('', claude)).json();
+  assert.deepEqual(body.data.map(item => item.id), ['anthropic/test', 'openai/test']);
+  assert.equal((await catalogue('?client_version=0.154.0', 'not-a-session')).status, 401);
+});
+
+test('a completed lifecycle keeps serving requests on its complete route', async () => {
+  const config = state.config(); config.phases[6] = { model: 'openai/test', fallbacks: [] }; state.write(state.stateFile('config'), config);
+  const phase = path.join(directory, 'lifecycle.phase'); fs.writeFileSync(phase, '6\n', { mode: 0o600 });
+  const token = await register('session', { phase_file: phase });
+  assert.equal((await send(token)).status, 200); fs.writeFileSync(phase, '7\n');
+  const response = await send(token);
+  assert.equal(response.status, 200, await response.text());
+  assert.deepEqual(calls.map(call => call.model), ['dex-openai/test', 'dex-openai/test']);
+  assert.equal(state.read(state.sessionFile('session')).phase, 7);
+  assert.equal((await service.control('route', { action: 'status', session: 'session' })).route.phase, 7);
+});
+
+test('failover events keep a cleaned provider explanation', async () => {
+  const token = await register();
+  reply = () => new Response(JSON.stringify({ error: { type: 'rate_limit_error', message: `Retry\u001b[2J later ${'x'.repeat(300)}` } }), { status: 429, headers: { 'retry-after': '60' } });
+  assert.equal((await send(token)).status, 503);
+  const events = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).filter(event => event.type === 'account.failover');
+  assert.equal(events.length, 2);
+  assert.equal(events[0].data.protocol, 'messages');
+  assert.equal(events[0].data.provider_error.type, 'rate_limit_error');
+  assert.equal(events[0].data.provider_error.message.length, 200);
+  assert.equal(events[0].data.provider_error.message.includes(''), false);
 });
 
 test('Responses forwarding preserves protocol, validates images and rejects missing conversation input', async () => {
@@ -117,8 +183,10 @@ for (const protocol of ['messages', 'responses']) for (const errorStatus of [429
   assert.equal((await send(token, extra)).status, 200);
   assert.deepEqual(calls.map(call => call.model), ['dex-anthropic/test', 'dex-anthropic/test', 'dex-anthropic/fallback']);
   const accounts = state.accounts().filter(account => account.provider === 'anthropic');
-  assert.ok(accounts.every(account => account.model_cooldowns['anthropic/test'] > Date.now() && !account.cooldown_until));
-  assert.ok(accounts.every(account => account.model_cooldown_reasons['anthropic/test'] === (errorStatus === 429 ? 'rate-limit' : 'temporary')));
+  // Codex traffic reaches Claude models through CCR conversion and cools down on its own key.
+  const key = protocol === 'responses' ? 'anthropic/test@responses' : 'anthropic/test';
+  assert.ok(accounts.every(account => account.model_cooldowns[key] > Date.now() && !account.cooldown_until && Object.keys(account.model_cooldowns).length === 1));
+  assert.ok(accounts.every(account => account.model_cooldown_reasons[key] === (errorStatus === 429 ? 'rate-limit' : 'temporary')));
   const next = await send(token, extra);
   assert.equal(next.status, 200);
   assert.equal(next.headers.get('x-dex-model'), 'anthropic/fallback');
@@ -197,6 +265,18 @@ test('session state and its scoped route survive a stopped extension and re-regi
   await service.control('finish', { id: 'session', token });
   const replacement = await register(); assert.equal((await send(token)).status, 401); assert.equal((await send(replacement, {}, { 'x-claude-code-session-id': 'conversation-one' })).status, 200);
   assert.equal(state.read(state.sessionFile('session')).conversation_id, 'conversation-one'); assert.equal(state.read(state.sessionFile('session')).current_model, 'openai/test');
+});
+test('a running client that clears or resumes moves its session to the new conversation', async () => {
+  const token = await register();
+  assert.equal((await send(token, {}, { 'x-claude-code-session-id': 'conversation-one' })).status, 200);
+  assert.equal((await send(token, {}, { 'x-claude-code-session-id': 'conversation-one' })).status, 200);
+  assert.equal((await send(token, {}, { 'x-claude-code-session-id': 'conversation-two' })).status, 200, 'after /clear the same launch keeps its route');
+  assert.equal(state.read(state.sessionFile('session')).conversation_id, 'conversation-two');
+  assert.equal((await send(token, {}, { 'x-claude-code-session-id': 'conversation-three', 'x-claude-code-parent-agent-id': 'agent-1' })).status, 200);
+  assert.equal(state.read(state.sessionFile('session')).conversation_id, 'conversation-two', 'subagent requests do not rebind the conversation');
+  const events = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).filter(event => event.type === 'route.conversation_changed');
+  assert.deepEqual(events.map(event => [event.data.from, event.data.to]), [['conversation-one', 'conversation-two']]);
+  assert.equal(calls.length, 4);
 });
 test('a fresh conversation at a reused Dex ID does not inherit the previous conversation or override', async () => {
   const token = await register(); await service.control('route', { action: 'use', model: 'openai/test', session: 'session' });

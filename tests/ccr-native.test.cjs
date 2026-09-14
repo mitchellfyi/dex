@@ -28,14 +28,17 @@ function toml(file) {
 }
 
 test('Claude launched by Dex retains its existing session capability and phase routing', async () => {
-  const previousId = process.env.DX_ROUTER_SESSION_ID; const previousToken = process.env.ANTHROPIC_AUTH_TOKEN;
+  const saved = Object.fromEntries(['DX_ROUTER_SESSION_ID', 'DX_ROUTER_SESSION_TOKEN', 'ANTHROPIC_AUTH_TOKEN'].map(key => [key, process.env[key]]));
   process.env.DX_ROUTER_SESSION_ID = 'existing-dex-session'; process.env.ANTHROPIC_AUTH_TOKEN = 'synthetic-scoped-capability';
+  delete process.env.DX_ROUTER_SESSION_TOKEN;
   try {
     assert.equal(await native.authenticate('claude'), 'synthetic-scoped-capability');
+    // The helper-only launch keeps ANTHROPIC_AUTH_TOKEN out of Claude's environment.
+    delete process.env.ANTHROPIC_AUTH_TOKEN; process.env.DX_ROUTER_SESSION_TOKEN = 'synthetic-helper-capability';
+    assert.equal(await native.authenticate('claude'), 'synthetic-helper-capability');
     assert.deepEqual(state.sessions(), []);
   } finally {
-    if (previousId === undefined) delete process.env.DX_ROUTER_SESSION_ID; else process.env.DX_ROUTER_SESSION_ID = previousId;
-    if (previousToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN; else process.env.ANTHROPIC_AUTH_TOKEN = previousToken;
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
 });
 

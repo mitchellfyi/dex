@@ -23,7 +23,9 @@ function ownerPid(pid = process.ppid) {
 
 async function authenticate(client) {
   if (!['claude', 'codex'].includes(client)) throw new Error('Expected claude or codex.');
-  if (client === 'claude' && process.env.DX_ROUTER_SESSION_ID && process.env.ANTHROPIC_AUTH_TOKEN) return process.env.ANTHROPIC_AUTH_TOKEN;
+  // A routed Dex launch already holds a session capability; the helper hands it back.
+  const routed = process.env.DX_ROUTER_SESSION_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN;
+  if (client === 'claude' && process.env.DX_ROUTER_SESSION_ID && routed) return routed;
   const owner_pid = ownerPid();
   if (!await adapter.health(true)) await adapter.start({ recovery: Boolean(state.backend(null)) });
   const result = await ipc.call('native-auth', { client, owner_pid }, 30000);

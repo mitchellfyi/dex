@@ -16,6 +16,26 @@ test('phase override expires while session override remains', () => {
   override.scope = 'session';
   assert.equal(policy.route(config, { fixed_phase: 2, override }).models[0].id, 'anthropic/a');
 });
+test('the terminal phase keeps the complete route and cannot be configured', () => {
+  const terminal = { ...config, phases: { ...config.phases, 6: { model: models[1].id, fallbacks: [] } } };
+  assert.equal(policy.route(terminal, { fixed_phase: 7 }).phase, 7);
+  assert.deepEqual(policy.route(terminal, { fixed_phase: 7 }).models.map(x => x.id), ['openai/b']);
+  assert.equal(policy.route(terminal, { fixed_phase: 7, override: { model: 'anthropic/a', scope: 'phase', phase: 7 } }).models[0].id, 'anthropic/a');
+  assert.equal(policy.route(terminal, { fixed_phase: 7, override: { model: 'anthropic/a', scope: 'phase', phase: 6 } }).models[0].id, 'anthropic/a');
+  assert.throws(() => policy.route(terminal, { fixed_phase: 8 }), /Invalid fixed phase/);
+  assert.equal(policy.PHASES.length, 7);
+});
+test('phase files accept the terminal marker and reject anything else', () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-phase-'));
+  const phase_file = path.join(directory, 'lifecycle.phase');
+  try {
+    for (const value of ['0', '6', '7']) { fs.writeFileSync(phase_file, `${value}\n`, { mode: 0o600 }); assert.equal(policy.phase({ phase_file }), Number(value)); }
+    for (const value of ['8', 'done', '']) { fs.writeFileSync(phase_file, value, { mode: 0o600 }); assert.throws(() => policy.phase({ phase_file }), /Invalid lifecycle phase/); }
+    fs.unlinkSync(phase_file);
+    assert.throws(() => policy.phase({ phase_file }), /Lifecycle phase is missing/);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
 test('context budget includes fallback models', () => assert.equal(policy.contextLimit(config), 128000));
 test('smaller context model cannot be introduced into a running session', () => {
   assert.throws(() => policy.route(config, { fixed_phase: 2, context_limit: 200000 }), /smaller context/);
@@ -58,6 +78,25 @@ test('a model quota or cooldown leaves another model on the same account eligibl
   assert.deepEqual(policy.candidates([account], selected, {}, 1000).map(item => item.model.id), ['anthropic/fallback']);
   account.usage.windows = [{ name: '5h', remaining_ratio: 0, resets_at: 61000 }];
   assert.deepEqual(policy.candidates([account], selected, {}, 1000), []);
+});
+test('converted-protocol failures cool down separately from native traffic', () => {
+  assert.equal(policy.cooldownKey(models[0], 'messages'), 'anthropic/a');
+  assert.equal(policy.cooldownKey(models[0], undefined), 'anthropic/a');
+  assert.equal(policy.cooldownKey(models[0], 'responses'), 'anthropic/a@responses');
+  assert.equal(policy.cooldownKey(models[1], 'responses'), 'openai/b');
+  assert.equal(policy.cooldownKey(models[1], 'messages'), 'openai/b@messages');
+  const account = { id: 'one', provider: 'anthropic', enabled: true, model_cooldowns: { 'anthropic/a@responses': 61000 }, model_cooldown_reasons: { 'anthropic/a@responses': 'rate-limit' } };
+  assert.deepEqual(policy.blockers(account, models[0], 1000), []);
+  assert.deepEqual(policy.blockers(account, models[0], 1000, 'messages'), []);
+  assert.deepEqual(policy.blockers(account, models[0], 1000, 'responses'), [{ reason: 'rate-limit', until: 61000 }]);
+  assert.deepEqual(policy.candidates([account], { models: [models[0]] }, {}, 1000, 'messages').map(item => item.account.id), ['one']);
+  assert.deepEqual(policy.candidates([account], { models: [models[0]] }, {}, 1000, 'responses'), []);
+  const error = policy.unavailable([account], { models: [models[0]] }, 1000, 'responses');
+  assert.match(error.message, /rate limited \(1m\)/);
+  assert.match(error.message, /needs CCR responses conversion/);
+  assert.match(error.message, /dx route configure openai\/<model>/);
+  assert.doesNotMatch(policy.unavailable([account], { models }, 1000, 'responses').message, /conversion/);
+  assert.doesNotMatch(policy.unavailable([account], { models: [models[0]] }, 1000).message, /conversion/);
 });
 test('unavailable errors identify each model and the earliest account that can recover', () => {
   const fallback = { ...models[0], id: 'anthropic/fallback', display_name: 'Fallback' };
