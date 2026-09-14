@@ -10,7 +10,7 @@ usage() {
 Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disable|update>
        dx account add [anthropic|openai] [--name <name>] [--device] [--yes]
        dx account <show|rename|enable|disable|reauth|remove|doctor> <name>
-       dx accounts [--watch|--json]
+       dx accounts [--live|--watch|--json]
        dx model <list|current|discover <account>>
        dx model add <provider/model> --context <tokens> --tools [--images]
        dx route configure <provider/model> [--phase <0-6|name>] [--fallback <model>] [--effort <effort>]
@@ -22,6 +22,8 @@ CCR is optional. It uses subscription OAuth accounts and a private local gateway
 Select it with 'dx provider use ccr-subscription' after setup.
 Direct Claude and Codex profiles work without CCR or its Node dependencies.
 Use --json for machine-readable output. Removing an account requires --yes outside a terminal.
+Use dx accounts --live (or --watch) to update the table in place every 30 seconds.
+Press Ctrl+C to exit the live view. Live mode requires a terminal and cannot use --json.
 EOF
 }
 

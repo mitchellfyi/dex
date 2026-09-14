@@ -12,4 +12,34 @@ function table(headers, rows, { width = process.stdout.isTTY ? process.stdout.co
   return result.stdout;
 }
 
-module.exports = { table };
+function liveScreen() {
+  let active = true;
+  const close = () => {
+    if (!active) return;
+    active = false;
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', terminate);
+    process.off('exit', close);
+    process.stdout.write('\x1b[?25h\x1b[?1049l');
+  };
+  const interrupt = () => { close(); process.exit(130); };
+  const terminate = () => { close(); process.exit(143); };
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', terminate);
+  process.once('exit', close);
+  process.stdout.write('\x1b[?1049h\x1b[?25l');
+  return {
+    render(frame, footerLines = 2) {
+      let lines = frame.trimEnd().split('\n');
+      const height = Math.max(3, (process.stdout.rows || 24) - 1);
+      if (lines.length > height) {
+        const footer = lines.slice(-Math.min(footerLines, height - 2));
+        lines = [...lines.slice(0, height - footer.length - 1), '... use dx accounts to see all rows.', ...footer];
+      }
+      process.stdout.write(`\x1b[H${lines.join('\n')}\x1b[J`);
+    },
+    close
+  };
+}
+
+module.exports = { table, liveScreen };

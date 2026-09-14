@@ -346,7 +346,7 @@ from the same provider, accounts from both providers, or both:
 dx account add anthropic --name backup
 dx account add openai --name chatgpt
 dx accounts                             # Account state and available quota
-dx accounts --watch                     # Refresh the account dashboard
+dx accounts --live                      # Update the account table in place
 ```
 
 Each command opens a separate login and asks you to confirm the identity being

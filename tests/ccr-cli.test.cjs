@@ -106,6 +106,7 @@ test('table rendering does not alter JSON output or saved account and model data
     return result.stdout;
   };
   assert.match(run(['accounts']), /Account +Provider +Status +Window +Left +Reset in +Reset at \(local\)/);
+  assert.match(run(['accounts']), /Tip: use dx accounts --live for updates\./);
   assert.match(run(['account', 'show', 'Main']), /test@example.test/);
   assert.match(run(['model', 'list']), /128,000/);
   assert.match(run(['route', 'policy']), /Fallbacks \(in order\)/);
@@ -118,6 +119,54 @@ test('table rendering does not alter JSON output or saved account and model data
   const narrow = table(['Account', 'Status', 'Quota window'], [['Long account name', 'reauth-required', 'unknown']], { width: 24 });
   assert.ok(narrow.split('\n').every(line => line.length <= 24));
   assert.match(narrow, /Status: reauth-required/);
+});
+test('live and watch are aliases that require an account table and an interactive terminal', async () => {
+  assert.deepEqual(cli.parse(['--live']), cli.parse(['--watch']));
+  for (const flag of ['--live', '--watch']) {
+    for (const args of [['accounts', flag, '--json'], ['model', 'list', flag]]) {
+      const result = spawnSync(process.execPath, ['scripts/ccr/cli.cjs', ...args], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0); assert.equal(result.stdout, ''); assert.match(result.stderr, /--live\/--watch/);
+    }
+    const result = spawnSync(process.execPath, ['scripts/ccr/cli.cjs', 'accounts', flag], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0); assert.equal(result.stdout, ''); assert.match(result.stderr, /interactive terminal/);
+  }
+});
+test('live updates replace the table, keep refresh failures visible and restore the terminal on errors', async t => {
+  const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  const rowsDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'rows');
+  Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+  Object.defineProperty(process.stdout, 'rows', { value: 8, configurable: true });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor); else delete process.stdout.isTTY;
+    if (rowsDescriptor) Object.defineProperty(process.stdout, 'rows', rowsDescriptor); else delete process.stdout.rows;
+  });
+  const writes = [], intervals = [];
+  const listeners = ['SIGINT', 'SIGTERM', 'exit'].map(signal => process.listenerCount(signal));
+  t.mock.method(process.stdout, 'write', value => { writes.push(value); return true; });
+  t.mock.method(globalThis, 'setTimeout', (callback, delay) => { intervals.push(delay); callback(); });
+  const account = { id: 'main', name: 'Main', enabled: true, provider: 'openai', usage: { observed_at: Date.now(), windows: [{ name: '5h', remaining_ratio: .8 }] } };
+  const stopped = new Error('End synthetic watch');
+  let reads = 0, refreshes = 0;
+  t.mock.method(state, 'accounts', () => { if (++reads === 5) throw stopped; return [account]; });
+  t.mock.method(adapter, 'health', async () => reads < 4);
+  t.mock.method(ipc, 'call', async method => {
+    assert.equal(method, 'usage');
+    if (++refreshes === 3) throw new Error('Synthetic refresh failure');
+    return [{ ...account, usage: { ...account.usage, windows: [{ name: '5h', remaining_ratio: refreshes === 1 ? .7 : .6 }] } }];
+  });
+  await assert.rejects(cli.main(['accounts', '--live']), error => error === stopped);
+  const frames = writes.filter(value => value.startsWith('\x1b[H'));
+  assert.equal(writes[0], '\x1b[?1049h\x1b[?25l');
+  assert.equal(writes.at(-1), '\x1b[?25h\x1b[?1049l');
+  assert.equal(frames.length, 5);
+  assert.ok(frames.every(frame => frame.endsWith('\x1b[J')));
+  assert.match(frames[1], /70%/); assert.match(frames[2], /60%/); assert.doesNotMatch(frames[2], /70%/);
+  assert.match(frames[3], /Quota refresh unavailable/);
+  assert.match(frames[3], /use dx accounts to see all rows/);
+  assert.match(frames[4], /CCR is stopped; showing cached readings/);
+  assert.match(frames[4], /Ctrl\+C to exit/);
+  assert.deepEqual(intervals, [30000, 30000, 30000, 30000]);
+  assert.deepEqual(['SIGINT', 'SIGTERM', 'exit'].map(signal => process.listenerCount(signal)), listeners);
 });
 test('model registration and phase configuration preserve explicit fallbacks', async () => {
   const options = { context: '128000', tools: true, fallback: [] };
@@ -250,6 +299,7 @@ test('routing help and direct setup help do not require Node', () => {
   const env = { ...process.env, DEX_DIR: path.resolve('.'), PATH: `${bin}:${process.env.PATH}` };
   for (const script of ['bin/router.sh', 'bin/setup.sh']) {
     const result = spawnSync('bash', [script, '--help'], { encoding: 'utf8', env }); assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /Usage:/);
+    if (script === 'bin/router.sh') assert.match(result.stdout, /dx accounts --live \(or --watch\) to update the table in place every 30 seconds/);
   }
   assert.equal(fs.existsSync(marker), false);
 });

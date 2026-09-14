@@ -9,7 +9,7 @@ const adapter = require('./adapter.cjs');
 const ipc = require('./ipc.cjs');
 const onboarding = require('./onboarding.cjs');
 const { launch } = require('./launch.cjs');
-const { table } = require('./output.cjs');
+const { table, liveScreen } = require('./output.cjs');
 
 const clean = value => String(value ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
 const out = value => process.stdout.write(`${clean(value)}\n`);
@@ -21,7 +21,7 @@ function parse(args) {
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg.startsWith('--')) { result.positional.push(arg); continue; }
-    const key = arg.slice(2);
+    const key = arg === '--live' ? 'watch' : arg.slice(2);
     if (values.has(key)) {
       const value = args[++index]; if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value.`);
       if (key === 'fallback') result.fallback.push(value); else result[key] = value;
@@ -134,24 +134,43 @@ function accountRows(items, now = Date.now()) {
     ]);
   });
 }
+function accountTable(items) {
+  return table(['Account', 'Provider', 'Status', 'Window', 'Left', 'Reset in', 'Reset at (local)'], accountRows(items), { rightAlign: [4] });
+}
 function showAccounts(items) {
-  showTable(['Account', 'Provider', 'Status', 'Window', 'Left', 'Reset in', 'Reset at (local)'], accountRows(items), { rightAlign: [4] });
+  process.stdout.write(accountTable(items));
+}
+function accountsFrame(items, live, note = '') {
+  const rows = accountTable(items) || 'No accounts. Run dx account add.\n';
+  const footer = live
+    ? `View updated at ${new Date().toLocaleTimeString()}\nLive: every 30s. Ctrl+C to exit.`
+    : 'Tip: use dx accounts --live for updates.';
+  return `Dex subscription accounts\n${rows}\n${note ? `${note}\n` : ''}${footer}\n`;
 }
 async function accounts(options) {
-  if (options.watch && !process.stdout.isTTY) throw new Error('--watch needs an interactive terminal. Use --json for scripts.');
-  do {
-    let items = state.accounts();
-    if (await adapter.health()) { try { items = await ipc.call('usage', {}, 30000); } catch { info('Quota refresh unavailable; showing cached readings.'); } }
-    if (options.json) display({ version: 1, accounts: items }, true);
-    else {
-      if (options.watch) process.stdout.write('\x1b[2J\x1b[H');
-      out('Dex subscription accounts');
-      showAccounts(items);
-      if (!items.length) out('No accounts. Run dx account add.');
-      if (options.watch) out('Refreshes every 30s. Press Ctrl+C to exit.');
-    }
-    if (options.watch) await new Promise(resolve => setTimeout(resolve, 30000));
-  } while (options.watch);
+  if (options.watch && options.json) throw new Error('--live/--watch cannot be combined with --json. Use dx accounts --json for a single snapshot.');
+  if (options.watch && !process.stdout.isTTY) throw new Error('--live/--watch needs an interactive terminal. Use --json for scripts.');
+  const screen = options.watch ? liveScreen() : null;
+  let first = true;
+  try {
+    do {
+      let items = state.accounts();
+      let note = '';
+      if (screen && first) screen.render(accountsFrame(items, true, 'Refreshing usage...'), 3);
+      first = false;
+      if (await adapter.health()) {
+        try { items = await ipc.call('usage', {}, 30000); }
+        catch {
+          note = 'Quota refresh unavailable.\nShowing cached readings.';
+          if (!screen) info('Quota refresh unavailable; showing cached readings.');
+        }
+      } else if (screen) note = 'CCR is stopped; showing cached readings.\nRun dx router start to refresh usage.';
+      if (options.json) display({ version: 1, accounts: items }, true);
+      else if (screen) screen.render(accountsFrame(items, true, note), note ? 4 : 2);
+      else process.stdout.write(accountsFrame(items, false));
+      if (screen) await new Promise(resolve => setTimeout(resolve, 30000));
+    } while (screen);
+  } finally { screen?.close(); }
 }
 async function addAccount(provider, options, previous) {
   if (!provider) { out('1. Anthropic Claude'); out('2. OpenAI ChatGPT / Codex'); const selected = await question('Provider', '1'); if (!['1', '2'].includes(selected)) throw new Error('Choose 1 or 2.'); provider = selected === '2' ? 'openai' : 'anthropic'; }
@@ -255,6 +274,9 @@ async function main(args) {
   const [group, ...rest] = args;
   if (group === 'launch') { process.exitCode = await launch(rest[0] === '--' ? rest.slice(1) : rest); return; }
   const options = parse(rest); const [action, ...values] = options.positional;
+  if (options.watch && !(group === 'accounts' || (group === 'account' && (!action || action === 'list')))) {
+    throw new Error('--live/--watch is only available with dx accounts or dx account list.');
+  }
   if (options.json && ((group === 'router' && action === 'setup')
     || (group === 'account' && ((action === 'add' && (!values[0] || !options.name || !options.yes))
       || (['remove', 'reauth'].includes(action) && !options.yes))))) {

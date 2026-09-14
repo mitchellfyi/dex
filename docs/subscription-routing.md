@@ -79,7 +79,7 @@ result. Run the setup wizard interactively without `--json`.
 In the examples below, replace `main` and `backup` with names from `dx accounts`.
 
 ```sh
-dx accounts --watch
+dx accounts --live
 dx accounts --json
 dx account show main
 dx account rename backup spare
@@ -95,6 +95,15 @@ provider, status, remaining quota, time until reset and the local reset time.
 Missing readings remain unknown and old readings remain labelled stale.
 With CCR running, the dashboard refreshes usage; the extension also polls every
 minute. The Claude status line reads the cache without a network request.
+
+Use `dx accounts --live` (or `--watch`) to refresh every 30 seconds. The live
+view replaces the table on the same screen and restores your terminal when
+you press Ctrl+C. If the table exceeds the screen height, use `dx accounts`
+to see all rows. The live view shows when it updated and identifies cached readings
+when CCR is stopped or a refresh fails. Start CCR with `dx router start` to
+resume provider refreshes. Live mode requires a terminal; use `--json` by itself
+for a single machine-readable snapshot. The normal table includes a reminder
+of the live option.
 
 Model lists, phase policies, provider profiles and lifecycle session lists use
 the same table layout. Columns wrap to fit the terminal; very narrow terminals
