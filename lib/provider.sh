@@ -1467,8 +1467,8 @@ dx_provider_list() {
   printf '  %s\n' "claude                  Direct Claude Code lifecycle agent"
   printf '  %s\n' "codex                   Direct Codex CLI lifecycle agent"
   printf '\n'
-  printf '%s\n' "Built-in profiles (* selected for this command):"
-  python3 - "$selected_profile" "$selected_source" "$repo_config" "$DX_PROVIDER_GLOBAL_CONFIG" <<'PY' || return 1
+  printf '%s\n' "Profiles (* selected for this command):"
+  python3 - "$selected_profile" "$selected_source" "$repo_config" "$DX_PROVIDER_GLOBAL_CONFIG" <<'PY' | dx_table || return 1
 import json, os, sys
 
 selected, selected_source, repo_file, global_file = sys.argv[1:]
@@ -1480,15 +1480,17 @@ for scope, file in (("repo", repo_file), ("global", global_file)):
             data = json.load(stream)
     configs.append((scope, file, data))
 
+rows = []
+
 def row(name, source, description=""):
-    marker = "*" if (name, source) == (selected, selected_source) else " "
+    marker = "*" if (name, source) == (selected, selected_source) else ""
     labels = []
     for scope, file, data in configs:
         default = data.get("default") or ("claude-subscription" if scope == "global" else "")
         if name == default and source in ("builtin:", f"{scope}:{file}"):
             labels.append(f"{scope} default")
-    suffix = f" [{', '.join(labels)}]" if labels else ""
-    print(f"  {marker} {name:<23} {description}{suffix}".rstrip())
+    scope = "built-in" if source == "builtin:" else source.split(":", 1)[0]
+    rows.append([marker, name, scope, ", ".join(labels) or "-", description or "-"])
 
 row("claude-subscription", "builtin:", "Claude Code with Claude subscription OAuth")
 row("codex-subscription", "builtin:", "Codex CLI with ChatGPT subscription authentication")
@@ -1496,10 +1498,17 @@ row("ccr-subscription", "builtin:", "Optional CCR account pools inside Claude Co
 for scope, file, data in configs:
     profiles = data.get("profiles", {})
     if profiles:
-        print(f"\nCustom profiles in {file}:")
         for name in sorted(profiles):
-            row(name, f"{scope}:{file}")
+            profile = profiles[name]
+            row(name, f"{scope}:{file}", f'{profile.get("engine", "unknown")} / {profile.get("auth", "unknown")}')
+print(json.dumps({"headers": ["Use", "Profile", "Source", "Default", "Details"], "rows": rows}))
 PY
+  if [[ -f "$repo_config" ]]; then
+    dx_info "Repository config: $repo_config"
+  fi
+  if [[ -f "$DX_PROVIDER_GLOBAL_CONFIG" ]]; then
+    dx_info "Global config: $DX_PROVIDER_GLOBAL_CONFIG"
+  fi
   printf '\n'
   dx_info "CCR subscription accounts: dx accounts"
   dx_info "Add another account: dx account add"

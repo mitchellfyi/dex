@@ -50,4 +50,12 @@ check_duration 'unknown' 'unknown'
 check_duration '-5' '-5'
 check_duration '1.5' '1.5'
 
-printf 'output-format: dx_format_duration cases passed\n'
+for shell in bash zsh; do
+  command -v "$shell" >/dev/null 2>&1 || continue
+  table_output=$(printf '%s\n' '{"headers":["Account","Left"],"rows":[["Main","72%"]]}' | \
+    "$shell" -c 'DEX_DIR="$1"; source "$1/lib/output.sh"; dx_table' _ "$ROOT")
+  assert_eq $'Account  Left\n-------  ----\nMain     72%' "$table_output" "dx_table under $shell"
+done
+python3 "$ROOT/tests/terminal-table-test.py"
+
+printf 'output-format: duration and table cases passed\n'

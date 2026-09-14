@@ -9,6 +9,7 @@ const adapter = require('./adapter.cjs');
 const ipc = require('./ipc.cjs');
 const onboarding = require('./onboarding.cjs');
 const { launch } = require('./launch.cjs');
+const { table } = require('./output.cjs');
 
 const clean = value => String(value ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
 const out = value => process.stdout.write(`${clean(value)}\n`);
@@ -37,35 +38,58 @@ async function question(prompt, fallback) {
 }
 async function confirm(prompt, yes) { return yes || /^y(es)?$/i.test(await question(`${prompt} (y/N)`, 'n')); }
 function display(value, json) { if (json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`); else if (typeof value === 'string') out(value); else process.stdout.write(`${JSON.stringify(value, null, 2)}\n`); }
+const showTable = (headers, rows, options) => process.stdout.write(table(headers, rows, options));
+const details = rows => showTable(['Field', 'Value'], rows);
+const capability = value => typeof value === 'boolean' ? value ? 'yes' : 'no' : 'unknown';
 function render(group, action, value, options) {
   if (options.json || typeof value === 'string') { display(value, options.json); return; }
   if (value?.session && value.route) {
     const session = value.session; const account = state.accounts().find(item => item.id === session.current_account);
-    out(`Session  ${session.id}`); out(`Phase    ${value.route.phase} (${policy.PHASES[value.route.phase]})`);
-    out(`Policy   ${session.override ? `${session.override.scope} override` : 'configured phases'}`);
-    out(`Selected ${value.route.models.map(model => model.id).join(' -> ')}`);
-    out(`Last used ${session.current_model || 'pending'}${account ? ` / ${account.name}` : ''}`);
-    if (session.pinned_account) out(`Pinned   ${state.getAccount(session.pinned_account).name}`);
-    if (session.paused_reason) out(`Paused   ${session.paused_reason}; inspect dx accounts`);
+    const rows = [
+      ['Session', session.id], ['Phase', `${value.route.phase} (${policy.PHASES[value.route.phase]})`],
+      ['Policy', session.override ? `${session.override.scope} override` : 'configured phases'],
+      ['Selected', value.route.models.map(model => model.id).join(' -> ')],
+      ['Last used', `${session.current_model || 'pending'}${account ? ` / ${account.name}` : ''}`]
+    ];
+    if (session.pinned_account) rows.push(['Pinned', state.getAccount(session.pinned_account).name]);
+    if (session.paused_reason) rows.push(['Paused', `${session.paused_reason}; inspect dx accounts`]);
+    details(rows);
     return;
   }
-  if (group === 'model' && Array.isArray(value)) {
-    if (!value.length) out('No models registered. Add an account, or run dx model add.');
-    for (const model of value) out(`${model.id.padEnd(42)} context ${model.context_window} (${model.context_source || 'configured'})${model.capabilities?.images ? '; images' : ''}`);
+  if (group === 'model' && (Array.isArray(value) || value?.id)) {
+    const models = Array.isArray(value) ? value : [value];
+    if (!models.length) out('No models registered. Add an account, or run dx model add.');
+    showTable(['Model', 'Context', 'Source', 'Tools', 'Images'], models.map(model => [
+      model.id, model.context_window?.toLocaleString('en-US') || 'unknown', model.context_source || 'configured',
+      capability(model.capabilities?.tools), capability(model.capabilities?.images)
+    ]), { rightAlign: [1] });
     return;
   }
   if ((group === 'route' && ['configure', 'policy'].includes(action)) && value?.phases) {
-    out(`Default  ${value.default_model || 'not selected'}`);
-    for (let phase = 0; phase <= 6; phase++) { const route = value.phases[phase] || { model: value.default_model }; out(`${phase} ${policy.PHASES[phase].padEnd(10)} ${[route.model, ...(route.fallbacks || [])].join(' -> ')}${route.effort ? `; effort ${route.effort}` : ''}`); }
+    out(`Default model: ${value.default_model || 'not selected'}`);
+    showTable(['Phase', 'Model', 'Fallbacks (in order)', 'Effort'], policy.PHASES.map((name, phase) => {
+      const route = value.phases[phase] || { model: value.default_model };
+      return [`${phase} ${name}`, route.model || 'not selected', route.fallbacks?.join(' -> ') || '-', route.effort || 'default'];
+    }));
     return;
   }
   if (group === 'account' && value?.name) {
-    out(`${value.name} / ${value.provider}`); out(`Status   ${value.enabled ? value.status || 'ready' : 'disabled'}`); out(`Identity ${value.identity || value.id}`);
+    details([['Account', value.name], ['Identity', value.identity || value.id], ['ID', value.id]]);
+    showAccounts([value]);
+    return;
+  }
+  if (group === 'account' && value?.credentials) {
+    details([['Account', value.account], ['Credentials', value.credentials]]);
+    showAccounts([{ ...state.getAccount(value.account), usage: value.usage }]);
     return;
   }
   if (group === 'router' && value?.release) {
-    out(`CCR ${value.release} / ${value.health}`); out(`Routing ${value.enabled ? 'enabled' : 'disabled'}; ${value.accounts} accounts; ${value.models} models; ${value.active_sessions} active sessions`);
-    out(`Credentials: ${value.credential_store}`); if (!value.installed) out('Run dx router setup to install the optional runtime.');
+    details([
+      ['CCR version', value.release], ['Runtime', value.health], ['Installed', value.installed ? 'yes' : 'no'],
+      ['Routing', value.enabled ? 'enabled' : 'disabled'], ['Accounts', value.accounts],
+      ['Models', value.models], ['Active sessions', value.active_sessions], ['Credentials', value.credential_store]
+    ]);
+    if (!value.installed) out('Run dx router setup to install the optional runtime.');
     return;
   }
   display(value, false);
@@ -79,16 +103,39 @@ async function configure(change, catalogueChange = false) {
     state.write(state.stateFile('config'), config); return config;
   }));
 }
-function accountRows(items) {
-  return items.map(account => {
+function resetIn(timestamp, now) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'unknown';
+  if (timestamp <= now) return 'due';
+  const minutes = Math.ceil((timestamp - now) / 60000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+function resetAt(timestamp, now) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'unknown';
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return 'unknown';
+  return date.toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', ...(date.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}),
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).replace(',', '');
+}
+function accountRows(items, now = Date.now()) {
+  return items.flatMap(account => {
     const usage = account.usage;
-    const fresh = usage && Date.now() - usage.observed_at < 120000 && !account.usage_error;
+    const fresh = usage && now - usage.observed_at < 120000 && !account.usage_error;
     const windows = usage?.windows || [];
-    const exhausted = fresh && windows.some(window => !window.model_pool && window.remaining_ratio === 0 && (!window.resets_at || window.resets_at > Date.now()));
-    const windowText = window => `${window.name} ${Math.round(window.remaining_ratio * 100)}% left${fresh ? '' : ' (stale)'}${window.resets_at ? `; reset ${new Date(window.resets_at).toLocaleString()}` : ''}`;
-    const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required' : account.cooldown_until > Date.now() ? `cooldown until ${new Date(account.cooldown_until).toLocaleTimeString()}` : exhausted ? 'quota exhausted' : 'ready';
-    return `${account.name.padEnd(22)} ${account.provider.padEnd(10)} ${status}\n  ${windows.length ? windows.map(windowText).join(' | ') : 'Quota unknown; no provider reading available.'}`;
+    const exhausted = fresh && windows.some(window => !window.model_pool && window.remaining_ratio === 0 && (!window.resets_at || window.resets_at > now));
+    const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required' : account.cooldown_until > now ? `cooldown (${resetIn(account.cooldown_until, now)})` : exhausted ? 'quota exhausted' : 'ready';
+    return (windows.length ? windows : [null]).map(window => [
+      account.name, account.provider, status, window?.name || '-',
+      window ? `${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : ' (stale)'}` : 'unknown',
+      resetIn(window?.resets_at, now), resetAt(window?.resets_at, now)
+    ]);
   });
+}
+function showAccounts(items) {
+  showTable(['Account', 'Provider', 'Status', 'Window', 'Left', 'Reset in', 'Reset at (local)'], accountRows(items), { rightAlign: [4] });
 }
 async function accounts(options) {
   if (options.watch && !process.stdout.isTTY) throw new Error('--watch needs an interactive terminal. Use --json for scripts.');
@@ -96,7 +143,13 @@ async function accounts(options) {
     let items = state.accounts();
     if (await adapter.health()) { try { items = await ipc.call('usage', {}, 30000); } catch { info('Quota refresh unavailable; showing cached readings.'); } }
     if (options.json) display({ version: 1, accounts: items }, true);
-    else { if (options.watch) process.stdout.write('\x1b[2J\x1b[H'); out('Dex subscription accounts'); for (const row of accountRows(items)) process.stdout.write(`${row}\n`); if (!items.length) out('No accounts. Run dx account add.'); }
+    else {
+      if (options.watch) process.stdout.write('\x1b[2J\x1b[H');
+      out('Dex subscription accounts');
+      showAccounts(items);
+      if (!items.length) out('No accounts. Run dx account add.');
+      if (options.watch) out('Refreshes every 30s. Press Ctrl+C to exit.');
+    }
     if (options.watch) await new Promise(resolve => setTimeout(resolve, 30000));
   } while (options.watch);
 }

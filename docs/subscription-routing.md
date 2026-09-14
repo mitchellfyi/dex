@@ -90,10 +90,16 @@ dx account doctor main
 dx account remove spare
 ```
 
-The dashboard shows account state, provider-reported quota windows and reset
-times. Missing readings remain unknown and old readings remain labelled stale.
+The account table shows one row per quota window, with columns for account,
+provider, status, remaining quota, time until reset and the local reset time.
+Missing readings remain unknown and old readings remain labelled stale.
 With CCR running, the dashboard refreshes usage; the extension also polls every
 minute. The Claude status line reads the cache without a network request.
+
+Model lists, phase policies, provider profiles and lifecycle session lists use
+the same table layout. Columns wrap to fit the terminal; very narrow terminals
+show labelled fields. Piped text keeps full column widths. Commands that support
+`--json` continue to return their structured data without table formatting.
 
 Disabling excludes an account from new selections. Removing it also deletes its
 stored credential after confirmation (`--yes` in a script). An already

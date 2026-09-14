@@ -13,6 +13,7 @@ const { launchArguments, launchEnvironment, launch } = require('../scripts/ccr/l
 const adapter = require('../scripts/ccr/adapter.cjs');
 const ipc = require('../scripts/ccr/ipc.cjs');
 const policy = require('../scripts/ccr/policy.cjs');
+const { table } = require('../scripts/ccr/output.cjs');
 let directory;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-cli-')); process.env.DEX_ROUTER_HOME = directory; });
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -65,13 +66,58 @@ test('empty account and status commands work without starting CCR', async () => 
 });
 test('dashboard distinguishes current account exhaustion from stale and model-only quotas', () => {
   const account = { name: 'Main', provider: 'anthropic', enabled: true, usage: { observed_at: Date.now(), windows: [{ name: 'weekly', remaining_ratio: 0 }] } };
-  assert.match(cli.accountRows([account])[0], /quota exhausted/);
+  const output = () => cli.accountRows([account]).flat().join(' ');
+  assert.match(output(), /quota exhausted/);
   account.usage.windows[0].model_pool = 'opus';
-  assert.doesNotMatch(cli.accountRows([account])[0], /quota exhausted/);
+  assert.doesNotMatch(output(), /quota exhausted/);
   delete account.usage.windows[0].model_pool;
   account.usage.observed_at -= 180000;
-  assert.doesNotMatch(cli.accountRows([account])[0], /quota exhausted/);
-  assert.match(cli.accountRows([account])[0], /stale/);
+  assert.doesNotMatch(output(), /quota exhausted/);
+  assert.match(output(), /stale/);
+});
+test('account rows retain every quota window and distinguish due and unknown resets', () => {
+  const now = Date.now();
+  const account = { name: 'Main', provider: 'anthropic', enabled: true, usage: { observed_at: now, windows: [
+    { name: '5h', remaining_ratio: 0.72, resets_at: now + (2 * 60 + 14) * 60000 },
+    { name: 'weekly', remaining_ratio: 0.4, resets_at: now + (3 * 24 + 4) * 3600000 },
+    { name: 'weekly-opus', model_pool: 'opus', remaining_ratio: 0, resets_at: now - 1 }
+  ] } };
+  const rows = cli.accountRows([account, { name: 'Backup', provider: 'openai', enabled: false }], now);
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.map(row => row[3]), ['5h', 'weekly', 'weekly-opus', '-']);
+  assert.deepEqual(rows.map(row => row[5]), ['2h 14m', '3d 4h', 'due', 'unknown']);
+  assert.equal(rows[0][4], '72%');
+  assert.equal(rows[3][2], 'disabled');
+  assert.equal(rows[3][4], 'unknown');
+  assert.equal(rows[3][6], 'unknown');
+  account.usage_error = 'Refresh failed';
+  assert.match(cli.accountRows([account], now)[0][4], /stale/);
+  account.status = 'reauth-required';
+  account.cooldown_until = now + 60000;
+  assert.equal(cli.accountRows([account], now)[0][2], 'reauth-required');
+});
+test('table rendering does not alter JSON output or saved account and model data', () => {
+  const items = [{ id: 'one', name: 'Main', identity: 'test@example.test', provider: 'openai', enabled: true }];
+  const config = { version: 1, enabled: false, models: [{ id: 'openai/test', context_window: 128000, capabilities: { tools: true, images: false } }], phases: {}, default_model: 'openai/test' };
+  state.saveAccounts(items); state.write(state.stateFile('config'), config);
+  const run = args => {
+    const result = spawnSync(process.execPath, ['scripts/ccr/cli.cjs', ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  assert.match(run(['accounts']), /Account +Provider +Status +Window +Left +Reset in +Reset at \(local\)/);
+  assert.match(run(['account', 'show', 'Main']), /test@example.test/);
+  assert.match(run(['model', 'list']), /128,000/);
+  assert.match(run(['route', 'policy']), /Fallbacks \(in order\)/);
+  assert.match(run(['router', 'status']), /Active sessions/);
+  assert.deepEqual(JSON.parse(run(['accounts', '--json'])), { version: 1, accounts: items });
+  assert.deepEqual(JSON.parse(run(['account', 'show', 'Main', '--json'])), items[0]);
+  assert.deepEqual(JSON.parse(run(['model', 'list', '--json'])), config.models);
+  assert.deepEqual(JSON.parse(run(['route', 'policy', '--json'])), config);
+  assert.deepEqual(state.accounts(), items); assert.deepEqual(state.config(), config);
+  const narrow = table(['Account', 'Status', 'Quota window'], [['Long account name', 'reauth-required', 'unknown']], { width: 24 });
+  assert.ok(narrow.split('\n').every(line => line.length <= 24));
+  assert.match(narrow, /Status: reauth-required/);
 });
 test('model registration and phase configuration preserve explicit fallbacks', async () => {
   const options = { context: '128000', tools: true, fallback: [] };

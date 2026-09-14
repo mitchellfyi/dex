@@ -309,7 +309,7 @@ PY
 }
 
 __dx_sessions_emit_list() {
-  local records_file="$1" formatted_file line
+  local records_file="$1" formatted_file
   if [[ ! -s "$records_file" ]]; then
     dx_info "No lifecycle sessions found."
     return 0
@@ -321,6 +321,7 @@ import json
 import sys
 
 
+rows = []
 with open(sys.argv[1], "r", encoding="utf-8") as records_file:
     for raw_line in records_file:
         # Skip blank lines like the --all path does; one must not break `list`.
@@ -329,13 +330,12 @@ with open(sys.argv[1], "r", encoding="utf-8") as records_file:
         record = json.loads(raw_line)
         phase = record.get("phase")
         workspace = record.get("workspace_name") or record.get("workspace") or "-"
-        print(
-            f'{record["session_id"]} | state={record.get("lifecycle_state") or "unknown"}'
-            f' | phase={phase if phase is not None else "-"}'
-            f' | runtime={record.get("runtime_health") or "unknown"}'
-            f' | provider={record.get("provider") or "-"}'
-            f' | workspace={workspace}'
-        )
+        rows.append([
+            record["session_id"], record.get("lifecycle_state") or "unknown",
+            phase if phase is not None else "-", record.get("runtime_health") or "unknown",
+            record.get("provider") or "-", workspace,
+        ])
+print(json.dumps({"headers": ["Session", "State", "Phase", "Runtime", "Provider", "Workspace"], "rows": rows}))
 PY
   then
     :
@@ -343,9 +343,7 @@ PY
     dx_error "Could not format the lifecycle session list."
     return 3
   fi
-  while IFS= read -r line; do
-    dx_info "$line"
-  done < "$formatted_file"
+  dx_table < "$formatted_file" || return 3
 }
 
 __dx_sessions_select_current() {

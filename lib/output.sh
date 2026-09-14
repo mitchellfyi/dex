@@ -8,6 +8,11 @@ dx_skip()  { printf '[skip]  %s\n' "$*"; }
 dx_info()  { printf '[info]  %s\n' "$*"; }
 dx_error() { printf '[error] %s\n' "$*" >&2; }
 
+# dx_table reads a JSON object with headers and rows from stdin.
+dx_table() {
+  python3 "$DEX_DIR/scripts/terminal-table.py"
+}
+
 # dx_format_duration <seconds> — the one duration formatter. Prints "Ys" below
 # a minute, "Xm Ys" below an hour, and "Xh Ym" above one, dropping the unit
 # that has stopped carrying information. Anything that is not a whole number of
