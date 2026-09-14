@@ -27,6 +27,18 @@ function toml(file) {
   assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
 }
 
+test('Claude launched by Dex retains its existing session capability and phase routing', async () => {
+  const previousId = process.env.DX_ROUTER_SESSION_ID; const previousToken = process.env.ANTHROPIC_AUTH_TOKEN;
+  process.env.DX_ROUTER_SESSION_ID = 'existing-dex-session'; process.env.ANTHROPIC_AUTH_TOKEN = 'synthetic-scoped-capability';
+  try {
+    assert.equal(await native.authenticate('claude'), 'synthetic-scoped-capability');
+    assert.deepEqual(state.sessions(), []);
+  } finally {
+    if (previousId === undefined) delete process.env.DX_ROUTER_SESSION_ID; else process.env.DX_ROUTER_SESSION_ID = previousId;
+    if (previousToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN; else process.env.ANTHROPIC_AUTH_TOKEN = previousToken;
+  }
+});
+
 test('native settings preserve client preferences and restore only managed values', () => {
   native.clientSettings('enable', config, settings);
   let claude = JSON.parse(fs.readFileSync(config.claude_file));

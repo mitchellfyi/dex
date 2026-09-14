@@ -23,6 +23,7 @@ function ownerPid(pid = process.ppid) {
 
 async function authenticate(client) {
   if (!['claude', 'codex'].includes(client)) throw new Error('Expected claude or codex.');
+  if (client === 'claude' && process.env.DX_ROUTER_SESSION_ID && process.env.ANTHROPIC_AUTH_TOKEN) return process.env.ANTHROPIC_AUTH_TOKEN;
   const owner_pid = ownerPid();
   if (!await adapter.health(true)) await adapter.start({ recovery: Boolean(state.backend(null)) });
   const result = await ipc.call('native-auth', { client, owner_pid }, 30000);
