@@ -10,6 +10,12 @@ const config = { models, default_model: models[0].id, phases: { 2: { model: mode
 test('phase routing preserves the configured fallback order', () => {
   assert.deepEqual(policy.route(config, { fixed_phase: 2 }).models.map(x => x.id), ['openai/b', 'anthropic/a']);
 });
+test('native clients can use their own configured route and context budget', () => {
+  const configured = { ...config, client_routes: { codex: { model: 'openai/b', fallbacks: ['anthropic/a'] } } };
+  assert.deepEqual(policy.route(configured, { client: 'codex' }).models.map(x => x.id), ['openai/b', 'anthropic/a']);
+  assert.equal(policy.contextLimit(configured, 'codex'), 128000);
+  assert.equal(policy.route(configured, { client: 'claude' }).models[0].id, 'anthropic/a');
+});
 test('phase override expires while session override remains', () => {
   const override = { model: 'anthropic/a', scope: 'phase', phase: 1 };
   assert.equal(policy.route(config, { fixed_phase: 2, override }).models[0].id, 'openai/b');
@@ -57,6 +63,17 @@ test('same model rotates accounts before another model and respects cooldowns', 
   assert.deepEqual(policy.candidates(items, selected, { current_account: 'b' }).map(x => x.account.id), ['b', 'a', 'c']);
   items[1].cooldown_until = 2000;
   assert.deepEqual(policy.candidates(items, selected, {}, 1000).map(x => x.account.id), ['a', 'c']);
+});
+test('explicit account ranks take precedence over affinity and quota headroom', () => {
+  const usage = remaining_ratio => ({ observed_at: 1000, windows: [{ name: 'weekly', remaining_ratio }] });
+  const items = [
+    { id: 'a', provider: 'anthropic', enabled: true, rank: 1, created_at: 2, usage: usage(0.1) },
+    { id: 'b', provider: 'anthropic', enabled: true, rank: 2, created_at: 1, usage: usage(0.9) },
+    { id: 'c', provider: 'openai', enabled: true, rank: 3, created_at: 0, usage: usage(1) }
+  ];
+  assert.deepEqual(policy.candidates(items, { models }, { current_account: 'b' }, 1000).map(x => x.account.id), ['a', 'b', 'c']);
+  items[0].cooldown_until = 2000;
+  assert.deepEqual(policy.candidates(items, { models }, { current_account: 'b' }, 1000).map(x => x.account.id), ['b', 'c']);
 });
 test('pinning never silently uses another account', () => {
   assert.deepEqual(policy.candidates([{ id: 'a', provider: 'anthropic', enabled: true }], { models, pinned: 'b' }, {}), []);

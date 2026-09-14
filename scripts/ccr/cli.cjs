@@ -16,7 +16,7 @@ const out = value => process.stdout.write(`${clean(value)}\n`);
 const info = value => process.stderr.write(`dex: ${clean(value)}\n`);
 function parse(args) {
   const result = { positional: [], fallback: [] };
-  const values = new Set(['name', 'context', 'session', 'scope', 'phase', 'effort', 'fallback']);
+  const values = new Set(['name', 'context', 'session', 'scope', 'phase', 'client', 'effort', 'fallback']);
   const switches = new Set(['json', 'yes', 'device', 'watch', 'tools', 'images']);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -71,10 +71,17 @@ function render(group, action, value, options) {
       const route = value.phases[phase] || { model: value.default_model };
       return [`${phase} ${name}`, route.model || 'not selected', route.fallbacks?.join(' -> ') || '-', route.effort || 'default'];
     }));
+    const clients = Object.entries(value.client_routes || {});
+    if (clients.length) {
+      out('Native client routes:');
+      showTable(['Client', 'Model', 'Fallbacks (in order)', 'Effort'], clients.map(([client, route]) => [
+        client, route.model, route.fallbacks?.join(' -> ') || '-', route.effort || 'default'
+      ]));
+    }
     return;
   }
   if (group === 'account' && value?.name) {
-    details([['Account', value.name], ['Identity', value.identity || value.id], ['ID', value.id]]);
+    details([['Account', value.name], ['Rank', value.rank || 'automatic'], ['Identity', value.identity || value.id], ['ID', value.id]]);
     showAccounts([value]);
     return;
   }
@@ -117,6 +124,7 @@ function accountWindows(items) {
 }
 function accountModels(account, config, now) {
   const ids = [...new Set([config.default_model, ...Object.values(config.phases).flatMap(route => [route.model, ...(route.fallbacks || [])]),
+    ...Object.values(config.client_routes || {}).flatMap(route => [route.model, ...(route.fallbacks || [])]),
     ...Object.entries(account.model_cooldowns || {}).filter(([, until]) => until > now).map(([id]) => id)])];
   const models = ids.map(id => config.models.find(model => model.id === id)).filter(model => model?.provider === account.provider);
   return models.length ? models : [null];
@@ -139,7 +147,7 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
       const label = problem.reason === 'quota-exhausted' ? `${problem.window} quota exhausted` : reasons[problem.reason] || 'cooldown';
       return `${label}${problem.until > now && problem.reason !== 'quota-exhausted' ? ` (${policy.retryIn(problem.until, now)})` : ''}`;
     }).join('; ') || 'ready' : summary;
-    return [account.name, account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status, ...windowNames.flatMap(name => {
+    return [account.name, account.rank || '-', account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status, ...windowNames.flatMap(name => {
       const window = windows.find(item => item.name === name);
       if (!window) return usage?.windows?.length ? ['-', '-'] : ['unknown', 'unknown'];
       return [`${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : ' (stale)'}`, resetIn(window.resets_at, now)];
@@ -148,11 +156,11 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
 }
 function accountTable(items) {
   const windows = accountWindows(items);
-  const headers = ['Account', 'Provider', 'Model', 'Status', ...windows.flatMap(name => {
+  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', ...windows.flatMap(name => {
     const label = name[0].toUpperCase() + name.slice(1).replaceAll('-', ' ');
     return [`${label} left`, 'Reset in'];
   })];
-  return table(headers, accountRows(items, Date.now(), windows), { rightAlign: windows.map((_, index) => 4 + index * 2) });
+  return table(headers, accountRows(items, Date.now(), windows), { rightAlign: [1, ...windows.map((_, index) => 5 + index * 2)] });
 }
 function showAccounts(items) {
   process.stdout.write(accountTable(items));
@@ -243,10 +251,15 @@ async function routeCommand(action, args, options) {
   if (action === 'configure') {
     const model = args[0] || await question('Default model (provider/model)');
     return configure(config => {
-      policy.model(config, model); for (const fallback of options.fallback) policy.model(config, fallback);
+      const fallbacks = options.fallback || [];
+      policy.model(config, model); for (const fallback of fallbacks) policy.model(config, fallback);
       if (options.effort && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort)) throw new Error('Unknown reasoning effort.');
-      const choice = { model, fallbacks: options.fallback, ...(options.effort ? { effort: options.effort } : {}) };
-      if (options.phase !== undefined) {
+      if (options.client && options.phase !== undefined) throw new Error('Choose either --client or --phase, not both.');
+      if (options.client && !['claude', 'codex'].includes(options.client)) throw new Error('Client must be claude or codex.');
+      const choice = { model, fallbacks, ...(options.effort ? { effort: options.effort } : {}) };
+      if (options.client) {
+        config.client_routes ||= {}; config.client_routes[options.client] = choice;
+      } else if (options.phase !== undefined) {
         const phase = /^\d$/.test(options.phase) ? Number(options.phase) : policy.PHASES.indexOf(options.phase);
         if (phase < 0 || phase > 6) throw new Error('Phase must be 0–6 or a lifecycle phase name.'); config.phases[phase] = choice;
       } else { config.default_model = model; for (let phase = 0; phase <= 6; phase++) config.phases[phase] = choice; }
@@ -302,7 +315,7 @@ async function main(args) {
     throw new Error('--json requires explicit account choices and --yes; run router setup interactively without --json.');
   }
   const arity = group === 'accounts' ? [0, 0] : group === 'router' ? (action === 'native' ? [0, 1] : [0, 0])
-    : group === 'account' ? (action === 'rename' ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
+    : group === 'account' ? (['rename', 'rank'].includes(action) ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
       : group === 'model' ? (['list', 'current', undefined].includes(action) ? [0, 0] : [1, 1])
         : group === 'route' ? (['status', 'policy', 'unpin-account', undefined].includes(action) ? [0, 0] : [1, 1]) : [0, 0];
   const provided = group === 'accounts' ? options.positional.length : values.length;

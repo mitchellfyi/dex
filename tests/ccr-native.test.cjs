@@ -63,6 +63,22 @@ test('native settings preserve client preferences and restore only managed value
   assert.equal(toml(config.codex_file).model_providers, undefined);
 });
 
+test('native settings use the context budget for each client route', () => {
+  const routing = state.config();
+  routing.models.find(model => model.id === 'openai/test').context_window = 64000;
+  routing.client_routes = {
+    claude: { model: 'anthropic/test', fallbacks: [] },
+    codex: { model: 'openai/test', fallbacks: [] }
+  };
+  state.write(state.stateFile('config'), routing);
+  native.clientSettings('enable', config, settings);
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  const codex = toml(config.codex_file);
+  assert.equal(claude.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '128000');
+  assert.equal(codex.model_context_window, 64000);
+  assert.equal(codex.model_auto_compact_token_limit, 51200);
+});
+
 test('disable preserves routing settings the user changed after installation', () => {
   native.clientSettings('enable', config, settings);
   const claude = JSON.parse(fs.readFileSync(config.claude_file)); claude.model = 'user-choice';

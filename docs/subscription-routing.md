@@ -151,6 +151,7 @@ dx accounts --live
 dx accounts --json
 dx account show main
 dx account rename backup spare
+dx account rank main 1
 dx account disable spare
 dx account enable spare
 dx account reauth main
@@ -192,6 +193,13 @@ stored credential after confirmation (`--yes` in a script). An already
 authorised request may finish. Reauthentication must return the same identity;
 a different identity requires a new entry.
 
+Account ranks are optional. Lower numbers are tried first for each model, ahead
+of session affinity and reported quota headroom. `dx account rank main 1` moves
+an account to that position and renumbers the rest of the pool. Once a ranked
+account's quota or cooldown clears, the next request tries it before accounts
+with lower priority. If no ranks are set, Dex keeps the default affinity and
+quota-aware selection policy.
+
 ## Models and phase policy
 
 ```sh
@@ -200,6 +208,8 @@ dx model discover main
 dx route configure anthropic/<model-id>
 dx route configure openai/<model-id> --phase implement --effort high \
   --fallback anthropic/<model-id>
+dx route configure openai/<model-id> --client codex \
+  --fallback openai/<fallback-model-id>
 dx route configure anthropic/<model-id> --phase review
 dx route policy
 ```
@@ -210,6 +220,12 @@ A configuration without `--phase` resets all seven phases. Repeat `--fallback`
 to extend the ordered model chain. Cross-provider fallback requires an explicit
 chain; it is not enabled by merely registering an OpenAI account.
 
+Use `--client claude` or `--client codex` to give a native client its own route
+without changing lifecycle phases or the other client. `--client` and `--phase`
+are mutually exclusive. When the model in the native client's settings matches
+the primary model in its client route, Dex retains the configured fallbacks. A
+different model selected with `/model` remains a strict one-model override.
+
 For example, if both models appear in your account's catalogue, keep Fable 5.1
 as the primary model and use Opus 5 when its accounts are unavailable:
 
@@ -218,8 +234,9 @@ dx route configure anthropic/claude-fable-5-1 --fallback anthropic/claude-opus-5
 ```
 
 This applies to all seven phases and native Claude/Codex sessions using
-`dex/active`. Dex tries the accounts that can serve Fable before trying Opus.
-An explicit model override or account pin restricts this automatic fallback.
+`dex/active`, unless that client has its own route. Dex tries the accounts that
+can serve Fable before trying Opus. A one-model override or account pin
+restricts this automatic fallback.
 
 After Phase 6 records its terminal commit, the lifecycle marks the session
 complete (phase 7). The conversation keeps the `complete` route for its final
@@ -283,8 +300,9 @@ available model to execute.
 ## Failures and recovery
 
 For each model, Dex tries eligible accounts before moving to the next model.
-It prefers the current account, then fresh quota headroom. It excludes disabled
-identities, expired logins, exhausted windows and accounts in cooldown. Rate limits
+Explicit account ranks take priority. Without ranks, Dex prefers the current
+account and then fresh quota headroom. It excludes disabled identities, expired
+logins, exhausted windows and accounts in cooldown. Rate limits
 and temporary provider errors cool only the requested model on that account,
 including when the provider does not identify the limit's scope. Other configured
 fallback models can still be tried. Connection and login failures affect the

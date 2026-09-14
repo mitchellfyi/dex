@@ -37,7 +37,8 @@ function clientSettings(action, native, settings) {
   const request = { action, backup, claude_file: native.claude_file, codex_file: native.codex_file };
   if (action !== 'disable') {
     const config = state.config();
-    const context = policy.contextLimit(config);
+    const claudeContext = policy.contextLimit(config, 'claude');
+    const codexContext = policy.contextLimit(config, 'codex');
     const helper = [process.execPath, ...authArgs('claude')].map(quote).join(' ');
     request.claude_fields = [
       { field: ['apiKeyHelper'], value: helper },
@@ -47,11 +48,11 @@ function clientSettings(action, native, settings) {
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME'], value: 'Dex automatic route' },
       ...['OPUS', 'SONNET', 'HAIKU'].map(name => ({ field: ['env', `ANTHROPIC_DEFAULT_${name}_MODEL`], value: 'dex/active' })),
       { field: ['env', 'CLAUDE_CODE_SUBAGENT_MODEL'], value: 'dex/active' },
-      { field: ['env', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'], value: String(context) }
+      { field: ['env', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'], value: String(claudeContext) }
     ];
     request.codex_fields = [
       { field: 'model_provider', value: 'dex-ccr' }, { field: 'model', value: 'dex/active' },
-      { field: 'model_context_window', value: context }, { field: 'model_auto_compact_token_limit', value: Math.floor(context * 0.8) }
+      { field: 'model_context_window', value: codexContext }, { field: 'model_auto_compact_token_limit', value: Math.floor(codexContext * 0.8) }
     ];
     request.provider_content = [
       '# Dex native routing: managed provider',

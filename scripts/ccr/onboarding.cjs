@@ -59,7 +59,7 @@ async function register({ provider, name, device = false, reauth, confirm = asyn
       const items = state.accounts();
       if (items.some(item => item.id !== id && (item.fingerprint === who.fingerprint || item.name === name))) throw new Error('That account or name is already registered.');
       if (previous && !items.some(item => item.id === id)) throw new Error('The account was removed during login. Add it again.');
-      const account = { id, name, provider, enabled: true, status: 'ready', fingerprint: who.fingerprint, identity: who.label, created_at: previous?.created_at || Date.now(), authenticated_at: Date.now() };
+      const account = { id, name, provider, enabled: true, status: 'ready', fingerprint: who.fingerprint, identity: who.label, created_at: previous?.created_at || Date.now(), authenticated_at: Date.now(), ...(previous?.rank ? { rank: previous.rank } : {}) };
       const oldCredentials = store.get(id);
       store.set(id, native.tokens);
       try { state.saveAccounts([...items.filter(item => item.id !== id), account]); }
@@ -87,6 +87,17 @@ async function changeAccount(action, selector, value, store = new CredentialStor
     if (action === 'rename') {
       const name = accountName(value); if (items.some(item => item.id !== account.id && item.name === name)) throw new Error('That name is already in use.'); account.name = name;
     } else if (action === 'enable' || action === 'disable') account.enabled = action === 'enable';
+    else if (action === 'rank') {
+      if (!/^\d+$/.test(value || '') || Number(value) < 1 || Number(value) > items.length) throw new Error(`Rank must be between 1 and ${items.length}.`);
+      const ordered = [...items].sort((a, b) => {
+        const aRank = Number.isSafeInteger(a.rank) && a.rank > 0 ? a.rank : Number.MAX_SAFE_INTEGER;
+        const bRank = Number.isSafeInteger(b.rank) && b.rank > 0 ? b.rank : Number.MAX_SAFE_INTEGER;
+        return aRank - bRank || (a.created_at || 0) - (b.created_at || 0);
+      });
+      ordered.splice(ordered.indexOf(account), 1); ordered.splice(Number(value) - 1, 0, account);
+      ordered.forEach((item, index) => { item.rank = index + 1; });
+      state.saveAccounts(ordered); return account;
+    }
     else if (action === 'remove') {
       // Removing membership first prevents new requests from selecting this identity.
       state.saveAccounts(items.filter(item => item.id !== account.id));

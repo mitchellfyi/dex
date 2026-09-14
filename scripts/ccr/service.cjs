@@ -105,7 +105,7 @@ class RouterService {
         if (active(saved) && saved.auth_hash === state.hash(token)) return;
         if (!config.enabled || !config.native?.enabled) throw new Error('Native routing is disabled. Run dx router native enable.');
         const session = { version: 1, id, active: true, owner_pid: params.owner_pid, owner_identity: identity, auth_hash: state.hash(token), client: params.client,
-          context_limit: policy.contextLimit(config) };
+          context_limit: policy.contextLimit(config, params.client) };
         state.write(state.sessionFile(id), session);
         event(session, 'route.session_started', { client: params.client, context_limit: session.context_limit });
       });
@@ -229,7 +229,9 @@ class RouterService {
         const config = state.config();
         const matches = session.client && typeof body.model === 'string' && !body.model.includes('/') ? config.models.filter(item => (item.upstream_id || item.id.split('/')[1]) === body.model) : [];
         if (matches.length > 1) throw new Error('Model name is ambiguous. Use the provider/model ID from dx model list.');
-        selected.models = [policy.model(config, matches[0]?.id || body.model)];
+        const requested = policy.model(config, matches[0]?.id || body.model);
+        const configuredClientPrimary = session.client && config.client_routes?.[session.client]?.model;
+        if (requested.id !== configuredClientPrimary) selected.models = [requested];
       }
       const choices = policy.candidates(state.accounts(), selected, session, Date.now(), protocol);
       if (!choices.length) throw policy.unavailable(state.accounts(), selected, Date.now(), protocol);

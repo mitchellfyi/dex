@@ -373,6 +373,9 @@ Use IDs from `dx model list` in place of the placeholders below:
 dx route configure 'anthropic/<model-id>'  # Set the model for all phases
 dx route configure 'openai/<model-id>' --phase implement \
   --fallback 'anthropic/<model-id>'        # Use OpenAI for implementation, with Claude fallback
+dx route configure 'openai/<model-id>' --client codex \
+  --fallback 'openai/<fallback-model-id>'  # Give native Codex its own route
+dx account rank <account-name> 1           # Prefer this account when it can serve the model
 dx route policy
 dx 1234                                 # Launch the usual Dex lifecycle with this policy
 ```

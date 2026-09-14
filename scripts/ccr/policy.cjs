@@ -41,8 +41,9 @@ function route(config, session) {
   const current = phase(session);
   const policyPhase = Math.min(current, PHASES.length - 1);
   const override = session.override;
+  const clientRoute = session.client && config.client_routes?.[session.client];
   const choice = override && (override.scope === 'session' || override.phase === current || override.phase === policyPhase)
-    ? override : config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
+    ? override : clientRoute || config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
   const ids = [choice.model, ...(choice.fallbacks || [])];
   const models = [...new Set(ids)].map(id => model(config, id));
   // session.context_limit is the compaction budget the client was launched with,
@@ -54,9 +55,12 @@ function route(config, session) {
 
 // The smallest window across the configured route, handed to the client at
 // launch as its compaction budget. Later route changes may select a smaller model.
-function contextLimit(config) {
-  const choices = Object.values(config.phases).flatMap(value => [value.model, ...(value.fallbacks || [])]);
-  if (config.default_model) choices.push(config.default_model);
+function contextLimit(config, client) {
+  const clientRoute = client && config.client_routes?.[client];
+  const choices = clientRoute
+    ? [clientRoute.model, ...(clientRoute.fallbacks || [])]
+    : Object.values(config.phases).flatMap(value => [value.model, ...(value.fallbacks || [])]);
+  if (!clientRoute && config.default_model) choices.push(config.default_model);
   if (!choices.length) throw new Error('Choose a default model with dx route configure.');
   return Math.min(...choices.map(id => model(config, id).context_window));
 }
@@ -95,6 +99,13 @@ function candidates(items, selection, session, now = Date.now(), protocol) {
       && (!selection.pinned || item.id === selection.pinned)
       && !blockers(item, target, now, protocol).length);
     available.sort((a, b) => {
+      const aRank = Number.isSafeInteger(a.rank) && a.rank > 0 ? a.rank : null;
+      const bRank = Number.isSafeInteger(b.rank) && b.rank > 0 ? b.rank : null;
+      if (aRank !== null || bRank !== null) {
+        if (aRank === null) return 1;
+        if (bRank === null) return -1;
+        return aRank - bRank || (a.created_at || 0) - (b.created_at || 0);
+      }
       if (a.id === session.current_account) return -1;
       if (b.id === session.current_account) return 1;
       const remaining = account => windows(account).length ? Math.min(...windows(account).map(window => window.remaining_ratio ?? 1), 1) : 0.5;

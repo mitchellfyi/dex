@@ -64,7 +64,8 @@ test('standalone sessions launch without phase files while workflows follow thei
 test('CLI rejects missing and unknown option values', () => {
   assert.throws(() => cli.parse(['--session']), /requires/);
   assert.throws(() => cli.parse(['--api-key', 'secret']), /Unknown/);
-  assert.deepEqual(cli.parse(['configure', 'openai/test', '--fallback', 'anthropic/test', '--phase', 'review']).fallback, ['anthropic/test']);
+  const parsed = cli.parse(['configure', 'openai/test', '--fallback', 'anthropic/test', '--client', 'codex']);
+  assert.deepEqual(parsed.fallback, ['anthropic/test']); assert.equal(parsed.client, 'codex');
 });
 test('gateway recovery logs its attempts without writing into the native terminal', async t => {
   const writes = [], probes = [];
@@ -157,12 +158,12 @@ test('dashboard distinguishes current account exhaustion from stale and model-on
 test('account status names limited models and reports short cooldowns in seconds', () => {
   const now = Date.now();
   const account = { name: 'Main', provider: 'anthropic', enabled: true, model_cooldowns: { 'anthropic/claude-fable-5-1': now + 12000, 'anthropic/claude-opus-5': now - 1000 } };
-  assert.equal(cli.accountRows([account], now)[0][3], 'claude-fable-5-1 rate limited (12s)');
+  assert.equal(cli.accountRows([account], now)[0][4], 'claude-fable-5-1 rate limited (12s)');
   account.model_cooldown_reasons = { 'anthropic/claude-fable-5-1': 'temporary' };
-  assert.equal(cli.accountRows([account], now)[0][3], 'claude-fable-5-1 temporary provider error (12s)');
+  assert.equal(cli.accountRows([account], now)[0][4], 'claude-fable-5-1 temporary provider error (12s)');
   account.cooldown_until = now + 8000; account.cooldown_reason = 'temporary';
-  assert.equal(cli.accountRows([account], now)[0][3], 'temporary provider error (8s)');
-  assert.equal(cli.accountRows([account], now + 13000)[0][3], 'ready');
+  assert.equal(cli.accountRows([account], now)[0][4], 'temporary provider error (8s)');
+  assert.equal(cli.accountRows([account], now + 13000)[0][4], 'ready');
 });
 test('account/model rows compare primary and fallback capacity without mixing model quotas', () => {
   const now = Date.now(), primary = 'anthropic/claude-fable-5-1', fallback = 'anthropic/claude-opus-5';
@@ -175,18 +176,21 @@ test('account/model rows compare primary and fallback capacity without mixing mo
   ] } };
   let rows = cli.accountRows([account], now, undefined, config);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows[0], ['Work', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72%', '1h 0m', '40%', '1d 0h', '-', '-']);
-  assert.deepEqual(rows[1], ['Work', 'anthropic', 'Opus 5', 'weekly-opus quota exhausted', '72%', '1h 0m', '40%', '1d 0h', '0%', '2h 0m']);
+  assert.deepEqual(rows[0], ['Work', '-', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72%', '1h 0m', '40%', '1d 0h', '-', '-']);
+  assert.deepEqual(rows[1], ['Work', '-', 'anthropic', 'Opus 5', 'weekly-opus quota exhausted', '72%', '1h 0m', '40%', '1d 0h', '0%', '2h 0m']);
   account.usage.windows[2].remaining_ratio = .3;
   rows = cli.accountRows([account], now, undefined, config);
-  assert.equal(rows[1][3], 'ready', 'a primary model cooldown leaves the fallback available');
+  assert.equal(rows[1][4], 'ready', 'a primary model cooldown leaves the fallback available');
   account.model_ids = [primary];
-  assert.equal(cli.accountRows([account], now, undefined, config)[1][3], 'not available');
+  assert.equal(cli.accountRows([account], now, undefined, config)[1][4], 'not available');
   account.model_ids = [primary, fallback]; account.usage_error = 'unavailable';
-  assert.match(cli.accountRows([account], now, undefined, config)[1][4], /stale/);
+  assert.match(cli.accountRows([account], now, undefined, config)[1][5], /stale/);
   config.models.push({ id: 'openai/test', provider: 'openai' });
   config.phases[2].fallbacks.push('openai/test');
-  assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, undefined, config)[0][2], 'test');
+  assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, undefined, config)[0][3], 'test');
+  config.models.push({ id: 'openai/client-test', provider: 'openai' });
+  config.client_routes = { codex: { model: 'openai/client-test', fallbacks: ['openai/test'] } };
+  assert.deepEqual(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, undefined, config).map(row => row[3]), ['test', 'client-test']);
 });
 test('account rows compare quota windows side by side and distinguish due and unknown resets', () => {
   const now = Date.now();
@@ -200,15 +204,15 @@ test('account rows compare quota windows side by side and distinguish due and un
   ] } };
   const rows = cli.accountRows([account, weeklyOnly, { name: 'Backup', provider: 'openai', enabled: false }], now);
   assert.deepEqual(rows, [
-    ['Main', 'anthropic', '-', 'ready', '72%', '2h 14m', '40%', '3d 4h', '0%', 'due'],
-    ['Personal', 'openai', '-', 'ready', '-', '-', '91%', 'unknown', '-', '-'],
-    ['Backup', 'openai', '-', 'disabled', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']
+    ['Main', '-', 'anthropic', '-', 'ready', '72%', '2h 14m', '40%', '3d 4h', '0%', 'due'],
+    ['Personal', '-', 'openai', '-', 'ready', '-', '-', '91%', 'unknown', '-', '-'],
+    ['Backup', '-', 'openai', '-', 'disabled', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']
   ]);
   account.usage_error = 'Refresh failed';
-  assert.match(cli.accountRows([account], now)[0][4], /stale/);
+  assert.match(cli.accountRows([account], now)[0][5], /stale/);
   account.status = 'reauth-required';
   account.cooldown_until = now + 60000;
-  assert.equal(cli.accountRows([account], now)[0][3], 'reauth-required');
+  assert.equal(cli.accountRows([account], now)[0][4], 'reauth-required');
 });
 test('table rendering does not alter JSON output or saved account and model data', () => {
   const items = [{ id: 'one', name: 'Main', identity: 'test@example.test', provider: 'openai', enabled: true }];
@@ -219,7 +223,7 @@ test('table rendering does not alter JSON output or saved account and model data
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  assert.match(run(['accounts']), /Account +Provider +Model +Status +5h left +Reset in +Weekly left +Reset in/);
+  assert.match(run(['accounts']), /Account +Rank +Provider +Model +Status +5h left +Reset in +Weekly left +Reset in/);
   assert.match(run(['accounts']), /Shared quota is repeated across model rows/);
   assert.match(run(['accounts']), /Tip: use dx accounts --live for updates\./);
   assert.match(run(['account', 'show', 'Main']), /test@example.test/);
@@ -289,9 +293,12 @@ test('model registration and phase configuration preserve explicit fallbacks', a
   await cli.modelCommand('add', ['openai/codex-test'], options);
   await cli.routeCommand('configure', ['anthropic/claude-test'], { fallback: [] });
   await cli.routeCommand('configure', ['openai/codex-test'], { phase: 'implement', fallback: ['anthropic/claude-test'], effort: 'high' });
+  await cli.routeCommand('configure', ['openai/codex-test'], { client: 'codex', fallback: ['anthropic/claude-test'], effort: 'xhigh' });
   assert.equal(Object.keys(state.config().phases).length, 7);
   assert.equal(state.config().phases[2].model, 'openai/codex-test');
   assert.equal(state.config().phases[3].model, 'anthropic/claude-test');
+  assert.deepEqual(state.config().client_routes.codex, { model: 'openai/codex-test', fallbacks: ['anthropic/claude-test'], effort: 'xhigh' });
+  await assert.rejects(cli.routeCommand('configure', ['openai/codex-test'], { client: 'codex', phase: 'setup', fallback: [] }), /either --client or --phase/);
   await assert.rejects(cli.routeCommand('configure', ['unknown/model'], { fallback: [] }), /model/);
   await assert.rejects(cli.modelCommand('add', ['openai/test'], { context: '-1' }), /context/);
   // A running session launched at the 128k budget does not block a smaller fallback from joining the route.
@@ -304,10 +311,13 @@ test('model registration and phase configuration preserve explicit fallbacks', a
   await assert.rejects(cli.routeCommand('configure', ['anthropic/claude-test'], { fallback: ['openai/missing'] }), /not configured/, 'unknown models are still rejected for running sessions');
 });
 test('account controls preserve identity and delete selected credentials only', async () => {
-  state.saveAccounts([{ id: 'one', name: 'Personal', provider: 'openai', enabled: true }, { id: 'two', name: 'Work', provider: 'openai', enabled: true }]);
+  state.saveAccounts([{ id: 'one', name: 'Personal', provider: 'openai', enabled: true, created_at: 1 }, { id: 'two', name: 'Work', provider: 'openai', enabled: true, created_at: 2 }]);
   const store = new CredentialStore('linux'); store.set('one', { refresh_token: 'synthetic-one' }); store.set('two', { refresh_token: 'synthetic-two' });
   await onboarding.changeAccount('disable', 'Personal', null, store);
   assert.equal(state.getAccount('Personal').enabled, false);
+  await onboarding.changeAccount('rank', 'Work', '1', store);
+  assert.deepEqual(state.accounts().map(account => [account.name, account.rank]), [['Work', 1], ['Personal', 2]]);
+  await assert.rejects(onboarding.changeAccount('rank', 'Work', '3', store), /between 1 and 2/);
   await assert.rejects(onboarding.changeAccount('rename', 'one', 'Work', store), /already/);
   await onboarding.changeAccount('rename', 'one', 'Personal two', store);
   await onboarding.changeAccount('remove', 'Personal two', null, store);
