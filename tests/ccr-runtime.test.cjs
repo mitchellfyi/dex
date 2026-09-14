@@ -14,11 +14,11 @@ const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
 test('pinned CCR authenticates two accounts and translates OpenAI in the same session', { skip: !process.env.DEX_CCR_INTEGRATION_RUNTIME, timeout: 180000 }, async () => {
   process.env.DEX_ROUTER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-runtime-'));
   const calls = [];
-  let secondLimited = false;
+  let secondLimited = false, allLimited = false;
   const upstream = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); calls.push({ url: req.url, headers: req.headers, body });
-    if (req.headers.authorization === 'Bearer synthetic-a' || (secondLimited && req.headers.authorization === 'Bearer synthetic-b')) {
+    if (allLimited || (body.model !== 'test-opus' && (req.headers.authorization === 'Bearer synthetic-a' || (secondLimited && req.headers.authorization === 'Bearer synthetic-b')))) {
       res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '60' });
       res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Synthetic quota exhausted' } })); return;
     }
@@ -34,7 +34,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       for (const event of [{ type: 'response.created', response: { ...response, status: 'in_progress', output: [] } }, { type: 'response.output_item.added', output_index: 0, item: response.output[0] }, { type: 'response.content_part.added', item_id: 'msg_test', output_index: 0, content_index: 0, part: { type: 'output_text', text: '', annotations: [] } }, { type: 'response.output_text.delta', item_id: 'msg_test', output_index: 0, content_index: 0, delta: 'OpenAI answer' }, { type: 'response.completed', response }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       res.end(); return;
     }
-    const message = { id: 'msg_test', type: 'message', role: 'assistant', model: 'test-claude', content: [{ type: 'text', text: 'Claude answer' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 5, output_tokens: 3 } };
+    const message = { id: 'msg_test', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'Claude answer' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 5, output_tokens: 3 } };
     if (body.stream) {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       for (const event of [{ type: 'message_start', message: { ...message, content: [], stop_reason: null } }, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Claude answer' } }, { type: 'content_block_stop', index: 0 }, { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } }, { type: 'message_stop' }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -44,7 +44,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
   });
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${upstream.address().port}`;
-  const config = { version: 1, enabled: true, default_model: 'anthropic/test-claude', phases: {}, models: ['anthropic/test-claude', 'openai/test-codex'].map(id => ({ id, provider: id.split('/')[0], context_window: 200000, capabilities: { tools: true, images: true } })) };
+  const config = { version: 1, enabled: true, default_model: 'anthropic/test-claude', phases: {}, models: ['anthropic/test-claude', 'openai/test-codex', 'anthropic/test-opus'].map(id => ({ id, provider: id.split('/')[0], context_window: 200000, capabilities: { tools: true, images: true } })) };
   state.write(state.stateFile('config'), config);
   const accounts = ['a', 'b', 'c'].map((id, index) => ({ id, name: id, enabled: true, status: 'ready', provider: index < 2 ? 'anthropic' : 'openai', created_at: index, usage: { observed_at: Date.now(), source: 'provider', confidence: 'provider-derived', windows: [{ name: '5h', remaining_ratio: 0.6, resets_at: Date.now() + 3600000 }] } }));
   state.saveAccounts(accounts);
@@ -63,7 +63,8 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     let response = await send(); const first = await response.text();
     assert.equal(response.status, 200, first); assert.match(first, /Claude answer/);
     assert.deepEqual(calls.map(call => call.headers.authorization), ['Bearer synthetic-a', 'Bearer synthetic-b']);
-    assert.equal(state.accounts()[0].cooldown_until > Date.now(), true);
+    assert.equal(state.accounts()[0].model_cooldowns['anthropic/test-claude'] > Date.now(), true);
+    assert.equal(state.accounts()[0].cooldown_until, undefined);
     await ipc.call('route', { action: 'use', model: 'openai/test-codex', session: 'test-session' });
     response = await send(); const second = await response.text();
     assert.equal(response.status, 200, second); assert.match(second, /OpenAI answer/);
@@ -155,6 +156,27 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     await ipc.call('route', { session: 'test-session', action: 'auto' }); secondLimited = true;
     const fallback = await send(); assert.equal(fallback.status, 200); assert.match(await fallback.text(), /OpenAI answer/);
     assert.deepEqual(calls.slice(-2).map(call => call.headers.authorization), ['Bearer synthetic-b', 'Bearer synthetic-c']);
+    config.phases[0].fallbacks = ['anthropic/test-opus']; state.write(state.stateFile('config'), config);
+    const sameProviderFallback = await send();
+    assert.equal(sameProviderFallback.status, 200); assert.match(await sameProviderFallback.text(), /Claude answer/);
+    assert.equal(sameProviderFallback.headers.get('x-dex-model'), 'anthropic/test-opus');
+    assert.equal(calls.at(-1).body.model, 'test-opus');
+    await ipc.call('native-auth', { client: 'codex', owner_pid: process.pid });
+    const nativeFallback = await sendResponses();
+    assert.equal(nativeFallback.status, 200); assert.match(await nativeFallback.text(), /Claude answer/);
+    assert.equal(nativeFallback.headers.get('x-dex-model'), 'anthropic/test-opus');
+    await ipc.call('finish', { id: `native-codex-${process.pid}`, token: native.token });
+    allLimited = true;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const unavailable = await send(); const error = (await unavailable.json()).error;
+      assert.equal(unavailable.status, 503);
+      assert.ok(Number(unavailable.headers.get('retry-after')) > 0);
+      assert.equal(error.retry_after_seconds, Number(unavailable.headers.get('retry-after')));
+      assert.match(error.message, /test-claude:.*rate limited.*test-opus:.*rate limited/);
+      assert.doesNotMatch(error.message, /reauth/);
+    }
+    allLimited = false;
+    config.phases[0].fallbacks = ['openai/test-codex']; state.write(state.stateFile('config'), config);
     await ipc.call('finish', { id: 'test-session', token });
     await adapter.stop();
     const previousKey = settings.client_key;

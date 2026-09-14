@@ -188,6 +188,17 @@ A configuration without `--phase` resets all seven phases. Repeat `--fallback`
 to extend the ordered model chain. Cross-provider fallback requires an explicit
 chain; it is not enabled by merely registering an OpenAI account.
 
+For example, if both models appear in your account's catalogue, keep Fable 5.1
+as the primary model and use Opus 5 when its accounts are unavailable:
+
+```sh
+dx route configure anthropic/claude-fable-5-1 --fallback anthropic/claude-opus-5
+```
+
+This applies to all seven phases and native Claude/Codex sessions using
+`dex/active`. Dex tries the accounts that can serve Fable before trying Opus.
+An explicit model override or account pin restricts this automatic fallback.
+
 If discovery is unavailable, register a model supported by your subscription:
 
 ```sh
@@ -240,8 +251,19 @@ available model to execute.
 
 For each model, Dex tries eligible accounts before moving to the next model.
 It prefers the current account, then fresh quota headroom. It excludes disabled
-identities, expired logins, exhausted windows and accounts in cooldown. A
-model-specific quota error cools that model only.
+identities, expired logins, exhausted windows and accounts in cooldown. A rate-limit
+response cools only the requested model on that account, including when the
+provider does not identify the limit's scope. Other configured fallback models
+can still be tried. A fresh exhausted quota window shared by all models excludes
+the whole account; a model-specific window excludes only matching models.
+
+When no route is available, the error names each model and account with its
+reason: rate limit, temporary provider error, exhausted quota, disabled account,
+missing model access or a login needing renewal. It includes the earliest known
+retry time and sends a matching HTTP `Retry-After` header. Unknown quota reset
+times and login failures do not get an invented countdown. Reauthentication is
+suggested only for a login failure. The account table also names models in
+cooldown and shows short waits in seconds.
 
 An authentication rejection permits one refresh before account failover.
 Rate limits and temporary server errors can fail over before response delivery.

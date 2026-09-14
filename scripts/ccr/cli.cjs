@@ -121,7 +121,12 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
     const fresh = usage && now - usage.observed_at < 120000 && !account.usage_error;
     const windows = usage?.windows || [];
     const exhausted = fresh && windows.some(window => !window.model_pool && window.remaining_ratio === 0 && (!window.resets_at || window.resets_at > now));
-    const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required' : account.cooldown_until > now ? `cooldown (${resetIn(account.cooldown_until, now)})` : exhausted ? 'quota exhausted' : 'ready';
+    const limits = Object.entries(account.model_cooldowns || {}).filter(([, until]) => until > now)
+      .map(([model, until]) => `${model.split('/').pop()} rate limited (${policy.retryIn(until, now)})`);
+    const reason = { temporary: 'temporary provider error', 'connection-failed': 'connection failed', 'refresh-unavailable': 'login refresh unavailable', 'rate-limit': 'rate limited' }[account.cooldown_reason] || 'cooldown';
+    const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required'
+      : account.cooldown_until > now ? `${reason} (${policy.retryIn(account.cooldown_until, now)})`
+        : exhausted ? 'quota exhausted' : limits.join('; ') || 'ready';
     return [account.name, account.provider, status, ...windowNames.flatMap(name => {
       const window = windows.find(item => item.name === name);
       if (!window) return windows.length ? ['-', '-'] : ['unknown', 'unknown'];

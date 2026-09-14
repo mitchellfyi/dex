@@ -75,6 +75,14 @@ test('dashboard distinguishes current account exhaustion from stale and model-on
   assert.doesNotMatch(output(), /quota exhausted/);
   assert.match(output(), /stale/);
 });
+test('account status names limited models and reports short cooldowns in seconds', () => {
+  const now = Date.now();
+  const account = { name: 'Main', provider: 'anthropic', enabled: true, model_cooldowns: { 'anthropic/claude-fable-5-1': now + 12000, 'anthropic/claude-opus-5': now - 1000 } };
+  assert.equal(cli.accountRows([account], now)[0][2], 'claude-fable-5-1 rate limited (12s)');
+  account.cooldown_until = now + 8000; account.cooldown_reason = 'temporary';
+  assert.equal(cli.accountRows([account], now)[0][2], 'temporary provider error (8s)');
+  assert.equal(cli.accountRows([account], now + 13000)[0][2], 'ready');
+});
 test('account rows compare quota windows side by side and distinguish due and unknown resets', () => {
   const now = Date.now();
   const account = { name: 'Main', provider: 'anthropic', enabled: true, usage: { observed_at: now, windows: [

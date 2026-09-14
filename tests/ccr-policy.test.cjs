@@ -41,6 +41,67 @@ test('auth, quota, temporary failures and malformed requests are distinct', () =
 });
 test('model-only quota rejection does not exhaust the whole account', () => {
   assert.equal(policy.failure(429, { error: { type: 'model_rate_limit' } }).modelOnly, true);
+  assert.equal(policy.failure(429, { error: { type: 'rate_limit_error' } }).modelOnly, true);
+  assert.equal(policy.failure(429).modelOnly, true);
+  assert.equal(policy.failure(429, null).modelOnly, true);
+});
+test('a model quota or cooldown leaves another model on the same account eligible', () => {
+  const fallback = { ...models[0], id: 'anthropic/fallback' };
+  const account = { id: 'one', provider: 'anthropic', enabled: true, usage: { observed_at: 1000, windows: [
+    { name: 'primary', model_pool: 'anthropic/a', remaining_ratio: 0, resets_at: 61000 }
+  ] } };
+  const selected = { models: [models[0], fallback] };
+  assert.deepEqual(policy.candidates([account], selected, {}, 1000).map(item => item.model.id), ['anthropic/fallback']);
+  account.usage.windows = [];
+  account.model_cooldowns = { 'anthropic/a': 61000 };
+  assert.deepEqual(policy.candidates([account], selected, {}, 1000).map(item => item.model.id), ['anthropic/fallback']);
+  account.usage.windows = [{ name: '5h', remaining_ratio: 0, resets_at: 61000 }];
+  assert.deepEqual(policy.candidates([account], selected, {}, 1000), []);
+});
+test('unavailable errors identify each model and the earliest account that can recover', () => {
+  const fallback = { ...models[0], id: 'anthropic/fallback', display_name: 'Fallback' };
+  const items = [
+    { id: 'one', name: 'Main', provider: 'anthropic', enabled: true, model_cooldowns: { 'anthropic/a': 61000, 'anthropic/fallback': 31000 } },
+    { id: 'two', name: 'Backup', provider: 'anthropic', enabled: true, cooldown_until: 11000, cooldown_reason: 'temporary' }
+  ];
+  const error = policy.unavailable(items, { models: [models[0], fallback] }, 1000);
+  assert.equal(error.retryAfter, 10);
+  assert.match(error.message, /anthropic\/a: Main: rate limited \(1m\)/);
+  assert.match(error.message, /Fallback: Main: rate limited \(30s\)/);
+  assert.match(error.message, /Backup: temporary provider error \(10s\)/);
+  assert.match(error.message, /Retry in 10s/);
+  assert.doesNotMatch(error.message, /reauth|No fallback/);
+});
+test('retry waits for every exhausted window and cooldown on an account', () => {
+  const account = { id: 'one', provider: 'anthropic', enabled: true, cooldown_until: 61000, usage: { observed_at: 1000, windows: [
+    { name: '5h', remaining_ratio: 0, resets_at: 11000 }, { name: 'weekly', remaining_ratio: 0, resets_at: 31000 }
+  ] } };
+  assert.equal(policy.unavailable([account], { models }, 1000).retryAfter, 60);
+  account.usage.windows[1].resets_at = null;
+  const unknown = policy.unavailable([account], { models }, 1000);
+  assert.equal(unknown.retryAfter, undefined);
+  assert.match(unknown.message, /weekly quota exhausted \(reset time unknown\)/);
+  assert.doesNotMatch(unknown.message, /Retry in/);
+});
+test('login, disabled, missing models and strict pins have actionable explanations', () => {
+  const account = { id: 'one', name: 'Main\u001b[2J', provider: 'anthropic', enabled: true, status: 'reauth-required', cooldown_until: 61000 };
+  let error = policy.unavailable([account], { models: [models[0]] }, 1000);
+  assert.match(error.message, /login needs renewal/);
+  assert.match(error.message, /dx account reauth <name>/);
+  assert.match(error.message, /No fallback models/);
+  assert.equal(error.retryAfter, undefined);
+  assert.equal(error.message.includes('\u001b'), false);
+  account.enabled = false;
+  error = policy.unavailable([account], { models }, 1000);
+  assert.match(error.message, /disabled/);
+  assert.match(error.message, /dx account enable <name>/);
+  assert.doesNotMatch(error.message, /reauth/);
+  account.enabled = true; account.status = 'ready'; account.model_ids = [];
+  assert.match(policy.unavailable([account], { models }, 1000).message, /model not available on this account/);
+  error = policy.unavailable([account], { models, pinned: 'missing' }, 1000);
+  assert.match(error.message, /pinned account cannot serve this model/);
+  assert.match(error.message, /dx route unpin-account/);
+  assert.doesNotMatch(error.message, /openai\/b/);
 });
 test('unsupported content is rejected before routing', () => {
   assert.throws(() => policy.validateRequest({ messages: [{ role: 'user', content: [{ type: 'image' }] }] }, models[1]), /image/);

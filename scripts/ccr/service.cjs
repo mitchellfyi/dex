@@ -152,6 +152,13 @@ class RouterService {
   async updateAccount(id, change) {
     return state.locked('accounts', () => { const items = state.accounts(); const found = items.find(item => item.id === id); if (found) { change(found); state.saveAccounts(items); } });
   }
+  async markUnavailable(accountId, modelId, problem) {
+    await this.updateAccount(accountId, item => {
+      if (problem.reauth) item.status = 'reauth-required';
+      else if (problem.modelOnly) item.model_cooldowns = { ...item.model_cooldowns, [modelId]: Math.max(item.model_cooldowns?.[modelId] || 0, problem.until) };
+      else if (!(item.cooldown_until > problem.until)) { item.cooldown_until = problem.until; item.cooldown_reason = problem.reason; }
+    });
+  }
   authenticate(request) {
     const supplied = String(request.headers.authorization || request.headers['x-api-key'] || '').replace(/^Bearer /i, '');
     const session = state.sessions().find(item => item.auth_hash === state.hash(supplied) && active(item));
@@ -188,14 +195,17 @@ class RouterService {
         if (selected.models[0].context_window < session.context_limit) throw new Error('Compact and restart before selecting a smaller context model.');
       }
       const choices = policy.candidates(state.accounts(), selected, session);
-      if (!choices.length) throw new Error('No eligible subscription accounts. Run dx accounts, reauthenticate an account, or select another route.');
+      if (!choices.length) throw policy.unavailable(state.accounts(), selected);
       for (const choice of choices) {
         if (controller.signal.aborted) return;
+        // Earlier attempts or concurrent sessions may have excluded this account.
+        const account = state.accounts().find(item => item.id === choice.account.id);
+        if (!account || policy.blockers(account, choice.model).length) continue;
         policy.validateRequest(body, choice.model, protocol);
         let credentials;
-        try { credentials = await this.broker.access(choice.account); }
+        try { credentials = await this.broker.access(account); }
         catch (error) {
-          if (error.reauth) await this.updateAccount(choice.account.id, item => { item.status = 'reauth-required'; });
+          await this.markUnavailable(account.id, choice.model.id, { reauth: error.reauth, reason: 'refresh-unavailable', until: Date.now() + 10000 });
           event(session, 'account.unavailable', { account_id: choice.account.id, reason: error.reauth ? 'reauth-required' : 'refresh-unavailable' });
           continue;
         }
@@ -216,6 +226,7 @@ class RouterService {
           } catch (error) {
             this.tickets.delete(ticket);
             if (controller.signal.aborted) return;
+            await this.markUnavailable(account.id, choice.model.id, { reason: 'connection-failed', until: Date.now() + 10000 });
             event(session, 'router.request_failed', { reason: 'connection-failed', account_id: choice.account.id });
             break;
           }
@@ -233,12 +244,9 @@ class RouterService {
               catch (error) { if (!error.reauth) problem = { retry: true, reason: 'refresh-unavailable', until: Date.now() + 10000 }; }
             }
             if (!problem.retry) { ipc.json(response, upstream.status, { error: { type: 'invalid_request_error', message: 'The provider rejected this request. Check the selected model and supported content.', provider_status: upstream.status } }); return; }
-            await this.updateAccount(choice.account.id, item => {
-              if (problem.reauth) item.status = 'reauth-required';
-              else if (problem.modelOnly) item.model_cooldowns = { ...item.model_cooldowns, [choice.model.id]: problem.until };
-              else item.cooldown_until = problem.until;
-            });
-            event(session, 'account.failover', { account_id: choice.account.id, model: choice.model.id, reason: problem.reason });
+            await this.markUnavailable(account.id, choice.model.id, problem);
+            event(session, 'account.failover', { account_id: account.id, model: choice.model.id, reason: problem.reason,
+              provider_status: upstream.status, scope: problem.modelOnly ? 'model' : 'account', retry_at: problem.until || null });
             break;
           }
           await state.locked('sessions', () => {
@@ -254,7 +262,7 @@ class RouterService {
           return;
         }
       }
-      throw new Error('All eligible routes are unavailable. Your session is preserved; use dx accounts or dx route use to recover.');
+      throw policy.unavailable(state.accounts(), selected);
     } catch (error) {
       if (session) {
         const reason = response.headersSent ? 'partial-response' : 'no-completed-response';
@@ -263,7 +271,12 @@ class RouterService {
           event(session, 'route.paused', { reason });
         } catch { /* An unsafe journal must not leave the HTTP request unresolved. */ }
       }
-      if (!response.headersSent && !response.destroyed) ipc.json(response, session ? 503 : 401, { error: { type: 'api_error', message: error.message } });
+      if (!response.headersSent && !response.destroyed) {
+        if (error.retryAfter) response.setHeader('retry-after', String(error.retryAfter));
+        ipc.json(response, session ? 503 : 401, { error: { type: 'api_error', message: error.message,
+          ...(error.code === 'subscription_accounts_unavailable' ? { code: error.code } : {}),
+          ...(error.retryAfter ? { retry_after_seconds: error.retryAfter } : {}) } });
+      }
       else response.destroy();
     } finally { this.inFlight.delete(controller); response.off('close', abort); }
   }
