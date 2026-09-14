@@ -75,23 +75,24 @@ test('dashboard distinguishes current account exhaustion from stale and model-on
   assert.doesNotMatch(output(), /quota exhausted/);
   assert.match(output(), /stale/);
 });
-test('account rows retain every quota window and distinguish due and unknown resets', () => {
+test('account rows compare quota windows side by side and distinguish due and unknown resets', () => {
   const now = Date.now();
   const account = { name: 'Main', provider: 'anthropic', enabled: true, usage: { observed_at: now, windows: [
-    { name: '5h', remaining_ratio: 0.72, resets_at: now + (2 * 60 + 14) * 60000 },
     { name: 'weekly', remaining_ratio: 0.4, resets_at: now + (3 * 24 + 4) * 3600000 },
+    { name: '5h', remaining_ratio: 0.72, resets_at: now + (2 * 60 + 14) * 60000 },
     { name: 'weekly-opus', model_pool: 'opus', remaining_ratio: 0, resets_at: now - 1 }
   ] } };
-  const rows = cli.accountRows([account, { name: 'Backup', provider: 'openai', enabled: false }], now);
-  assert.equal(rows.length, 4);
-  assert.deepEqual(rows.map(row => row[3]), ['5h', 'weekly', 'weekly-opus', '-']);
-  assert.deepEqual(rows.map(row => row[5]), ['2h 14m', '3d 4h', 'due', 'unknown']);
-  assert.equal(rows[0][4], '72%');
-  assert.equal(rows[3][2], 'disabled');
-  assert.equal(rows[3][4], 'unknown');
-  assert.equal(rows[3][6], 'unknown');
+  const weeklyOnly = { name: 'Personal', provider: 'openai', enabled: true, usage: { observed_at: now, windows: [
+    { name: 'weekly', remaining_ratio: .91, resets_at: null }
+  ] } };
+  const rows = cli.accountRows([account, weeklyOnly, { name: 'Backup', provider: 'openai', enabled: false }], now);
+  assert.deepEqual(rows, [
+    ['Main', 'anthropic', 'ready', '72%', '2h 14m', '40%', '3d 4h', '0%', 'due'],
+    ['Personal', 'openai', 'ready', '-', '-', '91%', 'unknown', '-', '-'],
+    ['Backup', 'openai', 'disabled', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']
+  ]);
   account.usage_error = 'Refresh failed';
-  assert.match(cli.accountRows([account], now)[0][4], /stale/);
+  assert.match(cli.accountRows([account], now)[0][3], /stale/);
   account.status = 'reauth-required';
   account.cooldown_until = now + 60000;
   assert.equal(cli.accountRows([account], now)[0][2], 'reauth-required');
@@ -105,7 +106,7 @@ test('table rendering does not alter JSON output or saved account and model data
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  assert.match(run(['accounts']), /Account +Provider +Status +Window +Left +Reset in +Reset at \(local\)/);
+  assert.match(run(['accounts']), /Account +Provider +Status +5h left +Reset in +Weekly left +Reset in/);
   assert.match(run(['accounts']), /Tip: use dx accounts --live for updates\./);
   assert.match(run(['account', 'show', 'Main']), /test@example.test/);
   assert.match(run(['model', 'list']), /128,000/);

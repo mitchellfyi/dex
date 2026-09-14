@@ -111,31 +111,31 @@ function resetIn(timestamp, now) {
   const hours = Math.floor(minutes / 60);
   return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
-function resetAt(timestamp, now) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'unknown';
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return 'unknown';
-  return date.toLocaleString('en-GB', {
-    day: '2-digit', month: 'short', ...(date.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}),
-    hour: '2-digit', minute: '2-digit', hour12: false
-  }).replace(',', '');
+function accountWindows(items) {
+  const names = new Set(items.flatMap(account => (account.usage?.windows || []).map(window => window.name)));
+  return ['5h', 'weekly', ...[...names].filter(name => name !== '5h' && name !== 'weekly').sort()];
 }
-function accountRows(items, now = Date.now()) {
-  return items.flatMap(account => {
+function accountRows(items, now = Date.now(), windowNames = accountWindows(items)) {
+  return items.map(account => {
     const usage = account.usage;
     const fresh = usage && now - usage.observed_at < 120000 && !account.usage_error;
     const windows = usage?.windows || [];
     const exhausted = fresh && windows.some(window => !window.model_pool && window.remaining_ratio === 0 && (!window.resets_at || window.resets_at > now));
     const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required' : account.cooldown_until > now ? `cooldown (${resetIn(account.cooldown_until, now)})` : exhausted ? 'quota exhausted' : 'ready';
-    return (windows.length ? windows : [null]).map(window => [
-      account.name, account.provider, status, window?.name || '-',
-      window ? `${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : ' (stale)'}` : 'unknown',
-      resetIn(window?.resets_at, now), resetAt(window?.resets_at, now)
-    ]);
+    return [account.name, account.provider, status, ...windowNames.flatMap(name => {
+      const window = windows.find(item => item.name === name);
+      if (!window) return windows.length ? ['-', '-'] : ['unknown', 'unknown'];
+      return [`${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : ' (stale)'}`, resetIn(window.resets_at, now)];
+    })];
   });
 }
 function accountTable(items) {
-  return table(['Account', 'Provider', 'Status', 'Window', 'Left', 'Reset in', 'Reset at (local)'], accountRows(items), { rightAlign: [4] });
+  const windows = accountWindows(items);
+  const headers = ['Account', 'Provider', 'Status', ...windows.flatMap(name => {
+    const label = name[0].toUpperCase() + name.slice(1).replaceAll('-', ' ');
+    return [`${label} left`, 'Reset in'];
+  })];
+  return table(headers, accountRows(items, Date.now(), windows), { rightAlign: windows.map((_, index) => 3 + index * 2) });
 }
 function showAccounts(items) {
   process.stdout.write(accountTable(items));

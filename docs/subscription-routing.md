@@ -90,9 +90,11 @@ dx account doctor main
 dx account remove spare
 ```
 
-The account table shows one row per quota window, with columns for account,
-provider, status, remaining quota, time until reset and the local reset time.
-Missing readings remain unknown and old readings remain labelled stale.
+The account table shows one row per account, with 5-hour and weekly quota side
+by side. Each window has a percentage left and a `Reset in` countdown, such as
+`4h 51m` or `3d 12h`. Additional windows, including model-specific quotas, get
+their own column pairs. A dash means that window was not reported; accounts
+with no readings show `unknown`, and old readings remain labelled `stale`.
 With CCR running, the dashboard refreshes usage; the extension also polls every
 minute. The Claude status line reads the cache without a network request.
 
