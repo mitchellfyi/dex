@@ -377,8 +377,10 @@ dx route policy
 dx 1234                                 # Launch the usual Dex lifecycle with this policy
 ```
 
-Cross-provider fallback requires an explicit `--fallback` route. Configure
-models before starting a lifecycle: its context budget is fixed at launch.
+Cross-provider fallback requires an explicit `--fallback` route. A lifecycle's
+compaction budget is fixed at launch from the smallest model on its route, but
+smaller models can still be added or selected while it runs; compact first if
+the conversation has outgrown them.
 See [subscription routing](docs/subscription-routing.md) for account pins,
 changes during a session, quota recovery and compatibility limits. The
 integration is experimental; live subscription access depends on provider

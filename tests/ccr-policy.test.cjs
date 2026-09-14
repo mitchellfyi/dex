@@ -37,8 +37,16 @@ test('phase files accept the terminal marker and reject anything else', () => {
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 test('context budget includes fallback models', () => assert.equal(policy.contextLimit(config), 128000));
-test('smaller context model cannot be introduced into a running session', () => {
-  assert.throws(() => policy.route(config, { fixed_phase: 2, context_limit: 200000 }), /smaller context/);
+test('a smaller context model can join a running session; each request is sized to the model serving it', () => {
+  // The session was launched at a 200k budget; the phase route and an override both bring in a 128k model.
+  assert.deepEqual(policy.route(config, { fixed_phase: 2, context_limit: 200000 }).models.map(x => x.id), ['openai/b', 'anthropic/a']);
+  assert.deepEqual(policy.route(config, { fixed_phase: 0, context_limit: 200000, override: { model: 'openai/b', scope: 'session' } }).models.map(x => x.id), ['openai/b']);
+  const small = { ...models[1], context_window: 8192, display_name: 'Small' };
+  const oversized = { messages: [{ role: 'user', content: 'x'.repeat(8192 * 4) }] };
+  assert.throws(() => policy.validateRequest(oversized, small), /8,192-token budget of Small.*Compact it \(\/compact\)/);
+  assert.doesNotThrow(() => policy.validateRequest({ messages: [{ role: 'user', content: 'hello' }] }, small));
+  assert.doesNotThrow(() => policy.validateRequest(oversized, models[0]), 'the same conversation fits the larger model');
+  assert.throws(() => policy.validateRequest({ input: 'x'.repeat(8192 * 4) }, { ...small, display_name: undefined }, 'responses'), /budget of openai\/b/);
 });
 test('invalid models cannot become filesystem paths or unknown routes', () => {
   for (const id of ['', '../secret', 'other/model', 'openai/unknown']) assert.throws(() => policy.model(config, id));
@@ -95,8 +103,12 @@ test('converted-protocol failures cool down separately from native traffic', () 
   assert.match(error.message, /rate limited \(1m\)/);
   assert.match(error.message, /needs CCR responses conversion/);
   assert.match(error.message, /dx route configure openai\/<model>/);
+  assert.match(error.message, /pick one in Codex with \/model/);
   assert.doesNotMatch(policy.unavailable([account], { models }, 1000, 'responses').message, /conversion/);
   assert.doesNotMatch(policy.unavailable([account], { models: [models[0]] }, 1000).message, /conversion/);
+  const converted = policy.unavailable([{ id: 'c', provider: 'openai', enabled: true, cooldown_until: 61000 }], { models: [models[1]] }, 1000, 'messages');
+  assert.match(converted.message, /needs CCR messages conversion/);
+  assert.doesNotMatch(converted.message, /\/model/);
 });
 test('unavailable errors identify each model and the earliest account that can recover', () => {
   const fallback = { ...models[0], id: 'anthropic/fallback', display_name: 'Fallback' };

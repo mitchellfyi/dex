@@ -97,6 +97,46 @@ test('Codex reads a catalogue that mirrors the routed OpenAI model under the dex
   assert.equal((await catalogue('?client_version=0.154.0', 'not-a-session')).status, 401);
 });
 
+test('an exhausted launch route can move to a smaller context model without a restart', async () => {
+  const config = state.config(); config.native = { enabled: true };
+  config.models.push({ id: 'openai/small', upstream_id: 'small', provider: 'openai', context_window: 8192, capabilities: { tools: true } });
+  state.write(state.stateFile('config'), config);
+  // Native Codex launched at the 128k Claude-only route budget; both Claude accounts are then exhausted.
+  const { token } = await service.control('native-auth', { client: 'codex', owner_pid: process.pid });
+  const id = `native-codex-${process.pid}`;
+  assert.equal(state.read(state.sessionFile(id)).context_limit, 128000);
+  state.saveAccounts(state.accounts().map(account => account.provider === 'anthropic' ? { ...account, cooldown_until: Date.now() + 3600000, cooldown_reason: 'rate-limit' } : account));
+  endpoint = endpoint.replace('/messages', '/responses');
+  const input = [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }];
+  let response = await send(token, { input });
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error.message, /needs CCR responses conversion.*dx route use openai\/<model>/);
+  // 1. Codex /model picks the smaller OpenAI model by its upstream name.
+  response = await send(token, { model: 'small', input });
+  assert.equal(response.status, 200, await response.text());
+  assert.equal(response.headers.get('x-dex-model'), 'openai/small');
+  assert.deepEqual(calls.map(call => call.model), ['dex-openai/small']);
+  assert.equal(state.read(state.sessionFile(id)).context_limit, 128000, 'the launch budget is a record, not a floor');
+  // 2. dx route use selects it for the rest of the session.
+  const routed = await service.control('route', { action: 'use', model: 'openai/small', session: id });
+  assert.deepEqual(routed.route.models.map(model => model.id), ['openai/small']);
+  assert.equal((await send(token, { input })).status, 200);
+  assert.equal(calls.at(-1).model, 'dex-openai/small');
+  // 3. dx route configure adds it as a fallback while the session is running.
+  config.phases[0] = { model: 'anthropic/test', fallbacks: ['openai/small'] }; state.write(state.stateFile('config'), config);
+  assert.deepEqual((await service.control('route', { action: 'auto', session: id })).route.models.map(model => model.id), ['anthropic/test', 'openai/small']);
+  response = await send(token, { input });
+  assert.equal(response.status, 200); assert.equal(response.headers.get('x-dex-model'), 'openai/small');
+  assert.equal(calls.length, 3, 'exhausted Claude accounts are skipped without a provider call');
+  // The payload guard still sizes each request against the model that will serve it.
+  const oversized = [{ role: 'user', content: [{ type: 'input_text', text: 'x'.repeat(8192 * 4) }] }];
+  response = await send(token, { model: 'small', input: oversized });
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error.message, /8,192-token budget of openai\/small.*Compact it/);
+  assert.equal(calls.length, 3, 'the oversized request never reached the provider');
+  assert.equal(state.read(state.sessionFile(id)).active, true);
+});
+
 test('a completed lifecycle keeps serving requests on its complete route', async () => {
   const config = state.config(); config.phases[6] = { model: 'openai/test', fallbacks: [] }; state.write(state.stateFile('config'), config);
   const phase = path.join(directory, 'lifecycle.phase'); fs.writeFileSync(phase, '6\n', { mode: 0o600 });

@@ -85,8 +85,9 @@ It updates Claude's user settings and adds a managed `dex-ccr` provider to
 Codex's user configuration. Unrelated settings are retained; `dx install`, `dx init` and
 `dx sync` refresh the native configuration after you have enabled it. Explicit
 client flags, another Codex profile, or higher-priority settings may override
-these defaults. Keep the gateway's configured context budget when switching
-models within a conversation.
+these defaults. The client's `/model` picker can select any model from
+`dx model list`, including one with a smaller context window than the route it
+started on; see the context budget notes below.
 
 ```sh
 dx router native status
@@ -236,10 +237,16 @@ window when available; otherwise it labels a conservative 64,000-token budget.
 You can replace that budget with an explicit supported value. When account
 discovery succeeds, selection uses that account's returned model list.
 
-The launcher gives Claude the smallest context budget in the configured phase
-and fallback routes. A smaller model cannot be introduced into a running
-conversation; configure it before starting a new session. Payload-size checks
-are not tokenizers. Providers remain authoritative about token limits.
+The launcher gives Claude and Codex the smallest context budget in the
+configured phase and fallback routes as their compaction point. That budget is
+a record of the launch, not a floor: a model with a smaller window can still
+join a running conversation through `dx route use`, `dx route configure` or the
+client's own `/model` picker, so an exhausted provider never strands a session.
+Each request is checked against the model that will serve it. When the
+conversation has outgrown that model, the router rejects the request and asks
+you to `/compact` or pick a larger model; the client keeps its compaction point
+from launch until it restarts. Payload-size checks are not tokenizers.
+Providers remain authoritative about token limits.
 
 ## Switching in one session
 

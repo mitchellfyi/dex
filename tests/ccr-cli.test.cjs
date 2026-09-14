@@ -294,6 +294,14 @@ test('model registration and phase configuration preserve explicit fallbacks', a
   assert.equal(state.config().phases[3].model, 'anthropic/claude-test');
   await assert.rejects(cli.routeCommand('configure', ['unknown/model'], { fallback: [] }), /model/);
   await assert.rejects(cli.modelCommand('add', ['openai/test'], { context: '-1' }), /context/);
+  // A running session launched at the 128k budget does not block a smaller fallback from joining the route.
+  await cli.modelCommand('add', ['openai/small-test'], { ...options, context: '16000' });
+  const { processIdentity } = require('../scripts/ccr/service.cjs');
+  state.write(state.sessionFile('running'), { version: 1, id: 'running', active: true, owner_pid: process.pid, owner_identity: processIdentity(process.pid), context_limit: 128000, fixed_phase: 0 });
+  await cli.routeCommand('configure', ['anthropic/claude-test'], { fallback: ['openai/small-test'] });
+  assert.deepEqual(state.config().phases[0].fallbacks, ['openai/small-test']);
+  assert.equal(policy.contextLimit(state.config()), 16000, 'new sessions launch at the smaller budget');
+  await assert.rejects(cli.routeCommand('configure', ['anthropic/claude-test'], { fallback: ['openai/missing'] }), /not configured/, 'unknown models are still rejected for running sessions');
 });
 test('account controls preserve identity and delete selected credentials only', async () => {
   state.saveAccounts([{ id: 'one', name: 'Personal', provider: 'openai', enabled: true }, { id: 'two', name: 'Work', provider: 'openai', enabled: true }]);

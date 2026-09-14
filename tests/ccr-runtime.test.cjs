@@ -45,6 +45,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${upstream.address().port}`;
   const config = { version: 1, enabled: true, default_model: 'anthropic/test-claude', phases: {}, models: ['anthropic/test-claude', 'openai/test-codex', 'anthropic/test-opus'].map(id => ({ id, provider: id.split('/')[0], context_window: 200000, capabilities: { tools: true, images: true } })) };
+  config.models.push({ id: 'openai/test-small', provider: 'openai', context_window: 64000, capabilities: { tools: true, images: true } });
   state.write(state.stateFile('config'), config);
   const accounts = ['a', 'b', 'c'].map((id, index) => ({ id, name: id, enabled: true, status: 'ready', provider: index < 2 ? 'anthropic' : 'openai', created_at: index, usage: { observed_at: Date.now(), source: 'provider', confidence: 'provider-derived', windows: [{ name: '5h', remaining_ratio: 0.6, resets_at: Date.now() + 3600000 }] } }));
   state.saveAccounts(accounts);
@@ -93,6 +94,14 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     const nativeClaude = await sendResponses(); const nativeClaudeStream = await nativeClaude.text();
     assert.equal(nativeClaude.status, 200, nativeClaudeStream);
     assert.match(nativeClaudeStream, /response.completed/); assert.match(nativeClaudeStream, /Claude answer/);
+    // Codex was launched at the 200k route budget; a 64k model is still selectable by /model and by dx route use.
+    assert.equal(state.read(state.sessionFile(`native-codex-${process.pid}`)).context_limit, 200000);
+    const smaller = await sendResponses({ model: 'test-small' }); const smallerStream = await smaller.text();
+    assert.equal(smaller.status, 200, smallerStream); assert.match(smallerStream, /OpenAI answer/);
+    assert.equal(smaller.headers.get('x-dex-model'), 'openai/test-small'); assert.equal(calls.at(-1).body.model, 'test-small');
+    await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-small' });
+    const smallerRoute = await sendResponses(); assert.equal(smallerRoute.status, 200, await smallerRoute.text());
+    assert.equal(smallerRoute.headers.get('x-dex-model'), 'openai/test-small');
     await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-codex' });
     const nativeTool = await sendResponses({ tools: [{ type: 'function', name: 'dex_test_write', description: 'Write a report', parameters: { type: 'object', properties: { file: { type: 'string' } } } }] });
     const nativeToolStream = await nativeTool.text(); assert.equal(nativeTool.status, 200, nativeToolStream);

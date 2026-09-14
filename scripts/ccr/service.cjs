@@ -223,12 +223,13 @@ class RouterService {
       }
       const selected = policy.route(state.config(), session);
       // Native /model is an explicit request override; dex/active follows policy.
+      // A smaller context window than the launch budget is allowed: the payload
+      // guard in validateRequest sizes this request against the chosen model.
       if (body.model && body.model !== 'dex/active') {
         const config = state.config();
         const matches = session.client && typeof body.model === 'string' && !body.model.includes('/') ? config.models.filter(item => (item.upstream_id || item.id.split('/')[1]) === body.model) : [];
         if (matches.length > 1) throw new Error('Model name is ambiguous. Use the provider/model ID from dx model list.');
         selected.models = [policy.model(config, matches[0]?.id || body.model)];
-        if (selected.models[0].context_window < session.context_limit) throw new Error('Compact and restart before selecting a smaller context model.');
       }
       const choices = policy.candidates(state.accounts(), selected, session, Date.now(), protocol);
       if (!choices.length) throw policy.unavailable(state.accounts(), selected, Date.now(), protocol);

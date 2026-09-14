@@ -45,10 +45,15 @@ function route(config, session) {
     ? override : config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
   const ids = [choice.model, ...(choice.fallbacks || [])];
   const models = [...new Set(ids)].map(id => model(config, id));
-  if (session.context_limit && models.some(item => item.context_window < session.context_limit)) throw new Error('This route has a smaller context window than the running session. Start a new session with this policy.');
+  // session.context_limit is the compaction budget the client was launched with,
+  // not a floor for later model choices. A smaller model stays selectable so an
+  // exhausted provider never strands the session; validateRequest sizes each
+  // request against the model that will serve it.
   return { phase: current, models, effort: choice.effort, pinned: session.pinned_account };
 }
 
+// The smallest window across the configured route, handed to the client at
+// launch as its compaction budget. Later route changes may select a smaller model.
 function contextLimit(config) {
   const choices = Object.values(config.phases).flatMap(value => [value.model, ...(value.fallbacks || [])]);
   if (config.default_model) choices.push(config.default_model);
@@ -137,7 +142,7 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   else if (selection.models.length === 1) advice.push('No fallback models are configured for this route.');
   if (protocol && !selection.models.some(target => NATIVE_PROTOCOL[target.provider] === protocol)) {
     const provider = Object.keys(NATIVE_PROTOCOL).find(name => NATIVE_PROTOCOL[name] === protocol);
-    advice.push(`Every model on this route needs CCR ${protocol} conversion. Add a ${provider} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>.`);
+    advice.push(`Every model on this route needs CCR ${protocol} conversion. Add a ${provider} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>${protocol === 'responses' ? ', or pick one in Codex with /model' : ''}.`);
   }
   if (reasons.has('reauth-required')) advice.push('Renew the affected login with dx account reauth <name>.');
   if (reasons.has('disabled')) advice.push('Enable an account with dx account enable <name>.');
@@ -174,9 +179,12 @@ function validateRequest(body, target, protocol = 'messages') {
   }
   visit(protocol === 'responses' ? body.input : body.messages);
   if (body.tools?.length && capabilities.tools !== true) throw new Error('The selected model has no verified tool support.');
-  // This is a payload guard, not a tokenizer. Native compaction uses the smallest
-  // configured context window; providers remain authoritative about token limits.
-  if (Buffer.byteLength(JSON.stringify(body)) > target.context_window * 4) throw new Error('The conversation exceeds this route’s payload budget. Compact it before switching.');
+  // This is a payload guard, not a tokenizer. The client compacts at the budget
+  // it was launched with, so a model chosen later may hold less than the
+  // conversation; providers remain authoritative about token limits.
+  if (Buffer.byteLength(JSON.stringify(body)) > target.context_window * 4) {
+    throw new Error(`The conversation exceeds the ${target.context_window.toLocaleString('en-US')}-token budget of ${target.display_name || target.id}. Compact it (/compact) before using this model, or select a larger model with dx route use.`);
+  }
 }
 
 module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, phase, route, contextLimit, cooldownKey, candidates, blockers, retryIn, unavailable, failure, validateRequest };
