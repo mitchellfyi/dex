@@ -1,7 +1,7 @@
 # Optional subscription routing
 
 Dex can keep several Anthropic and OpenAI subscription accounts available to
-one Claude Code session. It selects another account when a request hits a quota
+Claude Code and Codex sessions. It selects another account when a request hits a quota
 limit, and can choose a different model for each lifecycle phase. Direct Claude
 and Codex profiles remain available without CCR or its Node dependencies.
 
@@ -15,7 +15,8 @@ Subscription endpoints and provider eligibility can change independently of Dex.
 
 Install Node.js 22 or newer and the official Claude Code CLI. OpenAI account
 registration also needs the official Codex CLI as a login helper. Codex is not
-used as the engineering runtime for this profile.
+used as the engineering runtime for Dex's `ccr-subscription` profile; native
+Codex connects separately through the native setup below.
 OpenAI model discovery reads the installed Codex version because the subscription
 backend filters its catalogue by client version. Keep the CLI current when
 refreshing the model list.
@@ -40,6 +41,58 @@ dx provider use --repo ccr-subscription
 `dx setup` remembers your direct/routed choice. `dx setup --direct` returns a
 CCR global default to direct Claude; an existing direct Codex default is kept.
 Use `dx router setup` to configure routing without changing your default profile.
+
+## Use the native commands
+
+After router setup, enable routing for the native CLIs:
+
+```sh
+dx router native enable
+claude
+codex
+```
+
+Both clients request `dex/active`, which follows Dex's configured default route
+and fallbacks. A standalone conversation uses the setup phase's route. Eligible
+accounts for each model are tried before the next fallback model. This includes
+Codex running a Claude model through CCR's Responses-to-Messages conversion.
+`--model` and native model selectors can choose a configured model explicitly;
+that request uses the chosen model's account pool.
+
+These are ordinary native sessions with their existing conversation history,
+permissions and CLI options. They do not start a Dex lifecycle. Authentication
+helpers start CCR when needed and obtain a local capability tied to the client
+process. Provider credentials remain in Dex's account store. `dx accounts --live`
+shows the same pool used by these sessions and Dex workflows.
+
+Setup requires Python 3.11+ and native clients that support command-based gateway
+authentication, including the Codex `model_providers.<id>.auth` configuration.
+It updates Claude's user settings and adds a managed `dex-ccr` provider to
+Codex's user configuration. Unrelated settings are retained; `dx install`, `dx init` and
+`dx sync` refresh the native configuration after you have enabled it. Explicit
+client flags, another Codex profile, or higher-priority settings may override
+these defaults. Keep the gateway's configured context budget when switching
+models within a conversation.
+
+```sh
+dx router native status
+dx router native disable
+```
+
+Disabling restores the previous values for settings Dex still owns and keeps
+subsequent user edits. Start a new CLI session to use the restored defaults.
+Native routing keeps the local gateway address stable across router restarts.
+
+## Open the CCR dashboard
+
+```sh
+dx router ui
+```
+
+This starts the bundled CCR package and opens its browser dashboard. The command
+currently requires idle routed sessions. Use the UI for diagnostics and Dex
+commands for accounts and routing; Dex reapplies its managed CCR configuration
+at startup.
 
 ## Add more accounts
 
@@ -298,12 +351,14 @@ npm ci --prefix scripts/ccr/runtime-package --no-audit --no-fund
 DEX_CCR_INTEGRATION_RUNTIME=scripts/ccr/runtime-package bash tests/ccr-routing-test.sh
 DEX_CCR_NATIVE_CLAUDE=1 DEX_CCR_INTEGRATION_RUNTIME=scripts/ccr/runtime-package \
   node --test tests/ccr-runtime.test.cjs
+DEX_CCR_NATIVE_CLIENTS=1 DEX_CCR_INTEGRATION_RUNTIME=scripts/ccr/runtime-package \
+  node --test tests/ccr-runtime.test.cjs
 bash tests/check.sh
 ```
 
-The last smoke uses an installed official Claude CLI, isolated configuration,
-synthetic credentials and local providers. It checks two providers in one real
-Claude conversation, account failover, recovery and journal redaction. It does
+The native smokes use installed official CLIs, isolated configuration,
+synthetic credentials and local providers. They check two providers in one real
+Claude conversation, native Codex routing, account failover, recovery and journal redaction. They do
 not log into subscriptions or consume their allowance. CI has a separate CCR
 contract job on Linux and macOS; ordinary Dex tests do not install CCR.
 

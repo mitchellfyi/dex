@@ -84,17 +84,20 @@ function failure(status, payload = {}, headers = {}, now = Date.now()) {
   return { retry: false, reason: status === 403 ? 'forbidden' : 'request-rejected' };
 }
 
-function validateRequest(body, target) {
-  if (!body || !Array.isArray(body.messages)) throw new Error('A Messages request with a messages array is required.');
+function validateRequest(body, target, protocol = 'messages') {
+  if (protocol === 'responses') {
+    if (!body || (!Array.isArray(body.input) && typeof body.input !== 'string')) throw new Error('A Responses request with input is required.');
+    if (body.previous_response_id) throw new Error('Send the conversation input with each request so account failover can preserve it.');
+  } else if (!body || !Array.isArray(body.messages)) throw new Error('A Messages request with a messages array is required.');
   const capabilities = target.capabilities || {};
   function visit(value) {
     if (Array.isArray(value)) { value.forEach(visit); return; }
     if (!value || typeof value !== 'object') return;
-    if (value.type === 'image' && capabilities.images !== true) throw new Error('The selected model has no verified image support.');
+    if (['image', 'input_image'].includes(value.type) && capabilities.images !== true) throw new Error('The selected model has no verified image support.');
     if (['document', 'tool_reference', 'web_search_tool_result'].includes(value.type) && target.provider === 'openai') throw new Error(`The selected route cannot preserve ${value.type} content.`);
     Object.values(value).forEach(visit);
   }
-  visit(body.messages);
+  visit(protocol === 'responses' ? body.input : body.messages);
   if (body.tools?.length && capabilities.tools !== true) throw new Error('The selected model has no verified tool support.');
   // This is a payload guard, not a tokenizer. Native compaction uses the smallest
   // configured context window; providers remain authoritative about token limits.

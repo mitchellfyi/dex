@@ -23,6 +23,36 @@ afterEach(async () => { await service.stop(); await new Promise(resolve => serve
 async function register(id = 'session', extra = {}) { const token = state.token(); await service.control('register', { id, token, owner_pid: process.pid, ...extra }); return token; }
 function send(token, extra = {}, headers = {}) { return fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers }, body: JSON.stringify({ model: 'dex/active', messages: [{ role: 'user', content: 'hello' }], ...extra }) }); }
 
+test('native credentials are stable per client process and use the configured fallback chain', async () => {
+  const config = state.config(); config.native = { enabled: true }; config.phases[0] = { model: 'anthropic/test', fallbacks: ['openai/test'] }; state.write(state.stateFile('config'), config);
+  const params = { client: 'codex', owner_pid: process.pid };
+  const first = await service.control('native-auth', params);
+  assert.deepEqual(await service.control('native-auth', params), first);
+  assert.notDeepEqual(await service.control('native-auth', { ...params, client: 'claude' }), first);
+  endpoint = endpoint.replace('/messages', '/responses');
+  reply = () => new Response('{}', { status: calls.length < 3 ? 429 : 200 });
+  const input = [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }, { type: 'function_call', call_id: 'call_1', name: 'run', arguments: '{}' }, { type: 'function_call_output', call_id: 'call_1', output: 'done' }];
+  assert.equal((await send(first.token, { input })).status, 200);
+  assert.deepEqual(calls.map(call => call.model), ['dex-anthropic/test', 'dex-anthropic/test', 'dex-openai/test']);
+  assert.deepEqual(calls[2].input, input);
+  const session = state.read(state.sessionFile(`native-codex-${process.pid}`));
+  assert.equal(session.current_model, 'openai/test'); assert.equal(session.override, undefined);
+  assert.equal(session.auth_hash, state.hash(first.token)); assert.equal(JSON.stringify(session).includes(first.token), false);
+  config.native.enabled = false; state.write(state.stateFile('config'), config);
+  assert.deepEqual(await service.control('native-auth', params), first, 'running clients can finish after disabling native defaults');
+});
+
+test('Responses forwarding preserves protocol, validates images and rejects missing conversation input', async () => {
+  const token = await register(); endpoint = endpoint.replace('/messages', '/responses');
+  const urls = []; const originalFetch = service.fetch;
+  service.fetch = (url, options) => { urls.push(url); return originalFetch(url, options); };
+  assert.equal((await send(token, { input: 'hello' })).status, 200);
+  assert.match(urls[0], /\/v1\/responses$/);
+  assert.equal((await send(token, { input: [{ role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,AAAA' }] }] })).status, 503);
+  assert.equal((await send(token, { input: 'hello', previous_response_id: 'response_from_another_account' })).status, 503);
+  assert.equal(calls.length, 1);
+});
+
 test('phase change is read between requests without changing session ownership', async () => {
   const phase = path.join(directory, 'lifecycle.phase'); fs.writeFileSync(phase, '1', { mode: 0o600 });
   const token = await register('session', { phase_file: phase });

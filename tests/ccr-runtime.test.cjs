@@ -5,13 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const state = require('../scripts/ccr/state.cjs');
 const ipc = require('../scripts/ccr/ipc.cjs');
 const adapter = require('../scripts/ccr/adapter.cjs');
 const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
 
-test('pinned CCR authenticates two accounts and translates OpenAI in the same session', { skip: !process.env.DEX_CCR_INTEGRATION_RUNTIME, timeout: 60000 }, async () => {
+test('pinned CCR authenticates two accounts and translates OpenAI in the same session', { skip: !process.env.DEX_CCR_INTEGRATION_RUNTIME, timeout: 180000 }, async () => {
   process.env.DEX_ROUTER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-runtime-'));
   const calls = [];
   let secondLimited = false;
@@ -77,6 +77,40 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     const followup = await send({ messages: [{ role: 'user', content: 'Create report' }, { role: 'assistant', content: [tool] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: tool.id, content: 'Saved locally' }] }] });
     assert.equal(followup.status, 200); await followup.text();
     assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.output === 'Saved locally'));
+    config.native = { enabled: true }; state.write(state.stateFile('config'), config);
+    const native = await ipc.call('native-auth', { client: 'codex', owner_pid: process.pid });
+    const sendResponses = body => fetch(`${settings.gateway}/plugins/dex/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${native.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'dex/active', stream: true, input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], ...body }) });
+    const nativeClaude = await sendResponses(); const nativeClaudeStream = await nativeClaude.text();
+    assert.equal(nativeClaude.status, 200, nativeClaudeStream);
+    assert.match(nativeClaudeStream, /response.completed/); assert.match(nativeClaudeStream, /Claude answer/);
+    await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-codex' });
+    const nativeTool = await sendResponses({ tools: [{ type: 'function', name: 'dex_test_write', description: 'Write a report', parameters: { type: 'object', properties: { file: { type: 'string' } } } }] });
+    const nativeToolStream = await nativeTool.text(); assert.equal(nativeTool.status, 200, nativeToolStream);
+    assert.match(nativeToolStream, /response.function_call_arguments.delta/); assert.match(nativeToolStream, /dex_test_write/);
+    const nativeFollowup = await sendResponses({ input: [{ type: 'function_call', call_id: 'call_test', name: 'dex_test_write', arguments: '{"file":"report.html"}' }, { type: 'function_call_output', call_id: 'call_test', output: 'Saved by native Codex' }] });
+    assert.equal(nativeFollowup.status, 200, await nativeFollowup.text());
+    assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.output === 'Saved by native Codex'));
+    await ipc.call('finish', { id: `native-codex-${process.pid}`, token: native.token });
+    if (process.env.DEX_CCR_NATIVE_CLIENTS === '1') {
+      const nativeHome = state.privateDir(path.join(state.root(), 'native-clients'));
+      const nativeConfig = { claude_file: path.join(nativeHome, 'claude/settings.json'), codex_file: path.join(nativeHome, 'codex/config.toml') };
+      require('../scripts/ccr/native.cjs').clientSettings('enable', nativeConfig, settings);
+      const env = { ...process.env, DEX_DIR: path.resolve('.'), CODEX_HOME: path.dirname(nativeConfig.codex_file), CLAUDE_CONFIG_DIR: path.dirname(nativeConfig.claude_file), CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DEX_SESSION_ONLY: '1', DX_PROVIDER_PROFILE: 'codex-subscription', TERM: 'xterm-256color', DX_STATE_DIR: path.join(nativeHome, 'phases'), DX_LOOP_DIR: path.join(nativeHome, 'loops') };
+      for (const key of Object.keys(env)) if (/^(ANTHROPIC_|OPENAI_|DEX_LOOP_|DEX_REVIEW_|DEX_PHASE_|DX_MODEL|DX_CLAUDE_|DX_CODEX_|CLAUDE_CODE_OAUTH_TOKEN)/.test(key) || ['DEX_SESSION_ID', 'DEX_RUN_ID', 'DX_ROUTER_SESSION_ID', 'CLAUDECODE'].includes(key)) delete env[key];
+      const runNative = (executable, args) => new Promise((resolve, reject) => {
+        const child = spawn(executable, args, { cwd: nativeHome, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 });
+        let stdout = ''; let stderr = '';
+        child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
+        child.on('error', reject); child.on('exit', code => code === 0 ? resolve(stdout) : reject(new Error(`Native client failed (${code}): ${stderr} ${stdout}`)));
+      });
+      assert.match(await runNative('claude', ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '-p', 'Say hello.', '--no-session-persistence']), /Claude answer/);
+      const claims = Buffer.from(JSON.stringify({ sub: 'synthetic-user', exp: Math.floor(Date.now() / 1000) + 3600, 'https://api.openai.com/auth': { chatgpt_account_id: 'synthetic-account', chatgpt_plan_type: 'plus' } })).toString('base64url');
+      state.write(path.join(env.CODEX_HOME, 'auth.json'), { auth_mode: 'chatgpt', tokens: { id_token: `e30.${claims}.c3ludGhldGlj`, access_token: 'synthetic-native', refresh_token: 'synthetic-refresh', account_id: 'synthetic-account' }, last_refresh: new Date().toISOString() });
+      const initialized = spawnSync('git', ['init', '-q', nativeHome]); assert.equal(initialized.status, 0);
+      fs.appendFileSync(nativeConfig.codex_file, `\n[projects.${JSON.stringify(fs.realpathSync(nativeHome))}]\ntrust_level = "trusted"\n`);
+      assert.match(await runNative('python3', [path.resolve('tests/ccr-codex-smoke.py')]), /Native Codex received/);
+      require('../scripts/ccr/native.cjs').clientSettings('disable', nativeConfig, settings);
+    }
     assert.equal(state.read(state.sessionFile('test-session')).conversation_id, 'conversation-one');
     for (const call of calls) assert.equal(call.headers['x-ccr-dex-account-ticket'], undefined);
     const events = fs.readFileSync(path.join(state.root(), 'events.jsonl'), 'utf8');

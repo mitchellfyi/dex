@@ -239,7 +239,8 @@ async function routeCommand(action, args, options) {
   const mapped = { 'pin-account': 'pin', 'unpin-account': 'unpin' }[action] || action;
   return ipc.call('route', { action: mapped === 'use' && args[0] === 'auto' ? 'auto' : mapped, model: args[0], account: args[0], scope: options.scope, session: options.session || process.env.DX_ROUTER_SESSION_ID });
 }
-async function routerCommand(action, options) {
+async function routerCommand(action, options, args = []) {
+  if (action === 'native') return require('./native.cjs').command(args[0] || 'status', options);
   if (action === 'install') { await adapter.install(); return `Installed CCR ${adapter.RELEASE}.`; }
   if (action === 'setup') {
     await adapter.install();
@@ -282,7 +283,7 @@ async function main(args) {
       || (['remove', 'reauth'].includes(action) && !options.yes))))) {
     throw new Error('--json requires explicit account choices and --yes; run router setup interactively without --json.');
   }
-  const arity = group === 'accounts' ? [0, 0] : group === 'router' ? [0, 0]
+  const arity = group === 'accounts' ? [0, 0] : group === 'router' ? (action === 'native' ? [0, 1] : [0, 0])
     : group === 'account' ? (action === 'rename' ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
       : group === 'model' ? (['list', 'current', undefined].includes(action) ? [0, 0] : [1, 1])
         : group === 'route' ? (['status', 'policy', 'unpin-account', undefined].includes(action) ? [0, 0] : [1, 1]) : [0, 0];
@@ -293,7 +294,7 @@ async function main(args) {
   if (group === 'account') result = await accountCommand(action || 'list', values, options);
   else if (group === 'model') result = await modelCommand(action || 'list', values, options);
   else if (group === 'route') result = await routeCommand(action || 'status', values, options);
-  else if (group === 'router') result = await routerCommand(action || 'status', options);
+  else if (group === 'router') result = await routerCommand(action || 'status', options, values);
   else throw new Error('Unknown subscription routing command.');
   if (result !== undefined) render(group, action || (group === 'model' ? 'list' : 'status'), result, options);
 }

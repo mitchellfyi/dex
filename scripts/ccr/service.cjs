@@ -74,8 +74,26 @@ class RouterService {
     if (this.server) await new Promise(resolve => this.server.close(resolve));
   }
   async control(method, params) {
-    if (method === 'health') return { version: 1, extension: 'dex-ccr', pid: process.pid, owner_identity: processIdentity(process.pid), active_requests: this.inFlight.size, active_sessions: state.sessions().filter(active).length };
+    if (method === 'health') return { version: 1, extension: 'dex-ccr', capabilities: ['messages', 'responses', 'native-auth'], pid: process.pid, owner_identity: processIdentity(process.pid), active_requests: this.inFlight.size, active_sessions: state.sessions().filter(active).length };
     if (method === 'sessions') return state.sessions().map(publicSession);
+    if (method === 'native-auth') {
+      const config = state.config();
+      if (!['claude', 'codex'].includes(params.client)) throw new Error('Expected claude or codex.');
+      const identity = processIdentity(params.owner_pid);
+      if (!identity) throw new Error('The native client is no longer running.');
+      const id = `native-${params.client}-${params.owner_pid}`;
+      const token = require('node:crypto').createHmac('sha256', this.clientKey).update(`${id}:${identity}`).digest('base64url');
+      await state.locked('sessions', () => {
+        const saved = state.read(state.sessionFile(id), {});
+        if (active(saved) && saved.auth_hash === state.hash(token)) return;
+        if (!config.enabled || !config.native?.enabled) throw new Error('Native routing is disabled. Run dx router native enable.');
+        const session = { version: 1, id, active: true, owner_pid: params.owner_pid, owner_identity: identity, auth_hash: state.hash(token), client: params.client,
+          context_limit: policy.contextLimit(config) };
+        state.write(state.sessionFile(id), session);
+        event(session, 'route.session_started', { client: params.client, context_limit: session.context_limit });
+      });
+      return { token };
+    }
     if (method === 'register') return state.locked('sessions', () => {
       if (!state.config().enabled) throw new Error('CCR routing is disabled. Run dx router setup.');
       const id = state.checkedId(params.id);
@@ -150,7 +168,8 @@ class RouterService {
       if (request.method === 'GET' && /\/models(?:\?|$)/.test(request.url)) {
         ipc.json(response, 200, { data: state.config().models.map(item => ({ id: item.id, type: 'model', display_name: item.id })) }); return;
       }
-      if (request.method !== 'POST' || !/\/v1\/messages(?:\?|$)/.test(request.url)) { ipc.json(response, 404, { error: { type: 'not_found_error', message: 'Unsupported Dex gateway endpoint.' } }); return; }
+      const protocol = /\/v1\/responses(?:\?|$)/.test(request.url) ? 'responses' : 'messages';
+      if (request.method !== 'POST' || !/\/v1\/(?:messages|responses)(?:\?|$)/.test(request.url)) { ipc.json(response, 404, { error: { type: 'not_found_error', message: 'Unsupported Dex gateway endpoint.' } }); return; }
       const body = await ipc.body(request, 32 * 1024 * 1024);
       const conversation = request.headers['x-claude-code-session-id'];
       if (conversation) {
@@ -162,14 +181,17 @@ class RouterService {
       const selected = policy.route(state.config(), session);
       // Native /model is an explicit request override; dex/active follows policy.
       if (body.model && body.model !== 'dex/active') {
-        selected.models = [policy.model(state.config(), body.model)];
+        const config = state.config();
+        const matches = session.client && typeof body.model === 'string' && !body.model.includes('/') ? config.models.filter(item => (item.upstream_id || item.id.split('/')[1]) === body.model) : [];
+        if (matches.length > 1) throw new Error('Model name is ambiguous. Use the provider/model ID from dx model list.');
+        selected.models = [policy.model(config, matches[0]?.id || body.model)];
         if (selected.models[0].context_window < session.context_limit) throw new Error('Compact and restart before selecting a smaller context model.');
       }
       const choices = policy.candidates(state.accounts(), selected, session);
       if (!choices.length) throw new Error('No eligible subscription accounts. Run dx accounts, reauthenticate an account, or select another route.');
       for (const choice of choices) {
         if (controller.signal.aborted) return;
-        policy.validateRequest(body, choice.model);
+        policy.validateRequest(body, choice.model, protocol);
         let credentials;
         try { credentials = await this.broker.access(choice.account); }
         catch (error) {
@@ -187,10 +209,10 @@ class RouterService {
             const next = structuredClone(body);
             next.model = `dex-${choice.model.provider}/${choice.model.upstream_id || choice.model.id.split('/')[1]}`;
             if (choice.effort) {
-              if (choice.model.provider === 'anthropic') next.output_config = { ...next.output_config, effort: choice.effort };
+              if (choice.model.provider === 'anthropic' && protocol === 'messages') next.output_config = { ...next.output_config, effort: choice.effort };
               else next.reasoning = { effort: choice.effort };
             }
-            upstream = await this.fetch(`${this.gateway}/v1/messages`, { method: 'POST', headers, body: JSON.stringify(next), redirect: 'error', signal: controller.signal });
+            upstream = await this.fetch(`${this.gateway}/v1/${protocol}`, { method: 'POST', headers, body: JSON.stringify(next), redirect: 'error', signal: controller.signal });
           } catch (error) {
             this.tickets.delete(ticket);
             if (controller.signal.aborted) return;

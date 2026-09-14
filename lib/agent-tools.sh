@@ -614,5 +614,15 @@ dx_bootstrap_agent_tooling() {
     failed=1
   fi
 
+  if [[ -f "${DEX_ROUTER_HOME:-$HOME/.dex/router}/config.json" ]] && command -v node >/dev/null 2>&1; then
+    local native_router_output
+    if native_router_output=$(node "$DEX_DIR/scripts/ccr/native.cjs" sync 2>&1); then
+      [[ -z "$native_router_output" ]] || dx_ok "$native_router_output"
+    else
+      dx_warn "$native_router_output"
+      failed=1
+    fi
+  fi
+
   return "$failed"
 }

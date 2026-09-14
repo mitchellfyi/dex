@@ -8,6 +8,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 usage() {
   cat <<'EOF'
 Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disable|update>
+       dx router native <enable|disable|status>
        dx account add [anthropic|openai] [--name <name>] [--device] [--yes]
        dx account <show|rename|enable|disable|reauth|remove|doctor> <name>
        dx accounts [--live|--watch|--json]
@@ -20,6 +21,8 @@ Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disab
 
 CCR is optional. It uses subscription OAuth accounts and a private local gateway.
 Select it with 'dx provider use ccr-subscription' after setup.
+Use 'dx router native enable' to route plain claude and codex through the same account pool.
+Both native clients follow Dex's configured route and fallbacks without starting a lifecycle.
 Direct Claude and Codex profiles work without CCR or its Node dependencies.
 Use --json for machine-readable output. Removing an account requires --yes outside a terminal.
 Use dx accounts --live (or --watch) to update the table in place every 30 seconds.

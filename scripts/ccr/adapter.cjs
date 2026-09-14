@@ -119,7 +119,9 @@ async function start({ directory = runtime(), endpoints, extension, recovery = f
       if (!recovery) throw new Error('CCR is running without its extension. Run dx router stop, then start.');
       await stopOwned(previous);
     }
-    const settings = recovery ? { ...previous } : { version: 1, release: RELEASE, ...await availablePorts(), management_key: state.token(), client_key: state.token() };
+    const ports = recovery ? {} : previous && state.config().native?.enabled
+      ? { gateway_port: previous.gateway_port, core_port: previous.core_port, management_port: previous.management_port } : await availablePorts();
+    const settings = recovery ? { ...previous } : { version: 1, release: RELEASE, ...ports, management_key: state.token(), client_key: state.token() };
     settings.runtime_directory = directory;
     settings.management = `http://127.0.0.1:${settings.management_port}`; settings.gateway = `http://127.0.0.1:${settings.gateway_port}`;
     state.saveBackend(settings);
