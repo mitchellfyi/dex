@@ -115,33 +115,44 @@ function accountWindows(items) {
   const names = new Set(items.flatMap(account => (account.usage?.windows || []).map(window => window.name)));
   return ['5h', 'weekly', ...[...names].filter(name => name !== '5h' && name !== 'weekly').sort()];
 }
-function accountRows(items, now = Date.now(), windowNames = accountWindows(items)) {
-  return items.map(account => {
+function accountModels(account, config, now) {
+  const ids = [...new Set([config.default_model, ...Object.values(config.phases).flatMap(route => [route.model, ...(route.fallbacks || [])]),
+    ...Object.entries(account.model_cooldowns || {}).filter(([, until]) => until > now).map(([id]) => id)])];
+  const models = ids.map(id => config.models.find(model => model.id === id)).filter(model => model?.provider === account.provider);
+  return models.length ? models : [null];
+}
+function accountRows(items, now = Date.now(), windowNames = accountWindows(items), config = state.config()) {
+  return items.flatMap(account => accountModels(account, config, now).map(model => {
     const usage = account.usage;
     const fresh = usage && now - usage.observed_at < 120000 && !account.usage_error;
-    const windows = usage?.windows || [];
+    const windows = (usage?.windows || []).filter(window => !model || !window.model_pool || model.id.includes(window.model_pool));
     const exhausted = fresh && windows.some(window => !window.model_pool && window.remaining_ratio === 0 && (!window.resets_at || window.resets_at > now));
-    const reasons = { temporary: 'temporary provider error', 'connection-failed': 'connection failed', 'refresh-unavailable': 'login refresh unavailable', 'rate-limit': 'rate limited' };
+    const reasons = { disabled: 'disabled', 'reauth-required': 'reauth-required', 'model-unavailable': 'not available',
+      temporary: 'temporary provider error', 'connection-failed': 'connection failed', 'refresh-unavailable': 'login refresh unavailable', 'rate-limit': 'rate limited' };
     const limits = Object.entries(account.model_cooldowns || {}).filter(([, until]) => until > now)
       .map(([model, until]) => `${model.split('/').pop()} ${reasons[account.model_cooldown_reasons?.[model]] || 'rate limited'} (${policy.retryIn(until, now)})`);
     const reason = reasons[account.cooldown_reason] || 'cooldown';
-    const status = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required'
+    const summary = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required'
       : account.cooldown_until > now ? `${reason} (${policy.retryIn(account.cooldown_until, now)})`
         : exhausted ? 'quota exhausted' : limits.join('; ') || 'ready';
-    return [account.name, account.provider, status, ...windowNames.flatMap(name => {
+    const status = model ? policy.blockers(account, model, now).map(problem => {
+      const label = problem.reason === 'quota-exhausted' ? `${problem.window} quota exhausted` : reasons[problem.reason] || 'cooldown';
+      return `${label}${problem.until > now && problem.reason !== 'quota-exhausted' ? ` (${policy.retryIn(problem.until, now)})` : ''}`;
+    }).join('; ') || 'ready' : summary;
+    return [account.name, account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status, ...windowNames.flatMap(name => {
       const window = windows.find(item => item.name === name);
-      if (!window) return windows.length ? ['-', '-'] : ['unknown', 'unknown'];
+      if (!window) return usage?.windows?.length ? ['-', '-'] : ['unknown', 'unknown'];
       return [`${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : ' (stale)'}`, resetIn(window.resets_at, now)];
     })];
-  });
+  }));
 }
 function accountTable(items) {
   const windows = accountWindows(items);
-  const headers = ['Account', 'Provider', 'Status', ...windows.flatMap(name => {
+  const headers = ['Account', 'Provider', 'Model', 'Status', ...windows.flatMap(name => {
     const label = name[0].toUpperCase() + name.slice(1).replaceAll('-', ' ');
     return [`${label} left`, 'Reset in'];
   })];
-  return table(headers, accountRows(items, Date.now(), windows), { rightAlign: windows.map((_, index) => 3 + index * 2) });
+  return table(headers, accountRows(items, Date.now(), windows), { rightAlign: windows.map((_, index) => 4 + index * 2) });
 }
 function showAccounts(items) {
   process.stdout.write(accountTable(items));
@@ -151,7 +162,7 @@ function accountsFrame(items, live, note = '') {
   const footer = live
     ? `View updated at ${new Date().toLocaleTimeString()}\nLive: every 30s. Ctrl+C to exit.`
     : 'Tip: use dx accounts --live for updates.';
-  return `Dex subscription accounts\n${rows}\n${note ? `${note}\n` : ''}${footer}\n`;
+  return `Dex subscription accounts\n${rows}\nModels follow configured routes. Shared quota is repeated across model rows.\n${note ? `${note}\n` : ''}${footer}\n`;
 }
 async function accounts(options) {
   if (options.watch && options.json) throw new Error('--live/--watch cannot be combined with --json. Use dx accounts --json for a single snapshot.');
@@ -269,7 +280,8 @@ async function routerCommand(action, options, args = []) {
   if (action === 'status' || action === 'doctor') {
     let installed = false; try { adapter.verifyRuntime(); installed = true; } catch { /* Report as a diagnostic. */ }
     const health = await adapter.health();
-    return { version: 1, enabled: state.config().enabled, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', active_sessions: health?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
+    const sessions = health ? await ipc.call('health', { sessions: true }) : null;
+    return { version: 1, enabled: state.config().enabled, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
   }
   if (action === 'check') {
     if (!state.config().enabled || !state.accounts().some(item => item.enabled)) throw new Error('CCR needs setup and an enabled account. Run dx router setup.');

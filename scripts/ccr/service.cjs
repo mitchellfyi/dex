@@ -44,6 +44,7 @@ class RouterService {
   constructor({ gateway, clientKey, broker = new AccountBroker(), fetchImpl = fetch } = {}) {
     this.gateway = gateway; this.clientKey = clientKey; this.broker = broker; this.fetch = fetchImpl;
     this.tickets = new Map(); this.inFlight = new Set(); this.server = null;
+    this.ownerIdentity = processIdentity(process.pid);
   }
   async start() {
     const socket = ipc.socketPath();
@@ -74,7 +75,10 @@ class RouterService {
     if (this.server) await new Promise(resolve => this.server.close(resolve));
   }
   async control(method, params) {
-    if (method === 'health') return { version: 1, extension: 'dex-ccr', capabilities: ['messages', 'responses', 'native-auth'], pid: process.pid, owner_identity: processIdentity(process.pid), active_requests: this.inFlight.size, active_sessions: state.sessions().filter(active).length };
+    // Routine probes must not wait for process checks on every registered session.
+    if (method === 'health') return { version: 1, extension: 'dex-ccr', capabilities: ['messages', 'responses', 'native-auth'], pid: process.pid,
+      owner_identity: this.ownerIdentity, active_requests: this.inFlight.size,
+      ...(params?.sessions ? { active_sessions: state.sessions().filter(active).length } : {}) };
     if (method === 'sessions') return state.sessions().map(publicSession);
     if (method === 'native-auth') {
       const config = state.config();

@@ -38,6 +38,31 @@ function launchEnvironment(settings, token, session, original = process.env) {
   });
   return env;
 }
+function gatewayMonitor(session) {
+  let checking = false, failures = 0, recoveries = 0, stopped = false, failed = false;
+  const record = type => {
+    try { require('./service.cjs').event(session, type, { attempt: recoveries }); }
+    catch { /* The native client owns the terminal while recovery runs. */ }
+  };
+  return {
+    async check() {
+      if (checking || stopped || recoveries >= 2) return;
+      checking = true;
+      try {
+        if (await adapter.health(true)) { failures = 0; failed = false; return; }
+        if (stopped || ++failures < 3) return;
+        if (await adapter.health(true, 10000)) { failures = 0; failed = false; return; }
+        if (stopped) return;
+        recoveries++; failures = 0;
+        record('router.recovery_started');
+        try { await adapter.start({ recovery: true }); failed = false; record('router.recovery_succeeded'); }
+        catch { failed = true; record('router.recovery_failed'); }
+      } finally { checking = false; }
+    },
+    stop() { stopped = true; },
+    get failed() { return failed; }
+  };
+}
 async function launch(args) {
   const parsed = launchArguments(args);
   const settings = await adapter.start();
@@ -48,19 +73,8 @@ async function launch(args) {
   const phaseFile = lifecycle && process.env.DEX_SESSION_ONLY !== '1' ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(lifecycle)}.phase`) : null;
   const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile, resume: parsed.resume,
     model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined) });
-  let monitoring = false; let failures = 0; let recoveries = 0; let stopped = false;
-  const watchdog = setInterval(async () => {
-    if (monitoring || stopped || recoveries >= 2) return;
-    monitoring = true;
-    try {
-      if (await adapter.health(true)) { failures = 0; return; }
-      if (++failures < 3) return;
-      recoveries++; failures = 0;
-      process.stderr.write('[info]  Recovering the local CCR gateway; this conversation is preserved.\n');
-      await adapter.start({ recovery: true });
-    } catch { process.stderr.write('[warn]  CCR recovery failed. Run dx router doctor; resume the conversation after recovery.\n'); }
-    finally { monitoring = false; }
-  }, 3000);
+  const monitor = gatewayMonitor(session);
+  const watchdog = setInterval(() => { void monitor.check(); }, 3000);
   watchdog.unref();
   try {
     return await new Promise((resolve, reject) => {
@@ -73,8 +87,9 @@ async function launch(args) {
       child.once('exit', (code, signal) => { cleanup(); resolve(code ?? (signal === 'SIGINT' ? 130 : 143)); });
     });
   } finally {
-    stopped = true; clearInterval(watchdog);
+    monitor.stop(); clearInterval(watchdog);
     try { await ipc.call('finish', { id, token }); } catch { /* Owner death also invalidates the session capability. */ }
+    if (monitor.failed && !await adapter.health(true, 10000)) process.stderr.write('dex: CCR recovery failed. Run dx router doctor before resuming this conversation.\n');
   }
 }
-module.exports = { launchArguments, launchEnvironment, launch };
+module.exports = { launchArguments, launchEnvironment, gatewayMonitor, launch };

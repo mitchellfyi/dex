@@ -96,13 +96,13 @@ function managedConfig(base, settings, config, endpoints = {}, extension = path.
       surfaces: { gateway: true, provider: true, apps: false }, permissions: ['trusted-code', 'gateway-routes', 'core-gateway-plugins', 'provider-account-connectors'] }]
   };
 }
-async function health(deep = false) {
+async function health(deep = false, timeout = 1500) {
   try {
-    const result = await ipc.call('health', {}, 1500);
+    const result = await ipc.call('health', {}, timeout);
     if (result.version !== 1 || result.extension !== 'dex-ccr') return null;
     if (deep) {
       const settings = state.backend();
-      if (processIdentity(settings.pid) !== settings.owner_identity || (await rpc(settings, 'getGatewayStatus', [], 2000)).state !== 'running') return null;
+      if (processIdentity(settings.pid) !== settings.owner_identity || (await rpc(settings, 'getGatewayStatus', [], Math.max(2000, timeout))).state !== 'running') return null;
     }
     return result;
   } catch { return null; }

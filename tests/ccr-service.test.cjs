@@ -23,6 +23,19 @@ afterEach(async () => { await service.stop(); await new Promise(resolve => serve
 async function register(id = 'session', extra = {}) { const token = state.token(); await service.control('register', { id, token, owner_pid: process.pid, ...extra }); return token; }
 function send(token, extra = {}, headers = {}) { return fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers }, body: JSON.stringify({ model: 'dex/active', messages: [{ role: 'user', content: 'hello' }], ...extra }) }); }
 
+test('routine health probes skip session scans while detailed status verifies owners', async t => {
+  await register();
+  state.write(state.sessionFile('stale'), { id: 'stale', active: true, owner_pid: process.pid, owner_identity: 'different-process-start' });
+  assert.equal((await service.control('health', { sessions: true })).active_sessions, 1);
+  t.mock.method(state, 'sessions', () => { throw new Error('Health must not scan session owners'); });
+  const health = await service.control('health', {});
+  assert.equal(health.pid, process.pid);
+  assert.equal(health.owner_identity, service.ownerIdentity);
+  assert.ok(health.owner_identity);
+  assert.equal(health.active_requests, 0);
+  assert.equal(health.active_sessions, undefined);
+});
+
 test('native credentials are stable per client process and use the configured fallback chain', async () => {
   const config = state.config(); config.native = { enabled: true }; config.phases[0] = { model: 'anthropic/test', fallbacks: ['openai/test'] }; state.write(state.stateFile('config'), config);
   const params = { client: 'codex', owner_pid: process.pid };

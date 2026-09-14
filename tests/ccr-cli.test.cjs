@@ -9,7 +9,7 @@ const state = require('../scripts/ccr/state.cjs');
 const cli = require('../scripts/ccr/cli.cjs');
 const onboarding = require('../scripts/ccr/onboarding.cjs');
 const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
-const { launchArguments, launchEnvironment, launch } = require('../scripts/ccr/launch.cjs');
+const { launchArguments, launchEnvironment, gatewayMonitor, launch } = require('../scripts/ccr/launch.cjs');
 const adapter = require('../scripts/ccr/adapter.cjs');
 const ipc = require('../scripts/ccr/ipc.cjs');
 const policy = require('../scripts/ccr/policy.cjs');
@@ -59,6 +59,62 @@ test('CLI rejects missing and unknown option values', () => {
   assert.throws(() => cli.parse(['--api-key', 'secret']), /Unknown/);
   assert.deepEqual(cli.parse(['configure', 'openai/test', '--fallback', 'anthropic/test', '--phase', 'review']).fallback, ['anthropic/test']);
 });
+test('gateway recovery logs its attempts without writing into the native terminal', async t => {
+  const writes = [], probes = [];
+  t.mock.method(process.stderr, 'write', value => { writes.push(value); return true; });
+  t.mock.method(adapter, 'health', async (...args) => { probes.push(args); return null; });
+  let attempts = 0;
+  t.mock.method(adapter, 'start', async options => {
+    assert.deepEqual(options, { recovery: true });
+    if (++attempts === 2) throw new Error('Synthetic recovery failure');
+    return {};
+  });
+  const monitor = gatewayMonitor({ id: 'native-terminal' });
+  for (let count = 0; count < 9; count++) await monitor.check();
+  monitor.stop();
+  assert.equal(attempts, 2);
+  assert.equal(probes.filter(([, timeout]) => timeout === 10000).length, 2);
+  assert.deepEqual(writes, []);
+  assert.equal(monitor.failed, true);
+  const events = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(events.map(event => event.type), ['router.recovery_started', 'router.recovery_succeeded', 'router.recovery_started', 'router.recovery_failed']);
+  assert.deepEqual(events.map(event => event.data.attempt), [1, 1, 2, 2]);
+});
+test('a slow but responsive gateway does not trigger recovery', async t => {
+  const probes = [];
+  t.mock.method(adapter, 'health', async (...args) => { probes.push(args); return args[1] === 10000 ? { pid: process.pid } : null; });
+  const start = t.mock.method(adapter, 'start', async () => {});
+  const monitor = gatewayMonitor({ id: 'slow-gateway' });
+  for (let count = 0; count < 6; count++) await monitor.check();
+  monitor.stop();
+  assert.equal(start.mock.callCount(), 0);
+  assert.equal(probes.filter(([, timeout]) => timeout === 10000).length, 2);
+  assert.equal(fs.existsSync(path.join(directory, 'events.jsonl')), false);
+});
+test('ending a client cancels pending recovery and concurrent checks do not overlap', async t => {
+  let release, probes = 0;
+  t.mock.method(adapter, 'health', async (_deep, timeout) => {
+    probes++;
+    return timeout === 10000 ? new Promise(resolve => { release = resolve; }) : null;
+  });
+  const start = t.mock.method(adapter, 'start', async () => {});
+  const monitor = gatewayMonitor({ id: 'ended-client' });
+  await monitor.check(); await monitor.check();
+  const pending = monitor.check();
+  await Promise.resolve();
+  assert.equal(typeof release, 'function');
+  await monitor.check(); assert.equal(probes, 4);
+  monitor.stop(); release(null); await pending;
+  assert.equal(start.mock.callCount(), 0);
+});
+test('router status requests a detailed session count explicitly', async t => {
+  t.mock.method(adapter, 'health', async () => ({ pid: process.pid }));
+  t.mock.method(ipc, 'call', async (method, params) => {
+    assert.equal(method, 'health'); assert.deepEqual(params, { sessions: true });
+    return { active_sessions: 3 };
+  });
+  assert.equal((await cli.routerCommand('status', {})).active_sessions, 3);
+});
 test('empty account and status commands work without starting CCR', async () => {
   const status = await cli.routerCommand('status', {});
   assert.equal(status.enabled, false); assert.equal(status.health, 'stopped'); assert.equal(status.installed, false);
@@ -78,12 +134,36 @@ test('dashboard distinguishes current account exhaustion from stale and model-on
 test('account status names limited models and reports short cooldowns in seconds', () => {
   const now = Date.now();
   const account = { name: 'Main', provider: 'anthropic', enabled: true, model_cooldowns: { 'anthropic/claude-fable-5-1': now + 12000, 'anthropic/claude-opus-5': now - 1000 } };
-  assert.equal(cli.accountRows([account], now)[0][2], 'claude-fable-5-1 rate limited (12s)');
+  assert.equal(cli.accountRows([account], now)[0][3], 'claude-fable-5-1 rate limited (12s)');
   account.model_cooldown_reasons = { 'anthropic/claude-fable-5-1': 'temporary' };
-  assert.equal(cli.accountRows([account], now)[0][2], 'claude-fable-5-1 temporary provider error (12s)');
+  assert.equal(cli.accountRows([account], now)[0][3], 'claude-fable-5-1 temporary provider error (12s)');
   account.cooldown_until = now + 8000; account.cooldown_reason = 'temporary';
-  assert.equal(cli.accountRows([account], now)[0][2], 'temporary provider error (8s)');
-  assert.equal(cli.accountRows([account], now + 13000)[0][2], 'ready');
+  assert.equal(cli.accountRows([account], now)[0][3], 'temporary provider error (8s)');
+  assert.equal(cli.accountRows([account], now + 13000)[0][3], 'ready');
+});
+test('account/model rows compare primary and fallback capacity without mixing model quotas', () => {
+  const now = Date.now(), primary = 'anthropic/claude-fable-5-1', fallback = 'anthropic/claude-opus-5';
+  const config = { default_model: primary, phases: { 0: { model: primary, fallbacks: [fallback] }, 2: { model: primary, fallbacks: [fallback] } }, models: [
+    { id: primary, provider: 'anthropic', display_name: 'Claude Fable 5.1' }, { id: fallback, provider: 'anthropic', display_name: 'Claude Opus 5' }
+  ] };
+  const account = { name: 'Work', provider: 'anthropic', enabled: true, model_ids: [primary, fallback], model_cooldowns: { [primary]: now + 12000 }, usage: { observed_at: now, windows: [
+    { name: '5h', remaining_ratio: .72, resets_at: now + 3600000 }, { name: 'weekly', remaining_ratio: .4, resets_at: now + 86400000 },
+    { name: 'weekly-opus', model_pool: 'opus', remaining_ratio: 0, resets_at: now + 7200000 }
+  ] } };
+  let rows = cli.accountRows([account], now, undefined, config);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], ['Work', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72%', '1h 0m', '40%', '1d 0h', '-', '-']);
+  assert.deepEqual(rows[1], ['Work', 'anthropic', 'Opus 5', 'weekly-opus quota exhausted', '72%', '1h 0m', '40%', '1d 0h', '0%', '2h 0m']);
+  account.usage.windows[2].remaining_ratio = .3;
+  rows = cli.accountRows([account], now, undefined, config);
+  assert.equal(rows[1][3], 'ready', 'a primary model cooldown leaves the fallback available');
+  account.model_ids = [primary];
+  assert.equal(cli.accountRows([account], now, undefined, config)[1][3], 'not available');
+  account.model_ids = [primary, fallback]; account.usage_error = 'unavailable';
+  assert.match(cli.accountRows([account], now, undefined, config)[1][4], /stale/);
+  config.models.push({ id: 'openai/test', provider: 'openai' });
+  config.phases[2].fallbacks.push('openai/test');
+  assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, undefined, config)[0][2], 'test');
 });
 test('account rows compare quota windows side by side and distinguish due and unknown resets', () => {
   const now = Date.now();
@@ -97,15 +177,15 @@ test('account rows compare quota windows side by side and distinguish due and un
   ] } };
   const rows = cli.accountRows([account, weeklyOnly, { name: 'Backup', provider: 'openai', enabled: false }], now);
   assert.deepEqual(rows, [
-    ['Main', 'anthropic', 'ready', '72%', '2h 14m', '40%', '3d 4h', '0%', 'due'],
-    ['Personal', 'openai', 'ready', '-', '-', '91%', 'unknown', '-', '-'],
-    ['Backup', 'openai', 'disabled', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']
+    ['Main', 'anthropic', '-', 'ready', '72%', '2h 14m', '40%', '3d 4h', '0%', 'due'],
+    ['Personal', 'openai', '-', 'ready', '-', '-', '91%', 'unknown', '-', '-'],
+    ['Backup', 'openai', '-', 'disabled', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']
   ]);
   account.usage_error = 'Refresh failed';
-  assert.match(cli.accountRows([account], now)[0][3], /stale/);
+  assert.match(cli.accountRows([account], now)[0][4], /stale/);
   account.status = 'reauth-required';
   account.cooldown_until = now + 60000;
-  assert.equal(cli.accountRows([account], now)[0][2], 'reauth-required');
+  assert.equal(cli.accountRows([account], now)[0][3], 'reauth-required');
 });
 test('table rendering does not alter JSON output or saved account and model data', () => {
   const items = [{ id: 'one', name: 'Main', identity: 'test@example.test', provider: 'openai', enabled: true }];
@@ -116,7 +196,8 @@ test('table rendering does not alter JSON output or saved account and model data
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  assert.match(run(['accounts']), /Account +Provider +Status +5h left +Reset in +Weekly left +Reset in/);
+  assert.match(run(['accounts']), /Account +Provider +Model +Status +5h left +Reset in +Weekly left +Reset in/);
+  assert.match(run(['accounts']), /Shared quota is repeated across model rows/);
   assert.match(run(['accounts']), /Tip: use dx accounts --live for updates\./);
   assert.match(run(['account', 'show', 'Main']), /test@example.test/);
   assert.match(run(['model', 'list']), /128,000/);

@@ -143,8 +143,15 @@ dx account doctor main
 dx account remove spare
 ```
 
-The account table shows one row per account, with 5-hour and weekly quota side
-by side. Each window has a percentage left and a `Reset in` countdown, such as
+The account table shows one row per account and configured model, so primary
+and fallback availability can be compared. An account with no model in the
+configured routes has a dash in the Model column. Models currently in cooldown
+also appear while they remain in the catalogue. Shared quota readings repeat
+across model rows; they are one allowance. Model-specific windows appear only
+on matching rows.
+
+The 5-hour and weekly quota appear side by side. Each window has a percentage
+left and a `Reset in` countdown, such as
 `4h 51m` or `3d 12h`. Additional windows, including model-specific quotas, get
 their own column pairs. A dash means that window was not reported; accounts
 with no readings show `unknown`, and old readings remain labelled `stale`.
@@ -281,6 +288,13 @@ The launcher attempts CCR recovery twice after repeated health failures, keeping
 the endpoint, session capability and saved route. If Claude exits, ordinary Dex
 conversation resumption remains available. Routing failures do not write phase
 completion markers.
+
+Routine health checks avoid scanning every session's process identity. Before
+recovery, the launcher confirms the failure with a longer timeout. Recovery
+attempts and outcomes go to the routing journal; they do not write over Claude's
+input area. If recovery remains unsuccessful when Claude exits, Dex prints a
+warning after the client has released the terminal. Launchers already running
+when Dex is updated keep their previous watchdog until that session exits.
 
 ```sh
 dx router status
