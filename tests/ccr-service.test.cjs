@@ -95,7 +95,9 @@ test('an interrupted stream is never retried after its first content', async () 
   reply = () => new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('event: content_block_delta\ndata: {"delta":{"text":"partial"}}\n\n')); setTimeout(() => controller.error(new Error('synthetic disconnect')), 80); } }), { headers: { 'content-type': 'text/event-stream' } });
   const response = await send(token, { stream: true }); const reader = response.body.getReader();
   assert.match(new TextDecoder().decode((await reader.read()).value), /partial/);
-  await assert.rejects(reader.read()); await wait(100);
+  await assert.rejects(reader.read());
+  for (let attempt = 0; attempt < 100 && service.inFlight.size; attempt++) await wait(20);
+  assert.equal(service.inFlight.size, 0, 'the failed request finished saving its state');
   assert.equal(calls.length, 1); assert.equal(state.read(state.sessionFile('session')).paused_reason, 'partial-response');
 });
 test('local artifacts and tool results are forwarded while unsupported documents fail before upstream', async () => {
