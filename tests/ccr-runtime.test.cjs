@@ -51,12 +51,21 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
   const store = new CredentialStore('linux');
   for (const account of accounts) store.set(account.id, { access_token: `synthetic-${account.id}`, refresh_token: 'synthetic-refresh', expires_at: Date.now() + 3600000, account_id: 'synthetic-account' });
   const extension = path.join(state.root(), 'fixture-extension.cjs');
-  fs.writeFileSync(extension, `const { createExtension } = require(${JSON.stringify(path.resolve('scripts/ccr/extension.cjs'))}); const { AccountBroker, CredentialStore } = require(${JSON.stringify(path.resolve('scripts/ccr/accounts.cjs'))}); module.exports = createExtension({broker:new AccountBroker({store:new CredentialStore('linux')})});`);
+  fs.writeFileSync(extension, [
+    `const { createExtension } = require(${JSON.stringify(path.resolve('scripts/ccr/extension.cjs'))});`,
+    `const { AccountBroker, CredentialStore } = require(${JSON.stringify(path.resolve('scripts/ccr/accounts.cjs'))});`,
+    "const broker = new AccountBroker({store:new CredentialStore('linux'), fetchImpl:async () => { throw new Error('Unexpected external request in the runtime fixture'); }});",
+    'broker.usage = async account => ({ ...account.usage, observed_at: Date.now() });',
+    'module.exports = createExtension({broker});'
+  ].join('\n'));
   const token = state.token();
   try {
     const settings = await adapter.start({ directory: path.resolve(process.env.DEX_CCR_INTEGRATION_RUNTIME), endpoints: { anthropic: endpoint, openai: endpoint }, extension });
     const saved = await adapter.rpc(settings, 'getConfig');
     assert.equal(saved.APIKEYS?.some(key => key.key === settings.client_key), true, 'CCR retained the local transport key');
+    state.saveAccounts(state.accounts().map(account => ({ ...account, usage: { ...account.usage, observed_at: 0 } })));
+    const refreshed = await ipc.call('usage');
+    assert.ok(refreshed.every(account => account.status === 'ready' && account.usage.observed_at > 0 && !account.usage_error), 'expired fixture quota stays local and does not invalidate synthetic logins');
     const runRoot = path.join(state.root(), 'runs');
     await ipc.call('register', { id: 'test-session', token, owner_pid: process.pid, run_id: 'run_ccr_test', run_root: runRoot });
     const send = (body = {}) => fetch(`${settings.gateway}/plugins/dex/v1/messages`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-claude-code-session-id': 'conversation-one' }, body: JSON.stringify({ model: 'dex/active', max_tokens: 256, stream: false, messages: [{ role: 'user', content: 'hello' }], ...body }) });
