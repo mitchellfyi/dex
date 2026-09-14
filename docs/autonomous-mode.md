@@ -683,6 +683,11 @@ state and the provider's exact conversation ID are saved so `dx 999` or
 `dx --resume` can restore both the lifecycle and its conversation after a
 crash. Older Claude lifecycles fall back to their stable Dex session name;
 older Codex lifecycles fall back to the most recent session in the workspace.
+If the provider reports that the saved conversation no longer exists, Dex
+retries once with a new conversation at the current phase, keeping the same
+worktree, run, and phase context. The startup hook saves the new conversation
+ID for future resumes. Other provider errors and interrupts still pause the
+lifecycle.
 For Codex, the launcher also pins the non-secret lifecycle context in its hook
 commands and shell environment policy. This keeps resumed hooks tied to the
 right Dex state even when Codex reuses a persistent app-server process.

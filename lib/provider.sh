@@ -905,6 +905,108 @@ dx_provider_claude() {
   esac
 }
 
+# Keep the provider's terminal input and output intact while inspecting only
+# stderr. The relay retains a missing-conversation marker, never a transcript.
+__dx_provider_resume_stderr() {
+  python3 -c '
+import os
+import re
+import sys
+
+marker, engine, target = sys.argv[1:]
+if engine == "codex-plugin":
+    expected = (
+        f"No saved session found with ID {target}. "
+        "Run `codex resume` without an ID to choose from existing sessions."
+    )
+else:
+    expected = f"No conversation found with session ID: {target}"
+ansi = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
+
+def inspect(line):
+    text = ansi.sub(b"", line).decode("utf-8", errors="replace").strip()
+    if text in (expected, "Error: " + expected):
+        with open(marker, "w", encoding="utf-8") as stream:
+            stream.write("missing\n")
+
+pending = b""
+overlong = False
+while True:
+    chunk = os.read(0, 8192)
+    if not chunk:
+        if not overlong:
+            inspect(pending)
+        break
+    sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+    pending += chunk
+    while b"\n" in pending:
+        line, pending = pending.split(b"\n", 1)
+        if not overlong:
+            inspect(line)
+        overlong = False
+    if len(pending) > 8192:
+        pending = b""
+        overlong = True
+' "$@"
+}
+
+# dx_provider_run_session <name> <resuming:0|1> <saved-handle> <provider-args...>
+# A failed lookup has not started a conversation, so a fresh launch can use
+# the same prepared phase context and completion authorization.
+dx_provider_run_session() (
+  set -o pipefail
+  # Zsh multios would tee stdout into the pipe and hide the provider exit code.
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    unsetopt multios
+  fi
+  local session_name="$1" resuming="$2" saved_handle="$3"
+  shift 3
+  if [[ "$resuming" -eq 0 ]]; then
+    __dx_claude -n "$session_name" "$@"
+    return $?
+  fi
+
+  local resume_target="$saved_handle" resume_args=() provider_label="Claude"
+  if [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" ]]; then
+    provider_label="Codex"
+  fi
+  if [[ -n "$saved_handle" ]]; then
+    resume_args=(--resume "$saved_handle")
+  elif [[ "${DX_PROVIDER_ENGINE:-}" == "codex-plugin" ]]; then
+    dx_warn "No saved Codex session ID was found; resuming the most recent Codex session in this workspace."
+    resume_args=(--continue)
+  else
+    # Older Claude lifecycles have only Dex's stable session name.
+    resume_target="$session_name"
+    resume_args=(--resume "$session_name")
+  fi
+
+  local missing_file launch_result=0
+  missing_file=$(mktemp "${TMPDIR:-/tmp}/dx-provider-resume.XXXXXX") || {
+    dx_error "Could not prepare provider session recovery."
+    return 1
+  }
+  trap 'rm -f "$missing_file"' EXIT
+  # Only stderr enters the pipe; stdin and stdout still refer to the terminal.
+  # Waiting for the whole pipeline also drains the diagnostic before testing it.
+  exec 3>&1
+  __dx_claude "${resume_args[@]}" "$@" 2>&1 1>&3 3>&- \
+    | __dx_provider_resume_stderr "$missing_file" \
+        "${DX_PROVIDER_ENGINE:-}" "$resume_target" >&2 3>&- \
+    || launch_result=$?
+  exec 3>&-
+  if [[ "$launch_result" -ne 1 || ! -s "$missing_file" ]]; then
+    return "$launch_result"
+  fi
+
+  dx_warn "The saved ${provider_label} conversation could not be found; starting a new conversation at the current Dex phase."
+  # SessionStart replaces the missing handle once the new conversation starts.
+  launch_result=0
+  __dx_claude -n "$session_name" "$@" || launch_result=$?
+  return "$launch_result"
+)
+
 dx_provider_codex_prompt_from_claude_args() {
   local system_context="" prompt="" arg context_piece
   while [[ $# -gt 0 ]]; do

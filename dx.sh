@@ -3095,20 +3095,6 @@ __dx_run_phases_inline() {
   fi
 
   local claude_args=("${DX_CLAUDE_FLAGS[@]}")
-  if [[ "$had_times_file" -eq 0 ]]; then
-    claude_args+=(-n "$claude_session_name")
-  elif [[ -n "$provider_session_handle" ]]; then
-    claude_args+=(--resume "$provider_session_handle")
-  elif [[ "$agent_kind" == "claude" ]]; then
-    # Lifecycles started before exact handle capture still have Dex's stable
-    # startup name, which Claude resolves across this repository's worktrees.
-    claude_args+=(--resume "$claude_session_name")
-  else
-    # Older interactive Codex lifecycles have no captured thread ID. Keep their
-    # previous cwd-scoped fallback; new sessions always capture an exact ID.
-    dx_warn "No saved Codex session ID was found; resuming the most recent Codex session in this workspace."
-    claude_args+=(--continue)
-  fi
   claude_args+=(--append-system-prompt-file "$ctx_file")
   # DEX_DIR needs shell quoting inside the command string and JSON encoding
   # around it — an install path with a quote or backslash breaks hand-rolled
@@ -3200,7 +3186,8 @@ PY
     DEX_COMPLETE_WAIT_MINUTES="${DEX_COMPLETE_WAIT_MINUTES:-$DX_COMPLETE_WAIT_MINUTES}" \
     DEX_DIR="$DEX_DIR" \
     DX_RUN_ROOT="$DX_RUN_ROOT" \
-    __dx_claude "${claude_args[@]}" "$message"
+    dx_provider_run_session "$claude_session_name" "$had_times_file" \
+      "$provider_session_handle" "${claude_args[@]}" "$message"
   )
   local exit_code=$?
   local watchdog_reason=""

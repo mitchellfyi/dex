@@ -55,6 +55,7 @@ private-file-test.sh	fast	all	600	hermetic
 prompt-session-test.sh	fast	all	600	hermetic
 provider-codex-launch-test.sh	fast	all	600	hermetic
 provider-command-test.sh	fast	all	600	hermetic
+provider-session-recovery-test.sh	fast	all	600	hermetic
 public-command-args-test.sh	fast	all	600	hermetic
 push-guards-test.sh	fast	all	600	hermetic
 research-orchestrate-args-test.sh	fast	all	600	hermetic

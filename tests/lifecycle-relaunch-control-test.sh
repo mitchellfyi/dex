@@ -57,6 +57,22 @@ run_relaunch() { # <session-id> <marker-file> <output-file> <agent>
       __dx_claude() {
         local marker_line="launched" engine_line=""
         printf "%s\n" "$@" > "${TEST_MARKER}.args"
+        if [[ "${TEST_MISSING_CONVERSATION:-0}" == 1 ]]; then
+          local attempt=1
+          [[ ! -f "${TEST_MARKER}.attempt" ]] || attempt=$(($(cat "${TEST_MARKER}.attempt") + 1))
+          printf "%s\n" "$attempt" > "${TEST_MARKER}.attempt"
+          printf "%s\n" "$@" > "${TEST_MARKER}.args.${attempt}"
+          printf "%s\n" "$PWD" "$DEX_SESSION_ID" "$DEX_RUN_ID" "$DEX_LOOP_PHASE" \
+            > "${TEST_MARKER}.context.${attempt}"
+          if [[ "$attempt" -eq 1 ]]; then
+            printf "%s\n" "No conversation found with session ID: missing-conversation" >&2
+            return 1
+          fi
+          printf "%s\n" \
+            "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"replacement-conversation\"}" \
+            | DX_PROVIDER_ENGINE="$DX_PROVIDER_ENGINE" \
+              bash "$DEX_DIR/hooks/capture-provider-session.sh"
+        fi
         [[ -e "$(dx_lifecycle_control_file "$TEST_SESSION_ID")" ]] && marker_line+=" control"
         [[ -e "$(dx_paused_file "$TEST_SESSION_ID")" ]] && marker_line+=" paused"
         [[ -e "$(dx_pause_state_file "$TEST_SESSION_ID")" ]] && marker_line+=" pause-state"
@@ -69,8 +85,8 @@ run_relaunch() { # <session-id> <marker-file> <output-file> <agent>
       state_file=$(dx_state_file "$TEST_SESSION_ID")
       times_file=$(dx_times_file "$TEST_SESSION_ID")
       __dx_run_phases_inline \
-        "relaunch-control" "$TEST_REPO" main 2 "$state_file" "$times_file" \
-        "dx relaunch-test" worktree "$TEST_SESSION_ID" "relaunch test"
+        "relaunch-control" "$TEST_REPO" main "${TEST_PHASE:-2}" "$state_file" "$times_file" \
+        "dx relaunch-test" "${TEST_WORKSPACE_MODE:-worktree}" "$TEST_SESSION_ID" "relaunch test"
     ' > "$output_file" 2>&1
   status=$?
   set -e
@@ -166,5 +182,36 @@ run_relaunch "$CODEX_EXACT_SID" "$CODEX_EXACT_MARKER" \
 assert_file "$CODEX_EXACT_MARKER"
 assert_contains "$CODEX_SESSION_HANDLE" "${CODEX_EXACT_MARKER}.args"
 assert_not_contains "--continue" "${CODEX_EXACT_MARKER}.args"
+
+# Missing provider history must retain Phase 1 and the existing workspace.
+for workspace_mode in worktree in-place; do
+  RECOVERY_SID="relaunch-missing-${workspace_mode}"
+  seed_phase_two "$RECOVERY_SID"
+  dx_lifecycle_atomic_write "$(dx_state_file "$RECOVERY_SID")" 1
+  dx_agent_session_handle_write "$RECOVERY_SID" claude missing-conversation
+  dx_agent_session_handle_write "$RECOVERY_SID" codex other-provider-conversation
+  RECOVERY_MARKER="$TMP_DIR/recovery-${workspace_mode}.marker"
+  RECOVERY_RESULT=0
+  TEST_MISSING_CONVERSATION=1 TEST_PHASE=1 TEST_WORKSPACE_MODE="$workspace_mode" \
+    run_relaunch "$RECOVERY_SID" "$RECOVERY_MARKER" \
+      "$TMP_DIR/recovery-${workspace_mode}.out" claude || RECOVERY_RESULT=$?
+  assert_eq 97 "$RECOVERY_RESULT" "fresh conversation exit reaches lifecycle"
+  assert_eq 2 "$(cat "${RECOVERY_MARKER}.attempt")" "one fresh conversation"
+  assert_eq 1 "$(dx_lifecycle_phase_state "$RECOVERY_SID")" "saved phase retained"
+  cmp "${RECOVERY_MARKER}.context.1" "${RECOVERY_MARKER}.context.2"
+  assert_contains --resume "${RECOVERY_MARKER}.args.1"
+  assert_not_contains --resume "${RECOVERY_MARKER}.args.2"
+  assert_contains --append-system-prompt-file "${RECOVERY_MARKER}.args.2"
+  assert_contains "Initial phase: Phase 1 (Plan)." "$(dx_context_file "$RECOVERY_SID")"
+  assert_contains "Workspace mode: $workspace_mode" "$(dx_context_file "$RECOVERY_SID")"
+  assert_eq replacement-conversation \
+    "$(dx_agent_session_handle_read "$RECOVERY_SID" claude)" "replacement ID captured"
+  assert_eq other-provider-conversation \
+    "$(dx_agent_session_handle_read "$RECOVERY_SID" codex)" "other provider ID preserved"
+  run_relaunch "$RECOVERY_SID" "$RECOVERY_MARKER" \
+    "$TMP_DIR/recovery-next-${workspace_mode}.out" claude || true
+  assert_contains replacement-conversation "${RECOVERY_MARKER}.args"
+  assert_not_contains missing-conversation "${RECOVERY_MARKER}.args"
+done
 
 echo "lifecycle relaunch control tests passed"
