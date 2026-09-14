@@ -102,7 +102,8 @@ async function health(deep = false, timeout = 1500) {
     if (result.version !== 1 || result.extension !== 'dex-ccr') return null;
     if (deep) {
       const settings = state.backend();
-      if (processIdentity(settings.pid) !== settings.owner_identity || (await rpc(settings, 'getGatewayStatus', [], Math.max(2000, timeout))).state !== 'running') return null;
+      if (!result.owner_identity || result.pid !== settings.pid || result.owner_identity !== settings.owner_identity
+        || (await rpc(settings, 'getGatewayStatus', [], Math.max(2000, timeout))).state !== 'running') return null;
     }
     return result;
   } catch { return null; }

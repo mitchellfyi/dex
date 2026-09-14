@@ -115,6 +115,22 @@ test('router status requests a detailed session count explicitly', async t => {
   });
   assert.equal((await cli.routerCommand('status', {})).active_sessions, 3);
 });
+test('deep health matches the live gateway identity without launching process scans', async t => {
+  const settings = { pid: 2147483647, owner_identity: 'synthetic-owner', management: 'http://127.0.0.1:1', management_key: 'synthetic-key' };
+  let identity = settings.owner_identity;
+  t.mock.method(state, 'backend', () => settings);
+  t.mock.method(ipc, 'call', async (method, params, timeout) => {
+    assert.equal(method, 'health'); assert.deepEqual(params, {}); assert.equal(timeout, 10000);
+    return { version: 1, extension: 'dex-ccr', pid: settings.pid, owner_identity: identity };
+  });
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ ok: true, value: { state: 'running' } })));
+  assert.equal((await adapter.health(true, 10000)).owner_identity, 'synthetic-owner');
+  identity = 'previous-owner';
+  assert.equal(await adapter.health(true, 10000), null);
+  identity = '';
+  assert.equal(await adapter.health(true, 10000), null);
+  assert.equal(fetch.mock.callCount(), 1);
+});
 test('empty account and status commands work without starting CCR', async () => {
   const status = await cli.routerCommand('status', {});
   assert.equal(status.enabled, false); assert.equal(status.health, 'stopped'); assert.equal(status.installed, false);
