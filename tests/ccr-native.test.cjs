@@ -79,6 +79,82 @@ test('native settings use the context budget for each client route', () => {
   assert.equal(codex.model_auto_compact_token_limit, 51200);
 });
 
+test('route changes refresh installed context budgets without resetting model choices', async () => {
+  native.clientSettings('enable', config, settings);
+  fs.writeFileSync(config.codex_file, fs.readFileSync(config.codex_file, 'utf8').replace('model = "dex/active"', 'model = "test"'));
+  const routing = state.config();
+  routing.native = { ...config, enabled: true };
+  routing.models.push({ id: 'openai/small', provider: 'openai', context_window: 64000 });
+  state.write(state.stateFile('config'), routing);
+  const claudeBefore = fs.readFileSync(config.claude_file, 'utf8');
+  await require('../scripts/ccr/cli.cjs').routeCommand('configure', ['openai/test'], { client: 'codex', fallback: ['openai/small'] });
+  const codex = toml(config.codex_file);
+  assert.equal(codex.model, 'test');
+  assert.equal(codex.model_context_window, 64000);
+  assert.equal(codex.model_auto_compact_token_limit, 51200);
+  assert.equal(fs.readFileSync(config.claude_file, 'utf8'), claudeBefore);
+  native.clientSettings('disable', config, settings);
+  assert.equal(toml(config.codex_file).model_context_window, undefined);
+  assert.equal(toml(config.codex_file).model_auto_compact_token_limit, undefined);
+  assert.equal(toml(config.codex_file).model, 'test');
+});
+
+test('context sync preserves an earlier personal compaction threshold', () => {
+  native.clientSettings('enable', config, settings);
+  fs.writeFileSync(config.codex_file, fs.readFileSync(config.codex_file, 'utf8').replace('model_auto_compact_token_limit = 102400', 'model_auto_compact_token_limit = 40000'));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  routing.models[1].context_window = 64000;
+  native.syncContext(routing);
+  assert.equal(toml(config.codex_file).model_context_window, 64000);
+  assert.equal(toml(config.codex_file).model_auto_compact_token_limit, 40000);
+  native.clientSettings('disable', config, settings);
+  assert.equal(toml(config.codex_file).model_auto_compact_token_limit, 40000);
+});
+
+test('failed context sync rolls back the route and leaves client settings and ownership intact', async () => {
+  native.clientSettings('enable', config, settings);
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  routing.models.push({ id: 'openai/small', provider: 'openai', context_window: 64000 });
+  state.write(state.stateFile('config'), routing);
+  fs.writeFileSync(config.codex_file, 'invalid TOML = [');
+  const files = [config.claude_file, config.codex_file, path.join(directory, 'credentials/native-client-settings.json')];
+  const before = files.map(file => fs.readFileSync(file, 'utf8'));
+  await assert.rejects(require('../scripts/ccr/cli.cjs').routeCommand('configure', ['openai/small'], { client: 'codex', fallback: [] }), /Native client setup failed/);
+  assert.deepEqual(state.config(), routing);
+  assert.deepEqual(files.map(file => fs.readFileSync(file, 'utf8')), before);
+});
+
+test('catalogue changes synchronize context and compaction budgets too', async t => {
+  native.clientSettings('enable', config, settings);
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  state.write(state.stateFile('config'), routing);
+  t.mock.method(require('../scripts/ccr/adapter.cjs'), 'health', async () => null);
+  await require('../scripts/ccr/cli.cjs').modelCommand('add', ['openai/test'], { context: '64000', tools: true });
+  assert.equal(toml(config.codex_file).model_context_window, 64000);
+  assert.equal(toml(config.codex_file).model_auto_compact_token_limit, 51200);
+});
+
+test('a personal threshold above the new budget rejects the route change without overwriting it', async () => {
+  native.clientSettings('enable', config, settings);
+  fs.writeFileSync(config.codex_file, fs.readFileSync(config.codex_file, 'utf8').replace('model_auto_compact_token_limit = 102400', 'model_auto_compact_token_limit = 90000'));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  routing.models.push({ id: 'openai/small', provider: 'openai', context_window: 64000 });
+  state.write(state.stateFile('config'), routing);
+  const before = fs.readFileSync(config.codex_file, 'utf8');
+  await assert.rejects(require('../scripts/ccr/cli.cjs').routeCommand('configure', ['openai/small'], { client: 'codex', fallback: [] }), /model_auto_compact_token_limit.*at most 51200/);
+  assert.equal(fs.readFileSync(config.codex_file, 'utf8'), before);
+  assert.deepEqual(state.config(), routing);
+});
+
+test('context sync leaves a client on a different provider untouched', () => {
+  native.clientSettings('enable', config, settings);
+  const codex = fs.readFileSync(config.codex_file, 'utf8').replace('model_provider = "dex-ccr"', 'model_provider = "work"');
+  fs.writeFileSync(config.codex_file, codex);
+  const routing = state.config(); routing.native = { ...config, enabled: true }; routing.models[1].context_window = 64000;
+  native.syncContext(routing);
+  assert.equal(fs.readFileSync(config.codex_file, 'utf8'), codex);
+});
+
 test('disable preserves routing settings the user changed after installation', () => {
   native.clientSettings('enable', config, settings);
   const claude = JSON.parse(fs.readFileSync(config.claude_file)); claude.model = 'user-choice';

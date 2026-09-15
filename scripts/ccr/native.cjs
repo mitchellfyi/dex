@@ -32,11 +32,14 @@ async function authenticate(client) {
   return result.token;
 }
 
-function clientSettings(action, native, settings) {
+function clientSettings(action, native, settings, config) {
   const backup = path.join(state.privateDir(path.join(state.root(), 'credentials')), 'native-client-settings.json');
   const request = { action, backup, claude_file: native.claude_file, codex_file: native.codex_file };
-  if (action !== 'disable') {
-    const config = state.config();
+  if (action !== 'disable') config ||= state.config();
+  if (action === 'sync-context') {
+    request.claude_context = policy.contextLimit(config, 'claude');
+    request.codex_context = policy.contextLimit(config, 'codex');
+  } else if (action !== 'disable') {
     const claudeContext = policy.contextLimit(config, 'claude');
     const codexContext = policy.contextLimit(config, 'codex');
     const helper = [process.execPath, ...authArgs('claude')].map(quote).join(' ');
@@ -67,6 +70,13 @@ function clientSettings(action, native, settings) {
   const result = spawnSync('python3', [path.join(__dirname, 'native-config.py')], { input: JSON.stringify(request), encoding: 'utf8', timeout: 10000 });
   if (result.status !== 0) throw new Error(result.stderr.trim() || 'Native client configuration failed.');
   return JSON.parse(result.stdout);
+}
+
+// Called while holding the config lock. This also repairs settings installed
+// before native clients had separate routes, without resetting /model choices.
+function syncContext(config = state.config()) {
+  if (!config.enabled || !config.native?.enabled) return;
+  return clientSettings('sync-context', config.native, null, config);
 }
 
 async function command(action = 'status') {
@@ -104,4 +114,4 @@ if (require.main === module) {
   const operation = action === 'auth' ? authenticate(client) : command(action);
   operation.then(result => { if (result) process.stdout.write(`${result}\n`); }).catch(error => { process.stderr.write(`dex: ${error.message}\n`); process.exitCode = 1; });
 }
-module.exports = { ownerPid, authenticate, clientSettings, command };
+module.exports = { ownerPid, authenticate, clientSettings, syncContext, command };

@@ -254,16 +254,24 @@ window when available; otherwise it labels a conservative 64,000-token budget.
 You can replace that budget with an explicit supported value. When account
 discovery succeeds, selection uses that account's returned model list.
 
-The launcher gives Claude and Codex the smallest context budget in the
-configured phase and fallback routes as their compaction point. That budget is
-a record of the launch, not a floor: a model with a smaller window can still
-join a running conversation through `dx route use`, `dx route configure` or the
-client's own `/model` picker, so an exhausted provider never strands a session.
-Each request is checked against the model that will serve it. When the
-conversation has outgrown that model, the router rejects the request and asks
-you to `/compact` or pick a larger model; the client keeps its compaction point
-from launch until it restarts. Payload-size checks are not tokenizers.
-Providers remain authoritative about token limits.
+Dex gives each native client the smallest context window across its configured
+route and fallbacks. Codex automatically compacts at 80% of that budget and
+continues the task. Route configuration and model catalogue changes refresh
+the installed context settings while preserving model choices and any earlier
+personal compaction threshold. A personal threshold above the new budget must
+be lowered before the route change can be saved.
+
+Already-running clients retain their loaded settings; restart and resume the
+conversation to load updated limits. The `dex/active` model catalogue also
+bounds its advertised window and compaction threshold to the current route.
+Session-specific `dx route use` and the client's `/model` picker can select a
+smaller model without changing global client settings. Compact before switching
+if the conversation is already too large for it.
+
+Providers determine whether input fits their token limit. Dex preserves the
+OpenAI `context_length_exceeded` error code and limits HTTP requests to 32 MiB;
+it does not infer token counts from JSON size. For manual recovery, submit
+`/compact` on its own, wait for it to finish, then send `continue`.
 
 ## Switching in one session
 

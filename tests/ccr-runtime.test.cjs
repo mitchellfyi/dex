@@ -14,10 +14,14 @@ const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
 test('pinned CCR authenticates two accounts and translates OpenAI in the same session', { skip: !process.env.DEX_CCR_INTEGRATION_RUNTIME, timeout: 180000 }, async () => {
   process.env.DEX_ROUTER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-runtime-'));
   const calls = [];
-  let secondLimited = false, allLimited = false;
+  let secondLimited = false, allLimited = false, contextExceeded = false;
   const upstream = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); calls.push({ url: req.url, headers: req.headers, body });
+    if (contextExceeded) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { code: 'context_length_exceeded', type: 'invalid_request_error', message: 'Synthetic context limit' } })); return;
+    }
     if (allLimited || (body.model !== 'test-opus' && (req.headers.authorization === 'Bearer synthetic-a' || (secondLimited && req.headers.authorization === 'Bearer synthetic-b')))) {
       res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '60' });
       res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Synthetic quota exhausted' } })); return;
@@ -35,6 +39,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       res.end(); return;
     }
     const message = { id: 'msg_test', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'Claude answer' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 5, output_tokens: 3 } };
+    if (JSON.stringify(body.messages).includes('synthetic-compaction-fixture')) message.usage.input_tokens = 12000;
     if (body.stream) {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       for (const event of [{ type: 'message_start', message: { ...message, content: [], stop_reason: null } }, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Claude answer' } }, { type: 'content_block_stop', index: 0 }, { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } }, { type: 'message_stop' }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -103,6 +108,11 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     const smallerRoute = await sendResponses(); assert.equal(smallerRoute.status, 200, await smallerRoute.text());
     assert.equal(smallerRoute.headers.get('x-dex-model'), 'openai/test-small');
     await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-codex' });
+    contextExceeded = true;
+    const contextError = await sendResponses();
+    assert.equal(contextError.status, 400);
+    assert.equal((await contextError.json()).error.code, 'context_length_exceeded');
+    contextExceeded = false;
     const nativeTool = await sendResponses({ tools: [{ type: 'function', name: 'dex_test_write', description: 'Write a report', parameters: { type: 'object', properties: { file: { type: 'string' } } } }] });
     const nativeToolStream = await nativeTool.text(); assert.equal(nativeTool.status, 200, nativeToolStream);
     assert.match(nativeToolStream, /response.function_call_arguments.delta/); assert.match(nativeToolStream, /dex_test_write/);
@@ -128,6 +138,10 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       const initialized = spawnSync('git', ['init', '-q', nativeHome]); assert.equal(initialized.status, 0);
       fs.appendFileSync(nativeConfig.codex_file, `\n[projects.${JSON.stringify(fs.realpathSync(nativeHome))}]\ntrust_level = "trusted"\n`);
       assert.match(await runNative('python3', [path.resolve('tests/ccr-codex-smoke.py')]), /Native Codex received/);
+      const beforeCompaction = fs.readFileSync(nativeConfig.codex_file, 'utf8');
+      fs.writeFileSync(nativeConfig.codex_file, beforeCompaction.replace(/^model_auto_compact_token_limit = \d+$/m, 'model_auto_compact_token_limit = 5000'));
+      assert.match(await runNative('python3', [path.resolve('tests/ccr-codex-smoke.py'), '--compact']), /automatically compacted and continued/);
+      fs.writeFileSync(nativeConfig.codex_file, beforeCompaction);
       require('../scripts/ccr/native.cjs').clientSettings('disable', nativeConfig, settings);
     }
     assert.equal(state.read(state.sessionFile('test-session')).conversation_id, 'conversation-one');
@@ -206,7 +220,9 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     assert.equal(afterRestart.status, 200); assert.match(await afterRestart.text(), /OpenAI answer/);
   } finally {
     try { await ipc.call('finish', { id: 'test-session', token }); } catch { /* Startup may have failed. */ }
-    await adapter.stop(); await new Promise(resolve => upstream.close(resolve));
+    await adapter.stopOwned(state.backend(null));
+    upstream.closeAllConnections();
+    await new Promise(resolve => upstream.close(resolve));
     fs.rmSync(state.root(), { recursive: true, force: true });
   }
 });

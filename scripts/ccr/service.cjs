@@ -223,8 +223,7 @@ class RouterService {
       }
       const selected = policy.route(state.config(), session);
       // Native /model is an explicit request override; dex/active follows policy.
-      // A smaller context window than the launch budget is allowed: the payload
-      // guard in validateRequest sizes this request against the chosen model.
+      // The provider checks whether the input fits a smaller model's window.
       if (body.model && body.model !== 'dex/active') {
         const config = state.config();
         const matches = session.client && typeof body.model === 'string' && !body.model.includes('/') ? config.models.filter(item => (item.upstream_id || item.id.split('/')[1]) === body.model) : [];
@@ -278,6 +277,16 @@ class RouterService {
             }
             this.tickets.delete(ticket);
             let payload; try { payload = JSON.parse(bytes); } catch { payload = {}; }
+            // CCR wraps the upstream error in its single-provider attempt record.
+            const attempts = payload?.error?.attempts;
+            const contextExceeded = payload?.error?.code === 'context_length_exceeded'
+              || (Array.isArray(attempts) && attempts.length === 1 && attempts[0]?.status === 400
+                && attempts[0]?.stage === 'upstream_response' && attempts[0]?.details?.error?.code === 'context_length_exceeded');
+            if (upstream.status === 400 && contextExceeded) {
+              ipc.json(response, 400, { error: { type: 'invalid_request_error', code: 'context_length_exceeded',
+                message: 'The conversation exceeds the selected model\'s context window. Compact it with /compact or select a model with a larger context window.', provider_status: 400 } });
+              return;
+            }
             let problem = policy.failure(upstream.status, payload, upstream.headers);
             if (upstream.status === 401 && authRetry === 0) {
               try { credentials = await this.broker.access(choice.account, true); continue; }

@@ -43,16 +43,16 @@ test('phase files accept the terminal marker and reject anything else', () => {
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 test('context budget includes fallback models', () => assert.equal(policy.contextLimit(config), 128000));
-test('a smaller context model can join a running session; each request is sized to the model serving it', () => {
+test('a smaller context model can join a running session without treating JSON bytes as tokens', () => {
   // The session was launched at a 200k budget; the phase route and an override both bring in a 128k model.
   assert.deepEqual(policy.route(config, { fixed_phase: 2, context_limit: 200000 }).models.map(x => x.id), ['openai/b', 'anthropic/a']);
   assert.deepEqual(policy.route(config, { fixed_phase: 0, context_limit: 200000, override: { model: 'openai/b', scope: 'session' } }).models.map(x => x.id), ['openai/b']);
   const small = { ...models[1], context_window: 8192, display_name: 'Small' };
   const oversized = { messages: [{ role: 'user', content: 'x'.repeat(8192 * 4) }] };
-  assert.throws(() => policy.validateRequest(oversized, small), /8,192-token budget of Small.*Compact it \(\/compact\)/);
+  assert.doesNotThrow(() => policy.validateRequest(oversized, small));
   assert.doesNotThrow(() => policy.validateRequest({ messages: [{ role: 'user', content: 'hello' }] }, small));
-  assert.doesNotThrow(() => policy.validateRequest(oversized, models[0]), 'the same conversation fits the larger model');
-  assert.throws(() => policy.validateRequest({ input: 'x'.repeat(8192 * 4) }, { ...small, display_name: undefined }, 'responses'), /budget of openai\/b/);
+  assert.doesNotThrow(() => policy.validateRequest(oversized, models[0]));
+  assert.doesNotThrow(() => policy.validateRequest({ input: 'x'.repeat(8192 * 4) }, small, 'responses'));
 });
 test('invalid models cannot become filesystem paths or unknown routes', () => {
   for (const id of ['', '../secret', 'other/model', 'openai/unknown']) assert.throws(() => policy.model(config, id));

@@ -86,6 +86,7 @@ test('Codex reads a catalogue that mirrors the routed OpenAI model under the dex
   const urls = [];
   const upstream = { slug: 'test', display_name: 'Test', description: 'upstream', default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'high', description: 'h' }], shell_type: 'unified_exec', visibility: 'list', supported_in_api: true, priority: 3, upgrade: null, support_verbosity: true, default_verbosity: 'low', apply_patch_tool_type: 'freeform', truncation_policy: { mode: 'tokens', limit: 10000 }, supports_image_detail_original: true, context_window: 272000, max_context_window: 272000, experimental_supported_tools: [], model_messages: { instructions_template: 'upstream instructions' } };
   service.fetch = async url => { urls.push(url); return new Response(JSON.stringify({ models: [upstream, { slug: 'other', display_name: 'Other' }] })); };
+  upstream.auto_compact_token_limit = 240000;
   const catalogue = async (query = '?client_version=0.154.0', bearer = token) => fetch(endpoint.replace('/v1/messages', `/v1/models${query}`), { headers: { authorization: `Bearer ${bearer}` } });
   let response = await catalogue(); assert.equal(response.status, 200);
   let body = await response.json();
@@ -95,10 +96,16 @@ test('Codex reads a catalogue that mirrors the routed OpenAI model under the dex
   assert.equal(body.models[0].default_reasoning_level, 'high', 'metadata comes from the routed OpenAI model');
   assert.equal(body.models[0].model_messages.instructions_template, 'upstream instructions');
   assert.equal(body.models[0].context_window, 128000); assert.equal(body.models[0].max_context_window, 128000);
+  assert.equal(body.models[0].auto_compact_token_limit, 102400);
   assert.deepEqual(body.models.slice(1).map(item => item.slug), ['test', 'other']);
   assert.equal(refreshes.at(-1).id, 'three', 'the OpenAI account fetched the catalogue');
   assert.match(urls[0], /chatgpt\.com\/backend-api\/codex\/models\?client_version=0\.154\.0$/);
   await catalogue(); assert.equal(urls.length, 1, 'the upstream catalogue is cached');
+  config.models[1].context_window = 64000; state.write(state.stateFile('config'), config);
+  body = await (await catalogue()).json();
+  assert.equal(body.models[0].context_window, 64000);
+  assert.equal(body.models[0].max_context_window, 64000);
+  assert.equal(body.models[0].auto_compact_token_limit, 51200);
   // Without an OpenAI model on the route Codex still gets full native tooling.
   config.phases[0] = { model: 'anthropic/test', fallbacks: [] }; state.write(state.stateFile('config'), config);
   body = await (await catalogue()).json();
@@ -144,13 +151,32 @@ test('an exhausted launch route can move to a smaller context model without a re
   response = await send(token, { input });
   assert.equal(response.status, 200); assert.equal(response.headers.get('x-dex-model'), 'openai/small');
   assert.equal(calls.length, 3, 'exhausted Claude accounts are skipped without a provider call');
-  // The payload guard still sizes each request against the model that will serve it.
+  // Repeated text can occupy many bytes while using relatively few tokens.
   const oversized = [{ role: 'user', content: [{ type: 'input_text', text: 'x'.repeat(8192 * 4) }] }];
   response = await send(token, { model: 'small', input: oversized });
-  assert.equal(response.status, 503);
-  assert.match((await response.json()).error.message, /8,192-token budget of openai\/small.*Compact it/);
-  assert.equal(calls.length, 3, 'the oversized request never reached the provider');
+  assert.equal(response.status, 200, await response.text());
+  assert.equal(calls.length, 4, 'the provider determines whether the input fits');
+  assert.deepEqual(calls.at(-1).input, oversized);
   assert.equal(state.read(state.sessionFile(id)).active, true);
+});
+
+test('provider context errors remain recognizable and a compacted request can continue', async () => {
+  endpoint = endpoint.replace('/messages', '/responses');
+  const token = await register('context-recovery', { model: 'openai/test' });
+  reply = () => Response.json({ error: { code: 'context_length_exceeded', type: 'invalid_request_error', message: 'private prompt details' } }, { status: 400 });
+  const rejected = await send(token, { input: 'conversation' });
+  assert.equal(rejected.status, 400);
+  assert.deepEqual((await rejected.json()).error, {
+    type: 'invalid_request_error', code: 'context_length_exceeded',
+    message: 'The conversation exceeds the selected model\'s context window. Compact it with /compact or select a model with a larger context window.',
+    provider_status: 400
+  });
+  assert.equal(calls.length, 1);
+  assert.ok(state.accounts().every(account => !account.cooldown_until && !account.model_cooldowns));
+  reply = () => Response.json({ output: [] });
+  assert.equal((await send(token, { input: 'compacted summary' })).status, 200);
+  assert.equal(calls.length, 2);
+  assert.equal(state.read(state.sessionFile('context-recovery')).active, true);
 });
 
 test('a completed lifecycle keeps serving requests on its complete route', async () => {

@@ -104,10 +104,13 @@ function render(group, action, value, options) {
 async function configure(change, catalogueChange = false) {
   return state.locked('runtime', () => state.locked('config', () => {
     if (catalogueChange) adapter.idle();
-    const config = state.config(); change(config);
+    const previous = state.config(); const config = structuredClone(previous); change(config);
     if (config.default_model) policy.contextLimit(config);
     for (const session of state.sessions().filter(require('./service.cjs').active)) policy.route(config, session);
-    state.write(state.stateFile('config'), config); return config;
+    state.write(state.stateFile('config'), config);
+    try { require('./native.cjs').syncContext(config); }
+    catch (error) { state.write(state.stateFile('config'), previous); throw error; }
+    return config;
   }));
 }
 function resetIn(timestamp, now) {

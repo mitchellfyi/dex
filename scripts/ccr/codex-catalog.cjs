@@ -30,9 +30,12 @@ function template(context) {
 }
 
 function alias(entry, context) {
+  const compact = Math.floor(context * 0.8);
   return { ...entry, slug: ALIAS, display_name: 'Dex automatic route', description: 'Follows the Dex route and its fallbacks.',
     visibility: 'list', priority: 0, supported_in_api: true, availability_nux: null, upgrade: null,
-    context_window: context, max_context_window: context };
+    context_window: context, max_context_window: context,
+    auto_compact_token_limit: Number.isSafeInteger(entry.auto_compact_token_limit) && entry.auto_compact_token_limit > 0
+      ? Math.min(compact, entry.auto_compact_token_limit) : compact };
 }
 
 class CodexCatalog {
@@ -53,7 +56,7 @@ class CodexCatalog {
     return models;
   }
   async models({ session, selected, accounts, version }) {
-    const context = session.context_limit;
+    const context = Math.min(session.context_limit, ...selected.models.map(model => model.context_window));
     const target = selected.models.find(item => item.provider === 'openai');
     let upstream = [];
     if (target && VERSION.test(version || '')) {

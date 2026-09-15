@@ -78,12 +78,29 @@ def put_field(document, field, saved):
         current.pop(field[-1], None)
 
 
+def sync_context_field(document, entries, field, value, label):
+    entry = next(item for item in entries if item["field"] == field)
+    names = field if isinstance(field, list) else [field]
+    current = get_field(document, names)
+    if current != {"present": True, "value": entry["installed"]}:
+        raw = current.get("value")
+        if (isinstance(raw, (int, str)) and not isinstance(raw, bool)
+                and re.fullmatch(r"[1-9][0-9]*", str(raw)) and int(raw) <= int(value)):
+            return False
+        raise ValueError(f"{label} was edited and exceeds the route budget. Set it to a positive value at most {value} before changing routes.")
+    put_field(document, names, {"present": True, "value": value})
+    entry["installed"] = value
+    return current.get("value") != value
+
+
 def apply(request):
     action = request["action"]
     backup_file = Path(request["backup"])
     saved = json.loads(read(backup_file) or "null")
     if action == "disable" and saved is None:
         return {"changed": False, "preserved": []}
+    if action == "sync-context" and saved is None:
+        raise ValueError("Native routing ownership is missing. Enable native routing before syncing context settings.")
     claude_file = Path(request["claude_file"]).resolve()
     codex_file = Path(request["codex_file"]).resolve()
     sources = {file: read(file) for file in [claude_file, codex_file]}
@@ -103,7 +120,23 @@ def apply(request):
     if saved["claude_file"] != str(claude_file) or saved["codex_file"] != str(codex_file):
         raise ValueError("Disable native routing before changing the client configuration paths.")
     preserved = []
-    if action == "disable":
+    claude_source = None
+    if action == "sync-context":
+        codex_source = sources[codex_file]
+        claude_source = sources[claude_file]
+        if codex.get("model_provider") == "dex-ccr":
+            if not saved["provider_content"] or saved["provider_content"] not in codex_source:
+                raise ValueError("Native Codex provider settings were edited; context settings were not changed.")
+            for field, value in [("model_context_window", request["codex_context"]),
+                                 ("model_auto_compact_token_limit", request["codex_context"] * 8 // 10)]:
+                if sync_context_field(codex, saved["codex"], field, value, f"codex.{field}"):
+                    codex_source = set_root(codex_source, field, value)
+        base = next(item for item in saved["claude"] if item["field"] == ["env", "ANTHROPIC_BASE_URL"])
+        if get_field(claude, base["field"]) == {"present": True, "value": base["installed"]}:
+            if sync_context_field(claude, saved["claude"], ["env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+                                  str(request["claude_context"]), "claude.CLAUDE_CODE_MAX_CONTEXT_TOKENS"):
+                claude_source = json.dumps(claude, indent=2) + "\n"
+    elif action == "disable":
         for entry in saved["claude"]:
             if get_field(claude, entry["field"]) == {"present": True, "value": entry["installed"]}:
                 put_field(claude, entry["field"], entry["original"])
@@ -143,7 +176,7 @@ def apply(request):
         saved["provider_content"] = request["provider_content"]
         codex_source = codex_source.rstrip() + "\n\n" + saved["provider_content"]
     tomllib.loads(codex_source)
-    updates = {claude_file: json.dumps(claude, indent=2) + "\n", codex_file: codex_source}
+    updates = {claude_file: claude_source if claude_source is not None else json.dumps(claude, indent=2) + "\n", codex_file: codex_source}
     for file, source in sources.items():
         if read(file) != source:
             raise ValueError("Client settings changed during setup. Retry the command.")
@@ -153,6 +186,8 @@ def apply(request):
         if action != "disable":
             atomic_write(backup_file, json.dumps(saved, indent=2) + "\n")
         for file, content in updates.items():
+            if content == sources[file]:
+                continue
             if content is None:
                 file.unlink(missing_ok=True)
             else:
