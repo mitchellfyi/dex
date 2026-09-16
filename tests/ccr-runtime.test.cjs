@@ -14,7 +14,7 @@ const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
 test('pinned CCR authenticates two accounts and translates OpenAI in the same session', { skip: !process.env.DEX_CCR_INTEGRATION_RUNTIME, timeout: 180000 }, async () => {
   process.env.DEX_ROUTER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-runtime-'));
   const calls = [];
-  let secondLimited = false, allLimited = false, contextExceeded = false, reasoningFixtures = false;
+  let secondLimited = false, allLimited = false, contextExceeded = false, reasoningFixtures = false, claudeInputTokens = 5;
   const upstream = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); calls.push({ url: req.url, headers: req.headers, body });
@@ -52,7 +52,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       for (const event of [{ type: 'response.created', response: { ...response, status: 'in_progress', output: [] } }, { type: 'response.output_item.added', output_index: 0, item: response.output[0] }, { type: 'response.content_part.added', item_id: 'msg_test', output_index: 0, content_index: 0, part: { type: 'output_text', text: '', annotations: [] } }, { type: 'response.output_text.delta', item_id: 'msg_test', output_index: 0, content_index: 0, delta: 'OpenAI answer' }, { type: 'response.completed', response }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       res.end(); return;
     }
-    const message = { id: 'msg_test', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'Claude answer' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 5, output_tokens: 3 } };
+    const message = { id: 'msg_test', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'Claude answer' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: claudeInputTokens, output_tokens: 3 } };
     if (reasoningFixtures) message.content.unshift(
       { type: 'thinking', thinking: 'Claude summary.', signature: 'synthetic-claude-signature' },
       { type: 'thinking', thinking: '', signature: 'synthetic-omitted-signature' },
@@ -271,8 +271,8 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       const env = { ...process.env, DEX_DIR: path.resolve('.'), CLAUDE_CONFIG_DIR: nativeHome, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
       for (const key of ['DEX_SESSION_ID', 'DEX_RUN_ID', 'DX_ROUTER_SESSION_ID', 'DX_MODEL_OVERRIDE', 'DX_CLAUDE_MODEL', 'DEX_PHASE_HANDOFF']) delete env[key];
       const child = spawn(process.execPath, [path.resolve('scripts/ccr/cli.cjs'), 'launch', '--', '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json'], { cwd: nativeHome, env, stdio: ['pipe', 'pipe', 'pipe'], timeout: 30000 });
-      let pending = ''; let errors = ''; const results = []; let exited = false;
-      child.stdout.on('data', chunk => { pending += chunk; let boundary; while ((boundary = pending.indexOf('\n')) >= 0) { const line = pending.slice(0, boundary); pending = pending.slice(boundary + 1); try { const event = JSON.parse(line); if (event.type === 'result') results.push(event); } catch { /* Native informational output is not a model result. */ } } });
+      let pending = ''; let errors = ''; const results = []; const boundaries = []; let exited = false;
+      child.stdout.on('data', chunk => { pending += chunk; let boundary; while ((boundary = pending.indexOf('\n')) >= 0) { const line = pending.slice(0, boundary); pending = pending.slice(boundary + 1); try { const event = JSON.parse(line); if (event.type === 'result') results.push(event); if (event.subtype === 'compact_boundary') boundaries.push(event); } catch { /* Native informational output is not a model result. */ } } });
       child.stderr.on('data', chunk => { errors += chunk; });
       const completion = new Promise((resolve, reject) => { child.on('error', reject); child.on('exit', code => { exited = true; resolve(code); }); });
       const waitForResult = async number => {
@@ -280,13 +280,22 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
         assert.ok(results.length >= number, `Native Claude did not complete turn ${number}: ${errors} ${pending}`); return results[number - 1];
       };
       try {
+        claudeInputTokens = 5;
         child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Say hello.' } })}\n`);
         const first = await waitForResult(1); assert.match(first.result, /Claude answer/);
+        for (let turn = 1; turn <= 3; turn++) {
+          claudeInputTokens = turn * 38000;
+          child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: `Fake records batch ${turn}: ` + 'local-fixture '.repeat(4000) } })}\n`);
+          await waitForResult(turn + 1);
+        }
+        const beforeSwitch = boundaries.length;
+        claudeInputTokens = 5;
         const routed = state.sessions().find(session => session.owner_pid === child.pid && session.active);
         assert.ok(routed); await ipc.call('route', { session: routed.id, action: 'use', model: 'openai/test-codex' });
-        child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Say hello again.' } })}\n`);
-        const second = await waitForResult(2); assert.match(second.result, /OpenAI answer/);
+        child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Say hello again. ' + 'local-fixture '.repeat(4000) } })}\n`);
+        const second = await waitForResult(5); assert.match(second.result, /OpenAI answer/);
         assert.equal(first.session_id, second.session_id);
+        assert.ok(boundaries.length > beforeSwitch, 'Claude must automatically compact through OpenAI after switching providers');
         child.stdin.end(); assert.equal(await completion, 0, errors);
       } finally { if (!exited) { child.kill('SIGTERM'); await completion; } }
     }

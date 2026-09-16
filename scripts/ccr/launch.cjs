@@ -39,6 +39,8 @@ function launchEnvironment(settings, token, session, original = process.env, hel
     ANTHROPIC_CUSTOM_MODEL_OPTION: 'dex/active', ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: 'Dex automatic route',
     ANTHROPIC_DEFAULT_OPUS_MODEL: 'dex/active', ANTHROPIC_DEFAULT_SONNET_MODEL: 'dex/active', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'dex/active',
     CLAUDE_CODE_SUBAGENT_MODEL: 'dex/active', CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(session.context_limit),
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(Number(original.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) > 0
+      ? Math.min(80, Number(original.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)) : 80),
     CLAUDE_CODE_STOP_HOOK_BLOCK_CAP: original.CLAUDE_CODE_STOP_HOOK_BLOCK_CAP || '1000',
     DX_ROUTER_SESSION_ID: session.id, DX_ROUTER_SESSION_TOKEN: token, DX_PROVIDER_ENGINE: 'ccr', DX_PROVIDER_AGENT: 'claude', DX_PROVIDER_PROFILE: 'ccr-subscription',
     DEX_ROUTER_HOME: state.root()

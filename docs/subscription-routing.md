@@ -279,8 +279,9 @@ You can replace that budget with an explicit supported value. When account
 discovery succeeds, selection uses that account's returned model list.
 
 Dex gives each native client the smallest context window across its configured
-route and fallbacks. Codex automatically compacts at 80% of that budget and
-continues the task. Route configuration and model catalogue changes refresh
+route and fallbacks. Dex sets Claude’s compaction threshold to 80% and Codex’s
+auto-compaction limit to 80% of that budget, leaving room for tool output and
+the compaction request itself. Earlier personal thresholds are retained. Route configuration and model catalogue changes refresh
 the installed context settings while preserving model choices and any earlier
 personal compaction threshold. A personal threshold above the new budget must
 be lowered before the route change can be saved.
@@ -293,7 +294,8 @@ smaller model without changing global client settings. Compact before switching
 if the conversation is already too large for it.
 
 Providers determine whether input fits their token limit. Dex preserves the
-OpenAI `context_length_exceeded` error code and limits HTTP requests to 32 MiB;
+OpenAI `context_length_exceeded` error code and Claude’s `prompt is too long`
+signal so native recovery can run. It limits HTTP requests to 32 MiB;
 it does not infer token counts from JSON size. For manual recovery, submit
 `/compact` on its own, wait for it to finish, then send `continue`.
 

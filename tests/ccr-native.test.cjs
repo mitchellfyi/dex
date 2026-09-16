@@ -111,6 +111,35 @@ test('context sync preserves an earlier personal compaction threshold', () => {
   assert.equal(toml(config.codex_file).model_auto_compact_token_limit, 40000);
 });
 
+test('Claude compacts early and restores its earlier personal setting', () => {
+  original.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '60';
+  fs.writeFileSync(config.claude_file, JSON.stringify(original));
+  native.clientSettings('enable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '60');
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '60');
+  native.clientSettings('disable', config, settings);
+  assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)), original);
+});
+
+test('context sync migrates older Claude installations and can undo the migration', () => {
+  native.clientSettings('enable', config, settings);
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  const saved = JSON.parse(fs.readFileSync(backup));
+  saved.claude = saved.claude.filter(entry => entry.field.at(-1) !== 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE');
+  state.write(backup, saved);
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  delete claude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  fs.writeFileSync(config.claude_file, JSON.stringify(claude));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80');
+  native.clientSettings('enable', config, settings);
+  native.clientSettings('disable', config, settings);
+  assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)), original);
+});
+
 test('failed context sync rolls back the route and leaves client settings and ownership intact', async () => {
   native.clientSettings('enable', config, settings);
   const routing = state.config(); routing.native = { ...config, enabled: true };

@@ -25,10 +25,17 @@ function providerError(payload) {
 
 function upstreamError(payload, status) {
   const attempts = payload?.error?.attempts;
-  if (Array.isArray(attempts) && attempts.length === 1 && attempts[0]?.status === status && attempts[0]?.stage === 'upstream_response') {
-    return attempts[0]?.details?.error;
+  if (Array.isArray(attempts) && attempts.length === 1 && attempts[0]?.status === status) {
+    return upstreamError(attempts[0]?.details, status);
   }
-  return payload?.error;
+  return payload?.error || payload?.response?.error
+    || (typeof payload?.detail === 'string' ? { message: payload.detail } : payload?.detail);
+}
+
+function contextError(payload, status) {
+  const error = upstreamError(payload, status);
+  if (error?.code === 'context_length_exceeded') return true;
+  return typeof error?.message === 'string' && /^(?:prompt is too long\b|your input exceeds the context window\b|this model's maximum context length is\b)/i.test(error.message);
 }
 
 function rejectionDetails(payload, status) {
@@ -302,11 +309,11 @@ class RouterService {
             this.tickets.delete(ticket);
             let payload; try { payload = JSON.parse(bytes); } catch { payload = {}; }
             // CCR wraps the upstream error in its single-provider attempt record.
-            const contextExceeded = upstreamError(payload, upstream.status)?.code === 'context_length_exceeded';
+            const contextExceeded = contextError(payload, upstream.status);
             if (upstream.status === 400 && contextExceeded) {
               await this.recordRejection(session, choice.model.id, upstream.status);
               ipc.json(response, 400, { error: { type: 'invalid_request_error', code: 'context_length_exceeded',
-                message: 'The conversation exceeds the selected model\'s context window. Compact it with /compact or select a model with a larger context window.', provider_status: 400 } });
+                message: `${protocol === 'messages' ? 'prompt is too long: ' : ''}The conversation exceeds the selected model's context window. Compact it with /compact or select a model with a larger context window.`, provider_status: 400 } });
               return;
             }
             let problem = policy.failure(upstream.status, payload, upstream.headers);

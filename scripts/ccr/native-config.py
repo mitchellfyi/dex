@@ -93,6 +93,35 @@ def sync_context_field(document, entries, field, value, label):
     return current.get("value") != value
 
 
+def install_compaction(document, entries, percent):
+    """Migrate older installs while retaining earlier personal compaction."""
+    field = ["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]
+    current = get_field(document, field)
+    entry = next((item for item in entries if item["field"] == field), None)
+    if entry is None:
+        entry = {"field": field, "original": current, "installed": str(percent)}
+        entries.append(entry)
+        raw = current.get("value")
+        if raw is not None:
+            try:
+                earlier = 0 < float(raw) <= percent
+            except (ValueError, TypeError):
+                earlier = False
+            if earlier:
+                entry["installed"] = raw
+                return False
+        put_field(document, field, {"present": True, "value": str(percent)})
+        return True
+    # A smaller existing value remains an intentional early-compaction choice.
+    raw = current.get("value")
+    try:
+        if 0 < float(raw) <= percent:
+            return False
+    except (ValueError, TypeError):
+        pass
+    return sync_context_field(document, entries, field, str(percent), "claude.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
+
+
 def apply(request):
     action = request["action"]
     backup_file = Path(request["backup"])
@@ -113,7 +142,8 @@ def apply(request):
             raise ValueError("The dex-ccr Codex provider already exists and is not owned by Dex.")
         saved = {
             "claude_file": str(claude_file), "codex_file": str(codex_file),
-            "claude": [{"field": entry["field"], "original": get_field(claude, entry["field"]), "installed": entry["value"]} for entry in fields],
+            "claude": [{"field": entry["field"], "original": get_field(claude, entry["field"]), "installed": entry["value"]}
+                       for entry in fields if entry["field"] != ["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]],
             "codex": [{"field": entry["field"], "original": get_field(codex, [entry["field"]]), "installed": entry["value"]} for entry in codex_fields],
             "provider_content": "", "had_env": "env" in claude,
         }
@@ -133,8 +163,10 @@ def apply(request):
                     codex_source = set_root(codex_source, field, value)
         base = next(item for item in saved["claude"] if item["field"] == ["env", "ANTHROPIC_BASE_URL"])
         if get_field(claude, base["field"]) == {"present": True, "value": base["installed"]}:
-            if sync_context_field(claude, saved["claude"], ["env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-                                  str(request["claude_context"]), "claude.CLAUDE_CODE_MAX_CONTEXT_TOKENS"):
+            changed = sync_context_field(claude, saved["claude"], ["env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+                                         str(request["claude_context"]), "claude.CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            changed = install_compaction(claude, saved["claude"], request["claude_compact_percent"]) or changed
+            if changed:
                 claude_source = json.dumps(claude, indent=2) + "\n"
     elif action == "disable":
         for entry in saved["claude"]:
@@ -165,6 +197,9 @@ def apply(request):
                 if get_field(claude, entry["field"]) != {"present": True, "value": entry["installed"]}:
                     raise ValueError("Native Claude settings were edited. Disable native routing before enabling it again.")
         for entry in fields:
+            if entry["field"] == ["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]:
+                install_compaction(claude, saved["claude"], int(entry["value"]))
+                continue
             put_field(claude, entry["field"], {"present": True, "value": entry["value"]})
             next(item for item in saved["claude"] if item["field"] == entry["field"])["installed"] = entry["value"]
         codex_source = sources[codex_file]

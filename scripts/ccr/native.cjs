@@ -38,6 +38,7 @@ function clientSettings(action, native, settings, config) {
   if (action !== 'disable') config ||= state.config();
   if (action === 'sync-context') {
     request.claude_context = policy.contextLimit(config, 'claude');
+    request.claude_compact_percent = 80;
     request.codex_context = policy.contextLimit(config, 'codex');
   } else if (action !== 'disable') {
     const claudeContext = policy.contextLimit(config, 'claude');
@@ -51,7 +52,8 @@ function clientSettings(action, native, settings, config) {
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME'], value: 'Dex automatic route' },
       ...['OPUS', 'SONNET', 'HAIKU'].map(name => ({ field: ['env', `ANTHROPIC_DEFAULT_${name}_MODEL`], value: 'dex/active' })),
       { field: ['env', 'CLAUDE_CODE_SUBAGENT_MODEL'], value: 'dex/active' },
-      { field: ['env', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'], value: String(claudeContext) }
+      { field: ['env', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'], value: String(claudeContext) },
+      { field: ['env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'], value: '80' }
     ];
     request.codex_fields = [
       { field: 'model_provider', value: 'dex-ccr' }, { field: 'model', value: 'dex/active' },

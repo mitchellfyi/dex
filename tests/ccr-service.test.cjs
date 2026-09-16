@@ -180,6 +180,22 @@ test('provider context errors remain recognizable and a compacted request can co
   assert.equal(state.read(state.sessionFile('context-recovery')).active, true);
 });
 
+for (const details of [
+  { error: { type: 'invalid_request_error', message: 'prompt is too long: private prompt details' } },
+  { detail: 'Your input exceeds the context window of this model. private prompt details' },
+  { response: { error: { code: 'context_length_exceeded', message: 'private prompt details' } } }
+]) test('Claude recognizes context errors from upstream envelopes without leaking their messages', async () => {
+  const token = await register('claude-context');
+  reply = () => Response.json({ error: { attempts: [{ status: 400, stage: 'upstream_response', details }] } }, { status: 400 });
+  const result = await send(token);
+  const body = await result.json();
+  assert.equal(result.status, 400);
+  assert.equal(body.error.code, 'context_length_exceeded');
+  assert.match(body.error.message, /^prompt is too long:/);
+  assert.doesNotMatch(JSON.stringify(body), /private prompt/);
+  assert.ok(state.accounts().every(account => !account.cooldown_until && !account.model_cooldowns));
+});
+
 test('a completed lifecycle keeps serving requests on its complete route', async () => {
   const config = state.config(); config.phases[6] = { model: 'openai/test', fallbacks: [] }; state.write(state.stateFile('config'), config);
   const phase = path.join(directory, 'lifecycle.phase'); fs.writeFileSync(phase, '6\n', { mode: 0o600 });
