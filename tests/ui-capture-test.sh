@@ -620,4 +620,46 @@ assert_no_file "$OLD_DIR"
 assert_file "$OUTSIDE_DIR/keep.txt"
 assert_contains 'Removed 1 expired UI proof bundle' "$TMP_DIR/cleanup.out"
 
+# Browser MCPs use the same installed Chromium as capture, including headless hosts.
+DX_TOOL_DIR="$TMP_DIR/browser-tools" node --input-type=commonjs - "$DEX_DIR/scripts/browser-mcp.cjs" <<'JS'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const directory = path.join(process.env.DX_TOOL_DIR, 'ui-capture/node_modules/playwright');
+fs.mkdirSync(directory, { recursive: true });
+const executable = path.join(directory, 'chromium');
+fs.writeFileSync(executable, '');
+fs.writeFileSync(path.join(directory, 'index.js'), `exports.chromium = { executablePath: () => ${JSON.stringify(executable)} };`);
+const { command } = require(process.argv[2]);
+for (const name of ['playwright', 'chrome-devtools']) {
+  const args = command(name, [], { DX_TOOL_DIR: process.env.DX_TOOL_DIR });
+  assert.ok(args.includes(executable));
+  assert.equal(args.includes('--headless'), process.platform === 'linux');
+}
+fs.unlinkSync(executable);
+assert.throws(() => command('playwright'), /Chromium is missing/);
+JS
+python3 - "$DEX_DIR/scripts/browser-mcp-legacy.py" "$TMP_DIR" <<'PYTEST'
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("browser", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+root = Path(sys.argv[2]) / 'browser-config'
+root.mkdir()
+os.environ['CLAUDE_CONFIG_DIR'] = str(root)
+file = root / '.claude.json'
+entry = {'command': 'npx', 'args': ['-y', '@playwright/mcp@latest']}
+file.write_text(json.dumps({'mcpServers': {'playwright': entry}}))
+if not module.legacy('claude', 'playwright', '@playwright/mcp@latest'):
+    raise AssertionError('bare defaults must migrate')
+entry['args'].append('--extension')
+file.write_text(json.dumps({'mcpServers': {'playwright': entry}}))
+if module.legacy('claude', 'playwright', '@playwright/mcp@latest'):
+    raise AssertionError('custom browser configuration must survive')
+PYTEST
+
 printf 'ui capture tests passed\n'

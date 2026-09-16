@@ -407,7 +407,7 @@ chrome-devtools chrome-devtools-mcp@latest'
 
 # __dx_install_ui_mcp_servers <label> <cli> [scope args...]
 # Install every browser MCP server for one agent CLI, skipping ones already
-# configured. Returns 1 if any install failed.
+# configured, upgrading only Dex’s original bare npx defaults.
 __dx_install_ui_mcp_servers() {
   local label="$1" cli="$2"
   shift 2
@@ -418,18 +418,30 @@ __dx_install_ui_mcp_servers() {
     return 0
   fi
 
-  local failed=0 name package
+  local failed=0 name package upgrading
   while read -r name package; do
     [[ -n "$name" ]] || continue
+    upgrading=0
     if __dx_mcp_server_exists "$cli" "$name"; then
-      dx_ok "${label} MCP server '${name}' already configured"
-      continue
+      if ! python3 "$DEX_DIR/scripts/browser-mcp-legacy.py" "$cli" "$name" "$package"; then
+        dx_ok "${label} MCP server '${name}' already configured"
+        continue
+      fi
+      if ! "$cli" mcp remove ${scope_args[@]+"${scope_args[@]}"} "$name" >/dev/null; then
+        dx_warn "Could not upgrade ${label} MCP server '${name}'"
+        failed=1
+        continue
+      fi
+      upgrading=1
     fi
     dx_info "Installing ${label} MCP server '${name}'"
-    if "$cli" mcp add ${scope_args[@]+"${scope_args[@]}"} "$name" -- npx -y "$package" >/dev/null; then
+    if "$cli" mcp add ${scope_args[@]+"${scope_args[@]}"} "$name" -- node "$DEX_DIR/scripts/browser-mcp.cjs" "$name" >/dev/null; then
       dx_done "Installed ${label} MCP server '${name}'"
     else
       dx_warn "Could not install ${label} MCP server '${name}'"
+      if [[ "$upgrading" == "1" ]]; then
+        "$cli" mcp add ${scope_args[@]+"${scope_args[@]}"} "$name" -- npx -y "$package" >/dev/null || dx_warn "Could not restore the previous browser MCP entry"
+      fi
       failed=1
     fi
   done <<EOF
