@@ -11,6 +11,30 @@ turns in the same conversation. Real subscription login, refresh, quota and
 model entitlement must also be checked against the accounts you intend to use.
 Subscription endpoints and provider eligibility can change independently of Dex.
 
+## Provisioned development hosts
+
+Keep a host's routing policy in its infrastructure repository as well as its
+live configuration. Include every phase's model, ordered fallbacks and effort,
+native client routes, and the required model catalogue entries. Machine paths,
+credentials and temporary session overrides stay outside Git. Reprovisioning
+must preserve account state and deliberate local policy changes.
+
+After a Dex update, verify the host installer and native-client hooks still
+match the new behavior. Source updates do not replace router code already
+loaded into memory. When a router restart is required, finish routed sessions
+first, then run:
+
+```sh
+dx reload && dx router restart && dx router status && dx route policy
+```
+
+Policy changes and temporary session overrides are separate from source
+updates. Inspect the affected session's route, remove temporary overrides once
+the replacement is verified, and check the effective route again. Use the
+infrastructure repository's parity and commissioning checks for generated
+configuration, copied runtimes and service activation. Do not copy OAuth tokens
+between active machines.
+
 ## First setup
 
 Install Node.js 22 or newer and the official Claude Code CLI. OpenAI account

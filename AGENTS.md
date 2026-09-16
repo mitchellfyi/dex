@@ -334,6 +334,20 @@ Each ticket gets its own git worktree in `.dex/worktrees/`. The `dx` shell funct
 
 Exception: `dx --no-worktree <ticket-or-description>` runs the same phased lifecycle in the current checkout. It still creates or switches to the normal Dex lifecycle branch (`worktree-ticket-*` / `worktree-task-*`) from the default branch's upstream or remote-tracking ref; it only skips `git worktree add`. In-place sessions persist their current branch in phase state so resume can switch back or stop rather than continuing on the wrong checkout branch.
 
+## Provisioned Host Parity
+
+When a task also changes a provisioned development host, identify and read its
+infrastructure repository's instructions. Keep Dex generic; host-specific
+defaults and activation belong in that repository. Check router policy,
+provider compatibility, native-client setup, hooks and installer changes
+against the host's provisioning templates. A live workaround needs matching
+versioned source and a removal step. A published fix needs its activation
+step applied when authorized or reported as pending; updating source does
+not replace code already loaded by a router or other service. Preserve active
+sessions, private configuration and deliberate overrides. Verify both the
+source revision and effective host configuration using the host's supported
+diagnostics before declaring parity.
+
 ## Quality Gates
 
 This project has focused shell test scripts under `tests/`. There is no
