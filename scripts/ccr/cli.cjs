@@ -52,6 +52,7 @@ function render(group, action, value, options) {
       ['Last used', `${session.current_model || 'pending'}${account ? ` / ${account.name}` : ''}`]
     ];
     if (session.pinned_account) rows.push(['Pinned', state.getAccount(session.pinned_account).name]);
+    if (session.last_rejection) rows.push(['Rejected', `${session.last_rejection.model} (HTTP ${session.last_rejection.status})`]);
     if (session.paused_reason) rows.push(['Paused', `${session.paused_reason}; inspect dx accounts`]);
     details(rows);
     return;

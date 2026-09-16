@@ -1,5 +1,6 @@
 'use strict';
 const ipc = require('./ipc.cjs');
+const { restoreAnthropic } = require('./history.cjs');
 
 function convertedReasoning(item) {
   if (item.type !== 'reasoning' || item.encrypted_content || !Array.isArray(item.content) || !item.content.length
@@ -24,6 +25,7 @@ function createGatewayPlugin() {
         headers['anthropic-beta'] = [...new Set(`${input.request?.headers?.['anthropic-beta'] || ''},oauth-2025-04-20`.split(',').filter(Boolean))].join(',');
       }
       let body = input.upstreamRequest.body;
+      if (provider === 'anthropic' && body && typeof body === 'object') restoreAnthropic(body);
       if (provider === 'openai' && body && typeof body === 'object') {
         body = { ...body, store: false, stream: true, instructions: body.instructions || 'You are an engineering assistant.' };
         for (const key of ['max_output_tokens', 'max_tokens', 'temperature', 'top_p']) delete body[key];

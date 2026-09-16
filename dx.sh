@@ -3970,6 +3970,15 @@ dx() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session|--workflow)
+        # Management commands own their --session selector.
+        if [[ -z "$dx_prompt_mode" && ${#dx_args[@]} -gt 0 ]]; then
+          case "${dx_args[1]}" in
+            route|model|control|sessions|run)
+              dx_args+=("$@")
+              break
+              ;;
+          esac
+        fi
         if [[ -n "$dx_prompt_mode" && "$dx_prompt_mode" != "${1#--}" ]]; then
           dx_error "Choose either --session or --workflow."
           return 2

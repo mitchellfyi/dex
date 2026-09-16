@@ -42,15 +42,16 @@ function route(config, session) {
   const policyPhase = Math.min(current, PHASES.length - 1);
   const override = session.override;
   const clientRoute = session.client && config.client_routes?.[session.client];
+  const configured = clientRoute || config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
   const choice = override && (override.scope === 'session' || override.phase === current || override.phase === policyPhase)
-    ? override : clientRoute || config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
+    ? override : configured;
   const ids = [choice.model, ...(choice.fallbacks || [])];
   const models = [...new Set(ids)].map(id => model(config, id));
   // session.context_limit is the compaction budget the client was launched with,
   // not a floor for later model choices. A smaller model stays selectable so an
   // exhausted provider never strands the session. The provider determines
   // whether the conversation fits the selected model.
-  return { phase: current, models, effort: choice.effort, pinned: session.pinned_account };
+  return { phase: current, models, effort: choice.effort ?? configured.effort, pinned: session.pinned_account };
 }
 
 // The smallest window across the configured route, handed to the client at
@@ -91,9 +92,19 @@ function blockers(account, target, now = Date.now(), protocol) {
   return result;
 }
 
+function affinityKey(selection, protocol) {
+  return state.hash(JSON.stringify([selection.phase, selection.models.map(target => target.id), selection.effort, selection.pinned, protocol]));
+}
+
 function candidates(items, selection, session, now = Date.now(), protocol) {
   const result = [];
-  for (const target of selection.models) {
+  const models = [...selection.models];
+  // Keep a working fallback until the phase or route changes, including resume.
+  if (!selection.pinned && session.current_route === affinityKey(selection, protocol)) {
+    const index = models.findIndex(target => target.id === session.current_model);
+    if (index > 0) models.unshift(...models.splice(index, 1));
+  }
+  for (const target of models) {
     const windows = account => usageWindows(account, target, now);
     const available = items.filter(item => item.provider === target.provider
       && (!selection.pinned || item.id === selection.pinned)
@@ -205,4 +216,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, phase, route, contextLimit, cooldownKey, candidates, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, phase, route, contextLimit, affinityKey, cooldownKey, candidates, blockers, retryIn, unavailable, failure, validateRequest };

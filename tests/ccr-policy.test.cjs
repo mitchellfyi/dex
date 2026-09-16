@@ -78,6 +78,26 @@ test('explicit account ranks take precedence over affinity and quota headroom', 
 test('pinning never silently uses another account', () => {
   assert.deepEqual(policy.candidates([{ id: 'a', provider: 'anthropic', enabled: true }], { models, pinned: 'b' }, {}), []);
 });
+test('a working fallback stays first only for the same phase, route and protocol', () => {
+  const items = [{ id: 'a', provider: 'anthropic', enabled: true }, { id: 'b', provider: 'openai', enabled: true }];
+  const selection = { phase: 2, models, effort: 'xhigh' };
+  const session = { current_model: 'openai/b', current_route: policy.affinityKey(selection, 'messages') };
+  const order = (choice, saved = session, protocol = 'messages') => policy.candidates(items, choice, saved, 1000, protocol).map(item => item.model.id);
+  assert.deepEqual(order(selection), ['openai/b', 'anthropic/a']);
+  for (const change of [{ phase: 3 }, { effort: 'high' }, { models: [models[0]] }, { pinned: 'a' }]) {
+    assert.equal(order({ ...selection, ...change })[0], 'anthropic/a');
+  }
+  assert.equal(order(selection, {}, 'messages')[0], 'anthropic/a');
+  assert.equal(order(selection, session, 'responses')[0], 'anthropic/a');
+  items[1].cooldown_until = 2000;
+  assert.deepEqual(order(selection), ['anthropic/a']);
+});
+test('manual model overrides inherit the configured phase or client effort', () => {
+  const configured = { ...config, phases: { 2: { model: 'anthropic/a', effort: 'xhigh' } }, client_routes: { codex: { model: 'openai/b', effort: 'high' } } };
+  const session = { fixed_phase: 2, override: { model: 'openai/b', scope: 'session' } };
+  assert.equal(policy.route(configured, session).effort, 'xhigh');
+  assert.equal(policy.route(configured, { ...session, client: 'codex' }).effort, 'high');
+});
 test('auth, quota, temporary failures and malformed requests are distinct', () => {
   assert.equal(policy.failure(401).reauth, true);
   assert.equal(policy.failure(429, {}, { 'retry-after': '120' }, 1000).until, 121000);

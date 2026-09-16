@@ -8,6 +8,7 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const state = require('./state.cjs');
 const policy = require('./policy.cjs');
+const { prepareHistory, prepareResponse } = require('./history.cjs');
 const ipc = require('./ipc.cjs');
 const { AccountBroker, authHeaders } = require('./accounts.cjs');
 const { CodexCatalog } = require('./codex-catalog.cjs');
@@ -171,6 +172,10 @@ class RouterService {
       else if (params.action === 'pin') session.pinned_account = state.getAccount(params.account).id;
       else if (params.action === 'unpin') delete session.pinned_account;
       else if (params.action !== 'status') throw new Error('Unknown route action.');
+      if (params.action !== 'status') {
+        session.route_revision = state.token();
+        delete session.current_route; delete session.last_rejection; delete session.paused_reason;
+      }
       const selected = policy.route(config, session);
       if (session.pinned_account && state.getAccount(session.pinned_account).provider !== selected.models[0].provider) throw new Error('Pinned account does not serve this model. Unpin it first.');
       if (params.action !== 'status') { state.write(state.sessionFile(session.id), session); event(session, 'route.changed', { model: selected.models[0].id, phase: selected.phase, scope: session.override?.scope || 'auto' }); }
@@ -249,6 +254,7 @@ class RouterService {
         const configuredClientPrimary = session.client && config.client_routes?.[session.client]?.model;
         if (requested.id !== configuredClientPrimary) selected.models = [requested];
       }
+      const currentRoute = policy.affinityKey(selected, protocol);
       const choices = policy.candidates(state.accounts(), selected, session, Date.now(), protocol);
       if (!choices.length) throw policy.unavailable(state.accounts(), selected, Date.now(), protocol);
       for (const choice of choices) {
@@ -273,6 +279,7 @@ class RouterService {
             const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.clientKey}`, 'x-ccr-dex-account-ticket': ticket };
             for (const key of ['anthropic-version', 'anthropic-beta', 'user-agent', 'x-claude-code-session-id', 'x-claude-code-agent-id', 'x-claude-code-parent-agent-id']) if (request.headers[key]) headers[key] = request.headers[key];
             const next = structuredClone(body);
+            prepareHistory(next, choice.model.provider, protocol);
             next.model = `dex-${choice.model.provider}/${choice.model.upstream_id || choice.model.id.split('/')[1]}`;
             if (choice.effort) {
               if (protocol === 'messages') next.output_config = { ...next.output_config, effort: choice.effort };
@@ -297,6 +304,7 @@ class RouterService {
             // CCR wraps the upstream error in its single-provider attempt record.
             const contextExceeded = upstreamError(payload, upstream.status)?.code === 'context_length_exceeded';
             if (upstream.status === 400 && contextExceeded) {
+              await this.recordRejection(session, choice.model.id, upstream.status);
               ipc.json(response, 400, { error: { type: 'invalid_request_error', code: 'context_length_exceeded',
                 message: 'The conversation exceeds the selected model\'s context window. Compact it with /compact or select a model with a larger context window.', provider_status: 400 } });
               return;
@@ -307,6 +315,7 @@ class RouterService {
               catch (error) { if (!error.reauth) problem = { retry: true, reason: 'refresh-unavailable', until: Date.now() + 10000 }; }
             }
             if (!problem.retry) {
+              await this.recordRejection(session, choice.model.id, upstream.status);
               const detail = rejectionDetails(payload, upstream.status);
               const reason = detail.code || detail.type;
               const message = `${choice.model.id} rejected this request (HTTP ${upstream.status}${reason ? `; ${reason}` : ''}${detail.param ? ` at ${detail.param}` : ''}).`;
@@ -324,12 +333,19 @@ class RouterService {
           await state.locked('sessions', () => {
             const current = state.read(state.sessionFile(session.id));
             current.current_account = choice.account.id; current.current_model = choice.model.id; current.phase = selected.phase;
-            delete current.paused_reason;
+            if (current.route_revision === session.route_revision) current.current_route = currentRoute;
+            delete current.paused_reason; delete current.last_rejection;
             state.write(state.sessionFile(session.id), current);
           });
           if (session.current_account !== choice.account.id || session.current_model !== choice.model.id || session.phase !== selected.phase) event(session, 'route.selected', { account_id: choice.account.id, model: choice.model.id, phase: selected.phase });
           response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store', 'x-dex-model': choice.model.id });
-          try { if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), response); else response.end(); }
+          try {
+            if (upstream.body) {
+              const source = protocol === 'responses' && choice.model.provider === 'anthropic'
+                ? Readable.from(prepareResponse(upstream.body, upstream.headers.get('content-type'))) : Readable.fromWeb(upstream.body);
+              await pipeline(source, response);
+            } else response.end();
+          }
           finally { this.tickets.delete(ticket); }
           return;
         }
@@ -347,11 +363,19 @@ class RouterService {
         if (error.retryAfter) response.setHeader('retry-after', String(error.retryAfter));
         const unavailable = error.code === 'subscription_accounts_unavailable';
         ipc.json(response, session ? (unavailable ? error.status : 503) : 401, { error: { type: unavailable ? error.type : 'api_error', message: error.message,
-          ...(error.code === 'subscription_accounts_unavailable' ? { code: error.code } : {}),
+          ...(unavailable ? { code: error.code } : {}),
           ...(error.retryAfter ? { retry_after_seconds: error.retryAfter } : {}) } });
       }
       else response.destroy();
     } finally { this.inFlight.delete(controller); response.off('close', abort); }
+  }
+  async recordRejection(session, model, status) {
+    await state.locked('sessions', () => {
+      const current = state.read(state.sessionFile(session.id));
+      current.last_rejection = { model, status };
+      delete current.paused_reason;
+      state.write(state.sessionFile(session.id), current);
+    });
   }
 }
 module.exports = { RouterService, processIdentity, active, publicSession, event };

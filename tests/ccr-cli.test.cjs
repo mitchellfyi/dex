@@ -447,7 +447,11 @@ test('cached status line reports usage without reading provider credentials', ()
   state.saveAccounts([{ id: 'one', name: 'Main', usage: { observed_at: Date.now(), windows: [{ name: '5h', remaining_ratio: 0.4 }] } }]);
   state.write(state.sessionFile('current'), { current_account: 'one', current_model: 'openai/test' });
   const result = spawnSync('python3', ['scripts/router-status.py'], { encoding: 'utf8', env: { ...process.env, DX_ROUTER_SESSION_ID: 'current' } });
-  assert.equal(result.status, 0); assert.match(result.stdout, /openai\/test \/ Main \/ 5h 40%/);
+  assert.equal(result.status, 0); assert.match(result.stdout, /last: openai\/test \/ Main \/ 5h 40%/);
+  state.write(state.sessionFile('current'), { current_account: 'one', current_model: 'openai/test', last_rejection: { model: 'anthropic/test', status: 400 } });
+  const rejected = spawnSync('python3', ['scripts/router-status.py'], { encoding: 'utf8', env: { ...process.env, DX_ROUTER_SESSION_ID: 'current' } });
+  assert.match(rejected.stdout, /anthropic\/test rejected request \(HTTP 400\)/);
+  assert.doesNotMatch(rejected.stdout, /openai|Main|40%/);
 });
 test('CLI errors and machine output work from a separate process', () => {
   const run = args => spawnSync(process.execPath, [path.resolve('scripts/ccr/cli.cjs'), ...args], { encoding: 'utf8', env: { ...process.env, DEX_ROUTER_HOME: directory } });

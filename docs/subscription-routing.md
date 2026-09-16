@@ -293,7 +293,8 @@ Inside the routed agent, `/dxroute`, `/dxmodel` and `/dxaccount` use its current
 session. Outside it, `--session` is required when several sessions are active.
 Overrides last for the session by default; a phase override expires when the
 lifecycle advances. `auto` restores the configured phase policy. It does not
-invoke a model-selection agent.
+invoke a model-selection agent. Model overrides inherit the configured phase or
+native client's effort setting.
 
 Changes apply to the next request, including the next tool-loop request. They
 cannot replace an answer already streaming. Native subagents inherit the
@@ -308,6 +309,11 @@ available model to execute.
 ## Failures and recovery
 
 For each model, Dex tries eligible accounts before moving to the next model.
+After a fallback succeeds, Dex keeps using it for that session and phase,
+including after resume. It tries the remaining route again if that model becomes
+unavailable. A phase or policy change, or `dx route use auto`, resets this
+preference and tries the configured primary first. Explicit model overrides and
+account pins remain strict.
 Explicit account ranks take priority. Without ranks, Dex prefers the current
 account and then fresh quota headroom. It excludes disabled identities, expired
 logins, exhausted windows and accounts in cooldown. Rate limits
@@ -350,13 +356,18 @@ silently discarded.
 When a Claude conversation falls back to OpenAI, Dex preserves plaintext
 thinking as reasoning summaries and removes CCR's generated reasoning item IDs.
 This lets existing conversations continue through the stateless Responses
-endpoint. Native OpenAI reasoning and encrypted content keep their original fields.
+endpoint. In either client's wire format, signed or encrypted reasoning stays
+in the saved conversation and is sent only to its original provider. Requests
+to the other provider retain readable reasoning, messages, and tool calls and
+results. Switching back restores the original provider's reasoning blocks.
 Configured effort is applied in the client's request format before CCR converts
 it for the selected provider.
 
 Request rejections identify the model, HTTP status, and any provider error code
 and field path. Dex records those fields in `router.request_rejected` events;
 provider messages and request bodies are excluded from those diagnostics.
+The status line shows the rejected model after a failure. Successful route
+information is labelled `last:` because it describes the last accepted request.
 
 Once delivery starts, Dex never replays that response on another account. A
 broken stream may require user continuation. A retry before delivery also

@@ -14,10 +14,18 @@ const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
 test('pinned CCR authenticates two accounts and translates OpenAI in the same session', { skip: !process.env.DEX_CCR_INTEGRATION_RUNTIME, timeout: 180000 }, async () => {
   process.env.DEX_ROUTER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-runtime-'));
   const calls = [];
-  let secondLimited = false, allLimited = false, contextExceeded = false;
+  let secondLimited = false, allLimited = false, contextExceeded = false, reasoningFixtures = false;
   const upstream = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); calls.push({ url: req.url, headers: req.headers, body });
+    const foreignReasoning = body.messages?.some(message => message.role === 'assistant' && Array.isArray(message.content)
+      && message.content.some(block => (block.type === 'redacted_thinking' && block.data.startsWith('ccr-openai-'))
+        || (block.type === 'thinking' && !block.signature)))
+      || body.input?.some(item => item.type === 'reasoning' && item.encrypted_content && item.encrypted_content !== 'synthetic-openai-encrypted');
+    if (foreignReasoning) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { type: 'invalid_request_error', message: 'Synthetic foreign reasoning rejected' } })); return;
+    }
     if (body.input?.some(item => item.type === 'reasoning' && (item.content?.length || (item.id && !item.encrypted_content)))) {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { type: 'invalid_request_error', code: 'array_above_max_length', param: 'input[1].content' } })); return;
@@ -34,7 +42,9 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       if (body.tools?.some(tool => tool.name === 'dex_test_write')) {
         const item = { id: 'fc_test', call_id: 'call_test', type: 'function_call', name: 'dex_test_write', arguments: '{"file":"report.html"}', status: 'completed' };
-        const response = { id: 'resp_tool', object: 'response', model: 'test-codex', status: 'completed', output: [item], usage: { input_tokens: 5, output_tokens: 8, total_tokens: 13 } };
+        const response = { id: 'resp_tool', object: 'response', model: 'test-codex', status: 'completed', output: [
+          ...(reasoningFixtures ? [{ type: 'reasoning', id: 'rs_test', summary: [{ type: 'summary_text', text: 'OpenAI summary.' }], encrypted_content: 'synthetic-openai-encrypted' }] : []), item
+        ], usage: { input_tokens: 5, output_tokens: 8, total_tokens: 13 } };
         for (const event of [{ type: 'response.created', response: { ...response, status: 'in_progress', output: [] } }, { type: 'response.output_item.added', output_index: 0, item: { ...item, arguments: '' } }, { type: 'response.function_call_arguments.delta', item_id: 'fc_test', output_index: 0, delta: item.arguments }, { type: 'response.function_call_arguments.done', item_id: 'fc_test', output_index: 0, arguments: item.arguments }, { type: 'response.output_item.done', output_index: 0, item }, { type: 'response.completed', response }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
         res.end(); return;
       }
@@ -43,10 +53,21 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       res.end(); return;
     }
     const message = { id: 'msg_test', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'Claude answer' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 5, output_tokens: 3 } };
+    if (reasoningFixtures) message.content.unshift(
+      { type: 'thinking', thinking: 'Claude summary.', signature: 'synthetic-claude-signature' },
+      { type: 'thinking', thinking: '', signature: 'synthetic-omitted-signature' },
+      { type: 'redacted_thinking', data: 'synthetic-claude-encrypted' });
     if (JSON.stringify(body.messages).includes('synthetic-compaction-fixture')) message.usage.input_tokens = 12000;
     if (body.stream) {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      for (const event of [{ type: 'message_start', message: { ...message, content: [], stop_reason: null } }, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Claude answer' } }, { type: 'content_block_stop', index: 0 }, { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } }, { type: 'message_stop' }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      const events = [{ type: 'message_start', message: { ...message, content: [], stop_reason: null } }];
+      message.content.forEach((block, index) => {
+        events.push({ type: 'content_block_start', index, content_block: block.type === 'text' ? { type: 'text', text: '' } : block });
+        if (block.type === 'text') events.push({ type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text } });
+        events.push({ type: 'content_block_stop', index });
+      });
+      events.push({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } }, { type: 'message_stop' });
+      for (const event of events) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       res.end(); return;
     }
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(message));
@@ -109,6 +130,36 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     assert.deepEqual(reasoning, { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Check the report first.' }] });
     assert.equal(calls.at(-1).body.reasoning.effort, 'xhigh');
     assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.call_id === tool.id));
+    reasoningFixtures = true;
+    const history = [{ role: 'user', content: 'Work on a fake report.' }];
+    await ipc.call('route', { action: 'use', model: 'anthropic/test-opus', session: 'test-session' });
+    const claudeTurn = await send({ messages: history });
+    assert.equal(claudeTurn.status, 200);
+    const claudeMessage = await claudeTurn.json();
+    history.push({ role: 'assistant', content: claudeMessage.content }, { role: 'user', content: 'Write the fake report.' });
+    await ipc.call('route', { action: 'use', model: 'openai/test-codex', session: 'test-session' });
+    const openaiTurn = await send({ messages: history, tools: [{ name: 'dex_test_write', input_schema: { type: 'object' } }] });
+    assert.equal(openaiTurn.status, 200);
+    const openaiMessage = await openaiTurn.json();
+    const opaque = openaiMessage.content.find(block => block.type === 'redacted_thinking');
+    assert.match(opaque?.data || '', /^ccr-openai-responses-reasoning-v1:/);
+    const convertedTool = openaiMessage.content.find(block => block.type === 'tool_use');
+    history.push({ role: 'assistant', content: openaiMessage.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: convertedTool.id, content: 'Saved fake report.' }] });
+    await ipc.call('route', { action: 'use', model: 'anthropic/test-opus', session: 'test-session' });
+    const backToClaude = await send({ messages: history });
+    assert.equal(backToClaude.status, 200, await backToClaude.text());
+    const claudeHistory = calls.at(-1).body.messages;
+    assert.ok(claudeHistory.some(message => message.content?.some?.(block => block.signature === 'synthetic-claude-signature')));
+    assert.match(JSON.stringify(claudeHistory), /Saved fake report/);
+    assert.doesNotMatch(JSON.stringify(claudeHistory), /ccr-openai-responses-reasoning/);
+    await ipc.call('route', { action: 'use', model: 'openai/test-codex', session: 'test-session' });
+    const backToOpenai = await send({ messages: history, stream: true });
+    assert.equal(backToOpenai.status, 200, await backToOpenai.text());
+    assert.ok(calls.at(-1).body.input.some(item => item.id === 'rs_test' && item.encrypted_content === 'synthetic-openai-encrypted'));
+    assert.match(JSON.stringify(calls.at(-1).body.input), /Saved fake report/);
+    assert.equal(calls.at(-1).body.reasoning.effort, 'xhigh');
+    reasoningFixtures = false;
+    await ipc.call('route', { action: 'auto', session: 'test-session' });
     delete config.phases[0]; state.write(state.stateFile('config'), config);
     config.native = { enabled: true }; state.write(state.stateFile('config'), config);
     const native = await ipc.call('native-auth', { client: 'codex', owner_pid: process.pid });
@@ -136,8 +187,33 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     const nativeFollowup = await sendResponses({ input: [{ type: 'function_call', call_id: 'call_test', name: 'dex_test_write', arguments: '{"file":"report.html"}' }, { type: 'function_call_output', call_id: 'call_test', output: 'Saved by native Codex' }] });
     assert.equal(nativeFollowup.status, 200, await nativeFollowup.text());
     assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.output === 'Saved by native Codex'));
+    reasoningFixtures = true;
+    const responseOutput = async body => {
+      const response = await sendResponses(body); const stream = await response.text();
+      assert.equal(response.status, 200, `${stream}\n${JSON.stringify(body)}\nUpstream: ${JSON.stringify(calls.at(-1).body)}`);
+      const completed = stream.split('\n').filter(line => line.startsWith('data: ') && line !== 'data: [DONE]').map(line => JSON.parse(line.slice(6))).find(event => event.type === 'response.completed');
+      assert.ok(completed, stream); return completed.response.output;
+    };
+    const nativeHistory = [{ role: 'user', content: 'Work on another fake report.' }];
+    await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'anthropic/test-opus' });
+    nativeHistory.push(...await responseOutput({ input: nativeHistory }));
+    assert.ok(nativeHistory.some(item => item.type === 'reasoning'), JSON.stringify(nativeHistory));
+    nativeHistory.push({ role: 'user', content: 'Write it.' });
+    await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-codex' });
+    nativeHistory.push(...await responseOutput({ input: nativeHistory, tools: [{ type: 'function', name: 'dex_test_write', parameters: { type: 'object' } }] }));
+    nativeHistory.push({ type: 'function_call_output', call_id: 'call_test', output: 'Saved native fake report.' });
+    await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'anthropic/test-opus' });
+    await responseOutput({ input: nativeHistory });
+    assert.match(JSON.stringify(calls.at(-1).body.messages), /synthetic-claude-signature/);
+    assert.doesNotMatch(JSON.stringify(calls.at(-1).body.messages), /synthetic-openai-encrypted/);
+    await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-codex' });
+    await responseOutput({ input: nativeHistory });
+    assert.ok(calls.at(-1).body.input.some(item => item.encrypted_content === 'synthetic-openai-encrypted'));
+    assert.match(JSON.stringify(calls.at(-1).body.input), /Saved native fake report/);
+    reasoningFixtures = false;
     await ipc.call('finish', { id: `native-codex-${process.pid}`, token: native.token });
     if (process.env.DEX_CCR_NATIVE_CLIENTS === '1') {
+      reasoningFixtures = true;
       const nativeHome = state.privateDir(path.join(state.root(), 'native-clients'));
       const nativeConfig = { claude_file: path.join(nativeHome, 'claude/settings.json'), codex_file: path.join(nativeHome, 'codex/config.toml') };
       require('../scripts/ccr/native.cjs').clientSettings('enable', nativeConfig, settings);
@@ -160,6 +236,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       assert.match(await runNative('python3', [path.resolve('tests/ccr-codex-smoke.py'), '--compact']), /automatically compacted and continued/);
       fs.writeFileSync(nativeConfig.codex_file, beforeCompaction);
       require('../scripts/ccr/native.cjs').clientSettings('disable', nativeConfig, settings);
+      reasoningFixtures = false;
     }
     assert.equal(state.read(state.sessionFile('test-session')).conversation_id, 'conversation-one');
     for (const call of calls) assert.equal(call.headers['x-ccr-dex-account-ticket'], undefined);

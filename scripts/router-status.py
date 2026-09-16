@@ -27,8 +27,11 @@ def main():
     account = next((item for item in accounts if item["id"] == session.get("current_account")), {})
     if session.get("paused_reason"):
         result = "routing paused; dx accounts"
+    elif session.get("last_rejection"):
+        rejection = session["last_rejection"]
+        result = f"{rejection['model']} rejected request (HTTP {rejection['status']})"
     else:
-        result = session.get("current_model", "route pending")
+        result = f"last: {session['current_model']}" if session.get("current_model") else "route pending"
         if account:
             result += f" / {account['name']}"
             usage = account.get("usage", {})

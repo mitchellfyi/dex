@@ -94,6 +94,12 @@ __dx_setup_in_place() { print -r -- "IN_PLACE:$1"; return 71; }
         return {str(p.relative_to(base)): p.read_bytes()
                 for directory in ('repo', 'state', 'loops') for p in (base / directory).rglob('*') if p.is_file()}
 
+    for command in ('route', 'model', 'control', 'sessions', 'run'):
+        args = [command, 'status', '--session', 'fake-session', '--json']
+        result = invoke(args, prefix='__dx_cli() { print -rl -- "$@"; }')
+        assert result.returncode == 0 and result.stdout.splitlines() == args, (result.stdout, result.stderr)
+        assert not (base / 'launch.json').exists(), 'management selector launched a chat'
+
     alias = subprocess.check_output(['zsh', '-fc', shell + 'dx_session_id'], env=env, cwd=repo, text=True).strip()
     (base / 'loops' / (alias + '.provider')).write_text('session=parent\nengine=claude\n')
     (base / 'loops/parent.active').write_text('active\n')
