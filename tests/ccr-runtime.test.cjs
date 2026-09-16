@@ -57,6 +57,10 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
       { type: 'thinking', thinking: 'Claude summary.', signature: 'synthetic-claude-signature' },
       { type: 'thinking', thinking: '', signature: 'synthetic-omitted-signature' },
       { type: 'redacted_thinking', data: 'synthetic-claude-encrypted' });
+    if (body.tools?.some(tool => tool.name === 'dex_test_read')) {
+      message.content.push({ type: 'tool_use', id: 'tool_claude', name: 'dex_test_read', input: { file: 'fake.txt' } });
+      message.stop_reason = 'tool_use';
+    }
     if (JSON.stringify(body.messages).includes('synthetic-compaction-fixture')) message.usage.input_tokens = 12000;
     if (body.stream) {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -133,13 +137,14 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     reasoningFixtures = true;
     const history = [{ role: 'user', content: 'Work on a fake report.' }];
     await ipc.call('route', { action: 'use', model: 'anthropic/test-opus', session: 'test-session' });
-    const claudeTurn = await send({ messages: history });
+    const claudeTurn = await send({ messages: history, tools: [{ name: 'dex_test_read', input_schema: { type: 'object' } }] });
     assert.equal(claudeTurn.status, 200);
     const claudeMessage = await claudeTurn.json();
-    history.push({ role: 'assistant', content: claudeMessage.content }, { role: 'user', content: 'Write the fake report.' });
+    history.push({ role: 'assistant', content: claudeMessage.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool_claude', content: 'Read fake file.' }] });
     await ipc.call('route', { action: 'use', model: 'openai/test-codex', session: 'test-session' });
     const openaiTurn = await send({ messages: history, tools: [{ name: 'dex_test_write', input_schema: { type: 'object' } }] });
     assert.equal(openaiTurn.status, 200);
+    assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.call_id === 'tool_claude' && item.output === 'Read fake file.'));
     const openaiMessage = await openaiTurn.json();
     const opaque = openaiMessage.content.find(block => block.type === 'redacted_thinking');
     assert.match(opaque?.data || '', /^ccr-openai-responses-reasoning-v1:/);
@@ -188,6 +193,7 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     assert.equal(nativeFollowup.status, 200, await nativeFollowup.text());
     assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.output === 'Saved by native Codex'));
     reasoningFixtures = true;
+    config.phases[0] = { model: 'anthropic/test-opus', effort: 'xhigh' }; state.write(state.stateFile('config'), config);
     const responseOutput = async body => {
       const response = await sendResponses(body); const stream = await response.text();
       assert.equal(response.status, 200, `${stream}\n${JSON.stringify(body)}\nUpstream: ${JSON.stringify(calls.at(-1).body)}`);
@@ -196,21 +202,27 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     };
     const nativeHistory = [{ role: 'user', content: 'Work on another fake report.' }];
     await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'anthropic/test-opus' });
-    nativeHistory.push(...await responseOutput({ input: nativeHistory }));
+    nativeHistory.push(...await responseOutput({ input: nativeHistory, tools: [{ type: 'function', name: 'dex_test_read', parameters: { type: 'object' } }] }));
+    assert.equal(calls.at(-1).body.output_config?.effort, 'xhigh');
     assert.ok(nativeHistory.some(item => item.type === 'reasoning'), JSON.stringify(nativeHistory));
-    nativeHistory.push({ role: 'user', content: 'Write it.' });
+    assert.ok(nativeHistory.some(item => item.type === 'function_call' && item.call_id === 'tool_claude'));
+    nativeHistory.push({ type: 'function_call_output', call_id: 'tool_claude', output: 'Read native fake file.' });
     await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-codex' });
     nativeHistory.push(...await responseOutput({ input: nativeHistory, tools: [{ type: 'function', name: 'dex_test_write', parameters: { type: 'object' } }] }));
+    assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.call_id === 'tool_claude' && item.output === 'Read native fake file.'));
     nativeHistory.push({ type: 'function_call_output', call_id: 'call_test', output: 'Saved native fake report.' });
     await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'anthropic/test-opus' });
     await responseOutput({ input: nativeHistory });
     assert.match(JSON.stringify(calls.at(-1).body.messages), /synthetic-claude-signature/);
+    assert.match(JSON.stringify(calls.at(-1).body.messages), /synthetic-omitted-signature/);
     assert.doesNotMatch(JSON.stringify(calls.at(-1).body.messages), /synthetic-openai-encrypted/);
     await ipc.call('route', { session: `native-codex-${process.pid}`, action: 'use', model: 'openai/test-codex' });
     await responseOutput({ input: nativeHistory });
     assert.ok(calls.at(-1).body.input.some(item => item.encrypted_content === 'synthetic-openai-encrypted'));
+    assert.equal(calls.at(-1).body.reasoning?.effort, 'xhigh');
     assert.match(JSON.stringify(calls.at(-1).body.input), /Saved native fake report/);
     reasoningFixtures = false;
+    delete config.phases[0]; state.write(state.stateFile('config'), config);
     await ipc.call('finish', { id: `native-codex-${process.pid}`, token: native.token });
     if (process.env.DEX_CCR_NATIVE_CLIENTS === '1') {
       reasoningFixtures = true;

@@ -329,8 +329,9 @@ for (const protocol of ['messages', 'responses']) for (const model of ['anthropi
   endpoint = endpoint.replace('/messages', `/${protocol}`);
   const config = state.config(); config.phases[0] = { model, effort: 'xhigh' }; state.write(state.stateFile('config'), config);
   const token = await register();
-  assert.equal((await send(token, { input: 'hello', output_config: { effort: 'high' }, reasoning: { effort: 'high' } })).status, 200);
+  assert.equal((await send(token, { input: 'hello', output_config: { effort: 'high' }, reasoning: { effort: 'high', summary: 'auto' } })).status, 200);
   assert.equal(calls[0][protocol === 'messages' ? 'output_config' : 'reasoning'].effort, 'xhigh');
+  if (protocol === 'responses') assert.equal(calls[0].reasoning.summary, 'auto');
 });
 test('401 refreshes once before moving to another account', async () => {
   const token = await register(); reply = () => new Response('{}', { status: calls.length <= 2 ? 401 : 200 });

@@ -272,19 +272,19 @@ class RouterService {
           continue;
         }
         for (let authRetry = 0; authRetry < 2; authRetry++) {
+          const next = structuredClone(body);
+          prepareHistory(next, choice.model.provider, protocol);
+          next.model = `dex-${choice.model.provider}/${choice.model.upstream_id || choice.model.id.split('/')[1]}`;
+          if (choice.effort) {
+            if (protocol === 'messages') next.output_config = { ...next.output_config, effort: choice.effort };
+            else next.reasoning = { ...next.reasoning, effort: choice.effort };
+          }
           const ticket = state.token();
           this.tickets.set(ticket, { provider: choice.account.provider, credentials, expires: Date.now() + 120000 });
           let upstream;
           try {
             const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.clientKey}`, 'x-ccr-dex-account-ticket': ticket };
             for (const key of ['anthropic-version', 'anthropic-beta', 'user-agent', 'x-claude-code-session-id', 'x-claude-code-agent-id', 'x-claude-code-parent-agent-id']) if (request.headers[key]) headers[key] = request.headers[key];
-            const next = structuredClone(body);
-            prepareHistory(next, choice.model.provider, protocol);
-            next.model = `dex-${choice.model.provider}/${choice.model.upstream_id || choice.model.id.split('/')[1]}`;
-            if (choice.effort) {
-              if (protocol === 'messages') next.output_config = { ...next.output_config, effort: choice.effort };
-              else next.reasoning = { effort: choice.effort };
-            }
             upstream = await this.fetch(`${this.gateway}/v1/${protocol}`, { method: 'POST', headers, body: JSON.stringify(next), redirect: 'error', signal: controller.signal });
           } catch (error) {
             this.tickets.delete(ticket);

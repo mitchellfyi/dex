@@ -42,3 +42,16 @@ test('Anthropic requests retain their thinking blocks and signatures', async t =
   const body = { messages: [{ role: 'assistant', content: [{ type: 'thinking', thinking: 'A thought', signature: 'synthetic-signature' }] }] };
   assert.deepEqual((await authenticate(t, body, 'anthropic_messages', 'anthropic')).value.body, body);
 });
+
+test('Responses conversion preserves signature-only Claude thinking before CCR drops it', () => {
+  const payload = { content: [{ type: 'thinking', thinking: '', signature: 'synthetic-signature' },
+    { type: 'tool_use', id: 'tool_one', name: 'Read', input: {} }] };
+  const hook = createGatewayPlugin().providerHooks.find(item => item.providerName === 'dex-anthropic');
+  assert.deepEqual(hook.transformResponse({ sourceAdapterKey: 'anthropic_messages', upstreamPayload: payload }).value, payload);
+  const converted = hook.transformResponse({ sourceAdapterKey: 'openai_responses', upstreamPayload: payload }).value;
+  assert.equal(converted.content[0].type, 'redacted_thinking');
+  const restored = { messages: [{ role: 'assistant', content: converted.content }] };
+  require('../scripts/ccr/history.cjs').restoreAnthropic(restored);
+  assert.deepEqual(restored.messages[0].content, payload.content);
+  assert.equal(payload.content[0].type, 'thinking');
+});

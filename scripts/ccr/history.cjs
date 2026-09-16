@@ -103,6 +103,21 @@ function prepareResponseEvent(event) {
   for (const item of event.response?.output || event.output || []) prepareResponseItem(item);
 }
 
+function wrapAnthropicResponse(payload) {
+  if (!Array.isArray(payload?.content)) return payload;
+  const blocks = payload.content.filter(block => ['thinking', 'redacted_thinking'].includes(block.type));
+  if (!blocks.length) return payload;
+  const text = blocks.map(block => block.thinking || '').filter(Boolean).join('\n');
+  let inserted = false;
+  return { ...payload, content: payload.content.flatMap(block => {
+    if (!['thinking', 'redacted_thinking'].includes(block.type)) return [block];
+    if (inserted) return [];
+    inserted = true;
+    // CCR otherwise discards signature-only thinking before building Responses.
+    return [...(text ? [{ type: 'thinking', thinking: text }] : []), { type: 'redacted_thinking', data: encodeAnthropic(blocks) }];
+  }) };
+}
+
 async function* prepareResponse(source, contentType) {
   const decoder = new StringDecoder('utf8');
   let pending = '';
@@ -126,4 +141,4 @@ async function* prepareResponse(source, contentType) {
   else { const body = JSON.parse(pending); prepareResponseEvent(body); yield JSON.stringify(body); }
 }
 
-module.exports = { prepareHistory, restoreAnthropic, prepareResponse };
+module.exports = { prepareHistory, restoreAnthropic, prepareResponse, wrapAnthropicResponse };
