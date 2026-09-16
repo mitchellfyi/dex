@@ -18,6 +18,10 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
   const upstream = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); calls.push({ url: req.url, headers: req.headers, body });
+    if (body.input?.some(item => item.type === 'reasoning' && (item.content?.length || (item.id && !item.encrypted_content)))) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { type: 'invalid_request_error', code: 'array_above_max_length', param: 'input[1].content' } })); return;
+    }
     if (contextExceeded) {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { code: 'context_length_exceeded', type: 'invalid_request_error', message: 'Synthetic context limit' } })); return;
@@ -93,6 +97,19 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     const followup = await send({ messages: [{ role: 'user', content: 'Create report' }, { role: 'assistant', content: [tool] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: tool.id, content: 'Saved locally' }] }] });
     assert.equal(followup.status, 200); await followup.text();
     assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.output === 'Saved locally'));
+    config.phases[0] = { model: 'openai/test-codex', effort: 'xhigh' }; state.write(state.stateFile('config'), config);
+    await ipc.call('route', { action: 'auto', session: 'test-session' });
+    const thinkingResponse = await send({ output_config: { effort: 'high' }, messages: [
+      { role: 'user', content: 'Create report' },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'Check the report first.', signature: 'synthetic-signature' }, tool] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: tool.id, content: 'Saved locally' }] }
+    ] });
+    assert.equal(thinkingResponse.status, 200, await thinkingResponse.text());
+    const reasoning = calls.at(-1).body.input.find(item => item.type === 'reasoning');
+    assert.deepEqual(reasoning, { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Check the report first.' }] });
+    assert.equal(calls.at(-1).body.reasoning.effort, 'xhigh');
+    assert.ok(calls.at(-1).body.input.some(item => item.type === 'function_call_output' && item.call_id === tool.id));
+    delete config.phases[0]; state.write(state.stateFile('config'), config);
     config.native = { enabled: true }; state.write(state.stateFile('config'), config);
     const native = await ipc.call('native-auth', { client: 'codex', owner_pid: process.pid });
     const sendResponses = body => fetch(`${settings.gateway}/plugins/dex/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${native.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'dex/active', stream: true, input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], ...body }) });
@@ -201,7 +218,8 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     allLimited = true;
     for (let attempt = 0; attempt < 2; attempt++) {
       const unavailable = await send(); const error = (await unavailable.json()).error;
-      assert.equal(unavailable.status, 503);
+      assert.equal(unavailable.status, 429);
+      assert.equal(error.type, 'rate_limit_error');
       assert.ok(Number(unavailable.headers.get('retry-after')) > 0);
       assert.equal(error.retry_after_seconds, Number(unavailable.headers.get('retry-after')));
       assert.match(error.message, /test-claude:.*rate limited.*test-opus:.*rate limited/);

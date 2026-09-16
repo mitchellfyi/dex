@@ -152,6 +152,59 @@ test('retry waits for every exhausted window and cooldown on an account', () => 
   assert.match(unknown.message, /weekly quota exhausted \(reset time unknown\)/);
   assert.doesNotMatch(unknown.message, /Retry in/);
 });
+test('weekly exhaustion is a rate limit with a readable retry and missing-provider fallback advice', () => {
+  const fallback = { ...models[0], id: 'anthropic/fallback' };
+  const items = [
+    { id: 'one', provider: 'anthropic', enabled: true, model_cooldowns: { 'anthropic/a': 22000 }, usage: { observed_at: 1000, windows: [
+      { name: 'weekly', remaining_ratio: 0, resets_at: 141922000 }
+    ] } },
+    { id: 'two', provider: 'anthropic', enabled: true, usage: { observed_at: 1000, windows: [
+      { name: 'weekly', remaining_ratio: 0, resets_at: 345601000 }
+    ] } },
+    { id: 'three', provider: 'openai', enabled: true }
+  ];
+  const error = policy.unavailable(items, { models: [models[0], fallback] }, 1000);
+  assert.equal(error.status, 429);
+  assert.equal(error.type, 'rate_limit_error');
+  assert.equal(error.code, 'subscription_accounts_unavailable');
+  assert.equal(error.retryAfter, 141921);
+  assert.match(error.message, /^Subscription quota exhausted on this route\./);
+  assert.match(error.message, /Retry in 2d\./);
+  assert.match(error.message, /No OpenAI fallback is configured for this route/);
+  assert.match(error.message, /dx route configure.*--fallback openai\/<model>/);
+  assert.doesNotMatch(error.message, /141921s|temporary|server-side|reauth/);
+  const pinned = policy.unavailable(items, { models, pinned: 'one' }, 1000);
+  assert.match(pinned.message, /dx route unpin-account/);
+  assert.doesNotMatch(pinned.message, /No OpenAI fallback/);
+});
+test('quota errors retain their classification without a known reset time', () => {
+  const account = { id: 'one', provider: 'anthropic', enabled: true, usage: { observed_at: 1000, windows: [
+    { name: 'weekly', remaining_ratio: 0, resets_at: null }
+  ] } };
+  const error = policy.unavailable([account], { models: [models[0]] }, 1000);
+  assert.equal(error.status, 429);
+  assert.equal(error.type, 'rate_limit_error');
+  assert.equal(error.retryAfter, undefined);
+  assert.doesNotMatch(error.message, /Retry in/);
+});
+test('unavailable status distinguishes exhausted capacity from a recoverable provider failure', () => {
+  const limited = { id: 'one', provider: 'anthropic', enabled: true, model_cooldowns: { 'anthropic/a': 61000 } };
+  const temporary = { id: 'two', provider: 'anthropic', enabled: true, cooldown_until: 11000, cooldown_reason: 'temporary' };
+  const selected = { models: [models[0]] };
+  for (const extra of [{ ...temporary, enabled: false }, { ...temporary, status: 'reauth-required' }, { ...temporary, model_ids: [] }]) {
+    const error = policy.unavailable([limited, extra], selected, 1000);
+    assert.equal(error.status, 429);
+    assert.equal(error.type, 'rate_limit_error');
+  }
+  for (const items of [[limited, temporary], [temporary], [], [{ ...temporary, enabled: false }]]) {
+    const error = policy.unavailable(items, selected, 1000);
+    assert.equal(error.status, 503);
+    assert.equal(error.type, 'api_error');
+    assert.doesNotMatch(error.message, /^Subscription (quota|rate limit)/);
+  }
+  const error = policy.unavailable([limited], selected, 1000);
+  assert.match(error.message, /^Subscription rate limit reached on this route\./);
+});
 test('login, disabled, missing models and strict pins have actionable explanations', () => {
   const account = { id: 'one', name: 'Main\u001b[2J', provider: 'anthropic', enabled: true, status: 'reauth-required', cooldown_until: 61000 };
   let error = policy.unavailable([account], { models: [models[0]] }, 1000);

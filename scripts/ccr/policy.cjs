@@ -131,11 +131,12 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   const labels = { disabled: 'disabled', 'reauth-required': 'login needs renewal', 'model-unavailable': 'model not available on this account',
     'rate-limit': 'rate limited', temporary: 'temporary provider error', 'connection-failed': 'provider connection failed',
     'refresh-unavailable': 'login refresh temporarily unavailable', cooldown: 'cooling down' };
-  const waits = [], reasons = new Set();
+  const waits = [], reasons = new Set(), eligibleBlocks = [];
   const summaries = (selection.pinned ? selection.models.slice(0, 1) : selection.models).map(target => {
     const pool = items.filter(item => item.provider === target.provider && (!selection.pinned || item.id === selection.pinned));
     const accounts = pool.map(account => {
       const blocked = blockers(account, target, now, protocol);
+      if (!blocked.some(item => ['disabled', 'reauth-required', 'model-unavailable'].includes(item.reason))) eligibleBlocks.push(blocked);
       if (blocked.length && blocked.every(item => Number.isFinite(item.until) && item.until > now)) waits.push(Math.max(...blocked.map(item => item.until)));
       const explanation = blocked.map(item => {
         reasons.add(item.reason);
@@ -146,11 +147,18 @@ function unavailable(items, selection, now = Date.now(), protocol) {
     });
     return `${clean(target.display_name || target.id)}: ${accounts.join('; ') || (selection.pinned ? 'pinned account cannot serve this model' : `no ${target.provider} accounts registered`)}.`;
   });
+  const rateLimited = eligibleBlocks.length > 0 && eligibleBlocks.every(blocked => blocked.some(item => ['quota-exhausted', 'rate-limit'].includes(item.reason)));
   const retryAfter = waits.length ? Math.max(1, Math.ceil((Math.min(...waits) - now) / 1000)) : undefined;
   const advice = [];
-  if (retryAfter) advice.push(`Retry in ${retryAfter}s.`);
+  if (retryAfter) advice.push(`Retry in ${retryIn(now + retryAfter * 1000, now)}.`);
   if (selection.pinned) advice.push('Account pinning restricts failover. Use dx route unpin-account to restore it.');
-  else if (selection.models.length === 1) advice.push('No fallback models are configured for this route.');
+  else {
+    if (selection.models.length === 1) advice.push('No fallback models are configured for this route.');
+    const otherProviders = new Set(items.filter(item => item.enabled && !selection.models.some(target => target.provider === item.provider)).map(item => item.provider));
+    for (const provider of otherProviders) {
+      advice.push(`No ${{ anthropic: 'Anthropic', openai: 'OpenAI' }[provider] || clean(provider)} fallback is configured for this route. Add one with dx route configure ... --fallback ${clean(provider)}/<model>.`);
+    }
+  }
   if (protocol && !selection.models.some(target => NATIVE_PROTOCOL[target.provider] === protocol)) {
     const provider = Object.keys(NATIVE_PROTOCOL).find(name => NATIVE_PROTOCOL[name] === protocol);
     advice.push(`Every model on this route needs CCR ${protocol} conversion. Add a ${provider} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>${protocol === 'responses' ? ', or pick one in Codex with /model' : ''}.`);
@@ -158,7 +166,10 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   if (reasons.has('reauth-required')) advice.push('Renew the affected login with dx account reauth <name>.');
   if (reasons.has('disabled')) advice.push('Enable an account with dx account enable <name>.');
   advice.push('Inspect dx accounts --live or select another model with dx route use.');
-  return Object.assign(new Error([...summaries, ...advice].join(' ')), { code: 'subscription_accounts_unavailable', retryAfter });
+  const headline = rateLimited ? [`Subscription ${reasons.has('quota-exhausted') ? 'quota exhausted' : 'rate limit reached'} on this route.`] : [];
+  return Object.assign(new Error([...headline, ...summaries, ...advice].join(' ')), {
+    code: 'subscription_accounts_unavailable', status: rateLimited ? 429 : 503, type: rateLimited ? 'rate_limit_error' : 'api_error', retryAfter
+  });
 }
 
 function failure(status, payload = {}, headers = {}, now = Date.now()) {

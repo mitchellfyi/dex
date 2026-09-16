@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const { spawn } = require('node:child_process');
 const state = require('../scripts/ccr/state.cjs');
 const { RouterService } = require('../scripts/ccr/service.cjs');
 let directory, server, service, endpoint, calls, reply, refreshes;
@@ -132,7 +133,7 @@ test('an exhausted launch route can move to a smaller context model without a re
   endpoint = endpoint.replace('/messages', '/responses');
   const input = [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }];
   let response = await send(token, { input });
-  assert.equal(response.status, 503);
+  assert.equal(response.status, 429);
   assert.match((await response.json()).error.message, /needs CCR responses conversion.*dx route use openai\/<model>/);
   // 1. Codex /model picks the smaller OpenAI model by its upstream name.
   response = await send(token, { model: 'small', input });
@@ -194,7 +195,7 @@ test('a completed lifecycle keeps serving requests on its complete route', async
 test('failover events keep a cleaned provider explanation', async () => {
   const token = await register();
   reply = () => new Response(JSON.stringify({ error: { type: 'rate_limit_error', message: `Retry\u001b[2J later ${'x'.repeat(300)}` } }), { status: 429, headers: { 'retry-after': '60' } });
-  assert.equal((await send(token)).status, 503);
+  assert.equal((await send(token)).status, 429);
   const events = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).filter(event => event.type === 'account.failover');
   assert.equal(events.length, 2);
   assert.equal(events[0].data.protocol, 'messages');
@@ -234,6 +235,38 @@ test('rejected request does not rotate accounts or mark their quota exhausted', 
   const token = await register(); reply = () => new Response('{"error":{"type":"invalid_request_error"}}', { status: 400 });
   assert.equal((await send(token)).status, 400); assert.equal(calls.length, 1); assert.ok(state.accounts().every(account => !account.cooldown_until));
 });
+for (const wrapped of [false, true]) test(`request rejection exposes safe provider fields (${wrapped ? 'CCR wrapper' : 'direct'})`, async () => {
+  const token = await register('rejected', { model: 'openai/test' });
+  const error = { type: 'invalid_request_error', code: 'array_above_max_length', param: 'input[1].content', message: 'private prompt details and credentials' };
+  reply = () => Response.json(wrapped ? { error: { message: 'Gateway failure', attempts: [{ status: 400, stage: 'upstream_response', details: { error } }] } } : { error }, { status: 400 });
+  const response = await send(token);
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.match(body.error.message, /openai\/test.*array_above_max_length at input\[1\].content/);
+  assert.equal(body.error.code, 'provider_request_rejected');
+  assert.deepEqual(body.error.provider_error, { type: error.type, code: error.code, param: error.param });
+  const journal = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8');
+  assert.doesNotMatch(JSON.stringify(body) + journal, /private prompt|credentials/);
+  const event = journal.trim().split('\n').map(JSON.parse).find(event => event.type === 'router.request_rejected');
+  assert.equal(event.data.model, 'openai/test');
+  assert.deepEqual(event.data.provider_error, body.error.provider_error);
+  assert.equal(calls.length, 1);
+  assert.ok(state.accounts().every(account => !account.cooldown_until && !account.model_cooldowns));
+});
+test('rejection diagnostics exclude malformed error fields and terminal controls', async () => {
+  const token = await register();
+  reply = () => Response.json({ error: { type: 'private\ntext', code: 'secret=value', param: 'input["private text"]' } }, { status: 400 });
+  const body = await (await send(token)).json();
+  assert.deepEqual(body.error.provider_error, { type: null, code: null, param: null });
+  assert.doesNotMatch(JSON.stringify(body), /private|secret/);
+});
+for (const protocol of ['messages', 'responses']) for (const model of ['anthropic/test', 'openai/test']) test(`${protocol} carries configured effort through routing to ${model}`, async () => {
+  endpoint = endpoint.replace('/messages', `/${protocol}`);
+  const config = state.config(); config.phases[0] = { model, effort: 'xhigh' }; state.write(state.stateFile('config'), config);
+  const token = await register();
+  assert.equal((await send(token, { input: 'hello', output_config: { effort: 'high' }, reasoning: { effort: 'high' } })).status, 200);
+  assert.equal(calls[0][protocol === 'messages' ? 'output_config' : 'reasoning'].effort, 'xhigh');
+});
 test('401 refreshes once before moving to another account', async () => {
   const token = await register(); reply = () => new Response('{}', { status: calls.length <= 2 ? 401 : 200 });
   assert.equal((await send(token)).status, 200);
@@ -243,16 +276,62 @@ test('401 refreshes once before moving to another account', async () => {
 test('all exhausted accounts preserve route state without claiming a successful response', async () => {
   const token = await register(); reply = () => new Response('{}', { status: 429, headers: { 'retry-after': '60' } });
   const response = await send(token);
-  assert.equal(response.status, 503); assert.equal(calls.length, 2);
+  assert.equal(response.status, 429); assert.equal(calls.length, 2);
   assert.ok(Number(response.headers.get('retry-after')) > 0);
   const error = (await response.json()).error;
   assert.equal(error.retry_after_seconds, Number(response.headers.get('retry-after')));
   assert.equal(error.code, 'subscription_accounts_unavailable');
+  assert.equal(error.type, 'rate_limit_error');
   assert.match(error.message, /one: rate limited/);
   assert.match(error.message, /two: rate limited/);
   assert.doesNotMatch(error.message, /reauth/);
-  assert.equal((await send(token)).status, 503); assert.equal(calls.length, 2, 'retries during cooldown do not call the provider');
+  assert.equal((await send(token)).status, 429); assert.equal(calls.length, 2, 'retries during cooldown do not call the provider');
   const session = state.read(state.sessionFile('session')); assert.equal(session.active, true); assert.equal(session.paused_reason, 'no-completed-response');
+});
+for (const protocol of ['messages', 'responses']) test(`${protocol} reports weekly quota exhaustion without a server-error status`, async () => {
+  const config = state.config(); config.models.push({ ...config.models[0], id: 'anthropic/fallback' });
+  config.phases[0] = { model: 'anthropic/test', fallbacks: ['anthropic/fallback'] }; state.write(state.stateFile('config'), config);
+  const token = await register(); endpoint = endpoint.replace('/messages', `/${protocol}`);
+  state.saveAccounts(state.accounts().map(account => account.provider === 'anthropic' ? { ...account, usage: { observed_at: Date.now(), windows: [
+    { name: 'weekly', remaining_ratio: 0, resets_at: Date.now() + 141921000 }
+  ] }, model_cooldowns: { 'anthropic/test': Date.now() + 30000 } } : account));
+  const response = await send(token, protocol === 'responses' ? { input: 'hello' } : {});
+  assert.equal(response.status, 429);
+  assert.equal(calls.length, 0, 'known exhaustion does not call the provider');
+  const error = (await response.json()).error;
+  assert.equal(error.type, 'rate_limit_error');
+  assert.equal(error.code, 'subscription_accounts_unavailable');
+  assert.equal(error.retry_after_seconds, Number(response.headers.get('retry-after')));
+  assert.ok(error.retry_after_seconds > 141900 && error.retry_after_seconds <= 141921);
+  assert.match(error.message, /^Subscription quota exhausted on this route\./);
+  assert.match(error.message, /Retry in 2d\./);
+  assert.match(error.message, /No OpenAI fallback is configured/);
+});
+test('native Claude displays quota exhaustion without temporary-server-error advice', { skip: process.env.DEX_CCR_NATIVE_CLAUDE !== '1', timeout: 45000 }, async () => {
+  const token = await register();
+  state.saveAccounts(state.accounts().map(account => account.provider === 'anthropic' ? { ...account, usage: { observed_at: Date.now(), windows: [
+    { name: 'weekly', remaining_ratio: 0, resets_at: Date.now() + 141921000 }
+  ] } } : account));
+  const nativeHome = state.privateDir(path.join(directory, 'native-claude'));
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_CONFIG_DIR: nativeHome,
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CODE_MAX_RETRIES: '0', DEX_SESSION_ONLY: '1',
+    ANTHROPIC_BASE_URL: new URL(endpoint).origin, ANTHROPIC_AUTH_TOKEN: token, TERM: 'dumb' };
+  const child = spawn('claude', ['-p', 'hello', '--model', 'dex/active', '--output-format', 'json', '--no-session-persistence',
+    '--setting-sources', 'user', '--settings', '{"disableAllHooks":true}', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+    '--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions'], { cwd: nativeHome, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+  let output = '', errors = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { errors += chunk; });
+  const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+  assert.equal(code, 1, `${output}\n${errors}`);
+  const result = JSON.parse(output);
+  assert.equal(result.is_error, true);
+  assert.equal(result.api_error_status, 429);
+  assert.match(result.result, /Subscription quota exhausted on this route/);
+  assert.match(result.result, /Retry in 2d/);
+  assert.match(result.result, /No OpenAI fallback is configured/);
+  assert.doesNotMatch(result.result, /server-side issue|try again in a moment|usually temporary/);
+  assert.equal(calls.length, 0);
 });
 for (const protocol of ['messages', 'responses']) for (const errorStatus of [429, 503, 529]) test(`${protocol} uses another model after both primary accounts return ${errorStatus}`, async () => {
   const config = state.config(); config.models.push({ ...config.models[0], id: 'anthropic/fallback' });

@@ -22,6 +22,23 @@ function providerError(payload) {
   return { type: clean(error.type), message: clean(error.message) };
 }
 
+function upstreamError(payload, status) {
+  const attempts = payload?.error?.attempts;
+  if (Array.isArray(attempts) && attempts.length === 1 && attempts[0]?.status === status && attempts[0]?.stage === 'upstream_response') {
+    return attempts[0]?.details?.error;
+  }
+  return payload?.error;
+}
+
+function rejectionDetails(payload, status) {
+  const error = upstreamError(payload, status);
+  const identifier = value => typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,99}$/.test(value) ? value : null;
+  return {
+    type: identifier(error?.type), code: identifier(error?.code),
+    param: typeof error?.param === 'string' && /^[A-Za-z_][A-Za-z0-9_.\[\]]{0,159}$/.test(error.param) ? error.param : null
+  };
+}
+
 function processIdentity(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return '';
   const result = spawnSync('bash', [path.resolve(__dirname, '../../bin/router-runtime.sh'), 'identity', String(pid)], { encoding: 'utf8', timeout: 3000, env: { ...process.env, DEX_DIR: path.resolve(__dirname, '../..') } });
@@ -258,7 +275,7 @@ class RouterService {
             const next = structuredClone(body);
             next.model = `dex-${choice.model.provider}/${choice.model.upstream_id || choice.model.id.split('/')[1]}`;
             if (choice.effort) {
-              if (choice.model.provider === 'anthropic' && protocol === 'messages') next.output_config = { ...next.output_config, effort: choice.effort };
+              if (protocol === 'messages') next.output_config = { ...next.output_config, effort: choice.effort };
               else next.reasoning = { effort: choice.effort };
             }
             upstream = await this.fetch(`${this.gateway}/v1/${protocol}`, { method: 'POST', headers, body: JSON.stringify(next), redirect: 'error', signal: controller.signal });
@@ -278,10 +295,7 @@ class RouterService {
             this.tickets.delete(ticket);
             let payload; try { payload = JSON.parse(bytes); } catch { payload = {}; }
             // CCR wraps the upstream error in its single-provider attempt record.
-            const attempts = payload?.error?.attempts;
-            const contextExceeded = payload?.error?.code === 'context_length_exceeded'
-              || (Array.isArray(attempts) && attempts.length === 1 && attempts[0]?.status === 400
-                && attempts[0]?.stage === 'upstream_response' && attempts[0]?.details?.error?.code === 'context_length_exceeded');
+            const contextExceeded = upstreamError(payload, upstream.status)?.code === 'context_length_exceeded';
             if (upstream.status === 400 && contextExceeded) {
               ipc.json(response, 400, { error: { type: 'invalid_request_error', code: 'context_length_exceeded',
                 message: 'The conversation exceeds the selected model\'s context window. Compact it with /compact or select a model with a larger context window.', provider_status: 400 } });
@@ -292,7 +306,16 @@ class RouterService {
               try { credentials = await this.broker.access(choice.account, true); continue; }
               catch (error) { if (!error.reauth) problem = { retry: true, reason: 'refresh-unavailable', until: Date.now() + 10000 }; }
             }
-            if (!problem.retry) { ipc.json(response, upstream.status, { error: { type: 'invalid_request_error', message: 'The provider rejected this request. Check the selected model and supported content.', provider_status: upstream.status } }); return; }
+            if (!problem.retry) {
+              const detail = rejectionDetails(payload, upstream.status);
+              const reason = detail.code || detail.type;
+              const message = `${choice.model.id} rejected this request (HTTP ${upstream.status}${reason ? `; ${reason}` : ''}${detail.param ? ` at ${detail.param}` : ''}).`;
+              event(session, 'router.request_rejected', { account_id: account.id, model: choice.model.id, protocol,
+                provider_status: upstream.status, provider_error: detail });
+              ipc.json(response, upstream.status, { error: { type: 'invalid_request_error', code: 'provider_request_rejected',
+                message, provider_status: upstream.status, provider_error: detail } });
+              return;
+            }
             await this.markUnavailable(account.id, cooldownKey, problem);
             event(session, 'account.failover', { account_id: account.id, model: choice.model.id, protocol, reason: problem.reason,
               provider_status: upstream.status, provider_error: providerError(payload), scope: problem.modelOnly ? 'model' : 'account', retry_at: problem.until || null });
@@ -322,7 +345,8 @@ class RouterService {
       }
       if (!response.headersSent && !response.destroyed) {
         if (error.retryAfter) response.setHeader('retry-after', String(error.retryAfter));
-        ipc.json(response, session ? 503 : 401, { error: { type: 'api_error', message: error.message,
+        const unavailable = error.code === 'subscription_accounts_unavailable';
+        ipc.json(response, session ? (unavailable ? error.status : 503) : 401, { error: { type: unavailable ? error.type : 'api_error', message: error.message,
           ...(error.code === 'subscription_accounts_unavailable' ? { code: error.code } : {}),
           ...(error.retryAfter ? { retry_after_seconds: error.retryAfter } : {}) } });
       }

@@ -334,11 +334,29 @@ times and login failures do not get an invented countdown. Reauthentication is
 suggested only for a login failure. The account table also names models in
 cooldown and shows short waits in seconds.
 
+When quota or rate limits block every otherwise eligible account, Dex returns
+HTTP 429 with a `rate_limit_error`, so Claude Code does not append its generic
+temporary-server-error advice. The message shows a readable wait, such as `2d`,
+while `Retry-After` retains the exact number of seconds. It also names registered
+providers missing from the route's fallback chain. Temporary provider and
+connection failures still return HTTP 503.
+
 An authentication rejection permits one refresh before account failover.
 Rate limits and temporary server errors can fail over before response delivery.
 Bad or forbidden requests do not rotate accounts. Unsupported cross-provider
 content, such as document or tool-reference blocks, is rejected rather than
 silently discarded.
+
+When a Claude conversation falls back to OpenAI, Dex preserves plaintext
+thinking as reasoning summaries and removes CCR's generated reasoning item IDs.
+This lets existing conversations continue through the stateless Responses
+endpoint. Native OpenAI reasoning and encrypted content keep their original fields.
+Configured effort is applied in the client's request format before CCR converts
+it for the selected provider.
+
+Request rejections identify the model, HTTP status, and any provider error code
+and field path. Dex records those fields in `router.request_rejected` events;
+provider messages and request bodies are excluded from those diagnostics.
 
 Once delivery starts, Dex never replays that response on another account. A
 broken stream may require user continuation. A retry before delivery also
