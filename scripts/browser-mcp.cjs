@@ -15,14 +15,24 @@ function command(name, args = [], env = process.env) {
   const executable = playwright(env).chromium.executablePath();
   if (!fs.existsSync(executable)) throw new Error('Chromium is missing. Run dx ui-capture install.');
   const options = name === 'playwright' ? ['--executable-path', executable] : ['--executablePath', executable];
+  if (!args.some(arg => /^--(?:isolated|user-data-dir|userDataDir|cdp-endpoint|browserUrl)(?:=|$)/.test(arg))) options.push('--isolated');
   if (process.platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) options.push('--headless');
   return ['npx', '-y', packages[name], ...options, ...args];
 }
 function run(argv) {
-  const child = spawn(argv[0], argv.slice(1), { stdio: 'inherit' });
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => child.kill(signal));
+  const grouped = process.platform !== 'win32';
+  const child = spawn(argv[0], argv.slice(1), { stdio: 'inherit', detached: grouped });
+  const listeners = new Map(['SIGINT', 'SIGTERM', 'SIGHUP'].map(signal => [signal, () => {
+    if (!child.pid) return;
+    try { if (grouped) process.kill(-child.pid, signal); else child.kill(signal); }
+    catch { /* The MCP may have already exited. */ }
+  }]));
+  for (const [signal, listener] of listeners) process.on(signal, listener);
   child.on('error', () => { console.error('Could not start browser MCP. Check Node.js and npx.'); process.exitCode = 1; });
-  child.on('exit', code => { process.exitCode = code ?? 1; });
+  child.on('close', code => {
+    for (const [signal, listener] of listeners) process.removeListener(signal, listener);
+    process.exitCode = code ?? 1;
+  });
   return child;
 }
 if (require.main === module) {

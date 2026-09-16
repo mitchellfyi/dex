@@ -634,7 +634,10 @@ const { command } = require(process.argv[2]);
 for (const name of ['playwright', 'chrome-devtools']) {
   const args = command(name, [], { DX_TOOL_DIR: process.env.DX_TOOL_DIR });
   assert.ok(args.includes(executable));
+  assert.ok(args.includes('--isolated'));
   assert.equal(args.includes('--headless'), process.platform === 'linux');
+  const profileOption = name === 'playwright' ? '--user-data-dir' : '--userDataDir';
+  assert.ok(!command(name, [profileOption, '/fake/custom-profile']).includes('--isolated'));
 }
 fs.unlinkSync(executable);
 assert.throws(() => command('playwright'), /Chromium is missing/);
