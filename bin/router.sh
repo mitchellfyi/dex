@@ -18,7 +18,10 @@ Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disab
        dx route configure <provider/model> [--phase <0-6|name>|--client <claude|codex>] [--fallback <model>] [--effort <effort>]
        dx route <status|use <model|auto>|pin-account <name>|unpin-account> [--session <id>]
        dx route use <provider/model> [--scope <phase|session>]
-       dx route policy
+        dx route policy
+        dx context doctor [--session <id>] [--transcript <jsonl>] [--json]
+        dx context refresh
+        dx context budget <tokens>
 
 CCR is optional. It uses subscription OAuth accounts and a private local gateway.
 Router setup and enable select ccr-subscription as the global Dex default.
@@ -30,6 +33,8 @@ Direct Claude and Codex profiles work without CCR or its Node dependencies.
 Use --json for machine-readable output. Removing an account requires --yes outside a terminal.
 Use dx accounts --live (or --watch) to update the table in place every 30 seconds.
 Press Ctrl+C to exit the live view. Live mode requires a terminal and cannot use --json.
+Context refresh reads provider defaults and maxima without restarting the gateway.
+Budget changes apply to new client launches. Doctor reads saved sessions and compact history.
 EOF
 }
 

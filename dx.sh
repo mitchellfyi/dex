@@ -86,7 +86,7 @@ __dx_cli() {
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
     provider)  dx_provider_command "$@" ;;
     setup)     bash "$DEX_DIR/bin/setup.sh" "$@" ;;
-    router|account|accounts|model|route) bash "$DEX_DIR/bin/router.sh" "$cmd" "$@" ;;
+    router|account|accounts|model|route|context) bash "$DEX_DIR/bin/router.sh" "$cmd" "$@" ;;
     run)       __dx_run_spec_cli "$@" ;;
     control)   bash "$DEX_DIR/bin/control.sh" "$@" ;;
     sessions)  bash "$DEX_DIR/bin/sessions.sh" "$@" ;;
@@ -171,6 +171,7 @@ __dx_cli() {
       echo "  dx model list       List models available to registered accounts"
       echo "  dx router setup     Add optional CCR account pools and model routing"
       echo "  dx route            Inspect or change a running session's model"
+      echo "  dx context          Inspect context budgets and compaction; refresh model limits"
       echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
       echo "  dx run --spec-url URL --run-token TOKEN"
       echo "  dx control          Pause, stop, advance, jump, or resume the current lifecycle"
@@ -3852,7 +3853,7 @@ unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/nul
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
     test config provider run control sessions ui-capture research install uninstall uninit status \
-    reload help revert log triage refine setup account accounts model route router
+    reload help revert log triage refine setup account accounts model route router context
 }
 
 # Prints the nearest command within two edits, or nothing.
@@ -4078,7 +4079,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$dx_command_input" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|context|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;

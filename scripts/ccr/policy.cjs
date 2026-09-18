@@ -54,8 +54,16 @@ function route(config, session) {
   return { phase: current, models, effort: choice.effort ?? configured.effort, pinned: session.pinned_account };
 }
 
-// The smallest window across the configured route, handed to the client at
-// launch as its compaction budget. Later route changes may select a smaller model.
+function modelCapacity(target) {
+  const maximum = target.max_context_window;
+  if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < target.context_window || maximum > 4000000)) {
+    throw new Error(`Invalid maximum context window for ${target.id}. Refresh model metadata.`);
+  }
+  return maximum ?? target.context_window;
+}
+
+// The client default is not the provider maximum. Legacy entries remain bounded
+// by their recorded window until discovery supplies an advertised maximum.
 function contextLimit(config, client) {
   const clientRoute = client && config.client_routes?.[client];
   const choices = clientRoute
@@ -63,7 +71,13 @@ function contextLimit(config, client) {
     : Object.values(config.phases).flatMap(value => [value.model, ...(value.fallbacks || [])]);
   if (!clientRoute && config.default_model) choices.push(config.default_model);
   if (!choices.length) throw new Error('Choose a default model with dx route configure.');
-  return Math.min(...choices.map(id => model(config, id).context_window));
+  const targets = choices.map(id => model(config, id));
+  const budget = config.context_budget;
+  if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < 8192 || budget > 4000000)) throw new Error('Context budget must be an integer between 8192 and 4000000 tokens.');
+  for (const target of targets) {
+    if (budget !== undefined && budget > modelCapacity(target)) throw new Error(`Context budget ${budget} exceeds ${target.id}'s advertised capacity ${modelCapacity(target)}. Refresh metadata or remove this model from the route.`);
+  }
+  return Math.min(budget ?? 800000, ...targets.map(modelCapacity));
 }
 
 function usageWindows(account, target, now) {
@@ -220,4 +234,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, phase, route, contextLimit, affinityKey, cooldownKey, candidates, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, blockers, retryIn, unavailable, failure, validateRequest };

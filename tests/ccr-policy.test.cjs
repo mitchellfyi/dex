@@ -43,6 +43,18 @@ test('phase files accept the terminal marker and reject anything else', () => {
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 test('context budget includes fallback models', () => assert.equal(policy.contextLimit(config), 128000));
+test('long-context routes distinguish advertised maximum from client default and use an explicit budget', () => {
+  const long = { default_model: 'anthropic/a', context_budget: 800000, phases: { 0: { model: 'anthropic/a', fallbacks: ['openai/b'] } }, models: [
+    { ...models[0], context_window: 1000000, max_context_window: 1000000 },
+    { ...models[1], context_window: 272000, max_context_window: 872000 }
+  ] };
+  assert.equal(policy.contextLimit(long), 800000);
+  assert.equal(policy.contextLimit({ ...long, context_budget: undefined }), 800000);
+  for (const context_budget of [0, -1, '800000', 8000, 872001, 5000000]) {
+    assert.throws(() => policy.contextLimit({ ...long, context_budget }), /context|budget/i);
+  }
+  assert.throws(() => policy.contextLimit({ ...long, models: [long.models[0], models[1]] }), /openai\/b/);
+});
 test('a smaller context model can join a running session without treating JSON bytes as tokens', () => {
   // The session was launched at a 200k budget; the phase route and an override both bring in a 128k model.
   assert.deepEqual(policy.route(config, { fixed_phase: 2, context_limit: 200000 }).models.map(x => x.id), ['openai/b', 'anthropic/a']);

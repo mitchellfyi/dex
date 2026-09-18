@@ -56,12 +56,18 @@ class CodexCatalog {
     return models;
   }
   async models({ session, selected, accounts, version }) {
-    const context = Math.min(session.context_limit, ...selected.models.map(model => model.context_window));
+    const context = Math.min(session.context_limit, ...selected.models.map(policy.modelCapacity));
     const target = selected.models.find(item => item.provider === 'openai');
     let upstream = [];
     if (target && VERSION.test(version || '')) {
-      const account = policy.candidates(accounts, { models: [target], pinned: selected.pinned }, session, Date.now(), 'responses')[0]?.account;
-      if (account) upstream = await this.upstream(account, version);
+      // Catalogue access does not consume inference quota. An exhausted account
+      // can still supply the model's instructions, tools and context metadata.
+      const eligible = accounts.filter(account => account.enabled && account.provider === 'openai' && account.status !== 'reauth-required')
+        .sort((a, b) => (a.rank || Number.MAX_SAFE_INTEGER) - (b.rank || Number.MAX_SAFE_INTEGER));
+      for (const account of eligible) {
+        upstream = await this.upstream(account, version);
+        if (upstream.length) break;
+      }
     }
     const match = target && upstream.find(item => item.slug === (target.upstream_id || target.id.split('/')[1]));
     return { models: [alias(match || template(context), context), ...upstream.filter(item => item.slug !== ALIAS)] };

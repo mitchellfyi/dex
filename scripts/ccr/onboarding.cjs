@@ -114,10 +114,14 @@ function catalogue(provider, payload) {
   return entries.map(item => {
     const name = item.id || item.slug;
     if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:+-]*$/.test(name)) return null;
-    const context = item.max_input_tokens || item.context_window || item.context_length;
+    const validWindow = value => Number.isSafeInteger(value) && value >= 8192 && value <= 4000000;
+    const context = [item.max_input_tokens, item.context_window, item.context_length].find(validWindow);
+    const maximum = validWindow(item.max_context_window) && item.max_context_window >= (context || 64000) ? item.max_context_window : context || 64000;
     return { id: `${provider}/${name}`, upstream_id: name, provider, display_name: item.display_name || name,
-      context_window: Number.isInteger(context) && context >= 8192 ? context : 64000,
-      context_source: Number.isInteger(context) ? 'provider' : 'conservative-default',
+      context_window: context || 64000, default_context_window: context || 64000, max_context_window: maximum,
+      ...(Number.isSafeInteger(item.max_output_tokens || item.max_tokens) && (item.max_output_tokens || item.max_tokens) > 0
+        ? { max_output_tokens: item.max_output_tokens || item.max_tokens } : {}),
+      context_source: context ? 'provider' : 'conservative-default',
       capabilities: { tools: true, images: provider === 'anthropic' || item.input_modalities?.includes('image') === true },
       efforts: item.supported_reasoning_levels?.map(level => level.reasoning_effort || level.effort).filter(Boolean) || [], observed_at: Date.now() };
   }).filter(Boolean);

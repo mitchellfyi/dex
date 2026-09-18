@@ -405,6 +405,7 @@ registration once an account exists; use `dx account add` to grow the pool.
 dx model list                           # Available provider/model IDs
 dx route policy                         # Default model and routes for each phase
 dx router status                        # Router health and account/model counts
+dx context doctor --session <session-id> # Launch budget, model maxima and compaction evidence
 ```
 
 The model chosen during setup initially serves all seven lifecycle phases.
@@ -426,9 +427,12 @@ dx 1234                                 # Launch the usual Dex lifecycle with th
 ```
 
 Cross-provider fallback requires an explicit `--fallback` route. A lifecycle's
-compaction budget is fixed at launch from the smallest model on its route, but
-smaller models can still be added or selected while it runs; compact first if
-the conversation has outgrown them.
+compaction budget is fixed at launch using the advertised model maxima and its
+operating budget (800K by default). `dx context refresh` updates existing model
+metadata; `dx context budget 800000` validates an explicit common budget. New
+launches pick up changes. A smaller automatic fallback cannot silently lower an
+explicit budget. For a manual model switch, compact first if the conversation
+has outgrown that model.
 See [subscription routing](docs/subscription-routing.md) for account pins,
 changes during a session, quota recovery and compatibility limits. The
 integration is experimental; live subscription access depends on provider

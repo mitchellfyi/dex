@@ -120,6 +120,20 @@ test('Codex reads a catalogue that mirrors the routed OpenAI model under the dex
   assert.deepEqual(body.data.map(item => item.id), ['anthropic/test', 'openai/test']);
   assert.equal((await catalogue('?client_version=0.154.0', 'not-a-session')).status, 401);
 });
+test('quota exhaustion does not hide Codex metadata or reduce the configured long-context budget', async () => {
+  const config = state.config(); config.context_budget = 800000;
+  config.models = config.models.map(model => ({ ...model, context_window: model.provider === 'openai' ? 272000 : 1000000, max_context_window: model.provider === 'openai' ? 872000 : 1000000 }));
+  config.phases[0] = { model: 'openai/test', fallbacks: ['anthropic/test'] }; state.write(state.stateFile('config'), config);
+  state.saveAccounts(state.accounts().map(account => account.provider === 'openai' ? { ...account, usage: { observed_at: Date.now(), windows: [{ remaining_ratio: 0, name: 'weekly', resets_at: Date.now() + 86400000 }] } } : account));
+  const token = await register('long-context');
+  service.fetch = async () => Response.json({ models: [{ slug: 'test', context_window: 272000, max_context_window: 872000, model_messages: { instructions_template: 'Native Codex instructions' } }] });
+  const result = await fetch(endpoint.replace('/v1/messages', '/v1/models?client_version=0.155.0'), { headers: { authorization: `Bearer ${token}` } });
+  const body = await result.json();
+  assert.equal(body.models[0].context_window, 800000);
+  assert.equal(body.models[0].auto_compact_token_limit, 640000);
+  assert.equal(body.models[0].model_messages.instructions_template, 'Native Codex instructions');
+  assert.equal(body.models[1].max_context_window, 872000);
+});
 
 test('an exhausted launch route can move to a smaller context model without a restart', async () => {
   const config = state.config(); config.native = { enabled: true };

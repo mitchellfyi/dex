@@ -354,13 +354,35 @@ If discovery is unavailable, register a model supported by your subscription:
 dx model add openai/<model-id> --context 128000 --tools --images
 ```
 
-Only include `--images` when supported. Discovery records the provider's context
-window when available; otherwise it labels a conservative 64,000-token budget.
+Only include `--images` when supported. Discovery records the provider's default
+and maximum context windows separately; otherwise it labels a conservative 64,000-token budget.
 You can replace that budget with an explicit supported value. When account
 discovery succeeds, selection uses that account's returned model list.
 
-Dex gives each native client the smallest context window across its configured
-route and fallbacks. Dex sets Claude’s compaction threshold to 80% and Codex’s
+The Codex subscription catalogue can advertise a 272,000-token default and an
+872,000-token maximum for the same model. The default is not its capacity limit,
+and public API specifications can differ from the subscription endpoint.
+Dex uses advertised maxima when available, capped at an 800,000-token operating
+budget by default. Legacy entries keep their recorded limit until refreshed.
+An explicit budget must fit every model on the configured routes; adding a
+smaller fallback is rejected rather than silently shrinking it.
+
+```sh
+dx context refresh                 # Refresh existing models' metadata; no gateway restart
+dx context budget 800000           # Validate and save the common operating budget
+dx context doctor --session <id>   # Inspect launch budgets and compaction evidence
+dx context doctor --session <id> --json
+```
+
+Refresh preserves manual model limits and does not add models or modify account
+eligibility. `dx model list` shows both defaults and maxima. Metadata remains
+available from an authenticated OpenAI account even when inference quota is
+exhausted. `dx context doctor` can inspect stopped sessions and reports compact
+before/after counts, the first subsequent real input count, tool/schema size,
+and restored skill/instruction size without printing prompt or credential text.
+Use `--transcript <jsonl>` to inspect an explicitly selected owned transcript.
+
+Dex sets Claude’s compaction threshold to 80% and Codex’s
 auto-compaction limit to 80% of that budget, leaving room for tool output and
 the compaction request itself. Earlier personal thresholds are retained. Route configuration and model catalogue changes refresh
 the installed context settings while preserving model choices and any earlier
@@ -377,8 +399,12 @@ if the conversation is already too large for it.
 Providers determine whether input fits their token limit. Dex preserves the
 OpenAI `context_length_exceeded` error code and Claude’s `prompt is too long`
 signal so native recovery can run. It limits HTTP requests to 32 MiB;
-it does not infer token counts from JSON size. For manual recovery, submit
-`/compact` on its own, wait for it to finish, then send `continue`.
+it does not infer token counts from JSON size. For an ordinary full window,
+submit `/compact` on its own and wait for it to finish. If compaction thrashes,
+use `dx context doctor` instead of repeating it: a large fixed tool/instruction
+load can refill the window immediately. Correct the budget and loaded tools,
+then resume the existing conversation in a new client. A larger upstream model
+does not expand an already-running client's launch budget automatically.
 
 ## Switching in one session
 

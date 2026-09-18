@@ -400,6 +400,18 @@ test('model catalogue preserves unknown context provenance and modality', () => 
   assert.equal(models[0].capabilities.images, true); assert.equal(models[0].context_source, 'provider');
   assert.equal(models[1].context_source, 'conservative-default');
 });
+test('discovery preserves default and maximum subscription windows without inventing larger limits', () => {
+  const [model] = onboarding.catalogue('openai', { models: [{ slug: 'test', context_window: 272000, max_context_window: 872000 }] });
+  assert.equal(model.context_window, 272000);
+  assert.equal(model.default_context_window, 272000);
+  assert.equal(model.max_context_window, 872000);
+  for (const maximum of [null, -1, '872000', 1000, 5000000, 128000]) {
+    assert.equal(onboarding.catalogue('openai', { models: [{ slug: 'test', context_window: 272000, max_context_window: maximum }] })[0].max_context_window, 272000);
+  }
+  const [claude] = onboarding.catalogue('anthropic', { data: [{ id: 'claude-test', max_input_tokens: 1000000, max_tokens: 128000 }] });
+  assert.equal(claude.max_context_window, 1000000);
+  assert.equal(claude.max_output_tokens, 128000);
+});
 test('explicit discovery refreshes account eligibility as well as the shared catalogue', async t => {
   state.saveAccounts([{ id: 'one', name: 'Main', provider: 'openai', enabled: true, model_ids: ['openai/old'] }]);
   const models = onboarding.catalogue('openai', { models: [{ slug: 'new', context_window: 128000 }] });

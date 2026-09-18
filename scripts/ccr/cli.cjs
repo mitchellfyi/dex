@@ -16,7 +16,7 @@ const out = value => process.stdout.write(`${clean(value)}\n`);
 const info = value => process.stderr.write(`dex: ${clean(value)}\n`);
 function parse(args) {
   const result = { positional: [], fallback: [] };
-  const values = new Set(['name', 'context', 'session', 'scope', 'phase', 'client', 'effort', 'fallback']);
+  const values = new Set(['name', 'context', 'session', 'scope', 'phase', 'client', 'effort', 'fallback', 'transcript']);
   const switches = new Set(['json', 'yes', 'device', 'watch', 'tools', 'images']);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -43,6 +43,21 @@ const details = rows => showTable(['Field', 'Value'], rows);
 const capability = value => typeof value === 'boolean' ? value ? 'yes' : 'no' : 'unknown';
 function render(group, action, value, options) {
   if (options.json || typeof value === 'string') { display(value, options.json); return; }
+  if (group === 'context' && value.configured_budget) {
+    details([['Session', value.session || 'configuration'], ['Configured context', value.configured_budget], ['Launch context', value.launch_budget || 'no session selected'],
+      ['Actual model', value.current_model || 'not recorded'], ['New launch needed', value.restart_required ? 'yes' : 'no']]);
+    showTable(['Model', 'Default', 'Maximum', 'Source'], value.models.map(model => [model.id, model.default, model.maximum, model.source]), { rightAlign: [1, 2] });
+    if (value.last_request) details(Object.entries(value.last_request));
+    if (value.transcript) {
+      const trace = value.transcript;
+      details([['Tools in snapshot', trace.tool_count], ['Tool schema bytes', trace.tool_schema_bytes], ['Restored skill characters', trace.restored_skill_characters],
+        ['Restored instruction characters', trace.restored_instruction_characters], ['Thrashing recorded', trace.thrashing ? 'yes' : 'no']]);
+      showTable(['Compacted at', 'Before', 'Summary/retained', 'Next actual input'], trace.compactions.slice(-6).map(item => [item.timestamp || '-', item.pre_tokens, item.post_tokens, item.next_input_tokens ?? '-']), { rightAlign: [1, 2, 3] });
+    }
+    if (value.transcript_error) out(value.transcript_error);
+    for (const advice of value.advice) out(advice);
+    return;
+  }
   if (value?.session && value.route) {
     const session = value.session; const account = state.accounts().find(item => item.id === session.current_account);
     const rows = [
@@ -60,14 +75,15 @@ function render(group, action, value, options) {
   if (group === 'model' && (Array.isArray(value) || value?.id)) {
     const models = Array.isArray(value) ? value : [value];
     if (!models.length) out('No models registered. Add an account, or run dx model add.');
-    showTable(['Model', 'Context', 'Source', 'Tools', 'Images'], models.map(model => [
-      model.id, model.context_window?.toLocaleString('en-US') || 'unknown', model.context_source || 'configured',
+    showTable(['Model', 'Context default', 'Context max', 'Source', 'Tools', 'Images'], models.map(model => [
+      model.id, model.context_window?.toLocaleString('en-US') || 'unknown', policy.modelCapacity(model)?.toLocaleString('en-US') || 'unknown', model.context_source || 'configured',
       capability(model.capabilities?.tools), capability(model.capabilities?.images)
-    ]), { rightAlign: [1] });
+    ]), { rightAlign: [1, 2] });
     return;
   }
   if ((group === 'route' && ['configure', 'policy'].includes(action)) && value?.phases) {
     out(`Default model: ${value.default_model || 'not selected'}`);
+    if (value.default_model) out(`Operating context budget: ${policy.contextLimit(value)} tokens (running clients retain their launch budget).`);
     showTable(['Phase', 'Model', 'Fallbacks (in order)', 'Effort'], policy.PHASES.map((name, phase) => {
       const route = value.phases[phase] || { model: value.default_model };
       return [`${phase} ${name}`, route.model || 'not selected', route.fallbacks?.join(' -> ') || '-', route.effort || 'default'];
@@ -312,6 +328,18 @@ async function routerCommand(action, options, args = []) {
   }
   throw new Error(`Unknown router command: ${action}`);
 }
+async function contextCommand(action, values, options) {
+  const context = require('./context.cjs');
+  if (action === 'doctor') return context.doctor(options);
+  if (action === 'refresh') return context.refresh(configure);
+  if (action === 'budget') {
+    if (!/^[1-9][0-9]*$/.test(values[0] || '')) throw new Error('Context budget requires a positive integer token count.');
+    const budget = Number(values[0]);
+    await configure(config => { config.context_budget = budget; policy.contextLimit(config); for (const client of Object.keys(config.client_routes || {})) policy.contextLimit(config, client); });
+    return `Operating context budget set to ${budget} tokens. Resume existing conversations in new client launches to apply it; transcripts and worktrees are retained.`;
+  }
+  throw new Error('Use dx context doctor, refresh or budget <tokens>.');
+}
 async function main(args) {
   const [group, ...rest] = args;
   if (group === 'launch') { process.exitCode = await launch(rest[0] === '--' ? rest.slice(1) : rest); return; }
@@ -327,7 +355,8 @@ async function main(args) {
   const arity = group === 'accounts' ? [0, 0] : group === 'router' ? (action === 'native' ? [0, 1] : [0, 0])
     : group === 'account' ? (['rename', 'rank'].includes(action) ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
       : group === 'model' ? (['list', 'current', undefined].includes(action) ? [0, 0] : [1, 1])
-        : group === 'route' ? (['status', 'policy', 'unpin-account', undefined].includes(action) ? [0, 0] : [1, 1]) : [0, 0];
+        : group === 'route' ? (['status', 'policy', 'unpin-account', undefined].includes(action) ? [0, 0] : [1, 1])
+          : group === 'context' ? (action === 'budget' ? [1, 1] : [0, 0]) : [0, 0];
   const provided = group === 'accounts' ? options.positional.length : values.length;
   if (provided < arity[0] || provided > arity[1]) throw new Error(`Unexpected arguments for dx ${group}${action ? ` ${action}` : ''}. Run dx ${group} --help.`);
   let result;
@@ -336,6 +365,7 @@ async function main(args) {
   else if (group === 'model') result = await modelCommand(action || 'list', values, options);
   else if (group === 'route') result = await routeCommand(action || 'status', values, options);
   else if (group === 'router') result = await routerCommand(action || 'status', options, values);
+  else if (group === 'context') result = await contextCommand(action || 'doctor', values, options);
   else throw new Error('Unknown subscription routing command.');
   if (result !== undefined) render(group, action || (group === 'model' ? 'list' : 'status'), result, options);
 }
