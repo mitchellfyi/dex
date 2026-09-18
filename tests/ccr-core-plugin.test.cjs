@@ -43,6 +43,26 @@ test('Anthropic requests retain their thinking blocks and signatures', async t =
   assert.deepEqual((await authenticate(t, body, 'anthropic_messages', 'anthropic')).value.body, body);
 });
 
+test('Responses conversion includes the subscription prelude without replacing client instructions', async t => {
+  const prelude = "You are Claude Code, Anthropic's official CLI for Claude.";
+  for (const system of [undefined, 'Original Codex instructions', [{ type: 'text', text: 'Original Codex instructions', cache_control: { type: 'ephemeral' } }]]) {
+    const body = { model: 'test', system, messages: [{ role: 'user', content: 'hello' }] };
+    const original = structuredClone(body);
+    const result = await authenticate(t, body, 'openai_responses', 'anthropic');
+    assert.equal(result.ok, true);
+    assert.equal(result.value.body.system[0].text, prelude);
+    assert.deepEqual(result.value.body.system.slice(1), typeof system === 'string' ? [{ type: 'text', text: system }] : system || []);
+    assert.deepEqual(result.value.body.messages, original.messages);
+    assert.deepEqual(body, original);
+    assert.deepEqual(new Set(result.value.headers['anthropic-beta'].split(',')), new Set(['oauth-2025-04-20', 'claude-code-20250219']));
+    const again = await authenticate(t, result.value.body, 'openai_responses', 'anthropic');
+    assert.deepEqual(again.value.body, result.value.body, 'repeated conversion must not duplicate the prelude');
+  }
+  const native = { system: 'Native Claude instructions', messages: [] };
+  assert.deepEqual((await authenticate(t, native, 'anthropic_messages', 'anthropic')).value.body, native);
+  assert.equal((await authenticate(t, { system: {} }, 'openai_responses', 'anthropic')).ok, false);
+});
+
 test('Responses conversion preserves signature-only Claude thinking before CCR drops it', () => {
   const payload = { content: [{ type: 'thinking', thinking: '', signature: 'synthetic-signature' },
     { type: 'tool_use', id: 'tool_one', name: 'Read', input: {} }] };

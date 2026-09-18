@@ -2,6 +2,8 @@
 const ipc = require('./ipc.cjs');
 const { restoreAnthropic, wrapAnthropicResponse } = require('./history.cjs');
 
+const CLAUDE_SUBSCRIPTION_PRELUDE = "You are Claude Code, Anthropic's official CLI for Claude.";
+
 function convertedReasoning(item) {
   if (item.type !== 'reasoning' || item.encrypted_content || !Array.isArray(item.content) || !item.content.length
     || !item.content.every(part => part.type === 'reasoning_text' && typeof part.text === 'string')) return item;
@@ -22,11 +24,22 @@ function createGatewayPlugin() {
       for (const name of Object.keys(headers)) if (['authorization', 'x-api-key', 'x-ccr-dex-account-ticket'].includes(name.toLowerCase())) delete headers[name];
       Object.assign(headers, result.headers);
       if (provider === 'anthropic') {
-        headers['anthropic-beta'] = [...new Set(`${input.request?.headers?.['anthropic-beta'] || ''},oauth-2025-04-20`.split(',').filter(Boolean))].join(',');
+        const betas = `${input.request?.headers?.['anthropic-beta'] || ''},oauth-2025-04-20`.split(',').filter(Boolean);
+        if (input.sourceAdapterKey === 'openai_responses') betas.push('claude-code-20250219');
+        headers['anthropic-beta'] = [...new Set(betas)].join(',');
       }
       let body = input.upstreamRequest.body;
       if (provider === 'anthropic' && body && typeof body === 'object') {
         restoreAnthropic(body);
+        if (input.sourceAdapterKey === 'openai_responses') {
+          // The subscription endpoint requires this prelude even after protocol
+          // conversion. Keep the original client instructions after it.
+          const system = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : body.system ?? [];
+          if (!Array.isArray(system)) return { ok: false, error: 'Invalid Anthropic system content after Responses conversion.' };
+          if (!system[0]?.text?.startsWith(CLAUDE_SUBSCRIPTION_PRELUDE)) {
+            body = { ...body, system: [{ type: 'text', text: CLAUDE_SUBSCRIPTION_PRELUDE }, ...system] };
+          }
+        }
         const effort = input.sourceAdapterKey === 'openai_responses' && input.request?.body?.reasoning?.effort;
         if (effort) body = { ...body, output_config: { ...body.output_config, effort } };
       }

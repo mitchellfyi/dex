@@ -14,10 +14,16 @@ const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
 test('pinned CCR authenticates two accounts and translates OpenAI in the same session', { skip: !process.env.DEX_CCR_INTEGRATION_RUNTIME, timeout: 180000 }, async () => {
   process.env.DEX_ROUTER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-runtime-'));
   const calls = [];
-  let secondLimited = false, allLimited = false, contextExceeded = false, reasoningFixtures = false, claudeInputTokens = 5;
+  let secondLimited = false, allLimited = false, contextExceeded = false, reasoningFixtures = false, claudeInputTokens = 5, requireSubscriptionPrelude = false;
   const upstream = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); calls.push({ url: req.url, headers: req.headers, body });
+    if (requireSubscriptionPrelude && req.url.includes('messages')
+      && (body.system?.[0]?.text !== "You are Claude Code, Anthropic's official CLI for Claude."
+        || !req.headers['anthropic-beta']?.split(',').includes('claude-code-20250219'))) {
+      res.writeHead(429, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Error' } })); return;
+    }
     const foreignReasoning = body.messages?.some(message => message.role === 'assistant' && Array.isArray(message.content)
       && message.content.some(block => (block.type === 'redacted_thinking' && block.data.startsWith('ccr-openai-'))
         || (block.type === 'thinking' && !block.signature)))
@@ -169,9 +175,12 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     config.native = { enabled: true }; state.write(state.stateFile('config'), config);
     const native = await ipc.call('native-auth', { client: 'codex', owner_pid: process.pid });
     const sendResponses = body => fetch(`${settings.gateway}/plugins/dex/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${native.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'dex/active', stream: true, input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], ...body }) });
-    const nativeClaude = await sendResponses(); const nativeClaudeStream = await nativeClaude.text();
+    requireSubscriptionPrelude = true;
+    const nativeClaude = await sendResponses({ instructions: 'Preserve these Codex instructions.' }); const nativeClaudeStream = await nativeClaude.text();
     assert.equal(nativeClaude.status, 200, nativeClaudeStream);
     assert.match(nativeClaudeStream, /response.completed/); assert.match(nativeClaudeStream, /Claude answer/);
+    assert.match(JSON.stringify(calls.at(-1).body.system), /Preserve these Codex instructions/);
+    requireSubscriptionPrelude = false;
     // Codex was launched at the 200k route budget; a 64k model is still selectable by /model and by dx route use.
     assert.equal(state.read(state.sessionFile(`native-codex-${process.pid}`)).context_limit, 200000);
     const smaller = await sendResponses({ model: 'test-small' }); const smallerStream = await smaller.text();
