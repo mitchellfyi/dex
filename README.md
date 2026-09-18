@@ -334,10 +334,55 @@ Claude Code, including when it uses an OpenAI model.
 dx setup --router
 ```
 
-Setup installs CCR, registers your first account, discovers its models and asks
-you to choose a default model. It selects `ccr-subscription` as the global
-profile. In a repository with its own default, also run
+Setup installs and enables CCR, registers your first account, discovers its
+models and asks you to choose a default model. It selects `ccr-subscription` as
+the global Dex profile. `dx router setup` and `dx router enable` also select
+this default. In a repository with its own different default, also run
 `dx provider use --repo ccr-subscription`.
+
+After setup, ordinary Dex commands use CCR without an environment-variable
+prefix:
+
+```bash
+dx --session "Your task"                 # Current checkout, using the CCR account pool
+dx 1234                                 # Full Dex lifecycle, using CCR
+```
+
+### Disable CCR and recover native CLI access
+
+Plain `claude` and `codex` keep their own subscription logins and model menus
+unless you explicitly enabled `dx router native enable`. They are independent
+entry points you can use when CCR has a problem.
+
+To disable new routed sessions and restore any CLI defaults managed by that
+optional native-routing mode:
+
+```bash
+dx router disable
+```
+
+Then open a new terminal tab and run `claude` or `codex`. The disable command
+works without a running gateway and keeps your registered accounts and route
+policy. It preserves later edits to CLI settings. Existing routed sessions can
+finish; they do not switch providers mid-conversation.
+
+When ready to use CCR-backed Dex sessions again:
+
+```bash
+dx router enable
+dx --session "Your task"
+```
+
+Enabling starts CCR and selects `ccr-subscription` as the global Dex default.
+It does not enable global routing for plain `claude` or `codex`. If you want
+Dex itself to run directly while CCR is disabled, select a
+[direct provider profile](#direct-agents-and-overrides).
+
+`dx router status` shows both the Dex routing state and whether plain CLI
+launches use CCR. A model chosen inside a routed session still uses CCR;
+the native `/model` menus cannot switch endpoints or subscription logins.
+
+### Add more accounts
 
 Add each additional account with `dx account add`. You can add several accounts
 from the same provider, accounts from both providers, or both:

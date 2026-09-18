@@ -55,7 +55,7 @@ shows the identity returned by that login before registering it. Existing
 Claude Code, Codex and standalone CCR configurations stay separate.
 
 Choose a default model after discovery. Initially it serves all seven phases.
-Setup selects `ccr-subscription` as your global Dex profile. Existing repository
+Setup and `dx router enable` select `ccr-subscription` as your global Dex profile. Existing repository
 defaults still take precedence; where needed, select this profile there too:
 
 ```sh
@@ -64,11 +64,72 @@ dx provider use --repo ccr-subscription
 
 `dx setup` remembers your direct/routed choice. `dx setup --direct` returns a
 CCR global default to direct Claude; an existing direct Codex default is kept.
-Use `dx router setup` to configure routing without changing your default profile.
+`dx router setup` also enables routing and selects the global CCR default.
 
-## Use the native commands
+## Keep native CLI access independent
 
-After router setup, enable routing for the native CLIs:
+Router setup routes Dex sessions through the `ccr-subscription` profile. Plain
+`claude` and `codex` commands keep their own settings and subscription logins.
+Keep this separation so you can use either CLI when the router is unavailable.
+
+If you previously enabled global native routing, restore independent launches:
+
+```sh
+dx router native disable
+claude auth status
+codex login status
+```
+
+Start new CLI sessions from a terminal outside a routed agent. A shell opened
+by a routed agent inherits that agent's routing environment. Disabling native
+routing restores the settings Dex still owns, preserves your later edits, and
+leaves Dex's account pool and routed workflows available. It works even when
+the gateway is stopped. `dx install`, `dx init`, and `dx sync` keep it disabled.
+
+Native Claude uses the account selected by `claude auth login`; native Codex
+uses the account selected by `codex login`. Adding an account with
+`dx account add` only changes Dex's account pool.
+
+### Model selection and provider selection
+
+The native `/model` menus select a model on the session's current connection.
+They do not switch the endpoint or authentication between a native subscription
+and CCR. A model labeled Claude or GPT in a routed session still uses CCR.
+Switching to a genuinely independent connection requires a new launch.
+
+For native operation, start `claude` or `codex` from your terminal with native
+routing disabled. Their normal model menus remain available, subject to the
+models your subscription supports. Router setup or `dx router enable` selects
+the single `ccr-subscription` Dex profile, so an ordinary Dex session uses CCR:
+
+```sh
+dx --session "Your task"
+```
+
+In a routed Claude session, the picker has one named **CCR subscription** entry
+for the automatic route, plus the models configured in that route, labeled
+**via CCR**. Claude's own **Default** row can also appear. This lineup requires
+Claude Code 2.1.242 or newer. Dex supplies it through temporary launch settings;
+an explicit `--settings` picker takes precedence. Press `s` in Claude's picker
+to select a model for this session only, so it does not become your saved native
+default.
+
+`dx route policy` shows both clients' effective CCR routes. A client without
+its own override is labeled **inherited from setup**. These are routing
+policies for clients connected to CCR, not their independent native settings.
+
+To disable new Dex routed sessions and restore global native CLI settings, run
+`dx router disable`, then start `claude` or `codex` in a new terminal tab.
+To restore only the CLI settings while keeping Dex routing enabled, use
+`dx router native disable`. `dx router enable` starts CCR and selects it as the
+global Dex default again, without enabling global CLI routing.
+An existing routed session keeps its current connection; these commands do not
+convert it to a native session. `dx router stop` stops the gateway once routed
+sessions have finished.
+
+## Optional global routing for native commands
+
+To explicitly route plain CLI commands through Dex as well:
 
 ```sh
 dx router native enable
@@ -121,6 +182,26 @@ dx router native disable
 Disabling restores the previous values for settings Dex still owns and keeps
 subsequent user edits. Start a new CLI session to use the restored defaults.
 Native routing keeps the local gateway address stable across router restarts.
+
+## Account errors and recovery
+
+If Anthropic asks you to accept updated Consumer Terms and Privacy Policy,
+sign in to `claude.ai` with that account and accept the prompt. Check its
+identity with `claude auth status` for a native session or
+`dx account show <name>` for a routed account. A successful login and unused
+quota do not mean that terms have been accepted.
+
+Dex recognizes this account-specific rejection, tries the next eligible
+account, and shows `accept terms in claude.ai` in `dx accounts`. It waits one
+minute before trying the affected account again, so accepting the terms needs
+no router restart or reauthentication. Other HTTP 400 request errors still
+stop the request rather than retrying it across accounts.
+
+A 429 can mean the selected subscription has exhausted its weekly quota.
+`dx accounts` shows the quota and reset time. A newly added Anthropic account
+cannot replenish an OpenAI subscription or join a route containing only OpenAI
+models. Native CLIs use their own logged-in accounts, whose quota may differ
+from the accounts registered with Dex.
 
 ## Open the CCR dashboard
 

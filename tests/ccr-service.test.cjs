@@ -316,6 +316,57 @@ test('rejected request does not rotate accounts or mark their quota exhausted', 
   const token = await register(); reply = () => new Response('{"error":{"type":"invalid_request_error"}}', { status: 400 });
   assert.equal((await send(token)).status, 400); assert.equal(calls.length, 1); assert.ok(state.accounts().every(account => !account.cooldown_until));
 });
+const termsMessage = "We've updated our Consumer Terms and Privacy Policy. You'll need to accept them in claude.ai with the email in /status to continue.";
+for (const wrapped of [false, true]) test(`terms acceptance rotates accounts and recovers without reauth (${wrapped ? 'CCR wrapper' : 'direct'})`, async t => {
+  const token = await register();
+  const details = { error: { type: 'invalid_request_error', message: `${termsMessage} private provider detail` } };
+  reply = () => calls.length === 1 ? Response.json(wrapped ? { error: { attempts: [{ status: 400, details }] } } : details, { status: 400 }) : Response.json({});
+  assert.equal((await send(token)).status, 200);
+  assert.deepEqual(refreshes.map(item => item.id), ['one', 'two']);
+  const blocked = state.accounts()[0];
+  assert.equal(blocked.cooldown_reason, 'terms-required');
+  assert.equal(blocked.status, 'ready');
+  assert.equal(blocked.model_cooldowns, undefined);
+  assert.equal(state.read(state.sessionFile('session')).current_account, 'two');
+  const journal = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8');
+  assert.match(journal, /terms-required/);
+  assert.doesNotMatch(journal, /private provider detail/);
+  await service.control('route', { action: 'pin', account: 'one', session: 'session' });
+  const response = await send(token);
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error.message, /one: accept updated terms in claude\.ai/);
+  assert.equal(calls.length, 2, 'pinning cannot bypass terms or select another account');
+  t.mock.method(Date, 'now', () => blocked.cooldown_until + 1);
+  assert.equal((await send(token)).status, 200);
+  assert.equal(refreshes.at(-1).id, 'one');
+  assert.equal(state.read(state.sessionFile('session')).current_account, 'one');
+});
+test('terms errors skip other models on the same account and explain how to restore access', async () => {
+  const config = state.config();
+  config.models.push({ ...config.models[0], id: 'anthropic/fallback' });
+  config.phases[0] = { model: 'anthropic/test', fallbacks: ['anthropic/fallback'] };
+  state.write(state.stateFile('config'), config);
+  const token = await register();
+  reply = () => Response.json({ error: { type: 'invalid_request_error', message: termsMessage } }, { status: 403 });
+  const response = await send(token);
+  assert.equal(response.status, 400);
+  const message = (await response.json()).error.message;
+  assert.match(message, /one: accept updated terms in claude\.ai/);
+  assert.match(message, /two: accept updated terms in claude\.ai/);
+  assert.match(message, /Sign in to claude\.ai.*Consumer Terms and Privacy Policy/);
+  assert.match(message, /dx account show <name>/);
+  assert.equal(calls.length, 2, 'each account is tried once across the model chain');
+  assert.ok(refreshes.every(item => !item.force));
+});
+test('terms detection is limited to the known Anthropic account error', async () => {
+  const token = await register('openai-terms', { model: 'openai/test' });
+  reply = () => Response.json({ error: { type: 'invalid_request_error', message: termsMessage } }, { status: 400 });
+  const response = await send(token);
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'provider_request_rejected');
+  assert.ok(state.accounts().every(account => !account.cooldown_until));
+  assert.equal(calls.length, 1);
+});
 for (const wrapped of [false, true]) test(`request rejection exposes safe provider fields (${wrapped ? 'CCR wrapper' : 'direct'})`, async () => {
   const token = await register('rejected', { model: 'openai/test' });
   const error = { type: 'invalid_request_error', code: 'array_above_max_length', param: 'input[1].content', message: 'private prompt details and credentials' };

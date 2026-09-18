@@ -141,7 +141,7 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   const clean = value => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
   const labels = { disabled: 'disabled', 'reauth-required': 'login needs renewal', 'model-unavailable': 'model not available on this account',
     'rate-limit': 'rate limited', temporary: 'temporary provider error', 'connection-failed': 'provider connection failed',
-    'refresh-unavailable': 'login refresh temporarily unavailable', cooldown: 'cooling down' };
+    'refresh-unavailable': 'login refresh temporarily unavailable', 'terms-required': 'accept updated terms in claude.ai', cooldown: 'cooling down' };
   const waits = [], reasons = new Set(), eligibleBlocks = [];
   const summaries = (selection.pinned ? selection.models.slice(0, 1) : selection.models).map(target => {
     const pool = items.filter(item => item.provider === target.provider && (!selection.pinned || item.id === selection.pinned));
@@ -159,6 +159,8 @@ function unavailable(items, selection, now = Date.now(), protocol) {
     return `${clean(target.display_name || target.id)}: ${accounts.join('; ') || (selection.pinned ? 'pinned account cannot serve this model' : `no ${target.provider} accounts registered`)}.`;
   });
   const rateLimited = eligibleBlocks.length > 0 && eligibleBlocks.every(blocked => blocked.some(item => ['quota-exhausted', 'rate-limit'].includes(item.reason)));
+  const termsRequired = reasons.has('terms-required') && eligibleBlocks.length > 0
+    && eligibleBlocks.every(blocked => blocked.some(item => ['terms-required', 'quota-exhausted', 'rate-limit'].includes(item.reason)));
   const retryAfter = waits.length ? Math.max(1, Math.ceil((Math.min(...waits) - now) / 1000)) : undefined;
   const advice = [];
   if (retryAfter) advice.push(`Retry in ${retryIn(now + retryAfter * 1000, now)}.`);
@@ -175,11 +177,13 @@ function unavailable(items, selection, now = Date.now(), protocol) {
     advice.push(`Every model on this route needs CCR ${protocol} conversion. Add a ${provider} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>${protocol === 'responses' ? ', or pick one in Codex with /model' : ''}.`);
   }
   if (reasons.has('reauth-required')) advice.push('Renew the affected login with dx account reauth <name>.');
+  if (reasons.has('terms-required')) advice.push('Sign in to claude.ai with the affected account and accept the updated Consumer Terms and Privacy Policy, then retry after the short account cooldown. Use dx account show <name> to check its login identity.');
   if (reasons.has('disabled')) advice.push('Enable an account with dx account enable <name>.');
   advice.push('Inspect dx accounts --live or select another model with dx route use.');
   const headline = rateLimited ? [`Subscription ${reasons.has('quota-exhausted') ? 'quota exhausted' : 'rate limit reached'} on this route.`] : [];
   return Object.assign(new Error([...headline, ...summaries, ...advice].join(' ')), {
-    code: 'subscription_accounts_unavailable', status: rateLimited ? 429 : 503, type: rateLimited ? 'rate_limit_error' : 'api_error', retryAfter
+    code: 'subscription_accounts_unavailable', status: termsRequired ? 400 : rateLimited ? 429 : 503,
+    type: termsRequired ? 'invalid_request_error' : rateLimited ? 'rate_limit_error' : 'api_error', retryAfter
   });
 }
 

@@ -122,6 +122,20 @@ def install_compaction(document, entries, percent):
     return sync_context_field(document, entries, field, str(percent), "claude.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
 
 
+def sync_picker(document, entries, value):
+    field = ["modelPicker"]
+    current = get_field(document, field)
+    entry = next((item for item in entries if item["field"] == field), None)
+    if entry is None:
+        entry = {"field": field, "original": current, "installed": value}
+        entries.append(entry)
+    elif current != {"present": True, "value": entry["installed"]}:
+        return False
+    put_field(document, field, {"present": True, "value": value})
+    entry["installed"] = value
+    return current != {"present": True, "value": value}
+
+
 def apply(request):
     action = request["action"]
     backup_file = Path(request["backup"])
@@ -143,7 +157,7 @@ def apply(request):
         saved = {
             "claude_file": str(claude_file), "codex_file": str(codex_file),
             "claude": [{"field": entry["field"], "original": get_field(claude, entry["field"]), "installed": entry["value"]}
-                       for entry in fields if entry["field"] != ["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]],
+                       for entry in fields if entry["field"] not in [["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"], ["modelPicker"]]],
             "codex": [{"field": entry["field"], "original": get_field(codex, [entry["field"]]), "installed": entry["value"]} for entry in codex_fields],
             "provider_content": "", "had_env": "env" in claude,
         }
@@ -166,6 +180,7 @@ def apply(request):
             changed = sync_context_field(claude, saved["claude"], ["env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
                                          str(request["claude_context"]), "claude.CLAUDE_CODE_MAX_CONTEXT_TOKENS")
             changed = install_compaction(claude, saved["claude"], request["claude_compact_percent"]) or changed
+            changed = sync_picker(claude, saved["claude"], request["claude_picker"]) or changed
             if changed:
                 claude_source = json.dumps(claude, indent=2) + "\n"
     elif action == "disable":
@@ -197,6 +212,9 @@ def apply(request):
                 if get_field(claude, entry["field"]) != {"present": True, "value": entry["installed"]}:
                     raise ValueError("Native Claude settings were edited. Disable native routing before enabling it again.")
         for entry in fields:
+            if entry["field"] == ["modelPicker"]:
+                sync_picker(claude, saved["claude"], entry["value"])
+                continue
             if entry["field"] == ["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]:
                 install_compaction(claude, saved["claude"], int(entry["value"]))
                 continue

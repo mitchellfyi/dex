@@ -50,7 +50,6 @@ case "$setup_choice" in
     ;;
   --router)
     bash "$DEX_DIR/bin/router.sh" router setup
-    dx_provider_command use ccr-subscription
     ;;
   *) usage >&2; exit 2 ;;
 esac

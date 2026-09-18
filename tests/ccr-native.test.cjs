@@ -47,6 +47,8 @@ test('native settings preserve client preferences and restore only managed value
   let claude = JSON.parse(fs.readFileSync(config.claude_file));
   assert.deepEqual(claude.permissions, original.permissions); assert.deepEqual(claude.hooks, original.hooks);
   assert.equal(claude.env.KEEP_ME, 'yes'); assert.equal(claude.model, 'dex/active');
+  assert.equal(claude.modelPicker.replaceBuiltInOptions, true);
+  assert.equal(claude.modelPicker.options.filter(option => option.model === 'dex/active').length, 1);
   assert.match(claude.apiKeyHelper, /native\.cjs.*auth.*claude/);
   const codex = toml(config.codex_file);
   assert.equal(codex.model_provider, 'dex-ccr'); assert.equal(codex.model, 'dex/active');
@@ -61,6 +63,82 @@ test('native settings preserve client preferences and restore only managed value
   assert.equal(toml(config.codex_file).model_provider, 'work');
   assert.equal(toml(config.codex_file).model, 'personal-model');
   assert.equal(toml(config.codex_file).model_providers, undefined);
+});
+
+test('native picker migration restores the previous lineup and preserves later user edits', () => {
+  native.clientSettings('enable', config, settings);
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  const saved = JSON.parse(fs.readFileSync(backup));
+  saved.claude = saved.claude.filter(entry => entry.field[0] !== 'modelPicker');
+  state.write(backup, saved);
+  const personal = { options: [{ model: 'opus', label: 'Personal Opus' }] };
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  claude.modelPicker = personal; fs.writeFileSync(config.claude_file, JSON.stringify(claude));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).modelPicker.options[0].label, 'CCR subscription');
+  native.clientSettings('disable', config, settings);
+  assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)).modelPicker, personal);
+  native.clientSettings('enable', config, settings);
+  const edited = JSON.parse(fs.readFileSync(config.claude_file)); edited.modelPicker = personal;
+  fs.writeFileSync(config.claude_file, JSON.stringify(edited));
+  native.syncContext(routing);
+  assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)).modelPicker, personal);
+  assert.ok(native.clientSettings('disable', config, settings).preserved.includes('claude.modelPicker'));
+});
+
+test('disabled native routing survives tooling sync and route changes without editing either CLI', async t => {
+  native.clientSettings('enable', config, settings);
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  state.write(state.stateFile('config'), routing);
+  t.mock.method(require('../scripts/ccr/adapter.cjs'), 'start', () => { throw new Error('Native recovery must work without CCR'); });
+  await native.command('disable');
+  const files = [config.claude_file, config.codex_file];
+  const before = files.map(file => fs.readFileSync(file, 'utf8'));
+  await native.command('sync');
+  await require('../scripts/ccr/cli.cjs').routeCommand('configure', ['openai/test'], { fallback: [] });
+  assert.deepEqual(files.map(file => fs.readFileSync(file, 'utf8')), before);
+  assert.equal(state.config().native.enabled, false);
+  assert.equal(state.config().enabled, true, 'Dex routing remains available');
+  assert.match(await native.command('status'), /native configuration/);
+});
+
+test('router disable restores native clients offline despite invalid routes and retains accounts and sessions', async t => {
+  native.clientSettings('enable', config, settings);
+  const routing = state.config(); routing.native = { ...config, enabled: true }; routing.default_model = 'anthropic/missing'; routing.models = [];
+  state.write(state.stateFile('config'), routing);
+  fs.writeFileSync(state.stateFile('backend'), 'broken backend metadata', { mode: 0o600 });
+  state.saveAccounts([{ id: 'saved', enabled: true, provider: 'anthropic' }]);
+  const session = { id: 'running', active: true, current_model: 'anthropic/test' };
+  state.write(state.sessionFile('running'), session);
+  t.mock.method(require('../scripts/ccr/adapter.cjs'), 'start', () => { throw new Error('Rescue must not start the gateway'); });
+  t.mock.method(state, 'sessions', () => { throw new Error('Rescue must not inspect active sessions'); });
+  const cli = require('../scripts/ccr/cli.cjs');
+  assert.match(await cli.routerCommand('disable', {}), /Start a new terminal session and run claude or codex/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)), original);
+  assert.equal(toml(config.codex_file).model_provider, 'work');
+  assert.equal(state.config().enabled, false);
+  assert.equal(state.config().native.enabled, false);
+  assert.deepEqual(state.config().phases, routing.phases);
+  assert.equal(state.accounts()[0].id, 'saved');
+  assert.deepEqual(state.read(state.sessionFile('running')), session);
+  const before = [config.claude_file, config.codex_file].map(file => fs.readFileSync(file, 'utf8'));
+  await cli.routerCommand('disable', {});
+  assert.deepEqual([config.claude_file, config.codex_file].map(file => fs.readFileSync(file, 'utf8')), before);
+});
+
+test('router enable after rescue leaves native CLI routing off', async t => {
+  native.clientSettings('enable', config, settings);
+  const routing = state.config(); routing.native = { ...config, enabled: true }; state.write(state.stateFile('config'), routing);
+  const cli = require('../scripts/ccr/cli.cjs');
+  await cli.routerCommand('disable', {});
+  const before = [config.claude_file, config.codex_file].map(file => fs.readFileSync(file, 'utf8'));
+  const start = t.mock.method(require('../scripts/ccr/adapter.cjs'), 'start', async () => settings);
+  await cli.routerCommand('enable', {});
+  assert.equal(start.mock.callCount(), 1);
+  assert.equal(state.config().enabled, true);
+  assert.equal(state.config().native.enabled, false);
+  assert.deepEqual([config.claude_file, config.codex_file].map(file => fs.readFileSync(file, 'utf8')), before);
 });
 
 test('native settings use the context budget for each client route', () => {

@@ -10,7 +10,13 @@ dx_router_node_check() {
 
 dx_router_command() {
   dx_router_node_check || return 1
-  node "$DEX_DIR/scripts/ccr/cli.cjs" "$@"
+  node "$DEX_DIR/scripts/ccr/cli.cjs" "$@" || return $?
+  case "${1:-}:${2:-}" in
+    router:setup|router:enable)
+      dx_provider_command use ccr-subscription >&2 || return 1
+      ;;
+  esac
+  return 0
 }
 
 dx_router_launch() {

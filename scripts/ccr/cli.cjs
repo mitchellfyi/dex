@@ -72,13 +72,14 @@ function render(group, action, value, options) {
       const route = value.phases[phase] || { model: value.default_model };
       return [`${phase} ${name}`, route.model || 'not selected', route.fallbacks?.join(' -> ') || '-', route.effort || 'default'];
     }));
-    const clients = Object.entries(value.client_routes || {});
-    if (clients.length) {
-      out('Native client routes:');
-      showTable(['Client', 'Model', 'Fallbacks (in order)', 'Effort'], clients.map(([client, route]) => [
-        client, route.model, route.fallbacks?.join(' -> ') || '-', route.effort || 'default'
-      ]));
-    }
+    out('Client routes through CCR (used when the client is connected to the router):');
+    showTable(['Client', 'Source', 'Model', 'Fallbacks (in order)', 'Effort'], ['claude', 'codex'].map(client => {
+      const configured = value.client_routes?.[client] || value.phases[0] || value.phases.setup || { model: value.default_model };
+      const selected = configured.model ? policy.route(value, { client }) : null;
+      return [client, value.client_routes?.[client] ? 'configured' : 'inherited from setup', selected?.models[0].id || 'not selected',
+        selected?.models.slice(1).map(model => model.id).join(' -> ') || '-', selected?.effort || 'default'];
+    }));
+    out(`Plain CLI routing: ${value.native?.enabled ? 'through CCR; disable with dx router native disable' : 'native configuration (CCR off)'}.`);
     return;
   }
   if (group === 'account' && value?.name) {
@@ -94,10 +95,11 @@ function render(group, action, value, options) {
   if (group === 'router' && value?.release) {
     details([
       ['CCR version', value.release], ['Runtime', value.health], ['Installed', value.installed ? 'yes' : 'no'],
-      ['Routing', value.enabled ? 'enabled' : 'disabled'], ['Accounts', value.accounts],
+      ['Routing', value.enabled ? 'enabled' : 'disabled'], ['Plain CLI routing', value.native_routing ? 'through Dex' : 'native subscriptions'], ['Accounts', value.accounts],
       ['Models', value.models], ['Active sessions', value.active_sessions], ['Credentials', value.credential_store]
     ]);
     if (!value.installed) out('Run dx router setup to install the optional runtime.');
+    if (value.native_routing) out('Restore independent claude and codex launches with dx router native disable, then start new CLI sessions.');
     return;
   }
   display(value, false);
@@ -140,7 +142,8 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
     const windows = (usage?.windows || []).filter(window => !model || !window.model_pool || model.id.includes(window.model_pool));
     const exhausted = fresh && windows.some(window => !window.model_pool && window.remaining_ratio === 0 && (!window.resets_at || window.resets_at > now));
     const reasons = { disabled: 'disabled', 'reauth-required': 'reauth-required', 'model-unavailable': 'not available',
-      temporary: 'temporary provider error', 'connection-failed': 'connection failed', 'refresh-unavailable': 'login refresh unavailable', 'rate-limit': 'rate limited' };
+      temporary: 'temporary provider error', 'connection-failed': 'connection failed', 'refresh-unavailable': 'login refresh unavailable', 'rate-limit': 'rate limited',
+      'terms-required': 'accept terms in claude.ai' };
     const limits = Object.entries(account.model_cooldowns || {}).filter(([, until]) => until > now)
       .map(([model, until]) => `${model.split('/').pop()} ${reasons[account.model_cooldown_reasons?.[model]] || 'rate limited'} (${policy.retryIn(until, now)})`);
     const reason = reasons[account.cooldown_reason] || 'cooldown';
@@ -285,10 +288,13 @@ async function routerCommand(action, options, args = []) {
       await routeCommand('configure', [await question('Default model', state.config().models[0].id)], options);
     }
     await configure(config => { config.enabled = true; }); await adapter.start();
-    return 'CCR routing is ready. Select it with dx provider use ccr-subscription. Direct profiles remain available.';
+    return 'CCR routing is ready. Use dx router disable to restore native CLI access if needed.';
   }
   if (action === 'enable') { await configure(config => { policy.contextLimit(config); config.enabled = true; }); await adapter.start(); return 'CCR routing enabled.'; }
-  if (action === 'disable') { await configure(config => { config.enabled = false; }); return 'CCR routing disabled for new sessions. Running sessions can finish. Select dx provider use claude-subscription for direct launches.'; }
+  if (action === 'disable') {
+    const restored = await require('./native.cjs').disable({ router: true });
+    return `CCR routing disabled for new sessions. ${restored} Start a new terminal session and run claude or codex for native access. Running routed sessions can finish. Run dx router enable to resume CCR-backed Dex sessions.`;
+  }
   if (action === 'stop') return adapter.stop();
   if (action === 'ui') { await adapter.openUI(); return 'Opened the private CCR dashboard. Dex account and routing settings are managed by dx commands.'; }
   if (action === 'restart') { await adapter.stop(); await adapter.start(); return 'CCR restarted.'; }
@@ -298,7 +304,7 @@ async function routerCommand(action, options, args = []) {
     let installed = false; try { adapter.verifyRuntime(); installed = true; } catch { /* Report as a diagnostic. */ }
     const health = await adapter.health();
     const sessions = health ? await ipc.call('health', { sessions: true }) : null;
-    return { version: 1, enabled: state.config().enabled, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
+    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
   }
   if (action === 'check') {
     if (!state.config().enabled || !state.accounts().some(item => item.enabled)) throw new Error('CCR needs setup and an enabled account. Run dx router setup.');

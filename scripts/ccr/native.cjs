@@ -6,6 +6,7 @@ const state = require('./state.cjs');
 const policy = require('./policy.cjs');
 const ipc = require('./ipc.cjs');
 const adapter = require('./adapter.cjs');
+const { claudePicker } = require('./claude-picker.cjs');
 
 const quote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
 const authArgs = client => [path.join(__dirname, 'native.cjs'), 'auth', client, state.root()];
@@ -37,6 +38,7 @@ function clientSettings(action, native, settings, config) {
   const request = { action, backup, claude_file: native.claude_file, codex_file: native.codex_file };
   if (action !== 'disable') config ||= state.config();
   if (action === 'sync-context') {
+    request.claude_picker = claudePicker(config, 'claude');
     request.claude_context = policy.contextLimit(config, 'claude');
     request.claude_compact_percent = 80;
     request.codex_context = policy.contextLimit(config, 'codex');
@@ -47,6 +49,7 @@ function clientSettings(action, native, settings, config) {
     request.claude_fields = [
       { field: ['apiKeyHelper'], value: helper },
       { field: ['model'], value: 'dex/active' },
+      { field: ['modelPicker'], value: claudePicker(config, 'claude') },
       { field: ['env', 'ANTHROPIC_BASE_URL'], value: `${settings.gateway}/plugins/dex` },
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION'], value: 'dex/active' },
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME'], value: 'Dex automatic route' },
@@ -81,24 +84,32 @@ function syncContext(config = state.config()) {
   return clientSettings('sync-context', config.native, null, config);
 }
 
+async function disable({ router = false } = {}) {
+  return state.locked('config', () => {
+    const config = state.config();
+    const restored = config.native?.enabled ? clientSettings('disable', config.native, null) : null;
+    if (config.native) config.native.enabled = false;
+    if (router) config.enabled = false;
+    if (restored || router) state.write(state.stateFile('config'), config);
+    if (!restored) return 'Native routing is already disabled.';
+    return `Native routing disabled. Previous client defaults restored.${restored.preserved.length ? ` Kept your edits to ${restored.preserved.join(', ')}.` : ''}`;
+  });
+}
+
 async function command(action = 'status') {
   if (action === 'status') {
     const native = state.config().native;
-    return native?.enabled ? 'Native routing enabled. Claude and Codex follow the configured Dex route and fallbacks.' : 'Native routing is disabled. Run dx router native enable to connect claude and codex.';
+    return native?.enabled ? 'Plain claude and codex launches use Dex routing. Run dx router native disable to restore independent native launches.'
+      : 'Plain claude and codex launches use their native configuration. Dex routing is scoped to the ccr-subscription profile.';
   }
   if (action === 'sync' && !state.config().native?.enabled) return;
   if (!['enable', 'disable', 'sync'].includes(action)) throw new Error('Use dx router native enable, disable or status.');
+  if (action === 'disable') return disable();
   const settings = action === 'enable' ? await adapter.start() : state.backend(null);
   if (action === 'enable' && !(await ipc.call('health')).capabilities?.includes('native-auth')) throw new Error('The running gateway needs the native routing update. Finish its sessions, run dx router restart, then enable native routing.');
   return state.locked('config', () => {
     const config = state.config();
     const native = { ...config.native };
-    if (action === 'disable') {
-      if (!native.enabled) return 'Native routing is already disabled.';
-      const result = clientSettings('disable', native, settings);
-      config.native.enabled = false; state.write(state.stateFile('config'), config);
-      return `Native routing disabled. Previous client defaults restored.${result.preserved.length ? ` Kept your edits to ${result.preserved.join(', ')}.` : ''}`;
-    }
     if (!config.enabled) throw new Error('Run dx router setup first.');
     native.claude_file ||= path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
     native.codex_file ||= path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml');
@@ -116,4 +127,4 @@ if (require.main === module) {
   const operation = action === 'auth' ? authenticate(client) : command(action);
   operation.then(result => { if (result) process.stdout.write(`${result}\n`); }).catch(error => { process.stderr.write(`dex: ${error.message}\n`); process.exitCode = 1; });
 }
-module.exports = { ownerPid, authenticate, clientSettings, syncContext, command };
+module.exports = { ownerPid, authenticate, clientSettings, syncContext, disable, command };

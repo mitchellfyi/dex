@@ -1,17 +1,24 @@
 'use strict';
 const path = require('node:path');
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const state = require('./state.cjs');
 const adapter = require('./adapter.cjs');
 const ipc = require('./ipc.cjs');
+const { claudePicker } = require('./claude-picker.cjs');
 
 function launchArguments(args) {
-  const forwarded = []; let requested;
+  const forwarded = []; let requested, settings;
   const delimiter = args.indexOf('--');
   const options = delimiter < 0 ? args : args.slice(0, delimiter);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === '--') { forwarded.push(...args.slice(index)); break; }
+    if (arg === '--settings') {
+      if (!args[index + 1]) throw new Error('--settings requires a value.');
+      settings = args[++index]; continue;
+    }
+    if (arg.startsWith('--settings=')) { settings = arg.slice(11); continue; }
     if (['--model', '--fallback-model', '--permission-mode'].includes(arg)) {
       if (!args[index + 1]) throw new Error(`${arg} requires a value.`);
       if (arg === '--model' && args[index + 1] !== 'dex/active') requested = args[index + 1];
@@ -22,7 +29,17 @@ function launchArguments(args) {
     if (arg !== '--dangerously-skip-permissions') forwarded.push(arg);
   }
   const resume = options.some(arg => ['--resume', '--continue', '-r', '-c'].includes(arg) || arg.startsWith('--resume=')) && !options.includes('--fork-session');
-  return { requested, resume, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
+  return { requested, resume, settings, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
+}
+
+function launchSettings(input, config) {
+  let supplied = {};
+  if (input !== undefined) {
+    try { supplied = JSON.parse(input.trim().startsWith('{') ? input : fs.readFileSync(input, 'utf8')); }
+    catch { throw new Error('Cannot load --settings. Supply a JSON object or a path to a valid settings JSON file.'); }
+    if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) throw new Error('--settings must contain a JSON object.');
+  }
+  return { modelPicker: claudePicker(config), ...supplied };
 }
 // Native routing installs an apiKeyHelper in Claude's user settings. Claude
 // warns when that helper and ANTHROPIC_AUTH_TOKEN are both present, so a routed
@@ -74,6 +91,7 @@ function gatewayMonitor(session) {
 }
 async function launch(args) {
   const parsed = launchArguments(args);
+  const settingsOverride = launchSettings(parsed.settings, state.config());
   const settings = await adapter.start();
   const token = state.token();
   const lifecycle = process.env.DEX_SESSION_ID;
@@ -88,9 +106,13 @@ async function launch(args) {
   const monitor = gatewayMonitor(session);
   const watchdog = setInterval(() => { void monitor.check(); }, 3000);
   watchdog.unref();
+  let settingsDirectory;
   try {
+    settingsDirectory = fs.mkdtempSync(path.join(state.privateDir(state.root()), 'launch-'));
+    const settingsFile = path.join(settingsDirectory, 'settings.json');
+    state.write(settingsFile, settingsOverride);
     return await new Promise((resolve, reject) => {
-      const child = spawn('claude', parsed.args, { stdio: 'inherit', env: launchEnvironment(settings, token, session) });
+      const child = spawn('claude', ['--settings', settingsFile, ...parsed.args], { stdio: 'inherit', env: launchEnvironment(settings, token, session) });
       const forward = signal => { if (!child.killed) child.kill(signal); };
       const interrupt = () => forward('SIGINT'); const terminate = () => forward('SIGTERM');
       process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
@@ -99,9 +121,10 @@ async function launch(args) {
       child.once('exit', (code, signal) => { cleanup(); resolve(code ?? (signal === 'SIGINT' ? 130 : 143)); });
     });
   } finally {
+    if (settingsDirectory) fs.rmSync(settingsDirectory, { recursive: true, force: true });
     monitor.stop(); clearInterval(watchdog);
     try { await ipc.call('finish', { id, token }); } catch { /* Owner death also invalidates the session capability. */ }
     if (monitor.failed && !await adapter.health(true, 10000)) process.stderr.write('dex: CCR recovery failed. Run dx router doctor before resuming this conversation.\n');
   }
 }
-module.exports = { launchArguments, launchEnvironment, gatewayMonitor, launch };
+module.exports = { launchArguments, launchSettings, launchEnvironment, gatewayMonitor, launch };

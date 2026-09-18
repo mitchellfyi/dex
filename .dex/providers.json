@@ -1,5 +1,5 @@
 {
-  "default": "dex-codex",
+  "default": "ccr-subscription",
   "profiles": {
     "dex-codex": {
       "engine": "codex-plugin",

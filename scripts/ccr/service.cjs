@@ -38,6 +38,13 @@ function contextError(payload, status) {
   return typeof error?.message === 'string' && /^(?:prompt is too long\b|your input exceeds the context window\b|this model's maximum context length is\b)/i.test(error.message);
 }
 
+function termsAcceptanceRequired(payload, status, provider) {
+  if (provider !== 'anthropic' || ![400, 403].includes(status)) return false;
+  const error = upstreamError(payload, status);
+  return typeof error?.message === 'string'
+    && /^We['’]ve updated our Consumer Terms and Privacy Policy\. You['’]ll need to accept them in claude\.ai\b/i.test(error.message);
+}
+
 function rejectionDetails(payload, status) {
   const error = upstreamError(payload, status);
   const identifier = value => typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,99}$/.test(value) ? value : null;
@@ -316,7 +323,11 @@ class RouterService {
                 message: `${protocol === 'messages' ? 'prompt is too long: ' : ''}The conversation exceeds the selected model's context window. Compact it with /compact or select a model with a larger context window.`, provider_status: 400 } });
               return;
             }
-            let problem = policy.failure(upstream.status, payload, upstream.headers);
+            const termsRequired = termsAcceptanceRequired(payload, upstream.status, choice.model.provider);
+            // Terms acceptance belongs to the account, not the request or model.
+            // Retry it after a short interval so browser acceptance needs no reauth.
+            let problem = termsRequired ? { retry: true, reason: 'terms-required', until: Date.now() + 60000 }
+              : policy.failure(upstream.status, payload, upstream.headers);
             if (upstream.status === 401 && authRetry === 0) {
               try { credentials = await this.broker.access(choice.account, true); continue; }
               catch (error) { if (!error.reauth) problem = { retry: true, reason: 'refresh-unavailable', until: Date.now() + 10000 }; }
@@ -334,7 +345,8 @@ class RouterService {
             }
             await this.markUnavailable(account.id, cooldownKey, problem);
             event(session, 'account.failover', { account_id: account.id, model: choice.model.id, protocol, reason: problem.reason,
-              provider_status: upstream.status, provider_error: providerError(payload), scope: problem.modelOnly ? 'model' : 'account', retry_at: problem.until || null });
+              provider_status: upstream.status, provider_error: termsRequired ? { type: 'terms_acceptance_required', message: 'Accept the updated Consumer Terms and Privacy Policy in claude.ai for this account.' }
+                : providerError(payload), scope: problem.modelOnly ? 'model' : 'account', retry_at: problem.until || null });
             break;
           }
           await state.locked('sessions', () => {

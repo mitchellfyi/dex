@@ -9,7 +9,8 @@ const state = require('../scripts/ccr/state.cjs');
 const cli = require('../scripts/ccr/cli.cjs');
 const onboarding = require('../scripts/ccr/onboarding.cjs');
 const { CredentialStore } = require('../scripts/ccr/accounts.cjs');
-const { launchArguments, launchEnvironment, gatewayMonitor, launch } = require('../scripts/ccr/launch.cjs');
+const { launchArguments, launchSettings, launchEnvironment, gatewayMonitor, launch } = require('../scripts/ccr/launch.cjs');
+const { claudePicker } = require('../scripts/ccr/claude-picker.cjs');
 const adapter = require('../scripts/ccr/adapter.cjs');
 const ipc = require('../scripts/ccr/ipc.cjs');
 const policy = require('../scripts/ccr/policy.cjs');
@@ -28,6 +29,29 @@ test('prompt-only launch treats text after the option terminator literally', () 
   assert.equal(launchArguments(['--resume', 'conversation', '--', '--fork-session']).resume, true);
 });
 
+test('routed picker has one automatic entry and explicit models remain labeled as routed', () => {
+  const config = { default_model: 'anthropic/new', phases: { 0: { model: 'anthropic/new', fallbacks: ['anthropic/previous', 'openai/new'] }, 2: { model: 'anthropic/new' } },
+    models: ['anthropic/new', 'anthropic/previous', 'openai/new'].map(id => ({ id })) };
+  const picker = claudePicker(config);
+  assert.equal(picker.replaceBuiltInOptions, true);
+  assert.deepEqual(picker.options.map(option => option.model), ['dex/active', 'anthropic/new', 'anthropic/previous', 'openai/new']);
+  assert.equal(picker.options[0].label, 'CCR subscription');
+  assert.ok(picker.options.slice(1).every(option => option.label.endsWith('(via CCR)')));
+  const supplied = { statusLine: { type: 'command', command: 'status-command' }, permissions: { allow: ['Read'] } };
+  const file = path.join(directory, 'settings.json'); fs.writeFileSync(file, JSON.stringify(supplied));
+  for (const value of [JSON.stringify(supplied), file]) {
+    assert.deepEqual(launchSettings(value, config), { modelPicker: picker, ...supplied });
+  }
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)), supplied);
+  const personal = { options: [{ model: 'anthropic/new', label: 'Personal label' }] };
+  assert.deepEqual(launchSettings(JSON.stringify({ modelPicker: personal }), config).modelPicker, personal);
+  for (const value of ['missing.json', '{broken', 'null', '[]']) assert.throws(() => launchSettings(value, config), /settings/);
+  const parsed = launchArguments(['--settings', file, '--settings={"effortLevel":"high"}', '--', '--settings=prompt-text']);
+  assert.equal(parsed.settings, '{"effortLevel":"high"}');
+  assert.deepEqual(parsed.args.slice(-2), ['--', '--settings=prompt-text']);
+  assert.equal(parsed.args.some(arg => arg === file), false);
+});
+
 test('standalone sessions launch without phase files while workflows follow their phase', async t => {
   const saved = Object.fromEntries(['PATH', 'DEX_SESSION_ID', 'DEX_SESSION_ONLY', 'DEX_POLICY_SESSION_ID', 'DX_STATE_DIR'].map(key => [key, process.env[key]]));
   t.after(() => {
@@ -36,7 +60,7 @@ test('standalone sessions launch without phase files while workflows follow thei
     }
   });
   const bin = path.join(directory, 'bin'); fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\n[ "$1" = --settings ] && [ -f "$2" ] || exit 12\nexit 0\n', { mode: 0o700 });
   Object.assign(process.env, { PATH: `${bin}:${process.env.PATH}`, DEX_SESSION_ID: 'prompt-test', DEX_SESSION_ONLY: '1', DX_STATE_DIR: directory });
   const config = { models: [{ id: 'anthropic/test', context_window: 64000 }], phases: {}, default_model: 'anthropic/test' };
   const phases = [];
@@ -59,6 +83,49 @@ test('standalone sessions launch without phase files while workflows follow thei
   delete process.env.DEX_POLICY_SESSION_ID; process.env.DEX_SESSION_ID = 'workflow-test';
   assert.equal(await launch(['--', 'present the final summary']), 0);
   assert.deepEqual(phases, [0, 3, 3, 7]);
+  assert.equal(fs.readdirSync(directory).some(name => name.startsWith('launch-')), false, 'launch settings are removed after the child exits');
+});
+
+test('route policy displays inherited Claude and explicit Codex routes without altering configuration', async t => {
+  const config = { version: 1, enabled: true, default_model: 'anthropic/test', phases: { 0: { model: 'anthropic/test', fallbacks: ['openai/test'], effort: 'high' } },
+    client_routes: { codex: { model: 'openai/test', fallbacks: [], effort: 'xhigh' } },
+    models: ['anthropic/test', 'openai/test'].map(id => ({ id, context_window: 64000 })) };
+  state.write(state.stateFile('config'), config);
+  const writes = []; t.mock.method(process.stdout, 'write', value => { writes.push(value); return true; });
+  await cli.main(['route', 'policy']);
+  const output = writes.join('');
+  assert.match(output, /claude\s+inherited from setup\s+anthropic\/test\s+openai\/test\s+high/);
+  assert.match(output, /codex\s+configured\s+openai\/test\s+-\s+xhigh/);
+  assert.match(output, /native configuration \(CCR off\)/);
+  assert.deepEqual(state.config(), config);
+});
+
+test('route policy remains readable before router setup', async t => {
+  const writes = []; t.mock.method(process.stdout, 'write', value => { writes.push(value); return true; });
+  await cli.main(['route', 'policy']);
+  assert.match(writes.join(''), /claude\s+inherited from setup\s+not selected/);
+  assert.match(writes.join(''), /codex\s+inherited from setup\s+not selected/);
+});
+
+test('public router setup and enable select one global CCR default only after activation succeeds', () => {
+  const root = path.resolve(__dirname, '..');
+  const bin = path.join(directory, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nif [ "$1" = -e ]; then exit 0; fi\nif [ "${FAIL_ACTIVATION:-}" = 1 ]; then exit 7; fi\nprintf \'"activated"\\n\'\n', { mode: 0o700 });
+  const env = { ...process.env, HOME: directory, DEX_DIR: root, PATH: `${bin}:${process.env.PATH}` };
+  const file = path.join(directory, '.dex/providers.json');
+  const original = { default: 'codex-subscription', profiles: { personal: { engine: 'claude', auth: 'subscription', model: 'opus' } } };
+  const run = (action, extra = {}) => spawnSync('bash', [path.join(root, 'bin/router.sh'), 'router', action, '--json'], { cwd: directory, env: { ...env, ...extra }, encoding: 'utf8' });
+  for (const action of ['setup', 'enable']) {
+    state.write(file, original);
+    const failed = run(action, { FAIL_ACTIVATION: '1' });
+    assert.equal(failed.status, 7, failed.stderr);
+    assert.deepEqual(state.read(file), original);
+    const succeeded = run(action);
+    assert.equal(succeeded.status, 0, succeeded.stderr);
+    assert.equal(JSON.parse(succeeded.stdout), 'activated', 'profile messages stay out of JSON stdout');
+    assert.deepEqual(state.read(file), { ...original, default: 'ccr-subscription' });
+    assert.match(succeeded.stderr, /global provider profile to ccr-subscription/);
+  }
 });
 
 test('CLI rejects missing and unknown option values', () => {
@@ -122,6 +189,9 @@ test('router status requests a detailed session count explicitly', async t => {
     return { active_sessions: 3 };
   });
   assert.equal((await cli.routerCommand('status', {})).active_sessions, 3);
+  assert.equal((await cli.routerCommand('doctor', {})).native_routing, false);
+  state.write(state.stateFile('config'), { ...state.config(), native: { enabled: true } });
+  assert.equal((await cli.routerCommand('doctor', {})).native_routing, true);
 });
 test('deep health matches the live gateway identity without launching process scans', async t => {
   const settings = { pid: 2147483647, owner_identity: 'synthetic-owner', management: 'http://127.0.0.1:1', management_key: 'synthetic-key' };
@@ -163,6 +233,8 @@ test('account status names limited models and reports short cooldowns in seconds
   assert.equal(cli.accountRows([account], now)[0][4], 'claude-fable-5-1 temporary provider error (12s)');
   account.cooldown_until = now + 8000; account.cooldown_reason = 'temporary';
   assert.equal(cli.accountRows([account], now)[0][4], 'temporary provider error (8s)');
+  account.cooldown_reason = 'terms-required';
+  assert.equal(cli.accountRows([account], now)[0][4], 'accept terms in claude.ai (8s)');
   assert.equal(cli.accountRows([account], now + 13000)[0][4], 'ready');
 });
 test('account/model rows compare primary and fallback capacity without mixing model quotas', () => {

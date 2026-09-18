@@ -225,6 +225,20 @@ test('unavailable status distinguishes exhausted capacity from a recoverable pro
   const error = policy.unavailable([limited], selected, 1000);
   assert.match(error.message, /^Subscription rate limit reached on this route\./);
 });
+test('terms acceptance remains actionable when the other provider has exhausted its quota', () => {
+  const terms = { id: 'one', name: 'New Claude account', provider: 'anthropic', enabled: true, cooldown_until: 61000, cooldown_reason: 'terms-required' };
+  const exhausted = { id: 'two', provider: 'openai', enabled: true, usage: { observed_at: 1000, windows: [
+    { name: 'weekly', remaining_ratio: 0, resets_at: 86401000 }
+  ] } };
+  const error = policy.unavailable([terms, exhausted], { models }, 1000);
+  assert.equal(error.status, 400);
+  assert.equal(error.type, 'invalid_request_error');
+  assert.match(error.message, /New Claude account: accept updated terms in claude\.ai/);
+  assert.match(error.message, /weekly quota exhausted/);
+  assert.match(error.message, /dx account show <name>/);
+  assert.equal(error.retryAfter, 60);
+  assert.deepEqual(policy.candidates([terms, exhausted], { models }, {}, 61001).map(item => item.account.id), ['one']);
+});
 test('login, disabled, missing models and strict pins have actionable explanations', () => {
   const account = { id: 'one', name: 'Main\u001b[2J', provider: 'anthropic', enabled: true, status: 'reauth-required', cooldown_until: 61000 };
   let error = policy.unavailable([account], { models: [models[0]] }, 1000);
