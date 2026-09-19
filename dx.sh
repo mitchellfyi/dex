@@ -1075,14 +1075,14 @@ __dx_setup_in_place_claimed() {
 
 # dx_session_id is provided by lib/session.sh (sourced via lib/common.sh)
 
-# __dx_build_system_context <wt_name> <step> <session_id> <wt_dir> [workspace_mode] [raw_input] [completion_generation]
+# __dx_build_system_context <wt_name> <step> <session_id> <wt_dir> [workspace_mode] [raw_input] [completion_generation] [session_name]
 # Write a system prompt context file that persists across conversation compaction.
 # Returns the file path on stdout. The file is passed to --append-system-prompt-file
 # so Claude always knows which phase it is in, even after compaction.
 __dx_build_system_context() {
   local wt_name="$1" step="$2" session_id="$3" wt_dir="$4"
   local workspace_mode="${5:-worktree}" raw_input="${6:-}"
-  local completion_generation="${7:-}"
+  local completion_generation="${7:-}" session_name="${8:-}"
   local ctx_file
   ctx_file=$(dx_context_file "$session_id")
   mkdir -p "$(dirname "$ctx_file")"
@@ -1292,6 +1292,7 @@ Do NOT implement skill functionality ad-hoc — invoke the actual skill.
 EOF
 
   __dx_provider_prompt >> "$_ctx_tmp"
+  dx_session_messaging_prompt "$session_name" >> "$_ctx_tmp"
   printf '\n' >> "$_ctx_tmp"
 
   cat >> "$_ctx_tmp" <<'EOF'
@@ -3090,28 +3091,20 @@ __dx_run_phases_inline() {
   echo "${step}:${phase_start_epoch}" >> "$times_file"
 
   local ctx_file
-  if ! ctx_file=$(__dx_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input" "$completion_generation"); then
+  if ! ctx_file=$(__dx_build_system_context "$wt_name" "$step" "$session_id" "$wt_dir" "$workspace_mode" "$raw_input" "$completion_generation" "$claude_session_name"); then
     dx_error "Could not build the Phase ${step} system context."
     return 1
   fi
 
   local claude_args=("${DX_CLAUDE_FLAGS[@]}")
   claude_args+=(--append-system-prompt-file "$ctx_file")
-  # DEX_DIR needs shell quoting inside the command string and JSON encoding
-  # around it — an install path with a quote or backslash breaks hand-rolled
-  # interpolation. A build failure skips the status line rather than passing
+  # Status line plus, when the user opted in, unattended delivery of messages
+  # from their other sessions. A build failure skips both rather than passing
   # Claude malformed settings.
-  local statusline_settings
-  if statusline_settings=$(python3 - "$DEX_DIR/bin/status-line.sh" <<'PY'
-import json, shlex, sys
-
-print(json.dumps({"statusLine": {
-    "type": "command",
-    "command": "bash " + shlex.quote(sys.argv[1]),
-}}))
-PY
-  ) && [[ -n "$statusline_settings" ]]; then
-    claude_args+=(--settings "$statusline_settings")
+  local launch_settings
+  if launch_settings=$(dx_claude_launch_settings "$DEX_DIR/bin/status-line.sh") \
+     && [[ -n "$launch_settings" ]]; then
+    claude_args+=(--settings "$launch_settings")
   fi
 
   local message
@@ -4432,7 +4425,11 @@ __dxloop_run() {
   fi
   local plan_args=("${DX_PLAN_FLAGS[@]}")
   [[ -n "$session_name" ]] && plan_args+=(-n "$session_name")
-  plan_args+=(--append-system-prompt "You are in a dxloop planning session. You MUST be in plan mode — if not, call EnterPlanMode immediately. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool if you lose track of the task. After ExitPlanMode is approved, stop this Claude Code session immediately so the dxloop wrapper can launch implementation. Do NOT ask whether to continue and do NOT wait for another user prompt. The Stop hook handles the process handoff back to dxloop. When the Stop hook prints the exact command after the audit threshold, run this literal command only if the plan is approved and every planning requirement is met, then stop again: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${plan_generation}\"")
+  local loop_settings
+  if loop_settings=$(dx_claude_launch_settings) && [[ -n "$loop_settings" ]]; then
+    plan_args+=(--settings "$loop_settings")
+  fi
+  plan_args+=(--append-system-prompt "You are in a dxloop planning session. You MUST be in plan mode — if not, call EnterPlanMode immediately. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool if you lose track of the task. After ExitPlanMode is approved, stop this Claude Code session immediately so the dxloop wrapper can launch implementation. Do NOT ask whether to continue and do NOT wait for another user prompt. The Stop hook handles the process handoff back to dxloop. When the Stop hook prints the exact command after the audit threshold, run this literal command only if the plan is approved and every planning requirement is met, then stop again: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${plan_generation}\"$(dx_session_messaging_prompt "$session_name")")
 
   dx_info "Phase: Plan (read-only until approved)"
   DEX_SESSION_ID="$session_id" \
@@ -4522,7 +4519,10 @@ $(__dx_provider_prompt)"
   fi
   local impl_args=("${DX_CLAUDE_FLAGS[@]}" --resume)
   [[ -n "$session_name" ]] && impl_args+=(-n "$session_name")
-  impl_args+=(--append-system-prompt "You are in a dxloop session. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool before any audit step, or when you lose track of what you are working on. When the Stop hook prints the exact command after the audit threshold, run this literal command only if every implementation and verification requirement is met, then stop again: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${impl_generation}\"")
+  if loop_settings=$(dx_claude_launch_settings) && [[ -n "$loop_settings" ]]; then
+    impl_args+=(--settings "$loop_settings")
+  fi
+  impl_args+=(--append-system-prompt "You are in a dxloop session. Your original task prompt is saved at ${prompt_file}. Re-read it with the Read tool before any audit step, or when you lose track of what you are working on. When the Stop hook prints the exact command after the audit threshold, run this literal command only if every implementation and verification requirement is met, then stop again: bash \"\$DEX_DIR/bin/complete-receipt.sh\" \"${session_id}\" \"${impl_generation}\"$(dx_session_messaging_prompt "$session_name")")
 
   dx_info "Phase: Implement (autonomous)"
   DEX_SESSION_ID="$session_id" \

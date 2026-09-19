@@ -37,7 +37,7 @@ test('routed picker has one automatic entry and explicit models remain labeled a
   assert.deepEqual(picker.options.map(option => option.model), ['dex/active', 'anthropic/new', 'anthropic/previous', 'openai/new']);
   assert.equal(picker.options[0].label, 'CCR subscription');
   assert.ok(picker.options.slice(1).every(option => option.label.endsWith('(via CCR)')));
-  const supplied = { statusLine: { type: 'command', command: 'status-command' }, permissions: { allow: ['Read'] } };
+  const supplied = { statusLine: { type: 'command', command: 'status-command' }, crossSessionInbound: 'accept', permissions: { allow: ['Read'] } };
   const file = path.join(directory, 'settings.json'); fs.writeFileSync(file, JSON.stringify(supplied));
   for (const value of [JSON.stringify(supplied), file]) {
     assert.deepEqual(launchSettings(value, config), { modelPicker: picker, ...supplied });

@@ -391,4 +391,8 @@ if [[ "$SYNC_PROJECT_STATE_ACTIVE" == "1" ]]; then
 fi
 
 echo ""
+# A user-level choice, so a repo that never ran dx config still learns of it.
+if [[ "$(dx_session_messaging_preference 2>/dev/null || echo unset)" == unset ]]; then
+  dx_info "Messages between your Dex sessions are held for approval; run 'dx config --session-messaging on' to deliver them unattended."
+fi
 dx_done "Sync complete for: $repo_name"

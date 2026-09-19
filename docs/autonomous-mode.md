@@ -141,29 +141,55 @@ does not require concurrent test suites.
 
 ## Session messaging
 
-Claude Code sessions can message each other over a local socket, and deliver a
-message automatically only when both sessions run in the same permission mode
-class. Dex sessions run with `bypassPermissions` while editor sessions do not,
-so a message across that boundary is held for the recipient's approval and
-dropped after five minutes. An unattended session loses it silently.
+Claude Code sessions can message each other over a local socket, through the
+`ListAgents` and `SendMessage` tools. When no `crossSessionInbound` value
+applies, Claude Code delivers a message automatically only when both sessions
+are in the same permission-mode class. Dex launches with `bypassPermissions`,
+so a message from an editor or plain CLI session is held for the Dex session's
+approval and dropped after five minutes when nobody answers. An unattended Dex
+session loses it silently.
 
-`dx config` asks on every run and defaults to the current setting, so answering
-yes sets `crossSessionInbound` to `accept` in `~/.claude/settings.json` and
-answering no clears it. `hold` and `refuse` already decline delivery, so a
-deliberate one is left intact rather than cleared. The setting is the user's
-rather than the repository's: a repository settings file cannot set it, because
-repo scopes may only make the policy stricter.
+`dx config` asks once, `Deliver messages between your Dex sessions without
+approval (all repos)?`, and records the answer in
+`~/.claude/.dex-install-state.json`. Change it later, with or without a
+terminal:
 
-The setting is Claude Code's. Dex's own coordination between concurrent
-sessions — owner files, control receipts, and the host-wide review admission
-leases — is independent of it and works the same under either agent.
+```sh
+dx config --session-messaging on
+dx config --session-messaging off
+```
 
-Accepting gives up the approval step, not a permission gate. Senders are
-authenticated by socket ownership, a per-session key, and peer process
-verification, and any tool call a delivered message triggers still passes the
-receiving session's permission mode and Dex's `PreToolUse` guards. What remains
-is that a session holding untrusted content can influence another without
-review.
+When the answer is on, every Dex launch (lifecycle phases and `dxloop`) passes
+`crossSessionInbound: accept` in its `--settings` value, so the change reaches
+only sessions Dex starts. Dex does not edit `~/.claude/settings.json` for
+this. A `hold` or `refuse` you set there yourself wins and Dex passes nothing;
+managed settings and stricter project files apply on their own under Claude
+Code's precedence rules. Because `--settings` sets the key, Claude Code hides
+its own `/config` row **Messages from your other sessions** inside Dex
+sessions; use that row in any other session, or the flag above, to change the
+value. `dx sync` mentions the flag while no answer is recorded, so a repository
+that never ran `dx config` still learns of it.
+
+An earlier Dex release wrote `accept` straight into `~/.claude/settings.json`.
+That value applies to every session, not only Dex's; remove it through Claude
+Code's `/config` row if you only want Dex sessions to accept.
+
+Every Claude-engine Dex session gets a `Session Messaging` section in its
+system context that names the session, says whether arriving messages are
+delivered or held, and describes when to message another session. The context
+is generated at launch from the Dex install, so the guidance reaches every
+repository Dex runs in without a per-repository file; the `dex` skill carries
+the same guidance. Dex's own coordination between concurrent sessions — owner
+files, control receipts, and the host-wide review admission leases — is
+independent of messaging and works the same under either agent.
+
+Accepting gives up the approval step, not a permission gate. On macOS and
+Linux the inbox socket is restricted to your operating-system user, and the
+sending session's permission class is self-reported. Any tool call a delivered
+message triggers still passes the receiving session's permission mode and
+Dex's `PreToolUse` guards, and Claude Code tells the receiving session that the
+text came from another session rather than from you. What remains is that a
+session holding untrusted content can influence another without review.
 
 The check runner executes an explicit argument-array spec. Deterministic
 commands can opt into reuse bound to the checkout, working directory,

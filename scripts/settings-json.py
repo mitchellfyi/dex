@@ -334,22 +334,27 @@ def command_remove_dirs(settings_path, directories_json):
     emit(settings)
 
 
-def command_inbound_accepted(settings_path):
+def command_inbound_value(settings_path):
+    """Print the user-scope crossSessionInbound value; nothing when unset."""
     settings = load_object(settings_path) if os.path.isfile(settings_path) else {}
-    return 0 if settings.get("crossSessionInbound") == "accept" else 1
+    value = settings.get("crossSessionInbound")
+    if isinstance(value, str) and value:
+        print(value)
 
 
-def command_set_inbound(settings_path, state):
-    if state not in ("on", "off"):
-        raise ValueError(f"cross-session state must be on or off; got {state!r}")
-    settings = load_object(settings_path) if os.path.isfile(settings_path) else {}
-    if state == "on":
-        settings["crossSessionInbound"] = "accept"
-    elif settings.get("crossSessionInbound") == "accept":
-        # "hold" and "refuse" already decline delivery and are nobody else's to
-        # drop, so turning off only clears the value Dex itself writes.
-        del settings["crossSessionInbound"]
-    emit(settings)
+def command_session_messaging(state_path):
+    """Print on, off, or unset for the session-messaging answer Dex recorded."""
+    state = load_object(state_path) if os.path.isfile(state_path) else {}
+    value = state.get("sessionMessaging")
+    print("on" if value is True else "off" if value is False else "unset")
+
+
+def command_set_session_messaging(state_path, state_value):
+    if state_value not in ("on", "off"):
+        raise ValueError(f"session messaging must be on or off; got {state_value!r}")
+    state = load_object(state_path) if os.path.isfile(state_path) else {}
+    state["sessionMessaging"] = state_value == "on"
+    emit(state)
 
 
 COMMANDS = {
@@ -363,8 +368,9 @@ COMMANDS = {
     "remove-dex-hooks": (3, command_remove_hooks),
     "state-dirs": (1, command_state_dirs),
     "remove-worktree-dirs": (2, command_remove_dirs),
-    "inbound-accepted": (1, command_inbound_accepted),
-    "set-inbound": (2, command_set_inbound),
+    "inbound-value": (1, command_inbound_value),
+    "session-messaging": (1, command_session_messaging),
+    "set-session-messaging": (2, command_set_session_messaging),
 }
 
 

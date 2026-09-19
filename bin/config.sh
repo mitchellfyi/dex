@@ -8,28 +8,68 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: dx config
+Usage: dx config [--session-messaging on|off]
 
 Configure integrations and pull request reviewers for the current repository.
 
 Options:
-  -h, --help  Show this help
+  --session-messaging on|off  Deliver messages from your other sessions to Dex
+                              sessions without approval (all repos), then exit
+  -h, --help                  Show this help
 USAGE
 }
 
 show_help=0
-for arg in "$@"; do
-  case "$arg" in
+session_messaging_arg=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     -h|--help) show_help=1 ;;
+    --session-messaging=*) session_messaging_arg="${1#*=}" ;;
+    --session-messaging)
+      if [[ $# -lt 2 ]]; then
+        dx_error "--session-messaging requires on or off"
+        usage >&2
+        exit 1
+      fi
+      session_messaging_arg="$2"
+      shift
+      ;;
     *)
-      dx_error "Unknown config option: $arg"
+      dx_error "Unknown config option: $1"
       usage >&2
       exit 1
       ;;
   esac
+  shift
 done
 if [[ $show_help -eq 1 ]]; then
   usage
+  exit 0
+fi
+
+# The flag is a user-level preference, so it needs no repository and skips the
+# wizard. Dex passes the value to the sessions it launches; the user's own
+# Claude settings are never edited for this.
+if [[ -n "$session_messaging_arg" ]]; then
+  case "$session_messaging_arg" in
+    on|off) ;;
+    *)
+      dx_error "--session-messaging expects on or off, got: $session_messaging_arg"
+      exit 1
+      ;;
+  esac
+  dx_set_session_messaging_preference "$session_messaging_arg" || exit 1
+  if [[ "$session_messaging_arg" == on ]]; then
+    dx_done "Dex sessions will deliver messages from your other sessions without approval."
+    user_inbound=$(dx_claude_inbound_setting 2>/dev/null || true)
+    case "$user_inbound" in
+      hold|refuse)
+        dx_warn "Your Claude settings set crossSessionInbound to ${user_inbound}, which Dex respects; change it under /config (Messages from your other sessions) for Dex sessions to accept."
+        ;;
+    esac
+  else
+    dx_done "Dex sessions will hold messages from your other sessions for approval."
+  fi
   exit 0
 fi
 
@@ -108,18 +148,24 @@ ask_yn "Vercel (deployments)?" "n" && VERCEL_STATUS="enabled"
 ask_yn "Grafana (observability)?" "n" && GRAFANA_STATUS="enabled"
 ask_yn "Datadog (observability + APM)?" "n" && DATADOG_STATUS="enabled"
 
-# This setting is the user's, not the repository's, so the answer defaults to
-# its current value and applies to every repository.
-if [[ -t 0 ]] && command -v python3 >/dev/null 2>&1; then
-  session_messaging_default=n
-  dx_cross_session_messages_enabled && session_messaging_default=y
-  session_messaging_state=off
-  ask_yn "Auto-accept messages between your sessions (all repos)?" \
-    "$session_messaging_default" && session_messaging_state=on
-  if dx_set_cross_session_messages "$session_messaging_state" \
-     && [[ "$session_messaging_state" == on ]]; then
-    SESSION_MESSAGING_STATUS="enabled"
+# The preference is the user's, not the repository's. Ask until an answer is
+# recorded, then report it; --session-messaging changes it later.
+if command -v python3 >/dev/null 2>&1; then
+  session_messaging_pref=$(dx_session_messaging_preference 2>/dev/null || echo unset)
+  if [[ "$session_messaging_pref" == unset && -t 0 ]]; then
+    session_messaging_default=n
+    # An accept that an earlier Dex wrote to the user's Claude settings keeps
+    # its effect, so the default follows it.
+    [[ "$(dx_claude_inbound_setting 2>/dev/null || true)" == accept ]] && session_messaging_default=y
+    session_messaging_pref=off
+    ask_yn "Deliver messages between your Dex sessions without approval (all repos)?" \
+      "$session_messaging_default" && session_messaging_pref=on
+    dx_set_session_messaging_preference "$session_messaging_pref" || session_messaging_pref="unset"
   fi
+  case "$session_messaging_pref" in
+    on) SESSION_MESSAGING_STATUS="enabled" ;;
+    off) SESSION_MESSAGING_STATUS="disabled" ;;
+  esac
 fi
 
 # ── Reviewers ───────────────────────────────────────────────────────────
@@ -299,7 +345,10 @@ echo "  Ticket tracker: ${TRACKER_TOOL} (${TRACKER_STATUS})"
 [[ "$VERCEL_STATUS" == "enabled" ]] && echo "  Vercel: enabled"
 [[ "$GRAFANA_STATUS" == "enabled" ]] && echo "  Grafana: enabled"
 [[ "$DATADOG_STATUS" == "enabled" ]] && echo "  Datadog: enabled"
-[[ "$SESSION_MESSAGING_STATUS" == "enabled" ]] && echo "  Session messaging: enabled"
+case "$SESSION_MESSAGING_STATUS" in
+  enabled) echo "  Session messaging: enabled (dx config --session-messaging off to hold messages)" ;;
+  disabled) echo "  Session messaging: disabled (dx config --session-messaging on to deliver messages)" ;;
+esac
 echo ""
 echo "Reviewers configured:"
 printf '%s' "$REVIEWER_ROWS" | sed 's/^| /  - /; s/ |.*//' | grep -v '^$'

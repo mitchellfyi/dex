@@ -192,6 +192,7 @@ dx test                    # Test Dex here, or verify another initialized projec
 dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
 dx config                  # Configure integrations (ticket tracker, reviewers, MCP, session messaging)
+dx config --session-messaging on  # Deliver messages between your Dex sessions without approval
 dx maintain                # Run background maintenance or install its GitHub workflow
 dx ui-capture              # Capture, revise, inspect, or skip UI proof artifacts
 dx revert 1234 2           # Revert a worktree to a phase checkpoint

@@ -139,23 +139,69 @@ dx_check_claude_settings() {
   return 1
 }
 
-dx_cross_session_messages_enabled() {
-  python3 "$DEX_DIR/scripts/settings-json.py" \
-    inbound-accepted "$HOME/.claude/settings.json"
+# Cross-session messaging. Claude Code holds a message for approval when it
+# reaches a session that bypasses permission prompts, which every Dex launch
+# does, and drops it after five minutes when nobody answers. Dex records the
+# user's answer in its own install state and passes crossSessionInbound=accept
+# to the sessions it launches. It never edits the user's Claude settings for
+# this, so a hold or refuse the user set there stays theirs and wins.
+
+# The value Claude Code reads from the user's own settings file, or nothing.
+dx_claude_inbound_setting() {
+  python3 "$DEX_DIR/scripts/settings-json.py" inbound-value \
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 }
 
-dx_set_cross_session_messages() {
-  local state="$1" settings="$HOME/.claude/settings.json" tmp
-  tmp="${settings}.tmp.$$"
-  mkdir -p "$(dirname "$settings")"
+# on, off, or unset.
+dx_session_messaging_preference() {
+  python3 "$DEX_DIR/scripts/settings-json.py" session-messaging \
+    "$HOME/.claude/.dex-install-state.json"
+}
+
+dx_set_session_messaging_preference() {
+  local state="$1" file="$HOME/.claude/.dex-install-state.json" tmp
+  tmp="${file}.tmp.$$"
+  mkdir -p "$(dirname "$file")"
   if python3 "$DEX_DIR/scripts/settings-json.py" \
-       set-inbound "$settings" "$state" > "$tmp" \
-     && [[ -s "$tmp" ]] && mv "$tmp" "$settings"; then
+       set-session-messaging "$file" "$state" > "$tmp" \
+     && [[ -s "$tmp" ]] && mv "$tmp" "$file"; then
     return 0
   fi
   rm -f "$tmp"
-  dx_warn "Could not update ~/.claude/settings.json"
+  dx_warn "Could not update ~/.claude/.dex-install-state.json"
   return 1
+}
+
+# Prints "accept" when a Dex launch should deliver peer messages unattended.
+# Managed settings and stricter project files apply on their own under
+# Claude's precedence rules; only the user-scope value needs checking here.
+dx_session_messaging_launch_value() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  [[ "$(dx_session_messaging_preference 2>/dev/null)" == on ]] || return 0
+  case "$(dx_claude_inbound_setting 2>/dev/null)" in
+    hold|refuse) return 0 ;;
+  esac
+  printf 'accept\n'
+}
+
+# dx_claude_launch_settings [statusline_script] — the --settings JSON for a
+# Dex-launched Claude session, or nothing when there is nothing to set.
+# The script path needs shell quoting inside the command string and JSON
+# encoding around it, so Python builds the value rather than interpolation.
+dx_claude_launch_settings() {
+  local statusline="${1:-}" inbound
+  inbound=$(dx_session_messaging_launch_value)
+  [[ -n "$statusline" || -n "$inbound" ]] || return 0
+  python3 - "$statusline" "$inbound" <<'PY'
+import json, shlex, sys
+
+settings = {}
+if sys.argv[1]:
+    settings["statusLine"] = {"type": "command", "command": "bash " + shlex.quote(sys.argv[1])}
+if sys.argv[2]:
+    settings["crossSessionInbound"] = sys.argv[2]
+print(json.dumps(settings))
+PY
 }
 
 dx_claude_plugin_marketplace_configured() {
