@@ -34,33 +34,40 @@ def tracked(pattern):
     ).stdout.split()
 
 
-# The lib module table must name every module, and only real ones.
-tabled = set(re.findall(r"^\| `([a-z-]+\.sh)` \|", agents, re.M))
+# The lib module table must name every module, and only real ones. It lives in
+# docs/reference.md: AGENTS.md is read into every session and a lookup table is
+# needed only when someone is looking something up.
+reference = (root / "docs/reference.md").read_text(encoding="utf-8")
+tabled = set(re.findall(r"^\| `([a-z-]+\.sh)` \|", reference, re.M))
 # Include newly added modules before they are staged. This test checks the
 # working tree an agent is editing, not only Git's current index.
 on_disk = {path.name for path in (root / "lib").glob("*.sh") if path.is_file()}
 if tabled != on_disk:
     problems.append(
-        "AGENTS.md lib module table is out of step with lib/: "
+        "docs/reference.md lib module table is out of step with lib/: "
         f"only in the table {sorted(tabled - on_disk)}, "
         f"only on disk {sorted(on_disk - tabled)}"
     )
 
-# The list of what sourcing common.sh pulls in, and its count.
+# What sourcing common.sh pulls in. This used to be checked against a prose list
+# in AGENTS.md, which meant rewording the sentence silently switched the check
+# off. Compare against the tree instead: every module is sourced except
+# common.sh itself and the ones deliberately sourced lazily. Adding a name here
+# is a deliberate act, not a formality.
+LAZY = {"common.sh", "router.sh"}
 sourced = set(re.findall(r"__dx_require_lib ([a-z-]+\.sh)", (root / "lib/common.sh").read_text()))
+if sourced != on_disk - LAZY:
+    problems.append(
+        "common.sh does not source what lib/ contains: "
+        f"sourced but absent {sorted(sourced - on_disk)}, "
+        f"present but unsourced {sorted(on_disk - LAZY - sourced)} "
+        f"(lazily sourced, by exception: {sorted(LAZY - {'common.sh'})})"
+    )
 count = re.search(r"Shared shell libraries \((\d+) modules sourced by common\.sh", agents)
 if count and int(count.group(1)) != len(sourced):
     problems.append(
         f"AGENTS.md says {count.group(1)} modules are sourced by common.sh; it sources {len(sourced)}"
     )
-listing = re.search(r"Sourcing `common\.sh` also sources.*?\n\n", agents, re.S)
-if listing:
-    listed = set(re.findall(r"`([a-z-]+\.sh)`", listing.group(0))) - {"common.sh"}
-    if listed != sourced:
-        problems.append(
-            "the common.sh source list in AGENTS.md is out of step: "
-            f"only listed {sorted(listed - sourced)}, only sourced {sorted(sourced - listed)}"
-        )
 
 # Every built-in guard must be named, so nobody writes a duplicate of one.
 guards = set()
