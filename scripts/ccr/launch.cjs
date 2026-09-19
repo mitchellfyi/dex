@@ -5,7 +5,7 @@ const { spawn } = require('node:child_process');
 const state = require('./state.cjs');
 const adapter = require('./adapter.cjs');
 const ipc = require('./ipc.cjs');
-const { claudePicker } = require('./claude-picker.cjs');
+const { claudePicker, betaHeader, plainModel, longContext } = require('./claude-picker.cjs');
 
 function launchArguments(args) {
   const forwarded = []; let requested, settings;
@@ -21,17 +21,17 @@ function launchArguments(args) {
     if (arg.startsWith('--settings=')) { settings = arg.slice(11); continue; }
     if (['--model', '--fallback-model', '--permission-mode'].includes(arg)) {
       if (!args[index + 1]) throw new Error(`${arg} requires a value.`);
-      if (arg === '--model' && args[index + 1] !== 'dex/active') requested = args[index + 1];
+      if (arg === '--model' && plainModel(args[index + 1]) !== 'dex/active') requested = plainModel(args[index + 1]);
       index++; continue;
     }
-    if (arg.startsWith('--model=')) { if (arg.slice(8) !== 'dex/active') requested = arg.slice(8); continue; }
+    if (arg.startsWith('--model=')) { if (plainModel(arg.slice(8)) !== 'dex/active') requested = plainModel(arg.slice(8)); continue; }
     if (arg.startsWith('--fallback-model=') || arg.startsWith('--permission-mode=')) continue;
     if (arg !== '--dangerously-skip-permissions') forwarded.push(arg);
   }
   const resume = options.some(arg => ['--resume', '--continue', '-r', '-c'].includes(arg) || arg.startsWith('--resume=')) && !options.includes('--fork-session');
   const mcpExplicit = options.some(arg => arg === '--strict-mcp-config' || arg === '--mcp-config' || arg.startsWith('--mcp-config='));
   const toolsExplicit = options.some(arg => arg === '--tools' || arg.startsWith('--tools='));
-  return { requested, resume, settings, mcpExplicit, toolsExplicit, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
+  return { requested, resume, settings, mcpExplicit, toolsExplicit, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', longContext('dex/active'), ...forwarded] };
 }
 
 function launchSettings(input, config) {
@@ -55,11 +55,13 @@ function launchEnvironment(settings, token, session, original = process.env, hel
   for (const name of Object.keys(env)) if (/^(ANTHROPIC_|OPENAI_|AZURE_OPENAI_|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_API_KEY_HELPER|CLAUDE_CODE_USE_|CLAUDE_CODE_SUBAGENT_MODEL|CCR_|DX_ROUTER_SESSION_)/.test(name)) delete env[name];
   Object.assign(env, {
     ANTHROPIC_BASE_URL: `${settings.gateway}/plugins/dex`, ...(helper ? {} : { ANTHROPIC_AUTH_TOKEN: token }),
-    ANTHROPIC_CUSTOM_MODEL_OPTION: 'dex/active', ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: 'Dex automatic route',
-    ANTHROPIC_DEFAULT_OPUS_MODEL: 'dex/active', ANTHROPIC_DEFAULT_SONNET_MODEL: 'dex/active', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'dex/active',
-    CLAUDE_CODE_SUBAGENT_MODEL: 'dex/active', CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(session.context_limit),
-    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(Number(original.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) > 0
-      ? Math.min(80, Number(original.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)) : 80),
+    ANTHROPIC_BETAS: betaHeader(original.ANTHROPIC_BETAS),
+    ANTHROPIC_CUSTOM_MODEL_OPTION: longContext('dex/active'), ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: 'Dex automatic route',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: longContext('dex/active'), ANTHROPIC_DEFAULT_SONNET_MODEL: longContext('dex/active'), ANTHROPIC_DEFAULT_HAIKU_MODEL: longContext('dex/active'),
+    CLAUDE_CODE_SUBAGENT_MODEL: longContext('dex/active'), CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(session.context_limit),
+    // The route's real budget in tokens. Claude Code clamps its own compaction
+    // schedule to this; Dex no longer overrides the percentage behind it.
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(session.context_limit),
     CLAUDE_CODE_STOP_HOOK_BLOCK_CAP: original.CLAUDE_CODE_STOP_HOOK_BLOCK_CAP || '1000',
     DX_ROUTER_SESSION_ID: session.id, DX_ROUTER_SESSION_TOKEN: token, DX_PROVIDER_ENGINE: 'ccr', DX_PROVIDER_AGENT: 'claude', DX_PROVIDER_PROFILE: 'ccr-subscription',
     DEX_ROUTER_HOME: state.root()

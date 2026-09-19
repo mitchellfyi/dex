@@ -384,12 +384,42 @@ before/after counts, the first subsequent real input count, tool/schema size,
 and restored skill/instruction size without printing prompt or credential text.
 Use `--transcript <jsonl>` to inspect an explicitly selected owned transcript.
 
-Dex sets Claude’s compaction threshold to 80% and Codex’s
-auto-compaction limit to 80% of that budget, leaving room for tool output and
-the compaction request itself. Earlier personal thresholds are retained. Route configuration and model catalogue changes refresh
-the installed context settings while preserving model choices and any earlier
-personal compaction threshold. A personal threshold above the new budget must
-be lowered before the route change can be saved.
+Dex states the route's budget to each client and leaves the compaction
+schedule to the client itself. Claude receives the budget in tokens as
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` and decides when to compact within it; Codex's
+auto-compaction limit is set to 80% of that budget, leaving room for tool output
+and the compaction request itself. Earlier personal thresholds are retained.
+Route configuration and model catalogue changes refresh the installed context
+settings while preserving model choices and any earlier personal compaction
+threshold. A personal threshold above the new budget must be lowered before the
+route change can be saved.
+
+Claude resolves a model's context window locally, before any request. A routed
+launch points at the local gateway, so it is never first-party: a model name the
+client already recognises resolves to that model's believed 200,000-token
+window, and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is ignored for it. Only the
+unrecognised `dex/active` id honours that variable. Dex therefore appends the
+client's own `[1m]` long-context marker to every Claude-side model id it
+installs — `dex/active`, the default Opus, Sonnet, Haiku and subagent models, and
+each entry in the Dex model picker — which asks for the 1M window regardless of
+how the name resolves. The marker is stripped again before the gateway routes
+the request, so it never reaches the model catalogue. A `/model` choice you made
+from the Dex picker is re-marked in place on the next route or catalogue change
+rather than replaced; a model Dex does not offer is left alone.
+
+Dex no longer sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`. It was pinned only because
+a routed model resolved to a 200,000-token window and compacted at 160,000; with
+the window stated directly, the percentage is yours again. Installations that
+carry the old override have it removed on the next route or catalogue change,
+unless you changed the value afterwards, in which case it stays.
+
+`context-1m-2025-08-07` is still added to `ANTHROPIC_BETAS`, because Anthropic
+gates 1M input on it upstream. That governs the provider request, not the
+client's local window arithmetic. Betas you export yourself are preserved
+alongside it, models without long-context support ignore it, and the gateway
+forwards it only on Anthropic requests. Installations predating this field adopt
+it on the next route or catalogue change; a value you set by hand afterwards
+stays yours.
 
 Already-running clients retain their loaded settings; restart and resume the
 conversation to load updated limits. The `dex/active` model catalogue also

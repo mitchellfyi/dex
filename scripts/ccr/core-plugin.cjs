@@ -24,7 +24,7 @@ function createGatewayPlugin() {
       for (const name of Object.keys(headers)) if (['authorization', 'x-api-key', 'x-ccr-dex-account-ticket'].includes(name.toLowerCase())) delete headers[name];
       Object.assign(headers, result.headers);
       if (provider === 'anthropic') {
-        const betas = `${input.request?.headers?.['anthropic-beta'] || ''},oauth-2025-04-20`.split(',').filter(Boolean);
+        const betas = `${input.request?.headers?.['anthropic-beta'] || ''},oauth-2025-04-20`.split(',').map(beta => beta.trim()).filter(Boolean);
         if (input.sourceAdapterKey === 'openai_responses') betas.push('claude-code-20250219');
         headers['anthropic-beta'] = [...new Set(betas)].join(',');
       }

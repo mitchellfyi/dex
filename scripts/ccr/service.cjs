@@ -277,11 +277,13 @@ class RouterService {
       const selected = policy.route(state.config(), session);
       // Native /model is an explicit request override; dex/active follows policy.
       // The provider checks whether the input fits a smaller model's window.
-      if (body.model && body.model !== 'dex/active') {
+      // Claude Code carries its long-context marker in the model name.
+      const picked = typeof body.model === 'string' ? require('./claude-picker.cjs').plainModel(body.model) : body.model;
+      if (picked && picked !== 'dex/active') {
         const config = state.config();
-        const matches = session.client && typeof body.model === 'string' && !body.model.includes('/') ? config.models.filter(item => (item.upstream_id || item.id.split('/')[1]) === body.model) : [];
+        const matches = session.client && typeof picked === 'string' && !picked.includes('/') ? config.models.filter(item => (item.upstream_id || item.id.split('/')[1]) === picked) : [];
         if (matches.length > 1) throw new Error('Model name is ambiguous. Use the provider/model ID from dx model list.');
-        const requested = policy.model(config, matches[0]?.id || body.model);
+        const requested = policy.model(config, matches[0]?.id || picked);
         const configuredClientPrimary = session.client && config.client_routes?.[session.client]?.model;
         if (requested.id !== configuredClientPrimary) selected.models = [requested];
       }

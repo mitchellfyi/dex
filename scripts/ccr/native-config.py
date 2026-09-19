@@ -93,37 +93,77 @@ def sync_context_field(document, entries, field, value, label):
     return current.get("value") != value
 
 
-def install_compaction(document, entries, percent):
-    """Migrate older installs while retaining earlier personal compaction."""
+def retire_compact_percent(document, entries):
+    """Hand compaction scheduling back to the client.
+
+    Dex used to pin CLAUDE_AUTOCOMPACT_PCT_OVERRIDE because a routed model
+    resolved to a 200k window. The window is now stated directly, so the
+    percentage is the client's business again. A value the user changed
+    afterwards is theirs and stays.
+    """
     field = ["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]
+    entry = next((item for item in entries if item["field"] == field), None)
+    if entry is None:
+        return False
+    if get_field(document, field) != {"present": True, "value": entry["installed"]}:
+        return False
+    put_field(document, field, entry["original"])
+    entries.remove(entry)
+    return True
+
+
+def install_compact_window(document, entries, window):
+    """Migrate older installs while retaining earlier personal compaction."""
+    field = ["env", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
     current = get_field(document, field)
     entry = next((item for item in entries if item["field"] == field), None)
     if entry is None:
-        entry = {"field": field, "original": current, "installed": str(percent)}
+        entry = {"field": field, "original": current, "installed": str(window)}
         entries.append(entry)
         raw = current.get("value")
         if raw is not None:
             try:
-                earlier = 0 < float(raw) <= percent
+                earlier = 0 < float(raw) <= window
             except (ValueError, TypeError):
                 earlier = False
             if earlier:
                 entry["installed"] = raw
                 return False
-        put_field(document, field, {"present": True, "value": str(percent)})
+        put_field(document, field, {"present": True, "value": str(window)})
         return True
     # A smaller existing value remains an intentional early-compaction choice.
     raw = current.get("value")
     try:
-        if 0 < float(raw) <= percent:
+        if 0 < float(raw) <= window:
             return False
     except (ValueError, TypeError):
         pass
-    return sync_context_field(document, entries, field, str(percent), "claude.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
+    return sync_context_field(document, entries, field, str(window), "claude.CLAUDE_CODE_AUTO_COMPACT_WINDOW")
 
 
-def sync_picker(document, entries, value):
-    field = ["modelPicker"]
+def mark_long_context(document, models):
+    """Carry the client's long-context marker onto an existing /model choice.
+
+    The picked model is the user's, not Dex's, so it is re-marked rather than
+    replaced: without the marker the client resolves a recognised name to its
+    believed 200k window and compacts against that instead of the route.
+    """
+    current = get_field(document, ["model"])
+    if not current.get("present") or not isinstance(current.get("value"), str):
+        return False
+    plain = re.sub(r"(\[1m\])+$", "", current["value"], flags=re.IGNORECASE)
+    if current["value"] == plain + "[1m]" or plain not in models:
+        return False
+    put_field(document, ["model"], {"present": True, "value": plain + "[1m]"})
+    return True
+
+
+def sync_managed_field(document, entries, field, value):
+    """Install a field Dex manages, adopting it when the install predates it.
+
+    A value the user set afterwards stays theirs, and ownership still records
+    what Dex replaced so disable restores it.
+    """
     current = get_field(document, field)
     entry = next((item for item in entries if item["field"] == field), None)
     if entry is None:
@@ -157,7 +197,7 @@ def apply(request):
         saved = {
             "claude_file": str(claude_file), "codex_file": str(codex_file),
             "claude": [{"field": entry["field"], "original": get_field(claude, entry["field"]), "installed": entry["value"]}
-                       for entry in fields if entry["field"] not in [["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"], ["modelPicker"]]],
+                       for entry in fields if entry["field"] not in [["env", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"], ["modelPicker"]]],
             "codex": [{"field": entry["field"], "original": get_field(codex, [entry["field"]]), "installed": entry["value"]} for entry in codex_fields],
             "provider_content": "", "had_env": "env" in claude,
         }
@@ -179,8 +219,13 @@ def apply(request):
         if get_field(claude, base["field"]) == {"present": True, "value": base["installed"]}:
             changed = sync_context_field(claude, saved["claude"], ["env", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
                                          str(request["claude_context"]), "claude.CLAUDE_CODE_MAX_CONTEXT_TOKENS")
-            changed = install_compaction(claude, saved["claude"], request["claude_compact_percent"]) or changed
-            changed = sync_picker(claude, saved["claude"], request["claude_picker"]) or changed
+            changed = install_compact_window(claude, saved["claude"], request["claude_compact_window"]) or changed
+            changed = retire_compact_percent(claude, saved["claude"]) or changed
+            changed = mark_long_context(claude, request["claude_models"]) or changed
+            changed = sync_managed_field(claude, saved["claude"], ["modelPicker"], request["claude_picker"]) or changed
+            # Installs predating the long-context beta adopt it here; enable
+            # refuses to run once any managed value carries a personal edit.
+            changed = sync_managed_field(claude, saved["claude"], ["env", "ANTHROPIC_BETAS"], request["claude_betas"]) or changed
             if changed:
                 claude_source = json.dumps(claude, indent=2) + "\n"
     elif action == "disable":
@@ -211,12 +256,21 @@ def apply(request):
             for entry in saved["claude"]:
                 if get_field(claude, entry["field"]) != {"present": True, "value": entry["installed"]}:
                     raise ValueError("Native Claude settings were edited. Disable native routing before enabling it again.")
+        # A newer Dex manages a field this install predates. Record the user's
+        # current value first so ownership stays complete and disable restores
+        # it; validation above only covers fields this install already owned.
+        for entry in fields:
+            if entry["field"] in (["modelPicker"], ["env", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"]):
+                continue
+            if not any(item["field"] == entry["field"] for item in saved["claude"]):
+                saved["claude"].append({"field": entry["field"], "original": get_field(claude, entry["field"]),
+                                        "installed": entry["value"]})
         for entry in fields:
             if entry["field"] == ["modelPicker"]:
-                sync_picker(claude, saved["claude"], entry["value"])
+                sync_managed_field(claude, saved["claude"], entry["field"], entry["value"])
                 continue
-            if entry["field"] == ["env", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]:
-                install_compaction(claude, saved["claude"], int(entry["value"]))
+            if entry["field"] == ["env", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"]:
+                install_compact_window(claude, saved["claude"], int(entry["value"]))
                 continue
             put_field(claude, entry["field"], {"present": True, "value": entry["value"]})
             next(item for item in saved["claude"] if item["field"] == entry["field"])["installed"] = entry["value"]

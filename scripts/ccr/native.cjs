@@ -6,7 +6,7 @@ const state = require('./state.cjs');
 const policy = require('./policy.cjs');
 const ipc = require('./ipc.cjs');
 const adapter = require('./adapter.cjs');
-const { claudePicker } = require('./claude-picker.cjs');
+const { claudePicker, betaHeader, longContext, plainModel } = require('./claude-picker.cjs');
 
 const quote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
 const authArgs = client => [path.join(__dirname, 'native.cjs'), 'auth', client, state.root()];
@@ -39,8 +39,11 @@ function clientSettings(action, native, settings, config) {
   if (action !== 'disable') config ||= state.config();
   if (action === 'sync-context') {
     request.claude_picker = claudePicker(config, 'claude');
+    request.claude_betas = betaHeader(process.env.ANTHROPIC_BETAS);
     request.claude_context = policy.contextLimit(config, 'claude');
-    request.claude_compact_percent = 80;
+    request.claude_compact_window = request.claude_context;
+    // Only a model this route actually offers is re-marked; anything else is the user's.
+    request.claude_models = request.claude_picker.options.map(option => plainModel(option.model));
     request.codex_context = policy.contextLimit(config, 'codex');
   } else if (action !== 'disable') {
     const claudeContext = policy.contextLimit(config, 'claude');
@@ -48,15 +51,16 @@ function clientSettings(action, native, settings, config) {
     const helper = [process.execPath, ...authArgs('claude')].map(quote).join(' ');
     request.claude_fields = [
       { field: ['apiKeyHelper'], value: helper },
-      { field: ['model'], value: 'dex/active' },
+      { field: ['model'], value: longContext('dex/active') },
       { field: ['modelPicker'], value: claudePicker(config, 'claude') },
       { field: ['env', 'ANTHROPIC_BASE_URL'], value: `${settings.gateway}/plugins/dex` },
-      { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION'], value: 'dex/active' },
+      { field: ['env', 'ANTHROPIC_BETAS'], value: betaHeader(process.env.ANTHROPIC_BETAS) },
+      { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION'], value: longContext('dex/active') },
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME'], value: 'Dex automatic route' },
-      ...['OPUS', 'SONNET', 'HAIKU'].map(name => ({ field: ['env', `ANTHROPIC_DEFAULT_${name}_MODEL`], value: 'dex/active' })),
-      { field: ['env', 'CLAUDE_CODE_SUBAGENT_MODEL'], value: 'dex/active' },
+      ...['OPUS', 'SONNET', 'HAIKU'].map(name => ({ field: ['env', `ANTHROPIC_DEFAULT_${name}_MODEL`], value: longContext('dex/active') })),
+      { field: ['env', 'CLAUDE_CODE_SUBAGENT_MODEL'], value: longContext('dex/active') },
       { field: ['env', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'], value: String(claudeContext) },
-      { field: ['env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'], value: '80' }
+      { field: ['env', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'], value: String(claudeContext) }
     ];
     request.codex_fields = [
       { field: 'model_provider', value: 'dex-ccr' }, { field: 'model', value: 'dex/active' },

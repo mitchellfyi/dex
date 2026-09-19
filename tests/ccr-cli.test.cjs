@@ -34,7 +34,7 @@ test('routed picker has one automatic entry and explicit models remain labeled a
     models: ['anthropic/new', 'anthropic/previous', 'openai/new'].map(id => ({ id })) };
   const picker = claudePicker(config);
   assert.equal(picker.replaceBuiltInOptions, true);
-  assert.deepEqual(picker.options.map(option => option.model), ['dex/active', 'anthropic/new', 'anthropic/previous', 'openai/new']);
+  assert.deepEqual(picker.options.map(option => option.model), ['dex/active[1m]', 'anthropic/new[1m]', 'anthropic/previous[1m]', 'openai/new[1m]']);
   assert.equal(picker.options[0].label, 'CCR subscription');
   assert.ok(picker.options.slice(1).every(option => option.label.endsWith('(via CCR)')));
   const supplied = { statusLine: { type: 'command', command: 'status-command' }, crossSessionInbound: 'accept', permissions: { allow: ['Read'] } };
@@ -486,6 +486,19 @@ test('launch uses private transport env and keeps native credentials out of argv
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'synthetic-session-token'); assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '128000');
   assert.equal(env.DX_ROUTER_SESSION_TOKEN, 'synthetic-session-token'); assert.equal(env.DX_ROUTER_SESSION_ID, 'run1');
   assert.equal(parsed.args.includes('synthetic-session-token'), false);
+  // A gateway launch is never first-party, so a name the client recognises
+  // resolves to its believed 200k window and ignores CLAUDE_CODE_MAX_CONTEXT_TOKENS.
+  // The marker lifts that; the window states the route's budget in tokens.
+  assert.equal(env.ANTHROPIC_CUSTOM_MODEL_OPTION, 'dex/active[1m]');
+  assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, 'dex/active[1m]');
+  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'dex/active[1m]');
+  assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000');
+  // Compaction scheduling stays the client's own.
+  assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined);
+  assert.equal(env.ANTHROPIC_BETAS, 'context-1m-2025-08-07');
+  const carried = launchEnvironment({ gateway: 'http://127.0.0.1:1234' }, 'synthetic-session-token', { id: 'run1', context_limit: 128000 },
+    { ...original, ANTHROPIC_BETAS: ' fine-grained-tool-streaming-2025-05-14 , context-1m-2025-08-07 ' });
+  assert.equal(carried.ANTHROPIC_BETAS, 'fine-grained-tool-streaming-2025-05-14,context-1m-2025-08-07');
   // With the native apiKeyHelper installed, Claude gets the capability from the helper only.
   fs.writeFileSync(path.join(directory, 'settings.json'), JSON.stringify({ apiKeyHelper: 'node native.cjs auth claude' }));
   const helped = launchEnvironment({ gateway: 'http://127.0.0.1:1234' }, 'synthetic-session-token', { id: 'run1', context_limit: 128000 }, original);

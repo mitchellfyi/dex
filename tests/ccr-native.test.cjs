@@ -46,9 +46,9 @@ test('native settings preserve client preferences and restore only managed value
   native.clientSettings('enable', config, settings);
   let claude = JSON.parse(fs.readFileSync(config.claude_file));
   assert.deepEqual(claude.permissions, original.permissions); assert.deepEqual(claude.hooks, original.hooks);
-  assert.equal(claude.env.KEEP_ME, 'yes'); assert.equal(claude.model, 'dex/active');
+  assert.equal(claude.env.KEEP_ME, 'yes'); assert.equal(claude.model, 'dex/active[1m]');
   assert.equal(claude.modelPicker.replaceBuiltInOptions, true);
-  assert.equal(claude.modelPicker.options.filter(option => option.model === 'dex/active').length, 1);
+  assert.equal(claude.modelPicker.options.filter(option => option.model === 'dex/active[1m]').length, 1);
   assert.match(claude.apiKeyHelper, /native\.cjs.*auth.*claude/);
   const codex = toml(config.codex_file);
   assert.equal(codex.model_provider, 'dex-ccr'); assert.equal(codex.model, 'dex/active');
@@ -85,6 +85,47 @@ test('native picker migration restores the previous lineup and preserves later u
   native.syncContext(routing);
   assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)).modelPicker, personal);
   assert.ok(native.clientSettings('disable', config, settings).preserved.includes('claude.modelPicker'));
+});
+
+test('native settings request the long-context beta and adopt it on installs that predate the field', () => {
+  native.clientSettings('enable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.ANTHROPIC_BETAS, 'context-1m-2025-08-07');
+  // An install from before Dex managed this field has no ownership record for
+  // it. Enable refuses to run once any managed value carries a personal edit,
+  // so a context sync is the migration these installations actually reach.
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  const saved = JSON.parse(fs.readFileSync(backup));
+  saved.claude = saved.claude.filter(entry => entry.field[1] !== 'ANTHROPIC_BETAS');
+  state.write(backup, saved);
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  claude.env.ANTHROPIC_BETAS = 'personal-beta-2025-01-01'; claude.model = 'anthropic/test';
+  fs.writeFileSync(config.claude_file, JSON.stringify(claude));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.ANTHROPIC_BETAS, 'context-1m-2025-08-07');
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).model, 'anthropic/test[1m]', 'a /model choice survives the migration and gains the long-context marker');
+  native.clientSettings('disable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.ANTHROPIC_BETAS, 'personal-beta-2025-01-01');
+  // A beta the user changes after the migration stays theirs.
+  native.clientSettings('enable', config, settings);
+  const edited = JSON.parse(fs.readFileSync(config.claude_file));
+  edited.env.ANTHROPIC_BETAS = 'chosen-by-hand'; fs.writeFileSync(config.claude_file, JSON.stringify(edited));
+  native.syncContext(routing);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.ANTHROPIC_BETAS, 'chosen-by-hand');
+  assert.ok(native.clientSettings('disable', config, settings).preserved.includes('claude.env.ANTHROPIC_BETAS'));
+  // A beta the user exported for their own launches survives alongside ours.
+  const exported = process.env.ANTHROPIC_BETAS;
+  process.env.ANTHROPIC_BETAS = ' fine-grained-tool-streaming-2025-05-14 , context-1m-2025-08-07 ';
+  try {
+    fs.writeFileSync(config.claude_file, JSON.stringify(original));
+    native.clientSettings('enable', config, settings);
+    assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.ANTHROPIC_BETAS,
+      'fine-grained-tool-streaming-2025-05-14,context-1m-2025-08-07');
+  } finally {
+    if (exported === undefined) delete process.env.ANTHROPIC_BETAS; else process.env.ANTHROPIC_BETAS = exported;
+  }
+  native.clientSettings('disable', config, settings);
+  assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)), original);
 });
 
 test('disabled native routing survives tooling sync and route changes without editing either CLI', async t => {
@@ -190,29 +231,63 @@ test('context sync preserves an earlier personal compaction threshold', () => {
 });
 
 test('Claude compacts early and restores its earlier personal setting', () => {
-  original.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '60';
+  original.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '60000';
   fs.writeFileSync(config.claude_file, JSON.stringify(original));
   native.clientSettings('enable', config, settings);
-  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '60');
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '60000');
   const routing = state.config(); routing.native = { ...config, enabled: true };
   native.syncContext(routing);
-  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '60');
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '60000');
   native.clientSettings('disable', config, settings);
   assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)), original);
+});
+
+test('context sync hands compaction scheduling back to the client', () => {
+  native.clientSettings('enable', config, settings);
+  // An install from when Dex pinned the percentage against a believed 200k window.
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  const saved = JSON.parse(fs.readFileSync(backup));
+  saved.claude.push({ field: ['env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'], original: { present: false }, installed: '80' });
+  state.write(backup, saved);
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  claude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '80';
+  fs.writeFileSync(config.claude_file, JSON.stringify(claude));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  const synced = JSON.parse(fs.readFileSync(config.claude_file));
+  assert.equal(synced.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined, 'Dex stops pinning the percentage');
+  assert.equal(synced.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000', 'the route budget replaces it');
+  assert.equal(JSON.parse(fs.readFileSync(backup)).claude.some(entry => entry.field.at(-1) === 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'), false);
+  native.clientSettings('disable', config, settings);
+  assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)), original);
+});
+
+test('a percentage the user changed after the migration stays theirs', () => {
+  native.clientSettings('enable', config, settings);
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  const saved = JSON.parse(fs.readFileSync(backup));
+  saved.claude.push({ field: ['env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'], original: { present: false }, installed: '80' });
+  state.write(backup, saved);
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  claude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '55';
+  fs.writeFileSync(config.claude_file, JSON.stringify(claude));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '55');
 });
 
 test('context sync migrates older Claude installations and can undo the migration', () => {
   native.clientSettings('enable', config, settings);
   const backup = path.join(directory, 'credentials/native-client-settings.json');
   const saved = JSON.parse(fs.readFileSync(backup));
-  saved.claude = saved.claude.filter(entry => entry.field.at(-1) !== 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE');
+  saved.claude = saved.claude.filter(entry => entry.field.at(-1) !== 'CLAUDE_CODE_AUTO_COMPACT_WINDOW');
   state.write(backup, saved);
   const claude = JSON.parse(fs.readFileSync(config.claude_file));
-  delete claude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  delete claude.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   fs.writeFileSync(config.claude_file, JSON.stringify(claude));
   const routing = state.config(); routing.native = { ...config, enabled: true };
   native.syncContext(routing);
-  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80');
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000');
   native.clientSettings('enable', config, settings);
   native.clientSettings('disable', config, settings);
   assert.deepEqual(JSON.parse(fs.readFileSync(config.claude_file)), original);

@@ -1,5 +1,32 @@
 'use strict';
 
+// Claude Code resolves a model's context window locally, before any request.
+// A routed launch points at the local gateway, so it is never first-party: a
+// name the client recognises resolves to that model's believed 200k window,
+// and CLAUDE_CODE_MAX_CONTEXT_TOKENS is ignored for it. The [1m] name marker
+// is the client's own supported way to ask for the 1M window, and it applies
+// to recognised and routed names alike. Compaction then follows the client's
+// own policy against CLAUDE_CODE_AUTO_COMPACT_WINDOW, which it clamps to that
+// window, so Dex states the route's real budget and imposes no schedule of
+// its own.
+const LONG_CONTEXT_MARKER = '[1m]';
+
+// Anthropic still gates 1M input on this beta upstream, and the gateway only
+// forwards it on Anthropic requests. It governs the provider request, not the
+// client's local window arithmetic.
+const LONG_CONTEXT_BETA = 'context-1m-2025-08-07';
+
+// Preserves any betas the user already asked for instead of replacing them.
+function betaHeader(requested) {
+  const existing = (requested || '').split(',').map(value => value.trim()).filter(Boolean);
+  return [...new Set([...existing, LONG_CONTEXT_BETA])].join(',');
+}
+
+// Claude Code appends the marker itself when it resolves an alias, so a value
+// coming back from the client can carry more than one.
+function plainModel(id) { return String(id).replace(/(\[1m\])+$/i, ''); }
+function longContext(id) { return `${plainModel(id)}${LONG_CONTEXT_MARKER}`; }
+
 function claudePicker(config, client) {
   const clientRoute = client && config.client_routes?.[client];
   const routes = clientRoute ? [clientRoute] : Object.values(config.phases || {});
@@ -7,9 +34,9 @@ function claudePicker(config, client) {
   return {
     replaceBuiltInOptions: true,
     options: [
-      { model: 'dex/active', label: 'CCR subscription', description: 'Automatic Dex route, account pool, and fallbacks.' },
+      { model: longContext('dex/active'), label: 'CCR subscription', description: 'Automatic Dex route, account pool, and fallbacks.' },
       ...[...ids].map(id => config.models.find(model => model.id === id)).filter(Boolean).map(model => ({
-        model: model.id,
+        model: longContext(model.id),
         label: `${model.display_name || model.id} (via CCR)`,
         description: 'Use this model through the Dex account pool. This does not bypass the router.'
       }))
@@ -17,4 +44,4 @@ function claudePicker(config, client) {
   };
 }
 
-module.exports = { claudePicker };
+module.exports = { claudePicker, betaHeader, plainModel, longContext, LONG_CONTEXT_BETA, LONG_CONTEXT_MARKER };
