@@ -85,12 +85,19 @@ test('a metered key is never refreshed and never expires out from under a route'
   assert.equal((await broker.access(account, true)).api_key, `sk-or-v1-${'b'.repeat(40)}`);
 });
 
-test('a spend cap exhausts like a quota and an uncapped key reports no window', () => {
-  const capped = normalizeUsage('openrouter', { data: { limit: 40, usage: 40 } }, 1000);
-  assert.deepEqual(capped.windows, [{ name: 'credit', remaining_ratio: 0, resets_at: null }]);
-  const partial = normalizeUsage('openrouter', { data: { limit: 40, usage: 10 } }, 1000);
+test('a spend cap exhausts like a quota and an uncapped account reports no window', () => {
+  // The account balance is the cap that actually returns 402; a key can carry
+  // no limit of its own and still fail once the account behind it runs dry.
+  const spent = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 10 } }, 1000);
+  assert.deepEqual(spent.windows, [{ name: 'credit', remaining_ratio: 0, resets_at: null }]);
+  const partial = normalizeUsage('openrouter', { data: { total_credits: 40, total_usage: 10 } }, 1000);
   assert.equal(partial.windows[0].remaining_ratio, 0.75);
-  assert.deepEqual(normalizeUsage('openrouter', { data: { limit: null, usage: 3 } }, 1000).windows, [],
+  assert.equal(normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 12 } }, 1000).windows[0].remaining_ratio, 0,
+    'spending past the balance clamps at exhausted, it does not go negative');
+  // A key limit is a second, independent cap: either one stops the account.
+  const both = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 5, limit: 2, usage: 2 } }, 1000);
+  assert.deepEqual(both.windows.map(w => [w.name, w.remaining_ratio]), [['credit', 0.5], ['key-limit', 0]]);
+  assert.deepEqual(normalizeUsage('openrouter', { data: { total_credits: null, total_usage: 3, limit: null, usage: 1 } }, 1000).windows, [],
     'no cap means no window to exhaust, not a window at zero');
 });
 
@@ -98,7 +105,7 @@ test('an exhausted spend cap stops the route instead of spending on', () => {
   const policy = require('../scripts/ccr/policy.cjs');
   const target = { id: 'openrouter/glm-5.3', provider: 'openrouter', context_window: 200000 };
   const account = { id: 'a', provider: 'openrouter', enabled: true, created_at: 1,
-    usage: normalizeUsage('openrouter', { data: { limit: 40, usage: 40 } }, 1000) };
+    usage: normalizeUsage('openrouter', { data: { total_credits: 40, total_usage: 40 } }, 1000) };
   assert.deepEqual(policy.blockers(account, target, 1000).map(item => item.reason), ['quota-exhausted']);
   assert.equal(policy.candidates([account], { phase: 2, models: [target] }, {}, 1000).length, 0);
   assert.match(policy.unavailable([account], { phase: 2, models: [target] }, 1000).message, /quota exhausted/);

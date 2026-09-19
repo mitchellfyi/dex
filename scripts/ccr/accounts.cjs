@@ -16,8 +16,12 @@ const state = require('./state.cjs');
 const PROVIDERS = {
   anthropic: { kind: 'subscription', token: 'https://platform.claude.com/v1/oauth/token', client: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', usage: 'https://api.anthropic.com/api/oauth/usage' },
   openai: { kind: 'subscription', token: 'https://auth.openai.com/oauth/token', client: 'app_EMoamEEZ73f0CkXaXp7hrann', usage: 'https://chatgpt.com/backend-api/wham/usage' },
+  // `identity` names the key; `usage` reads the account balance, which is the
+  // cap that actually stops requests — a key can carry no limit of its own and
+  // still fail once the account behind it runs dry.
   openrouter: { kind: 'api-key', key_env: 'DEX_OPENROUTER_API_KEY', label: 'OpenRouter',
-    usage: 'https://openrouter.ai/api/v1/key', base: 'https://openrouter.ai/api/v1' }
+    identity: 'https://openrouter.ai/api/v1/key', usage: 'https://openrouter.ai/api/v1/credits',
+    base: 'https://openrouter.ai/api/v1' }
 };
 
 // Unknown providers read as subscriptions so existing callers keep their errors.
@@ -98,13 +102,20 @@ function normalizeUsage(provider, data, now = Date.now()) {
     windows.push({ name, remaining_ratio: (100 - used) / 100, resets_at: Number.isFinite(parsedReset) ? parsedReset : null, ...(modelPool ? { model_pool: modelPool } : {}) });
   };
   if (providerKind(provider) === 'api-key') {
-    // A key with no spend limit reports no window: there is no cap to exhaust.
-    // A limited key exhausts like a quota, so the route falls back or stops
-    // with an explicit error rather than continuing to spend.
-    const key = data?.data || data || {};
-    const limit = Number(key.limit), used = Number(key.usage);
-    if (Number.isFinite(limit) && limit > 0 && Number.isFinite(used) && used >= 0) {
-      add('credit', key, Math.min(100, (used / limit) * 100), key.limit_reset ?? null);
+    // Two independent caps: the account's credit balance, and a spend limit on
+    // the key itself. Either can stop the account, so both are reported and the
+    // exhausted one excludes it. Neither is required — an account with credit
+    // and an unlimited key reports no window, because there is nothing to
+    // exhaust, rather than a window sitting at zero.
+    const body = data?.data || data || {};
+    for (const [name, cap, used, reset] of [
+      ['credit', body.total_credits, body.total_usage, null],
+      ['key-limit', body.limit, body.usage, body.limit_reset ?? null]
+    ]) {
+      const capValue = Number(cap), usedValue = Number(used);
+      if (Number.isFinite(capValue) && capValue > 0 && Number.isFinite(usedValue) && usedValue >= 0) {
+        add(name, { cap, used }, Math.min(100, (usedValue / capValue) * 100), reset);
+      }
     }
   } else if (provider === 'anthropic') {
     for (const [field, name, pool] of [['five_hour', '5h'], ['seven_day', 'weekly'], ['seven_day_opus', 'weekly-opus', 'opus'], ['seven_day_sonnet', 'weekly-sonnet', 'sonnet']]) {

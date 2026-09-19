@@ -13,7 +13,7 @@ function accountName(value) {
 }
 async function identity(provider, credentials, fetchImpl = fetch) {
   if (providerKind(provider) === 'api-key') {
-    const response = await fetchImpl(PROVIDERS[provider].usage, { headers: authHeaders(provider, credentials), redirect: 'error', signal: AbortSignal.timeout(15000) });
+    const response = await fetchImpl(PROVIDERS[provider].identity || PROVIDERS[provider].usage, { headers: authHeaders(provider, credentials), redirect: 'error', signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`${PROVIDERS[provider].label} rejected this API key. Check the key and retry.`);
     const key = (await response.json())?.data || {};
     // The truncated label identifies the key without ever storing the key.
