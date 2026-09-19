@@ -358,6 +358,56 @@ dx model add openai/<model-id> --context 128000 --tools --images
 
 Only include `--images` when supported. Discovery records the provider's default
 and maximum context windows separately; otherwise it labels a conservative 64,000-token budget.
+
+### Metered API-key providers
+
+Anthropic and OpenAI accounts are subscriptions: a renewable OAuth login owned
+by a native client, billed by your plan. OpenRouter is the other kind — a
+metered provider billed per token, authenticated with an API key rather than a
+login. Dex branches on that kind, not on the provider's name, so the two behave
+differently only where they genuinely differ.
+
+```sh
+export DEX_OPENROUTER_API_KEY=sk-or-v1-...
+dx account add openrouter --name openrouter
+```
+
+The key is read from that variable or typed at the prompt, and goes straight to
+the OS credential store. There is deliberately no `--api-key` flag: a value in
+argv is world-readable in `ps`. Only a truncated label identifying the key is
+recorded alongside the account. A key does not expire and has nothing to
+refresh, so `dx account reauth` replaces it rather than renewing it.
+
+Metered catalogues are not discovered. Importing thousands of per-token models
+would make an expensive one routable without anyone choosing it, so each model
+is added explicitly:
+
+```sh
+dx model add openrouter/glm-5.3 --context 1048576 --max-context 1310720 \
+  --tools --upstream z-ai/glm-5.3
+```
+
+`--upstream` is what the provider calls the model. An aggregator's own IDs carry
+a vendor segment, so the Dex ID stays stable and short while the upstream ID is
+recorded separately and used on the wire. Routes, phases and `dx route use`
+always name the Dex ID.
+
+A metered provider speaks chat completions, which no client speaks natively, so
+its traffic always goes through conversion and cools down separately from native
+traffic on the same account and model. Conversion drops the client's own
+reasoning dialect, so Dex translates the configured effort into the wire
+format's own field; `xhigh` and `max` clamp to its highest level rather than
+being dropped.
+
+Spend caps use the same path as subscription quota. A key with a limit reports
+its remaining credit as a quota window, so a spent key is excluded from
+selection and the route either falls back or stops with an explicit error. A key
+with no limit reports no window, because there is no cap to exhaust — set a
+limit on the key itself if you want Dex to stop at one.
+
+Account rank orders accounts within a provider. Which provider is tried first is
+the order of models on the route, so a metered model only serves traffic when a
+route names it.
 You can replace that budget with an explicit supported value. When account
 discovery succeeds, selection uses that account's returned model list.
 
