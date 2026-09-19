@@ -191,7 +191,7 @@ dx sessions doctor         # Diagnose inconsistent, dead, or unsafe session stat
 dx test                    # Test Dex here, or verify another initialized project
 dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
-dx config                  # Configure integrations (ticket tracker, reviewers, MCP)
+dx config                  # Configure integrations (ticket tracker, reviewers, MCP, session messaging)
 dx maintain                # Run background maintenance or install its GitHub workflow
 dx ui-capture              # Capture, revise, inspect, or skip UI proof artifacts
 dx revert 1234 2           # Revert a worktree to a phase checkpoint

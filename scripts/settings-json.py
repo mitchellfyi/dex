@@ -334,6 +334,24 @@ def command_remove_dirs(settings_path, directories_json):
     emit(settings)
 
 
+def command_inbound_accepted(settings_path):
+    settings = load_object(settings_path) if os.path.isfile(settings_path) else {}
+    return 0 if settings.get("crossSessionInbound") == "accept" else 1
+
+
+def command_set_inbound(settings_path, state):
+    if state not in ("on", "off"):
+        raise ValueError(f"cross-session state must be on or off; got {state!r}")
+    settings = load_object(settings_path) if os.path.isfile(settings_path) else {}
+    if state == "on":
+        settings["crossSessionInbound"] = "accept"
+    elif settings.get("crossSessionInbound") == "accept":
+        # "hold" and "refuse" already decline delivery and are nobody else's to
+        # drop, so turning off only clears the value Dex itself writes.
+        del settings["crossSessionInbound"]
+    emit(settings)
+
+
 COMMANDS = {
     "render-template": (2, command_render_template),
     "template-dirs": (1, command_template_dirs),
@@ -345,6 +363,8 @@ COMMANDS = {
     "remove-dex-hooks": (3, command_remove_hooks),
     "state-dirs": (1, command_state_dirs),
     "remove-worktree-dirs": (2, command_remove_dirs),
+    "inbound-accepted": (1, command_inbound_accepted),
+    "set-inbound": (2, command_set_inbound),
 }
 
 

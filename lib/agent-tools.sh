@@ -139,6 +139,25 @@ dx_check_claude_settings() {
   return 1
 }
 
+dx_cross_session_messages_enabled() {
+  python3 "$DEX_DIR/scripts/settings-json.py" \
+    inbound-accepted "$HOME/.claude/settings.json"
+}
+
+dx_set_cross_session_messages() {
+  local state="$1" settings="$HOME/.claude/settings.json" tmp
+  tmp="${settings}.tmp.$$"
+  mkdir -p "$(dirname "$settings")"
+  if python3 "$DEX_DIR/scripts/settings-json.py" \
+       set-inbound "$settings" "$state" > "$tmp" \
+     && [[ -s "$tmp" ]] && mv "$tmp" "$settings"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  dx_warn "Could not update ~/.claude/settings.json"
+  return 1
+}
+
 dx_claude_plugin_marketplace_configured() {
   local name="$1"
   command -v claude >/dev/null 2>&1 || return 1

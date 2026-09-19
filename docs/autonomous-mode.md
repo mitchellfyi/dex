@@ -139,6 +139,32 @@ remain sequential. Commands launched through `bin/review-check.sh` use a
 separate FIFO pool with one active command by default, so model concurrency
 does not require concurrent test suites.
 
+## Session messaging
+
+Claude Code sessions can message each other over a local socket, and deliver a
+message automatically only when both sessions run in the same permission mode
+class. Dex sessions run with `bypassPermissions` while editor sessions do not,
+so a message across that boundary is held for the recipient's approval and
+dropped after five minutes. An unattended session loses it silently.
+
+`dx config` asks on every run and defaults to the current setting, so answering
+yes sets `crossSessionInbound` to `accept` in `~/.claude/settings.json` and
+answering no clears it. `hold` and `refuse` already decline delivery, so a
+deliberate one is left intact rather than cleared. The setting is the user's
+rather than the repository's: a repository settings file cannot set it, because
+repo scopes may only make the policy stricter.
+
+The setting is Claude Code's. Dex's own coordination between concurrent
+sessions — owner files, control receipts, and the host-wide review admission
+leases — is independent of it and works the same under either agent.
+
+Accepting gives up the approval step, not a permission gate. Senders are
+authenticated by socket ownership, a per-session key, and peer process
+verification, and any tool call a delivered message triggers still passes the
+receiving session's permission mode and Dex's `PreToolUse` guards. What remains
+is that a session holding untrusted content can influence another without
+review.
+
 The check runner executes an explicit argument-array spec. Deterministic
 commands can opt into reuse bound to the checkout, working directory,
 environment, executable bytes, declared external inputs, criteria, and policy.

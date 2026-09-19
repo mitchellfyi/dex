@@ -98,6 +98,7 @@ HONEYBADGER_STATUS="not configured"
 VERCEL_STATUS="not configured"
 GRAFANA_STATUS="not configured"
 DATADOG_STATUS="not configured"
+SESSION_MESSAGING_STATUS="not configured"
 
 echo ""
 ask_yn "Figma (design context)?" "n" && FIGMA_STATUS="enabled"
@@ -106,6 +107,20 @@ ask_yn "Honeybadger (error monitoring)?" "n" && HONEYBADGER_STATUS="enabled"
 ask_yn "Vercel (deployments)?" "n" && VERCEL_STATUS="enabled"
 ask_yn "Grafana (observability)?" "n" && GRAFANA_STATUS="enabled"
 ask_yn "Datadog (observability + APM)?" "n" && DATADOG_STATUS="enabled"
+
+# This setting is the user's, not the repository's, so the answer defaults to
+# its current value and applies to every repository.
+if [[ -t 0 ]] && command -v python3 >/dev/null 2>&1; then
+  session_messaging_default=n
+  dx_cross_session_messages_enabled && session_messaging_default=y
+  session_messaging_state=off
+  ask_yn "Auto-accept messages between your sessions (all repos)?" \
+    "$session_messaging_default" && session_messaging_state=on
+  if dx_set_cross_session_messages "$session_messaging_state" \
+     && [[ "$session_messaging_state" == on ]]; then
+    SESSION_MESSAGING_STATUS="enabled"
+  fi
+fi
 
 # ── Reviewers ───────────────────────────────────────────────────────────
 #
@@ -284,6 +299,7 @@ echo "  Ticket tracker: ${TRACKER_TOOL} (${TRACKER_STATUS})"
 [[ "$VERCEL_STATUS" == "enabled" ]] && echo "  Vercel: enabled"
 [[ "$GRAFANA_STATUS" == "enabled" ]] && echo "  Grafana: enabled"
 [[ "$DATADOG_STATUS" == "enabled" ]] && echo "  Datadog: enabled"
+[[ "$SESSION_MESSAGING_STATUS" == "enabled" ]] && echo "  Session messaging: enabled"
 echo ""
 echo "Reviewers configured:"
 printf '%s' "$REVIEWER_ROWS" | sed 's/^| /  - /; s/ |.*//' | grep -v '^$'
