@@ -22,6 +22,8 @@ Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disab
         dx context doctor [--session <id>] [--transcript <jsonl>] [--json]
         dx context refresh
         dx context budget <tokens>
+        dx context scope --include <server> [--include <server> ...] [--builtin-tools <names>]
+        dx context scope off
 
 CCR is optional. It uses subscription OAuth accounts and a private local gateway.
 Router setup and enable select ccr-subscription as the global Dex default.

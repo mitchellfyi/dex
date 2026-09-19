@@ -419,6 +419,36 @@ bounded stream observer records usage without logging prompts, schemas or model
 answers. Responses carry `x-dex-request-id`; provider request IDs are included
 when exposed by the gateway. `dx router doctor` reports telemetry write failures.
 
+## Scoped tools for routed sessions
+
+Choose the existing MCP servers a Dex-launched Claude session needs:
+
+```sh
+dx context scope --include linear --include linear-server --include github \
+  --include playwright --include codegraph --include openaiDeveloperDocs \
+  --include devserver-db
+dx context scope off
+```
+
+This opt-in policy builds a private, launch-scoped MCP configuration from user,
+project and local registrations. It loads only named servers, prefers `linear`
+over a duplicate `linear-server`, and disables additional account connectors for
+that launch. It retains the original registrations. Explicit `--mcp-config` or
+`--strict-mcp-config` arguments take precedence. Use `--builtin-tools` with a
+comma-separated list to bound the built-in tool set too; an explicit `--tools`
+argument takes precedence. The launch record contains server names and missing
+environment-variable names, never credentials or server configuration bodies.
+
+Native sessions outside Dex keep their own MCP configuration. A provisioned host
+can register one worktree-aware database MCP instead of exposing every VM's
+database to every client. Keep that adapter and its registration in the host's
+infrastructure repository.
+
+Frequently restored lifecycle skills use short entrypoints that load their
+complete workflows from `prompts/workflows/`. The full contracts are retained;
+only the active workflow needs to be re-read after compaction. This avoids
+re-injecting every completed phase's full instructions indefinitely.
+
 ## Switching in one session
 
 With `ccr-subscription` selected, choose session only or the full workflow

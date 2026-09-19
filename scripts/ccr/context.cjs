@@ -89,7 +89,7 @@ async function doctor(options = {}) {
   const report = { version: 1, session: session?.id || null, active: session ? require('./service.cjs').active(session) : false,
     configured_budget: budget, launch_budget: session?.context_limit || null,
     restart_required: Boolean(session && session.context_limit !== budget),
-    current_model: session?.current_model || null,
+    current_model: session?.current_model || null, mcp_scope: session?.mcp_scope || null,
     models: config.models.map(model => ({ id: model.id, default: model.default_context_window || model.context_window,
       maximum: policy.modelCapacity(model), source: model.context_source || 'legacy', observed_at: model.observed_at || null })),
     last_request: session?.last_request || null, transcript: null, advice: [] };

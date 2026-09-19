@@ -15,8 +15,8 @@ const clean = value => String(value ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
 const out = value => process.stdout.write(`${clean(value)}\n`);
 const info = value => process.stderr.write(`dex: ${clean(value)}\n`);
 function parse(args) {
-  const result = { positional: [], fallback: [] };
-  const values = new Set(['name', 'context', 'session', 'scope', 'phase', 'client', 'effort', 'fallback', 'transcript']);
+  const result = { positional: [], fallback: [], include: [] };
+  const values = new Set(['name', 'context', 'session', 'scope', 'phase', 'client', 'effort', 'fallback', 'transcript', 'include', 'builtin-tools']);
   const switches = new Set(['json', 'yes', 'device', 'watch', 'tools', 'images']);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -24,7 +24,7 @@ function parse(args) {
     const key = arg === '--live' ? 'watch' : arg.slice(2);
     if (values.has(key)) {
       const value = args[++index]; if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value.`);
-      if (key === 'fallback') result.fallback.push(value); else result[key] = value;
+      if (key === 'fallback' || key === 'include') result[key].push(value); else result[key] = value;
     } else if (switches.has(key)) result[key] = true;
     else throw new Error(`Unknown option: ${arg}`);
   }
@@ -48,6 +48,7 @@ function render(group, action, value, options) {
       ['Actual model', value.current_model || 'not recorded'], ['New launch needed', value.restart_required ? 'yes' : 'no']]);
     showTable(['Model', 'Default', 'Maximum', 'Source'], value.models.map(model => [model.id, model.default, model.maximum, model.source]), { rightAlign: [1, 2] });
     if (value.last_request) details(Object.entries(value.last_request));
+    if (value.mcp_scope) details([['Selected MCPs', value.mcp_scope.selected.join(', ') || 'none'], ['Omitted MCPs', value.mcp_scope.omitted.join(', ') || 'none'], ['Unset MCP variables', value.mcp_scope.missing_env.join(', ') || 'none']]);
     if (value.transcript) {
       const trace = value.transcript;
       details([['Tools in snapshot', trace.tool_count], ['Tool schema bytes', trace.tool_schema_bytes], ['Restored skill characters', trace.restored_skill_characters],
@@ -333,13 +334,22 @@ async function contextCommand(action, values, options) {
   const context = require('./context.cjs');
   if (action === 'doctor') return context.doctor(options);
   if (action === 'refresh') return context.refresh(configure);
+  if (action === 'scope') {
+    if (values[0] === 'off') { await configure(config => { config.mcp_scope = { enabled: false }; }); return 'Scoped MCP loading is disabled for new Dex launches.'; }
+    if (values.length || !options.include.length) throw new Error('Use dx context scope --include <server> [--include <server> ...] [--builtin-tools <names>], or dx context scope off.');
+    const selection = { enabled: true, include: options.include,
+      ...(options['builtin-tools'] ? { builtin_tools: options['builtin-tools'].split(',') } : {}) };
+    const scoped = require('./mcp-scope.cjs').scope(selection);
+    await configure(config => { config.mcp_scope = selection; });
+    return `Scoped MCP loading saved for new Dex launches. Selected here: ${scoped.summary.selected.join(', ') || 'none'}. Global registrations are retained. Use dx context scope off to restore inherited loading.`;
+  }
   if (action === 'budget') {
     if (!/^[1-9][0-9]*$/.test(values[0] || '')) throw new Error('Context budget requires a positive integer token count.');
     const budget = Number(values[0]);
     await configure(config => { config.context_budget = budget; policy.contextLimit(config); for (const client of Object.keys(config.client_routes || {})) policy.contextLimit(config, client); });
     return `Operating context budget set to ${budget} tokens. Resume existing conversations in new client launches to apply it; transcripts and worktrees are retained.`;
   }
-  throw new Error('Use dx context doctor, refresh or budget <tokens>.');
+  throw new Error('Use dx context doctor, refresh, scope or budget <tokens>.');
 }
 async function main(args) {
   const [group, ...rest] = args;
@@ -357,7 +367,7 @@ async function main(args) {
     : group === 'account' ? (['rename', 'rank'].includes(action) ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
       : group === 'model' ? (['list', 'current', undefined].includes(action) ? [0, 0] : [1, 1])
         : group === 'route' ? (['status', 'policy', 'unpin-account', undefined].includes(action) ? [0, 0] : [1, 1])
-          : group === 'context' ? (action === 'budget' ? [1, 1] : [0, 0]) : [0, 0];
+          : group === 'context' ? (action === 'budget' ? [1, 1] : action === 'scope' ? [0, 1] : [0, 0]) : [0, 0];
   const provided = group === 'accounts' ? options.positional.length : values.length;
   if (provided < arity[0] || provided > arity[1]) throw new Error(`Unexpected arguments for dx ${group}${action ? ` ${action}` : ''}. Run dx ${group} --help.`);
   let result;

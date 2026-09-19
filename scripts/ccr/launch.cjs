@@ -29,7 +29,9 @@ function launchArguments(args) {
     if (arg !== '--dangerously-skip-permissions') forwarded.push(arg);
   }
   const resume = options.some(arg => ['--resume', '--continue', '-r', '-c'].includes(arg) || arg.startsWith('--resume=')) && !options.includes('--fork-session');
-  return { requested, resume, settings, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
+  const mcpExplicit = options.some(arg => arg === '--strict-mcp-config' || arg === '--mcp-config' || arg.startsWith('--mcp-config='));
+  const toolsExplicit = options.some(arg => arg === '--tools' || arg.startsWith('--tools='));
+  return { requested, resume, settings, mcpExplicit, toolsExplicit, args: ['--dangerously-skip-permissions', '--permission-mode', 'bypassPermissions', '--model', 'dex/active', ...forwarded] };
 }
 
 function launchSettings(input, config) {
@@ -91,7 +93,10 @@ function gatewayMonitor(session) {
 }
 async function launch(args) {
   const parsed = launchArguments(args);
-  const settingsOverride = launchSettings(parsed.settings, state.config());
+  const config = state.config();
+  const settingsOverride = launchSettings(parsed.settings, config);
+  const mcp = parsed.mcpExplicit ? null : require('./mcp-scope.cjs').scope(config.mcp_scope);
+  if (mcp) settingsOverride.disableClaudeAiConnectors = true;
   const settings = await adapter.start();
   const token = state.token();
   const lifecycle = process.env.DEX_SESSION_ID;
@@ -102,7 +107,7 @@ async function launch(args) {
   const policySession = process.env.DEX_POLICY_SESSION_ID || lifecycle;
   const phaseFile = policySession && process.env.DEX_SESSION_ONLY !== '1' ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(policySession)}.phase`) : null;
   const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile, resume: parsed.resume,
-    model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined) });
+    model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined), mcp_scope: mcp?.summary });
   const monitor = gatewayMonitor(session);
   const watchdog = setInterval(() => { void monitor.check(); }, 3000);
   watchdog.unref();
@@ -111,8 +116,15 @@ async function launch(args) {
     settingsDirectory = fs.mkdtempSync(path.join(state.privateDir(state.root()), 'launch-'));
     const settingsFile = path.join(settingsDirectory, 'settings.json');
     state.write(settingsFile, settingsOverride);
+    const scopedArgs = [];
+    if (mcp) {
+      const mcpFile = path.join(settingsDirectory, 'mcp.json'); state.write(mcpFile, mcp.config);
+      scopedArgs.push('--strict-mcp-config', '--mcp-config', mcpFile);
+      if (mcp.builtin_tools && !parsed.toolsExplicit) scopedArgs.push('--tools', mcp.builtin_tools.join(','));
+      if (mcp.summary.missing_env.length) process.stderr.write(`dex: selected MCPs reference unset variables: ${mcp.summary.missing_env.join(', ')}. Check their authentication before relying on these tools.\n`);
+    }
     return await new Promise((resolve, reject) => {
-      const child = spawn('claude', ['--settings', settingsFile, ...parsed.args], { stdio: 'inherit', env: launchEnvironment(settings, token, session) });
+      const child = spawn('claude', ['--settings', settingsFile, ...scopedArgs, ...parsed.args], { stdio: 'inherit', env: launchEnvironment(settings, token, session) });
       const forward = signal => { if (!child.killed) child.kill(signal); };
       const interrupt = () => forward('SIGINT'); const terminate = () => forward('SIGTERM');
       process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);

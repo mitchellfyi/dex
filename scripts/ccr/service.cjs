@@ -156,6 +156,14 @@ class RouterService {
       if (typeof params.token !== 'string' || params.token.length < 32 || !processIdentity(params.owner_pid)) throw new Error('Invalid session authentication or process owner.');
       const session = { ...old, version: 1, id, active: true, owner_pid: params.owner_pid, owner_identity: processIdentity(params.owner_pid), auth_hash: state.hash(params.token), run_id: params.run_id || null, run_root: params.run_root || null, phase_file: params.phase_file || null, context_limit: policy.contextLimit(state.config()), cwd: params.cwd, fixed_phase: params.fixed_phase, conversation_id: params.conversation_id || old.conversation_id || null };
       if (params.model) session.override = { model: policy.model(state.config(), params.model).id, scope: 'session', fallbacks: [] };
+      if (params.mcp_scope) {
+        const summary = {};
+        for (const key of ['selected', 'omitted', 'missing_env']) {
+          if (!Array.isArray(params.mcp_scope[key]) || params.mcp_scope[key].length > 300 || params.mcp_scope[key].some(name => typeof name !== 'string' || !/^[A-Za-z0-9_.-]{1,120}$/.test(name))) throw new Error('Invalid MCP scope summary.');
+          summary[key] = params.mcp_scope[key];
+        }
+        session.mcp_scope = summary;
+      } else delete session.mcp_scope;
       policy.route(state.config(), session);
       state.write(state.sessionFile(id), session);
       event(session, 'route.session_started', { context_limit: session.context_limit });
