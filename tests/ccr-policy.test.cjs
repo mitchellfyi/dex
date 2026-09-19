@@ -115,7 +115,9 @@ test('auth, quota, temporary failures and malformed requests are distinct', () =
   assert.equal(policy.failure(429, {}, { 'retry-after': '120' }, 1000).until, 121000);
   assert.equal(policy.failure(503).retry, true);
   for (const code of [408, 409, 500, 502, 503, 504, 529]) assert.equal(policy.failure(code).modelOnly, true);
-  for (const code of [400, 403, 404, 422]) assert.equal(policy.failure(code).retry, false);
+  // A request the provider rejects on its own terms is not failed over; a
+  // provider refusing to serve this account is (402/403 have their own test).
+  for (const code of [400, 404, 422]) assert.equal(policy.failure(code).retry, false);
 });
 test('model-only quota rejection does not exhaust the whole account', () => {
   assert.equal(policy.failure(429, { error: { type: 'model_rate_limit' } }).modelOnly, true);
@@ -351,4 +353,43 @@ test('review waves take turns over the models on their route', () => {
   assert.deepEqual(policy.route(single, { fixed_phase: 3, review_wave: 4 }).models.map(m => m.id), ['anthropic/claude-fable-5-1']);
   // Sessions outside a review wave keep the configured order exactly.
   assert.deepEqual(policy.route(config, { fixed_phase: 3 }).models.map(m => m.id)[0], 'anthropic/claude-fable-5-1');
+});
+
+test('a metered account out of credit fails the route over instead of rejecting the request', () => {
+  // 402 stops the account, not the request: every model on it is unusable until
+  // it is topped up, so the request must reach whatever else can serve it.
+  const out = policy.failure(402, {}, {}, 1000);
+  assert.equal(out.retry, true, 'the request is retried on another candidate');
+  assert.equal(out.reason, 'payment-required');
+  assert.equal(out.modelOnly, undefined, 'the whole account is out, not one model');
+  assert.ok(out.until > 1000);
+  // 403 is about this model on this account, so another model may still serve.
+  const refused = policy.failure(403, {}, {}, 1000);
+  assert.equal(refused.retry, true);
+  assert.equal(refused.reason, 'forbidden');
+  assert.equal(refused.modelOnly, true);
+  // A malformed request is still the request's own fault and is not failed over.
+  assert.equal(policy.failure(400, {}, {}, 1000).retry, false);
+  assert.equal(policy.failure(404, {}, {}, 1000).retry, false);
+});
+
+test('an exhausted metered route explains itself instead of looking like a login problem', () => {
+  const glm = { id: 'openrouter/glm-5.3', provider: 'openrouter', display_name: 'GLM 5.3', context_window: 1048576 };
+  const qwen = { id: 'openrouter/qwen3.8-max-0902', provider: 'openrouter', display_name: 'Qwen3.8 Max', context_window: 1000000 };
+  const account = { id: 'a', name: 'openrouter', provider: 'openrouter', enabled: true, created_at: 1,
+    cooldown_until: 1000 + 1800000, cooldown_reason: 'payment-required' };
+  const selection = { phase: 2, models: [glm, qwen] };
+  // Both models sit on the one exhausted account, so nothing can be selected.
+  assert.equal(policy.candidates([account], selection, {}, 1000).length, 0);
+  const error = policy.unavailable([account], selection, 1000, 'messages');
+  assert.match(error.message, /provider credit exhausted/);
+  assert.match(error.message, /A metered account is out of credit\. Top it up/);
+  assert.equal(error.code, 'subscription_accounts_unavailable', 'Dex answers, not the raw provider status');
+  assert.notEqual(error.status, 403, 'a client must not read this as an authentication failure');
+  const refused = policy.unavailable([{ ...account, cooldown_until: undefined, cooldown_reason: undefined,
+    model_cooldowns: { 'openrouter/glm-5.3@messages': 1000 + 300000, 'openrouter/qwen3.8-max-0902@messages': 1000 + 300000 },
+    model_cooldown_reasons: { 'openrouter/glm-5.3@messages': 'forbidden', 'openrouter/qwen3.8-max-0902@messages': 'forbidden' } }],
+    selection, 1000, 'messages');
+  assert.match(refused.message, /not permitted by the provider/);
+  assert.match(refused.message, /model permissions or guardrails/);
 });

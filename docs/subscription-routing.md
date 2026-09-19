@@ -613,6 +613,20 @@ fallback models can still be tried. Connection and login failures affect the
 whole account. A fresh exhausted quota window shared by all models excludes the
 whole account; a model-specific window excludes only matching models.
 
+A metered provider adds two refusals of its own. `402 Payment Required` means
+the account is out of credit and can serve nothing until it is topped up, so it
+cools the whole account for 30 minutes and the request falls through to the next
+model on the route. `403 Forbidden` is about permission for that model on that
+account — a provider guardrail, a key scope — so it cools only that model for
+5 minutes and another model on the same key is still tried. Neither is returned
+to the client as the provider's own status: a client reading a bare 403 from its
+API takes it for an authentication failure and tells you to log in again. When
+nothing on the route can serve the request, Dex answers with
+`subscription_accounts_unavailable` and says which account is out of credit and
+what to do about it. A request the provider rejects on its own terms — malformed,
+unsupported, too long — is still returned as-is, because no other model would
+serve it either.
+
 A request that CCR converts between wire formats (Codex Responses to a Claude
 model, or Claude Messages to an OpenAI model) cools down separately from native
 traffic. A converted Codex request that is rejected does not block a Claude

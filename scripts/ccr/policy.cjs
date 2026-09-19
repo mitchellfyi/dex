@@ -238,7 +238,8 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   const clean = value => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
   const labels = { disabled: 'disabled', 'reauth-required': 'login needs renewal', 'model-unavailable': 'model not available on this account',
     'rate-limit': 'rate limited', temporary: 'temporary provider error', 'connection-failed': 'provider connection failed',
-    'refresh-unavailable': 'login refresh temporarily unavailable', 'terms-required': 'accept updated terms in claude.ai', cooldown: 'cooling down' };
+    'refresh-unavailable': 'login refresh temporarily unavailable', 'terms-required': 'accept updated terms in claude.ai', cooldown: 'cooling down',
+    'payment-required': 'provider credit exhausted', forbidden: 'not permitted by the provider' };
   const waits = [], reasons = new Set(), eligibleBlocks = [];
   const summaries = (selection.pinned ? selection.models.slice(0, 1) : selection.models).map(target => {
     const pool = items.filter(item => item.provider === target.provider && (!selection.pinned || item.id === selection.pinned));
@@ -274,6 +275,8 @@ function unavailable(items, selection, now = Date.now(), protocol) {
     const label = PROVIDER_LABELS[provider] || provider;
     advice.push(`Every model on this route needs CCR ${protocol} conversion. Add ${/^[AEIOU]/i.test(label) ? 'an' : 'a'} ${label} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>${protocol === 'responses' ? ', or pick one in Codex with /model' : ''}.`);
   }
+  if (reasons.has('payment-required')) advice.push('A metered account is out of credit. Top it up, or route this phase to a subscription model with dx route configure <provider/model> --phase <phase>.');
+  if (reasons.has('forbidden')) advice.push('The provider refused this model for this account. Check the provider\'s own model permissions or guardrails, then retry.');
   if (reasons.has('reauth-required')) advice.push('Renew the affected login with dx account reauth <name>.');
   if (reasons.has('terms-required')) advice.push('Sign in to claude.ai with the affected account and accept the updated Consumer Terms and Privacy Policy, then retry after the short account cooldown. Use dx account show <name> to check its login identity.');
   if (reasons.has('disabled')) advice.push('Enable an account with dx account enable <name>.');
@@ -291,6 +294,16 @@ function unavailable(items, selection, now = Date.now(), protocol) {
 
 function failure(status, payload = {}, headers = {}, now = Date.now()) {
   if (status === 401) return { retry: true, reauth: true, reason: 'authentication' };
+  // Payment Required is the metered equivalent of an exhausted quota: this
+  // account cannot serve anything until it is topped up. It stops the account,
+  // not the request, so the route falls through to whatever else can serve it
+  // rather than returning the provider's own error to the client.
+  if (status === 402) return { retry: true, reason: 'payment-required', until: now + 1800000 };
+  // Forbidden is about permission for this model on this account — a provider
+  // guardrail, a key scope — not about the request, which another model may
+  // still serve. The cooldown is short because the cause is usually config
+  // someone is about to change.
+  if (status === 403) return { retry: true, reason: 'forbidden', until: now + 300000, modelOnly: true };
   if (status === 429) {
     const after = headers.get ? headers.get('retry-after') : headers['retry-after'];
     const delay = /^\d+(\.\d+)?$/.test(after || '') ? Number(after) * 1000 : Date.parse(after) - now;
@@ -300,7 +313,7 @@ function failure(status, payload = {}, headers = {}, now = Date.now()) {
     return { retry: true, reason: 'rate-limit', until: Math.max(now + 1000, Number.isFinite(reset) && reset > now ? reset : now + (Number.isFinite(delay) ? delay : 60000)), modelOnly: true };
   }
   if ([408, 409, 500, 502, 503, 504, 529].includes(status)) return { retry: true, reason: 'temporary', until: now + 10000, modelOnly: true };
-  return { retry: false, reason: status === 403 ? 'forbidden' : 'request-rejected' };
+  return { retry: false, reason: 'request-rejected' };
 }
 
 function validateRequest(body, target, protocol = 'messages') {
