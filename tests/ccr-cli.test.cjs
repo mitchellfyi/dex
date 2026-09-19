@@ -570,3 +570,21 @@ test('CLI errors and machine output work from a separate process', () => {
   assert.match(run(['account', 'show', 'missing']).stderr, /Account not found/);
   assert.notEqual(run(['route', 'use', 'openai/test']).status, 0);
 });
+
+test('a metered model keeps a stable Dex ID separate from its upstream ID', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-metered-'));
+  const prior = process.env.DEX_ROUTER_HOME; process.env.DEX_ROUTER_HOME = dir;
+  t.after(() => { if (prior === undefined) delete process.env.DEX_ROUTER_HOME; else process.env.DEX_ROUTER_HOME = prior; fs.rmSync(dir, { recursive: true, force: true }); });
+  t.mock.method(adapter, 'health', async () => null);
+  const model = await cli.modelCommand('add', ['openrouter/glm-5.3'],
+    cli.parse(['--context', '1048576', '--max-context', '1310720', '--tools', '--upstream', 'z-ai/glm-5.3']));
+  assert.equal(model.id, 'openrouter/glm-5.3');
+  assert.equal(model.upstream_id, 'z-ai/glm-5.3', 'the vendor segment stays out of the Dex ID');
+  assert.equal(model.max_context_window, 1310720);
+  assert.equal(model.capabilities.images, false);
+  // What the gateway is told to call it, built the same way the router builds it.
+  assert.equal(`dex-${model.provider}/${model.upstream_id}`, 'dex-openrouter/z-ai/glm-5.3');
+  await assert.rejects(cli.modelCommand('add', ['openrouter/bad'], cli.parse(['--context', '200000', '--tools', '--upstream', 'has space'])), /upstream model ID/);
+  await assert.rejects(cli.modelCommand('add', ['openrouter/small'], cli.parse(['--context', '200000', '--tools', '--max-context', '1000'])), /maximum context window/);
+  await assert.rejects(cli.modelCommand('add', ['nope/model'], cli.parse(['--context', '200000', '--tools'])), /openrouter/);
+});

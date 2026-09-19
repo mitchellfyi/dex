@@ -10,13 +10,14 @@ const ipc = require('./ipc.cjs');
 const onboarding = require('./onboarding.cjs');
 const { launch } = require('./launch.cjs');
 const { table, liveScreen } = require('./output.cjs');
+const { PROVIDERS, providerKind } = require('./accounts.cjs');
 
 const clean = value => String(value ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
 const out = value => process.stdout.write(`${clean(value)}\n`);
 const info = value => process.stderr.write(`dex: ${clean(value)}\n`);
 function parse(args) {
   const result = { positional: [], fallback: [], include: [] };
-  const values = new Set(['name', 'context', 'session', 'scope', 'phase', 'client', 'effort', 'fallback', 'transcript', 'include', 'builtin-tools']);
+  const values = new Set(['name', 'context', 'max-context', 'upstream', 'session', 'scope', 'phase', 'client', 'effort', 'fallback', 'transcript', 'include', 'builtin-tools']);
   const switches = new Set(['json', 'yes', 'device', 'watch', 'tools', 'images']);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -224,10 +225,24 @@ async function accounts(options) {
   } finally { screen?.close(); }
 }
 async function addAccount(provider, options, previous) {
-  if (!provider) { out('1. Anthropic Claude'); out('2. OpenAI ChatGPT / Codex'); const selected = await question('Provider', '1'); if (!['1', '2'].includes(selected)) throw new Error('Choose 1 or 2.'); provider = selected === '2' ? 'openai' : 'anthropic'; }
+  if (!provider) {
+    out('1. Anthropic Claude'); out('2. OpenAI ChatGPT / Codex'); out('3. OpenRouter API key (metered)');
+    const selected = await question('Provider', '1');
+    provider = { 1: 'anthropic', 2: 'openai', 3: 'openrouter' }[selected];
+    if (!provider) throw new Error('Choose 1, 2 or 3.');
+  }
+  const metered = providerKind(provider) === 'api-key';
   const name = options.name || previous?.name || await question('Account name', `${provider}-${state.accounts().filter(item => item.provider === provider).length + 1}`);
-  info(`Opening ${provider} subscription login. Existing accounts stay signed in.`);
-  const result = await onboarding.register({ provider, name, device: options.device, reauth: previous?.id, confirm: identity => confirm(`Register ${clean(identity)} as ${clean(name)}?`, options.yes) });
+  let apiKey;
+  if (metered) {
+    const variable = PROVIDERS[provider].key_env;
+    // Read from the environment or typed at the prompt, then handed straight to
+    // the credential store. There is deliberately no flag for it: an argv value
+    // is world-readable in ps. It is never echoed, stored in config, or logged.
+    apiKey = process.env[variable] || await question(`${PROVIDERS[provider].label} API key (or set ${variable})`);
+    info(`${PROVIDERS[provider].label} bills per token. Add models explicitly with dx model add.`);
+  } else info(`Opening ${provider} subscription login. Existing accounts stay signed in.`);
+  const result = await onboarding.register({ provider, name, apiKey, device: options.device, reauth: previous?.id, confirm: identity => confirm(`Register ${clean(identity)} as ${clean(name)}?`, options.yes) });
   info(`Added ${result.name}. Credentials are stored ${process.platform === 'darwin' ? 'in macOS Keychain' : 'in an owner-only local file'}.`);
   try {
     const discovered = await onboarding.discover(result);
@@ -266,10 +281,17 @@ async function modelCommand(action, args, options) {
     });
     if (await adapter.health()) { await adapter.stop(); await adapter.start(); } return models;
   }
-  if (action !== 'add' || !/^(anthropic|openai)\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/.test(args[0] || '')) throw new Error('Use dx model add <provider/model> --context <tokens> --tools [--images].');
+  if (action !== 'add' || !policy.MODEL.test(args[0] || '')) throw new Error(`Use dx model add <provider/model> --context <tokens> --tools [--images] [--upstream <id>] [--max-context <tokens>]. Providers: ${policy.PROVIDER_NAMES.join(', ')}.`);
   const context = Number(options.context);
   if (!Number.isSafeInteger(context) || context < 8192 || context > 4000000 || !options.tools) throw new Error('Specify a supported context window (8192–4000000) and confirm --tools support.');
-  const model = { id: args[0], upstream_id: args[0].split('/')[1], provider: args[0].split('/')[0], context_window: context, context_source: 'user', capabilities: { tools: true, images: Boolean(options.images) } };
+  // An aggregator's own ID carries a vendor segment, so the Dex ID stays stable
+  // and short while --upstream records what the provider is actually called.
+  const upstream = options.upstream || args[0].split('/')[1];
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(upstream)) throw new Error('An upstream model ID may contain letters, numbers and . _ : + - /.');
+  const maximum = options['max-context'] === undefined ? undefined : Number(options['max-context']);
+  if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < context || maximum > 4000000)) throw new Error('A maximum context window must be an integer between the default window and 4000000.');
+  const model = { id: args[0], upstream_id: upstream, provider: args[0].split('/')[0], context_window: context, default_context_window: context,
+    ...(maximum === undefined ? {} : { max_context_window: maximum }), context_source: 'user', capabilities: { tools: true, images: Boolean(options.images) } };
   await configure(config => { config.models = [...config.models.filter(item => item.id !== model.id), model]; }, true);
   if (await adapter.health()) { await adapter.stop(); await adapter.start(); } return model;
 }

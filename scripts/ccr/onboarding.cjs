@@ -5,13 +5,21 @@ const os = require('node:os');
 const { spawn, spawnSync } = require('node:child_process');
 const state = require('./state.cjs');
 const policy = require('./policy.cjs');
-const { CredentialStore, AccountBroker, nativeEnv, readNative, authHeaders, keychain } = require('./accounts.cjs');
+const { CredentialStore, AccountBroker, PROVIDERS, providerKind, nativeEnv, readNative, authHeaders, keychain, normalizeApiKey } = require('./accounts.cjs');
 
 function accountName(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_. -]{0,59}$/.test(value)) throw new Error('Use an account name of 1–60 letters, numbers, spaces, dots, hyphens or underscores.');
   return value.trim();
 }
 async function identity(provider, credentials, fetchImpl = fetch) {
+  if (providerKind(provider) === 'api-key') {
+    const response = await fetchImpl(PROVIDERS[provider].usage, { headers: authHeaders(provider, credentials), redirect: 'error', signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`${PROVIDERS[provider].label} rejected this API key. Check the key and retry.`);
+    const key = (await response.json())?.data || {};
+    // The truncated label identifies the key without ever storing the key.
+    if (typeof key.label !== 'string' || !key.label) throw new Error(`${PROVIDERS[provider].label} returned an unrecognised key identity.`);
+    return { fingerprint: state.hash(`${provider}:${key.workspace_id || key.creator_user_id || ''}:${key.label}`), label: key.label };
+  }
   if (provider === 'openai') {
     if (!credentials.account_id || !credentials.subject) throw new Error('The native login did not identify a ChatGPT subscription account.');
     return { fingerprint: state.hash(`openai:${credentials.account_id}:${credentials.subject}`), label: credentials.email || credentials.account_id };
@@ -28,6 +36,7 @@ function loginCommand(provider, device = false) {
     if (device) throw new Error('Claude login requires its native browser flow; --device is available for OpenAI.');
     return ['claude', ['auth', 'login', '--claudeai']];
   }
+  if (providerKind(provider) === 'api-key') throw new Error(`${PROVIDERS[provider].label} authenticates with an API key, not a browser login.`);
   if (provider !== 'openai') throw new Error('Provider must be anthropic or openai.');
   return ['bash', [path.resolve(__dirname, '../../bin/dxcodex.sh'), 'auth-login', ...(device ? ['--device-auth'] : [])]];
 }
@@ -41,7 +50,43 @@ async function nativeLogin(provider, directory, device) {
     child.once('exit', code => code === 0 ? resolve() : reject(new Error('Login was cancelled or failed. Your existing accounts are unchanged.')));
   });
 }
-async function register({ provider, name, device = false, reauth, confirm = async () => true, login = nativeLogin, resolveIdentity = identity, store = new CredentialStore() }) {
+// Both registration paths agree on identity, duplicates and rollback; only the
+// way the credential is obtained differs.
+function persist({ id, name, provider, who, previous, credentials, store }) {
+  return state.locked('accounts', () => state.locked(`credential-${id}`, () => {
+    const items = state.accounts();
+    if (items.some(item => item.id !== id && (item.fingerprint === who.fingerprint || item.name === name))) throw new Error('That account or name is already registered.');
+    if (previous && !items.some(item => item.id === id)) throw new Error('The account was removed during login. Add it again.');
+    const account = { id, name, provider, enabled: true, status: 'ready', fingerprint: who.fingerprint, identity: who.label, created_at: previous?.created_at || Date.now(), authenticated_at: Date.now(), ...(previous?.rank ? { rank: previous.rank } : {}) };
+    const oldCredentials = store.get(id);
+    store.set(id, credentials);
+    try { state.saveAccounts([...items.filter(item => item.id !== id), account]); }
+    catch (error) { if (oldCredentials) store.set(id, oldCredentials); else store.delete(id); throw error; }
+    return account;
+  }));
+}
+
+// A metered provider has no login to open. The key comes from the caller or the
+// provider's named environment variable, and only ever reaches the credential
+// store — never repository configuration, logs or telemetry.
+async function registerApiKey({ provider, name, apiKey, reauth, confirm = async () => true, resolveIdentity = identity, store = new CredentialStore() }) {
+  name = accountName(name);
+  const previous = reauth ? state.getAccount(reauth) : null;
+  if (previous && previous.provider !== provider) throw new Error('Reauthentication must use the existing provider.');
+  const variable = PROVIDERS[provider].key_env;
+  const supplied = apiKey || process.env[variable];
+  if (!supplied) throw new Error(`Set ${variable} or pass the API key when adding this account.`);
+  const credentials = normalizeApiKey(supplied);
+  const who = await resolveIdentity(provider, credentials);
+  if (previous && previous.fingerprint !== who.fingerprint) throw new Error('This is a different key. Reauthenticate the original one or add it as a new account.');
+  const duplicate = state.accounts().find(item => item.fingerprint === who.fingerprint && item.id !== previous?.id);
+  if (duplicate) throw new Error(`This key is already registered as ${duplicate.name}.`);
+  if (!await confirm(who.label)) throw new Error('Account registration cancelled.');
+  return persist({ id: previous?.id || `acc-${state.token().slice(0, 18)}`, name, provider, who, previous, credentials, store });
+}
+
+async function register({ provider, name, device = false, reauth, apiKey, confirm = async () => true, login = nativeLogin, resolveIdentity = identity, store = new CredentialStore() }) {
+  if (providerKind(provider) === 'api-key') return registerApiKey({ provider, name, apiKey, reauth, confirm, resolveIdentity, store });
   loginCommand(provider, device); name = accountName(name);
   const previous = reauth ? state.getAccount(reauth) : null;
   if (previous && previous.provider !== provider) throw new Error('Reauthentication must use the existing provider.');
@@ -56,17 +101,7 @@ async function register({ provider, name, device = false, reauth, confirm = asyn
     const duplicate = state.accounts().find(item => item.fingerprint === who.fingerprint && item.id !== id);
     if (duplicate) throw new Error(`This account is already registered as ${duplicate.name}.`);
     if (!await confirm(who.label)) throw new Error('Account registration cancelled.');
-    return await state.locked('accounts', () => state.locked(`credential-${id}`, () => {
-      const items = state.accounts();
-      if (items.some(item => item.id !== id && (item.fingerprint === who.fingerprint || item.name === name))) throw new Error('That account or name is already registered.');
-      if (previous && !items.some(item => item.id === id)) throw new Error('The account was removed during login. Add it again.');
-      const account = { id, name, provider, enabled: true, status: 'ready', fingerprint: who.fingerprint, identity: who.label, created_at: previous?.created_at || Date.now(), authenticated_at: Date.now(), ...(previous?.rank ? { rank: previous.rank } : {}) };
-      const oldCredentials = store.get(id);
-      store.set(id, native.tokens);
-      try { state.saveAccounts([...items.filter(item => item.id !== id), account]); }
-      catch (error) { if (oldCredentials) store.set(id, oldCredentials); else store.delete(id); throw error; }
-      return account;
-    }));
+    return persist({ id, name, provider, who, previous, credentials: native.tokens, store });
   } finally {
     cleanupNative(provider, directory, native);
   }
@@ -130,6 +165,12 @@ function codexVersion(run = spawnSync) {
   return version;
 }
 async function discover(account, broker = new AccountBroker(), fetchImpl = fetch, version = codexVersion) {
+  // A metered catalogue is thousands of models priced per token. Importing it
+  // wholesale would make an expensive model routable without anyone choosing
+  // it, so these providers take explicit dx model add entries instead.
+  if (providerKind(account.provider) === 'api-key') {
+    throw new Error(`${PROVIDERS[account.provider].label} models are added explicitly with dx model add, so a metered model is never routable by accident.`);
+  }
   const credentials = await broker.access(account);
   // Codex filters its catalogue by client version; an old value hides new models.
   const endpoint = account.provider === 'anthropic' ? 'https://api.anthropic.com/v1/models' : `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(version())}`;
@@ -137,4 +178,4 @@ async function discover(account, broker = new AccountBroker(), fetchImpl = fetch
   if (!response.ok) throw new Error('Model discovery is unavailable. Use dx model add with a model available to this subscription.');
   return catalogue(account.provider, await response.json());
 }
-module.exports = { accountName, identity, loginCommand, nativeLogin, register, cleanupNative, changeAccount, catalogue, codexVersion, discover };
+module.exports = { accountName, identity, loginCommand, nativeLogin, register, registerApiKey, persist, cleanupNative, changeAccount, catalogue, codexVersion, discover };

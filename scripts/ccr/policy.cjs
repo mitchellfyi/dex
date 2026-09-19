@@ -8,9 +8,16 @@ const PHASES = ['setup', 'plan', 'implement', 'review', 'verify', 'pr', 'complet
 // session keeps talking (final summary, follow-up questions) on the complete
 // route; 7 is never configurable on its own.
 const TERMINAL_PHASE = 7;
-const MODEL = /^(anthropic|openai)\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
-// Wire protocol each provider speaks without CCR conversion.
-const NATIVE_PROTOCOL = { anthropic: 'messages', openai: 'responses' };
+// A Dex model ID is always `provider/name`. `name` is Dex's stable identifier,
+// which is not necessarily the provider's: an aggregator's own IDs contain a
+// vendor segment, so the upstream ID is carried separately on the model entry.
+const PROVIDER_NAMES = ['anthropic', 'openai', 'openrouter'];
+const MODEL = new RegExp(`^(${PROVIDER_NAMES.join('|')})\\/[A-Za-z0-9][A-Za-z0-9._:+-]*$`);
+// Wire protocol each provider speaks without CCR conversion. A provider whose
+// protocol no client speaks natively always routes through conversion, and so
+// cools down separately from native traffic on the same account and model.
+const NATIVE_PROTOCOL = { anthropic: 'messages', openai: 'responses', openrouter: 'chat' };
+const PROVIDER_LABELS = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter' };
 
 function model(config, id) {
   if (typeof id !== 'string' || !MODEL.test(id)) throw new Error('Use a model listed by dx model list.');
@@ -192,7 +199,7 @@ function unavailable(items, selection, now = Date.now(), protocol) {
     if (selection.models.length === 1) advice.push('No fallback models are configured for this route.');
     const otherProviders = new Set(items.filter(item => item.enabled && !selection.models.some(target => target.provider === item.provider)).map(item => item.provider));
     for (const provider of otherProviders) {
-      advice.push(`No ${{ anthropic: 'Anthropic', openai: 'OpenAI' }[provider] || clean(provider)} fallback is configured for this route. Add one with dx route configure ... --fallback ${clean(provider)}/<model>.`);
+      advice.push(`No ${PROVIDER_LABELS[provider] || clean(provider)} fallback is configured for this route. Add one with dx route configure ... --fallback ${clean(provider)}/<model>.`);
     }
   }
   if (protocol && !selection.models.some(target => NATIVE_PROTOCOL[target.provider] === protocol)) {
@@ -243,4 +250,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };

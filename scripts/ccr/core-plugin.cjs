@@ -14,7 +14,7 @@ function convertedReasoning(item) {
 }
 
 function createGatewayPlugin() {
-  return { providerHooks: ['anthropic', 'openai'].map(provider => ({
+  return { providerHooks: Object.keys(require('./adapter.cjs').PROVIDER_ENDPOINTS).map(provider => ({
     key: `dex-${provider}-oauth`, providerName: `dex-${provider}`,
     async authenticate(input) {
       const ticket = input.request?.headers?.['x-ccr-dex-account-ticket'];

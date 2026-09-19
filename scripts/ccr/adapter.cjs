@@ -74,11 +74,19 @@ async function rpc(settings, method, args = [], timeout = 30000) {
   if (!result.ok) throw new Error(`CCR rejected ${method}. Run dx router doctor.`);
   return result.value;
 }
+// Where each provider's traffic goes and which wire format it speaks. Adding a
+// provider is an entry here plus a PROVIDERS entry in accounts.cjs; nothing in
+// the request path branches on the provider name.
+const PROVIDER_ENDPOINTS = {
+  anthropic: { type: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' },
+  openai: { type: 'openai_responses', baseUrl: 'https://chatgpt.com/backend-api/codex' },
+  openrouter: { type: 'openai_chat_completions', baseUrl: 'https://openrouter.ai/api/v1' }
+};
 function managedConfig(base, settings, config, endpoints = {}, extension = path.join(__dirname, 'extension.cjs')) {
-  const providers = ['anthropic', 'openai'].map(provider => ({
+  const providers = Object.keys(PROVIDER_ENDPOINTS).map(provider => ({
     id: `dex-${provider}`, name: `dex-${provider}`, enabled: true,
-    type: provider === 'anthropic' ? 'anthropic_messages' : 'openai_responses',
-    baseUrl: endpoints[provider] || (provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://chatgpt.com/backend-api/codex'),
+    type: PROVIDER_ENDPOINTS[provider].type,
+    baseUrl: endpoints[provider] || PROVIDER_ENDPOINTS[provider].baseUrl,
     apiKey: 'dex-extension-auth-required', autoFetchModels: false,
     models: config.models.filter(item => item.provider === provider).map(item => item.upstream_id || item.id.split('/')[1]),
     account: { enabled: true, connectors: [{ id: 'dex-subscriptions', type: 'plugin', pluginId: 'dex-subscriptions', connectorId: 'dex-subscription-usage' }] }
@@ -177,4 +185,4 @@ async function openUI() {
     child.once('exit', code => { if (code === 0) resolve(); else { server.close(); reject(new Error('Could not open the CCR dashboard.')); } });
   });
 }
-module.exports = { RELEASE, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, start, stop, stopOwned, openUI };
+module.exports = { RELEASE, PROVIDER_ENDPOINTS, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, start, stop, stopOwned, openUI };

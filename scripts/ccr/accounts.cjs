@@ -7,10 +7,21 @@ const { spawnSync } = require('node:child_process');
 const state = require('./state.cjs');
 
 // Public native-client identifiers; these are not client secrets.
+//
+// `kind` is what the rest of Dex branches on, not the provider name:
+//   subscription  a renewable OAuth login owned by a native client
+//   api-key       a metered key that is itself the credential and never refreshes
+// A key is resolved from the OS credential store or the named environment
+// variable below, and is never written to repository configuration or telemetry.
 const PROVIDERS = {
-  anthropic: { token: 'https://platform.claude.com/v1/oauth/token', client: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', usage: 'https://api.anthropic.com/api/oauth/usage' },
-  openai: { token: 'https://auth.openai.com/oauth/token', client: 'app_EMoamEEZ73f0CkXaXp7hrann', usage: 'https://chatgpt.com/backend-api/wham/usage' }
+  anthropic: { kind: 'subscription', token: 'https://platform.claude.com/v1/oauth/token', client: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', usage: 'https://api.anthropic.com/api/oauth/usage' },
+  openai: { kind: 'subscription', token: 'https://auth.openai.com/oauth/token', client: 'app_EMoamEEZ73f0CkXaXp7hrann', usage: 'https://chatgpt.com/backend-api/wham/usage' },
+  openrouter: { kind: 'api-key', key_env: 'DEX_OPENROUTER_API_KEY', label: 'OpenRouter',
+    usage: 'https://openrouter.ai/api/v1/key', base: 'https://openrouter.ai/api/v1' }
 };
+
+// Unknown providers read as subscriptions so existing callers keep their errors.
+function providerKind(provider) { return PROVIDERS[provider]?.kind || 'subscription'; }
 
 function keychain(operation, service, account, value) {
   const result = spawnSync('python3', [path.join(__dirname, 'native.py')], {
@@ -32,7 +43,16 @@ function jwt(value) {
   try { return JSON.parse(Buffer.from(value.split('.')[1], 'base64url').toString()); } catch { return {}; }
 }
 
+// A metered key has no refresh and no expiry; the key is the whole credential.
+function normalizeApiKey(raw) {
+  const value = typeof raw === 'string' ? raw : raw?.api_key || raw?.key || raw?.tokens?.api_key;
+  const key = typeof value === 'string' ? value.trim() : '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9._~+/-]{15,511}$/.test(key)) throw new Error('A provider API key is required.');
+  return { kind: 'api-key', api_key: key, expires_at: Number.MAX_SAFE_INTEGER };
+}
+
 function normalizeTokens(provider, raw) {
+  if (providerKind(provider) === 'api-key') return normalizeApiKey(raw);
   const tokens = provider === 'anthropic' ? raw?.claudeAiOauth || raw : raw?.tokens || raw;
   if (!tokens || typeof tokens !== 'object') throw new Error('No subscription OAuth credentials were returned.');
   const access = tokens.accessToken || tokens.access_token;
@@ -77,7 +97,16 @@ function normalizeUsage(provider, data, now = Date.now()) {
     const parsedReset = typeof reset === 'number' ? reset * 1000 : Date.parse(reset);
     windows.push({ name, remaining_ratio: (100 - used) / 100, resets_at: Number.isFinite(parsedReset) ? parsedReset : null, ...(modelPool ? { model_pool: modelPool } : {}) });
   };
-  if (provider === 'anthropic') {
+  if (providerKind(provider) === 'api-key') {
+    // A key with no spend limit reports no window: there is no cap to exhaust.
+    // A limited key exhausts like a quota, so the route falls back or stops
+    // with an explicit error rather than continuing to spend.
+    const key = data?.data || data || {};
+    const limit = Number(key.limit), used = Number(key.usage);
+    if (Number.isFinite(limit) && limit > 0 && Number.isFinite(used) && used >= 0) {
+      add('credit', key, Math.min(100, (used / limit) * 100), key.limit_reset ?? null);
+    }
+  } else if (provider === 'anthropic') {
     for (const [field, name, pool] of [['five_hour', '5h'], ['seven_day', 'weekly'], ['seven_day_opus', 'weekly-opus', 'opus'], ['seven_day_sonnet', 'weekly-sonnet', 'sonnet']]) {
       add(name, data[field], data[field]?.utilization, data[field]?.resets_at, pool);
     }
@@ -100,6 +129,9 @@ class AccountBroker {
     const operation = state.locked(`credential-${state.checkedId(account.id)}`, async () => {
       let credentials = this.store.get(account.id);
       if (!credentials) { const error = new Error('Account credentials are missing. Run dx account reauth.'); error.reauth = true; throw error; }
+      // A metered key is the credential itself. There is nothing to refresh, so
+      // a forced refresh would only discard a working key.
+      if (credentials.kind === 'api-key') return credentials;
       if (!force && credentials.expires_at > this.now() + 60000) return credentials;
       const provider = PROVIDERS[account.provider];
       if (!provider) throw new Error('Unsupported OAuth provider.');
@@ -141,10 +173,16 @@ class AccountBroker {
 }
 
 function authHeaders(provider, credentials) {
+  if (credentials.kind === 'api-key') {
+    const headers = { authorization: `Bearer ${credentials.api_key}` };
+    // OpenRouter attributes requests to the calling tool; neither value is secret.
+    if (provider === 'openrouter') Object.assign(headers, { 'http-referer': 'https://dexcode.ai', 'x-title': 'Dex' });
+    return headers;
+  }
   const headers = { authorization: `Bearer ${credentials.access_token}` };
   if (provider === 'anthropic') headers['anthropic-beta'] = 'oauth-2025-04-20';
   else if (credentials.account_id) headers['ChatGPT-Account-ID'] = credentials.account_id;
   return headers;
 }
 
-module.exports = { CredentialStore, AccountBroker, PROVIDERS, keychain, jwt, normalizeTokens, nativeEnv, readNative, normalizeUsage, authHeaders };
+module.exports = { CredentialStore, AccountBroker, PROVIDERS, providerKind, keychain, jwt, normalizeTokens, normalizeApiKey, nativeEnv, readNative, normalizeUsage, authHeaders };
