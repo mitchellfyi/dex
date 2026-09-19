@@ -94,7 +94,7 @@ __dx_setup_in_place() { print -r -- "IN_PLACE:$1"; return 71; }
         return {str(p.relative_to(base)): p.read_bytes()
                 for directory in ('repo', 'state', 'loops') for p in (base / directory).rglob('*') if p.is_file()}
 
-    for command in ('route', 'model', 'control', 'sessions', 'run'):
+    for command in ('route', 'model', 'context', 'control', 'sessions', 'run'):
         args = [command, 'status', '--session', 'fake-session', '--json']
         result = invoke(args, prefix='__dx_cli() { print -rl -- "$@"; }')
         assert result.returncode == 0 and result.stdout.splitlines() == args, (result.stdout, result.stderr)
