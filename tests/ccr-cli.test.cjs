@@ -673,3 +673,21 @@ test('the accounts table shows money only when an account is billed in it', () =
   const keyOnly = { ...metered, usage: { ...metered.usage, spend: { currency: 'USD', key_used: 1.5 } } };
   assert.ok(cli.accountRows([keyOnly], now).some(row => row.includes('$1.50')));
 });
+
+test('the accounts table rules between vendors, not between every account', () => {
+  const row = (name, provider) => [name, 1, provider, '-', 'ready'];
+  const grouped = cli.groupByProvider([
+    row('or', 'openrouter'),
+    row('a1', 'anthropic'), row('a1', 'anthropic'), row('a2', 'anthropic'),
+    row('o1', 'openai')
+  ]);
+  const shape = grouped.map(entry => entry === null ? '--' : entry[2]);
+  assert.deepEqual(shape, ['openrouter', '--', 'anthropic', 'anthropic', 'anthropic', '--', 'openai'],
+    'one rule where the vendor changes, none between an account\'s own model rows');
+  // Nothing to separate stays unruled.
+  assert.deepEqual(cli.groupByProvider([row('a', 'anthropic')]).length, 1);
+  assert.deepEqual(cli.groupByProvider([]).length, 0);
+  // A vendor that reappears is separated again rather than silently merged.
+  const alternating = cli.groupByProvider([row('a', 'anthropic'), row('b', 'openai'), row('c', 'anthropic')]);
+  assert.equal(alternating.filter(entry => entry === null).length, 2);
+});

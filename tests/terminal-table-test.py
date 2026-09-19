@@ -50,6 +50,29 @@ class TableTests(unittest.TestCase):
         self.assertEqual(TABLE.render_table(["Account"], []), "")
         with self.assertRaises(ValueError):
             TABLE.render_table(["Account", "Status"], [["Main"]])
+        # A table of nothing but group rules has no rows to show.
+        self.assertEqual(TABLE.render_table(["Account"], [None, None]), "")
+
+    def test_group_rules_separate_rows_without_doubling(self):
+        out = TABLE.render_table(["A", "B"], [["x", "1"], None, ["y", "2"]], width=40)
+        lines = out.split("\n")
+        rule = lines[1]
+        self.assertEqual(lines, ["A  B", rule, "x  1", rule, "y  2"])
+        # A rule against the header rule, or against another rule, is collapsed.
+        leading = TABLE.render_table(["A", "B"], [None, ["x", "1"]], width=40)
+        self.assertEqual(leading.split("\n"), ["A  B", rule, "x  1"])
+        doubled = TABLE.render_table(["A", "B"], [["x", "1"], None, None, ["y", "2"]], width=40)
+        self.assertEqual(doubled.split("\n"), ["A  B", rule, "x  1", rule, "y  2"])
+        # A rule is not data: it must not widen a column or be aligned.
+        self.assertEqual(TABLE.render_table(["A"], [["short"], None], width=40).split("\n")[0], "A    ".rstrip())
+
+    def test_group_rules_survive_the_narrow_record_layout(self):
+        # Too narrow for columns: records are printed instead, and a rule has
+        # no record of its own to print.
+        out = TABLE.render_table(["Account", "Status"], [["main", "ready"], None, ["other", "ready"]], width=8)
+        self.assertNotIn("None", out)
+        self.assertIn("main", out)
+        self.assertIn("other", out)
 
 
 if __name__ == "__main__":

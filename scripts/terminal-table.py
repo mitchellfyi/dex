@@ -53,16 +53,19 @@ def wrap_cell(text, width):
 
 def render_table(headers, rows, width=None, right_align=()):
     headers = [clean_cell(value) for value in headers]
-    rows = [[clean_cell(value) for value in row] for row in rows]
-    if not rows:
+    # A null row is a rule between groups, not data: it carries no cells and is
+    # skipped by every width and alignment calculation below.
+    rows = [None if row is None else [clean_cell(value) for value in row] for row in rows]
+    if not any(row is not None for row in rows):
         return ""
-    if not headers or any(len(row) != len(headers) for row in rows):
+    if not headers or any(len(row) != len(headers) for row in rows if row is not None):
         raise ValueError("Table rows must match the headers.")
     if width is not None and (not isinstance(width, int) or width < 1):
         raise ValueError("Table width must be a positive integer.")
 
     widths = [
-        max(display_width(line) for row in [headers, *rows] for line in row[index].split("\n"))
+        max(display_width(line) for row in [headers, *(r for r in rows if r is not None)]
+            for line in row[index].split("\n"))
         for index in range(len(headers))
     ]
     minimums = [min(size, max(4, min(12, display_width(label)))) for size, label in zip(widths, headers)]
@@ -70,6 +73,8 @@ def render_table(headers, rows, width=None, right_align=()):
     if width is not None and sum(minimums) + gaps > width:
         records = []
         for row in rows:
+            if row is None:
+                continue
             lines = []
             for label, value in zip(headers, row):
                 if value:
@@ -95,8 +100,14 @@ def render_table(headers, rows, width=None, right_align=()):
         return lines
 
     lines = format_row(headers, right_align)
-    lines.append("  ".join("-" * size for size in widths).rstrip())
+    rule = "  ".join("-" * size for size in widths).rstrip()
+    lines.append(rule)
     for row in rows:
+        if row is None:
+            # Never open or double a rule: a group break only separates rows.
+            if lines and lines[-1] != rule:
+                lines.append(rule)
+            continue
         lines.extend(format_row(row, right_align))
     return "\n".join(lines)
 

@@ -108,6 +108,7 @@ function render(group, action, value, options) {
   if (group === 'account' && value?.name) {
     details([['Account', value.name], ['Rank', value.rank || 'automatic'], ['Identity', value.identity || value.id], ['ID', value.id]]);
     showAccounts([value]);
+    showSpend(value);
     return;
   }
   if (group === 'account' && value?.credentials) {
@@ -199,6 +200,31 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
     })];
   }));
 }
+// One rule between vendors. Accounts stay in rank order; the break only marks
+// where the provider changes, so a vendor's rows read as a block.
+function groupByProvider(rows, column = 2) {
+  return rows.flatMap((row, index) =>
+    index && row[column] !== rows[index - 1][column] ? [null, row] : [row]);
+}
+
+// A metered account is billed in money, so its detail view says so in money.
+function showSpend(account) {
+  const spend = account.usage?.spend;
+  if (!spend) return;
+  const money = value => value === undefined ? null : `$${value.toFixed(2)}`;
+  const rows = [];
+  if (spend.limit !== undefined) rows.push(['Balance', `${money(spend.remaining)} left of ${money(spend.limit)}`]);
+  if (spend.used !== undefined) rows.push(['Account spent', money(spend.used)]);
+  if (spend.key_used !== undefined && spend.key_used !== spend.used) rows.push(['This key spent', money(spend.key_used)]);
+  for (const [label, key] of [['Today', 'daily'], ['This week', 'weekly'], ['This month', 'monthly']]) {
+    if (spend[key] !== undefined) rows.push([label, money(spend[key])]);
+  }
+  if (spend.free_requests) rows.push(['Free model requests', `${spend.free_requests.remaining} left of ${spend.free_requests.limit} today`]);
+  if (spend.free_tier) rows.push(['Tier', 'free']);
+  if (spend.expires_at) rows.push(['Key expires', new Date(spend.expires_at).toISOString().slice(0, 10)]);
+  if (rows.length) details(rows);
+}
+
 function accountTable(items) {
   const windows = accountWindows(items);
   const spend = anySpend(items);
@@ -207,7 +233,7 @@ function accountTable(items) {
     return [`${label} left`, 'Reset in'];
   })];
   const first = spend ? 6 : 5;
-  return table(headers, accountRows(items, Date.now(), windows, state.config(), spend),
+  return table(headers, groupByProvider(accountRows(items, Date.now(), windows, state.config(), spend)),
     { rightAlign: [1, ...(spend ? [5] : []), ...windows.map((_, index) => first + index * 2)] });
 }
 function showAccounts(items) {
@@ -281,7 +307,20 @@ async function accountCommand(action, args, options) {
   if (action === 'list') return accounts(options);
   if (!args[0]) throw new Error(`dx account ${action} requires an account name.`);
   const account = state.getAccount(args[0]);
-  if (action === 'show') return account;
+  if (action === 'show') {
+    // A single account needs no gateway to answer for itself, and reading it
+    // here means the detail is this version's, not whatever the running router
+    // last stored. A provider that will not answer leaves the cached reading.
+    try {
+      const { AccountBroker } = require('./accounts.cjs');
+      const usage = await new AccountBroker().usage({ ...account, usage: undefined });
+      return await state.locked('accounts', () => {
+        const items = state.accounts(); const current = state.getAccount(account.id, items);
+        current.usage = usage; delete current.usage_error; state.saveAccounts(items);
+        return current;
+      });
+    } catch { return account; }
+  }
   if (action === 'reauth') return addAccount(account.provider, options, account);
   if (action === 'doctor') {
     const { AccountBroker } = require('./accounts.cjs'); await new AccountBroker().access(account); return { account: account.name, credentials: 'renewable', usage: account.usage || null };
@@ -519,4 +558,4 @@ if (require.main === module) {
   process.umask(0o077);
   main(process.argv.slice(2)).catch(error => { info(error.message); process.exitCode = 1; });
 }
-module.exports = { clean, parse, question, configure, accountRows, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };
+module.exports = { clean, parse, question, configure, accountRows, accountTable, groupByProvider, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };
