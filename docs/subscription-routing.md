@@ -529,6 +529,13 @@ forwards it only on Anthropic requests. Installations predating this field adopt
 it on the next route or catalogue change; a value you set by hand afterwards
 stays yours.
 
+`dx router restart` and `dx router start` also refresh the native client
+settings that this version of Dex manages, so upgrading Dex and restarting the
+router is enough to pick up a newly managed field. Values you edited yourself
+are named and kept. Without that, a field added since the install landed would
+wait for an unrelated route or catalogue change while the restart looked like
+it had applied the upgrade.
+
 Already-running clients retain their loaded settings; restart and resume the
 conversation to load updated limits. The `dex/active` model catalogue also
 bounds its advertised window and compaction threshold to the current route.

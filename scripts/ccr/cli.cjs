@@ -391,6 +391,20 @@ async function profileCommand(action, args, options) {
   throw new Error('Use dx profile list, dx profile set <name> <provider/model> or dx profile clear <name>.');
 }
 
+// Returns what sync-context changed, or null when native routing is off. A
+// failure here must not make a working restart look failed, so it is reported
+// rather than thrown: the router is up either way.
+async function syncNative() {
+  try { return await state.locked('config', () => require('./native.cjs').syncContext()) || null; }
+  catch (error) { return { error: error.message }; }
+}
+function syncedNote(result) {
+  if (!result) return '';
+  if (result.error) return ` Client settings were not refreshed: ${result.error}`;
+  if (!result.changed) return '';
+  return ` Native client settings refreshed${result.preserved?.length ? `, keeping your edits to ${result.preserved.join(', ')}` : ''}; restart running clients to pick them up.`;
+}
+
 async function routerCommand(action, options, args = []) {
   if (action === 'native') return require('./native.cjs').command(args[0] || 'status', options);
   if (action === 'install') { await adapter.install(); return `Installed CCR ${adapter.RELEASE}.`; }
@@ -412,8 +426,14 @@ async function routerCommand(action, options, args = []) {
   }
   if (action === 'stop') return adapter.stop();
   if (action === 'ui') { await adapter.openUI(); return 'Opened the private CCR dashboard. Dex account and routing settings are managed by dx commands.'; }
-  if (action === 'restart') { await adapter.stop(); await adapter.start(); return 'CCR restarted.'; }
-  if (action === 'start') { if (!state.config().enabled) throw new Error('Run dx router setup or enable first.'); await adapter.start(); return 'CCR started.'; }
+  // Restarting is how someone picks up a new Dex version, so it also carries
+  // that version's managed client settings across. A field added since the
+  // install landed would otherwise wait for an unrelated route or catalogue
+  // change, and a restart would look like it had applied the upgrade when it
+  // had not. sync-context is the migration channel: it adopts what is missing
+  // and leaves values edited by hand alone.
+  if (action === 'restart') { await adapter.stop(); await adapter.start(); return `CCR restarted.${syncedNote(await syncNative())}`; }
+  if (action === 'start') { if (!state.config().enabled) throw new Error('Run dx router setup or enable first.'); await adapter.start(); return `CCR started.${syncedNote(await syncNative())}`; }
   if (action === 'update') { adapter.idle(); await adapter.install(); return `Using tested release ${adapter.RELEASE}. CCR upgrades ship with Dex after contract tests pass.`; }
   if (action === 'status' || action === 'doctor') {
     let installed = false; try { adapter.verifyRuntime(); installed = true; } catch { /* Report as a diagnostic. */ }

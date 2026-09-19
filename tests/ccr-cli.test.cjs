@@ -619,3 +619,35 @@ test('profiles name the role a model plays and routes re-point without edits', a
   await assert.rejects(cli.profileCommand('set', ['BadName', 'anthropic/claude-opus-5'], {}), /profile name/i);
   await assert.rejects(cli.routeCommand('configure', ['@ghost'], cli.parse(['--phase', 'review'])), /Profile ghost is not assigned/);
 });
+
+test('restarting the router carries this version\'s managed client settings across', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-restart-'));
+  const prior = process.env.DEX_ROUTER_HOME; process.env.DEX_ROUTER_HOME = dir;
+  t.after(() => { if (prior === undefined) delete process.env.DEX_ROUTER_HOME; else process.env.DEX_ROUTER_HOME = prior; fs.rmSync(dir, { recursive: true, force: true }); });
+  state.write(state.stateFile('config'), { version: 1, enabled: true, models: [], phases: {} });
+  t.mock.method(adapter, 'stop', async () => ({ stopped: true }));
+  t.mock.method(adapter, 'start', async () => ({ gateway: 'http://127.0.0.1:1' }));
+  const native = require('../scripts/ccr/native.cjs');
+
+  // Native routing off: a restart says nothing about client settings.
+  t.mock.method(native, 'syncContext', () => undefined);
+  assert.equal(await cli.routerCommand('restart', {}), 'CCR restarted.');
+
+  // A field added since the install landed is adopted by the restart.
+  t.mock.method(native, 'syncContext', () => ({ changed: true, preserved: [] }));
+  assert.match(await cli.routerCommand('restart', {}), /Native client settings refreshed; restart running clients/);
+
+  // Values the user edited are named, not silently overwritten.
+  t.mock.method(native, 'syncContext', () => ({ changed: true, preserved: ['claude.ANTHROPIC_BETAS'] }));
+  assert.match(await cli.routerCommand('start', {}), /keeping your edits to claude\.ANTHROPIC_BETAS/);
+
+  // Nothing to adopt is silent rather than noisy.
+  t.mock.method(native, 'syncContext', () => ({ changed: false, preserved: [] }));
+  assert.equal(await cli.routerCommand('restart', {}), 'CCR restarted.');
+
+  // A sync failure must not make a working restart look failed.
+  t.mock.method(native, 'syncContext', () => { throw new Error('settings file is busy'); });
+  const noisy = await cli.routerCommand('restart', {});
+  assert.match(noisy, /^CCR restarted\./);
+  assert.match(noisy, /not refreshed: settings file is busy/);
+});
