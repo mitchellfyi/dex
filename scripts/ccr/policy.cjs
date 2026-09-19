@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const state = require('./state.cjs');
+const { providerKind } = require('./accounts.cjs');
 
 const PHASES = ['setup', 'plan', 'implement', 'review', 'verify', 'pr', 'complete'];
 // The lifecycle writes 7 once Phase 6 has a verified terminal commit. The
@@ -221,13 +222,18 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   }
   if (protocol && !selection.models.some(target => NATIVE_PROTOCOL[target.provider] === protocol)) {
     const provider = Object.keys(NATIVE_PROTOCOL).find(name => NATIVE_PROTOCOL[name] === protocol);
-    advice.push(`Every model on this route needs CCR ${protocol} conversion. Add a ${provider} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>${protocol === 'responses' ? ', or pick one in Codex with /model' : ''}.`);
+    const label = PROVIDER_LABELS[provider] || provider;
+    advice.push(`Every model on this route needs CCR ${protocol} conversion. Add ${/^[AEIOU]/i.test(label) ? 'an' : 'a'} ${label} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>${protocol === 'responses' ? ', or pick one in Codex with /model' : ''}.`);
   }
   if (reasons.has('reauth-required')) advice.push('Renew the affected login with dx account reauth <name>.');
   if (reasons.has('terms-required')) advice.push('Sign in to claude.ai with the affected account and accept the updated Consumer Terms and Privacy Policy, then retry after the short account cooldown. Use dx account show <name> to check its login identity.');
   if (reasons.has('disabled')) advice.push('Enable an account with dx account enable <name>.');
   advice.push('Inspect dx accounts --live or select another model with dx route use.');
-  const headline = rateLimited ? [`Subscription ${reasons.has('quota-exhausted') ? 'quota exhausted' : 'rate limit reached'} on this route.`] : [];
+  // A metered provider has no subscription to name, so only a route that can
+  // reach one describes the limit as a subscription's.
+  const problem = reasons.has('quota-exhausted') ? 'quota exhausted' : 'rate limit reached';
+  const subscribed = selection.models.some(target => providerKind(target.provider) === 'subscription');
+  const headline = rateLimited ? [subscribed ? `Subscription ${problem} on this route.` : `${problem[0].toUpperCase()}${problem.slice(1)} on this route.`] : [];
   return Object.assign(new Error([...headline, ...summaries, ...advice].join(' ')), {
     code: 'subscription_accounts_unavailable', status: termsRequired ? 400 : rateLimited ? 429 : 503,
     type: termsRequired ? 'invalid_request_error' : rateLimited ? 'rate_limit_error' : 'api_error', retryAfter

@@ -275,3 +275,18 @@ test('unsupported content is rejected before routing', () => {
   assert.throws(() => policy.validateRequest({ messages: [{ role: 'user', content: [{ type: 'image' }] }] }, models[1]), /image/);
   assert.doesNotThrow(() => policy.validateRequest({ messages: [{ role: 'user', content: 'hello' }], tools: [{ name: 'Read' }] }, models[1]));
 });
+
+test('a metered route reports its limit without calling it a subscription', () => {
+  const glm = { id: 'openrouter/glm-5.3', provider: 'openrouter', display_name: 'GLM 5.3', context_window: 1048576 };
+  const opus = { id: 'anthropic/claude-opus-5', provider: 'anthropic', display_name: 'Opus 5', context_window: 200000 };
+  const limited = provider => ({ id: provider, name: provider, provider, enabled: true, created_at: 1, cooldown_until: 2000, cooldown_reason: 'rate-limit' });
+  const metered = policy.unavailable([limited('openrouter')], { phase: 2, models: [glm] }, 1000, 'messages');
+  assert.match(metered.message, /^Rate limit reached on this route\./);
+  assert.doesNotMatch(metered.message, /Subscription/);
+  // A route that can still reach a subscription keeps describing it as one.
+  const mixed = policy.unavailable([limited('openrouter'), limited('anthropic')], { phase: 2, models: [glm, opus] }, 1000, 'messages');
+  assert.match(mixed.message, /^Subscription rate limit reached on this route\./);
+  // The advice that names another provider reads as a sentence.
+  assert.match(metered.message, /Add an Anthropic model with dx route configure anthropic\/<model>/);
+  assert.doesNotMatch(metered.message, /Add a anthropic/);
+});
