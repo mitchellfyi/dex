@@ -101,15 +101,8 @@ the tier its callers put it in.
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 ```
 
-Sourcing `common.sh` also sources every other module in `lib/`: `agent-tools.sh`,
-`attribution.sh`, `codex.sh`, `completion.sh`, `dexcode.sh`, `events.sh`, `factory.sh`, `git.sh`,
-`lifecycle-control.sh`, `lock.sh`, `maintenance.sh`, `output.sh`, `override.sh`, `project-state.sh`,
-`provider.sh`, `review.sh`, `review-capacity.sh`, `review-controller.sh`,
-`review-acceptance.sh`, `review-diagnostics.sh`,
-`review-loop.sh`, `review-policy.sh`, `rtk.sh`, `run-spec.sh`,
-`session-catalog.sh`, `session-management.sh`,
-`session-runtime.sh`, `session.sh`, `ui-capture.sh`,
-`triage.sh`, `worker.sh`, and `worktree.sh`.
+Sourcing `common.sh` sources every other module in `lib/` — see the module table below for
+what each one owns.
 
 ### Output
 
@@ -161,13 +154,19 @@ removing AI-sounding filler.
 
 ### Vendor skills are NOT bundled
 
-Dex does not ship third-party vendor skills (Figma, Asana, Linear, Notion, Slack, HubSpot, Microsoft 365, Gmail, Google Calendar, Fireflies, etc.). These are maintained by their vendors and distributed via Claude's official plugin/MCP integrations.
+Dex ships no third-party vendor skills (Figma, Asana, Linear, Notion, Slack, HubSpot,
+Microsoft 365, Gmail, Google Calendar, Fireflies). Their vendors distribute them through
+Claude's official plugin/MCP integrations.
 
-**Do not commit vendor skills into this repo.** If a vendor skill directory appears in `skills/` (e.g., `skills/figma-*/`), delete it — it was added by a Claude plugin install and should live in the user's `~/.claude/` or be enabled via the official integration, not in Dex.
+**Never commit one here.** A vendor skill directory under `skills/` (e.g. `skills/figma-*/`)
+came from a plugin install; delete it. It belongs in the user's `~/.claude/` or behind the
+official integration.
 
-`skills/synced/` is different: Claude Code writes the skills synced from a claude.ai organization to `~/.claude/skills/synced/`, and `~/.claude/skills` is a link to this directory. It is gitignored; leave it in place, since Claude Code recreates it.
+`skills/synced/` is the exception: Claude Code writes claude.ai organization skills to
+`~/.claude/skills/synced/`, and `~/.claude/skills` links to it. Gitignored — leave it, Claude
+Code recreates it.
 
-When users need a vendor skill:
+To enable one:
 
 | Vendor | How to enable |
 |--------|---------------|
@@ -176,16 +175,15 @@ When users need a vendor skill:
 | Asana, Notion, Slack, HubSpot, Microsoft 365, Gmail, Google Calendar, Fireflies | Enable the corresponding integration on <https://claude.ai/settings/connectors> |
 | Other  | Browse the Claude plugin marketplace via `/plugin` inside Claude Code, or check the vendor's docs for their official MCP/skill integration |
 
-The corresponding MCP servers are listed and authenticated through claude.ai or `claude mcp` — they show up as `mcp__claude_ai_<Vendor>__*` tools and are available to Dex's skills automatically when enabled.
+Those MCP servers authenticate through claude.ai or `claude mcp`, appear as
+`mcp__claude_ai_<Vendor>__*`, and reach Dex's skills automatically once enabled.
 
-Dex may install a narrow official tooling allowlist during `dx install`,
-`dx init`, and `dx sync`: Dex Claude/Codex skill links, browser MCPs,
-OpenAI docs MCP, the OpenAI Codex Claude plugin when Codex is installed,
-`frontend-design` for detected frontend repos, official language LSP
-plugins for detected TypeScript/JavaScript, Python, Rust, or Go repos, and the
-RTK token-reduction binary plus Dex-managed RTK hook/instruction files. Do not
-add broad behavior-changing plugins, community marketplaces, or vendor
-integration plugins to the default bootstrap path.
+`dx install`, `dx init` and `dx sync` may install a narrow official allowlist: Dex
+Claude/Codex skill links, browser MCPs, OpenAI docs MCP, the OpenAI Codex Claude plugin when
+Codex is installed, `frontend-design` for frontend repos, official LSP plugins for detected
+TypeScript/JavaScript, Python, Rust or Go, and the RTK binary with its Dex-managed
+hook/instruction files. Never add broad behaviour-changing plugins, community marketplaces or
+vendor integrations to that path.
 
 ## Guard Conventions
 
@@ -263,7 +261,27 @@ Dex exposes stable agent names (`claude`, `codex`) through `dx --agent`, while
 agent support behind that provider layer rather than branching on agent names
 throughout `dx.sh`.
 
-Dex-launched Claude Code sessions must include `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`. Every Codex launch must go through `bin/dxcodex.sh`. Interactive `dx` lifecycles use `codex [PROMPT]` (or `codex resume <session-id> [PROMPT]`) with `--dangerously-bypass-approvals-and-sandbox`, `--dangerously-bypass-hook-trust`, and session-scoped Dex `SessionStart` and `Stop` hooks. Codex's persistent app server may execute hooks outside the launcher's environment, so the wrapper must pass its allowlisted, non-secret Dex context both in the hook commands and through `shell_environment_policy.set`; do not add credentials to that context. Both interactive providers capture their exact conversation ID at startup for crash-safe resumption; Claude's stable Dex session name and Codex's cwd-scoped `--last` remain migration fallbacks for lifecycles created before capture was available. Normal non-interactive delegation uses `--ignore-user-config` with `--dangerously-bypass-approvals-and-sandbox`; do not reintroduce `--full-auto`. Internal read-only launches set `DX_CODEX_READ_ONLY=1` and use `--ignore-user-config --sandbox read-only --ephemeral` without the dangerous bypass flag. The wrapper works under any provider profile, so a Claude-engine run can hand individual tasks to Codex; only codex-plugin profiles resolve a `codex_model` override, other engines use the Codex session default. `dx --model <model>` targets the selected agent through its native model flag.
+Launch rules:
+
+- Claude: always `--dangerously-skip-permissions` plus `--permission-mode bypassPermissions`.
+- Codex: always through `bin/dxcodex.sh`. Never reintroduce `--full-auto`.
+- Interactive lifecycles: `codex [PROMPT]` or `codex resume <session-id> [PROMPT]`, with
+  `--dangerously-bypass-approvals-and-sandbox`, `--dangerously-bypass-hook-trust`, and
+  session-scoped `SessionStart`/`Stop` hooks.
+- Non-interactive delegation: `--ignore-user-config` plus `--dangerously-bypass-approvals-and-sandbox`.
+- Internal read-only: `DX_CODEX_READ_ONLY=1` with
+  `--ignore-user-config --sandbox read-only --ephemeral`, and no bypass flag.
+- `dx --model <model>` targets the selected agent through its native model flag. Only
+  codex-plugin profiles resolve a `codex_model` override; other engines use the Codex default.
+
+Codex's app server may run hooks outside the launcher's environment, so the wrapper passes its
+allowlisted, non-secret context both in the hook commands and through
+`shell_environment_policy.set`. Never put credentials there.
+
+Both interactive providers capture their exact conversation ID at startup for crash-safe
+resumption. Claude's stable Dex session name and Codex's cwd-scoped `--last` remain fallbacks
+for lifecycles created before capture existed. The wrapper works under any profile, so a
+Claude-engine run can hand individual tasks to Codex.
 
 ### Hook integration
 
@@ -316,7 +334,20 @@ agent --reason ...` command instead of deleting state by hand. Use it only for
 the dead-owner diagnosis: it refuses live or malformed state, revokes
 completion, and leaves Phase 3 paused for `/dxresume` or `/dxskip`.
 
-The outer review loop is separate. In the normal flow, the Phase 2 agent selects `small`, `normal`, or `complex`. Dex maps those tiers to fixed global consecutive-clean requirements of 1, 2, and 3, plus soft outer-wave budgets of 3, 6, and 9. A standalone loop without an explicit override starts with a fresh read-only assessor. Each lifecycle assessor and wave gets a temporary pass-scoped copy of the approved criteria. The sealed criteria hash and global policy are bound to resumable state, the risk selection, per-item evidence, every clean ledger row, and the success receipt. Receipt validation reopens retained proof copies and recomputes every clean-pass attestation. Standalone waves use the explicit `standalone` criteria binding. Legacy or resumed lifecycles with no valid current-scope selection may use a fresh read-only assessor before the first wave. Spending the wave budget pauses without a completion receipt or loss of valid clean credit. An attributed `review.max-waves` override may change the operational budget without changing clean-pass assurance. Changed or partially covered criteria, residual findings, blockers, churn, invalid results, and provider failures also pause the loop.
+The outer review loop is separate. The Phase 2 agent selects `small`, `normal` or `complex`;
+those map to consecutive-clean requirements of 1, 2 and 3 and soft wave budgets of 3, 6 and 9.
+
+- Every assessor and wave gets a temporary pass-scoped copy of the approved criteria.
+- The sealed criteria hash and global policy bind to resumable state, the risk selection,
+  per-item evidence, every clean ledger row, and the success receipt.
+- Receipt validation reopens retained proofs and recomputes every clean-pass attestation.
+- Standalone waves use the explicit `standalone` criteria binding. A standalone loop with no
+  override, and legacy or resumed lifecycles with no valid current-scope selection, start from
+  a fresh read-only assessor.
+- Spending the wave budget pauses without a completion receipt and without losing valid clean
+  credit. An attributed `review.max-waves` override changes the budget, never the assurance.
+- Changed or partly covered criteria, residual findings, blockers, churn, invalid results and
+  provider failures also pause the loop.
 
 ### Session IDs
 
@@ -338,22 +369,22 @@ Exception: `dx --no-worktree <ticket-or-description>` runs the same phased lifec
 
 ## Provisioned Host Parity
 
-When a task also changes a provisioned development host, identify and read its
-infrastructure repository's instructions. Keep Dex generic; host-specific
-defaults and activation belong in that repository. Check router policy,
-provider compatibility, native-client setup, hooks and installer changes
-against the host's provisioning templates. A live workaround needs matching
-versioned source and a removal step. A published fix needs its activation
-step applied when authorized or reported as pending; updating source does
-not replace code already loaded by a router or other service. Preserve active
-sessions, private configuration and deliberate overrides. Verify both the
-source revision and effective host configuration using the host's supported
-diagnostics before declaring parity.
+When a task also changes a provisioned development host, read that infrastructure
+repository's instructions. Keep Dex generic — host-specific defaults and activation belong
+there. Check router policy, provider compatibility, native-client setup, hooks and installer
+changes against the host's provisioning templates.
+
+- A live workaround needs matching versioned source and a removal step.
+- A published fix needs its activation step applied when authorized, or reported as pending:
+  updating source does not replace code already loaded by a router or other service.
+- Preserve active sessions, private configuration and deliberate overrides.
+- Verify the source revision *and* the effective host configuration with the host's supported
+  diagnostics before declaring parity.
 
 ## Quality Gates
 
-This project has focused shell test scripts under `tests/`. There is no
-formatter; verification is static checks plus the test suite.
+Focused shell tests live under `tests/`. No formatter; verification is static checks plus the
+test suite.
 
 | Check | Command | Notes |
 |-------|---------|-------|
@@ -373,9 +404,8 @@ serial runs.
 
 ### The serial lane
 
-A test whose assertion is a wall-clock bound cannot share the machine with
-several others. Put it in the `serial` lane in `tests/manifest.tsv`. A test may
-also document the reason near its shebang:
+A test whose assertion is a wall-clock bound cannot share the machine. Put it in the `serial`
+lane in `tests/manifest.tsv`, and optionally note why near its shebang:
 
 ```bash
 # dex-test-lane: serial
@@ -387,9 +417,8 @@ exclusively; `fast` and `slow` tests may run in parallel. If a legacy
 `# dex-test-lane:` marker is present, the runner verifies that it agrees with
 the manifest instead of using it to select the lane.
 
-Reach for it only when a bound is genuinely about elapsed time. A slow test is
-not a serial test — the lane is not a place to hide flakiness that has another
-cause.
+Use it only when the bound is genuinely about elapsed time. A slow test is not a serial test;
+the lane is not a place to hide flakiness with another cause.
 
 ### Writing an assertion
 
@@ -460,8 +489,8 @@ leaving the runner with "FAIL(1)" over an empty log.
 
 ### Modularizing large scripts
 
-`dx.sh` is the largest shell file. When adding shared or self-contained logic,
-prefer extracting it into `lib/` modules. The pattern:
+`dx.sh` is the largest shell file. Prefer extracting shared or self-contained logic into
+`lib/` modules.
 
 **When to extract:**
 - Same logic appears in 2+ functions → extract to `lib/`

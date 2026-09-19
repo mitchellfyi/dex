@@ -171,6 +171,7 @@ __dx_cli() {
       echo "  dx model list       List models available to registered accounts"
       echo "  dx router setup     Add optional CCR account pools and model routing"
       echo "  dx route            Inspect or change a running session's model"
+      echo "  dx profile          Name a model role so routes can be re-pointed at once"
       echo "  dx context          Inspect context budgets and compaction; refresh model limits"
       echo "  dx run --spec FILE  Run the lifecycle from a structured headless run spec"
       echo "  dx run --spec-url URL --run-token TOKEN"
@@ -3846,7 +3847,7 @@ unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/nul
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
     test config provider run control sessions ui-capture research install uninstall uninit status \
-    reload help revert log triage refine setup account accounts model route router context
+    reload help revert log triage refine setup account accounts model route profile router context
 }
 
 # Prints the nearest command within two edits, or nothing.
@@ -4072,7 +4073,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$dx_command_input" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|context|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|profile|context|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
