@@ -8,26 +8,34 @@ import subprocess
 import time
 
 
-def stop_group(child):
+def signal_group(child, signum):
     try:
-        os.killpg(child.pid, signal.SIGTERM)
+        os.killpg(child.pid, signum)
     except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Darwin skips zombies and returns EPERM if no eligible member remains.
+        # A live direct child is different: surface the denial rather than hang
+        # in child.wait() after pretending cleanup succeeded.
+        if child.poll() is None:
+            raise
+        return False
+    return True
+
+
+def stop_group(child):
+    if not signal_group(child, signal.SIGTERM):
         return
 
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         child.poll()
-        try:
-            os.killpg(child.pid, 0)
-        except ProcessLookupError:
+        if not signal_group(child, 0):
             return
         time.sleep(0.05)
 
     # A child may ignore TERM even after the test shell has exited.
-    try:
-        os.killpg(child.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_group(child, signal.SIGKILL)
 
 
 def main():
