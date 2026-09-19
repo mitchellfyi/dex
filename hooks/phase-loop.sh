@@ -714,6 +714,24 @@ if [[ -n "$HOOK_PROVIDER_SESSION_ID" ]]; then
   fi
 fi
 
+# A compact loop cannot make progress by receiving another phase audit. Use
+# the normal detach path so the phase and workspace survive and receipts do not.
+if [[ "$HANDOFF_MODE" == "inline" && "$AUTHORITATIVE_PHASE" =~ ^[0-6]$ \
+  && -z "$EARLY_CONTROL_SNAPSHOT" && ! -e "$CONTROL_FILE" && ! -L "$CONTROL_FILE" \
+  && ! -e "$PAUSED_FILE" && ! -L "$PAUSED_FILE" && -n "$HOOK_INPUT" ]]; then
+  if printf '%s' "$HOOK_INPUT" | python3 "$DEX_DIR/scripts/context-stop.py"; then
+    THRASH_PAUSE_RC=0
+    dx_lifecycle_detach "$SESSION_ID" context-thrashing phase-loop || THRASH_PAUSE_RC=1
+    dx_lifecycle_control_lock_release_checked "$SESSION_ID" || THRASH_PAUSE_RC=1
+    if [[ "$THRASH_PAUSE_RC" -ne 0 ]]; then
+      dx_error "Dex could not safely pause after compaction thrashing. Inspect lifecycle state before resuming."
+      exit 2
+    fi
+    python3 -c 'import json,sys; print(json.dumps({"systemMessage": "Dex paused after compaction thrashing. The phase and workspace are preserved. Run dx context doctor --session " + sys.argv[1] + "; correct the launch budget and loaded tools before resuming. Do not repeat /compact or clear the transcript blindly."}))' "$SESSION_ID"
+    exit 0
+  fi
+fi
+
 # Pause publication is serialized by this same lock. Handle it before config
 # repair so automatic recovery cannot mint a fresh generation while paused.
 EARLY_PAUSE_CONTEXT_RC=0

@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const state = require('../scripts/ccr/state.cjs');
 const context = require('../scripts/ccr/context.cjs');
+const { spawnSync } = require('node:child_process');
 let directory;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-context-')); process.env.DEX_ROUTER_HOME = directory; });
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -92,4 +93,17 @@ test('context refresh updates only metadata and preserves manual limits without 
   t.mock.method(onboarding, 'discover', async () => { throw new Error('PRIVATE TOKEN'); });
   await assert.rejects(context.refresh(cli.configure), /metadata unavailable/);
   assert.deepEqual(state.config(), before);
+});
+test('the stop detector distinguishes current thrashing from historical errors, quotes and bystanders', () => {
+  const run = payload => spawnSync('python3', [path.resolve(__dirname, '../scripts/context-stop.py')], { input: JSON.stringify(payload), encoding: 'utf8' });
+  assert.equal(run({ last_assistant_message: 'Autocompact is thrashing: the context refilled.' }).status, 0);
+  assert.equal(run({ last_assistant_message: 'We discussed Autocompact is thrashing: earlier.' }).status, 1);
+  const row = { type: 'assistant', sessionId: 'owner', message: { model: '<synthetic>', content: [{ type: 'text', text: 'Autocompact is thrashing: context refilled.' }] } };
+  const file = transcript([row]);
+  assert.equal(run({ session_id: 'owner', transcript_path: file }).status, 0);
+  assert.equal(run({ session_id: 'bystander', transcript_path: file }).status, 1);
+  fs.appendFileSync(file, JSON.stringify({ type: 'user', message: { content: 'Continue after recovery' } }) + '\n');
+  assert.equal(run({ session_id: 'owner', transcript_path: file }).status, 1);
+  const link = path.join(directory, 'unsafe.jsonl'); fs.symlinkSync(file, link);
+  assert.equal(run({ session_id: 'owner', transcript_path: link }).status, 1);
 });

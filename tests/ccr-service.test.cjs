@@ -36,6 +36,21 @@ test('routine health probes skip session scans while detailed status verifies ow
   assert.equal(health.active_requests, 0);
   assert.equal(health.active_sessions, undefined);
 });
+test('request diagnostics retain counts and correlation IDs without tool or prompt contents', async () => {
+  const token = await register('metrics');
+  reply = () => Response.json({ content: [{ type: 'text', text: 'PRIVATE ANSWER' }], usage: { input_tokens: 1, cache_read_input_tokens: 100000, cache_creation_input_tokens: 110000, output_tokens: 20 } }, { headers: { 'request-id': 'req_provider' } });
+  const response = await send(token, { tools: [{ name: 'Read', description: 'PRIVATE SCHEMA', input_schema: {} }], system: 'PRIVATE SYSTEM' });
+  await response.text();
+  await wait(100);
+  const saved = state.read(state.sessionFile('metrics')).last_request;
+  assert.equal(saved.input_tokens, 210001);
+  assert.equal(saved.tool_count, 1);
+  assert.equal(saved.provider_request_id, 'req_provider');
+  assert.match(response.headers.get('x-dex-request-id'), /^dxreq_/);
+  const journal = fs.readFileSync(path.join(directory, 'events.jsonl'), 'utf8');
+  assert.match(journal, /router.request_completed/);
+  assert.doesNotMatch(journal + JSON.stringify(saved), /PRIVATE|synthetic-local|Bearer/);
+});
 
 test('native credentials are stable per client process and use the configured fallback chain', async () => {
   const config = state.config(); config.native = { enabled: true }; config.phases[0] = { model: 'anthropic/test', fallbacks: ['openai/test'] }; state.write(state.stateFile('config'), config);

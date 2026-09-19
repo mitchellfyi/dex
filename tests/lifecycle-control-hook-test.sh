@@ -25,6 +25,24 @@ mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
+# A compaction error pauses its owner without advancing or retaining a receipt.
+THRASH_SID="context-thrash-hook"
+dx_lifecycle_atomic_write "$(dx_state_file "$THRASH_SID")" 2
+dx_lifecycle_atomic_write "$(dx_handoff_mode_file "$THRASH_SID")" inline
+THRASH_GENERATION=$(dx_completion_issue "$THRASH_SID" lifecycle phase 2)
+dx_lifecycle_atomic_write "$(dx_loop_config_file "$THRASH_SID")" \
+  "2:PHASE_2_COMPLETE:${ROOT}/prompts/phase-audits/2-implement.md:1:lifecycle:phase:${THRASH_GENERATION}"
+dx_lifecycle_atomic_write "$(dx_active_file "$THRASH_SID")" active
+dx_lifecycle_atomic_write "$(dx_owner_file "$THRASH_SID")" claude-thrash-owner
+printf '%s\n' '{"session_id":"claude-thrash-owner","last_assistant_message":"Autocompact is thrashing: the context refilled to the limit."}' | \
+  env DEX_SESSION_ID="$THRASH_SID" DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline \
+  bash "$ROOT/hooks/phase-loop.sh" > "$TMP_DIR/thrash.out" 2> "$TMP_DIR/thrash.err"
+assert_file "$(dx_paused_file "$THRASH_SID")"
+assert_no_file "$(dx_completion_expectation_file "$THRASH_SID")"
+[[ "$(cat "$(dx_state_file "$THRASH_SID")")" == 2 ]] || assert_at $LINENO
+assert_contains "dx context doctor" "$TMP_DIR/thrash.out"
+dx_cleanup_session "$THRASH_SID"
+
 payload() {
   python3 -c 'import json, sys; print(json.dumps({"prompt": sys.argv[1]}))' "$1"
 }

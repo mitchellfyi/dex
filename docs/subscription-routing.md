@@ -406,6 +406,19 @@ load can refill the window immediately. Correct the budget and loaded tools,
 then resume the existing conversation in a new client. A larger upstream model
 does not expand an already-running client's launch budget automatically.
 
+The lifecycle Stop hook recognizes Claude's compaction-thrashing error and uses
+the normal pause path. It preserves the phase and worktree, revokes completion
+authorization, and prints the context diagnostic command instead of injecting
+another audit. Human controls still take precedence. It does not clear history
+or mark a phase complete.
+
+Request events under `~/.dex/router/events.jsonl` include a correlation ID,
+actual model/account, launch and advertised context limits, request/tool-schema
+sizes, quota-reading age, response token counts and duration. A byte-preserving
+bounded stream observer records usage without logging prompts, schemas or model
+answers. Responses carry `x-dex-request-id`; provider request IDs are included
+when exposed by the gateway. `dx router doctor` reports telemetry write failures.
+
 ## Switching in one session
 
 With `ccr-subscription` selected, choose session only or the full workflow

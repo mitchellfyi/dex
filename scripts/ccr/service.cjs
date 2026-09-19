@@ -12,6 +12,7 @@ const { prepareHistory, prepareResponse } = require('./history.cjs');
 const ipc = require('./ipc.cjs');
 const { AccountBroker, authHeaders } = require('./accounts.cjs');
 const { CodexCatalog } = require('./codex-catalog.cjs');
+const { responseMetrics, providerRequestId } = require('./metrics.cjs');
 
 // Failover events keep the provider's own explanation (a quota window versus a
 // rejected converted request) as a short cleaned excerpt; bodies never land in
@@ -87,6 +88,7 @@ class RouterService {
   constructor({ gateway, clientKey, broker = new AccountBroker(), fetchImpl = fetch } = {}) {
     this.gateway = gateway; this.clientKey = clientKey; this.broker = broker; this.fetch = fetchImpl;
     this.tickets = new Map(); this.inFlight = new Set(); this.server = null;
+    this.metricWrites = new Set(); this.telemetryFailures = 0;
     this.ownerIdentity = processIdentity(process.pid);
     // Delegate lazily: tests and recovery swap the broker and fetch after construction.
     this.codexCatalog = new CodexCatalog({ broker: { access: (...args) => this.broker.access(...args) }, fetchImpl: (...args) => this.fetch(...args) });
@@ -116,13 +118,14 @@ class RouterService {
     clearInterval(this.timer);
     clearInterval(this.quotaTimer);
     for (const controller of this.inFlight) controller.abort();
+    await Promise.allSettled([...this.metricWrites]);
     this.tickets.clear();
     if (this.server) await new Promise(resolve => this.server.close(resolve));
   }
   async control(method, params) {
     // Routine probes must not wait for process checks on every registered session.
     if (method === 'health') return { version: 1, extension: 'dex-ccr', capabilities: ['messages', 'responses', 'native-auth'], pid: process.pid,
-      owner_identity: this.ownerIdentity, active_requests: this.inFlight.size,
+      owner_identity: this.ownerIdentity, active_requests: this.inFlight.size, telemetry_failures: this.telemetryFailures,
       ...(params?.sessions ? { active_sessions: state.sessions().filter(active).length } : {}) };
     if (method === 'sessions') return state.sessions().map(publicSession);
     if (method === 'native-auth') {
@@ -224,10 +227,12 @@ class RouterService {
     return session;
   }
   async handle(request, response) {
+    const started = Date.now(), requestId = `dxreq_${require('node:crypto').randomUUID()}`;
+    response.setHeader('x-dex-request-id', requestId);
     const controller = new AbortController();
     const abort = () => { if (!response.writableFinished) controller.abort(); };
     response.on('close', abort); this.inFlight.add(controller);
-    let session;
+    let session, metrics, observer;
     try {
       session = this.authenticate(request);
       if (request.method === 'GET' && /\/models(?:\?|$)/.test(request.url)) {
@@ -241,6 +246,10 @@ class RouterService {
       const protocol = /\/v1\/responses(?:\?|$)/.test(request.url) ? 'responses' : 'messages';
       if (request.method !== 'POST' || !/\/v1\/(?:messages|responses)(?:\?|$)/.test(request.url)) { ipc.json(response, 404, { error: { type: 'not_found_error', message: 'Unsupported Dex gateway endpoint.' } }); return; }
       const body = await ipc.body(request, 32 * 1024 * 1024);
+      metrics = { request_id: requestId, protocol, launch_context: session.context_limit,
+        request_bytes: Buffer.byteLength(JSON.stringify(body)), tool_count: Array.isArray(body.tools) ? body.tools.length : 0,
+        tool_schema_bytes: Buffer.byteLength(JSON.stringify(body.tools || [])), system_bytes: Buffer.byteLength(JSON.stringify(body.system || body.instructions || '')),
+        attempts: 0 };
       const conversation = request.headers['x-claude-code-session-id'];
       if (conversation) {
         state.checkedId(conversation);
@@ -297,9 +306,15 @@ class RouterService {
           this.tickets.set(ticket, { provider: choice.account.provider, credentials, expires: Date.now() + 120000 });
           let upstream;
           try {
+            Object.assign(metrics, { attempts: metrics.attempts + 1, account_id: account.id, model: choice.model.id,
+              model_default_context: choice.model.default_context_window || choice.model.context_window, model_max_context: policy.modelCapacity(choice.model),
+              quota_age_ms: Number.isFinite(account.usage?.observed_at) ? Math.max(0, Date.now() - account.usage.observed_at) : null,
+              quota_refresh_unavailable: Boolean(account.usage_error) });
             const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.clientKey}`, 'x-ccr-dex-account-ticket': ticket };
             for (const key of ['anthropic-version', 'anthropic-beta', 'user-agent', 'x-claude-code-session-id', 'x-claude-code-agent-id', 'x-claude-code-parent-agent-id']) if (request.headers[key]) headers[key] = request.headers[key];
             upstream = await this.fetch(`${this.gateway}/v1/${protocol}`, { method: 'POST', headers, body: JSON.stringify(next), redirect: 'error', signal: controller.signal });
+            metrics.provider_status = upstream.status;
+            metrics.provider_request_id = providerRequestId(upstream.headers);
           } catch (error) {
             this.tickets.delete(ticket);
             if (controller.signal.aborted) return;
@@ -358,11 +373,12 @@ class RouterService {
           });
           if (session.current_account !== choice.account.id || session.current_model !== choice.model.id || session.phase !== selected.phase) event(session, 'route.selected', { account_id: choice.account.id, model: choice.model.id, phase: selected.phase });
           response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store', 'x-dex-model': choice.model.id });
+          observer = responseMetrics(upstream.headers.get('content-type'));
           try {
             if (upstream.body) {
               const source = protocol === 'responses' && choice.model.provider === 'anthropic'
                 ? Readable.from(prepareResponse(upstream.body, upstream.headers.get('content-type'))) : Readable.fromWeb(upstream.body);
-              await pipeline(source, response);
+              await pipeline(source, observer.stream, response);
             } else response.end();
           }
           finally { this.tickets.delete(ticket); }
@@ -386,7 +402,20 @@ class RouterService {
           ...(error.retryAfter ? { retry_after_seconds: error.retryAfter } : {}) } });
       }
       else response.destroy();
-    } finally { this.inFlight.delete(controller); response.off('close', abort); }
+    } finally {
+      if (session && metrics) {
+        const saved = { ...metrics, ...(observer?.totals || {}), status: response.headersSent ? response.statusCode : 0,
+          duration_ms: Math.max(0, Date.now() - started), timestamp: new Date().toISOString(), interrupted: !response.writableFinished };
+        const write = state.locked('sessions', () => {
+          const current = state.read(state.sessionFile(session.id));
+          current.last_request = saved; state.write(state.sessionFile(session.id), current);
+          event(session, 'router.request_completed', saved);
+        }).catch(() => { this.telemetryFailures++; });
+        this.metricWrites.add(write);
+        try { await write; } finally { this.metricWrites.delete(write); }
+      }
+      this.inFlight.delete(controller); response.off('close', abort);
+    }
   }
   async recordRejection(session, model, status) {
     await state.locked('sessions', () => {
