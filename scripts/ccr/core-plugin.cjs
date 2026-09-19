@@ -1,6 +1,7 @@
 'use strict';
 const ipc = require('./ipc.cjs');
 const { restoreAnthropic, wrapAnthropicResponse } = require('./history.cjs');
+const { PROVIDER_ENDPOINTS, chatReasoning } = require('./policy.cjs');
 
 const CLAUDE_SUBSCRIPTION_PRELUDE = "You are Claude Code, Anthropic's official CLI for Claude.";
 
@@ -14,7 +15,7 @@ function convertedReasoning(item) {
 }
 
 function createGatewayPlugin() {
-  return { providerHooks: Object.keys(require('./adapter.cjs').PROVIDER_ENDPOINTS).map(provider => ({
+  return { providerHooks: Object.keys(PROVIDER_ENDPOINTS).map(provider => ({
     key: `dex-${provider}-oauth`, providerName: `dex-${provider}`,
     async authenticate(input) {
       const ticket = input.request?.headers?.['x-ccr-dex-account-ticket'];
@@ -47,6 +48,10 @@ function createGatewayPlugin() {
         body = { ...body, store: false, stream: true, instructions: body.instructions || 'You are an engineering assistant.' };
         for (const key of ['max_output_tokens', 'max_tokens', 'temperature', 'top_p']) delete body[key];
         if (input.sourceAdapterKey === 'anthropic_messages' && Array.isArray(body.input)) body.input = body.input.map(convertedReasoning);
+      }
+      if (PROVIDER_ENDPOINTS[provider].type === 'openai_chat_completions' && body && typeof body === 'object') {
+        const effort = chatReasoning(input.request?.body);
+        if (effort) body = { ...body, reasoning: { ...body.reasoning, effort } };
       }
       return { ok: true, value: { ...input.upstreamRequest, headers, body } };
     },

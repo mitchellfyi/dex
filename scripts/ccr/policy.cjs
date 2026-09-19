@@ -18,6 +18,23 @@ const MODEL = new RegExp(`^(${PROVIDER_NAMES.join('|')})\\/[A-Za-z0-9][A-Za-z0-9
 // cools down separately from native traffic on the same account and model.
 const NATIVE_PROTOCOL = { anthropic: 'messages', openai: 'responses', openrouter: 'chat' };
 const PROVIDER_LABELS = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter' };
+// Where each provider's traffic goes and which wire format it speaks. Adding a
+// provider is an entry here plus a PROVIDERS entry in accounts.cjs; nothing in
+// the request path branches on the provider name.
+const PROVIDER_ENDPOINTS = {
+  anthropic: { type: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' },
+  openai: { type: 'openai_responses', baseUrl: 'https://chatgpt.com/backend-api/codex' },
+  openrouter: { type: 'openai_chat_completions', baseUrl: 'https://openrouter.ai/api/v1' }
+};
+// Reasoning effort arrives in the client's own dialect and does not survive
+// conversion to chat completions. Dex's levels are translated once, for every
+// provider on that wire format; a level above the format's top one clamps to it
+// rather than being dropped, so asking for more reasoning never yields less.
+const CHAT_EFFORT = { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'high' };
+function chatReasoning(body) {
+  const requested = body?.output_config?.effort || body?.reasoning?.effort;
+  return typeof requested === 'string' ? CHAT_EFFORT[requested] : undefined;
+}
 
 function model(config, id) {
   if (typeof id !== 'string' || !MODEL.test(id)) throw new Error('Use a model listed by dx model list.');
@@ -250,4 +267,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, CHAT_EFFORT, chatReasoning, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };

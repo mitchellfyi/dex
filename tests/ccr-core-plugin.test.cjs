@@ -75,3 +75,44 @@ test('Responses conversion preserves signature-only Claude thinking before CCR d
   assert.deepEqual(restored.messages[0].content, payload.content);
   assert.equal(payload.content[0].type, 'thinking');
 });
+
+// A chat-completions provider is reached through conversion, which drops the
+// client's own reasoning dialect. These cover the translation that replaces it.
+async function chatAuthenticate(t, clientBody, upstreamBody = { model: 'z-ai/glm-5.3', messages: [] }) {
+  t.mock.method(ipc, 'call', async () => ({ headers: { authorization: 'Bearer synthetic-key' } }));
+  const plugin = createGatewayPlugin().providerHooks.find(hook => hook.providerName === 'dex-openrouter');
+  return plugin.authenticate({ sourceAdapterKey: 'anthropic_messages',
+    request: { headers: { 'x-ccr-dex-account-ticket': 'synthetic-ticket' }, body: clientBody },
+    upstreamRequest: { headers: { authorization: 'Bearer client-key', 'x-ccr-dex-account-ticket': 'synthetic-ticket' }, body: upstreamBody } });
+}
+
+test('reasoning effort survives conversion to a chat-completions provider', async t => {
+  const messages = await chatAuthenticate(t, { output_config: { effort: 'high' }, messages: [] });
+  assert.deepEqual(messages.value.body.reasoning, { effort: 'high' });
+  // The Responses dialect carries the same request.
+  const responses = await chatAuthenticate(t, { reasoning: { effort: 'medium' }, input: [] });
+  assert.deepEqual(responses.value.body.reasoning, { effort: 'medium' });
+  // Dex has levels above what the wire format names; asking for more reasoning
+  // must never quietly yield less than 'high'.
+  for (const level of ['xhigh', 'max']) {
+    const clamped = await chatAuthenticate(t, { output_config: { effort: level }, messages: [] });
+    assert.deepEqual(clamped.value.body.reasoning, { effort: 'high' }, `${level} clamps to high`);
+  }
+});
+
+test('a chat-completions provider adds no reasoning field when none was requested', async t => {
+  const none = await chatAuthenticate(t, { messages: [] });
+  assert.equal('reasoning' in none.value.body, false);
+  const junk = await chatAuthenticate(t, { output_config: { effort: 'not-a-level' }, messages: [] });
+  assert.equal('reasoning' in junk.value.body, false);
+});
+
+test('a metered provider gets its account credential and none of the client key', async t => {
+  const result = await chatAuthenticate(t, { output_config: { effort: 'high' }, messages: [] });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.headers.authorization, 'Bearer synthetic-key');
+  assert.equal(result.value.headers['x-ccr-dex-account-ticket'], undefined, 'the ticket never reaches the provider');
+  // Anthropic's OAuth beta belongs to Anthropic requests only.
+  assert.equal(result.value.headers['anthropic-beta'], undefined);
+  assert.equal(result.value.body.model, 'z-ai/glm-5.3', 'the upstream ID is what the provider is called');
+});

@@ -6,6 +6,7 @@ const net = require('node:net');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 const state = require('./state.cjs');
+const policy = require('./policy.cjs');
 const ipc = require('./ipc.cjs');
 const { nativeEnv } = require('./accounts.cjs');
 const { active, processIdentity } = require('./service.cjs');
@@ -74,14 +75,7 @@ async function rpc(settings, method, args = [], timeout = 30000) {
   if (!result.ok) throw new Error(`CCR rejected ${method}. Run dx router doctor.`);
   return result.value;
 }
-// Where each provider's traffic goes and which wire format it speaks. Adding a
-// provider is an entry here plus a PROVIDERS entry in accounts.cjs; nothing in
-// the request path branches on the provider name.
-const PROVIDER_ENDPOINTS = {
-  anthropic: { type: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' },
-  openai: { type: 'openai_responses', baseUrl: 'https://chatgpt.com/backend-api/codex' },
-  openrouter: { type: 'openai_chat_completions', baseUrl: 'https://openrouter.ai/api/v1' }
-};
+const { PROVIDER_ENDPOINTS } = policy;
 function managedConfig(base, settings, config, endpoints = {}, extension = path.join(__dirname, 'extension.cjs')) {
   const providers = Object.keys(PROVIDER_ENDPOINTS).map(provider => ({
     id: `dex-${provider}`, name: `dex-${provider}`, enabled: true,
