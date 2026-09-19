@@ -86,7 +86,7 @@ __dx_cli() {
     config)    bash "$DEX_DIR/bin/config.sh" "$@" ;;
     provider)  dx_provider_command "$@" ;;
     setup)     bash "$DEX_DIR/bin/setup.sh" "$@" ;;
-    router|account|accounts|model|route|context) bash "$DEX_DIR/bin/router.sh" "$cmd" "$@" ;;
+    router|account|accounts|model|route|profile|context) bash "$DEX_DIR/bin/router.sh" "$cmd" "$@" ;;
     run)       __dx_run_spec_cli "$@" ;;
     control)   bash "$DEX_DIR/bin/control.sh" "$@" ;;
     sessions)  bash "$DEX_DIR/bin/sessions.sh" "$@" ;;

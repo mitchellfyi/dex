@@ -89,7 +89,11 @@ function render(group, action, value, options) {
     if (value.default_model) out(`Operating context budget: ${policy.contextLimit(value)} tokens (running clients retain their launch budget).`);
     showTable(['Phase', 'Model', 'Fallbacks (in order)', 'Effort'], policy.PHASES.map((name, phase) => {
       const route = value.phases[phase] || { model: value.default_model };
-      return [`${phase} ${name}`, route.model || 'not selected', route.fallbacks?.join(' -> ') || '-', route.effort || 'default'];
+      // A stored profile shows what it currently resolves to, not its name:
+      // the name lives in the profile table, and a stale one must be visible here.
+      const show = id => policy.PROFILE.test(id || '') ? `${id} (${policy.resolveProfiles(structuredClone(value), [id])[0]})` : id;
+      return [`${phase} ${name}`, route.model ? show(route.model) : 'not selected',
+        route.fallbacks?.length ? route.fallbacks.map(show).join(' -> ') : '-', route.effort || 'default'];
     }));
     out('Client routes through CCR (used when the client is connected to the router):');
     showTable(['Client', 'Source', 'Model', 'Fallbacks (in order)', 'Effort'], ['claude', 'codex'].map(client => {
@@ -321,16 +325,27 @@ async function modelCommand(action, args, options) {
   await configure(config => { config.models = [...config.models.filter(item => item.id !== model.id), model]; }, true);
   if (await adapter.health()) { await adapter.stop(); await adapter.start(); } return model;
 }
+// A route may name a profile: @cheap, @strong, @near_frontier, @frontier. It
+// is stored as given, resolved where the route is read, and must resolve to a
+// configured model at the moment the route is saved — a profile that names
+// nothing would otherwise make the route unlaunchable.
+function resolveForSave(config, ids) {
+  return policy.resolveProfiles(structuredClone(config), ids);
+}
+
 async function routeCommand(action, args, options) {
   if (action === 'configure') {
     const model = args[0] || await question('Default model (provider/model)');
     return configure(config => {
       const fallbacks = options.fallback || [];
-      policy.model(config, model); for (const fallback of fallbacks) policy.model(config, fallback);
+      const resolved = resolveForSave(config, [model, ...fallbacks]);
+      resolved.forEach(id => policy.model(config, id));
       if (options.effort && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort)) throw new Error('Unknown reasoning effort.');
       if (options.client && options.phase !== undefined) throw new Error('Choose either --client or --phase, not both.');
       if (options.client && !['claude', 'codex'].includes(options.client)) throw new Error('Client must be claude or codex.');
       const choice = { model, fallbacks, ...(options.effort ? { effort: options.effort } : {}) };
+      // A save must prove each profile resolves; the stored choice keeps the
+      // profile names so re-pointing one later re-targets the route.
       if (options.client) {
         config.client_routes ||= {}; config.client_routes[options.client] = choice;
       } else if (options.phase !== undefined) {
@@ -343,6 +358,39 @@ async function routeCommand(action, args, options) {
   const mapped = { 'pin-account': 'pin', 'unpin-account': 'unpin' }[action] || action;
   return ipc.call('route', { action: mapped === 'use' && args[0] === 'auto' ? 'auto' : mapped, model: args[0], account: args[0], scope: options.scope, session: options.session || process.env.DX_ROUTER_SESSION_ID });
 }
+// Profiles name the role a model plays — cheap, strong, near_frontier,
+// frontier — so a route can be expressed once and re-pointed later.
+async function profileCommand(action, args, options) {
+  if (action === 'list' || action === undefined) {
+    const profiles = state.config().profiles || {};
+    return Object.entries(profiles).map(([name, model]) => ({ name, model }));
+  }
+  const name = args[0];
+  if (!policy.PROFILE.test(`@${name}`)) throw new Error('A profile name is 1–32 lowercase letters, numbers, hyphens or underscores, starting with a letter.');
+  if (action === 'set') {
+    const model = args[1];
+    policy.model(state.config(), model);
+    return configure(config => { config.profiles ||= {}; config.profiles[name] = model; });
+  }
+  if (action === 'clear') {
+    return configure(config => {
+      if (!config.profiles?.[name]) throw new Error(`Profile ${name} is not assigned.`);
+      // A route naming the profile would stop resolving the moment it is gone,
+      // so the routes that still point at it are named and the clear is refused.
+      const users = [];
+      const visit = (route, label) => {
+        if (route?.model === `@${name}` || (route?.fallbacks || []).includes(`@${name}`)) users.push(label);
+      };
+      for (const [phase, route] of Object.entries(config.phases || {})) visit(route, `phase ${phase}`);
+      for (const [client, route] of Object.entries(config.client_routes || {})) visit(route, `client ${client}`);
+      if (config.default_model === `@${name}`) users.push('the default route');
+      if (users.length) throw new Error(`Profile ${name} is named by ${users.join(', ')}. Re-point or reconfigure those first.`);
+      delete config.profiles[name];
+    });
+  }
+  throw new Error('Use dx profile list, dx profile set <name> <provider/model> or dx profile clear <name>.');
+}
+
 async function routerCommand(action, options, args = []) {
   if (action === 'native') return require('./native.cjs').command(args[0] || 'status', options);
   if (action === 'install') { await adapter.install(); return `Installed CCR ${adapter.RELEASE}.`; }
@@ -416,6 +464,7 @@ async function main(args) {
     : group === 'account' ? (['rename', 'rank'].includes(action) ? [2, 2] : ['list', undefined].includes(action) ? [0, 0] : action === 'add' ? [0, 1] : [1, 1])
       : group === 'model' ? (['list', 'current', undefined].includes(action) ? [0, 0] : [1, 1])
         : group === 'route' ? (['status', 'policy', 'unpin-account', undefined].includes(action) ? [0, 0] : [1, 1])
+          : group === 'profile' ? (['list', undefined].includes(action) ? [0, 0] : action === 'set' ? [2, 2] : [1, 1])
           : group === 'context' ? (action === 'budget' ? [1, 1] : action === 'scope' ? [0, 1] : [0, 0]) : [0, 0];
   const provided = group === 'accounts' ? options.positional.length : values.length;
   if (provided < arity[0] || provided > arity[1]) throw new Error(`Unexpected arguments for dx ${group}${action ? ` ${action}` : ''}. Run dx ${group} --help.`);
@@ -424,6 +473,7 @@ async function main(args) {
   if (group === 'account') result = await accountCommand(action || 'list', values, options);
   else if (group === 'model') result = await modelCommand(action || 'list', values, options);
   else if (group === 'route') result = await routeCommand(action || 'status', values, options);
+  else if (group === 'profile') result = await profileCommand(action, values, options);
   else if (group === 'router') result = await routerCommand(action || 'status', options, values);
   else if (group === 'context') result = await contextCommand(action || 'doctor', values, options);
   else throw new Error('Unknown subscription routing command.');
@@ -433,4 +483,4 @@ if (require.main === module) {
   process.umask(0o077);
   main(process.argv.slice(2)).catch(error => { info(error.message); process.exitCode = 1; });
 }
-module.exports = { clean, parse, question, configure, accountRows, accountCommand, modelCommand, routeCommand, routerCommand, main };
+module.exports = { clean, parse, question, configure, accountRows, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };

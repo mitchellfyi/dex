@@ -290,3 +290,41 @@ test('a metered route reports its limit without calling it a subscription', () =
   assert.match(metered.message, /Add an Anthropic model with dx route configure anthropic\/<model>/);
   assert.doesNotMatch(metered.message, /Add a anthropic/);
 });
+
+test('a profile resolves where the route is read, so re-pointing it needs no restart', () => {
+  const models = [
+    { id: 'openrouter/glm-5.3', provider: 'openrouter', context_window: 200000 },
+    { id: 'anthropic/claude-fable-5-1', provider: 'anthropic', context_window: 200000 },
+    { id: 'anthropic/claude-opus-5', provider: 'anthropic', context_window: 200000 }
+  ];
+  const config = { models, profiles: { cheap: 'openrouter/glm-5.3', strong: '@near_frontier', near_frontier: 'anthropic/claude-fable-5-1' },
+    phases: { 2: { model: '@cheap', fallbacks: ['@strong'] }, 3: { model: '@strong' } }, default_model: '@strong' };
+  const session = { fixed_phase: 2 };
+  const first = policy.route(config, session);
+  assert.deepEqual(first.models.map(target => target.id), ['openrouter/glm-5.3', 'anthropic/claude-fable-5-1'],
+    'a nested profile resolves through its chain');
+  assert.equal(policy.route(config, { fixed_phase: 3 }).models[0].id, 'anthropic/claude-fable-5-1');
+  // Re-point the profile; the same saved route now selects a different model.
+  config.profiles.cheap = 'anthropic/claude-opus-5';
+  assert.equal(policy.route(config, session).models[0].id, 'anthropic/claude-opus-5');
+  // The context budget follows the resolution too.
+  assert.doesNotThrow(() => policy.contextLimit(config));
+});
+
+test('profiles that do not resolve are rejected with a path to fix them', () => {
+  const empty = { models: [{ id: 'anthropic/claude-fable-5-1', provider: 'anthropic', context_window: 200000 }], profiles: {}, phases: { 2: { model: '@ghost' } } };
+  assert.throws(() => policy.route(empty, { fixed_phase: 2 }), /Profile ghost is not assigned a model\. Set one with dx profile set ghost/);
+  const cycle = { models: [], profiles: { a: '@b', b: '@a' }, phases: { 2: { model: '@a' } } };
+  assert.throws(() => policy.route(cycle, { fixed_phase: 2 }), /part of a cycle/);
+  const self = { models: [], profiles: { a: '@a' }, phases: { 2: { model: '@a' } } };
+  assert.throws(() => policy.route(self, { fixed_phase: 2 }), /part of a cycle/);
+  // Two routes naming the same profile is fine; only a profile in its own chain is a cycle.
+  const shared = { models: [{ id: 'anthropic/claude-fable-5-1', provider: 'anthropic', context_window: 200000 }],
+    profiles: { strong: 'anthropic/claude-fable-5-1' }, phases: { 2: { model: '@strong', fallbacks: ['@strong'] } } };
+  assert.equal(policy.route(shared, { fixed_phase: 2 }).models.length, 1);
+});
+
+test('profile names are rejected outside route configuration', () => {
+  const config = { models: [{ id: 'anthropic/claude-fable-5-1', provider: 'anthropic', context_window: 200000 }] };
+  assert.throws(() => policy.model(config, '@cheap'), /other commands need the provider\/model ID/);
+});

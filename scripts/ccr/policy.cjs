@@ -9,6 +9,41 @@ const PHASES = ['setup', 'plan', 'implement', 'review', 'verify', 'pr', 'complet
 // session keeps talking (final summary, follow-up questions) on the complete
 // route; 7 is never configurable on its own.
 const TERMINAL_PHASE = 7;
+// A profile names the role a model plays — cheap, strong, frontier — so a
+// route can be expressed once and re-pointed later. Resolution happens where a
+// route is read, so a profile change applies to the next request without a
+// restart, and the profile a value came from is recorded beside it for
+// experiment data.
+const PROFILE = /^@([a-z][a-z0-9_-]{0,31})$/;
+function resolveProfiles(config, ids, path = 'route') {
+  // `visiting` is the chain being walked, so two routes may name the same
+  // profile; only a profile appearing in its own chain is a cycle.
+  // A resolved profile remembers its answer, so a chain walked once is not
+  // walked again — but the answer stored is the resolved model, never the
+  // profile it was assigned, or a second reference to a nested profile would
+  // hand back an unresolved name.
+  const visiting = new Set(), answers = new Map();
+  const resolve = id => {
+    const match = typeof id === 'string' ? id.match(PROFILE) : null;
+    if (!match) return id;
+    if (visiting.has(id)) throw new Error(`Profile ${id} is part of a cycle.`);
+    if (answers.has(id)) return answers.get(id);
+    visiting.add(id);
+    const assigned = config.profiles?.[match[1]];
+    if (typeof assigned !== 'string') throw new Error(`Profile ${id.slice(1)} is not assigned a model. Set one with dx profile set ${match[1]} <provider/model>.`);
+    const value = resolve(assigned);
+    visiting.delete(id); answers.set(id, value);
+    return value;
+  };
+  const resolved = ids.map(resolve);
+  if (answers.size) {
+    const existing = config.profile_bindings || {};
+    for (const value of answers.keys()) { const name = value.match(PROFILE)[1]; existing[name] = (existing[name] || 0) + 1; }
+    config.profile_bindings = existing;
+  }
+  return resolved;
+}
+
 // A Dex model ID is always `provider/name`. `name` is Dex's stable identifier,
 // which is not necessarily the provider's: an aggregator's own IDs contain a
 // vendor segment, so the upstream ID is carried separately on the model entry.
@@ -38,6 +73,7 @@ function chatReasoning(body) {
 }
 
 function model(config, id) {
+  if (typeof id === 'string' && PROFILE.test(id)) throw new Error('A route may only name a profile through dx route configure; other commands need the provider/model ID.');
   if (typeof id !== 'string' || !MODEL.test(id)) throw new Error('Use a model listed by dx model list.');
   const found = config.models.find(item => item.id === id);
   if (!found || !Number.isInteger(found.context_window) || found.context_window < 8192) throw new Error(`Model is not configured: ${id}`);
@@ -70,7 +106,10 @@ function route(config, session) {
   const configured = clientRoute || config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
   const choice = override && (override.scope === 'session' || override.phase === current || override.phase === policyPhase)
     ? override : configured;
-  const ids = [choice.model, ...(choice.fallbacks || [])];
+  // Profiles resolve here, where the route is read, so re-pointing one applies
+  // to the next request with no restart. The config object is the running
+  // service's own copy, so the binding counts it accumulates are transient.
+  const ids = resolveProfiles(config, [choice.model, ...(choice.fallbacks || [])]);
   const models = [...new Set(ids)].map(id => model(config, id));
   // session.context_limit is the compaction budget the client was launched with,
   // not a floor for later model choices. A smaller model stays selectable so an
@@ -96,7 +135,7 @@ function contextLimit(config, client) {
     : Object.values(config.phases).flatMap(value => [value.model, ...(value.fallbacks || [])]);
   if (!clientRoute && config.default_model) choices.push(config.default_model);
   if (!choices.length) throw new Error('Choose a default model with dx route configure.');
-  const targets = choices.map(id => model(config, id));
+  const targets = [...new Set(resolveProfiles(config, choices))].map(id => model(config, id));
   const budget = config.context_budget;
   if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < 8192 || budget > 4000000)) throw new Error('Context budget must be an integer between 8192 and 4000000 tokens.');
   for (const target of targets) {
@@ -273,4 +312,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, CHAT_EFFORT, chatReasoning, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };

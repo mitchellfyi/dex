@@ -588,3 +588,31 @@ test('a metered model keeps a stable Dex ID separate from its upstream ID', asyn
   await assert.rejects(cli.modelCommand('add', ['openrouter/small'], cli.parse(['--context', '200000', '--tools', '--max-context', '1000'])), /maximum context window/);
   await assert.rejects(cli.modelCommand('add', ['nope/model'], cli.parse(['--context', '200000', '--tools'])), /openrouter/);
 });
+
+test('profiles name the role a model plays and routes re-point without edits', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-profile-'));
+  const prior = process.env.DEX_ROUTER_HOME; process.env.DEX_ROUTER_HOME = dir;
+  t.after(() => { if (prior === undefined) delete process.env.DEX_ROUTER_HOME; else process.env.DEX_ROUTER_HOME = prior; fs.rmSync(dir, { recursive: true, force: true }); });
+  t.mock.method(adapter, 'health', async () => null);
+  for (const id of ['openrouter/glm-5.3', 'anthropic/claude-fable-5-1', 'anthropic/claude-opus-5'])
+    await cli.modelCommand('add', [id], cli.parse(['--context', '200000', '--tools']));
+  await cli.profileCommand('set', ['cheap', 'openrouter/glm-5.3'], {});
+  await cli.profileCommand('set', ['near_frontier', 'anthropic/claude-fable-5-1'], {});
+  await cli.routeCommand('configure', ['@cheap'], cli.parse(['--phase', 'implement', '--fallback', '@near_frontier', '--effort', 'high']));
+  let config = state.config();
+  assert.equal(config.phases[2].model, '@cheap', 'the profile name is stored, not its current model');
+  // The saved route resolves at read time, so re-pointing the profile follows.
+  assert.deepEqual(policy.route(config, { fixed_phase: 2 }).models.map(m => m.id), ['openrouter/glm-5.3', 'anthropic/claude-fable-5-1']);
+  await cli.profileCommand('set', ['cheap', 'anthropic/claude-opus-5'], {});
+  config = state.config();
+  assert.deepEqual(policy.route(config, { fixed_phase: 2 }).models.map(m => m.id), ['anthropic/claude-opus-5', 'anthropic/claude-fable-5-1']);
+  const profiles = await cli.profileCommand('list', [], {});
+  assert.deepEqual(profiles.map(p => p.name).sort(), ['cheap', 'near_frontier']);
+  // Clearing one a route still names is refused, and says which routes.
+  await assert.rejects(cli.profileCommand('clear', ['cheap'], {}), /named by phase 2/);
+  await cli.routeCommand('configure', ['anthropic/claude-opus-5'], cli.parse(['--phase', 'implement']));
+  await cli.profileCommand('clear', ['cheap'], {});
+  assert.equal(state.config().profiles.cheap, undefined);
+  await assert.rejects(cli.profileCommand('set', ['BadName', 'anthropic/claude-opus-5'], {}), /profile name/i);
+  await assert.rejects(cli.routeCommand('configure', ['@ghost'], cli.parse(['--phase', 'review'])), /Profile ghost is not assigned/);
+});

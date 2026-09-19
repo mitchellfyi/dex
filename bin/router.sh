@@ -35,6 +35,9 @@ Direct Claude and Codex profiles work without CCR or its Node dependencies.
 Use --json for machine-readable output. Removing an account requires --yes outside a terminal.
 Use dx accounts --live (or --watch) to update the table in place every 30 seconds.
 Press Ctrl+C to exit the live view. Live mode requires a terminal and cannot use --json.
+Model profiles name the role a model plays: dx profile set cheap <provider/model>,
+then dx route configure @cheap --phase implement. Re-point the profile once and
+every route naming it follows.
 Context refresh reads provider defaults and maxima without restarting the gateway.
 Budget changes apply to new client launches. Doctor reads saved sessions and compact history.
 EOF

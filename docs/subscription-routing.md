@@ -345,6 +345,22 @@ This applies to all seven phases and native Claude/Codex sessions using
 can serve Fable before trying Opus. A one-model override or account pin
 restricts this automatic fallback.
 
+### Model profiles
+
+A model profile names the role a model plays rather than the model itself:
+
+```sh
+dx profile set cheap openrouter/glm-5.3
+dx profile set strong anthropic/claude-fable-5-1
+dx route configure @cheap --phase implement
+```
+
+`@<profile>` resolves to the model currently assigned to that profile. Change
+what `cheap` means once and every route that names `@cheap` follows; the
+resolved model is recorded in each request's telemetry, so an experiment
+compares models, not just labels. Phases, client routes and `--fallback` all
+accept a profile. `dx profile list` shows each profile's model.
+
 After Phase 6 records its terminal commit, the lifecycle marks the session
 complete (phase 7). The conversation keeps the `complete` route for its final
 summary and any follow-up. Review-wave passes and assessments launched by a
