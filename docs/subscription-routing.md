@@ -300,7 +300,9 @@ a different identity requires a new entry.
 
 Account ranks are optional. Lower numbers are tried first for each model, ahead
 of session affinity and reported quota headroom. `dx account rank main 1` moves
-an account to that position and renumbers the rest of the pool. Once a ranked
+an account to that position and renumbers the rest of the pool. `dx accounts`
+lists ranked accounts first in rank order, then unranked accounts in the order
+they were registered; `--json` uses the same order. Once a ranked
 account's quota or cooldown clears, the next request tries it before accounts
 with lower priority. If no ranks are set, Dex keeps the default affinity and
 quota-aware selection policy.

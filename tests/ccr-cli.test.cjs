@@ -286,6 +286,19 @@ test('account rows compare quota windows side by side and distinguish due and un
   account.cooldown_until = now + 60000;
   assert.equal(cli.accountRows([account], now)[0][4], 'reauth-required');
 });
+test('account rows list ranked accounts first regardless of registry order', () => {
+  const now = Date.now();
+  // Reauth re-appends an account, so the registry can hold rank 1 after rank 2 and an unranked newcomer.
+  const items = [
+    { id: 'spare', name: 'Spare', provider: 'anthropic', enabled: true, rank: 2, created_at: 1 },
+    { id: 'new', name: 'New', provider: 'anthropic', enabled: true, created_at: 4 },
+    { id: 'old', name: 'Old', provider: 'openai', enabled: true, created_at: 3 },
+    { id: 'main', name: 'Main', provider: 'anthropic', enabled: true, rank: 1, created_at: 2 }
+  ];
+  assert.deepEqual(cli.accountRows(items, now).map(row => row[0]), ['Main', 'Spare', 'Old', 'New']);
+  assert.deepEqual(policy.rankOrder(items).map(account => account.id), ['main', 'spare', 'old', 'new']);
+  assert.deepEqual(items.map(account => account.id), ['spare', 'new', 'old', 'main'], 'ordering does not mutate the registry');
+});
 test('table rendering does not alter JSON output or saved account and model data', () => {
   const items = [{ id: 'one', name: 'Main', identity: 'test@example.test', provider: 'openai', enabled: true }];
   const config = { version: 1, enabled: false, models: [{ id: 'openai/test', context_window: 128000, capabilities: { tools: true, images: false } }], phases: {}, default_model: 'openai/test' };

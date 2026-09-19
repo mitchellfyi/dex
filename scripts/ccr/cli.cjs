@@ -154,7 +154,8 @@ function accountModels(account, config, now) {
   return models.length ? models : [null];
 }
 function accountRows(items, now = Date.now(), windowNames = accountWindows(items), config = state.config()) {
-  return items.flatMap(account => accountModels(account, config, now).map(model => {
+  // The registry appends on add and reauth, so file order drifts from rank order.
+  return policy.rankOrder(items).flatMap(account => accountModels(account, config, now).map(model => {
     const usage = account.usage;
     const fresh = usage && now - usage.observed_at < 120000 && !account.usage_error;
     const windows = (usage?.windows || []).filter(window => !model || !window.model_pool || model.id.includes(window.model_pool));
@@ -215,7 +216,7 @@ async function accounts(options) {
           if (!screen) info('Quota refresh unavailable; showing cached readings.');
         }
       } else if (screen) note = 'CCR is stopped; showing cached readings.\nRun dx router start to refresh usage.';
-      if (options.json) display({ version: 1, accounts: items }, true);
+      if (options.json) display({ version: 1, accounts: policy.rankOrder(items) }, true);
       else if (screen) screen.render(accountsFrame(items, true, note), note ? 4 : 2);
       else process.stdout.write(accountsFrame(items, false));
       if (screen) await new Promise(resolve => setTimeout(resolve, 30000));

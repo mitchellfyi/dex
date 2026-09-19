@@ -4,6 +4,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn, spawnSync } = require('node:child_process');
 const state = require('./state.cjs');
+const policy = require('./policy.cjs');
 const { CredentialStore, AccountBroker, nativeEnv, readNative, authHeaders, keychain } = require('./accounts.cjs');
 
 function accountName(value) {
@@ -89,11 +90,7 @@ async function changeAccount(action, selector, value, store = new CredentialStor
     } else if (action === 'enable' || action === 'disable') account.enabled = action === 'enable';
     else if (action === 'rank') {
       if (!/^\d+$/.test(value || '') || Number(value) < 1 || Number(value) > items.length) throw new Error(`Rank must be between 1 and ${items.length}.`);
-      const ordered = [...items].sort((a, b) => {
-        const aRank = Number.isSafeInteger(a.rank) && a.rank > 0 ? a.rank : Number.MAX_SAFE_INTEGER;
-        const bRank = Number.isSafeInteger(b.rank) && b.rank > 0 ? b.rank : Number.MAX_SAFE_INTEGER;
-        return aRank - bRank || (a.created_at || 0) - (b.created_at || 0);
-      });
+      const ordered = policy.rankOrder(items);
       ordered.splice(ordered.indexOf(account), 1); ordered.splice(Number(value) - 1, 0, account);
       ordered.forEach((item, index) => { item.rank = index + 1; });
       state.saveAccounts(ordered); return account;

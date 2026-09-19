@@ -124,13 +124,8 @@ function candidates(items, selection, session, now = Date.now(), protocol) {
       && (!selection.pinned || item.id === selection.pinned)
       && !blockers(item, target, now, protocol).length);
     available.sort((a, b) => {
-      const aRank = Number.isSafeInteger(a.rank) && a.rank > 0 ? a.rank : null;
-      const bRank = Number.isSafeInteger(b.rank) && b.rank > 0 ? b.rank : null;
-      if (aRank !== null || bRank !== null) {
-        if (aRank === null) return 1;
-        if (bRank === null) return -1;
-        return aRank - bRank || (a.created_at || 0) - (b.created_at || 0);
-      }
+      const ranked = byRank(a, b);
+      if (ranked !== 0) return ranked;
       if (a.id === session.current_account) return -1;
       if (b.id === session.current_account) return 1;
       const remaining = account => windows(account).length ? Math.min(...windows(account).map(window => window.remaining_ratio ?? 1), 1) : 0.5;
@@ -140,6 +135,20 @@ function candidates(items, selection, session, now = Date.now(), protocol) {
     if (selection.pinned) break;
   }
   return result;
+}
+
+// Ranked accounts come first in rank order; two unranked accounts compare equal
+// so callers can add their own tie-break (affinity, registration order).
+function byRank(a, b) {
+  const aRank = Number.isSafeInteger(a.rank) && a.rank > 0 ? a.rank : null;
+  const bRank = Number.isSafeInteger(b.rank) && b.rank > 0 ? b.rank : null;
+  if (aRank === null && bRank === null) return 0;
+  if (aRank === null) return 1;
+  if (bRank === null) return -1;
+  return aRank - bRank || (a.created_at || 0) - (b.created_at || 0);
+}
+function rankOrder(items) {
+  return [...items].sort((a, b) => byRank(a, b) || (a.created_at || 0) - (b.created_at || 0));
 }
 
 function retryIn(until, now = Date.now()) {
@@ -234,4 +243,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
