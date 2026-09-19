@@ -107,3 +107,14 @@ test('the stop detector distinguishes current thrashing from historical errors, 
   const link = path.join(directory, 'unsafe.jsonl'); fs.symlinkSync(file, link);
   assert.equal(run({ session_id: 'owner', transcript_path: link }).status, 1);
 });
+test('frequently restored skill entrypoints stay small and point at their complete workflows', () => {
+  const root = path.resolve(__dirname, '..');
+  for (const name of ['dxplan', 'dximplement', 'dxpr', 'dxprreview', 'dxwatchpr']) {
+    const entry = fs.readFileSync(path.join(root, 'skills', name, 'SKILL.md'), 'utf8');
+    assert.ok(Buffer.byteLength(entry) < 1100, `${name} restored entrypoint exceeds its context budget`);
+    assert.ok(entry.includes(`prompts/workflows/${name}.md`));
+    const workflow = fs.readFileSync(path.join(root, 'prompts/workflows', `${name}.md`), 'utf8');
+    assert.ok(workflow.includes(`# Skill: ${name}`));
+    assert.ok(workflow.length > 5000, `${name} workflow must retain its full contract`);
+  }
+});

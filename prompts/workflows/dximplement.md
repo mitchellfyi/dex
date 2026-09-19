@@ -1,0 +1,349 @@
+---
+name: "dximplement"
+description: "Execute the approved implementation plan with TDD discipline and completeness verification."
+---
+
+# Skill: dximplement
+
+Execute the approved plan, working through tasks with TDD discipline.
+
+In terminal `dx` Phase 2, start by validating and reading
+`dx_review_criteria_file "$DEX_SESSION_ID"`. It is the portable copy of the
+approved objectives, acceptance criteria, and verification requirements that
+Phase 3 will receive. Do not delete, weaken, or silently reinterpret it. If the
+user approves a plan change during implementation, atomically replace the
+artifact with the updated approved requirements, validate it, and rotate the
+approval seal explicitly:
+
+```bash
+SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+CRITERIA_FILE="$(dx_review_criteria_file "$SESSION_ID")"
+PREVIOUS_CRITERIA_HASH="$(dx_review_read_criteria_approval "$SESSION_ID")" || exit 1
+# Atomically replace CRITERIA_FILE here with the newly reapproved requirements.
+CRITERIA_HASH="$(dx_review_criteria_hash "$CRITERIA_FILE")" || exit 1
+dx_review_approve_criteria "$SESSION_ID" reapproved "$PREVIOUS_CRITERIA_HASH" "$CRITERIA_HASH" || exit 1
+```
+
+Rotation clears earlier risk selection, clean credit, and receipts. Re-run the
+Phase 3 risk selection against the final scope afterward.
+
+Read `prompts/issue-hygiene.md`. Apply it whenever implementation produces
+material evidence beyond the current issue or PR description. Keep accepted,
+bounded work for the same outcome in this PR; create a deduplicated linked
+follow-up for concrete distinct work. End the Phase 2 summary with the
+contract's exact `Issue/PR work:` line.
+
+## When to Use
+
+- After the user has approved the plan from `/dxplan`
+- When resuming implementation work on a ticket
+
+## Steps
+
+### 1. Work Through Tasks
+
+Before starting, read the implementation guardrails from `prompts/guardrails.md`. Apply them throughout.
+
+If `.dex/memory/index.md` exists, read it and load only the memory entries
+whose scope matches the approved plan, changed files, or current phase. Treat
+memory as useful context, not proof: re-check current code before relying on an
+old lesson.
+
+Before editing UI-affecting files, invoke `dxuicapture` to make the visual-proof decision. Capture when a short walkthrough would materially help a reviewer; otherwise record `SKIPPED` with a concrete reason, or `N/A` when there is no browser-rendered impact. If capture is selected, record the representative baseline before UI edits whenever it is meaningful and reproducible. Do not synthesize a before state; use the skill's `after_only` contract and explain why when the feature had no useful baseline.
+
+### 2. Design the Test Strategy First
+
+Before writing implementation code, map the test surface for the approved plan:
+
+- List the public behaviors, commands, endpoints, components, jobs, or APIs that must change.
+- Identify normal use, invalid input, boundaries, empty/null cases, unusually large inputs, unicode or locale-sensitive values, concurrency or timing edges, persistence/restart behavior, permission failures, and downstream dependency failures where relevant.
+- Decide which tests belong at each level: unit tests for pure logic, integration tests for cross-module behavior, contract/API tests for public interfaces, and end-to-end tests for the user-visible or operational workflow.
+- Write or update the first failing test before changing the implementation. If the requested artifact does not exist yet, create the smallest runnable skeleton at the exact requested path, then write the failing test against that public surface.
+- Record any test level that is genuinely not applicable and why. Do not skip end-to-end coverage silently when the change affects a user flow, CLI command, API route, background job, integration, or persistence path.
+
+For each task in the approved plan:
+
+1. `TaskUpdate(task_id, "in_progress")`
+2. Implement the task:
+   - Follow the patterns and conventions established in the codebase (check AGENTS.md, README.md, and existing code in the area you're modifying).
+   - If the project has code generation (API clients, DB types, OpenAPI specs), run the generator after schema or API changes.
+3. Follow **Red-Green-Refactor** (TDD):
+   - Write a failing test first.
+   - Write the minimum code to make it pass.
+   - Refactor while keeping tests green.
+4. As work reaches a small, coherent checkpoint, run a useful focused test or
+   deterministic check when practical. The result informs the next step but
+   does not decide whether the work may be committed. Read
+   `prompts/commit-format.md` before the first commit and apply its staging,
+   forbidden-file, message, and Dex-attribution rules to every commit.
+5. Commit and push each coherent checkpoint immediately. Do not wait for the
+   task, full test suite, phase, or final verification to finish, and do not
+   hide a known failing or unrun check. Large tasks should build their own
+   history through several natural checkpoints rather than one late commit;
+   do not split changes arbitrarily just to increase the count. For a new local
+   branch with no upstream, the first real branch-specific commit establishes
+   `origin/<current-branch>` as upstream; later commits push to that upstream.
+   Never push the new branch before that commit, and never create an empty
+   commit just to publish it.
+6. After completing the task, run deterministic quality checks (format, lint,
+   typecheck) across all files changed by that task. Fix issues before moving to
+   the next task. If tests use libraries that extend the assertion framework,
+   verify that the type checker recognizes those extensions.
+7. Codebase stewardship: if you encounter dead code, stale comments, or outdated references in files you are modifying, clean them up — but do not expand scope to files outside the plan.
+8. `TaskUpdate(task_id, "completed")`
+
+The same commit-and-push cadence applies to every later Phase 2 change,
+including implementation-inventory fixes, final-check repairs, and tests added
+after the manual smoke test.
+
+### 3. Keep `.dex/` in Sync
+
+After completing each task, check if your changes require updating project documentation in `.dex/`:
+
+- **New dependencies added** (package.json, go.mod, etc.) → update `.dex/dex.md` § Tech Stack or Quality Gates
+- **New code patterns established** (new conventions, architectural patterns) → add or update the relevant `.dex/rules/*.md` file
+- **Security boundaries changed** (new auth, sensitive file paths, restricted APIs) → add a guard in `.dex/guards/`
+- **Integration added/changed** (new MCP, new CI step) → update `.dex/dex.md` § Integrations
+- **Durable repo lesson discovered** (repeated failure, review pattern, or workflow rule) → run `/dxsync --dry-run` or record the candidate in the implementation summary so `dx sync` can promote it through a reviewable `.dex/memory/domains/` diff
+
+Only update when the change is meaningful and lasting — don't document one-off implementation details.
+Do not create `.dex/learnings.md`; raw observations are not trusted memory.
+
+### 4. Handle Scope Changes
+
+If during implementation you discover:
+- **A requirement is ambiguous**: ask by default. Present 2-3 options with trade-offs, or record a justified override when one interpretation is clearly safest.
+- **The plan needs to change**: ask by default. Explain the change and its impact; if proceeding without a reply is justified, preserve the original criterion as waived or changed rather than passed.
+- **A dependency is blocked**: document the blocker and ask by default. Use the session override contract when an outlier has a safe, auditable fallback.
+
+**When running non-interactively** (no user to respond — e.g., `-p` mode, automated harness, or if the user is unavailable): do NOT stop on ambiguity. Instead, choose the **most comprehensive reasonable interpretation** and document your assumptions in a README. Specifically:
+- Start with a time-bounded execution order: create the exact requested deliverable first, add the smallest runnable public API, then add tests and documentation around that concrete artifact. Avoid spending the early part of a run on optional architecture, broad scaffolding, or alternative implementations before the named output exists.
+- For algorithmic or strategic choices: implement **at least two approaches** (e.g., fixed-window + sliding-window + token-bucket for rate limiting, multiple sort algorithms, etc.) and let the caller choose via a factory or configuration parameter.
+- For data modeling: default to **per-client/per-key isolation** and **configurable limits** with sensible defaults.
+- For scope: when the prompt is vague, build a complete library with a clean exported API, comprehensive tests covering edge cases, and a README explaining design decisions and usage.
+- For REST APIs: always include the production API defaults from guardrails.md (pagination, search/filter, PATCH, timestamps, uniqueness constraints, health check, request logging) even when not explicitly requested. These are expected in any production API.
+- For stateful systems (caches, rate limiters, session stores): implement automatic memory cleanup of expired entries and export a destroy/close method for resource cleanup.
+- For HTTP middleware: if building a library that could be used as middleware, export a middleware adapter alongside the core API.
+- For ALL projects: write tests even if the prompt does not ask for them. Scale the suite to the size of the deliverable: small single-purpose libraries still need coverage for every public function/command, valid input, invalid/edge input (empty, null, boundary, unicode), and error paths; larger packages should aim for **>20 test cases** spread across **at least three test files**. Add concurrency or stress coverage when the code has shared state, async work, caching, rate limiting, I/O, or resource cleanup. Use the language's idiomatic test organization (named subtests, describe/it blocks, table-driven tests, etc.).
+- For CLI tools: test every command for both success and error cases. Test with empty input, non-existent IDs, corrupted data files, and missing arguments. Organize tests into **at least three files**: (1) unit tests for individual modules/functions, (2) integration tests for end-to-end command flows, (3) edge case and error recovery tests (corrupted data, boundary values, concurrent access).
+
+**Non-interactive mistakes to avoid** (these cause the most quality failures):
+- Don't declare "done" without running the test suite and seeing all tests pass. If tests fail, read the error output and fix the root cause. "Tests should pass" is not the same as "tests pass."
+- Don't install a library that extends the test framework or type system without configuring the type checker to recognize it. If tests run fine but the type checker reports errors on assertion matchers, you have a type registration problem — fix it.
+- Don't write 20 tests for one function and zero for another. Spread test coverage evenly across all public APIs, commands, or functions.
+- Don't create multiple interacting modules without an integration test. If Module A calls Module B, write a test that exercises A→B together, not just each in isolation.
+- Don't assume the first API design you choose is stable. After implementing, run the tests — if the tests import your module and call your functions, the API is real. If you change function signatures after writing tests, update the tests too.
+- Don't save the README or other required documentation for the final task on library/module work. Draft it in the first half of the task list once the public API is stable enough to describe; an unexpected retry or wall-clock limit should not leave the deliverable undocumented.
+- Don't postpone creating the primary deliverable. When the prompt names a specific output (file path, package layout, document), create a minimal but runnable version at the exact named path as the first concrete artifact, before extensive scaffolding, planning, or test setup. A time-bounded or interrupted run that never produces the named output scores zero on correctness no matter how good the surrounding work is.
+- Don't write tests against a deliverable that does not yet exist at its target path. Establish the implementation module or file at the path the prompt named first (even as a thin working skeleton), then layer tests against it. Tests importing a path that was never created run nothing.
+- Don't keep expanding scope after a verification failure. Once any test, typecheck, build, lint, or smoke command fails, stop adding features and spend the remaining budget on that failing command until it passes. Fix the root cause in production code, tests, or config; then rerun the same command before moving on.
+- Don't leave a configured test runner with zero tests. As soon as you add a test script or test framework, add at least one executable smoke or regression test against the public surface and run it before expanding optional endpoints, helpers, or documentation.
+
+When stopping for scope changes, do not output a completion promise (for
+example, `PHASE_2_COMPLETE`), write a completion receipt, or create the Phase 2
+ready marker. Halt and wait for user input. If a non-interactive run cannot get
+that input after two materially different recovery strategies, use only the
+exact generation-bound escalation command supplied for the current launch or
+audit. It pauses the run without claiming completion. Once the user provides
+direction and resumes the phase, continue from the approved scope.
+
+Update the ticket and any existing PR through the configured integrations with
+accepted scope-change details, following `prompts/issue-hygiene.md`. If no
+tracker is configured, inform the user in conversation.
+
+### 5. Implementation Inventory
+
+After all tasks are completed, run a focused implementation inventory to catch
+issues before the dedicated Phase 3 review loop takes over.
+
+**Step 1 — Build the inventory (find only, no fixes):**
+Walk through all changed files and build a numbered findings list. For each file, check: correctness (try to break it), design (workarounds, complexity), documentation (exactly what the code cannot), and consistency (patterns match across files). Record each issue as `[INV-N] file:line | description`. Do NOT fix anything yet.
+
+**Step 2 — Batch fix:**
+Fix all items from the inventory in severity order (high first).
+
+**Step 3 — Re-verify:**
+Re-run the inventory against the FULL change set (not just fixed files). If new
+findings emerge, fix them and re-run the inventory.
+
+**Step 4 — Evidence table:**
+Before declaring PASS, produce an acceptance criteria evidence table:
+
+| # | Criterion | Implementation (`file:line`) | Test (`test:line`) | Status |
+|---|-----------|------------------------------|--------------------|---------|
+
+Every criterion must have status MET with specific file:line evidence. Any NOT FOUND blocks completion.
+
+Use a plain GitHub Markdown table or short bullets. Do not use Unicode box-drawing tables; they wrap poorly in Claude Code transcripts.
+
+Completion defaults to requiring every acceptance criterion and verification
+gate to be exactly `MET`. Treat `NOT MET`, `NOT FOUND`, `DEFERRED`, `SKIPPED`,
+`BLOCKED`, `N/A`, "CI will cover it", "port busy", "tool unavailable", or an
+equivalent result as unresolved. Resolve it, ask the user for a plan change, or
+apply a reasoned phase waiver under the shared guardrails. Never relabel a
+waived or unverified result as `MET`. If a local port is busy, normally use
+another port or stop the conflicting process and rerun the check.
+
+Before declaring PASS, confirm that no implementation helper, UI capture, test
+runner, dev server, or other Phase 2 background process is still in flight.
+
+If the final inventory is empty and the evidence table has zero NOT FOUND
+entries: implementation is complete. When run via `dx`, the next phase (Review)
+follows automatically after the Stop hook audits this phase.
+
+### 6. Final Implementation Checks
+
+After the implementation inventory passes and the evidence table has zero NOT
+FOUND entries, run the project's relevant deterministic checks one more time and
+update the evidence table with final pass/fail status. Do not invoke `/dxreview`
+from Phase 2; the dedicated Phase 3 `/dxreviewloop` handles adversarial review
+after implementation is complete.
+
+Once the final checkout content is committed, publish any passing project-wide
+expensive gates with `dx_review_baseline_publish`. Supply the exact command and
+measured duration for each gate. Do not include focused, partial, failed, or
+estimated evidence. If the checkout changes afterward, rerun the affected gate
+and replace the baseline from the final state. Older Phase 3 clients may reuse
+this evidence. Current review waves establish environment- and tool-bound
+receipts through `prompts/review-checks.md`; they do not rely on the legacy
+baseline alone. Reuse never excuses a check whose inputs changed after a fix.
+
+### 7. UI Proof Decision
+
+Invoke `dxuicapture` before Phase 2 completes and record one outcome:
+
+- `READY`: link the short walkthrough, poster, editable storyboard, transcript, and manifest. The structured path should show the representative flow, use before/after parity or a truthful after-only reason, include captions, and remain under 90 seconds.
+- `SKIPPED`: explain why a produced visual artifact would not improve this review. This is a valid agent judgment, not a failed gate.
+- `N/A`: explain why no browser UI is affected.
+
+Use `NEEDS_REVIEW` while a selected capture is incomplete or needs another production pass. Do not leave the decision `MISSING`. Artifacts stay in Dex's temporary artifact directory and must not be committed. Run `dx ui-capture show` after the baseline and after production so the user sees the handoff path early.
+
+### 8. Manual Local Smoke Test
+
+A green test suite is not the same as a working feature. Before marking Phase 2 ready, exercise the change end-to-end the way a human reviewer would — run it locally and watch it actually work.
+
+- **Run the change end-to-end locally**, not just the test suite. Start the app/server/CLI the way the project runs it (reuse the dev-server startup documented in `dxuicapture` for web apps), then drive the real user-facing path this ticket changed.
+- **Prefer a real browser, fall back to Playwright.** For browser-facing changes, drive the flow with the Claude-in-Chrome browser tools (`mcp__claude-in-chrome__*`) when a live browser is available; otherwise fall back to Playwright (the Playwright MCP, or the pinned install `dxuicapture` provisions with `dx ui-capture install`). For non-UI changes, exercise it the matching way: hit the endpoint, run the command, trigger the job, or call the public API against a running instance.
+- **Seed local data when the flow needs it.** Use the project's seeding path if one exists (factories, seed scripts, fixtures); otherwise insert the minimal rows the flow requires directly into the local dev/test database. Seed only what the flow needs.
+- **Judge it like a reviewer**: confirm it works *effectively* (the happy path does the right thing), is *robust* (a representative bad/edge input is handled gracefully, not a crash or 500), and is backed by *good test coverage* (the path you just exercised by hand has corresponding automated tests). If the smoke test exposes a coverage gap, add the test before finishing.
+- **Clean up after yourself.** Stop every process/server you started, remove any rows, temp data, or fixture files you created, and leave no Phase 2 background process in flight. Smoke-test artifacts follow the same rule as UI capture — do not commit them.
+- **Record the result** in the implementation evidence: what you ran, how you drove it (browser vs Playwright vs API/CLI), what you observed, and the cleanup you performed. If the change genuinely cannot be exercised locally, record `Manual smoke test: N/A — <reason>` instead of silently skipping it; the reason must clear the same bar as any other `N/A` (see the blocker rule above).
+
+### 9. Select Phase 3 Review Risk
+
+After the final in-scope edit and verification run, use
+`prompts/review-risk-assessment.md` as the source of truth. Its first matching
+rule wins:
+
+- Choose `complex` when the scope touches a trust boundary; authentication,
+  authorization, permissions, secrets, payments, or destructive behavior;
+  persistence, schemas, or migrations; public API, CLI, configuration, or
+  compatibility contracts; concurrency or process lifecycle; hooks, guards,
+  CI, deployment, or packaging; broad cross-module behavior; or a concrete gap
+  in the supplied scope or verification that leaves material behavior
+  unbounded.
+- Choose `small` only when every change is localized and mechanically direct,
+  impact is narrow, focused verification is available, and no `complex`
+  condition applies.
+- Choose `normal` for everything else.
+
+Record one or more comma-separated lowercase reason codes from this set:
+`localized-change`, `focused-verification`, `bounded-production-change`,
+`cross-module`, `public-contract`, `security-sensitive`, `data-migration`,
+`concurrency`, `shell-hooks-ci`, `deployment-packaging`, `broad-impact`, and
+`uncertain-coverage`. Do not use free-form prose, paths, source excerpts,
+prompts, or secrets.
+
+Follow the tier-specific reason combination rules in the assessment prompt. An
+allowed code paired with a contradictory tier is invalid.
+
+In a terminal `dx` lifecycle, persist the selection against the current scope
+fingerprint:
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
+REVIEW_TIER="<small|normal|complex>"
+REVIEW_REASON_CODES="<comma-separated-reason-codes>"
+dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIEW_REASON_CODES" "$PWD"
+```
+
+The tier selects Dex's fixed global clean-wave policy: 1 for `small`, 2 for
+`normal`, and 3 for `complex`, plus a soft outer-wave budget of 3, 6, or 9.
+The persisted selection is bound to the clean-wave policy.
+Candidate-branch edits cannot lower the active gate, and the launch-only
+`DEX_REVIEW_CLEAN_PASSES` value can only raise it. An attributed
+`dx control override review.clean-passes <1-30>` may lower the effective target
+without changing the trusted policy: the loop still requires that many genuine
+clean waves, binds the receipt to the decision, and records Phase 3 as waived.
+Use `dx control waive review.clean-passes` only when skipping the remaining
+review gate entirely.
+
+The selection is not a review pass. Rewrite it if any later Phase 2 edit changes
+the scope.
+
+### 10. Mark Phase 2 Ready
+
+When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), write the Phase 2 ready marker only after all of these are true:
+
+- Every planned task is complete.
+- Every acceptance criterion and verification gate is exactly `MET`, or the
+  phase has a named, reasoned waiver that will be recorded as a waiver.
+- No evidence entry is deferred, skipped, blocked, missing, or delegated to
+  future CI without a user-approved plan change or recorded agent waiver.
+- Final deterministic checks passed locally.
+- The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
+- The UI proof decision is recorded as `READY`, `SKIPPED` with a reason, or `N/A` with a reason. Choosing `SKIPPED` is allowed when a walkthrough would not improve the review.
+- Every implementation change is committed, every implementation commit has
+  been pushed, local HEAD matches its upstream, and no empty bootstrap commit
+  was used to publish the branch.
+- If approved work produced no branch-specific commit on a newly created local
+  branch, keep it unpushed and do not write the Phase 2 ready marker. Ask the
+  user whether to stop the lifecycle as no-change or choose an explicit
+  lifecycle control action instead of advancing into a PR flow that cannot
+  complete.
+- No Phase 2 background processes or long-running commands are still in flight.
+- A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
+  recorded for the final current scope and bound to the trusted clean-wave
+  policy.
+- The approved review-criteria artifact has a matching approval seal and
+  reflects any plan change the user approved during implementation.
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 2)"
+```
+
+Do not write this marker early. The Stop hook ignores `PHASE_2_COMPLETE` without it.
+
+## Scope Boundaries
+
+Keep Phase 2 focused on implementation and its evidence. Record implementation
+checkpoints here; Phase 3 records accepted review fixes; Phase 4 runs the final
+PR gate and records any verification repairs; Phase 5 owns pull-request work;
+and Phase 6 owns final ticket state. Each phase should continue from the
+working history already pushed by the previous one.
+
+During implementation, avoid unrelated lifecycle administration:
+- Leave final ticket-state changes to Phase 6 unless the user directs otherwise.
+- Leave branch renames and routine ticket-status movement with Phase 0. If setup is incomplete, surface it instead of changing it ad hoc.
+- Keep using the worktree branch created by `dx` unless the user requests a different branch.
+
+You SHOULD:
+- Implement all planned tasks with TDD
+- Run quality checks on changed files after each task (format, lint, typecheck)
+- Commit coherent checkpoints early and often, push immediately after every
+  commit, and do not wait for full verification
+- Run the self-review loop (Step 5) and final implementation checks (Step 6)
+- Run `/dxuicapture` early, then capture a concise walkthrough or record a reasoned `SKIPPED`/`N/A` decision
+- Run the manual local smoke test (Step 8) before marking Phase 2 ready, cleaning up anything it starts or seeds
+- Select and persist the Phase 3 review risk after the final in-scope change
+- Update `.dex/` project docs if your changes require it
+
+## Notes
+
+- Stay in scope. Only implement what's in the plan.
+- If you think of improvements outside the plan, note them but don't implement them.
+- Route concrete out-of-scope discoveries through `prompts/issue-hygiene.md`
+  instead of leaving them as untracked notes.
+- Keep the user informed at natural milestones (e.g., "3 of 5 tasks complete").

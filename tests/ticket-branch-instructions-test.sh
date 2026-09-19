@@ -9,7 +9,8 @@ assert_contains "dx_ticket_branch_prepare" "$ROOT/prompts/ticket-instructions.md
 assert_contains "ticket_branch_source" "$ROOT/prompts/phase-audits/0-setup.md"
 assert_contains "origin/<tracker-branch>" "$ROOT/prompts/phase-audits/0-setup.md"
 assert_contains "dx_ticket_branch_prepare" "$ROOT/skills/dex/SKILL.md"
-assert_contains "dx_ticket_branch_prepare" "$ROOT/skills/dxplan/SKILL.md"
+assert_contains "prompts/workflows/dxplan.md" "$ROOT/skills/dxplan/SKILL.md"
+assert_contains "dx_ticket_branch_prepare" "$ROOT/prompts/workflows/dxplan.md"
 
 if grep -Fq 'git branch -m {{BRANCH}} <suggested-branch-name>' \
     "$ROOT/prompts/ticket-instructions.md"; then

@@ -24,7 +24,13 @@ for phase in 0-setup 1-plan 2-implement 3-review-loop 4-verify 5-pr 6-complete; 
 done
 
 for skill in dxtriage dex dxplan dximplement dxreview dxreviewloop dxverify dxpr dxprreview dxcomplete dxwatchpr; do
-  assert_contains "prompts/issue-hygiene.md" "$ROOT/skills/${skill}/SKILL.md"
+  skill_file="$ROOT/skills/${skill}/SKILL.md"
+  workflow_file="$ROOT/prompts/workflows/${skill}.md"
+  if [[ -f "$workflow_file" ]]; then
+    assert_contains "prompts/workflows/${skill}.md" "$skill_file"
+    skill_file="$workflow_file"
+  fi
+  assert_contains "prompts/issue-hygiene.md" "$skill_file"
 done
 
 assert_contains "prompts/issue-hygiene.md" "$ROOT/prompts/ticket-instructions.md"
