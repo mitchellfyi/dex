@@ -94,6 +94,23 @@ function readNative(provider, directory) {
   return { tokens: normalizeTokens(provider, state.read(file)), native_file: file };
 }
 
+// A spend cap can report when it resets as a period name rather than a time.
+// Only the boundaries that are unambiguous in UTC become one; a period whose
+// reset day Dex would have to guess keeps its name and no timestamp, because a
+// confidently wrong reset time is worse than an honest unknown. The result is
+// an ISO string: a bare number in this position means Unix seconds to the
+// window reader, and these are not seconds.
+function periodReset(value, now) {
+  if (typeof value !== 'string' || !value) return null;
+  const explicit = Date.parse(value);
+  if (Number.isFinite(explicit)) return new Date(explicit).toISOString();
+  const date = new Date(now);
+  const next = { hourly: [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours() + 1],
+    daily: [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1],
+    monthly: [date.getUTCFullYear(), date.getUTCMonth() + 1, 1] }[value];
+  return next ? new Date(Date.UTC(...next)).toISOString() : null;
+}
+
 function normalizeUsage(provider, data, now = Date.now()) {
   const windows = [];
   const spend = meteredSpend(provider, data);
@@ -111,7 +128,10 @@ function normalizeUsage(provider, data, now = Date.now()) {
     const body = data?.data || data || {};
     for (const [name, cap, used, reset] of [
       ['credit', body.total_credits, body.total_usage, null],
-      ['key-limit', body.limit, body.usage, body.limit_reset ?? null]
+      // The key's own cap is this account's near-term limit, so it shares the
+      // near-term column with a subscription's 5h window instead of widening
+      // every table with one more pair. Its real reset time travels with it.
+      ['5h', body.limit, body.usage, periodReset(body.limit_reset, now)]
     ]) {
       const capValue = Number(cap), usedValue = Number(used);
       if (Number.isFinite(capValue) && capValue > 0 && Number.isFinite(usedValue) && usedValue >= 0) {
@@ -142,7 +162,9 @@ function meteredSpend(provider, data) {
   const used = money(body.total_usage), limit = money(body.total_credits);
   const spend = { currency: 'USD', used, limit,
     remaining: used !== undefined && limit !== undefined ? Number((limit - used).toFixed(6)) : undefined,
-    key_used: money(body.usage), daily: money(body.usage_daily), weekly: money(body.usage_weekly), monthly: money(body.usage_monthly) };
+    key_used: money(body.usage), key_limit: money(body.limit), key_remaining: money(body.limit_remaining),
+    ...(typeof body.limit_reset === 'string' && body.limit_reset ? { key_limit_period: body.limit_reset } : {}),
+    daily: money(body.usage_daily), weekly: money(body.usage_weekly), monthly: money(body.usage_monthly) };
   // A key can expire independently of the balance, and that stops it as surely.
   const expiry = Date.parse(body.expires_at);
   if (Number.isFinite(expiry)) spend.expires_at = expiry;
@@ -234,4 +256,4 @@ function authHeaders(provider, credentials) {
   return headers;
 }
 
-module.exports = { CredentialStore, AccountBroker, PROVIDERS, providerKind, meteredSpend, keychain, jwt, normalizeTokens, normalizeApiKey, nativeEnv, readNative, normalizeUsage, authHeaders };
+module.exports = { CredentialStore, AccountBroker, PROVIDERS, providerKind, meteredSpend, periodReset, keychain, jwt, normalizeTokens, normalizeApiKey, nativeEnv, readNative, normalizeUsage, authHeaders };

@@ -408,3 +408,34 @@ test('a deferred tool reference is normalised per provider, not refused', () => 
       { id: 'openai/m', provider: 'openai', capabilities: { tools: true } }, 'messages'), /cannot preserve/);
   }
 });
+
+test('a spend refusal stops the account; any other refusal stops only the model', () => {
+  // Real OpenRouter wording for a workspace budget.
+  const budget = { error: { message: 'Workspace daily budget of $5.00 exceeded. Contact your org admin.', code: 403 } };
+  const stopped = policy.failure(403, budget, {}, 1000);
+  assert.equal(stopped.reason, 'budget-exceeded');
+  assert.equal(stopped.modelOnly, undefined, 'a budget covers every model, so trying the next one only buys another refusal');
+  assert.equal(stopped.retry, true);
+  // A guardrail or key scope is about this model and cools briefly.
+  const guardrail = { error: { message: 'Model blocked by guardrail: 4 endpoints excluded', code: 403 } };
+  assert.equal(policy.failure(403, guardrail, {}, 1000).reason, 'forbidden');
+  assert.equal(policy.failure(403, guardrail, {}, 1000).modelOnly, true);
+  // Unrecognised wording stays the per-model refusal: a short cooldown on one
+  // model is the safer mistake.
+  assert.equal(policy.failure(403, {}, {}, 1000).modelOnly, true);
+  assert.equal(policy.failure(403, { error: { message: 'forbidden' } }, {}, 1000).modelOnly, true);
+  assert.equal(policy.budgetExceeded({ error: { message: 'insufficient credits' } }), true);
+  assert.equal(policy.budgetExceeded({ error: { message: 'spend limit reached' } }), true);
+  assert.equal(policy.budgetExceeded({ error: { message: 'credit balance exhausted' } }), true);
+  for (const message of ['model not found', 'Model blocked by guardrail: 4 endpoints excluded',
+    'invalid api key', 'context length limit']) {
+    assert.equal(policy.budgetExceeded({ error: { message } }), false, `${message} is not a spend refusal`);
+  }
+  // It reads the message, so a route with one must explain itself.
+  const target = { id: 'openrouter/glm-5.3', provider: 'openrouter', display_name: 'GLM 5.3', context_window: 200000 };
+  const account = { id: 'a', name: 'or', provider: 'openrouter', enabled: true, created_at: 1,
+    cooldown_until: 1000 + 1800000, cooldown_reason: 'budget-exceeded' };
+  const error = policy.unavailable([account], { phase: 2, models: [target] }, 1000, 'messages');
+  assert.match(error.message, /spend limit reached/);
+  assert.match(error.message, /Raise it there, wait for it to reset/);
+});

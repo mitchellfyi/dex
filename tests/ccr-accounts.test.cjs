@@ -96,7 +96,9 @@ test('a spend cap exhausts like a quota and an uncapped account reports no windo
     'spending past the balance clamps at exhausted, it does not go negative');
   // A key limit is a second, independent cap: either one stops the account.
   const both = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 5, limit: 2, usage: 2 } }, 1000);
-  assert.deepEqual(both.windows.map(w => [w.name, w.remaining_ratio]), [['credit', 0.5], ['key-limit', 0]]);
+  // The key's own cap is this account's near-term limit, so it shares the
+  // near-term column rather than adding one to every table.
+  assert.deepEqual(both.windows.map(w => [w.name, w.remaining_ratio]), [['credit', 0.5], ['5h', 0]]);
   assert.deepEqual(normalizeUsage('openrouter', { data: { total_credits: null, total_usage: 3, limit: null, usage: 1 } }, 1000).windows, [],
     'no cap means no window to exhaust, not a window at zero');
 });
@@ -132,4 +134,25 @@ test('a metered account reports money, a subscription reports none', () => {
   assert.equal(normalizeUsage('anthropic', { five_hour: { utilization: 10, resets_at: 2 } }, 1000).spend, undefined);
   // Nothing numeric means nothing to report, rather than an empty money object.
   assert.equal(normalizeUsage('openrouter', { data: {} }, 1000).spend, undefined);
+});
+
+test('a spend cap that reports a period becomes a reset time only where UTC is unambiguous', () => {
+  const { periodReset } = require('../scripts/ccr/accounts.cjs');
+  const now = Date.parse('2026-09-19T21:30:00Z');
+  assert.equal(periodReset('hourly', now), '2026-09-19T22:00:00.000Z');
+  assert.equal(periodReset('daily', now), '2026-09-20T00:00:00.000Z');
+  assert.equal(periodReset('monthly', now), '2026-10-01T00:00:00.000Z');
+  // Which day a week rolls over on is the provider's business, not a guess.
+  assert.equal(periodReset('weekly', now), null);
+  assert.equal(periodReset('', now), null);
+  assert.equal(periodReset(null, now), null);
+  assert.equal(periodReset('2026-10-01T00:00:00Z', now), '2026-10-01T00:00:00.000Z');
+  // A bare number in this position means Unix seconds to the window reader, so
+  // the reset must not arrive as milliseconds.
+  const usage = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 7.54, limit: 15, usage: 5.07, limit_reset: 'daily' } }, now);
+  const window = usage.windows.find(item => item.name === '5h');
+  assert.equal(new Date(window.resets_at).toISOString(), '2026-09-20T00:00:00.000Z');
+  assert.equal(usage.spend.key_limit, 15);
+  assert.equal(usage.spend.key_remaining, undefined, 'absent when the provider does not report it');
+  assert.equal(usage.spend.key_limit_period, 'daily');
 });

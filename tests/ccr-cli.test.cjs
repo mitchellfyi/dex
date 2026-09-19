@@ -223,7 +223,8 @@ test('dashboard distinguishes current account exhaustion from stale and model-on
   delete account.usage.windows[0].model_pool;
   account.usage.observed_at -= 180000;
   assert.doesNotMatch(output(), /quota exhausted/);
-  assert.match(output(), /stale/);
+  // A stale reading is marked, not spelled out, so the column stays narrow.
+  assert.match(output(), /0%\*/);
 });
 test('account status names limited models and reports short cooldowns in seconds', () => {
   const now = Date.now();
@@ -248,15 +249,18 @@ test('account/model rows compare primary and fallback capacity without mixing mo
   ] } };
   let rows = cli.accountRows([account], now, undefined, config);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows[0], ['Work', '-', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72%', '1h 0m', '40%', '1d 0h', '-', '-']);
-  assert.deepEqual(rows[1], ['Work', '-', 'anthropic', 'Opus 5', 'weekly-opus quota exhausted', '72%', '1h 0m', '40%', '1d 0h', '0%', '2h 0m']);
+  assert.deepEqual(rows[0], ['Work', '-', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72% · 1h 0m', '40% · 1d 0h', '-']);
+  assert.deepEqual(rows[1], ['Work', '-', 'anthropic', 'Opus 5', 'weekly-opus quota exhausted', '72% · 1h 0m', '40% · 1d 0h', '0% · 2h 0m']);
+  // These two differ in status, so they stay separate rows even though the
+  // account and every quota reading is shared.
+  assert.equal(cli.mergeModelRows(rows).length, 2);
   account.usage.windows[2].remaining_ratio = .3;
   rows = cli.accountRows([account], now, undefined, config);
   assert.equal(rows[1][4], 'ready', 'a primary model cooldown leaves the fallback available');
   account.model_ids = [primary];
   assert.equal(cli.accountRows([account], now, undefined, config)[1][4], 'not available');
   account.model_ids = [primary, fallback]; account.usage_error = 'unavailable';
-  assert.match(cli.accountRows([account], now, undefined, config)[1][5], /stale/);
+  assert.match(cli.accountRows([account], now, undefined, config)[1][5], /72%\*/);
   config.models.push({ id: 'openai/test', provider: 'openai' });
   config.phases[2].fallbacks.push('openai/test');
   assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, undefined, config)[0][3], 'test');
@@ -275,13 +279,15 @@ test('account rows compare quota windows side by side and distinguish due and un
     { name: 'weekly', remaining_ratio: .91, resets_at: null }
   ] } };
   const rows = cli.accountRows([account, weeklyOnly, { name: 'Backup', provider: 'openai', enabled: false }], now);
+  // One cell per window: the reset rides with the value it belongs to, and a
+  // window with nothing to report is a dash rather than a word.
   assert.deepEqual(rows, [
-    ['Main', '-', 'anthropic', '-', 'ready', '72%', '2h 14m', '40%', '3d 4h', '0%', 'due'],
-    ['Personal', '-', 'openai', '-', 'ready', '-', '-', '91%', 'unknown', '-', '-'],
-    ['Backup', '-', 'openai', '-', 'disabled', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']
+    ['Main', '-', 'anthropic', '-', 'ready', '72% · 2h 14m', '40% · 3d 4h', '0% · due'],
+    ['Personal', '-', 'openai', '-', 'ready', '-', '91%', '-'],
+    ['Backup', '-', 'openai', '-', 'disabled', '-', '-', '-']
   ]);
   account.usage_error = 'Refresh failed';
-  assert.match(cli.accountRows([account], now)[0][5], /stale/);
+  assert.match(cli.accountRows([account], now)[0][5], /72%\*/);
   account.status = 'reauth-required';
   account.cooldown_until = now + 60000;
   assert.equal(cli.accountRows([account], now)[0][4], 'reauth-required');
@@ -308,8 +314,8 @@ test('table rendering does not alter JSON output or saved account and model data
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  assert.match(run(['accounts']), /Account +Rank +Provider +Model +Status +5h left +Reset in +Weekly left +Reset in/);
-  assert.match(run(['accounts']), /Shared quota is repeated across model rows/);
+  assert.match(run(['accounts']), /Account +Rank +Provider +Model +Status +5h +Weekly/);
+  assert.match(run(['accounts']), /A model on its own row has a status of its own/);
   assert.match(run(['accounts']), /Tip: use dx accounts --live for updates\./);
   assert.match(run(['account', 'show', 'Main']), /test@example.test/);
   assert.match(run(['model', 'list']), /128,000/);
@@ -690,4 +696,31 @@ test('the accounts table rules between vendors, not between every account', () =
   // A vendor that reappears is separated again rather than silently merged.
   const alternating = cli.groupByProvider([row('a', 'anthropic'), row('b', 'openai'), row('c', 'anthropic')]);
   assert.equal(alternating.filter(entry => entry === null).length, 2);
+});
+
+test('the accounts table keeps every reading without a column or row per model', () => {
+  const now = Date.now();
+  const merged = cli.mergeModelRows([
+    ['acct', 1, 'anthropic', 'Opus 5', 'ready', '80%'],
+    ['acct', 1, 'anthropic', 'Fable 5.1', 'ready', '80%'],
+    ['acct', 1, 'anthropic', 'Haiku', 'rate limited (3m)', '80%'],
+    ['other', 2, 'openai', 'GPT', 'ready', '10%']
+  ]);
+  assert.deepEqual(merged.map(r => [r[3], r[4]]), [
+    ['Opus 5, Fable 5.1', 'ready'],
+    ['Haiku', 'rate limited (3m)'],
+    ['GPT', 'ready']
+  ], 'models sharing a status share a row; one with a status of its own keeps its row');
+
+  // A credit balance is the Spent column restated, so it takes no column of its own.
+  const metered = { id: 'b', name: 'or', provider: 'openrouter', enabled: true, rank: 1, created_at: 1,
+    usage: { observed_at: now, spend: { currency: 'USD', used: 7.5, limit: 10 },
+      windows: [{ name: 'credit', remaining_ratio: 0.25, resets_at: null }, { name: '5h', remaining_ratio: 0.66, resets_at: now + 3600000 }] } };
+  assert.deepEqual(cli.accountWindows([metered], true), ['5h', 'weekly']);
+  assert.ok(cli.accountWindows([metered], false).includes('credit'), 'without a money column the balance still needs one');
+
+  // Each window is one cell: the reset rides with the value it belongs to.
+  const [row] = cli.accountRows([metered], now, ['5h'], state.config(), true);
+  assert.match(row[6], /^66% · /);
+  assert.ok(!row.includes('unknown'), 'nothing to say is a dash, not a word');
 });

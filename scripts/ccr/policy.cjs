@@ -239,7 +239,8 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   const labels = { disabled: 'disabled', 'reauth-required': 'login needs renewal', 'model-unavailable': 'model not available on this account',
     'rate-limit': 'rate limited', temporary: 'temporary provider error', 'connection-failed': 'provider connection failed',
     'refresh-unavailable': 'login refresh temporarily unavailable', 'terms-required': 'accept updated terms in claude.ai', cooldown: 'cooling down',
-    'payment-required': 'provider credit exhausted', forbidden: 'not permitted by the provider' };
+    'payment-required': 'provider credit exhausted', forbidden: 'not permitted by the provider',
+    'budget-exceeded': 'spend limit reached' };
   const waits = [], reasons = new Set(), eligibleBlocks = [];
   const summaries = (selection.pinned ? selection.models.slice(0, 1) : selection.models).map(target => {
     const pool = items.filter(item => item.provider === target.provider && (!selection.pinned || item.id === selection.pinned));
@@ -276,6 +277,7 @@ function unavailable(items, selection, now = Date.now(), protocol) {
     advice.push(`Every model on this route needs CCR ${protocol} conversion. Add ${/^[AEIOU]/i.test(label) ? 'an' : 'a'} ${label} model with dx route configure ${provider}/<model> --phase <phase> or dx route use ${provider}/<model>${protocol === 'responses' ? ', or pick one in Codex with /model' : ''}.`);
   }
   if (reasons.has('payment-required')) advice.push('A metered account is out of credit. Top it up, or route this phase to a subscription model with dx route configure <provider/model> --phase <phase>.');
+  if (reasons.has('budget-exceeded')) advice.push('A spend limit was reached on the provider, not in Dex. Raise it there, wait for it to reset, or route this phase to another model.');
   if (reasons.has('forbidden')) advice.push('The provider refused this model for this account. Check the provider\'s own model permissions or guardrails, then retry.');
   if (reasons.has('reauth-required')) advice.push('Renew the affected login with dx account reauth <name>.');
   if (reasons.has('terms-required')) advice.push('Sign in to claude.ai with the affected account and accept the updated Consumer Terms and Privacy Policy, then retry after the short account cooldown. Use dx account show <name> to check its login identity.');
@@ -292,6 +294,18 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   });
 }
 
+// A provider says "you have spent too much" in prose, so this reads prose. It
+// is deliberately narrow: a budget or spend limit that has been reached or
+// exceeded. Anything it does not recognise stays a per-model refusal, which is
+// the safer mistake — a short cooldown on one model rather than a long one on
+// the account.
+function budgetExceeded(payload) {
+  const message = [payload?.error?.message, payload?.message, payload?.error?.metadata?.raw]
+    .find(value => typeof value === 'string') || '';
+  return /\b(budget|spend|credits?|quotas?|limits?)\b/i.test(message)
+    && /\b(exceed|exhaust|reach|insufficient|over)\w*/i.test(message);
+}
+
 function failure(status, payload = {}, headers = {}, now = Date.now()) {
   if (status === 401) return { retry: true, reauth: true, reason: 'authentication' };
   // Payment Required is the metered equivalent of an exhausted quota: this
@@ -299,11 +313,16 @@ function failure(status, payload = {}, headers = {}, now = Date.now()) {
   // not the request, so the route falls through to whatever else can serve it
   // rather than returning the provider's own error to the client.
   if (status === 402) return { retry: true, reason: 'payment-required', until: now + 1800000 };
-  // Forbidden is about permission for this model on this account — a provider
-  // guardrail, a key scope — not about the request, which another model may
-  // still serve. The cooldown is short because the cause is usually config
-  // someone is about to change.
-  if (status === 403) return { retry: true, reason: 'forbidden', until: now + 300000, modelOnly: true };
+  // A refusal for spending too much is not about permission: it applies to
+  // every model the budget covers, so retrying the next one only buys another
+  // refusal. It stops the account for as long as a 402 does. Anything else
+  // forbidden — a guardrail, a key scope — is about this model, and cools
+  // briefly because the cause is usually config someone is about to change.
+  if (status === 403) {
+    return budgetExceeded(payload)
+      ? { retry: true, reason: 'budget-exceeded', until: now + 1800000 }
+      : { retry: true, reason: 'forbidden', until: now + 300000, modelOnly: true };
+  }
   if (status === 429) {
     const after = headers.get ? headers.get('retry-after') : headers['retry-after'];
     const delay = /^\d+(\.\d+)?$/.test(after || '') ? Number(after) * 1000 : Date.parse(after) - now;
@@ -339,4 +358,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, rotateForWave, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, budgetExceeded, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, rotateForWave, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };

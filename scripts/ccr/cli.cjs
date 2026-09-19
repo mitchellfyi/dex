@@ -142,15 +142,19 @@ async function configure(change, catalogueChange = false) {
   }));
 }
 function resetIn(timestamp, now) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'unknown';
+  // Nothing to say reads better as a dash than as a word.
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '-';
   if (timestamp <= now) return 'due';
   const minutes = Math.ceil((timestamp - now) / 60000);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
-function accountWindows(items) {
+function accountWindows(items, spend = anySpend(items)) {
   const names = new Set(items.flatMap(account => (account.usage?.windows || []).map(window => window.name)));
+  // A credit balance is the Spent column said as a percentage. Keep the window
+  // for selection, drop the column that repeats it.
+  if (spend) names.delete('credit');
   return ['5h', 'weekly', ...[...names].filter(name => name !== '5h' && name !== 'weekly').sort()];
 }
 function accountModels(account, config, now) {
@@ -193,10 +197,11 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
       return `${label}${problem.until > now && problem.reason !== 'quota-exhausted' ? ` (${policy.retryIn(problem.until, now)})` : ''}`;
     }).join('; ') || 'ready' : summary;
     return [account.name, account.rank || '-', account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status,
-      ...(spend ? [spendCell(account)] : []), ...windowNames.flatMap(name => {
+      ...(spend ? [spendCell(account)] : []), ...windowNames.map(name => {
       const window = windows.find(item => item.name === name);
-      if (!window) return usage?.windows?.length ? ['-', '-'] : ['unknown', 'unknown'];
-      return [`${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : ' (stale)'}`, resetIn(window.resets_at, now)];
+      if (!window) return '-';
+      const reset = resetIn(window.resets_at, now);
+      return `${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : '*'}${reset === '-' ? '' : ` · ${reset}`}`;
     })];
   }));
 }
@@ -216,6 +221,10 @@ function showSpend(account) {
   if (spend.limit !== undefined) rows.push(['Balance', `${money(spend.remaining)} left of ${money(spend.limit)}`]);
   if (spend.used !== undefined) rows.push(['Account spent', money(spend.used)]);
   if (spend.key_used !== undefined && spend.key_used !== spend.used) rows.push(['This key spent', money(spend.key_used)]);
+  if (spend.key_limit !== undefined) {
+    const period = spend.key_limit_period ? `, resets ${spend.key_limit_period}` : '';
+    rows.push(['Spend limit', `${money(spend.key_remaining) ?? money(spend.key_limit - (spend.key_used ?? 0))} left of ${money(spend.key_limit)}${period}`]);
+  }
   for (const [label, key] of [['Today', 'daily'], ['This week', 'weekly'], ['This month', 'monthly']]) {
     if (spend[key] !== undefined) rows.push([label, money(spend[key])]);
   }
@@ -225,16 +234,27 @@ function showSpend(account) {
   if (rows.length) details(rows);
 }
 
+const MODEL_COLUMN = 3;
+function mergeModelRows(rows) {
+  const merged = [];
+  for (const row of rows) {
+    const previous = merged[merged.length - 1];
+    const same = previous && previous.length === row.length
+      && previous.every((cell, index) => index === MODEL_COLUMN || cell === row[index]);
+    if (same) previous[MODEL_COLUMN] = `${previous[MODEL_COLUMN]}, ${row[MODEL_COLUMN]}`;
+    else merged.push([...row]);
+  }
+  return merged;
+}
+
 function accountTable(items) {
-  const windows = accountWindows(items);
   const spend = anySpend(items);
-  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', ...(spend ? ['Spent'] : []), ...windows.flatMap(name => {
-    const label = name[0].toUpperCase() + name.slice(1).replaceAll('-', ' ');
-    return [`${label} left`, 'Reset in'];
-  })];
+  const windows = accountWindows(items, spend);
+  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', ...(spend ? ['Spent'] : []),
+    ...windows.map(name => name[0].toUpperCase() + name.slice(1).replaceAll('-', ' '))];
   const first = spend ? 6 : 5;
-  return table(headers, groupByProvider(accountRows(items, Date.now(), windows, state.config(), spend)),
-    { rightAlign: [1, ...(spend ? [5] : []), ...windows.map((_, index) => first + index * 2)] });
+  return table(headers, groupByProvider(mergeModelRows(accountRows(items, Date.now(), windows, state.config(), spend))),
+    { rightAlign: [1, ...(spend ? [5] : []), ...windows.map((_, index) => first + index)] });
 }
 function showAccounts(items) {
   process.stdout.write(accountTable(items));
@@ -244,7 +264,7 @@ function accountsFrame(items, live, note = '') {
   const footer = live
     ? `View updated at ${new Date().toLocaleTimeString()}\nLive: every 30s. Ctrl+C to exit.`
     : 'Tip: use dx accounts --live for updates.';
-  return `Dex subscription accounts\n${rows}\nModels follow configured routes. Shared quota is repeated across model rows.\n${note ? `${note}\n` : ''}${footer}\n`;
+  return `Dex subscription accounts\n${rows}\nModels follow configured routes. A model on its own row has a status of its own. * is a stale reading.\n${note ? `${note}\n` : ''}${footer}\n`;
 }
 async function accounts(options) {
   if (options.watch && options.json) throw new Error('--live/--watch cannot be combined with --json. Use dx accounts --json for a single snapshot.');
@@ -558,4 +578,4 @@ if (require.main === module) {
   process.umask(0o077);
   main(process.argv.slice(2)).catch(error => { info(error.message); process.exitCode = 1; });
 }
-module.exports = { clean, parse, question, configure, accountRows, accountTable, groupByProvider, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };
+module.exports = { clean, parse, question, configure, accountRows, accountTable, groupByProvider, mergeModelRows, accountWindows, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };
