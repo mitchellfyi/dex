@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { scope } = require('../scripts/ccr/mcp-scope.cjs');
 const { launchArguments } = require('../scripts/ccr/launch.cjs');
 
@@ -43,4 +44,19 @@ test('scoping is opt-in and explicit native MCP flags take precedence', () => {
   assert.throws(() => scope({ enabled: true, include: ['bad\nname'] }), /name/);
   assert.equal(launchArguments(['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']).mcpExplicit, true);
   assert.equal(launchArguments(['--', '--mcp-config']).mcpExplicit, false);
+});
+
+test('linked worktrees retain servers disabled in the main checkout', t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-mcp-worktree-')); t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const repo = fs.realpathSync(home);
+  const git = args => { const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr); };
+  git(['init', '-q']);
+  fs.writeFileSync(path.join(repo, '.mcp.json'), JSON.stringify({ mcpServers: { github: { url: 'https://github' }, linear: { url: 'https://linear' } } }));
+  git(['add', '.mcp.json']);
+  git(['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'fixture']);
+  const cwd = path.join(repo, 'ticket'); git(['worktree', 'add', '--detach', cwd, 'HEAD']);
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [repo]: { disabledMcpServers: ['github'] }, [cwd]: {} } }));
+  const result = scope({ enabled: true, include: ['github', 'linear'] }, { home, cwd, env: {} });
+  assert.deepEqual(result.summary.selected, ['linear']);
+  assert.ok(result.summary.omitted.includes('github'));
 });

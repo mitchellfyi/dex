@@ -28,11 +28,16 @@ function scope(policy, { home = os.homedir(), cwd = process.cwd(), root, env = p
   }
   const globalFile = env.CLAUDE_CONFIG_DIR ? path.join(env.CLAUDE_CONFIG_DIR, '.claude.json') : path.join(home, '.claude.json');
   const user = read(globalFile), project = read(path.join(root, '.mcp.json'));
+  const common = spawnSync('git', ['-C', root, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', timeout: 3000, maxBuffer: 8192 });
+  const commonDir = common.status === 0 ? path.resolve(root, common.stdout.trim()) : null;
+  const sharedState = commonDir && path.basename(commonDir) === '.git' ? user.projects?.[path.dirname(commonDir)] || {} : {};
   const projectState = user.projects?.[cwd] || user.projects?.[root] || {};
   const local = projectState.mcpServers || {};
   const available = { ...user.mcpServers, ...project.mcpServers, ...local };
   const included = new Set(policy.include), selected = Object.create(null), omitted = [], missing = new Set();
   const disabled = new Set([...(Array.isArray(user.disabledMcpServers) ? user.disabledMcpServers : []),
+    ...(Array.isArray(sharedState.disabledMcpServers) ? sharedState.disabledMcpServers : []),
+    ...(Array.isArray(sharedState.disabledMcpjsonServers) ? sharedState.disabledMcpjsonServers : []),
     ...(Array.isArray(projectState.disabledMcpServers) ? projectState.disabledMcpServers : []),
     ...(Array.isArray(projectState.disabledMcpjsonServers) ? projectState.disabledMcpjsonServers : [])]);
   if (available.linear && included.has('linear') && !disabled.has('linear') && available.linear.enabled !== false && available.linear.disabled !== true) included.delete('linear-server');
