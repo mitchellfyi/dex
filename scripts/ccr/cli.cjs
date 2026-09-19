@@ -17,7 +17,7 @@ const out = value => process.stdout.write(`${clean(value)}\n`);
 const info = value => process.stderr.write(`dex: ${clean(value)}\n`);
 function parse(args) {
   const result = { positional: [], fallback: [], include: [] };
-  const values = new Set(['name', 'context', 'max-context', 'upstream', 'session', 'scope', 'phase', 'client', 'effort', 'fallback', 'transcript', 'include', 'builtin-tools']);
+  const values = new Set(['name', 'context', 'max-context', 'upstream', 'price-in', 'price-out', 'price-cached', 'session', 'scope', 'phase', 'client', 'effort', 'fallback', 'transcript', 'include', 'builtin-tools']);
   const switches = new Set(['json', 'yes', 'device', 'watch', 'tools', 'images']);
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -48,7 +48,8 @@ function render(group, action, value, options) {
     details([['Session', value.session || 'configuration'], ['Configured context', value.configured_budget], ['Launch context', value.launch_budget || 'no session selected'],
       ['Actual model', value.current_model || 'not recorded'], ['New launch needed', value.restart_required ? 'yes' : 'no']]);
     showTable(['Model', 'Default', 'Maximum', 'Source'], value.models.map(model => [model.id, model.default, model.maximum, model.source]), { rightAlign: [1, 2] });
-    if (value.last_request) details(Object.entries(value.last_request));
+    if (value.last_request) details(Object.entries(value.last_request).map(([name, item]) =>
+      [name, name === 'cost_usd' && item === null ? 'unknown (model has no recorded price)' : item]));
     if (value.mcp_scope) details([['Selected MCPs', value.mcp_scope.selected.join(', ') || 'none'], ['Omitted MCPs', value.mcp_scope.omitted.join(', ') || 'none'], ['Unset MCP variables', value.mcp_scope.missing_env.join(', ') || 'none']]);
     if (value.transcript) {
       const trace = value.transcript;
@@ -268,6 +269,29 @@ async function accountCommand(action, args, options) {
   if (action === 'remove' && !await confirm(`Remove ${account.name} and delete its stored login?`, options.yes)) return 'Account retained.';
   return onboarding.changeAccount(action, args[0], args[1]);
 }
+// Rates are USD per million tokens. A model priced on one side only would make
+// every estimate from it wrong in a way nothing downstream could detect, so
+// both sides are required together; the cache rate is optional because input
+// falls back to the full rate, which overstates rather than understates.
+function modelPricing(options) {
+  const rate = (flag, required) => {
+    if (options[flag] === undefined) {
+      if (required) throw new Error('Price a model on both sides: give --price-in and --price-out in USD per million tokens, or neither.');
+      return undefined;
+    }
+    const value = Number(options[flag]);
+    if (!Number.isFinite(value) || value < 0 || value > 10000) throw new Error(`--${flag} must be a rate in USD per million tokens between 0 and 10000.`);
+    return value;
+  };
+  const priced = options['price-in'] !== undefined || options['price-out'] !== undefined;
+  if (!priced) {
+    if (options['price-cached'] !== undefined) throw new Error('A cached-input rate needs --price-in and --price-out as well.');
+    return undefined;
+  }
+  return { input_per_mtok: rate('price-in', true), output_per_mtok: rate('price-out', true),
+    ...(options['price-cached'] === undefined ? {} : { cached_input_per_mtok: rate('price-cached') }) };
+}
+
 async function modelCommand(action, args, options) {
   if (action === 'list') return state.config().models;
   if (action === 'current') return ipc.call('route', { action: 'status', session: options.session || process.env.DX_ROUTER_SESSION_ID });
@@ -281,7 +305,7 @@ async function modelCommand(action, args, options) {
     });
     if (await adapter.health()) { await adapter.stop(); await adapter.start(); } return models;
   }
-  if (action !== 'add' || !policy.MODEL.test(args[0] || '')) throw new Error(`Use dx model add <provider/model> --context <tokens> --tools [--images] [--upstream <id>] [--max-context <tokens>]. Providers: ${policy.PROVIDER_NAMES.join(', ')}.`);
+  if (action !== 'add' || !policy.MODEL.test(args[0] || '')) throw new Error(`Use dx model add <provider/model> --context <tokens> --tools [--images] [--upstream <id>] [--max-context <tokens>] [--price-in <usd/Mtok> --price-out <usd/Mtok>]. Providers: ${policy.PROVIDER_NAMES.join(', ')}.`);
   const context = Number(options.context);
   if (!Number.isSafeInteger(context) || context < 8192 || context > 4000000 || !options.tools) throw new Error('Specify a supported context window (8192–4000000) and confirm --tools support.');
   // An aggregator's own ID carries a vendor segment, so the Dex ID stays stable
@@ -290,8 +314,10 @@ async function modelCommand(action, args, options) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(upstream)) throw new Error('An upstream model ID may contain letters, numbers and . _ : + - /.');
   const maximum = options['max-context'] === undefined ? undefined : Number(options['max-context']);
   if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < context || maximum > 4000000)) throw new Error('A maximum context window must be an integer between the default window and 4000000.');
+  const pricing = modelPricing(options);
   const model = { id: args[0], upstream_id: upstream, provider: args[0].split('/')[0], context_window: context, default_context_window: context,
-    ...(maximum === undefined ? {} : { max_context_window: maximum }), context_source: 'user', capabilities: { tools: true, images: Boolean(options.images) } };
+    ...(maximum === undefined ? {} : { max_context_window: maximum }), ...(pricing ? { pricing } : {}),
+    context_source: 'user', capabilities: { tools: true, images: Boolean(options.images) } };
   await configure(config => { config.models = [...config.models.filter(item => item.id !== model.id), model]; }, true);
   if (await adapter.health()) { await adapter.stop(); await adapter.start(); } return model;
 }

@@ -12,7 +12,7 @@ const { prepareHistory, prepareResponse } = require('./history.cjs');
 const ipc = require('./ipc.cjs');
 const { AccountBroker, authHeaders } = require('./accounts.cjs');
 const { CodexCatalog } = require('./codex-catalog.cjs');
-const { responseMetrics, providerRequestId } = require('./metrics.cjs');
+const { responseMetrics, requestCost, providerRequestId } = require('./metrics.cjs');
 
 // Failover events keep the provider's own explanation (a quota window versus a
 // rejected converted request) as a short cleaned excerpt; bodies never land in
@@ -318,6 +318,7 @@ class RouterService {
           try {
             Object.assign(metrics, { attempts: metrics.attempts + 1, account_id: account.id, model: choice.model.id,
               model_default_context: choice.model.default_context_window || choice.model.context_window, model_max_context: policy.modelCapacity(choice.model),
+              model_pricing: choice.model.pricing,
               quota_age_ms: Number.isFinite(account.usage?.observed_at) ? Math.max(0, Date.now() - account.usage.observed_at) : null,
               quota_refresh_unavailable: Boolean(account.usage_error) });
             const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.clientKey}`, 'x-ccr-dex-account-ticket': ticket };
@@ -414,8 +415,13 @@ class RouterService {
       else response.destroy();
     } finally {
       if (session && metrics) {
-        const saved = { ...metrics, ...(observer?.totals || {}), status: response.headersSent ? response.statusCode : 0,
+        const totals = observer?.totals || {};
+        const saved = { ...metrics, ...totals, status: response.headersSent ? response.statusCode : 0,
+          // Null when the model carries no recorded price, so an unpriced route
+          // never reads as a free one.
+          cost_usd: requestCost(metrics.model_pricing, totals),
           duration_ms: Math.max(0, Date.now() - started), timestamp: new Date().toISOString(), interrupted: !response.writableFinished };
+        delete saved.model_pricing;
         const write = state.locked('sessions', () => {
           const current = state.read(state.sessionFile(session.id));
           current.last_request = saved; state.write(state.sessionFile(session.id), current);

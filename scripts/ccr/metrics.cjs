@@ -51,8 +51,28 @@ function responseMetrics(contentType) {
   return { stream, totals };
 }
 
+// What a request cost, from the tokens actually observed and the model's
+// recorded rates. This is an estimate for comparing routes against each other,
+// never a reconciliation: the provider's own accounting is authoritative and
+// may apply discounts, batch rates or minimums Dex cannot see. A model with no
+// recorded price reports null rather than a zero that would read as free.
+function requestCost(pricing, totals) {
+  const rate = value => Number.isFinite(value) && value >= 0 ? value : null;
+  const input_per_mtok = rate(pricing?.input_per_mtok), output_per_mtok = rate(pricing?.output_per_mtok);
+  if (input_per_mtok === null || output_per_mtok === null) return null;
+  const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const input = count(totals?.input_tokens), output = count(totals?.output_tokens);
+  if (input === null || output === null) return null;
+  // Cached input is a subset of input. Without a recorded cache rate it is
+  // billed at the full input rate, which overstates rather than understates.
+  const cached = Math.min(count(totals?.cached_input_tokens) ?? 0, input);
+  const cached_per_mtok = rate(pricing?.cached_input_per_mtok) ?? input_per_mtok;
+  const total = (input - cached) * input_per_mtok + cached * cached_per_mtok + output * output_per_mtok;
+  return Math.round(total / 1e6 * 1e6) / 1e6;
+}
+
 function providerRequestId(headers) {
   const value = headers.get('request-id') || headers.get('x-request-id');
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(value) ? value : null;
 }
-module.exports = { responseMetrics, providerRequestId };
+module.exports = { responseMetrics, requestCost, providerRequestId };
