@@ -108,7 +108,10 @@ async function launch(args) {
   // lifecycle that spawned them; only that policy session has a phase file.
   const policySession = process.env.DEX_POLICY_SESSION_ID || lifecycle;
   const phaseFile = policySession && process.env.DEX_SESSION_ONLY !== '1' ? path.join(process.env.DX_STATE_DIR || path.join(require('node:os').homedir(), '.claude', '.dex-phases'), `${state.checkedId(policySession)}.phase`) : null;
-  const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile, resume: parsed.resume,
+  // A review wave's index drives model diversity across waves; the wave itself
+  // never chooses a model, so its reviewer stays independent of the route.
+  const reviewWave = /^\d+$/.test(process.env.DEX_REVIEW_WAVE_NUMBER || '') ? Number(process.env.DEX_REVIEW_WAVE_NUMBER) : undefined;
+  const session = await ipc.call('register', { id, token, owner_pid: process.pid, cwd: process.cwd(), run_id: process.env.DEX_RUN_ID, run_root: process.env.DX_RUN_ROOT, phase_file: phaseFile, review_wave: reviewWave, resume: parsed.resume,
     model: process.env.DX_MODEL_OVERRIDE || (parsed.requested && parsed.requested !== process.env.DX_CLAUDE_MODEL ? parsed.requested : undefined), mcp_scope: mcp?.summary });
   const monitor = gatewayMonitor(session);
   const watchdog = setInterval(() => { void monitor.check(); }, 3000);

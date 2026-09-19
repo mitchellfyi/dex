@@ -328,3 +328,27 @@ test('profile names are rejected outside route configuration', () => {
   const config = { models: [{ id: 'anthropic/claude-fable-5-1', provider: 'anthropic', context_window: 200000 }] };
   assert.throws(() => policy.model(config, '@cheap'), /other commands need the provider\/model ID/);
 });
+
+test('review waves take turns over the models on their route', () => {
+  const models = [
+    { id: 'anthropic/claude-fable-5-1', provider: 'anthropic', context_window: 200000 },
+    { id: 'anthropic/claude-opus-5', provider: 'anthropic', context_window: 200000 },
+    { id: 'openai/gpt-6-astra', provider: 'openai', context_window: 200000 }
+  ];
+  const config = { models, phases: { 3: { model: models[0].id, fallbacks: models.slice(1).map(m => m.id) } }, profiles: {} };
+  const wave = n => policy.route(config, { fixed_phase: 3, review_wave: n }).models.map(m => m.id);
+  assert.deepEqual(wave(0), ['anthropic/claude-fable-5-1', 'anthropic/claude-opus-5', 'openai/gpt-6-astra']);
+  assert.deepEqual(wave(1), ['anthropic/claude-opus-5', 'openai/gpt-6-astra', 'anthropic/claude-fable-5-1'],
+    'the next wave leads with a different reviewer');
+  assert.deepEqual(wave(2), ['openai/gpt-6-astra', 'anthropic/claude-fable-5-1', 'anthropic/claude-opus-5']);
+  assert.deepEqual(wave(3), wave(0), 'the rotation wraps');
+  // The order within a wave keeps the fallback chain: the leading model's
+  // fallbacks follow it, so a provider failure still degrades in order.
+  const one = policy.route(config, { fixed_phase: 3, review_wave: 0 });
+  assert.deepEqual(one.models.map(m => m.id), config.phases[3] ? ['anthropic/claude-fable-5-1', 'anthropic/claude-opus-5', 'openai/gpt-6-astra'] : []);
+  // A single-model route cannot be diverse, and must not break.
+  const single = { models, phases: { 3: { model: models[0].id } }, profiles: {} };
+  assert.deepEqual(policy.route(single, { fixed_phase: 3, review_wave: 4 }).models.map(m => m.id), ['anthropic/claude-fable-5-1']);
+  // Sessions outside a review wave keep the configured order exactly.
+  assert.deepEqual(policy.route(config, { fixed_phase: 3 }).models.map(m => m.id)[0], 'anthropic/claude-fable-5-1');
+});

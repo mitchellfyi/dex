@@ -98,6 +98,16 @@ function phase(session) {
   }
 }
 
+// Review waves take turns over the models on their route, so consecutive clean
+// passes come from different reviewers — the spec's answer to raising quality
+// without raising the count. The rotation is a function of the wave index
+// alone: deterministic, observable in telemetry, and identical on resume.
+function rotateForWave(models, wave) {
+  if (!models.length) return models;
+  const shift = Number.isInteger(wave) && wave > 0 ? wave % models.length : 0;
+  return shift ? [...models.slice(shift), ...models.slice(0, shift)] : models;
+}
+
 function route(config, session) {
   const current = phase(session);
   const policyPhase = Math.min(current, PHASES.length - 1);
@@ -110,7 +120,7 @@ function route(config, session) {
   // to the next request with no restart. The config object is the running
   // service's own copy, so the binding counts it accumulates are transient.
   const ids = resolveProfiles(config, [choice.model, ...(choice.fallbacks || [])]);
-  const models = [...new Set(ids)].map(id => model(config, id));
+  const models = rotateForWave([...new Set(ids)].map(id => model(config, id)), session.review_wave);
   // session.context_limit is the compaction budget the client was launched with,
   // not a floor for later model choices. A smaller model stays selectable so an
   // exhausted provider never strands the session. The provider determines
@@ -312,4 +322,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, rotateForWave, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };

@@ -345,6 +345,22 @@ This applies to all seven phases and native Claude/Codex sessions using
 can serve Fable before trying Opus. A one-model override or account pin
 restricts this automatic fallback.
 
+### Review-wave model diversity
+
+Consecutive review waves on the same route lead with different models. The
+route's model list is rotated by the wave index — wave 1 leads with the first
+fallback, wave 2 with the next, wrapping — so two or three consecutive clean
+passes on a `normal` or `complex` route come from genuinely different reviewers
+instead of the same model agreeing with itself. Quality rises through that
+diversity rather than through a higher clean-pass count.
+
+The rotation is a function of the wave index alone: it is deterministic,
+resumes to the same order, and needs no new gate numbers. The fallback chain
+within a wave keeps its order, so a provider failure still degrades in order.
+A route with one model cannot be diverse, and does not break. The wave's own
+process never chooses a model — its reviewer stays independent of the route —
+and each wave's selected model is recorded in `route.selected` telemetry.
+
 ### Model profiles
 
 A model profile names the role a model plays rather than the model itself:
