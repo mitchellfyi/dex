@@ -15,6 +15,8 @@ trap cleanup EXIT
 
 export HOME="$TMP_DIR/home"
 export DEX_DIR="$ROOT"
+# Match dx --agent codex; DX_PROVIDER_ENGINE is resolved output, not an override.
+export DX_AGENT_OVERRIDE=codex
 export DX_STATE_DIR="$TMP_DIR/state"
 export DX_LOOP_DIR="$TMP_DIR/loops"
 export DX_ARTIFACT_DIR="$TMP_DIR/artifacts"
@@ -39,8 +41,16 @@ git -C "$TMP_DIR/repo" add README.md
 git -C "$TMP_DIR/repo" commit -q -m init
 export TEST_DEFAULT_BRANCH
 TEST_DEFAULT_BRANCH=$(git -C "$TMP_DIR/repo" branch --show-current)
+# Resolve the provider from this repo, as dx does when run inside one. The Dex
+# checkout's own .dex/providers.json may name a profile that needs a router.
+cd "$TMP_DIR/repo"
 
-zsh -fc '
+# Share the assertion function, not helpers.sh and its Bash-only ERR trap.
+run_zsh() {
+  zsh -fc "$(declare -f assert_at)"$'\n'"$1"
+}
+
+run_zsh '
 source "$DEX_DIR/dx.sh"
 source "$DEX_DIR/tests/review-proof-fixture.sh"
 set -e
@@ -191,7 +201,7 @@ fi
 [[ ! -f "$(dx_active_file "$session_id")" ]] || assert_at $LINENO
 '
 
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 export DEX_HEADLESS_RUN=1
@@ -287,7 +297,7 @@ fi
 dx_completion_abandon "$session_id"
 '
 
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 
@@ -324,7 +334,7 @@ __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAULT_BRANCH" 2 "$state_f
 [[ ! -f "$(dx_lifecycle_control_file "$session_id")" ]] || assert_at $LINENO
 '
 
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 
@@ -373,7 +383,7 @@ for control_kind in symlink directory; do
 done
 '
 
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 
@@ -390,6 +400,8 @@ dx_completion_write_receipt "$session_id" "$old_generation"
 
 __dx_claude() {
   local expect_context=0 context_file="" arg expectation receipt_generation
+  [[ "$DX_PROVIDER_ENGINE" == "codex-plugin" ]] || assert_at $LINENO
+  grep -Fxq "engine=codex-plugin" "$provider_file"
   for arg in "$@"; do
     if [[ "$expect_context" -eq 1 ]]; then
       context_file="$arg"
@@ -418,7 +430,7 @@ DEX_SESSION_TIMEOUT=1 __dx_run_phases_inline "repo" "$TMP_DIR/repo" "$TEST_DEFAU
 # lock is released. A one-shot release fault must roll the phase back, revoke
 # the consumed generation, and leave an explicit resume path without emitting
 # terminal telemetry.
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 
@@ -475,7 +487,7 @@ IFS=$'"'"'\t'"'"' read -r resume_phase resume_generation resume_mode resume_purp
 # only the low-level issuance helper. A proof from an earlier Phase 7 must be
 # physically gone before configuration, a backward human transition, or
 # session reinitialization can mint new authorization.
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 
@@ -529,7 +541,7 @@ if dx_lifecycle_terminal_commit_valid "$reinit_session"; then
 fi
 '
 
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 
@@ -590,7 +602,7 @@ grep -q "commit and push each coherent repair checkpoint" "$ctx_file"
 grep -q "user-direction path" "$ctx_file"
 '
 
-zsh -fc '
+run_zsh '
 source "$DEX_DIR/dx.sh"
 set -e
 
