@@ -165,6 +165,8 @@ Dex does not ship third-party vendor skills (Figma, Asana, Linear, Notion, Slack
 
 **Do not commit vendor skills into this repo.** If a vendor skill directory appears in `skills/` (e.g., `skills/figma-*/`), delete it — it was added by a Claude plugin install and should live in the user's `~/.claude/` or be enabled via the official integration, not in Dex.
 
+`skills/synced/` is different: Claude Code writes the skills synced from a claude.ai organization to `~/.claude/skills/synced/`, and `~/.claude/skills` is a link to this directory. It is gitignored; leave it in place, since Claude Code recreates it.
+
 When users need a vendor skill:
 
 | Vendor | How to enable |

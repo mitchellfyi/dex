@@ -27,3 +27,6 @@ skills/microsoft-*/
 skills/google-*/
 skills/fireflies-*/
 skills/vibe-*/
+# Claude Code writes the skills synced from a claude.ai organization into
+# ~/.claude/skills/synced/, and ~/.claude/skills links to this directory.
+skills/synced/
