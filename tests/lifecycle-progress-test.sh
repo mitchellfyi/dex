@@ -16,7 +16,13 @@ export DX_LOOP_DIR="$TMP_DIR/loops"
 export DX_RUN_ROOT="$TMP_DIR/runs"
 export DEXCODE_SYNC=0
 export DEX_FACTORY_SYNC=false
-mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR" "$DX_RUN_ROOT"
+mkdir -p "$HOME" "$DX_STATE_DIR" "$DX_LOOP_DIR" "$DX_RUN_ROOT" "$TMP_DIR/bin"
+
+# The launcher checks for Claude before calling the stubbed provider below.
+# Fail if a scenario unexpectedly reaches the executable instead of the stub.
+printf '#!/usr/bin/env bash\nexit 97\n' > "$TMP_DIR/bin/claude"
+chmod +x "$TMP_DIR/bin/claude"
+export PATH="$TMP_DIR/bin:$PATH"
 
 ATOMIC_FAILURE_ENV="$TMP_DIR/atomic-failure-env.sh"
 cat > "$ATOMIC_FAILURE_ENV" <<'SH'
@@ -50,6 +56,9 @@ git init -q -b main "$TEST_REPO"
 git -C "$TEST_REPO" config user.email test@example.com
 git -C "$TEST_REPO" config user.name Test
 git -C "$TEST_REPO" commit --allow-empty -qm init
+# Resolve the provider from this repo, as dx does when run inside one. The Dex
+# checkout's own .dex/providers.json may name a profile that needs a router.
+cd "$TEST_REPO"
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
@@ -59,9 +68,9 @@ run_paused_lifecycle() {
 
   set +e
   TEST_REPO="$TEST_REPO" TEST_SESSION_ID="$session_id" TEST_PAUSE_REASON="$pause_reason" \
-    zsh -fc '
+    DX_AGENT_OVERRIDE=claude zsh -fc '
       source "$DEX_DIR/dx.sh"
-      DX_PROVIDER_ENGINE=claude
+      __dx_refresh_provider
 
       unalias __dx_claude 2>/dev/null
       unfunction __dx_claude 2>/dev/null

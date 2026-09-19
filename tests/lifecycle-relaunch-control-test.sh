@@ -39,6 +39,9 @@ git init -q -b main "$TEST_REPO"
 git -C "$TEST_REPO" config user.email dex@example.test
 git -C "$TEST_REPO" config user.name "Dex Test"
 git -C "$TEST_REPO" commit --allow-empty -qm init
+# Resolve the provider from this repo, as dx does when run inside one. The Dex
+# checkout's own .dex/providers.json may name a profile that needs a router.
+cd "$TEST_REPO"
 
 # Record what the launcher left behind at the moment the provider started,
 # and which engine it resolved. The agent is pinned per scenario so the repo's
