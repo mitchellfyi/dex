@@ -19,7 +19,7 @@ function responseMetrics(contentType) {
     }
     if (record?.type === 'message_stop' || record?.type === 'response.completed') totals.completed = true;
   };
-  const parse = text => { try { observe(JSON.parse(text)); } catch { /* Non-JSON SSE lines are protocol framing. */ } };
+  const parse = text => { try { const value = JSON.parse(text); observe(value); return value; } catch { return null; } };
   const consume = text => {
     if (!streaming) {
       if (!skipped) pending += text;
@@ -40,7 +40,10 @@ function responseMetrics(contentType) {
     transform(chunk, encoding, callback) { consume(decoder.write(chunk)); callback(null, chunk); },
     flush(callback) {
       consume(decoder.end());
-      if (!streaming && !skipped) { parse(pending); totals.completed = true; }
+      if (!streaming && !skipped) {
+        const value = parse(pending);
+        totals.completed = Boolean(value && typeof value === 'object' && !Array.isArray(value) && !value.error && value.status !== 'failed');
+      }
       else if (streaming && pending.startsWith('data:')) parse(pending.slice(5).trim());
       callback();
     }

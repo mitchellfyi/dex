@@ -28,12 +28,16 @@ function scope(policy, { home = os.homedir(), cwd = process.cwd(), root, env = p
   }
   const globalFile = env.CLAUDE_CONFIG_DIR ? path.join(env.CLAUDE_CONFIG_DIR, '.claude.json') : path.join(home, '.claude.json');
   const user = read(globalFile), project = read(path.join(root, '.mcp.json'));
-  const local = user.projects?.[cwd]?.mcpServers || user.projects?.[root]?.mcpServers || {};
+  const projectState = user.projects?.[cwd] || user.projects?.[root] || {};
+  const local = projectState.mcpServers || {};
   const available = { ...user.mcpServers, ...project.mcpServers, ...local };
-  const included = new Set(policy.include), selected = {}, omitted = [], missing = new Set();
-  if (available.linear && included.has('linear')) included.delete('linear-server');
+  const included = new Set(policy.include), selected = Object.create(null), omitted = [], missing = new Set();
+  const disabled = new Set([...(Array.isArray(user.disabledMcpServers) ? user.disabledMcpServers : []),
+    ...(Array.isArray(projectState.disabledMcpServers) ? projectState.disabledMcpServers : []),
+    ...(Array.isArray(projectState.disabledMcpjsonServers) ? projectState.disabledMcpjsonServers : [])]);
+  if (available.linear && included.has('linear') && !disabled.has('linear') && available.linear.enabled !== false && available.linear.disabled !== true) included.delete('linear-server');
   for (const [name, entry] of Object.entries(available)) {
-    if (!included.has(name)) { omitted.push(name); continue; }
+    if (!included.has(name) || disabled.has(name) || entry?.enabled === false || entry?.disabled === true) { omitted.push(name); continue; }
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`Invalid configuration for MCP server ${name}.`);
     selected[name] = entry;
     for (const match of JSON.stringify(entry).matchAll(/\$\{([A-Z_][A-Z0-9_]*)\}/g)) if (!env[match[1]]) missing.add(match[1]);

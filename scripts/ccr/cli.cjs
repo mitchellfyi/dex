@@ -53,7 +53,7 @@ function render(group, action, value, options) {
       const trace = value.transcript;
       details([['Tools in snapshot', trace.tool_count], ['Tool schema bytes', trace.tool_schema_bytes], ['Restored skill characters', trace.restored_skill_characters],
         ['Restored instruction characters', trace.restored_instruction_characters], ['Thrashing recorded', trace.thrashing ? 'yes' : 'no']]);
-      showTable(['Compacted at', 'Before', 'Summary/retained', 'Next actual input'], trace.compactions.slice(-6).map(item => [item.timestamp || '-', item.pre_tokens, item.post_tokens, item.next_input_tokens ?? '-']), { rightAlign: [1, 2, 3] });
+      showTable(['Compacted at', 'Before', 'Summary/retained', 'Next actual input'], trace.compactions.slice(-6).map(item => [item.timestamp || '-', item.pre_tokens ?? '-', item.post_tokens ?? '-', item.next_input_tokens ?? '-']), { rightAlign: [1, 2, 3] });
     }
     if (value.transcript_error) out(value.transcript_error);
     for (const advice of value.advice) out(advice);

@@ -5,6 +5,7 @@ const os = require('node:os');
 const state = require('./state.cjs');
 const policy = require('./policy.cjs');
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+const optionalCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 const label = value => typeof value === 'string' && /^[A-Za-z0-9_.:/-]{1,180}$/.test(value) ? value : 'unknown';
 const timestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
 
@@ -25,7 +26,7 @@ async function readTranscript(file, budget) {
     if (!row || typeof row !== 'object') { report.incomplete_records++; return; }
     if (row.subtype === 'compact_boundary' && row.compactMetadata) {
       const metadata = row.compactMetadata;
-      pendingCompact = { timestamp: timestamp(row.timestamp), pre_tokens: count(metadata.preTokens), post_tokens: count(metadata.postTokens), duration_ms: count(metadata.durationMs), next_input_tokens: null };
+      pendingCompact = { timestamp: timestamp(row.timestamp), pre_tokens: optionalCount(metadata.preTokens), post_tokens: optionalCount(metadata.postTokens), duration_ms: optionalCount(metadata.durationMs), next_input_tokens: null };
       report.compactions.push(pendingCompact); if (report.compactions.length > 20) report.compactions.shift();
     }
     const attachment = row.attachment;

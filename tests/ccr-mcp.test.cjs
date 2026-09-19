@@ -24,6 +24,17 @@ test('scoped MCP loading selects approved servers, honors local overrides and re
   assert.deepEqual(JSON.parse(fs.readFileSync(file)), config);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(cwd, '.mcp.json'))), project);
   assert.doesNotMatch(JSON.stringify(result.summary), /Bearer|https:\/\//);
+  config.projects[cwd].disabledMcpServers = ['playwright', 'linear'];
+  config.projects[cwd].disabledMcpjsonServers = ['github'];
+  config.mcpServers.disabled = { command: 'disabled-tool', enabled: false };
+  config.mcpServers.hidden = { command: 'disabled-tool', disabled: true };
+  config.mcpServers.globallyDisabled = { command: 'disabled-tool' };
+  config.disabledMcpServers = ['globallyDisabled'];
+  Object.defineProperty(config.mcpServers, '__proto__', { value: { command: 'ordinary-tool' }, enumerable: true });
+  fs.writeFileSync(file, JSON.stringify(config));
+  const disabled = scope({ enabled: true, include: ['playwright', 'github', 'linear', 'linear-server', 'disabled', 'hidden', 'globallyDisabled', '__proto__'] }, { home, cwd, root: cwd, env: {} });
+  assert.deepEqual(disabled.summary.selected.sort(), ['__proto__', 'linear-server']);
+  assert.equal(JSON.parse(JSON.stringify(disabled.config)).mcpServers.__proto__.command, 'ordinary-tool');
 });
 test('scoping is opt-in and explicit native MCP flags take precedence', () => {
   assert.equal(scope(undefined), null);

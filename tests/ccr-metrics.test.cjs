@@ -26,6 +26,8 @@ test('oversized frames do not retain content or lose the next usage event', asyn
   assert.equal(json.input_tokens, 10); assert.equal(json.completed, true);
   const partial = await inspect('data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}\n\n', 'text/event-stream');
   assert.equal(partial.completed, false);
+  assert.equal((await inspect('{broken', 'application/json')).completed, false);
+  assert.equal((await inspect('{"error":{"message":"private"}}', 'application/json')).completed, false);
 });
 test('provider request IDs are bounded identifiers, not arbitrary header text', () => {
   assert.equal(providerRequestId(new Headers({ 'request-id': 'req_123' })), 'req_123');

@@ -42,6 +42,7 @@ test('transcript inspection is bounded and tolerates a partially written final r
   const report = await context.readTranscript(file, 272000);
   assert.equal(report.incomplete_records, 1);
   assert.equal(report.compactions.length, 1);
+  assert.equal(report.compactions[0].duration_ms, null, 'unknown timing is not reported as an instantaneous compact');
   const link = path.join(directory, 'link.jsonl'); fs.symlinkSync(file, link);
   await assert.rejects(context.readTranscript(link, 272000), /regular|safe|symlink/i);
 });
