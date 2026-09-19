@@ -96,6 +96,7 @@ function readNative(provider, directory) {
 
 function normalizeUsage(provider, data, now = Date.now()) {
   const windows = [];
+  const spend = meteredSpend(provider, data);
   const add = (name, raw, used, reset, modelPool) => {
     if (!raw || !Number.isFinite(used) || used < 0 || used > 100) return;
     const parsedReset = typeof reset === 'number' ? reset * 1000 : Date.parse(reset);
@@ -128,7 +129,29 @@ function normalizeUsage(provider, data, now = Date.now()) {
       add(period, raw, raw?.used_percent, raw?.reset_at);
     }
   }
-  return { observed_at: now, source: 'provider', confidence: windows.length ? 'provider-derived' : 'unknown', windows };
+  return { observed_at: now, source: 'provider', confidence: windows.length ? 'provider-derived' : 'unknown', windows,
+    ...(spend ? { spend } : {}) };
+}
+
+// What a metered account has actually spent, in money rather than percentages.
+// A subscription has no equivalent: its cost is the plan, not the request.
+function meteredSpend(provider, data) {
+  if (providerKind(provider) !== 'api-key') return undefined;
+  const body = data?.data || data || {};
+  const money = value => Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(Number(value).toFixed(6)) : undefined;
+  const used = money(body.total_usage), limit = money(body.total_credits);
+  const spend = { currency: 'USD', used, limit,
+    remaining: used !== undefined && limit !== undefined ? Number((limit - used).toFixed(6)) : undefined,
+    key_used: money(body.usage), daily: money(body.usage_daily), weekly: money(body.usage_weekly), monthly: money(body.usage_monthly) };
+  // A key can expire independently of the balance, and that stops it as surely.
+  const expiry = Date.parse(body.expires_at);
+  if (Number.isFinite(expiry)) spend.expires_at = expiry;
+  if (body.is_free_tier === true) spend.free_tier = true;
+  const free = body.free_model_daily_requests;
+  if (free && Number.isFinite(Number(free.limit))) {
+    spend.free_requests = { used: Number(free.used) || 0, limit: Number(free.limit), remaining: Number(free.remaining) };
+  }
+  return Object.values(spend).some(value => value !== undefined && value !== 'USD') ? spend : undefined;
 }
 
 class AccountBroker {
@@ -170,13 +193,28 @@ class AccountBroker {
     if (this.usageRequests.has(account.id)) return this.usageRequests.get(account.id);
     const operation = (async () => {
       let credentials = await this.access(account);
-      const request = () => this.fetch(PROVIDERS[account.provider].usage, {
+      const provider = PROVIDERS[account.provider];
+      // A metered account reports the balance that stops requests and the
+      // key's own spend from two endpoints. The balance is required; the key
+      // detail only enriches, so losing it must not lose the quota answer.
+      const extra = providerKind(account.provider) === 'api-key' && provider.identity ? provider.identity : null;
+      const request = url => this.fetch(url, {
         headers: authHeaders(account.provider, credentials), redirect: 'error', signal: AbortSignal.timeout(15000)
       });
-      let response = await request();
-      if (response.status === 401) { await response.body?.cancel(); credentials = await this.access(account, true); response = await request(); }
+      let response = await request(provider.usage);
+      if (response.status === 401) { await response.body?.cancel(); credentials = await this.access(account, true); response = await request(provider.usage); }
       if (!response.ok) throw new Error('Quota information is temporarily unavailable.');
-      return normalizeUsage(account.provider, await response.json(), this.now());
+      const payload = await response.json();
+      if (extra) {
+        try {
+          const detail = await request(extra);
+          if (detail.ok) {
+            const body = await detail.json();
+            if (body?.data && payload?.data) Object.assign(payload.data, body.data, payload.data);
+          } else await detail.body?.cancel();
+        } catch { /* The balance already answered; detail is a bonus. */ }
+      }
+      return normalizeUsage(account.provider, payload, this.now());
     })();
     this.usageRequests.set(account.id, operation);
     try { return await operation; } finally { this.usageRequests.delete(account.id); }
@@ -196,4 +234,4 @@ function authHeaders(provider, credentials) {
   return headers;
 }
 
-module.exports = { CredentialStore, AccountBroker, PROVIDERS, providerKind, keychain, jwt, normalizeTokens, normalizeApiKey, nativeEnv, readNative, normalizeUsage, authHeaders };
+module.exports = { CredentialStore, AccountBroker, PROVIDERS, providerKind, meteredSpend, keychain, jwt, normalizeTokens, normalizeApiKey, nativeEnv, readNative, normalizeUsage, authHeaders };

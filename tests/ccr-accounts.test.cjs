@@ -110,3 +110,26 @@ test('an exhausted spend cap stops the route instead of spending on', () => {
   assert.equal(policy.candidates([account], { phase: 2, models: [target] }, {}, 1000).length, 0);
   assert.match(policy.unavailable([account], { phase: 2, models: [target] }, 1000).message, /quota exhausted/);
 });
+
+test('a metered account reports money, a subscription reports none', () => {
+  const live = { data: { total_credits: 10, total_usage: 7.541665302, usage: 5.071964802,
+    usage_daily: 5.071964802, usage_weekly: 5.071964802, usage_monthly: 5.071964802,
+    is_free_tier: false, expires_at: null, free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } };
+  const { spend } = normalizeUsage('openrouter', live, 1000);
+  assert.equal(spend.currency, 'USD');
+  assert.equal(spend.used, 7.541665, 'the account balance is what actually stops requests');
+  assert.equal(spend.limit, 10);
+  assert.equal(spend.remaining, 2.458335);
+  assert.equal(spend.key_used, 5.071965, 'this key spent less than the account it belongs to');
+  assert.deepEqual(spend.free_requests, { used: 0, limit: 1000, remaining: 1000 });
+  assert.equal(spend.expires_at, undefined, 'a key with no expiry reports none');
+  assert.equal(spend.free_tier, undefined);
+  // A key that does expire says when, because that stops it as surely as an empty balance.
+  const expiring = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 1, expires_at: '2027-01-01T00:00:00Z' } }, 1000);
+  assert.equal(expiring.spend.expires_at, Date.parse('2027-01-01T00:00:00Z'));
+  assert.equal(normalizeUsage('openrouter', { data: { is_free_tier: true, total_credits: 1, total_usage: 0 } }, 1000).spend.free_tier, true);
+  // A subscription is billed by its plan, not its requests.
+  assert.equal(normalizeUsage('anthropic', { five_hour: { utilization: 10, resets_at: 2 } }, 1000).spend, undefined);
+  // Nothing numeric means nothing to report, rather than an empty money object.
+  assert.equal(normalizeUsage('openrouter', { data: {} }, 1000).spend, undefined);
+});

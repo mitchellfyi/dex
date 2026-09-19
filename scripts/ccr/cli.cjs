@@ -159,7 +159,19 @@ function accountModels(account, config, now) {
   const models = ids.map(id => config.models.find(model => model.id === id)).filter(model => model?.provider === account.provider);
   return models.length ? models : [null];
 }
-function accountRows(items, now = Date.now(), windowNames = accountWindows(items), config = state.config()) {
+// Money, only for accounts billed in it. A subscription's cost is its plan,
+// so it has nothing to show here and gets a dash rather than a zero.
+function spendCell(account) {
+  const spend = account.usage?.spend;
+  if (!spend) return '-';
+  const money = value => value === undefined ? null : `$${value.toFixed(2)}`;
+  const used = money(spend.used) ?? money(spend.key_used);
+  if (!used) return '-';
+  return spend.limit === undefined ? used : `${used} / ${money(spend.limit)}`;
+}
+function anySpend(items) { return items.some(account => spendCell(account) !== '-'); }
+
+function accountRows(items, now = Date.now(), windowNames = accountWindows(items), config = state.config(), spend = anySpend(items)) {
   // The registry appends on add and reauth, so file order drifts from rank order.
   return policy.rankOrder(items).flatMap(account => accountModels(account, config, now).map(model => {
     const usage = account.usage;
@@ -179,7 +191,8 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
       const label = problem.reason === 'quota-exhausted' ? `${problem.window} quota exhausted` : reasons[problem.reason] || 'cooldown';
       return `${label}${problem.until > now && problem.reason !== 'quota-exhausted' ? ` (${policy.retryIn(problem.until, now)})` : ''}`;
     }).join('; ') || 'ready' : summary;
-    return [account.name, account.rank || '-', account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status, ...windowNames.flatMap(name => {
+    return [account.name, account.rank || '-', account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status,
+      ...(spend ? [spendCell(account)] : []), ...windowNames.flatMap(name => {
       const window = windows.find(item => item.name === name);
       if (!window) return usage?.windows?.length ? ['-', '-'] : ['unknown', 'unknown'];
       return [`${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : ' (stale)'}`, resetIn(window.resets_at, now)];
@@ -188,11 +201,14 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
 }
 function accountTable(items) {
   const windows = accountWindows(items);
-  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', ...windows.flatMap(name => {
+  const spend = anySpend(items);
+  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', ...(spend ? ['Spent'] : []), ...windows.flatMap(name => {
     const label = name[0].toUpperCase() + name.slice(1).replaceAll('-', ' ');
     return [`${label} left`, 'Reset in'];
   })];
-  return table(headers, accountRows(items, Date.now(), windows), { rightAlign: [1, ...windows.map((_, index) => 5 + index * 2)] });
+  const first = spend ? 6 : 5;
+  return table(headers, accountRows(items, Date.now(), windows, state.config(), spend),
+    { rightAlign: [1, ...(spend ? [5] : []), ...windows.map((_, index) => first + index * 2)] });
 }
 function showAccounts(items) {
   process.stdout.write(accountTable(items));

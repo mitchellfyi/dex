@@ -651,3 +651,25 @@ test('restarting the router carries this version\'s managed client settings acro
   assert.match(noisy, /^CCR restarted\./);
   assert.match(noisy, /not refreshed: settings file is busy/);
 });
+
+test('the accounts table shows money only when an account is billed in it', () => {
+  const now = Date.now();
+  const subscription = { id: 'a', name: 'sub', provider: 'anthropic', enabled: true, rank: 1, created_at: 1,
+    usage: { observed_at: now, windows: [{ name: '5h', remaining_ratio: 0.8, resets_at: now + 3600000 }] } };
+  const metered = { id: 'b', name: 'metered', provider: 'openrouter', enabled: true, rank: 2, created_at: 2,
+    usage: { observed_at: now, windows: [{ name: 'credit', remaining_ratio: 0.25, resets_at: null }],
+      spend: { currency: 'USD', used: 7.541665, limit: 10, remaining: 2.458335, key_used: 5.071965 } } };
+  const both = cli.accountRows([subscription, metered], now);
+  assert.ok(both.some(row => row.includes('$7.54 / $10.00')), 'the metered account shows what it spent');
+  assert.ok(both.some(row => row[1] === 1 && row.includes('-')), 'a subscription shows a dash, never $0.00');
+  // With no metered account there is no money column at all.
+  const alone = cli.accountRows([subscription], now);
+  assert.equal(alone.every(row => !row.some(cell => String(cell).startsWith('$'))), true);
+  // Same window set, so the only difference is the money column itself.
+  const pair = cli.accountRows([subscription, metered], now, ['5h']);
+  const solo = cli.accountRows([subscription], now, ['5h']);
+  assert.equal(solo[0].length + 1, pair[0].length, 'the column appears only when it has something to say');
+  // A key with no account balance still reports its own spend.
+  const keyOnly = { ...metered, usage: { ...metered.usage, spend: { currency: 'USD', key_used: 1.5 } } };
+  assert.ok(cli.accountRows([keyOnly], now).some(row => row.includes('$1.50')));
+});

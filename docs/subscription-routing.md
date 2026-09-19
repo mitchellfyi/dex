@@ -466,6 +466,16 @@ limit on the key itself if you want Dex to stop at one.
 Account rank orders accounts within a provider. Which provider is tried first is
 the order of models on the route, so a metered model only serves traffic when a
 route names it.
+
+`dx accounts` grows a `Spent` column when any registered account is billed in
+money, showing what the account has spent against its balance — a subscription
+shows a dash there, because its cost is the plan rather than the request.
+`dx account show <name> --json` carries the detail: the account balance, this
+key's own spend, daily, weekly and monthly totals, the free-model request
+allowance, and the key's expiry when it has one. OpenRouter's per-model activity
+needs a management key and is not available to an inference key, so Dex does not
+report a cost breakdown by model from the provider; the `cost_usd` on each
+request event covers that from Dex's own side.
 You can replace that budget with an explicit supported value. When account
 discovery succeeds, selection uses that account's returned model list.
 
