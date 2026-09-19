@@ -391,6 +391,32 @@ dx model add openai/<model-id> --context 128000 --tools --images
 Only include `--images` when supported. Discovery records the provider's default
 and maximum context windows separately; otherwise it labels a conservative 64,000-token budget.
 
+### Deferred tool loading
+
+Claude Code can leave most tool schemas out of a request and fetch them on
+demand, but only over a base URL it recognises as first-party. A routed launch
+never is, so the client suppresses the optimisation and inlines every schema
+into every request instead. Measured on this repository, that was 110,777 bytes
+of tool schemas in a request of 67,988 tokens — 59% of a fresh session before
+any work had been done.
+
+Dex therefore sets `ENABLE_TOOL_SEARCH=true` for routed launches and native
+settings. The same prompt then opened at 37,612 tokens: 30,376 fewer, a 45%
+reduction, with 12 tools inlined instead of 83. Schemas arrive through the
+ordinary `tools` array when the model asks for them — after one `ToolSearch`
+call the array grew to 17 tools — so nothing depends on a provider
+understanding Anthropic's own deferred-tool blocks, and every route keeps the
+tools it had. Set the variable yourself to change or disable this; a routed
+launch does not overwrite a value you exported, and `auto` or `auto:N` select
+the client's threshold modes.
+
+A `tool_reference` block pins a deferred definition and only Anthropic reads
+it. Other providers have the schema already, from the tools array, so the block
+is dropped on the way out rather than failing the request; the tool call it
+accompanies is untouched. Content that genuinely cannot survive conversion —
+`document`, `web_search_tool_result` — is still refused rather than silently
+altered.
+
 ### Metered API-key providers
 
 Anthropic and OpenAI accounts are subscriptions: a renewable OAuth login owned

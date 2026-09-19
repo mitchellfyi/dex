@@ -326,7 +326,11 @@ function validateRequest(body, target, protocol = 'messages') {
     if (Array.isArray(value)) { value.forEach(visit); return; }
     if (!value || typeof value !== 'object') return;
     if (['image', 'input_image'].includes(value.type) && capabilities.images !== true) throw new Error('The selected model has no verified image support.');
-    if (['document', 'tool_reference', 'web_search_tool_result'].includes(value.type) && target.provider === 'openai') throw new Error(`The selected route cannot preserve ${value.type} content.`);
+    // A tool_reference is not in this list: it pins a deferred tool definition
+    // that only Anthropic reads, and the schema itself reaches every provider
+    // in the tools array, so prepareHistory drops the block instead of failing
+    // the request. These two carry content nothing downstream can reconstruct.
+    if (['document', 'web_search_tool_result'].includes(value.type) && target.provider === 'openai') throw new Error(`The selected route cannot preserve ${value.type} content.`);
     Object.values(value).forEach(visit);
   }
   visit(protocol === 'responses' ? body.input : body.messages);

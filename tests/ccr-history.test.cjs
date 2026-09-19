@@ -110,3 +110,24 @@ test('malformed private reasoning and truncated streams fail without forwarding 
   assert.throws(() => prepareHistory({ input: [{ type: 'reasoning', encrypted_content: data }] }, 'openai', 'responses'), /Invalid Claude reasoning/);
   await assert.rejects(async () => { for await (const _chunk of prepareResponse([Buffer.from('data: {')], 'text/event-stream')) { /* Drain the stream to observe truncation. */ } }, /ended before/);
 });
+
+test('a tool reference reaches Anthropic and is dropped everywhere else', () => {
+  const make = () => ({ messages: [{ role: 'assistant', content: [
+    { type: 'tool_reference', name: 'mcp__playwright__browser_click' },
+    { type: 'tool_use', id: 'tu_1', name: 'mcp__playwright__browser_click', input: {} }
+  ] }] });
+  const anthropic = make();
+  prepareHistory(anthropic, 'anthropic', 'messages');
+  assert.deepEqual(anthropic.messages[0].content.map(b => b.type), ['tool_reference', 'tool_use'],
+    'Anthropic reads the reference that pins the deferred definition');
+  for (const provider of ['openai', 'openrouter']) {
+    const body = make();
+    prepareHistory(body, provider, 'messages');
+    assert.deepEqual(body.messages[0].content.map(b => b.type), ['tool_use'],
+      `${provider} keeps the call and loses only the block it cannot read`);
+  }
+  // A turn that was nothing but a reference leaves no empty message behind.
+  const only = { messages: [{ role: 'assistant', content: [{ type: 'tool_reference', name: 'x' }] }] };
+  prepareHistory(only, 'openai', 'messages');
+  assert.deepEqual(only.messages, []);
+});

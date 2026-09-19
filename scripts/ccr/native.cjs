@@ -40,6 +40,7 @@ function clientSettings(action, native, settings, config) {
   if (action === 'sync-context') {
     request.claude_picker = claudePicker(config, 'claude');
     request.claude_betas = betaHeader(process.env.ANTHROPIC_BETAS);
+    request.claude_tool_search = 'true';
     request.claude_context = policy.contextLimit(config, 'claude');
     request.claude_compact_window = request.claude_context;
     // Only a model this route actually offers is re-marked; anything else is the user's.
@@ -59,6 +60,7 @@ function clientSettings(action, native, settings, config) {
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME'], value: 'Dex automatic route' },
       ...['OPUS', 'SONNET', 'HAIKU'].map(name => ({ field: ['env', `ANTHROPIC_DEFAULT_${name}_MODEL`], value: longContext('dex/active') })),
       { field: ['env', 'CLAUDE_CODE_SUBAGENT_MODEL'], value: longContext('dex/active') },
+      { field: ['env', 'ENABLE_TOOL_SEARCH'], value: 'true' },
       { field: ['env', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'], value: String(claudeContext) },
       { field: ['env', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'], value: String(claudeContext) }
     ];

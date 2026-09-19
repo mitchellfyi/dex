@@ -194,6 +194,7 @@ test('native settings use the context budget for each client route', () => {
   const claude = JSON.parse(fs.readFileSync(config.claude_file));
   const codex = toml(config.codex_file);
   assert.equal(claude.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '128000');
+  assert.equal(claude.env.ENABLE_TOOL_SEARCH, 'true');
   assert.equal(codex.model_context_window, 64000);
   assert.equal(codex.model_auto_compact_token_limit, 51200);
 });

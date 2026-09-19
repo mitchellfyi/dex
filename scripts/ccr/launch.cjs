@@ -62,6 +62,12 @@ function launchEnvironment(settings, token, session, original = process.env, hel
     // The route's real budget in tokens. Claude Code clamps its own compaction
     // schedule to this; Dex no longer overrides the percentage behind it.
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(session.context_limit),
+    // Claude Code defers tool schemas until the model asks for them, but only
+    // over a base URL it recognises as first-party. A routed launch never is, so
+    // it would otherwise inline every schema into every request. Dex forwards
+    // the deferred shape on all routes, so it opts back in. A value set here by
+    // hand wins: launch.cjs does not scrub this name.
+    ENABLE_TOOL_SEARCH: original.ENABLE_TOOL_SEARCH || 'true',
     CLAUDE_CODE_STOP_HOOK_BLOCK_CAP: original.CLAUDE_CODE_STOP_HOOK_BLOCK_CAP || '1000',
     DX_ROUTER_SESSION_ID: session.id, DX_ROUTER_SESSION_TOKEN: token, DX_PROVIDER_ENGINE: 'ccr', DX_PROVIDER_AGENT: 'claude', DX_PROVIDER_PROFILE: 'ccr-subscription',
     DEX_ROUTER_HOME: state.root()

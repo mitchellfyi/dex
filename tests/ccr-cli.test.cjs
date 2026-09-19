@@ -493,6 +493,9 @@ test('launch uses private transport env and keeps native credentials out of argv
   assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, 'dex/active[1m]');
   assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'dex/active[1m]');
   assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000');
+  // A routed base URL is never first-party, so the client would inline every
+  // tool schema into every request unless Dex opts back in.
+  assert.equal(env.ENABLE_TOOL_SEARCH, 'true');
   // Compaction scheduling stays the client's own.
   assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined);
   assert.equal(env.ANTHROPIC_BETAS, 'context-1m-2025-08-07');

@@ -57,6 +57,11 @@ function prepareHistory(body, provider, protocol) {
             ...(block.cache_control ? { cache_control: block.cache_control } : {}) }] : [];
         }
         if (provider === 'openai' && block.type === 'thinking' && !block.thinking?.trim()) return [];
+        // Tool search delivers a deferred tool's schema in the tools array, which
+        // every provider reads. Only Anthropic also understands the reference
+        // block that pins it, so elsewhere the block is dropped rather than
+        // rejected: the call it accompanies survives intact.
+        if (block.type === 'tool_reference' && provider !== 'anthropic') return [];
         return [block];
       });
       return content.length ? [{ ...message, content }] : [];

@@ -393,3 +393,18 @@ test('an exhausted metered route explains itself instead of looking like a login
   assert.match(refused.message, /not permitted by the provider/);
   assert.match(refused.message, /model permissions or guardrails/);
 });
+
+test('a deferred tool reference is normalised per provider, not refused', () => {
+  const body = { messages: [{ role: 'assistant', content: [{ type: 'tool_reference', name: 'mcp__x__y' }] }] };
+  // Tool search delivers the schema in the tools array, which every provider
+  // reads, so no route needs to reject the block that accompanies it.
+  for (const provider of ['anthropic', 'openai', 'openrouter']) {
+    assert.doesNotThrow(() => policy.validateRequest(body, { id: `${provider}/m`, provider, capabilities: { tools: true } }, 'messages'),
+      `${provider} must not refuse a tool_reference`);
+  }
+  // Content that genuinely cannot survive the conversion is still refused.
+  for (const type of ['document', 'web_search_tool_result']) {
+    assert.throws(() => policy.validateRequest({ messages: [{ role: 'user', content: [{ type }] }] },
+      { id: 'openai/m', provider: 'openai', capabilities: { tools: true } }, 'messages'), /cannot preserve/);
+  }
+});

@@ -226,6 +226,8 @@ def apply(request):
             # Installs predating the long-context beta adopt it here; enable
             # refuses to run once any managed value carries a personal edit.
             changed = sync_managed_field(claude, saved["claude"], ["env", "ANTHROPIC_BETAS"], request["claude_betas"]) or changed
+            # Installs predating deferred tool loading adopt it here.
+            changed = sync_managed_field(claude, saved["claude"], ["env", "ENABLE_TOOL_SEARCH"], request["claude_tool_search"]) or changed
             if changed:
                 claude_source = json.dumps(claude, indent=2) + "\n"
     elif action == "disable":
