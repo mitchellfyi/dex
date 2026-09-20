@@ -1,4 +1,8 @@
 'use strict';
+// Sandbox the router home before any scripts/ccr module can resolve it.
+// This suite does not reach live state today; tests/ccr-test-isolation.py
+// does not depend on that staying true. An outer sandbox wins.
+process.env.DEX_ROUTER_HOME ||= require('node:path').join(require('node:os').tmpdir(), 'dex-ccr-unused-state');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const policy = require('../scripts/ccr/policy.cjs');

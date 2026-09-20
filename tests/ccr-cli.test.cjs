@@ -223,8 +223,9 @@ test('dashboard distinguishes current account exhaustion from stale and model-on
   delete account.usage.windows[0].model_pool;
   account.usage.observed_at -= 180000;
   assert.doesNotMatch(output(), /exhausted/);
-  // A stale reading is marked, not spelled out, so the column stays narrow.
-  assert.match(output(), /0%\*/);
+  // The reading still shows. Usage refreshes on its own well inside the window
+  // a marker would warn about, so the number carries no staleness annotation.
+  assert.match(output(), /(^|\s)0%(\s|$)/);
 });
 test('account status names limited models and reports short cooldowns in seconds', () => {
   const now = Date.now();
@@ -262,7 +263,7 @@ test('account/model rows compare primary and fallback capacity without mixing mo
   account.model_ids = [primary];
   assert.equal(cli.accountRows([account], now, config)[1][4], 'not available');
   account.model_ids = [primary, fallback]; account.usage_error = 'unavailable';
-  assert.match(cli.accountRows([account], now, config)[1][5], /72%\*/);
+  assert.equal(cli.accountRows([account], now, config)[1][5], '72% · 1h 0m', 'a failed refresh still reports the cached reading');
   config.models.push({ id: 'openai/test', provider: 'openai' });
   config.phases[2].fallbacks.push('openai/test');
   assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, config)[0][3], 'test');
@@ -289,7 +290,7 @@ test('account rows compare quota windows side by side and distinguish due and un
     ['Backup', '-', 'openai', '-', 'disabled', '-', '-']
   ]);
   account.usage_error = 'Refresh failed';
-  assert.match(cli.accountRows([account], now)[0][5], /72%\*/);
+  assert.equal(cli.accountRows([account], now)[0][5], '72% · 2h 14m', 'a failed refresh still reports the cached reading');
   account.status = 'reauth-required';
   account.cooldown_until = now + 60000;
   assert.equal(cli.accountRows([account], now)[0][4], 'reauth-required');

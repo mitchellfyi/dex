@@ -217,7 +217,7 @@ function accountRows(items, now = Date.now(), config = state.config()) {
       const window = slotWindow(windows, slot);
       if (!window) return '-';
       const detail = windowDetail(window, now);
-      return `${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : '*'}${detail ? ` · ${detail}` : ''}`;
+      return `${Math.round(window.remaining_ratio * 100)}%${detail ? ` · ${detail}` : ''}`;
     })];
   }));
 }
@@ -276,7 +276,7 @@ function accountsFrame(items, live, note = '') {
   const footer = live
     ? `View updated at ${new Date().toLocaleTimeString()}\nLive: every 30s. Ctrl+C to exit.`
     : 'Tip: use dx accounts --live for updates.';
-  return `Dex subscription accounts\n${rows}\nModels follow configured routes. A model on its own row has a status of its own. * is a stale reading.\n${note ? `${note}\n` : ''}${footer}\n`;
+  return `Dex subscription accounts\n${rows}\nModels follow configured routes. A model on its own row has a status of its own.\n${note ? `${note}\n` : ''}${footer}\n`;
 }
 async function accounts(options) {
   if (options.watch && options.json) throw new Error('--live/--watch cannot be combined with --json. Use dx accounts --json for a single snapshot.');
