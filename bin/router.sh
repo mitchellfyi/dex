@@ -9,7 +9,7 @@ usage() {
   cat <<'EOF'
 Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disable|update>
        dx router native <enable|disable|status>
-       dx account add [anthropic|openai] [--name <name>] [--device] [--yes]
+       dx account add [anthropic|openai|openrouter] [--name <name>] [--device] [--yes]
        dx account <show|rename|rank|enable|disable|reauth|remove|doctor> <name>
        dx account rank <name> <rank>
        dx accounts [--live|--watch|--json]
