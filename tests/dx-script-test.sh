@@ -404,4 +404,21 @@ if [[ -s "$TMP_DIR/typo-quiet.out" ]]; then
   exit 1
 fi
 
+# dx.sh is sourced by scripts as well as by ~/.zshrc, and the generated worker
+# unit sources it too. Its re-sourcing guards remove names that are usually not
+# there, so without the || true the first one aborts the source under errexit —
+# silently, and in an interactive shell by killing the shell itself.
+DEX_DIR="$ROOT" zsh -fc '
+  set -e
+  source "$DEX_DIR/dx.sh"
+  source "$DEX_DIR/dx.sh"
+  typeset -f dx >/dev/null || exit 1
+  printf sourced
+' > "$TMP_DIR/errexit-source.out" 2>&1 || {
+  printf 'sourcing dx.sh under errexit aborted:\n' >&2
+  cat "$TMP_DIR/errexit-source.out" >&2
+  exit 1
+}
+[[ "$(cat "$TMP_DIR/errexit-source.out")" == sourced ]] || assert_at $LINENO
+
 printf 'dx-script-test passed\n'

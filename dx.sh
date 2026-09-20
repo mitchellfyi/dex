@@ -64,8 +64,10 @@ source "$DEX_DIR/lib/common.sh"
 # ─── Dex management CLI ──────────────────────────────────────────────
 # unalias/unfunction before each function definition so this file can be
 # re-sourced (e.g. via `dx reload`) without "already defined" errors.
+# The || true matters: removing a name that is not there is the normal case,
+# and under errexit that non-zero status aborts the source with no message.
 
-unalias __dx_cli 2>/dev/null; unfunction __dx_cli 2>/dev/null
+{ unalias __dx_cli; unfunction __dx_cli; } 2>/dev/null || true
 __dx_cli() {
   local cmd="${1:-help}"
   shift 2>/dev/null || true
@@ -339,7 +341,7 @@ fi
 
 
 
-unalias __dx_phase_message 2>/dev/null; unfunction __dx_phase_message 2>/dev/null
+{ unalias __dx_phase_message; unfunction __dx_phase_message; } 2>/dev/null || true
 __dx_phase_message() {
   local step="$1"
   local raw_input="${2:-}"
@@ -470,7 +472,7 @@ __dx_phase_timeout() {
 
 # __dx_child_pids <pid>
 # Print child PIDs for a process using pgrep when available, with a ps fallback.
-unalias __dx_child_pids 2>/dev/null; unfunction __dx_child_pids 2>/dev/null
+{ unalias __dx_child_pids; unfunction __dx_child_pids; } 2>/dev/null || true
 __dx_child_pids() {
   local pid="$1"
   if command -v pgrep >/dev/null 2>&1; then
@@ -482,7 +484,7 @@ __dx_child_pids() {
 
 # __dx_kill_process_tree <pid> [signal]
 # Kill a process and its descendants without assuming the process owns a pgroup.
-unalias __dx_kill_process_tree 2>/dev/null; unfunction __dx_kill_process_tree 2>/dev/null
+{ unalias __dx_kill_process_tree; unfunction __dx_kill_process_tree; } 2>/dev/null || true
 __dx_kill_process_tree() {
   local pid="$1" signal="${2:-TERM}" child
   [[ "$pid" =~ ^[0-9]+$ ]] || return 0
@@ -541,7 +543,7 @@ __dx_session_id_for_workspace() {
 
 # Persist the branch before lifecycle work continues. A failed private-state
 # write leaves in-place resume without an authoritative branch to restore.
-unalias __dx_record_session_branch 2>/dev/null; unfunction __dx_record_session_branch 2>/dev/null
+{ unalias __dx_record_session_branch; unfunction __dx_record_session_branch; } 2>/dev/null || true
 __dx_record_session_branch() {
   local session_id="$1" workspace_dir="$2"
   if dx_record_session_branch "$session_id" "$workspace_dir"; then
@@ -743,7 +745,7 @@ __dx_resolve_existing_workspace_by_ticket() {
 # Re-open a ticket lookup only after the selected session's startup claim is
 # held. A lookup performed before the claim is only a candidate: cleanup may
 # remove or replace it before this launcher can act on it.
-unalias __dx_pin_ticket_workspace_claim 2>/dev/null; unfunction __dx_pin_ticket_workspace_claim 2>/dev/null
+{ unalias __dx_pin_ticket_workspace_claim; unfunction __dx_pin_ticket_workspace_claim; } 2>/dev/null || true
 __dx_pin_ticket_workspace_claim() {
   local ticket_number="$1" expected_session="$_dx_session_id"
   local expected_name="$_dx_wt_name" expected_dir="$_dx_wt_dir"
@@ -770,7 +772,7 @@ __dx_pin_ticket_workspace_claim() {
 # _dx_workspace_mode, _dx_session_id.
 # Returns 0 if worktree exists or was created, 1 on error.
 # See: docs/autonomous-mode.md for the full lifecycle that follows worktree creation.
-unalias __dx_startup_claim_acquire 2>/dev/null; unfunction __dx_startup_claim_acquire 2>/dev/null
+{ unalias __dx_startup_claim_acquire; unfunction __dx_startup_claim_acquire; } 2>/dev/null || true
 __dx_startup_claim_acquire() {
   local session_id="$1" claim_result=0
   dx_session_claim_acquire "$session_id" startup || claim_result=$?
@@ -784,7 +786,7 @@ __dx_startup_claim_acquire() {
   return 1
 }
 
-unalias __dx_startup_claim_release 2>/dev/null; unfunction __dx_startup_claim_release 2>/dev/null
+{ unalias __dx_startup_claim_release; unfunction __dx_startup_claim_release; } 2>/dev/null || true
 __dx_startup_claim_release() {
   local claimed_session="${DX_SESSION_CLAIM_SESSION:-}"
   [[ -n "$claimed_session" ]] || return 0
@@ -795,7 +797,7 @@ __dx_startup_claim_release() {
   return 1
 }
 
-unalias __dx_setup_worktree 2>/dev/null; unfunction __dx_setup_worktree 2>/dev/null
+{ unalias __dx_setup_worktree; unfunction __dx_setup_worktree; } 2>/dev/null || true
 __dx_setup_worktree() {
   local raw_input="$1" setup_result=0
 
@@ -814,7 +816,7 @@ __dx_setup_worktree() {
   return "$setup_result"
 }
 
-unalias __dx_setup_worktree_claimed 2>/dev/null; unfunction __dx_setup_worktree_claimed 2>/dev/null
+{ unalias __dx_setup_worktree_claimed; unfunction __dx_setup_worktree_claimed; } 2>/dev/null || true
 __dx_setup_worktree_claimed() {
   local raw_input="$1"
   # If worktree exists, ensure links are set up (retroactive fix) and return
@@ -940,7 +942,7 @@ __dx_restore_in_place_session_branch() {
 # __dx_setup_in_place <raw_input>
 # Sets the same workspace variables as __dx_setup_worktree, but points them at
 # the current checkout and creates/switches the normal Dex branch there.
-unalias __dx_setup_in_place 2>/dev/null; unfunction __dx_setup_in_place 2>/dev/null
+{ unalias __dx_setup_in_place; unfunction __dx_setup_in_place; } 2>/dev/null || true
 __dx_setup_in_place() {
   local raw_input="$1" setup_result=0
 
@@ -966,7 +968,7 @@ __dx_setup_in_place() {
   return "$setup_result"
 }
 
-unalias __dx_setup_in_place_claimed 2>/dev/null; unfunction __dx_setup_in_place_claimed 2>/dev/null
+{ unalias __dx_setup_in_place_claimed; unfunction __dx_setup_in_place_claimed; } 2>/dev/null || true
 __dx_setup_in_place_claimed() {
   local raw_input="$1"
   local branch_name="worktree-${_dx_wt_name}"
@@ -1442,7 +1444,7 @@ __dx_inline_audit_file() {
 }
 
 # __dx_inline_completion_config <step> <generation>
-unalias __dx_inline_completion_config 2>/dev/null; unfunction __dx_inline_completion_config 2>/dev/null
+{ unalias __dx_inline_completion_config; unfunction __dx_inline_completion_config; } 2>/dev/null || true
 __dx_inline_completion_config() {
   local step="$1" generation="$2"
   printf '%s:%s:%s:%s:lifecycle:phase:%s\n' \
@@ -1450,7 +1452,7 @@ __dx_inline_completion_config() {
     "$(__dx_phase_min_audits "$step")" "$generation"
 }
 
-unalias __dx_abandon_completion_state 2>/dev/null; unfunction __dx_abandon_completion_state 2>/dev/null
+{ unalias __dx_abandon_completion_state; unfunction __dx_abandon_completion_state; } 2>/dev/null || true
 __dx_abandon_completion_state() {
   local session_id="$1"
   if dx_completion_abandon "$session_id" 2>/dev/null; then
@@ -1464,7 +1466,7 @@ __dx_abandon_completion_state() {
 # A new launch always gets a new generation, including resume and same-phase
 # retry launches. The printed value is also passed to headless providers that
 # cannot receive completion instructions from a Stop hook.
-unalias __dx_configure_inline_phase 2>/dev/null; unfunction __dx_configure_inline_phase 2>/dev/null
+{ unalias __dx_configure_inline_phase; unfunction __dx_configure_inline_phase; } 2>/dev/null || true
 __dx_configure_inline_phase() {
   local step="$1" session_id="$2" generation config_file state_file current_phase
   local current_phase_rc=0
@@ -1594,7 +1596,7 @@ __dx_configure_inline_phase() {
   printf '%s\n' "$generation"
 }
 
-unalias __dx_cleanup_completed_workspace 2>/dev/null; unfunction __dx_cleanup_completed_workspace 2>/dev/null
+{ unalias __dx_cleanup_completed_workspace; unfunction __dx_cleanup_completed_workspace; } 2>/dev/null || true
 __dx_cleanup_completed_workspace() {
   local wt_name="$1" wt_dir="$2" default_branch="$3" workspace_mode="${4:-worktree}" session_id="${5:-}"
 
@@ -1653,7 +1655,7 @@ __dx_cleanup_completed_workspace() {
   dx_done "Local branch ${current_branch} removed."
 }
 
-unalias __dx_inline_phase_iteration_count 2>/dev/null; unfunction __dx_inline_phase_iteration_count 2>/dev/null
+{ unalias __dx_inline_phase_iteration_count; unfunction __dx_inline_phase_iteration_count; } 2>/dev/null || true
 __dx_inline_phase_iteration_count() {
   local session_id="$1" raw iterations
   raw=$(cat "$(dx_loop_file "$session_id")" 2>/dev/null || echo "0")
@@ -1665,7 +1667,7 @@ __dx_inline_phase_iteration_count() {
   fi
 }
 
-unalias __dx_record_inline_phase_result 2>/dev/null; unfunction __dx_record_inline_phase_result 2>/dev/null
+{ unalias __dx_record_inline_phase_result; unfunction __dx_record_inline_phase_result; } 2>/dev/null || true
 __dx_record_inline_phase_result() {
   local session_id="$1" phase="$2" phase_status="$3" exit_code="$4"
   local start_epoch end_epoch duration iterations phase_name data_json event_type severity message
@@ -1729,7 +1731,7 @@ __dx_record_inline_phase_result() {
   dx_run_log_append_for_session "$session_id" "$severity" "dx" "${message}; status=${phase_status}; duration_s=${duration}; iterations=${iterations}; exit_code=${exit_code}"
 }
 
-unalias __dx_terminal_event_data 2>/dev/null; unfunction __dx_terminal_event_data 2>/dev/null
+{ unalias __dx_terminal_event_data; unfunction __dx_terminal_event_data; } 2>/dev/null || true
 __dx_terminal_event_data() {
   local terminal_status="$1" reason="$2" phase="$3" phase_name="$4" exit_code="${5:-}" resume_command="${6:-}"
   DX_TERMINAL_STATUS="$terminal_status" \
@@ -1764,7 +1766,7 @@ print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 PY
 }
 
-unalias __dx_pause_reason_message 2>/dev/null; unfunction __dx_pause_reason_message 2>/dev/null
+{ unalias __dx_pause_reason_message; unfunction __dx_pause_reason_message; } 2>/dev/null || true
 __dx_pause_reason_message() {
   local session_id="$1" reason="$2" raw_iter iterations max_iterations current_phase
   case "$reason" in
@@ -1792,7 +1794,7 @@ __dx_pause_reason_message() {
   esac
 }
 
-unalias __dx_finish_inline_pause 2>/dev/null; unfunction __dx_finish_inline_pause 2>/dev/null
+{ unalias __dx_finish_inline_pause; unfunction __dx_finish_inline_pause; } 2>/dev/null || true
 __dx_finish_inline_pause() {
   local session_id="$1" final_step="$2" resume_hint="$3" wt_name="$4"
   local wt_dir="$5" default_branch="$6" workspace_mode="$7"
@@ -1819,8 +1821,8 @@ __dx_finish_inline_pause() {
   return 1
 }
 
-unalias __dx_codex_direct_phase_handoff 2>/dev/null; unfunction __dx_codex_direct_phase_handoff 2>/dev/null
-unalias __dx_codex_transition_unlock 2>/dev/null; unfunction __dx_codex_transition_unlock 2>/dev/null
+{ unalias __dx_codex_direct_phase_handoff; unfunction __dx_codex_direct_phase_handoff; } 2>/dev/null || true
+{ unalias __dx_codex_transition_unlock; unfunction __dx_codex_transition_unlock; } 2>/dev/null || true
 __dx_codex_transition_unlock() {
   local session_id="$1" reason="$2"
   if dx_lifecycle_control_lock_release "$session_id"; then
@@ -2315,7 +2317,7 @@ __dx_codex_direct_phase_handoff() {
   return 0
 }
 
-unalias __dx_runtime_set_terminal 2>/dev/null; unfunction __dx_runtime_set_terminal 2>/dev/null
+{ unalias __dx_runtime_set_terminal; unfunction __dx_runtime_set_terminal; } 2>/dev/null || true
 __dx_runtime_set_terminal() {
   local terminal_state="$1"
   [[ -n "${_dx_runtime_owner_handle:-}" ]] || return 0
@@ -2326,8 +2328,8 @@ __dx_runtime_set_terminal() {
   esac
 }
 
-unalias __dx_run_with_runtime 2>/dev/null; unfunction __dx_run_with_runtime 2>/dev/null
-unalias __dx_run_with_runtime_owner_handle 2>/dev/null; unfunction __dx_run_with_runtime_owner_handle 2>/dev/null
+{ unalias __dx_run_with_runtime; unfunction __dx_run_with_runtime; } 2>/dev/null || true
+{ unalias __dx_run_with_runtime_owner_handle; unfunction __dx_run_with_runtime_owner_handle; } 2>/dev/null || true
 __dx_run_with_runtime_owner_handle() {
   local owner_handle="$1" owner_pid="$2" callback_name="$3"
   local -x DEX_SESSION_ONLY=0
@@ -2415,7 +2417,7 @@ __dx_run_with_runtime() {
     "$callback_name" "$@"
 }
 
-unalias __dx_run_with_recovered_runtime 2>/dev/null; unfunction __dx_run_with_recovered_runtime 2>/dev/null
+{ unalias __dx_run_with_recovered_runtime; unfunction __dx_run_with_recovered_runtime; } 2>/dev/null || true
 __dx_run_with_recovered_runtime() {
   local session_id="$1" runtime_snapshot="$2" callback_name="$3"
   shift 3
@@ -2439,7 +2441,7 @@ __dx_run_with_recovered_runtime() {
     "$callback_name" "$@"
 }
 
-unalias __dx_selected_resume_workspace_valid 2>/dev/null; unfunction __dx_selected_resume_workspace_valid 2>/dev/null
+{ unalias __dx_selected_resume_workspace_valid; unfunction __dx_selected_resume_workspace_valid; } 2>/dev/null || true
 __dx_selected_resume_workspace_valid() {
   local repo_root="$1" session_id="$2" workspace_dir="$3" workspace_mode="$4"
   local expected_branch="" current_branch="" resolved_repo="" resolved_workspace=""
@@ -2468,7 +2470,7 @@ __dx_selected_resume_workspace_valid() {
   esac
 }
 
-unalias __dx_selected_resume_runtime_matches 2>/dev/null; unfunction __dx_selected_resume_runtime_matches 2>/dev/null
+{ unalias __dx_selected_resume_runtime_matches; unfunction __dx_selected_resume_runtime_matches; } 2>/dev/null || true
 __dx_selected_resume_runtime_matches() {
   local session_id="$1" provider_name="$2" workspace_dir="$3"
   local runtime_record="" runtime_health="" expected_owner_pid="${_dx_runtime_owner_pid:-}"
@@ -2495,7 +2497,7 @@ if (
 PY
 }
 
-unalias __dx_selected_resume_catalog_matches 2>/dev/null; unfunction __dx_selected_resume_catalog_matches 2>/dev/null
+{ unalias __dx_selected_resume_catalog_matches; unfunction __dx_selected_resume_catalog_matches; } 2>/dev/null || true
 __dx_selected_resume_catalog_matches() {
   local repo_root="$1" session_id="$2" workspace_dir="$3" workspace_name="$4"
   local workspace_mode="$5" provider_name="$6" selected_phase="$7"
@@ -2529,7 +2531,7 @@ if (
 PY
 }
 
-unalias __dx_selected_resume_after_claim 2>/dev/null; unfunction __dx_selected_resume_after_claim 2>/dev/null
+{ unalias __dx_selected_resume_after_claim; unfunction __dx_selected_resume_after_claim; } 2>/dev/null || true
 __dx_selected_resume_after_claim() {
   local session_id="$1" repo_root="$2" workspace_dir="$3" workspace_name="$4"
   local workspace_mode="$5" provider_name="$6" selected_phase="$7" raw_input="$8"
@@ -2674,7 +2676,7 @@ __dx_selected_resume_after_claim() {
     "$workspace_mode" "$session_id" "$raw_input"
 }
 
-unalias __dx_selected_resume_legacy_mapping_matches 2>/dev/null; unfunction __dx_selected_resume_legacy_mapping_matches 2>/dev/null
+{ unalias __dx_selected_resume_legacy_mapping_matches; unfunction __dx_selected_resume_legacy_mapping_matches; } 2>/dev/null || true
 __dx_selected_resume_legacy_mapping_matches() {
   [[ $# -eq 6 ]] || return 1
   local workspace_name="$1" workspace_dir="$2" workspace_mode="$3"
@@ -2699,7 +2701,7 @@ __dx_selected_resume_legacy_mapping_matches() {
   [[ "$resolved_workspace" == "$resolved_expected_workspace" ]]
 }
 
-unalias __dx_selected_resume_completed_catalog_matches 2>/dev/null; unfunction __dx_selected_resume_completed_catalog_matches 2>/dev/null
+{ unalias __dx_selected_resume_completed_catalog_matches; unfunction __dx_selected_resume_completed_catalog_matches; } 2>/dev/null || true
 __dx_selected_resume_completed_catalog_matches() {
   [[ $# -eq 7 ]] || return 1
   local repo_root="$1" session_id="$2" workspace_dir="$3"
@@ -2736,7 +2738,7 @@ if (
 PY
 }
 
-unalias __dx_sessions_resume_selected 2>/dev/null; unfunction __dx_sessions_resume_selected 2>/dev/null
+{ unalias __dx_sessions_resume_selected; unfunction __dx_sessions_resume_selected; } 2>/dev/null || true
 __dx_sessions_resume_selected() {
   [[ $# -eq 1 || $# -eq 2 || $# -eq 6 ]] || return 1
   local selector_value="$1" requested_provider="${2:-}"
@@ -3388,7 +3390,7 @@ __dx_run_phases_inline() {
   return 1
 }
 
-unalias __dx_run_spec_usage 2>/dev/null; unfunction __dx_run_spec_usage 2>/dev/null
+{ unalias __dx_run_spec_usage; unfunction __dx_run_spec_usage; } 2>/dev/null || true
 __dx_run_spec_usage() {
   cat <<'USAGE'
 Usage:
@@ -3405,7 +3407,7 @@ Options:
 USAGE
 }
 
-unalias __dx_run_spec_failure_json 2>/dev/null; unfunction __dx_run_spec_failure_json 2>/dev/null
+{ unalias __dx_run_spec_failure_json; unfunction __dx_run_spec_failure_json; } 2>/dev/null || true
 __dx_run_spec_failure_json() {
   local source="$1" error="$2" stage="${3:-validation}"
   DX_RUN_SPEC_FAILURE_SOURCE="$source" \
@@ -3423,7 +3425,7 @@ print(json.dumps({
 PY
 }
 
-unalias __dx_run_spec_record_failure 2>/dev/null; unfunction __dx_run_spec_record_failure 2>/dev/null
+{ unalias __dx_run_spec_record_failure; unfunction __dx_run_spec_record_failure; } 2>/dev/null || true
 __dx_run_spec_record_failure() {
   local source="$1" message="$2" stage="${3:-validation}" repo_dir="${4:-$PWD}"
   local session_id run_id data_json
@@ -3442,7 +3444,7 @@ __dx_run_spec_record_failure() {
   fi
 }
 
-unalias __dx_run_spec_apply_env 2>/dev/null; unfunction __dx_run_spec_apply_env 2>/dev/null
+{ unalias __dx_run_spec_apply_env; unfunction __dx_run_spec_apply_env; } 2>/dev/null || true
 __dx_run_spec_apply_env() {
   local spec_file="$1" run_token="${2:-}"
   local token factory_url events_endpoint harness_name harness_model harness_effort plan_approval default_branch
@@ -3500,7 +3502,7 @@ __dx_run_spec_apply_env() {
   export DEX_HEADLESS_DEFAULT_BRANCH="$default_branch"
 }
 
-unalias __dx_run_spec_cli 2>/dev/null; unfunction __dx_run_spec_cli 2>/dev/null
+{ unalias __dx_run_spec_cli; unfunction __dx_run_spec_cli; } 2>/dev/null || true
 __dx_run_spec_cli() {
   setopt localoptions localtraps
   local spec_path="" spec_url="" run_token="" dry_run=0 validate_only=0
@@ -3843,7 +3845,7 @@ __dx_show_header() {
 # Keep this list equal to the routing allowlist in dx() — minus the flag forms,
 # plus `refine`, which dx() intercepts before that case. Both, plus `dx help`,
 # are held together by tests/docs-consistency-test.sh.
-unalias __dx_task_commands 2>/dev/null; unfunction __dx_task_commands 2>/dev/null
+{ unalias __dx_task_commands; unfunction __dx_task_commands; } 2>/dev/null || true
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
     test config provider run control sessions ui-capture research install uninstall uninit status \
@@ -3851,7 +3853,7 @@ __dx_task_commands() {
 }
 
 # Prints the nearest command within two edits, or nothing.
-unalias __dx_nearest_command 2>/dev/null; unfunction __dx_nearest_command 2>/dev/null
+{ unalias __dx_nearest_command; unfunction __dx_nearest_command; } 2>/dev/null || true
 __dx_nearest_command() {
   local word="$1"
   local candidates=("${(@f)$(__dx_task_commands)}")
@@ -3890,7 +3892,7 @@ PY
 }
 
 # Returns non-zero when the user declines, and dx() stops.
-unalias __dx_confirm_task_word 2>/dev/null; unfunction __dx_confirm_task_word 2>/dev/null
+{ unalias __dx_confirm_task_word; unfunction __dx_confirm_task_word; } 2>/dev/null || true
 __dx_confirm_task_word() {
   local raw="$1" argc="$2" suggestion answer
   [[ "$argc" -eq 1 ]] || return 0
@@ -3918,7 +3920,7 @@ __dx_confirm_task_word() {
   return 1
 }
 
-unalias __dx_choose_prompt_mode 2>/dev/null; unfunction __dx_choose_prompt_mode 2>/dev/null
+{ unalias __dx_choose_prompt_mode; unfunction __dx_choose_prompt_mode; } 2>/dev/null || true
 __dx_choose_prompt_mode() {
   local answer
   dx_info "How would you like to run this prompt?" >&2
@@ -3940,7 +3942,7 @@ __dx_choose_prompt_mode() {
   done
 }
 
-unalias dx 2>/dev/null; unfunction dx 2>/dev/null
+{ unalias dx; unfunction dx; } 2>/dev/null || true
 dx() {
   if [[ $# -eq 0 ]]; then
     echo "Usage: dx <NUMBER>        (e.g. dx 999, dx ENG-999)"
@@ -4236,19 +4238,19 @@ dx() {
   return $?
 }
 
-unalias dex 2>/dev/null; unfunction dex 2>/dev/null
+{ unalias dex; unfunction dex; } 2>/dev/null || true
 dex() {
   dx "$@"
 }
 
-unalias dexter 2>/dev/null; unfunction dexter 2>/dev/null
+{ unalias dexter; unfunction dexter; } 2>/dev/null || true
 dexter() {
   dx "$@"
 }
 
 # ─── dxloop — prompt loop (run until done) ─────────────────────────────────
 
-unalias __dx_finalize_standalone_pause 2>/dev/null; unfunction __dx_finalize_standalone_pause 2>/dev/null
+{ unalias __dx_finalize_standalone_pause; unfunction __dx_finalize_standalone_pause; } 2>/dev/null || true
 __dx_finalize_standalone_pause() {
   local session_id="$1" completion_mode="$2" completion_purpose="$3"
   local completion_phase="$4" completion_generation="$5"
@@ -4323,7 +4325,7 @@ __dx_finalize_standalone_pause() {
   return 0
 }
 
-unalias dxloop 2>/dev/null; unfunction dxloop 2>/dev/null
+{ unalias dxloop; unfunction dxloop; } 2>/dev/null || true
 dxloop() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
     echo "Usage: dxloop [prompt]"
@@ -4368,7 +4370,7 @@ dxloop() {
   return $?
 }
 
-unalias __dxloop_run 2>/dev/null; unfunction __dxloop_run 2>/dev/null
+{ unalias __dxloop_run; unfunction __dxloop_run; } 2>/dev/null || true
 __dxloop_run() {
   local prompt="$1" repo_root="$2" session_id="$3"
   : "$repo_root"
@@ -4601,19 +4603,19 @@ $(__dx_provider_prompt)"
 
 # ─── Standalone ticket triage ──────────────────────────────────────────
 
-unalias dxtriage 2>/dev/null; unfunction dxtriage 2>/dev/null
+{ unalias dxtriage; unfunction dxtriage; } 2>/dev/null || true
 dxtriage() {
   dx_triage_run "$@"
 }
 
-unalias dxrefine 2>/dev/null; unfunction dxrefine 2>/dev/null
+{ unalias dxrefine; unfunction dxrefine; } 2>/dev/null || true
 dxrefine() {
   dxtriage "$@"
 }
 
 # ─── dxcomplete — standalone Phase 6 (recovery / non-dx PRs) ───────────────
 
-unalias dxcomplete 2>/dev/null; unfunction dxcomplete 2>/dev/null
+{ unalias dxcomplete; unfunction dxcomplete; } 2>/dev/null || true
 dxcomplete() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
     echo "Usage: dxcomplete"
@@ -4666,7 +4668,7 @@ dxcomplete() {
   return $?
 }
 
-unalias __dxcomplete_run 2>/dev/null; unfunction __dxcomplete_run 2>/dev/null
+{ unalias __dxcomplete_run; unfunction __dxcomplete_run; } 2>/dev/null || true
 __dxcomplete_run() {
   local provider_agent="$1" pr_num="$2" session_id="$3" start_dir="$4"
   local complete_max_cycles complete_wait_minutes
@@ -4948,7 +4950,7 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
 
 
 
-unalias dxreviewloop 2>/dev/null; unfunction dxreviewloop 2>/dev/null
+{ unalias dxreviewloop; unfunction dxreviewloop; } 2>/dev/null || true
 # Public command: the implementation lives in lib/review-loop.sh.
 dxreviewloop() {
   dx_review_loop_run "$@"
@@ -4956,7 +4958,7 @@ dxreviewloop() {
 
 # ─── dxrm — remove worktrees ──────────────────────────────────────────────
 
-unalias dxrm 2>/dev/null; unfunction dxrm 2>/dev/null
+{ unalias dxrm; unfunction dxrm; } 2>/dev/null || true
 dxrm() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
     echo "Usage: dxrm <NUMBER|name>"
@@ -5204,7 +5206,7 @@ dxrm() {
 
 # ─── dxls — list worktrees ────────────────────────────────────────────────
 
-unalias dxls 2>/dev/null; unfunction dxls 2>/dev/null
+{ unalias dxls; unfunction dxls; } 2>/dev/null || true
 dxls() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
     echo "Usage: dxls"
@@ -5272,7 +5274,7 @@ dxls() {
 
 # ─── dxcd — navigate to a worktree or repo root ─────────────────────────────
 
-unalias dxcd 2>/dev/null; unfunction dxcd 2>/dev/null
+{ unalias dxcd; unfunction dxcd; } 2>/dev/null || true
 dxcd() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
     echo "Usage: dxcd [NUMBER|name]"
@@ -5372,7 +5374,7 @@ dxcd() {
 
 # ─── dxclean — prune stale worktrees + gone branches ─────────────────────────
 
-unalias dxclean 2>/dev/null; unfunction dxclean 2>/dev/null
+{ unalias dxclean; unfunction dxclean; } 2>/dev/null || true
 dxclean() {
   if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
     echo "Usage: dxclean"
