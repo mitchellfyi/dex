@@ -306,6 +306,20 @@ function budgetExceeded(payload) {
     && /\b(exceed|exhaust|reach|insufficient|over)\w*/i.test(message);
 }
 
+// When a spend cap comes back, if the provider says so. A budget refusal lasts
+// until then: waiting less only buys another refusal, and a fixed interval
+// either retries pointlessly or idles an account that has already reset. The
+// wait is capped at a day so a long cap is still probed occasionally — the
+// limit may have been raised in the meantime, and one refused request a day
+// costs nothing.
+const MAX_BUDGET_WAIT = 86400000;
+function spendResetAt(account, now = Date.now()) {
+  const resets = (account?.usage?.windows || [])
+    .filter(window => window.name === 'spend-limit' && Number.isFinite(window.resets_at) && window.resets_at > now)
+    .map(window => window.resets_at);
+  return resets.length ? Math.min(Math.min(...resets), now + MAX_BUDGET_WAIT) : null;
+}
+
 function failure(status, payload = {}, headers = {}, now = Date.now()) {
   if (status === 401) return { retry: true, reauth: true, reason: 'authentication' };
   // Payment Required is the metered equivalent of an exhausted quota: this
@@ -358,4 +372,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, budgetExceeded, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, rotateForWave, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, budgetExceeded, spendResetAt, MAX_BUDGET_WAIT, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, rotateForWave, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };

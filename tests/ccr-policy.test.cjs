@@ -439,3 +439,19 @@ test('a spend refusal stops the account; any other refusal stops only the model'
   assert.match(error.message, /spend limit reached/);
   assert.match(error.message, /Raise it there, wait for it to reset/);
 });
+
+test('a spend refusal waits for the cap to come back, not a fixed interval', () => {
+  const now = Date.parse('2026-09-20T07:05:00Z');
+  const capped = reset => ({ usage: { windows: [{ name: 'spend-limit', remaining_ratio: 0, resets_at: Date.parse(reset) }] } });
+  assert.equal(policy.spendResetAt(capped('2026-09-21T00:00:00Z'), now), Date.parse('2026-09-21T00:00:00Z'),
+    'a daily cap comes back at midnight, so that is when it is worth retrying');
+  // A cap far out is still probed daily: the limit may have been raised since,
+  // and one refused request a day costs nothing.
+  assert.equal(policy.spendResetAt(capped('2026-10-01T00:00:00Z'), now), now + policy.MAX_BUDGET_WAIT);
+  // Nothing to go on leaves the caller's own interval in place.
+  assert.equal(policy.spendResetAt(capped('2026-09-19T00:00:00Z'), now), null, 'a reset already past says nothing');
+  assert.equal(policy.spendResetAt({ usage: { windows: [{ name: 'credit', remaining_ratio: 0, resets_at: null }] } }, now), null,
+    'a balance has no reset, so it cannot date a cooldown');
+  assert.equal(policy.spendResetAt({}, now), null);
+  assert.equal(policy.spendResetAt(undefined, now), null);
+});

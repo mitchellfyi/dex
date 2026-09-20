@@ -89,7 +89,8 @@ test('a spend cap exhausts like a quota and an uncapped account reports no windo
   // The account balance is the cap that actually returns 402; a key can carry
   // no limit of its own and still fail once the account behind it runs dry.
   const spent = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 10 } }, 1000);
-  assert.deepEqual(spent.windows, [{ name: 'credit', remaining_ratio: 0, resets_at: null }]);
+  // A balance carries what is left of it in money, because it has no reset to report.
+  assert.deepEqual(spent.windows, [{ name: 'credit', remaining_ratio: 0, resets_at: null, remaining_amount: 0 }]);
   const partial = normalizeUsage('openrouter', { data: { total_credits: 40, total_usage: 10 } }, 1000);
   assert.equal(partial.windows[0].remaining_ratio, 0.75);
   assert.equal(normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 12 } }, 1000).windows[0].remaining_ratio, 0,
@@ -98,7 +99,8 @@ test('a spend cap exhausts like a quota and an uncapped account reports no windo
   const both = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 5, limit: 2, usage: 2 } }, 1000);
   // The key's own cap is this account's near-term limit, so it shares the
   // near-term column rather than adding one to every table.
-  assert.deepEqual(both.windows.map(w => [w.name, w.remaining_ratio]), [['credit', 0.5], ['5h', 0]]);
+  assert.deepEqual(both.windows.map(w => [w.name, w.remaining_ratio, w.remaining_amount]),
+    [['credit', 0.5, 5], ['spend-limit', 0, 0]]);
   assert.deepEqual(normalizeUsage('openrouter', { data: { total_credits: null, total_usage: 3, limit: null, usage: 1 } }, 1000).windows, [],
     'no cap means no window to exhaust, not a window at zero');
 });
@@ -150,7 +152,7 @@ test('a spend cap that reports a period becomes a reset time only where UTC is u
   // A bare number in this position means Unix seconds to the window reader, so
   // the reset must not arrive as milliseconds.
   const usage = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 7.54, limit: 15, usage: 5.07, limit_reset: 'daily' } }, now);
-  const window = usage.windows.find(item => item.name === '5h');
+  const window = usage.windows.find(item => item.name === 'spend-limit');
   assert.equal(new Date(window.resets_at).toISOString(), '2026-09-20T00:00:00.000Z');
   assert.equal(usage.spend.key_limit, 15);
   assert.equal(usage.spend.key_remaining, undefined, 'absent when the provider does not report it');

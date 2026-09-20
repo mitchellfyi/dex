@@ -355,6 +355,12 @@ class RouterService {
             // Retry it after a short interval so browser acceptance needs no reauth.
             let problem = termsRequired ? { retry: true, reason: 'terms-required', until: Date.now() + 60000 }
               : policy.failure(upstream.status, payload, upstream.headers);
+            // A spend cap returns at a time the provider already reported, so
+            // wait for that rather than a fixed interval.
+            if (problem.reason === 'budget-exceeded') {
+              const resetAt = policy.spendResetAt(account, Date.now());
+              if (resetAt && resetAt > problem.until) problem = { ...problem, until: resetAt };
+            }
             if (upstream.status === 401 && authRetry === 0) {
               try { credentials = await this.broker.access(choice.account, true); continue; }
               catch (error) { if (!error.reauth) problem = { retry: true, reason: 'refresh-unavailable', until: Date.now() + 10000 }; }

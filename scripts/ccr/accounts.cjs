@@ -114,10 +114,14 @@ function periodReset(value, now) {
 function normalizeUsage(provider, data, now = Date.now()) {
   const windows = [];
   const spend = meteredSpend(provider, data);
-  const add = (name, raw, used, reset, modelPool) => {
+  // `remaining_amount` is what is left in money, for a cap denominated in it.
+  // A time window has a reset instead; a spend cap has a number.
+  const add = (name, raw, used, reset, modelPool, remainingAmount) => {
     if (!raw || !Number.isFinite(used) || used < 0 || used > 100) return;
     const parsedReset = typeof reset === 'number' ? reset * 1000 : Date.parse(reset);
-    windows.push({ name, remaining_ratio: (100 - used) / 100, resets_at: Number.isFinite(parsedReset) ? parsedReset : null, ...(modelPool ? { model_pool: modelPool } : {}) });
+    windows.push({ name, remaining_ratio: (100 - used) / 100, resets_at: Number.isFinite(parsedReset) ? parsedReset : null,
+      ...(modelPool ? { model_pool: modelPool } : {}),
+      ...(Number.isFinite(remainingAmount) ? { remaining_amount: Number(remainingAmount) } : {}) });
   };
   if (providerKind(provider) === 'api-key') {
     // Two independent caps: the account's credit balance, and a spend limit on
@@ -126,16 +130,15 @@ function normalizeUsage(provider, data, now = Date.now()) {
     // and an unlimited key reports no window, because there is nothing to
     // exhaust, rather than a window sitting at zero.
     const body = data?.data || data || {};
+    // A balance has no reset, so what it reports is money left. A spend cap
+    // does reset, so it reports that, like any other window.
     for (const [name, cap, used, reset] of [
       ['credit', body.total_credits, body.total_usage, null],
-      // The key's own cap is this account's near-term limit, so it shares the
-      // near-term column with a subscription's 5h window instead of widening
-      // every table with one more pair. Its real reset time travels with it.
-      ['5h', body.limit, body.usage, periodReset(body.limit_reset, now)]
+      ['spend-limit', body.limit, body.usage, periodReset(body.limit_reset, now)]
     ]) {
       const capValue = Number(cap), usedValue = Number(used);
       if (Number.isFinite(capValue) && capValue > 0 && Number.isFinite(usedValue) && usedValue >= 0) {
-        add(name, { cap, used }, Math.min(100, (usedValue / capValue) * 100), reset);
+        add(name, { cap, used }, Math.min(100, (usedValue / capValue) * 100), reset, undefined, capValue - usedValue);
       }
     }
   } else if (provider === 'anthropic') {

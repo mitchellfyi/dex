@@ -217,12 +217,12 @@ test('empty account and status commands work without starting CCR', async () => 
 test('dashboard distinguishes current account exhaustion from stale and model-only quotas', () => {
   const account = { name: 'Main', provider: 'anthropic', enabled: true, usage: { observed_at: Date.now(), windows: [{ name: 'weekly', remaining_ratio: 0 }] } };
   const output = () => cli.accountRows([account]).flat().join(' ');
-  assert.match(output(), /quota exhausted/);
+  assert.match(output(), /exhausted/);
   account.usage.windows[0].model_pool = 'opus';
-  assert.doesNotMatch(output(), /quota exhausted/);
+  assert.doesNotMatch(output(), /exhausted/);
   delete account.usage.windows[0].model_pool;
   account.usage.observed_at -= 180000;
-  assert.doesNotMatch(output(), /quota exhausted/);
+  assert.doesNotMatch(output(), /exhausted/);
   // A stale reading is marked, not spelled out, so the column stays narrow.
   assert.match(output(), /0%\*/);
 });
@@ -247,26 +247,28 @@ test('account/model rows compare primary and fallback capacity without mixing mo
     { name: '5h', remaining_ratio: .72, resets_at: now + 3600000 }, { name: 'weekly', remaining_ratio: .4, resets_at: now + 86400000 },
     { name: 'weekly-opus', model_pool: 'opus', remaining_ratio: 0, resets_at: now + 7200000 }
   ] } };
-  let rows = cli.accountRows([account], now, undefined, config);
+  let rows = cli.accountRows([account], now, config);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows[0], ['Work', '-', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72% · 1h 0m', '40% · 1d 0h', '-']);
-  assert.deepEqual(rows[1], ['Work', '-', 'anthropic', 'Opus 5', 'weekly-opus quota exhausted', '72% · 1h 0m', '40% · 1d 0h', '0% · 2h 0m']);
+  assert.deepEqual(rows[0], ['Work', '-', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72% · 1h 0m', '40% · 1d 0h']);
+  // The long-term cell shows whichever cap binds, so an opus-only window at
+  // zero replaces the weekly one for that model's row.
+  assert.deepEqual(rows[1], ['Work', '-', 'anthropic', 'Opus 5', 'exhausted', '72% · 1h 0m', '0% · 2h 0m']);
   // These two differ in status, so they stay separate rows even though the
   // account and every quota reading is shared.
   assert.equal(cli.mergeModelRows(rows).length, 2);
   account.usage.windows[2].remaining_ratio = .3;
-  rows = cli.accountRows([account], now, undefined, config);
+  rows = cli.accountRows([account], now, config);
   assert.equal(rows[1][4], 'ready', 'a primary model cooldown leaves the fallback available');
   account.model_ids = [primary];
-  assert.equal(cli.accountRows([account], now, undefined, config)[1][4], 'not available');
+  assert.equal(cli.accountRows([account], now, config)[1][4], 'not available');
   account.model_ids = [primary, fallback]; account.usage_error = 'unavailable';
-  assert.match(cli.accountRows([account], now, undefined, config)[1][5], /72%\*/);
+  assert.match(cli.accountRows([account], now, config)[1][5], /72%\*/);
   config.models.push({ id: 'openai/test', provider: 'openai' });
   config.phases[2].fallbacks.push('openai/test');
-  assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, undefined, config)[0][3], 'test');
+  assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, config)[0][3], 'test');
   config.models.push({ id: 'openai/client-test', provider: 'openai' });
   config.client_routes = { codex: { model: 'openai/client-test', fallbacks: ['openai/test'] } };
-  assert.deepEqual(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, undefined, config).map(row => row[3]), ['test', 'client-test']);
+  assert.deepEqual(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, config).map(row => row[3]), ['test', 'client-test']);
 });
 test('account rows compare quota windows side by side and distinguish due and unknown resets', () => {
   const now = Date.now();
@@ -282,9 +284,9 @@ test('account rows compare quota windows side by side and distinguish due and un
   // One cell per window: the reset rides with the value it belongs to, and a
   // window with nothing to report is a dash rather than a word.
   assert.deepEqual(rows, [
-    ['Main', '-', 'anthropic', '-', 'ready', '72% · 2h 14m', '40% · 3d 4h', '0% · due'],
-    ['Personal', '-', 'openai', '-', 'ready', '-', '91%', '-'],
-    ['Backup', '-', 'openai', '-', 'disabled', '-', '-', '-']
+    ['Main', '-', 'anthropic', '-', 'ready', '72% · 2h 14m', '0% · due'],
+    ['Personal', '-', 'openai', '-', 'ready', '-', '91%'],
+    ['Backup', '-', 'openai', '-', 'disabled', '-', '-']
   ]);
   account.usage_error = 'Refresh failed';
   assert.match(cli.accountRows([account], now)[0][5], /72%\*/);
@@ -314,7 +316,7 @@ test('table rendering does not alter JSON output or saved account and model data
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  assert.match(run(['accounts']), /Account +Rank +Provider +Model +Status +5h +Weekly/);
+  assert.match(run(['accounts']), /Account +Rank +Provider +Model +Status +Short term +Long term/);
   assert.match(run(['accounts']), /A model on its own row has a status of its own/);
   assert.match(run(['accounts']), /Tip: use dx accounts --live for updates\./);
   assert.match(run(['account', 'show', 'Main']), /test@example.test/);
@@ -658,26 +660,24 @@ test('restarting the router carries this version\'s managed client settings acro
   assert.match(noisy, /not refreshed: settings file is busy/);
 });
 
-test('the accounts table shows money only when an account is billed in it', () => {
+test('a metered account reports money where a subscription reports a reset', () => {
   const now = Date.now();
   const subscription = { id: 'a', name: 'sub', provider: 'anthropic', enabled: true, rank: 1, created_at: 1,
-    usage: { observed_at: now, windows: [{ name: '5h', remaining_ratio: 0.8, resets_at: now + 3600000 }] } };
+    usage: { observed_at: now, windows: [
+      { name: '5h', remaining_ratio: 0.8, resets_at: now + 3600000 },
+      { name: 'weekly', remaining_ratio: 0.4, resets_at: now + 86400000 }] } };
   const metered = { id: 'b', name: 'metered', provider: 'openrouter', enabled: true, rank: 2, created_at: 2,
-    usage: { observed_at: now, windows: [{ name: 'credit', remaining_ratio: 0.25, resets_at: null }],
-      spend: { currency: 'USD', used: 7.541665, limit: 10, remaining: 2.458335, key_used: 5.071965 } } };
-  const both = cli.accountRows([subscription, metered], now);
-  assert.ok(both.some(row => row.includes('$7.54 / $10.00')), 'the metered account shows what it spent');
-  assert.ok(both.some(row => row[1] === 1 && row.includes('-')), 'a subscription shows a dash, never $0.00');
-  // With no metered account there is no money column at all.
-  const alone = cli.accountRows([subscription], now);
-  assert.equal(alone.every(row => !row.some(cell => String(cell).startsWith('$'))), true);
-  // Same window set, so the only difference is the money column itself.
-  const pair = cli.accountRows([subscription, metered], now, ['5h']);
-  const solo = cli.accountRows([subscription], now, ['5h']);
-  assert.equal(solo[0].length + 1, pair[0].length, 'the column appears only when it has something to say');
-  // A key with no account balance still reports its own spend.
-  const keyOnly = { ...metered, usage: { ...metered.usage, spend: { currency: 'USD', key_used: 1.5 } } };
-  assert.ok(cli.accountRows([keyOnly], now).some(row => row.includes('$1.50')));
+    usage: { observed_at: now, windows: [
+      // A balance never resets, so what it has left to say is money.
+      { name: 'credit', remaining_ratio: 0.25, resets_at: null, remaining_amount: 2.458335 },
+      { name: 'spend-limit', remaining_ratio: 0.66, resets_at: now + 7200000, remaining_amount: 9.93 }] } };
+  const [sub, paid] = cli.accountRows([subscription, metered], now);
+  assert.deepEqual(sub.slice(5), ['80% · 1h 0m', '40% · 1d 0h'], 'a subscription reports when its window returns');
+  assert.deepEqual(paid.slice(5), ['25% · $2.46', '66% · 2h 0m'],
+    'a balance reports what is left of it; a cap that resets reports when');
+  // Both providers occupy the same two columns, whatever their caps are called.
+  assert.equal(sub.length, paid.length);
+  assert.equal(sub.length, 7);
 });
 
 test('the accounts table rules between vendors, not between every account', () => {
@@ -701,26 +701,29 @@ test('the accounts table rules between vendors, not between every account', () =
 test('the accounts table keeps every reading without a column or row per model', () => {
   const now = Date.now();
   const merged = cli.mergeModelRows([
-    ['acct', 1, 'anthropic', 'Opus 5', 'ready', '80%'],
-    ['acct', 1, 'anthropic', 'Fable 5.1', 'ready', '80%'],
-    ['acct', 1, 'anthropic', 'Haiku', 'rate limited (3m)', '80%'],
-    ['other', 2, 'openai', 'GPT', 'ready', '10%']
+    ['acct', 1, 'anthropic', 'Opus 5', 'ready', '80%', '-'],
+    ['acct', 1, 'anthropic', 'Fable 5.1', 'ready', '80%', '-'],
+    ['acct', 1, 'anthropic', 'Haiku', 'rate limited (3m)', '80%', '-'],
+    ['other', 2, 'openai', 'GPT', 'ready', '10%', '-']
   ]);
-  assert.deepEqual(merged.map(r => [r[3], r[4]]), [
+  assert.deepEqual(merged.map(row => [row[3], row[4]]), [
     ['Opus 5, Fable 5.1', 'ready'],
     ['Haiku', 'rate limited (3m)'],
     ['GPT', 'ready']
   ], 'models sharing a status share a row; one with a status of its own keeps its row');
 
-  // A credit balance is the Spent column restated, so it takes no column of its own.
-  const metered = { id: 'b', name: 'or', provider: 'openrouter', enabled: true, rank: 1, created_at: 1,
-    usage: { observed_at: now, spend: { currency: 'USD', used: 7.5, limit: 10 },
-      windows: [{ name: 'credit', remaining_ratio: 0.25, resets_at: null }, { name: '5h', remaining_ratio: 0.66, resets_at: now + 3600000 }] } };
-  assert.deepEqual(cli.accountWindows([metered], true), ['5h', 'weekly']);
-  assert.ok(cli.accountWindows([metered], false).includes('credit'), 'without a money column the balance still needs one');
-
-  // Each window is one cell: the reset rides with the value it belongs to.
-  const [row] = cli.accountRows([metered], now, ['5h'], state.config(), true);
-  assert.match(row[6], /^66% · /);
-  assert.ok(!row.includes('unknown'), 'nothing to say is a dash, not a word');
+  // Whichever cap has least left is the one that binds, so that is the one shown.
+  const windows = [
+    { name: 'weekly', remaining_ratio: 0.4, resets_at: now + 86400000 },
+    { name: 'weekly-opus', model_pool: 'opus', remaining_ratio: 0.1, resets_at: now + 7200000 }
+  ];
+  assert.equal(cli.slotWindow(windows, 'long').name, 'weekly-opus');
+  assert.equal(cli.slotWindow(windows, 'short'), null, 'no short-term cap is a dash, not an error');
+  // A balance falls on the near horizon, a resetting cap on the far one.
+  assert.equal(cli.slotWindow([{ name: 'credit', remaining_ratio: 0.25 }], 'short').name, 'credit');
+  assert.equal(cli.slotWindow([{ name: 'spend-limit', remaining_ratio: 0.66 }], 'long').name, 'spend-limit');
+  // What a cap reports beside its percentage: a reset if it has one, else money.
+  assert.equal(cli.windowDetail({ resets_at: now + 3600000 }, now), '1h 0m');
+  assert.equal(cli.windowDetail({ resets_at: null, remaining_amount: 2.46 }, now), '$2.46');
+  assert.equal(cli.windowDetail({ resets_at: null }, now), '', 'nothing to add rather than a dash inside the cell');
 });

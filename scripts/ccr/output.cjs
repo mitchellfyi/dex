@@ -36,7 +36,10 @@ function liveScreen() {
         const footer = lines.slice(-Math.min(footerLines, height - 2));
         lines = [...lines.slice(0, height - footer.length - 1), '... use dx accounts to see all rows.', ...footer];
       }
-      process.stdout.write(`\x1b[H${lines.join('\n')}\x1b[J`);
+      // Clear to the end of each line as well as the end of the screen: a
+      // redraw that is narrower than the last one would otherwise leave the
+      // tail of the old row sitting past the new one.
+      process.stdout.write(`\x1b[H${lines.map(line => `${line}\x1b[K`).join('\n')}\x1b[J`);
     },
     close
   };

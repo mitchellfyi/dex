@@ -150,12 +150,24 @@ function resetIn(timestamp, now) {
   const hours = Math.floor(minutes / 60);
   return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
-function accountWindows(items, spend = anySpend(items)) {
-  const names = new Set(items.flatMap(account => (account.usage?.windows || []).map(window => window.name)));
-  // A credit balance is the Spent column said as a percentage. Keep the window
-  // for selection, drop the column that repeats it.
-  if (spend) names.delete('credit');
-  return ['5h', 'weekly', ...[...names].filter(name => name !== '5h' && name !== 'weekly').sort()];
+// Every cap an account has is either the one that comes back soon or the one
+// that comes back later. Naming the columns after the period suited one
+// provider; naming them after the horizon suits all of them.
+const SHORT_TERM = new Set(['5h', 'credit']);
+function windowSlot(name) { return SHORT_TERM.has(name) ? 'short' : 'long'; }
+
+// The cap that binds is the one with least left, so that is the one shown.
+function slotWindow(windows, slot) {
+  const found = windows.filter(window => windowSlot(window.name) === slot);
+  return found.length ? found.reduce((a, b) => (a.remaining_ratio ?? 1) <= (b.remaining_ratio ?? 1) ? a : b) : null;
+}
+
+// What a cap reports beside the percentage: when it comes back, or, for a
+// balance that never resets, how much of it is left.
+function windowDetail(window, now) {
+  const reset = resetIn(window.resets_at, now);
+  if (reset !== '-') return reset;
+  return Number.isFinite(window.remaining_amount) ? `$${window.remaining_amount.toFixed(2)}` : '';
 }
 function accountModels(account, config, now) {
   const ids = [...new Set([config.default_model, ...Object.values(config.phases).flatMap(route => [route.model, ...(route.fallbacks || [])]),
@@ -176,7 +188,7 @@ function spendCell(account) {
 }
 function anySpend(items) { return items.some(account => spendCell(account) !== '-'); }
 
-function accountRows(items, now = Date.now(), windowNames = accountWindows(items), config = state.config(), spend = anySpend(items)) {
+function accountRows(items, now = Date.now(), config = state.config()) {
   // The registry appends on add and reauth, so file order drifts from rank order.
   return policy.rankOrder(items).flatMap(account => accountModels(account, config, now).map(model => {
     const usage = account.usage;
@@ -191,17 +203,17 @@ function accountRows(items, now = Date.now(), windowNames = accountWindows(items
     const reason = reasons[account.cooldown_reason] || 'cooldown';
     const summary = !account.enabled ? 'disabled' : account.status === 'reauth-required' ? 'reauth-required'
       : account.cooldown_until > now ? `${reason} (${policy.retryIn(account.cooldown_until, now)})`
-        : exhausted ? 'quota exhausted' : limits.join('; ') || 'ready';
+        : exhausted ? 'exhausted' : limits.join('; ') || 'ready';
     const status = model ? policy.blockers(account, model, now).map(problem => {
-      const label = problem.reason === 'quota-exhausted' ? `${problem.window} quota exhausted` : reasons[problem.reason] || 'cooldown';
+      const label = problem.reason === 'quota-exhausted' ? 'exhausted' : reasons[problem.reason] || 'cooldown';
       return `${label}${problem.until > now && problem.reason !== 'quota-exhausted' ? ` (${policy.retryIn(problem.until, now)})` : ''}`;
     }).join('; ') || 'ready' : summary;
     return [account.name, account.rank || '-', account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status,
-      ...(spend ? [spendCell(account)] : []), ...windowNames.map(name => {
-      const window = windows.find(item => item.name === name);
+      ...['short', 'long'].map(slot => {
+      const window = slotWindow(windows, slot);
       if (!window) return '-';
-      const reset = resetIn(window.resets_at, now);
-      return `${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : '*'}${reset === '-' ? '' : ` · ${reset}`}`;
+      const detail = windowDetail(window, now);
+      return `${Math.round(window.remaining_ratio * 100)}%${fresh ? '' : '*'}${detail ? ` · ${detail}` : ''}`;
     })];
   }));
 }
@@ -248,13 +260,9 @@ function mergeModelRows(rows) {
 }
 
 function accountTable(items) {
-  const spend = anySpend(items);
-  const windows = accountWindows(items, spend);
-  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', ...(spend ? ['Spent'] : []),
-    ...windows.map(name => name[0].toUpperCase() + name.slice(1).replaceAll('-', ' '))];
-  const first = spend ? 6 : 5;
-  return table(headers, groupByProvider(mergeModelRows(accountRows(items, Date.now(), windows, state.config(), spend))),
-    { rightAlign: [1, ...(spend ? [5] : []), ...windows.map((_, index) => first + index)] });
+  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', 'Short term', 'Long term'];
+  return table(headers, groupByProvider(mergeModelRows(accountRows(items, Date.now()))),
+    { rightAlign: [1, 5, 6] });
 }
 function showAccounts(items) {
   process.stdout.write(accountTable(items));
@@ -578,4 +586,4 @@ if (require.main === module) {
   process.umask(0o077);
   main(process.argv.slice(2)).catch(error => { info(error.message); process.exitCode = 1; });
 }
-module.exports = { clean, parse, question, configure, accountRows, accountTable, groupByProvider, mergeModelRows, accountWindows, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };
+module.exports = { clean, parse, question, configure, accountRows, accountTable, groupByProvider, mergeModelRows, slotWindow, windowDetail, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };
