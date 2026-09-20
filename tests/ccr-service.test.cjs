@@ -80,9 +80,11 @@ test('native credentials are stable per client process and use the configured fa
   assert.deepEqual(await service.control('native-auth', params), first, 'running clients can finish after disabling native defaults');
 });
 
-test('native Codex keeps its configured fallback when it sends the configured primary model', async () => {
+test('a model a native client names explicitly never moves the work to another provider', async () => {
   const config = state.config(); config.native = { enabled: true };
   config.models.find(model => model.id === 'openai/test').upstream_id = 'codex-test';
+  // The automatic route can cross providers; naming a model must not.
+  config.phases[0] = { model: 'openai/test', fallbacks: ['anthropic/test'] };
   config.client_routes = { codex: { model: 'openai/test', fallbacks: ['anthropic/test'] } };
   state.write(state.stateFile('config'), config);
   const { token } = await service.control('native-auth', { client: 'codex', owner_pid: process.pid });
@@ -92,8 +94,10 @@ test('native Codex keeps its configured fallback when it sends the configured pr
     : new Response('{}');
   const input = [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }];
   const response = await send(token, { model: 'codex-test', input });
-  assert.equal(response.status, 200, await response.text());
-  assert.deepEqual(calls.map(call => call.model), ['dex-openai/codex-test', 'dex-anthropic/test']);
+  // Choosing a model chooses its provider too, so the rate limit stops here
+  // rather than quietly spending on a different bill.
+  assert.equal(response.status, 429);
+  assert.deepEqual(calls.map(call => call.model), ['dex-openai/codex-test']);
 });
 
 test('Codex reads a catalogue that mirrors the routed OpenAI model under the dex/active alias', async () => {

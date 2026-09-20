@@ -10,11 +10,33 @@ const config = { models, default_model: models[0].id, phases: { 2: { model: mode
 test('phase routing preserves the configured fallback order', () => {
   assert.deepEqual(policy.route(config, { fixed_phase: 2 }).models.map(x => x.id), ['openai/b', 'anthropic/a']);
 });
-test('native clients can use their own configured route and context budget', () => {
+test('a client route names what that client offers, it does not narrow the automatic route', () => {
   const configured = { ...config, client_routes: { codex: { model: 'openai/b', fallbacks: ['anthropic/a'] } } };
-  assert.deepEqual(policy.route(configured, { client: 'codex' }).models.map(x => x.id), ['openai/b', 'anthropic/a']);
+  // Choosing the automatic option in a native client means the whole pipeline,
+  // the same as a lifecycle gets. A client wanting only its own models picks one.
+  assert.deepEqual(policy.route(configured, { client: 'codex' }).models.map(x => x.id),
+    policy.route(configured, {}).models.map(x => x.id));
+  assert.deepEqual(policy.clientModels(configured, 'codex').models.map(x => x.id), ['openai/b', 'anthropic/a']);
+  assert.equal(policy.clientModels(configured, 'claude'), null, 'a client without a route of its own has none');
+  // The launch budget has to hold every model that client can reach, its own
+  // and the automatic route it can also choose.
   assert.equal(policy.contextLimit(configured, 'codex'), 128000);
-  assert.equal(policy.route(configured, { client: 'claude' }).models[0].id, 'anthropic/a');
+});
+
+test('an explicit model still falls back, but only inside the provider it named', () => {
+  const route = [{ id: 'openrouter/glm', provider: 'openrouter' }, { id: 'openrouter/qwen', provider: 'openrouter' },
+    { id: 'anthropic/opus', provider: 'anthropic' }, { id: 'anthropic/fable', provider: 'anthropic' },
+    { id: 'openai/sol', provider: 'openai' }, { id: 'openai/astra', provider: 'openai' }];
+  const chain = id => policy.explicitChain(route, route.find(m => m.id === id)).map(m => m.id);
+  assert.deepEqual(chain('anthropic/opus'), ['anthropic/opus', 'anthropic/fable']);
+  assert.deepEqual(chain('openai/sol'), ['openai/sol', 'openai/astra']);
+  assert.deepEqual(chain('openrouter/glm'), ['openrouter/glm', 'openrouter/qwen']);
+  // The last model of a provider stops rather than crossing to another one:
+  // choosing a model chooses its bill and its privacy boundary too.
+  assert.deepEqual(chain('anthropic/fable'), ['anthropic/fable']);
+  assert.deepEqual(chain('openai/astra'), ['openai/astra']);
+  // A model that is not on the automatic route is exactly itself.
+  assert.deepEqual(policy.explicitChain(route, { id: 'other/x', provider: 'other' }).map(m => m.id), ['other/x']);
 });
 test('phase override expires while session override remains', () => {
   const override = { model: 'anthropic/a', scope: 'phase', phase: 1 };
@@ -108,7 +130,9 @@ test('manual model overrides inherit the configured phase or client effort', () 
   const configured = { ...config, phases: { 2: { model: 'anthropic/a', effort: 'xhigh' } }, client_routes: { codex: { model: 'openai/b', effort: 'high' } } };
   const session = { fixed_phase: 2, override: { model: 'openai/b', scope: 'session' } };
   assert.equal(policy.route(configured, session).effort, 'xhigh');
-  assert.equal(policy.route(configured, { ...session, client: 'codex' }).effort, 'high');
+  // The automatic route's effort is the phase's, for every client.
+  assert.equal(policy.route(configured, { ...session, client: 'codex' }).effort, 'xhigh');
+  assert.equal(policy.clientModels(configured, 'codex').effort, 'high', 'a client route carries its own');
 });
 test('auth, quota, temporary failures and malformed requests are distinct', () => {
   assert.equal(policy.failure(401).reauth, true);

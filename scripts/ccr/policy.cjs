@@ -108,12 +108,36 @@ function rotateForWave(models, wave) {
   return shift ? [...models.slice(shift), ...models.slice(0, shift)] : models;
 }
 
+// An explicitly chosen model still degrades, but only within the provider it
+// named: choosing a model chooses its provider too, so a failure there must not
+// quietly move the work to a different one — a different bill, a different
+// privacy boundary, a different model family. The order comes from the
+// automatic route, so Opus falls to Fable, Sol to Astra, GLM to Qwen, and the
+// last model of a provider simply stops.
+function explicitChain(routeModels, target) {
+  const index = routeModels.findIndex(item => item.id === target.id);
+  if (index < 0) return [target];
+  return routeModels.slice(index).filter(item => item.provider === target.provider);
+}
+
+// The models a native client offers in its own picker, primary first. Null when
+// that client has no route of its own.
+function clientModels(config, client) {
+  const route = client && config.client_routes?.[client];
+  if (!route?.model) return null;
+  const ids = resolveProfiles(config, [route.model, ...(route.fallbacks || [])]);
+  return { models: [...new Set(ids)].map(id => model(config, id)), effort: route.effort };
+}
+
 function route(config, session) {
   const current = phase(session);
   const policyPhase = Math.min(current, PHASES.length - 1);
   const override = session.override;
-  const clientRoute = session.client && config.client_routes?.[session.client];
-  const configured = clientRoute || config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
+  // A client route names the models that client offers in its own picker; it
+  // does not narrow the automatic route. Choosing the automatic option in a
+  // native client means the whole pipeline, across every provider, the same as
+  // a lifecycle gets — a client that wanted only its own models would pick one.
+  const configured = config.phases[policyPhase] || config.phases[PHASES[policyPhase]] || { model: config.default_model, fallbacks: [] };
   const choice = override && (override.scope === 'session' || override.phase === current || override.phase === policyPhase)
     ? override : configured;
   // Profiles resolve here, where the route is read, so re-pointing one applies
@@ -138,12 +162,13 @@ function modelCapacity(target) {
 
 // The client default is not the provider maximum. Legacy entries remain bounded
 // by their recorded window until discovery supplies an advertised maximum.
+// The budget a client launches with has to hold every model that client can
+// reach: its own, and the automatic route it can also choose.
 function contextLimit(config, client) {
   const clientRoute = client && config.client_routes?.[client];
-  const choices = clientRoute
-    ? [clientRoute.model, ...(clientRoute.fallbacks || [])]
-    : Object.values(config.phases).flatMap(value => [value.model, ...(value.fallbacks || [])]);
-  if (!clientRoute && config.default_model) choices.push(config.default_model);
+  const choices = [...(clientRoute ? [clientRoute.model, ...(clientRoute.fallbacks || [])] : []),
+    ...Object.values(config.phases).flatMap(value => [value.model, ...(value.fallbacks || [])])];
+  if (config.default_model) choices.push(config.default_model);
   if (!choices.length) throw new Error('Choose a default model with dx route configure.');
   const targets = [...new Set(resolveProfiles(config, choices))].map(id => model(config, id));
   const budget = config.context_budget;
@@ -372,4 +397,4 @@ function validateRequest(body, target, protocol = 'messages') {
   // a token budget. The HTTP reader bounds memory; the provider counts tokens.
 }
 
-module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, budgetExceeded, spendResetAt, MAX_BUDGET_WAIT, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, rotateForWave, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };
+module.exports = { PHASES, TERMINAL_PHASE, NATIVE_PROTOCOL, budgetExceeded, spendResetAt, MAX_BUDGET_WAIT, clientModels, explicitChain, PROVIDER_NAMES, PROVIDER_LABELS, PROVIDER_ENDPOINTS, PROFILE, CHAT_EFFORT, chatReasoning, resolveProfiles, rotateForWave, MODEL, model, modelCapacity, phase, route, contextLimit, affinityKey, cooldownKey, candidates, byRank, rankOrder, blockers, retryIn, unavailable, failure, validateRequest };

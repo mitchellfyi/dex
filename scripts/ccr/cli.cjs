@@ -97,10 +97,14 @@ function render(group, action, value, options) {
     }));
     out('Client routes through CCR (used when the client is connected to the router):');
     showTable(['Client', 'Source', 'Model', 'Fallbacks (in order)', 'Effort'], ['claude', 'codex'].map(client => {
-      const configured = value.client_routes?.[client] || value.phases[0] || value.phases.setup || { model: value.default_model };
-      const selected = configured.model ? policy.route(value, { client }) : null;
-      return [client, value.client_routes?.[client] ? 'configured' : 'inherited from setup', selected?.models[0].id || 'not selected',
-        selected?.models.slice(1).map(model => model.id).join(' -> ') || '-', selected?.effort || 'default'];
+      // What this client offers in its own picker. Its automatic option is the
+      // phase route, shown above, so a client route no longer narrows it.
+      const own = policy.clientModels(value, client);
+      const automatic = value.phases[0]?.model || value.phases.setup?.model || value.default_model;
+      const inherited = own || !automatic ? null : policy.route(value, {});
+      const models = own?.models || inherited?.models || [];
+      return [client, own ? 'configured' : 'inherited from setup', models[0]?.id || 'not selected',
+        models.slice(1).map(model => model.id).join(' -> ') || '-', (own?.effort ?? inherited?.effort) || 'default'];
     }));
     out(`Plain CLI routing: ${value.native?.enabled ? 'through CCR; disable with dx router native disable' : 'native configuration (CCR off)'}.`);
     return;

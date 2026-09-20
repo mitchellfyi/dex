@@ -285,8 +285,7 @@ class RouterService {
         const matches = session.client && typeof picked === 'string' && !picked.includes('/') ? config.models.filter(item => (item.upstream_id || item.id.split('/')[1]) === picked) : [];
         if (matches.length > 1) throw new Error('Model name is ambiguous. Use the provider/model ID from dx model list.');
         const requested = policy.model(config, matches[0]?.id || picked);
-        const configuredClientPrimary = session.client && config.client_routes?.[session.client]?.model;
-        if (requested.id !== configuredClientPrimary) selected.models = [requested];
+        selected.models = policy.explicitChain(selected.models, requested);
       }
       const currentRoute = policy.affinityKey(selected, protocol);
       const choices = policy.candidates(state.accounts(), selected, session, Date.now(), protocol);

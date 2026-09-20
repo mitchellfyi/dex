@@ -182,12 +182,14 @@ test('router enable after rescue leaves native CLI routing off', async t => {
   assert.deepEqual([config.claude_file, config.codex_file].map(file => fs.readFileSync(file, 'utf8')), before);
 });
 
-test('native settings use the context budget for each client route', () => {
+test('a client budget covers its own models and the automatic route it can still pick', () => {
   const routing = state.config();
-  routing.models.find(model => model.id === 'openai/test').context_window = 64000;
+  // Only Codex offers the small model, but both clients keep dex/active in
+  // their picker, so neither budget may exceed what the phase route can serve.
+  routing.models.push({ id: 'openai/small', provider: 'openai', context_window: 64000 });
   routing.client_routes = {
     claude: { model: 'anthropic/test', fallbacks: [] },
-    codex: { model: 'openai/test', fallbacks: [] }
+    codex: { model: 'openai/small', fallbacks: [] }
   };
   state.write(state.stateFile('config'), routing);
   native.clientSettings('enable', config, settings);
@@ -197,6 +199,49 @@ test('native settings use the context budget for each client route', () => {
   assert.equal(claude.env.ENABLE_TOOL_SEARCH, 'true');
   assert.equal(codex.model_context_window, 64000);
   assert.equal(codex.model_auto_compact_token_limit, 51200);
+});
+
+test('marking the model Dex installed stays Dex-owned rather than reading as a personal edit', () => {
+  native.clientSettings('enable', config, settings);
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  // An install from before the long-context marker: Dex owns the model field,
+  // and the value in settings is the unmarked one it wrote.
+  const saved = JSON.parse(fs.readFileSync(backup));
+  saved.claude.find(entry => entry.field[0] === 'model').installed = 'dex/active';
+  state.write(backup, saved);
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).model, 'dex/active[1m]');
+  // Enable would refuse over a value it had not recorded, and disable would
+  // leave a routed model name behind instead of restoring the user's.
+  native.clientSettings('enable', config, settings);
+  const result = native.clientSettings('disable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).model, original.model);
+  assert.ok(!result.preserved.includes('claude.model'), 'the marked value is not mistaken for the user\'s own pick');
+});
+
+test('a client route makes that client start on its own model and keeps dex/active offered', () => {
+  const routing = state.config();
+  routing.models.push({ id: 'openai/sol', provider: 'openai', context_window: 128000 });
+  routing.client_routes = {
+    claude: { model: 'anthropic/test', fallbacks: [] },
+    codex: { model: 'openai/sol', fallbacks: [] }
+  };
+  state.write(state.stateFile('config'), routing);
+  native.clientSettings('enable', config, settings);
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  assert.equal(claude.model, 'anthropic/test[1m]');
+  assert.equal(claude.modelPicker.options[0].model, 'dex/active[1m]');
+  // Codex resolves a catalogue slug, not the provider-qualified id.
+  assert.equal(toml(config.codex_file).model, 'sol');
+});
+
+test('a client whose model shares a slug with another provider stays provider-qualified', () => {
+  const routing = state.config();
+  routing.client_routes = { codex: { model: 'openai/test', fallbacks: [] } };
+  state.write(state.stateFile('config'), routing);
+  native.clientSettings('enable', config, settings);
+  assert.equal(toml(config.codex_file).model, 'openai/test');
 });
 
 test('route changes refresh installed context budgets without resetting model choices', async () => {

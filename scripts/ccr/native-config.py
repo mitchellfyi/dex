@@ -141,20 +141,31 @@ def install_compact_window(document, entries, window):
     return sync_context_field(document, entries, field, str(window), "claude.CLAUDE_CODE_AUTO_COMPACT_WINDOW")
 
 
-def mark_long_context(document, models):
+def mark_long_context(document, models, entries=()):
     """Carry the client's long-context marker onto an existing /model choice.
 
     The picked model is the user's, not Dex's, so it is re-marked rather than
     replaced: without the marker the client resolves a recognised name to its
     believed 200k window and compacts against that instead of the route.
+
+    Re-marking a value Dex installed is still Dex's own edit, so ownership
+    follows it. Left behind, the record would read as a personal edit: enable
+    would refuse to run again, and disable would keep a routed model name in
+    settings instead of restoring what the user had.
     """
     current = get_field(document, ["model"])
     if not current.get("present") or not isinstance(current.get("value"), str):
         return False
     plain = re.sub(r"(\[1m\])+$", "", current["value"], flags=re.IGNORECASE)
-    if current["value"] == plain + "[1m]" or plain not in models:
+    marked = plain + "[1m]"
+    if plain not in models:
         return False
-    put_field(document, ["model"], {"present": True, "value": plain + "[1m]"})
+    entry = next((item for item in entries if item["field"] == ["model"]), None)
+    if entry is not None and entry["installed"] in (current["value"], plain):
+        entry["installed"] = marked
+    if current["value"] == marked:
+        return False
+    put_field(document, ["model"], {"present": True, "value": marked})
     return True
 
 
@@ -221,7 +232,7 @@ def apply(request):
                                          str(request["claude_context"]), "claude.CLAUDE_CODE_MAX_CONTEXT_TOKENS")
             changed = install_compact_window(claude, saved["claude"], request["claude_compact_window"]) or changed
             changed = retire_compact_percent(claude, saved["claude"]) or changed
-            changed = mark_long_context(claude, request["claude_models"]) or changed
+            changed = mark_long_context(claude, request["claude_models"], saved["claude"]) or changed
             changed = sync_managed_field(claude, saved["claude"], ["modelPicker"], request["claude_picker"]) or changed
             # Installs predating the long-context beta adopt it here; enable
             # refuses to run once any managed value carries a personal edit.

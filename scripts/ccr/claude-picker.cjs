@@ -27,6 +27,14 @@ function betaHeader(requested) {
 function plainModel(id) { return String(id).replace(/(\[1m\])+$/i, ''); }
 function longContext(id) { return `${plainModel(id)}${LONG_CONTEXT_MARKER}`; }
 
+// A native client starts on the first model of its own route, because running
+// that client directly is a request for that client's models. dex/active stays
+// in the picker one keystroke away, and a Dex lifecycle names it explicitly,
+// so neither choice depends on what the other client is configured to do.
+function clientDefault(config, client) {
+  return (client && config.client_routes?.[client]?.model) || 'dex/active';
+}
+
 function claudePicker(config, client) {
   const clientRoute = client && config.client_routes?.[client];
   const routes = clientRoute ? [clientRoute] : Object.values(config.phases || {});
@@ -44,4 +52,4 @@ function claudePicker(config, client) {
   };
 }
 
-module.exports = { claudePicker, betaHeader, plainModel, longContext, LONG_CONTEXT_BETA, LONG_CONTEXT_MARKER };
+module.exports = { claudePicker, clientDefault, betaHeader, plainModel, longContext, LONG_CONTEXT_BETA, LONG_CONTEXT_MARKER };

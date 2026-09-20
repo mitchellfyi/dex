@@ -6,7 +6,21 @@ const state = require('./state.cjs');
 const policy = require('./policy.cjs');
 const ipc = require('./ipc.cjs');
 const adapter = require('./adapter.cjs');
-const { claudePicker, betaHeader, longContext, plainModel } = require('./claude-picker.cjs');
+const { claudePicker, clientDefault, betaHeader, longContext, plainModel } = require('./claude-picker.cjs');
+
+// Codex looks a model up by the slug its catalogue serves, and falls back to
+// generic metadata — no apply_patch, no skills instructions — for a name it
+// cannot find. Claude's picker carries provider-qualified ids instead, so only
+// Codex needs the slug, and only when that slug is unambiguous on its own.
+function codexModel(config, client) {
+  const id = clientDefault(config, client);
+  if (id === 'dex/active') return id;
+  const name = item => item.upstream_id || item.id.split('/')[1];
+  const slug = name(config.models.find(item => item.id === id) || { id });
+  // The gateway resolves a bare slug the same way, and refuses one that two
+  // registered models answer to, so a shared slug stays provider-qualified.
+  return slug && !slug.includes('/') && config.models.filter(item => name(item) === slug).length === 1 ? slug : id;
+}
 
 const quote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
 const authArgs = client => [path.join(__dirname, 'native.cjs'), 'auth', client, state.root()];
@@ -47,12 +61,18 @@ function clientSettings(action, native, settings, config) {
     request.claude_models = request.claude_picker.options.map(option => plainModel(option.model));
     request.codex_context = policy.contextLimit(config, 'codex');
   } else if (action !== 'disable') {
+    // Both clients are pointed at this address, so a missing or malformed one
+    // installs a base URL that no request can reach and that only shows up as
+    // the client failing on every model. Refuse before touching either file.
+    if (!/^https?:\/\/[^\s"']+$/.test(String(settings?.gateway || ''))) {
+      throw new Error('The router did not report a gateway address. Run dx router status, then dx router restart before enabling native routing.');
+    }
     const claudeContext = policy.contextLimit(config, 'claude');
     const codexContext = policy.contextLimit(config, 'codex');
     const helper = [process.execPath, ...authArgs('claude')].map(quote).join(' ');
     request.claude_fields = [
       { field: ['apiKeyHelper'], value: helper },
-      { field: ['model'], value: longContext('dex/active') },
+      { field: ['model'], value: longContext(clientDefault(config, 'claude')) },
       { field: ['modelPicker'], value: claudePicker(config, 'claude') },
       { field: ['env', 'ANTHROPIC_BASE_URL'], value: `${settings.gateway}/plugins/dex` },
       { field: ['env', 'ANTHROPIC_BETAS'], value: betaHeader(process.env.ANTHROPIC_BETAS) },
@@ -65,7 +85,7 @@ function clientSettings(action, native, settings, config) {
       { field: ['env', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'], value: String(claudeContext) }
     ];
     request.codex_fields = [
-      { field: 'model_provider', value: 'dex-ccr' }, { field: 'model', value: 'dex/active' },
+      { field: 'model_provider', value: 'dex-ccr' }, { field: 'model', value: codexModel(config, 'codex') },
       { field: 'model_context_window', value: codexContext }, { field: 'model_auto_compact_token_limit', value: Math.floor(codexContext * 0.8) }
     ];
     request.provider_content = [
