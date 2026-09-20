@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 const os = require('node:os');
+const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const state = require('./state.cjs');
 const policy = require('./policy.cjs');
@@ -64,8 +65,9 @@ function clientSettings(action, native, settings, config) {
     // Both clients are pointed at this address, so a missing or malformed one
     // installs a base URL that no request can reach and that only shows up as
     // the client failing on every model. Refuse before touching either file.
-    if (!/^https?:\/\/[^\s"']+$/.test(String(settings?.gateway || ''))) {
-      throw new Error('The router did not report a gateway address. Run dx router status, then dx router restart before enabling native routing.');
+    const gateway = settings?.gateway;
+    if (typeof gateway !== 'string' || !/^https?:\/\/[^\s/?#]+$/.test(gateway)) {
+      throw new Error(`The router did not report a usable gateway address (${JSON.stringify(gateway)}). Run dx router status, then dx router restart before enabling native routing.`);
     }
     const claudeContext = policy.contextLimit(config, 'claude');
     const codexContext = policy.contextLimit(config, 'codex');
@@ -74,7 +76,7 @@ function clientSettings(action, native, settings, config) {
       { field: ['apiKeyHelper'], value: helper },
       { field: ['model'], value: longContext(clientDefault(config, 'claude')) },
       { field: ['modelPicker'], value: claudePicker(config, 'claude') },
-      { field: ['env', 'ANTHROPIC_BASE_URL'], value: `${settings.gateway}/plugins/dex` },
+      { field: ['env', 'ANTHROPIC_BASE_URL'], value: `${gateway}/plugins/dex` },
       { field: ['env', 'ANTHROPIC_BETAS'], value: betaHeader(process.env.ANTHROPIC_BETAS) },
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION'], value: longContext('dex/active') },
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME'], value: 'Dex automatic route' },
@@ -91,7 +93,7 @@ function clientSettings(action, native, settings, config) {
     request.provider_content = [
       '# Dex native routing: managed provider',
       '[model_providers.dex-ccr]', 'name = "Dex subscription accounts"',
-      `base_url = ${JSON.stringify(`${settings.gateway}/plugins/dex/v1`)}`,
+      `base_url = ${JSON.stringify(`${gateway}/plugins/dex/v1`)}`,
       'wire_api = "responses"', 'supports_websockets = false',
       '', '[model_providers.dex-ccr.auth]',
       `command = ${JSON.stringify(process.execPath)}`, `args = ${JSON.stringify(authArgs('codex'))}`,
@@ -117,7 +119,9 @@ async function disable({ router = false } = {}) {
     if (config.native) config.native.enabled = false;
     if (router) config.enabled = false;
     if (restored || router) state.write(state.stateFile('config'), config);
-    if (!restored) return 'Native routing is already disabled.';
+    if (!restored) return fs.existsSync(path.join(state.root(), 'credentials', 'native-client-settings.json'))
+      ? 'Native routing is already disabled, but its ownership record survives: claude and codex may still carry Dex-owned settings. Run dx router native enable to re-adopt them, or follow the recovery steps in docs/subscription-routing.md if enable reports edited settings.'
+      : 'Native routing is already disabled.';
     return `Native routing disabled. Previous client defaults restored.${restored.preserved.length ? ` Kept your edits to ${restored.preserved.join(', ')}.` : ''}`;
   });
 }

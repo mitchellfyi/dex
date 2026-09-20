@@ -393,6 +393,32 @@ test('disable preserves routing settings the user changed after installation', (
   assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).model, 'user-choice');
 });
 
+test('enable refuses a malformed gateway instead of writing it into client settings', () => {
+  const before = fs.readFileSync(config.claude_file, 'utf8');
+  for (const broken of [undefined, {}, { gateway: undefined }, { gateway: 'undefined' },
+    { gateway: 'http://127.0.0.1:34567/plugins/dex' }, { gateway: 'file:///tmp/router' }]) {
+    assert.throws(() => native.clientSettings('enable', config, broken), /did not report a usable gateway address/);
+  }
+  assert.equal(fs.readFileSync(config.claude_file, 'utf8'), before);
+  assert.ok(!fs.existsSync(path.join(directory, 'credentials/native-client-settings.json')), 'nothing is owned until a valid enable succeeds');
+});
+
+test('disable names a surviving ownership record instead of a bare already-disabled', async () => {
+  native.clientSettings('enable', config, settings);
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  state.write(state.stateFile('config'), routing);
+  // The incident shape: the flag went false without disable running, so the
+  // installed files and the ownership record outlive it.
+  routing.native.enabled = false;
+  state.write(state.stateFile('config'), routing);
+  const message = await native.command('disable');
+  assert.match(message, /ownership record survives/);
+  assert.match(message, /dx router native enable/);
+  assert.ok(fs.existsSync(path.join(directory, 'credentials/native-client-settings.json')), 'the record stays for the recovery path');
+  fs.rmSync(path.join(directory, 'credentials/native-client-settings.json'));
+  assert.equal(await native.command('disable'), 'Native routing is already disabled.');
+});
+
 test('malformed config or an unowned provider leaves all client files unchanged', () => {
   fs.writeFileSync(config.codex_file, 'invalid TOML = [');
   assert.throws(() => native.clientSettings('enable', config, settings), /Native client setup failed/);
