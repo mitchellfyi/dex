@@ -80,6 +80,7 @@ For `env_var: DX_PROVIDER_ENGINE`, `guard-handler.py` treats the current Dex ses
 | `warn-await-in-loop` | file | warn | `await` directly inside a loop body, which can serialize independent I/O. Uses the `await-in-loop` detector: handles common brace- and colon-delimited loop bodies, skips async iteration forms and awaits inside nested closures or methods |
 | `warn-review-assessment-bash` | bash | warn | Any Bash command while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor is read-only |
 | `warn-review-assessment-file-edits` | file | warn | Any file edit while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor must not modify the tree |
+| `warn-ccr-live-state` | bash | warn | Ad-hoc `node`/`python` evaluation (`-e`, `-p`, `-c`, stdin heredoc) referencing CCR router internals (`scripts/ccr/` modules such as `native.cjs`, `state.cjs`, `service.cjs`, or calls to `clientSettings`, `syncContext`, `saveBackend`) or the live router state under `~/.dex/router/`; the sanctioned paths are the `dx router` CLI and a `DEX_ROUTER_HOME` sandbox, and writes outside them have locked users out of `claude` and `codex` |
 
 ### Built-in detectors
 

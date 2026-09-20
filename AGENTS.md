@@ -216,7 +216,8 @@ env_value: optional-exact-value
 - Built-in guards (in `hooks/guards/`, listed by their `name:` value — don't duplicate these):
   `warn-claude-attribution`, `warn-destructive-commands`, `warn-raw-codex-delegation`,
   `warn-review-assessment-bash`, `warn-review-assessment-file-edits`,
-  `warn-await-in-loop`, `warn-hardcoded-secrets`, `warn-sensitive-files`
+  `warn-await-in-loop`, `warn-hardcoded-secrets`, `warn-sensitive-files`,
+  `warn-ccr-live-state`
 - Every built-in guard advises rather than denies. The message reaches the agent as context
   and the tool call proceeds — the agent is expected to read it and decide, which is why the
   wording is guidance rather than a verdict. `action: block` still works for anyone who wants
@@ -282,6 +283,38 @@ Both interactive providers capture their exact conversation ID at startup for cr
 resumption. Claude's stable Dex session name and Codex's cwd-scoped `--last` remain fallbacks
 for lifecycles created before capture existed. The wrapper works under any profile, so a
 Claude-engine run can hand individual tasks to Codex.
+
+### CCR router live state
+
+`scripts/ccr/` is not ordinary repo code: it drives the user's live client
+configuration. `~/.claude/settings.json` (apiKeyHelper, `ANTHROPIC_BASE_URL`,
+model picker), `~/.codex/config.toml` (the `dex-ccr` provider), and
+`~/.dex/router/` (`config.json`, `backend.json`, and the ownership record
+`credentials/native-client-settings.json`) are what let the user run claude
+and codex at all. An agent that corrupts them takes away the user's ability
+to run any local agent, including one that could repair the damage. The
+`warn-ccr-live-state` guard flags ad-hoc interpreter access to these modules
+and state paths; these rules are what its message points at.
+
+- Never exercise router internals (`clientSettings`, `syncContext`,
+  `saveBackend`, `state.write`) ad hoc against the real home directory. Tests
+  sandbox with `DEX_ROUTER_HOME=$(mktemp -d)` plus fixture
+  `CLAUDE_CONFIG_DIR`/`CODEX_HOME`; copy `tests/ccr-native.test.cjs`.
+- Real changes go through the CLI (`dx router …` =
+  `node scripts/ccr/cli.cjs router …`). It holds the config lock, reads the
+  live gateway from `state.backend()`, and keeps `config.native.enabled` in
+  step with the installed client files. A direct `clientSettings("enable", …)`
+  call with a hand-built `{ gateway }` wrote
+  `ANTHROPIC_BASE_URL=undefined/plugins/dex` into the live settings once and
+  deadlocked `native enable` and `native disable`.
+- Invariants: gateway ports survive restarts only while
+  `config.native.enabled` is true, and both client files pin the port;
+  `native enable` refuses to run when the ownership record and the live files
+  disagree; `native disable` restores only when the flag is true. Drift
+  between flag, record, and files is a lockout.
+- If the live state is already inconsistent, follow the recovery steps in
+  docs/subscription-routing.md § Failures and recovery. Snapshot every file
+  before touching anything.
 
 ### Hook integration
 

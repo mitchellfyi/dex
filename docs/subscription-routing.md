@@ -747,6 +747,46 @@ sessions. Disabling affects new launches; active sessions can finish. Select
 `claude-subscription` or `codex-subscription` through `dx provider use` to run
 directly again.
 
+### Inconsistent native routing state
+
+`dx router native enable` reports that native settings were edited, while
+`dx router native disable` says native routing is already disabled, and plain
+`claude` fails with `API Error: Invalid URL` or a failing apiKeyHelper.
+
+The three pieces of native routing disagree. The client files
+(`~/.claude/settings.json`, `~/.codex/config.toml`) still carry Dex-owned
+values, the ownership record
+(`~/.dex/router/credentials/native-client-settings.json`) disagrees with at
+least one of them, and `native.enabled` in `~/.dex/router/config.json` is
+false. Enable refuses to adopt files that drifted from the record; disable
+believes there is nothing installed to restore. Restarts make it worse while
+the flag is false: port preservation is tied to `native.enabled`, so each
+`dx router restart` can move the gateway to a new port, and the
+`ANTHROPIC_BASE_URL` both clients carry silently goes stale.
+
+This state comes from something writing the client files outside the CLI,
+usually an ad-hoc script calling router internals with hand-built arguments.
+
+To repair it:
+
+1. Snapshot every file involved before touching anything: both client files,
+   `config.json`, `backend.json`, and the ownership record.
+2. Compare each `installed` value in the ownership record against the live
+   client files and note every mismatch. `backend.json` names the gateway the
+   clients should point at.
+3. Align each drifted field with what the ownership record says. The usual
+   drifts are a `/model` choice that rewrote `model`, and a stale base URL.
+4. Run `dx router native enable`. It rewrites both clients against the live
+   gateway, refreshes the ownership record, and sets `native.enabled`, which
+   re-arms port preservation for restarts.
+5. Verify end to end: the apiKeyHelper command from `~/.claude/settings.json`
+   prints a token; `GET <gateway>/plugins/dex/v1/models` with that token
+   returns 200; `claude -p 'reply OK'` completes. Restart open client
+   sessions afterwards, because a running process keeps the old URL in memory.
+
+Experiments with router code belong in a `DEX_ROUTER_HOME=$(mktemp -d)`
+sandbox with fixture client directories, the way `tests/ccr-*.test.cjs` run.
+
 ## Dependency choice and upgrades
 
 Dex uses the full

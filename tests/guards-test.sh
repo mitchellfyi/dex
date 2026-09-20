@@ -82,6 +82,26 @@ assert_raw_codex_clean() {
   fi
 }
 
+assert_ccr_live_state_warns() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if [[ "${GUARD_OUT}" == *'warn-ccr-live-state'* ]]; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL (expected CCR live-state warning): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_ccr_live_state_clean() {
+  run_bash_guard "$(mkbashpayload "$2")"
+  if [[ "${GUARD_OUT}" == *'warn-ccr-live-state'* ]]; then
+    printf 'FAIL (CCR live-state false positive): %s\n' "$1" >&2
+    fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
+  fi
+}
+
 # The commit event carries the committed file names and the subject line in
 # CLAUDE_TOOL_USE_INPUT rather than a JSON payload — see hooks/post-commit-guard.sh.
 run_commit_guard() {
@@ -294,6 +314,25 @@ assert_raw_codex_blocks "the same value indented" \
   'printf "  codex exec build\n" | xargs -I{} bash -c '\''{}'\'''
 assert_raw_codex_clean "a readable value that does not" \
   'printf "build\n" | xargs -I{} make {}'
+
+# --- ad-hoc access to CCR router internals or the live router state ---
+assert_ccr_live_state_warns "node -e calling into the native settings writer" \
+  'node -e '\''const native = require("./scripts/ccr/native.cjs"); native.clientSettings("enable", {}, { gateway: undefined })'\'''
+assert_ccr_live_state_warns "python -c reading the ownership record" \
+  'python3 -c "import json; print(json.load(open('\''/Users/m12n/.dex/router/credentials/native-client-settings.json'\'')))"'
+assert_ccr_live_state_warns "a heredoc script against the router state" \
+  'python3 - <<'\''PYEOF'\''
+import json
+json.load(open("/home/user/.dex/router/config.json"))
+PYEOF'
+assert_ccr_live_state_clean "the sanctioned CLI" \
+  'node scripts/ccr/cli.cjs router native status'
+assert_ccr_live_state_clean "the test suite" \
+  'node --test tests/ccr-native.test.cjs'
+assert_ccr_live_state_clean "an unrelated inline script" \
+  'node -e "console.log(require('\''fs'\'').existsSync('\''/tmp/x'\''))"'
+assert_ccr_live_state_clean "a repo helper with no eval flag" \
+  'python3 scripts/dex_redact.py'
 
 # --- sensitive files in a commit (the only guard on the commit event) ---
 assert_sensitive_warns "a dotenv file" \
