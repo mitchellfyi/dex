@@ -728,3 +728,25 @@ test('the accounts table keeps every reading without a column or row per model',
   assert.equal(cli.windowDetail({ resets_at: null, remaining_amount: 2.46 }, now), '$2.46');
   assert.equal(cli.windowDetail({ resets_at: null }, now), '', 'nothing to add rather than a dash inside the cell');
 });
+
+test('profile output is a table, not the raw value the command happens to return', t => {
+  // list returns an array and set returns the whole config. Neither had a
+  // render branch, so one printed [] and the other dumped every config key.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dex-ccr-profile-render-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, DEX_ROUTER_HOME: dir, CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), CODEX_HOME: path.join(dir, 'codex') };
+  const run = (...args) => spawnSync('node', ['scripts/ccr/cli.cjs', ...args], { encoding: 'utf8', env });
+
+  const empty = run('profile', 'list');
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.match(empty.stdout, /No profiles assigned/);
+  assert.doesNotMatch(empty.stdout, /^\[\]/m, 'an empty list is a sentence, not JSON');
+  assert.equal(JSON.parse(run('profile', 'list', '--json').stdout).length, 0, '--json still emits the value itself');
+
+  assert.equal(run('model', 'add', 'anthropic/claude-opus-5', '--context', '200000', '--tools').status, 0);
+  const set = run('profile', 'set', 'cheap', 'anthropic/claude-opus-5');
+  assert.equal(set.status, 0, set.stderr);
+  assert.match(set.stdout, /@cheap\s+anthropic\/claude-opus-5/, 'set shows the profile it just assigned');
+  assert.doesNotMatch(set.stdout, /"default_model"|"models"/, 'set does not dump the config it returns');
+  assert.match(run('profile', 'list').stdout, /@cheap\s+anthropic\/claude-opus-5/);
+});

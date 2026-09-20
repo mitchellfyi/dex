@@ -131,6 +131,15 @@ function render(group, action, value, options) {
     if (value.native_routing) out('Restore independent claude and codex launches with dx router native disable, then start new CLI sessions.');
     return;
   }
+  if (group === 'profile') {
+    // set and clear return the whole config; list returns the pairs. Both end
+    // up as the same table, because what the caller wants to see either way is
+    // the names a route may now use.
+    const profiles = Array.isArray(value) ? value : Object.entries(value?.profiles || {}).map(([name, model]) => ({ name, model }));
+    if (!profiles.length) { out('No profiles assigned. Name one with dx profile set <name> <provider/model>.'); return; }
+    showTable(['Profile', 'Model'], profiles.map(profile => [`@${profile.name}`, profile.model]));
+    return;
+  }
   display(value, false);
 }
 async function configure(change, catalogueChange = false) {
