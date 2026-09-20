@@ -583,7 +583,7 @@ Choose the existing MCP servers a Dex-launched Claude session needs:
 ```sh
 dx context scope --include linear --include linear-server --include github \
   --include playwright --include codegraph --include openaiDeveloperDocs \
-  --include devserver-db
+  --include devbox-db
 dx context scope off
 ```
 
