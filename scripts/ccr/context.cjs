@@ -4,6 +4,8 @@ const path = require('node:path');
 const os = require('node:os');
 const state = require('./state.cjs');
 const policy = require('./policy.cjs');
+const { LONG_CONTEXT_BETA, LONG_CONTEXT_MARKER } = require('./claude-picker.cjs');
+const LONG_CONTEXT_MARKER_PATTERN = new RegExp(`${LONG_CONTEXT_MARKER.replace(/[[\]]/g, '\\$&')}$`, 'i');
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const optionalCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 const label = value => typeof value === 'string' && /^[A-Za-z0-9_.:/-]{1,180}$/.test(value) ? value : 'unknown';
@@ -82,6 +84,36 @@ function transcriptPath(session) {
   return path.join(root, 'projects', session.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${session.conversation_id}.jsonl`);
 }
 
+// What the installed client settings actually make Claude Code do, which is
+// not what the route configures. The client resolves a model's window locally
+// from its name before any request, so an install left behind by an older Dex
+// keeps compacting against a window the route never chose and nothing else in
+// this report would show it. Read-only: dx router native sync installs the
+// current values without restarting the router.
+function clientSettings(config) {
+  if (!config.enabled || !config.native?.enabled) return null;
+  const file = config.native.claude_file
+    || path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+  let claude;
+  try { claude = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { return { file, stale: [error.code === 'ENOENT' ? 'No client settings are installed.' : 'Client settings could not be read.'] }; }
+  const budget = policy.contextLimit(config, 'claude');
+  const env = claude.env || {};
+  const marked = typeof claude.model === 'string' && LONG_CONTEXT_MARKER_PATTERN.test(claude.model);
+  const report = { file, model: label(claude.model || 'none'), long_context: marked,
+    max_context_tokens: optionalCount(Number(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS)),
+    auto_compact_window: optionalCount(Number(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW)),
+    long_context_beta: (env.ANTHROPIC_BETAS || '').split(',').includes(LONG_CONTEXT_BETA),
+    tool_search: env.ENABLE_TOOL_SEARCH === 'true', stale: [] };
+  if (!marked) report.stale.push(`The installed model ${report.model} carries no ${LONG_CONTEXT_MARKER} marker, so the client resolves its own window and ignores CLAUDE_CODE_MAX_CONTEXT_TOKENS.`);
+  if (report.max_context_tokens !== budget) report.stale.push(`CLAUDE_CODE_MAX_CONTEXT_TOKENS is ${env.CLAUDE_CODE_MAX_CONTEXT_TOKENS ?? 'unset'}, not the route budget ${budget}.`);
+  if (report.auto_compact_window === null) report.stale.push('CLAUDE_CODE_AUTO_COMPACT_WINDOW is unset, so compaction follows the window the client resolved rather than the route budget.');
+  if (env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE !== undefined) report.stale.push(`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is ${env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}; Dex no longer sets a percentage and states the window instead.`);
+  if (!report.long_context_beta) report.stale.push('ANTHROPIC_BETAS does not request the 1M context beta, so the provider caps input below the route budget.');
+  if (!report.tool_search) report.stale.push('ENABLE_TOOL_SEARCH is not on, so every tool definition loads up front and the conversation starts larger than it needs to.');
+  return report;
+}
+
 async function doctor(options = {}) {
   const config = state.config();
   const id = options.session || process.env.DX_ROUTER_SESSION_ID;
@@ -93,7 +125,7 @@ async function doctor(options = {}) {
     current_model: session?.current_model || null, mcp_scope: session?.mcp_scope || null,
     models: config.models.map(model => ({ id: model.id, default: model.default_context_window || model.context_window,
       maximum: policy.modelCapacity(model), source: model.context_source || 'legacy', observed_at: model.observed_at || null })),
-    last_request: session?.last_request || null, transcript: null, advice: [] };
+    last_request: session?.last_request || null, client_settings: clientSettings(config), transcript: null, advice: [] };
   const file = options.transcript || transcriptPath(session);
   if (file) {
     try { report.transcript = await readTranscript(file, session?.context_limit || budget); }
@@ -102,6 +134,7 @@ async function doctor(options = {}) {
       report.transcript_error = error.code === 'ENOENT' ? 'No retained transcript was found for this conversation.' : 'Transcript could not be inspected safely.';
     }
   }
+  if (report.client_settings?.stale.length) report.advice.push(`Installed client settings do not match this Dex: ${report.client_settings.stale.join(' ')} Run dx router native sync, then start a new client launch.`);
   if (report.restart_required) report.advice.push('Resume the saved conversation in a new client launch to use the configured budget; an existing process retains its launch budget.');
   if (report.transcript?.thrashing || report.transcript?.near_limit_after_compact) report.advice.push('Compaction leaves too little headroom. Inspect tool/schema and restored-skill sizes, scope MCPs to this worktree, and correct the context budget before resuming. Do not repeat compaction or clear the transcript blindly.');
   if (report.transcript?.tool_count > 80) report.advice.push('This session has a large tool set. Use a scoped MCP profile and one browser provider.');
@@ -134,4 +167,4 @@ async function refresh(configure) {
   });
   return { updated, message: 'Provider defaults and maximum windows refreshed. Running clients retain their launch budget; resume them after selecting the operating budget.' };
 }
-module.exports = { readTranscript, doctor, refresh };
+module.exports = { readTranscript, clientSettings, doctor, refresh };

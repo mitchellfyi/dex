@@ -119,3 +119,29 @@ test('frequently restored skill entrypoints stay small and point at their comple
     assert.ok(workflow.length > 5000, `${name} workflow must retain its full contract`);
   }
 });
+
+test('doctor names the installed client settings that predate this Dex', async () => {
+  const claude_file = path.join(directory, 'claude-settings.json');
+  state.write(state.stateFile('config'), { version: 1, enabled: true, models: [{ id: 'anthropic/test', context_window: 1000000 }],
+    phases: {}, default_model: 'anthropic/test', context_budget: 800000,
+    native: { enabled: true, claude_file, codex_file: path.join(directory, 'codex.toml') } });
+  // The shape an install from before the long-context repair leaves behind.
+  fs.writeFileSync(claude_file, JSON.stringify({ model: 'anthropic/test',
+    env: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '800000', CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '80' } }), { mode: 0o600 });
+  const stale = (await context.doctor()).client_settings;
+  assert.equal(stale.long_context, false);
+  assert.equal(stale.auto_compact_window, null);
+  assert.equal(stale.long_context_beta, false);
+  assert.equal(stale.tool_search, false);
+  assert.equal(stale.stale.length, 5, 'the marker, window, percentage, beta and tool search are each named');
+  assert.match((await context.doctor()).advice.join(' '), /dx router native sync/);
+
+  // A current install has nothing to report, and the section is absent when
+  // Dex does not own the client's settings at all.
+  fs.writeFileSync(claude_file, JSON.stringify({ model: 'anthropic/test[1m]',
+    env: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '800000', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '800000',
+      ANTHROPIC_BETAS: 'context-1m-2025-08-07', ENABLE_TOOL_SEARCH: 'true' } }), { mode: 0o600 });
+  assert.deepEqual((await context.doctor()).client_settings.stale, []);
+  const config = state.config(); config.native.enabled = false; state.write(state.stateFile('config'), config);
+  assert.equal((await context.doctor()).client_settings, null);
+});
