@@ -8,7 +8,7 @@ const { LONG_CONTEXT_BETA, LONG_CONTEXT_MARKER } = require('./claude-picker.cjs'
 const LONG_CONTEXT_MARKER_PATTERN = new RegExp(`${LONG_CONTEXT_MARKER.replace(/[[\]]/g, '\\$&')}$`, 'i');
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const optionalCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
-const label = value => typeof value === 'string' && /^[A-Za-z0-9_.:/-]{1,180}$/.test(value) ? value : 'unknown';
+const label = value => typeof value === 'string' && /^[A-Za-z0-9_.:/[\]-]{1,180}$/.test(value) ? value : 'unknown';
 const timestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
 
 async function readTranscript(file, budget) {

@@ -502,3 +502,25 @@ test('an install predating the long-context repair is brought current by context
   assert.equal(native.syncContext(routing).changed, false);
   native.clientSettings('enable', config, settings);
 });
+
+test('enable retires the pinned compaction percentage that doctor points at', () => {
+  native.clientSettings('enable', config, settings);
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  // An install from before the repair: Dex owns a pinned percentage that the
+  // current lineup no longer installs.
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  const saved = JSON.parse(fs.readFileSync(backup));
+  claude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '80';
+  saved.claude.push({ field: ['env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'], original: { present: false }, installed: '80' });
+  fs.writeFileSync(config.claude_file, JSON.stringify(claude)); state.write(backup, saved);
+  // dx router native sync runs the enable action, and it is what doctor
+  // advises, so it has to be able to clear this.
+  native.clientSettings('enable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined);
+  assert.ok(!JSON.parse(fs.readFileSync(backup)).claude.some(entry => entry.field[1] === 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'));
+  // A percentage the user set themselves is theirs and survives.
+  const mine = JSON.parse(fs.readFileSync(config.claude_file));
+  mine.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '55'; fs.writeFileSync(config.claude_file, JSON.stringify(mine));
+  native.clientSettings('enable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '55');
+});

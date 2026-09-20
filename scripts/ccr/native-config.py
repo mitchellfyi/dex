@@ -313,6 +313,10 @@ def apply(request):
         for entry in codex_fields:
             codex_source = set_root(codex_source, entry["field"], entry["value"])
             next(item for item in saved["codex"] if item["field"] == entry["field"])["installed"] = entry["value"]
+        # An install that predates the long-context repair still carries the
+        # pinned percentage. sync is what doctor points at, so it has to be
+        # able to retire it; only the sync-context path did before.
+        retire_compact_percent(claude, saved["claude"])
         saved["provider_content"] = request["provider_content"]
         codex_source = codex_source.rstrip() + "\n\n" + saved["provider_content"]
     tomllib.loads(codex_source)
