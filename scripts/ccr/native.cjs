@@ -72,10 +72,14 @@ function clientSettings(action, native, settings, config) {
     const claudeContext = policy.contextLimit(config, 'claude');
     const codexContext = policy.contextLimit(config, 'codex');
     const helper = [process.execPath, ...authArgs('claude')].map(quote).join(' ');
+    const picker = claudePicker(config, 'claude');
+    // Re-installing keeps a model this route offers, because picking one is
+    // using the picker Dex installed rather than editing the settings file.
+    request.claude_models = picker.options.map(option => plainModel(option.model));
     request.claude_fields = [
       { field: ['apiKeyHelper'], value: helper },
       { field: ['model'], value: longContext(clientDefault(config, 'claude')) },
-      { field: ['modelPicker'], value: claudePicker(config, 'claude') },
+      { field: ['modelPicker'], value: picker },
       { field: ['env', 'ANTHROPIC_BASE_URL'], value: `${gateway}/plugins/dex` },
       { field: ['env', 'ANTHROPIC_BETAS'], value: betaHeader(process.env.ANTHROPIC_BETAS) },
       { field: ['env', 'ANTHROPIC_CUSTOM_MODEL_OPTION'], value: longContext('dex/active') },

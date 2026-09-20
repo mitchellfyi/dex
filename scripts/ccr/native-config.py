@@ -148,10 +148,11 @@ def mark_long_context(document, models, entries=()):
     replaced: without the marker the client resolves a recognised name to its
     believed 200k window and compacts against that instead of the route.
 
-    Re-marking a value Dex installed is still Dex's own edit, so ownership
-    follows it. Left behind, the record would read as a personal edit: enable
-    would refuse to run again, and disable would keep a routed model name in
-    settings instead of restoring what the user had.
+    Ownership follows the marked name, whether Dex installed it or the user
+    picked it from the picker Dex installed. Left behind, the record would
+    read as a personal edit: enable would refuse to run again, and disable
+    would keep a routed model name in settings instead of restoring what the
+    user had.
     """
     current = get_field(document, ["model"])
     if not current.get("present") or not isinstance(current.get("value"), str):
@@ -161,12 +162,27 @@ def mark_long_context(document, models, entries=()):
     if plain not in models:
         return False
     entry = next((item for item in entries if item["field"] == ["model"]), None)
-    if entry is not None and entry["installed"] in (current["value"], plain):
+    if entry is not None:
         entry["installed"] = marked
     if current["value"] == marked:
         return False
     put_field(document, ["model"], {"present": True, "value": marked})
     return True
+
+
+def picked_model(document, models):
+    """The installed model, marked, when this route offers it; otherwise None.
+
+    Dex installs a picker precisely so /model works, so a name it offers is
+    Dex's own doing. Enable must not read the pick as a hand edit and refuse
+    to run, and re-installing must not quietly move the user back onto the
+    route default.
+    """
+    current = get_field(document, ["model"])
+    if not current.get("present") or not isinstance(current.get("value"), str):
+        return None
+    plain = re.sub(r"(\[1m\])+$", "", current["value"], flags=re.IGNORECASE)
+    return plain + "[1m]" if plain in models else None
 
 
 def sync_managed_field(document, entries, field, value):
@@ -260,6 +276,7 @@ def apply(request):
         else:
             preserved.append("codex.model_providers.dex-ccr")
     else:
+        offered = picked_model(claude, request.get("claude_models", []))
         if saved["provider_content"]:
             if saved["provider_content"] not in sources[codex_file]:
                 raise ValueError("Native Codex settings were edited. Disable native routing before enabling it again.")
@@ -267,6 +284,8 @@ def apply(request):
                 if get_field(codex, [entry["field"]]) != {"present": True, "value": entry["installed"]}:
                     raise ValueError("Native Codex settings were edited. Disable native routing before enabling it again.")
             for entry in saved["claude"]:
+                if entry["field"] == ["model"] and offered:
+                    continue
                 if get_field(claude, entry["field"]) != {"present": True, "value": entry["installed"]}:
                     raise ValueError("Native Claude settings were edited. Disable native routing before enabling it again.")
         # A newer Dex manages a field this install predates. Record the user's
@@ -285,8 +304,9 @@ def apply(request):
             if entry["field"] == ["env", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"]:
                 install_compact_window(claude, saved["claude"], int(entry["value"]))
                 continue
-            put_field(claude, entry["field"], {"present": True, "value": entry["value"]})
-            next(item for item in saved["claude"] if item["field"] == entry["field"])["installed"] = entry["value"]
+            value = offered if entry["field"] == ["model"] and offered else entry["value"]
+            put_field(claude, entry["field"], {"present": True, "value": value})
+            next(item for item in saved["claude"] if item["field"] == entry["field"])["installed"] = value
         codex_source = sources[codex_file]
         if saved["provider_content"]:
             codex_source = codex_source.replace(saved["provider_content"], "", 1)

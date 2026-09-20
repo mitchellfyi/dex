@@ -437,3 +437,68 @@ test('TOML root edits respect multiline strings and arrays', () => {
   assert.equal(restored.model_provider, 'work'); assert.deepEqual(restored.values, [['nested array']]);
   assert.match(restored.instructions, /model_provider = "in prose"/);
 });
+
+test('a model picked from the installed picker survives sync instead of wedging it', () => {
+  native.clientSettings('enable', config, settings);
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  // Dex installs the picker to invite /model, so a name it offers is Dex's
+  // own doing rather than a hand edit of the settings file.
+  const picked = claude.modelPicker.options.at(-1).model;
+  assert.notEqual(picked, claude.model);
+  claude.model = picked; fs.writeFileSync(config.claude_file, JSON.stringify(claude));
+  native.clientSettings('enable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).model, picked, 'the pick survives a re-install');
+  const result = native.clientSettings('disable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).model, original.model);
+  assert.ok(!result.preserved.includes('claude.model'), 'an offered model is not mistaken for a personal edit');
+});
+
+test('context sync follows a picked model so ownership keeps describing the file', () => {
+  native.clientSettings('enable', config, settings);
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  const picked = claude.modelPicker.options.at(-1).model;
+  claude.model = picked; fs.writeFileSync(config.claude_file, JSON.stringify(claude));
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  native.syncContext(routing);
+  const saved = JSON.parse(fs.readFileSync(backup));
+  assert.equal(saved.claude.find(entry => entry.field[0] === 'model').installed, picked);
+  const result = native.clientSettings('disable', config, settings);
+  assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).model, original.model);
+  assert.ok(!result.preserved.includes('claude.model'));
+});
+
+test('an install predating the long-context repair is brought current by context sync alone', () => {
+  native.clientSettings('enable', config, settings);
+  const backup = path.join(directory, 'credentials/native-client-settings.json');
+  const claude = JSON.parse(fs.readFileSync(config.claude_file));
+  const saved = JSON.parse(fs.readFileSync(backup));
+  // The shape an install from before the repair leaves behind: an unmarked
+  // model and picker, a pinned compaction percentage, and none of the fields
+  // Dex has taken over since.
+  claude.model = 'dex/active';
+  claude.modelPicker.options = claude.modelPicker.options.map(option => ({ ...option, model: option.model.replace('[1m]', '') }));
+  claude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '80';
+  for (const key of ['CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'ANTHROPIC_BETAS', 'ENABLE_TOOL_SEARCH']) delete claude.env[key];
+  saved.claude.find(entry => entry.field[0] === 'model').installed = 'dex/active';
+  saved.claude.find(entry => entry.field[0] === 'modelPicker').installed = claude.modelPicker;
+  saved.claude = saved.claude.filter(entry => !['CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'ANTHROPIC_BETAS', 'ENABLE_TOOL_SEARCH'].includes(entry.field[1]));
+  saved.claude.push({ field: ['env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'], original: { present: false }, installed: '80' });
+  fs.writeFileSync(config.claude_file, JSON.stringify(claude)); state.write(backup, saved);
+
+  const routing = state.config(); routing.native = { ...config, enabled: true };
+  assert.equal(native.syncContext(routing).changed, true);
+  const repaired = JSON.parse(fs.readFileSync(config.claude_file));
+  const budget = String(require('../scripts/ccr/policy.cjs').contextLimit(routing, 'claude'));
+  assert.equal(repaired.model, 'dex/active[1m]');
+  assert.ok(repaired.modelPicker.options.every(option => option.model.endsWith('[1m]')));
+  assert.equal(repaired.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined);
+  assert.equal(repaired.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, budget);
+  assert.equal(repaired.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, budget);
+  assert.match(repaired.env.ANTHROPIC_BETAS, /context-1m/);
+  assert.equal(repaired.env.ENABLE_TOOL_SEARCH, 'true');
+  // A repaired install is already current, so the next sync is a no-op and
+  // enable no longer reads the repair as a personal edit.
+  assert.equal(native.syncContext(routing).changed, false);
+  native.clientSettings('enable', config, settings);
+});
