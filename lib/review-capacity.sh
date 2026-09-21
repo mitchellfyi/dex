@@ -303,10 +303,24 @@ dx_review_capacity_wait() {
   fi
   dx_review_capacity_enqueue "$session_id" "$owner_token" || return 2
   start_epoch=$(date +%s)
+  local memory_notice=0 active_now=0
   while :; do
     claim_result=0
-    dx_review_capacity_try_acquire "$session_id" "$owner_token" "$limit" \
-      || claim_result=$?
+    # A wave that would join others already running waits for host memory
+    # to recover first. The first wave is always admitted, so a host that
+    # cannot report memory, or one that is simply busy, still makes progress.
+    active_now=$(dx_review_capacity_active_count 2>/dev/null \
+      || printf '%s\n' "0")
+    if [[ "$active_now" =~ ^[1-9][0-9]*$ ]] && dx_host_memory_low; then
+      if [[ "$memory_notice" -eq 0 ]]; then
+        dx_info "Host memory is below ${DEX_MIN_FREE_MEMORY_PERCENT:-10}% free; holding this review wave until it recovers"
+        memory_notice=1
+      fi
+      claim_result=1
+    else
+      dx_review_capacity_try_acquire "$session_id" "$owner_token" "$limit" \
+        || claim_result=$?
+    fi
     case "$claim_result" in
       0)
         # shellcheck disable=SC2034  # caller reads these dynamic-scope outputs

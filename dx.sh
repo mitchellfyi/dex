@@ -827,6 +827,7 @@ __dx_setup_worktree_claimed() {
       return 1
     fi
     dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
+    dx_link_build_caches_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
     __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
     dx_meta_write "$_dx_session_id" "wt_name=${_dx_wt_name}" "wt_dir=${_dx_wt_dir}" "workspace_mode=worktree" "raw_input=${raw_input}"
     [[ $_dx_is_task -eq 0 ]] && dx_meta_write "$_dx_session_id" "ticket_number=${_dx_wt_name#ticket-}"
@@ -886,6 +887,9 @@ __dx_setup_worktree_claimed() {
 
   # Share .claude/ config and MCP auth with main repo
   dx_link_claude_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
+  # Share ignored dependency and build trees so this lifecycle does not pay a
+  # cold install and build the host has already done once.
+  dx_link_build_caches_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
   __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
   local _dx_original_head
   _dx_original_head=$(git -C "$_dx_wt_dir" rev-parse --verify 'HEAD^{commit}') || return 1

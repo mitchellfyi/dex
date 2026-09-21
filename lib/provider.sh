@@ -788,6 +788,17 @@ dx_provider_claude() {
   # termination. Still overridable from the environment.
   env_args+=(CLAUDE_CODE_STOP_HOOK_BLOCK_CAP="${CLAUDE_CODE_STOP_HOOK_BLOCK_CAP:-1000}")
 
+  # One host budget for every launch path, the router included. Exported for
+  # this function's lifetime only, so the launched process inherits it while
+  # the caller's shell does not. A name the operator or a parent Dex process
+  # already exported keeps its value (see lib/host-budget.sh).
+  local _budget_line
+  while IFS= read -r _budget_line; do
+    [[ -n "$_budget_line" ]] || continue
+    # shellcheck disable=SC2163  # NAME=VALUE lines from dx_host_budget_env
+    declare -x "$_budget_line"
+  done < <(dx_host_budget_env 2>/dev/null || true)
+
   case "$DX_PROVIDER_ENGINE" in
     ccr)
       # shellcheck disable=SC1091

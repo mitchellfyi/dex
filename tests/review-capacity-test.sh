@@ -189,6 +189,40 @@ if [[ -e "$DX_REVIEW_CAPACITY_DIR/wait-cancelled" \
   exit 1
 fi
 
+# Extra waves wait while host memory is low. The first wave is always admitted,
+# and a disabled floor or recovered memory lets the queue drain again.
+set +e
+DX_HOST_MEMORY_FREE_PERCENT=3 DX_REVIEW_CAPACITY_RECHECK_SECONDS=1 \
+  dx_review_capacity_wait session-mem-first mem-first 4
+mem_first_rc=$?
+set -e
+assert_eq "0" "$mem_first_rc" "first wave is admitted regardless of host memory"
+assert_eq "1" "$(dx_review_capacity_active_count)" "first wave holds a lease"
+mem_cancel_file="$TMP_DIR/mem-cancel"
+mem_cancel_check() {
+  [[ -f "$mem_cancel_file" ]] || return 1
+}
+( /bin/sleep 3; touch "$mem_cancel_file" ) &
+mem_cancel_pid=$!
+set +e
+DX_HOST_MEMORY_FREE_PERCENT=3 DX_REVIEW_CAPACITY_RECHECK_SECONDS=1 \
+  dx_review_capacity_wait session-mem-second mem-second 4 mem_cancel_check
+mem_second_rc=$?
+set -e
+wait "$mem_cancel_pid" 2>/dev/null || true
+assert_eq "125" "$mem_second_rc" "a second wave is held while host memory is low"
+assert_eq "1" "$(dx_review_capacity_active_count)" "held wave took no lease"
+DX_HOST_MEMORY_FREE_PERCENT=50 DX_REVIEW_CAPACITY_RECHECK_SECONDS=1 \
+  dx_review_capacity_wait session-mem-third mem-third 4
+assert_eq "2" "$(dx_review_capacity_active_count)" "recovered memory admits the next wave"
+DX_HOST_MEMORY_FREE_PERCENT=3 DEX_MIN_FREE_MEMORY_PERCENT=0 DX_REVIEW_CAPACITY_RECHECK_SECONDS=1 \
+  dx_review_capacity_wait session-mem-fourth mem-fourth 4
+assert_eq "3" "$(dx_review_capacity_active_count)" "a zero floor disables the memory gate"
+dx_review_capacity_release mem-first
+dx_review_capacity_release mem-third
+dx_review_capacity_release mem-fourth
+assert_eq "0" "$(dx_review_capacity_active_count)" "memory gate leases released"
+
 [[ "$(dx_path_mode "$DX_REVIEW_CAPACITY_DIR")" == "700" ]] || assert_at $LINENO
 
 printf 'review-capacity-test passed\n'

@@ -19,6 +19,10 @@
 
 # shellcheck disable=SC2034  # read by the trap below, which shellcheck cannot follow
 __DX_TEST_FILE="${BASH_SOURCE[1]:-$0}"
+# The review capacity gate holds extra waves while host memory is low. A test
+# must not inherit the machine it runs on; tests that exercise the gate set
+# this themselves.
+export DX_HOST_MEMORY_FREE_PERCENT="${DX_HOST_MEMORY_FREE_PERCENT:-50}"
 __dx_test_died() {
   local exit_code=$?
   # An ERR trap fires whether or not errexit is on, so a test that deliberately

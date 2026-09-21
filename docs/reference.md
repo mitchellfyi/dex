@@ -42,6 +42,7 @@ it.
 | `session.sh` | Session ID derivation, state file paths | `dx_session_id()`, `dx_provider_state_file()`, `dx_cleanup_session()` |
 | `session-management.sh` | Strict internal lifecycle-session cleanup transactions | `__dx_session_management_cleanup_exact()` |
 | `output.sh` | Formatted user-facing output | `dx_done()`, `dx_ok()`, `dx_warn()`, `dx_error()`, etc. |
+| `host-budget.sh` | Per-session host budget: test-job count, runner environment (`DX_TEST_JOBS`, vitest, pytest-xdist, cargo, go, make), subagent caps, and the free-memory probe behind review-wave admission | `dx_host_test_jobs()`, `dx_host_budget_env()`, `dx_host_memory_free_percent()`, `dx_host_memory_low()` |
 | `ui-capture.sh` | Playwright/UI capture tooling, artifact paths, MCP bootstrap | `dx_install_ui_capture_tooling()`, `dx_ui_capture_run_dir()`, `dx_ui_capture_playwright_ready()` |
 | `triage.sh` | Standalone ticket triage arguments, provider launch, and isolated cleanup | `dx_triage_run()`, `dx_triage_cleanup()` |
 | `worker.sh` | DexCode worker registration and the poll/claim/lease/settle daemon | `dx_worker_command()`, `dx_worker_register()`, `dx_worker_daemon()` |
@@ -95,6 +96,12 @@ the gate map.
 | `DEX_REVIEW_DISABLE_MCP` | Disable inherited MCP servers in review waves (`0` restores them); read-only assessors always disable them | `1` |
 | `DEX_REVIEW_PASS_TIMEOUT` | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; `0` disables it | Profile-based: 15m assessment/light, 30m standard, 60m thorough |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish | 45 (45s) |
+| `DEX_TEST_JOBS` | Test-runner workers each Dex-launched session may use (1 to 32); exported to every launch as `DX_TEST_JOBS` and the runner variables listed in [docs/host-budget.md](host-budget.md) | half the cores shared across `DEX_REVIEW_MAX_ACTIVE_WAVES` sessions, capped at 4 |
+| `DEX_MIN_FREE_MEMORY_PERCENT` | Free-memory floor below which a review wave waits before joining waves already running; `0` disables the check | 10 |
+| `DEX_MAX_CONCURRENT_SUBAGENTS` | Subagents one Dex-launched session may run at once (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`); review waves use their scout parallelism instead | 4 |
+| `DEX_MAX_SUBAGENT_SPAWN_DEPTH` | How deep subagents may nest in a Dex-launched session (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`); review waves use 1 | 2 |
+| `DEX_VERIFY_FULL_SUITE` | `ci` makes CI the full-test-suite gate: Phase 4 runs the focused tests locally and reports the suite as `CI`, and Phase 6 fixes a CI failure like any other verification failure | unset (run locally) |
+| `DEX_WORKTREE_SHARED_DIRS` | Ignored top-level directories a new worktree links from the main checkout instead of rebuilding; empty disables | `node_modules target .venv vendor .next .nuxt` |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation; a cycle past it hands over to the next tick, and a watcher that exits hands over at once. `0` means no budget | 120 (2m 0s) |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | Maximum runtime for one GitHub/local shell command inside a watcher cycle | 30 (30s) |
 | `DEX_WATCH_PAUSE_TTL_SECONDS` | Seconds scheduled Phase 6 watchers stay paused after a direct user prompt | 3600 (1h 0m) |

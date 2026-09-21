@@ -480,13 +480,8 @@ __dx_review_test_jobs() {
     printf '%s\n' "$configured_jobs"
     return 0
   fi
-  [[ "$cpu_count" =~ ^[1-9][0-9]*$ ]] \
-    || cpu_count=$(__dx_review_host_cpu_count) || return 1
   [[ "$capacity_limit" =~ ^[1-8]$ ]] || return 1
-  cpu_count=$((cpu_count / 2 / capacity_limit))
-  [[ "$cpu_count" -ge 1 ]] || cpu_count=1
-  [[ "$cpu_count" -le 4 ]] || cpu_count=4
-  printf '%s\n' "$cpu_count"
+  dx_host_test_jobs "$cpu_count" "$capacity_limit"
 }
 __dx_review_capacity_wait_cancelled() {
   local control_snapshot="" control_action=""
@@ -2240,6 +2235,8 @@ ${message}"
       DEX_REVIEW_SCOUT_PARALLELISM="$scout_parallelism" \
       DEX_REVIEW_TEST_JOBS="$review_test_jobs" \
       DX_TEST_JOBS="$review_test_jobs" \
+      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="$scout_parallelism" \
+      CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1 \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
         "$pass_timeout" \
@@ -2281,6 +2278,8 @@ ${message}"
       DEX_REVIEW_SCOUT_PARALLELISM="$scout_parallelism" \
       DEX_REVIEW_TEST_JOBS="$review_test_jobs" \
       DX_TEST_JOBS="$review_test_jobs" \
+      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="$scout_parallelism" \
+      CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1 \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
         "$pass_timeout" \

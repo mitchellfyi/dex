@@ -134,6 +134,60 @@ dx_link_claude_to_worktree() {
   fi
 }
 
+# __dx_exclude_worktree_path <wt_dir> <pattern>
+# Append one pattern to the repository's info/exclude file, once.
+__dx_exclude_worktree_path() {
+  local wt_dir="$1" pattern="$2" exclude_file
+  exclude_file=$(git -C "$wt_dir" rev-parse --git-path info/exclude 2>/dev/null || true)
+  [[ -n "$exclude_file" ]] || return 0
+  mkdir -p "$(dirname "$exclude_file")" 2>/dev/null || return 0
+  touch "$exclude_file" 2>/dev/null || return 0
+  grep -Fxq -- "$pattern" "$exclude_file" 2>/dev/null \
+    || printf '%s\n' "$pattern" >> "$exclude_file"
+}
+
+# dx_link_build_caches_to_worktree <repo_root> <wt_dir>
+# A fresh worktree starts with no dependency or build tree, so every lifecycle
+# pays a cold install and a cold build, and the host pays for six of them at
+# once. Link the main checkout's ignored cache directories into the worktree
+# instead. Only directories git already ignores in the worktree are linked, so
+# a link can never be committed. Cargo serialises builds on a shared target
+# directory, which also keeps concurrent lifecycles from compiling the same
+# dependency tree side by side. DEX_WORKTREE_SHARED_DIRS overrides the list;
+# set it empty to disable. Idempotent and non-fatal.
+dx_link_build_caches_to_worktree() {
+  local repo_root="$1" wt_dir="$2" name linked=0
+  local shared_dirs="${DEX_WORKTREE_SHARED_DIRS-node_modules target .venv vendor .next .nuxt}"
+  [[ -n "$shared_dirs" ]] || return 0
+  [[ -d "$repo_root" && -d "$wt_dir" ]] || return 0
+  # Split explicitly: zsh does not word-split an unquoted parameter.
+  while IFS= read -r name; do
+    case "$name" in
+      ''|*/*|.|..) continue ;;
+    esac
+    [[ -d "$repo_root/$name" ]] || continue
+    [[ ! -e "$wt_dir/$name" && ! -L "$wt_dir/$name" ]] || continue
+    # The directory does not exist in the worktree yet, so ask about it as a
+    # directory: a `name/` ignore pattern does not match a bare `name`.
+    git -C "$wt_dir" check-ignore -q -- "$name/" 2>/dev/null || continue
+    if ln -s "$repo_root/$name" "$wt_dir/$name" 2>/dev/null; then
+      linked=$((linked + 1))
+      # A `name/` ignore pattern matches a directory, not the symlink that now
+      # stands in for it, so the link would show as untracked. Exclude it by
+      # name; the exclude file is shared with the main checkout, where the
+      # real directory is ignored already.
+      __dx_exclude_worktree_path "$wt_dir" "/$name"
+    else
+      dx_warn "Failed to link $name into the worktree"
+    fi
+  done <<EOF
+$(printf '%s\n' "$shared_dirs" | tr ' ' '\n')
+EOF
+  [[ "$linked" -eq 0 ]] \
+    || dx_info "Linked $linked shared cache directories from the main checkout"
+  return 0
+}
+
 # dx_unlink_claude_from_worktree <wt_dir>
 # Remove the ~/.claude/projects/ symlink for a worktree.
 # Only removes symlinks, never real directories.

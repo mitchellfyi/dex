@@ -35,6 +35,14 @@ fi
 
 echo "Dex — Status"
 echo ""
+# Host load from every provider session on this machine, since several
+# lifecycles usually share it. Best-effort: a host that cannot report prints
+# nothing here.
+echo "Host:"
+DX_HOST_MEMORY_FREE_PERCENT="$(dx_host_memory_free_percent 2>/dev/null || true)" \
+DX_HOST_BUDGET_JOBS="$(dx_host_test_jobs 2>/dev/null || true)" \
+  python3 "$DEX_DIR/scripts/host_budget.py" 2>/dev/null || true
+echo ""
 
 # Global installation
 echo "Global:"

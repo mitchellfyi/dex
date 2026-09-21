@@ -28,6 +28,7 @@ factory-sync-test.sh	service	all	900	hermetic
 guards-test.sh	serial	all	1200	hermetic
 headless-provider-test.sh	fast	all	600	hermetic
 hook-input-test.sh	fast	all	600	hermetic
+host-budget-test.sh	fast	all	600	hermetic
 init-reliability-test.sh	fast	all	600	hermetic
 init-uninit-ownership-test.sh	slow	all	1200	hermetic
 install-health-test.sh	slow	all	1200	hermetic
@@ -111,5 +112,6 @@ triage-hooks-test.sh	fast	all	600	hermetic
 ui-capture-test.sh	fast	all	600	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic
+worktree-shared-caches-test.sh	fast	all	600	hermetic
 worktree-test.sh	slow	all	1200	hermetic
 worktree-ticket-resolution-test.sh	slow	all	1200	hermetic
