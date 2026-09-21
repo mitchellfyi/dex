@@ -64,6 +64,8 @@ test('standalone sessions launch without phase files while workflows follow thei
   Object.assign(process.env, { PATH: `${bin}:${process.env.PATH}`, DEX_SESSION_ID: 'prompt-test', DEX_SESSION_ONLY: '1', DX_STATE_DIR: directory });
   const config = { models: [{ id: 'anthropic/test', context_window: 64000 }], phases: {}, default_model: 'anthropic/test' };
   const phases = [];
+  // launch() refuses a routed session that has no account behind it.
+  state.saveAccounts([{ id: 'one', name: 'main', provider: 'anthropic', enabled: true }]);
   t.mock.method(adapter, 'start', async () => ({ gateway: 'http://127.0.0.1:1234' }));
   t.mock.method(ipc, 'call', async (method, fields) => {
     if (method !== 'register') return {};
@@ -192,6 +194,20 @@ test('router status requests a detailed session count explicitly', async t => {
   assert.equal((await cli.routerCommand('doctor', {})).native_routing, false);
   state.write(state.stateFile('config'), { ...state.config(), native: { enabled: true } });
   assert.equal((await cli.routerCommand('doctor', {})).native_routing, true);
+});
+test('a routed launch refuses when routing is on but no account is behind it', async t => {
+  // dx router enable makes ccr-subscription the global default without asking
+  // for an account, and register only checks that routing is on. The session
+  // launched and then failed on every request.
+  const start = t.mock.method(adapter, 'start', async () => ({ gateway: 'http://127.0.0.1:1234' }));
+  const register = t.mock.method(ipc, 'call', async () => ({ id: 'x', context_limit: 64000 }));
+  state.write(state.stateFile('config'), { version: state.VERSION, enabled: true, models: [{ id: 'anthropic/test' }], phases: {}, default_model: 'anthropic/test' });
+  await assert.rejects(launch(['--', 'prompt']), /no account is enabled.*dx account add.*dx setup --direct/s);
+  assert.equal(start.mock.callCount(), 0);
+  assert.equal(register.mock.callCount(), 0);
+  // A disabled account is not one the router can use either.
+  state.saveAccounts([{ id: 'one', name: 'main', provider: 'anthropic', enabled: false }]);
+  await assert.rejects(launch(['--', 'prompt']), /no account is enabled/);
 });
 test('deep health matches the live gateway identity without launching process scans', async t => {
   const settings = { pid: 2147483647, owner_identity: 'synthetic-owner', management: 'http://127.0.0.1:1', management_key: 'synthetic-key' };

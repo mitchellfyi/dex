@@ -102,6 +102,15 @@ function gatewayMonitor(session) {
 async function launch(args) {
   const parsed = launchArguments(args);
   const config = state.config();
+  // Routing can be switched on without an account behind it: dx router enable
+  // makes ccr-subscription the global Dex default and asks for nothing else.
+  // register only checks that routing is on, so the launch used to succeed and
+  // every request after it answered "no eligible subscription accounts" — a
+  // failure the client spends its retry budget on, in a session that could
+  // never have worked. Refuse here, where the reason is still readable.
+  if (!state.accounts().some(item => item.enabled)) {
+    throw new Error('CCR routing is enabled, but no account is enabled. Add one with dx account add, or go back to direct Claude Code with dx setup --direct.');
+  }
   const settingsOverride = launchSettings(parsed.settings, config);
   const mcp = parsed.mcpExplicit ? null : require('./mcp-scope.cjs').scope(config.mcp_scope);
   if (mcp) settingsOverride.disableClaudeAiConnectors = true;
