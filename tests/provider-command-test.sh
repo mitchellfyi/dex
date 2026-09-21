@@ -26,6 +26,9 @@ for tool in python3 git grep find basename dirname env; do
   tool_path=$(command -v "$tool")
   ln -s "$tool_path" "$TMP_DIR/bin/$tool"
 done
+# Node is optional for Dex, and the router readiness check below turns on
+# whether this shell can see one. Resolve it before the sandbox narrows PATH.
+host_node=$(command -v node 2>/dev/null || true)
 export PATH="$TMP_DIR/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 cat > "$TMP_DIR/bin/codex" <<'SH'
@@ -258,5 +261,56 @@ fi
 # And the answer itself is still exactly the value, nothing more.
 assert_eq "claude" "$(dx_agent_normalize claude)" "normalized claude"
 assert_eq "codex" "$(dx_agent_normalize Codex)" "normalized Codex"
+
+# Native routing installs the gateway into the user's Claude settings, so a
+# direct profile still reaches CCR. Without the readiness check following it
+# there, an unusable router answers every request with a retrying 503 from the
+# gateway instead of Dex naming the account to repair.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_DIR/bin/claude"
+chmod +x "$TMP_DIR/bin/claude"
+[[ -z "$host_node" ]] || ln -sf "$host_node" "$TMP_DIR/bin/node"
+export DEX_ROUTER_HOME="$TMP_DIR/router"
+mkdir -p "$DEX_ROUTER_HOME"
+chmod 700 "$DEX_ROUTER_HOME"
+export DX_PROVIDER_PROFILE="claude-subscription"
+dx_provider_apply
+
+write_router_config() {
+  printf '{"version":1,"enabled":true,"models":[],"native":{"enabled":%s}}\n' "$1" > "$DEX_ROUTER_HOME/config.json"
+  chmod 600 "$DEX_ROUTER_HOME/config.json"
+}
+
+# No router config at all is the ordinary case: nothing consults CCR.
+[[ ! -e "$DEX_ROUTER_HOME/config.json" ]] || assert_at $LINENO
+dx_provider_agent_ready_check || assert_at $LINENO
+
+# Routing enabled but scoped to the ccr-subscription profile leaves a direct
+# launch alone, because plain claude keeps its own subscription.
+write_router_config false
+dx_provider_agent_ready_check || assert_at $LINENO
+
+# Native routing on, and no account the router can use: refuse with the reason.
+# Needs a real Node, because that is what decides whether the check can run.
+write_router_config true
+if [[ -n "$host_node" ]]; then
+  assert_fails_with "Native routing sends every Claude Code launch through CCR" \
+    dx_provider_agent_ready_check
+  assert_fails_with "dx router native disable" dx_provider_agent_ready_check
+fi
+
+# The client settings reach the gateway through an absolute interpreter, so a
+# Node this shell cannot see, or one too old to run the router, says nothing
+# about whether the router works. A verdict we could not reach must not stop a
+# launch that would have succeeded.
+rm -f "$TMP_DIR/bin/node"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_DIR/bin/node"
+chmod +x "$TMP_DIR/bin/node"
+dx_provider_agent_ready_check || assert_at $LINENO
+rm -f "$TMP_DIR/bin/node"
+
+rm -f "$TMP_DIR/bin/claude"
+unset DEX_ROUTER_HOME
+export DX_PROVIDER_PROFILE="codex-subscription"
+dx_provider_apply
 
 printf 'provider command tests passed\n'

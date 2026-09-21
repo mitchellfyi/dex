@@ -1475,6 +1475,32 @@ dx_provider_codex_ready_check() {
   return 1
 }
 
+# Native routing writes the gateway's base URL and an apiKeyHelper into the
+# user's Claude settings, so every Claude Code launch goes through CCR whatever
+# profile Dex resolved. The readiness check has to follow it there: without
+# this, a direct profile meets an unusable router as a retrying 503 from the
+# gateway instead of Dex's own message naming the account to repair. Reads the
+# router's own config rather than the client settings, because that flag is
+# what the gateway itself honours when it mints a native session.
+dx_provider_native_routing_enabled() {
+  local router_config="${DEX_ROUTER_HOME:-$HOME/.dex/router}/config.json"
+  [[ -f "$router_config" ]] || return 1
+  python3 - "$router_config" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, ValueError):
+    raise SystemExit(1)
+if not isinstance(data, dict) or data.get("enabled") is not True:
+    raise SystemExit(1)
+native = data.get("native")
+raise SystemExit(0 if isinstance(native, dict) and native.get("enabled") is True else 1)
+PY
+}
+
 dx_provider_agent_ready_check() {
   [[ "${DX_PROVIDER_APPLIED:-}" == "1" ]] || dx_provider_apply || return 1
 
@@ -1488,8 +1514,27 @@ dx_provider_agent_ready_check() {
         dx_info "Install Claude Code, then run 'dx provider doctor'."
         return 1
       fi
+      local router_check_required=0
       if [[ "$DX_PROVIDER_ENGINE" == "ccr" ]]; then
-        bash "$DEX_DIR/bin/router.sh" router check || return 1
+        router_check_required=1
+      elif dx_provider_native_routing_enabled; then
+        # A CCR profile needs Node and says so. This path does not: the client
+        # settings call the gateway through an absolute interpreter recorded at
+        # enable time, so a Node this shell cannot see is no evidence the router
+        # is unusable. Skip the check we cannot run rather than block on it.
+        if command -v node >/dev/null 2>&1 \
+          && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' >/dev/null 2>&1; then
+          router_check_required=1
+        fi
+      fi
+      if [[ "$router_check_required" -eq 1 ]]; then
+        if ! bash "$DEX_DIR/bin/router.sh" router check; then
+          if [[ "$DX_PROVIDER_ENGINE" != "ccr" ]]; then
+            dx_info "Native routing sends every Claude Code launch through CCR, including the ${DX_PROVIDER_PROFILE_RESOLVED:-selected} profile."
+            dx_info "Restore direct launches with 'dx router native disable', then start a new session."
+          fi
+          return 1
+        fi
       fi
       ;;
     *)
