@@ -131,7 +131,10 @@ at once. Treat CPU and memory as a shared budget:
 
 - **Run the tests that cover the change, not the suite.** Pick the test files
   for the changed modules and their direct consumers. The complete suite runs
-  once, in Phase 4 or in CI, not after every task or audit pass.
+  once, in Phase 4, not after every task or audit pass. Running it earlier is
+  your call, and the right one when the change's reach makes it relevant: a
+  shared module, a schema, build or test configuration, a fix whose blast
+  radius you cannot bound.
 - **Stay within `DX_TEST_JOBS` workers.** Runners that read an environment
   variable (vitest, pytest-xdist, cargo, go, make) already have it. Pass it to
   the rest: `jest --maxWorkers=$DX_TEST_JOBS`, `playwright test

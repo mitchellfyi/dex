@@ -74,12 +74,9 @@ as a flag: `jest --maxWorkers=$DX_TEST_JOBS`, `playwright test
 --workers=$DX_TEST_JOBS`, `pytest -n $DX_TEST_JOBS`. Never start a runner in
 watch mode, and stop any server or browser you started before reporting.
 
-When `DEX_VERIFY_FULL_SUITE=ci` is set, the full test suite is CI's gate, not
-this session's. Run the focused tests for every changed surface locally, run
-every other required gate as normal, and report the full-suite gate as `CI`.
-Phase 6 watches that CI run and fixes a failure like any other verification
-failure. This is policy, not a waiver, so it needs no `dx control` record.
-When the variable is unset, run the full required suite here as before.
+This skill is where the complete required suite runs. Earlier phases run the
+tests that cover their change and leave the whole suite to this final gate,
+so do not assume it has already passed.
 
 When a check fails:
 

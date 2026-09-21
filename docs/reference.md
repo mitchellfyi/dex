@@ -100,7 +100,6 @@ the gate map.
 | `DEX_MIN_FREE_MEMORY_PERCENT` | Free-memory floor below which a review wave waits before joining waves already running; `0` disables the check | 10 |
 | `DEX_MAX_CONCURRENT_SUBAGENTS` | Subagents one Dex-launched session may run at once (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`); review waves use their scout parallelism instead | 4 |
 | `DEX_MAX_SUBAGENT_SPAWN_DEPTH` | How deep subagents may nest in a Dex-launched session (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`); review waves use 1 | 2 |
-| `DEX_VERIFY_FULL_SUITE` | `ci` makes CI the full-test-suite gate: Phase 4 runs the focused tests locally and reports the suite as `CI`, and Phase 6 fixes a CI failure like any other verification failure | unset (run locally) |
 | `DEX_WORKTREE_SHARED_DIRS` | Ignored top-level directories a new worktree links from the main checkout instead of rebuilding; empty disables | `node_modules target .venv vendor .next .nuxt` |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | Maximum runtime budget for one scheduled Phase 6 watcher invocation; a cycle past it hands over to the next tick, and a watcher that exits hands over at once. `0` means no budget | 120 (2m 0s) |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | Maximum runtime for one GitHub/local shell command inside a watcher cycle | 30 (30s) |

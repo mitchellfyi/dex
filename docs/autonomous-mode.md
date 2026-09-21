@@ -926,7 +926,6 @@ use an override-bound lower target; other assurance gates use
 | `DEX_MIN_FREE_MEMORY_PERCENT` | `10` | A review wave that would join others already running waits until free memory is above this; the first wave is always admitted; `0` disables |
 | `DEX_MAX_CONCURRENT_SUBAGENTS` | `4` | Cap on concurrent subagents per Dex-launched session; waves are capped at their scout parallelism |
 | `DEX_MAX_SUBAGENT_SPAWN_DEPTH` | `2` | Cap on subagent nesting per Dex-launched session; waves use 1 |
-| `DEX_VERIFY_FULL_SUITE` | unset | `ci` delegates the full test suite to CI: focused tests run locally in Phase 4, the suite gate is reported as `CI`, and Phase 6 fixes CI failures |
 | `DEX_WORKTREE_SHARED_DIRS` | `node_modules target .venv vendor .next .nuxt` | Ignored directories a new worktree links from the main checkout instead of rebuilding |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation. A cycle that outruns it hands the lease to the next tick; a watcher that exits hands it over immediately, without waiting out the budget. `0` means no budget, as it does for the phase timeouts |
 | `DEX_WATCH_COMMAND_TIMEOUT_SECONDS` | `30` (30s) | Maximum runtime for one GitHub/local shell command inside a watcher cycle |

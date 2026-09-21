@@ -93,7 +93,8 @@ when relevant. Mechanical fixes make the wave non-`CLEAN`.
 
 Targeted means the tests that cover the changed files, their modules, and
 their direct consumers, not the whole suite; the lifecycle runs the complete
-pipeline once in Phase 4 or CI. Keep every runner within `DX_TEST_JOBS`
+pipeline once in Phase 4. Widen the run only when the change's reach makes
+the whole suite relevant. Keep every runner within `DX_TEST_JOBS`
 workers (`jest --maxWorkers=$DX_TEST_JOBS`, `playwright test
 --workers=$DX_TEST_JOBS`, `pytest -n $DX_TEST_JOBS`; vitest, cargo, go, and
 make read it from the environment already). Never use watch mode, and stop

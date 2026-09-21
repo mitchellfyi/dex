@@ -16,8 +16,10 @@ For each task in the approved plan:
 2. **Tested?** — Does a test verify the implementation? (TDD: test should exist before or alongside the implementation)
 3. **Passing?** — Run the tests that cover the changed files, their modules,
    and their direct consumers, within `DX_TEST_JOBS` workers. Do they pass?
-   Do not run the whole suite on every audit pass; Phase 4 runs the complete
-   required pipeline once (or CI does, under `DEX_VERIFY_FULL_SUITE=ci`).
+   The whole suite is not an audit-pass ritual: Phase 4 runs the complete
+   required pipeline once. Run it here only when you judge the change's reach
+   makes it relevant, for example a shared module, a schema, a build or test
+   configuration change, or a fix whose blast radius you cannot bound.
 
 If any task is incomplete, implement it now. If any test is missing, write it now.
 

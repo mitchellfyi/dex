@@ -76,16 +76,16 @@ shared `target`, which also stops six lifecycles compiling the same
 dependency tree side by side. Set `DEX_WORKTREE_SHARED_DIRS` to change the
 list or empty to disable.
 
-**Prompts ask for less.** Phase 2 audits run the tests that cover the
-change, not the suite, on every pass; the complete pipeline runs once, in
-Phase 4. Review waves run targeted tests. Every phase is told to stop the
-servers, browsers, watchers and runners it started, never to use watch mode,
-and to stay within `DX_TEST_JOBS`. `prompts/guardrails.md` carries the rule
-set under "Resource Discipline".
-
-**The full suite can move to CI.** With `DEX_VERIFY_FULL_SUITE=ci`, Phase 4
-runs the focused tests locally and reports the full-suite gate as `CI`;
-Phase 6 already watches CI and fixes failures. This is policy, not a waiver.
+**Prompts ask for less, and leave the judgment to the agent.** Phase 2
+audits run the tests that cover the change, not the suite, on every pass;
+the complete pipeline runs once, in Phase 4. Running the whole suite earlier
+is the agent's call, and the prompts name when it is the right one: a shared
+module, a schema, build or test configuration, a fix whose blast radius
+cannot be bounded. Review waves run targeted tests. Every phase is told to
+stop the servers, browsers, watchers and runners it started, never to use
+watch mode, and to stay within `DX_TEST_JOBS`. `prompts/guardrails.md`
+carries the rule set under "Resource Discipline". There is no gate that
+moves the suite elsewhere; Phase 4 remains the place it runs.
 
 ## Recommended settings for a shared host
 
@@ -97,9 +97,6 @@ machines or when browsers are involved.
 # Fewer concurrent review waves, one scout at a time inside each.
 export DEX_REVIEW_MAX_ACTIVE_WAVES=1
 export DEX_REVIEW_SCOUT_PARALLELISM=1
-
-# Let CI run the full suite; run focused tests locally.
-export DEX_VERIFY_FULL_SUITE=ci
 
 # Hold new review waves until at least 15% of memory is free.
 export DEX_MIN_FREE_MEMORY_PERCENT=15
