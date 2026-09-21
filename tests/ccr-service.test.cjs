@@ -542,9 +542,12 @@ test('login failures name the affected accounts without inventing a retry time',
   const token = await register();
   service.broker.access = async () => { throw Object.assign(new Error('synthetic login failure'), { reauth: true }); };
   const response = await send(token);
-  assert.equal(response.status, 503); assert.equal(calls.length, 0);
+  // Every account needs a new login, so asking again cannot help. A 5xx would
+  // put the client into a retry loop that hides the instruction below.
+  assert.equal(response.status, 400); assert.equal(calls.length, 0);
   assert.equal(response.headers.get('retry-after'), null);
   const error = (await response.json()).error;
+  assert.equal(error.type, 'invalid_request_error');
   assert.match(error.message, /one: login needs renewal/);
   assert.match(error.message, /two: login needs renewal/);
   assert.match(error.message, /dx account reauth <name>/);

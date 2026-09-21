@@ -694,6 +694,14 @@ while `Retry-After` retains the exact number of seconds. It also names registere
 providers missing from the route's fallback chain. Temporary provider and
 connection failures still return HTTP 503.
 
+When nothing in the way is transient — no account is registered for the route,
+or every one of them is disabled, needs a new login, or cannot serve the model —
+Dex returns HTTP 400 with an `invalid_request_error` instead. None of that
+clears by asking again, and a 5xx invites the client to keep asking: Claude Code
+spends ten backed-off retries on it and truncates the one line naming the
+account to repair. A single account that can recover on its own keeps the whole
+route on the retryable classification.
+
 An authentication rejection permits one refresh before account failover.
 Rate limits and temporary server errors can fail over before response delivery.
 Bad or forbidden requests do not rotate accounts. Unsupported cross-provider

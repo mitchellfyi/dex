@@ -258,7 +258,7 @@ test('unavailable status distinguishes exhausted capacity from a recoverable pro
     assert.equal(error.status, 429);
     assert.equal(error.type, 'rate_limit_error');
   }
-  for (const items of [[limited, temporary], [temporary], [], [{ ...temporary, enabled: false }]]) {
+  for (const items of [[limited, temporary], [temporary]]) {
     const error = policy.unavailable(items, selected, 1000);
     assert.equal(error.status, 503);
     assert.equal(error.type, 'api_error');
@@ -266,6 +266,31 @@ test('unavailable status distinguishes exhausted capacity from a recoverable pro
   }
   const error = policy.unavailable([limited], selected, 1000);
   assert.match(error.message, /^Subscription rate limit reached on this route\./);
+});
+test('a route no account can serve refuses the request instead of inviting retries', () => {
+  const selected = { models: [models[0]] };
+  // None of these clear on their own, and a retryable status spends the
+  // client's backoff budget hiding the one line that says what to repair.
+  const permanent = {
+    'no account is registered': [],
+    'the only account is disabled': [{ id: 'one', name: 'main', provider: 'anthropic', enabled: false }],
+    'the only login needs renewal': [{ id: 'one', name: 'main', provider: 'anthropic', enabled: true, status: 'reauth-required' }],
+    'no account carries the model': [{ id: 'one', name: 'main', provider: 'anthropic', enabled: true, model_ids: ['anthropic/other'] }]
+  };
+  for (const [label, items] of Object.entries(permanent)) {
+    const error = policy.unavailable(items, selected, 1000);
+    assert.equal(error.status, 400, label);
+    assert.equal(error.type, 'invalid_request_error', label);
+    assert.equal(error.retryAfter, undefined, label);
+    assert.equal(error.code, 'subscription_accounts_unavailable', label);
+  }
+  assert.match(policy.unavailable(permanent['the only login needs renewal'], selected, 1000).message, /dx account reauth <name>/);
+  assert.match(policy.unavailable(permanent['the only account is disabled'], selected, 1000).message, /dx account enable <name>/);
+  // One account that can recover on its own keeps the whole route retryable.
+  const cooling = { id: 'two', name: 'spare', provider: 'anthropic', enabled: true, cooldown_until: 11000, cooldown_reason: 'temporary' };
+  for (const items of Object.values(permanent)) {
+    assert.equal(policy.unavailable([...items, cooling], selected, 1000).status, 503);
+  }
 });
 test('terms acceptance remains actionable when the other provider has exhausted its quota', () => {
   const terms = { id: 'one', name: 'New Claude account', provider: 'anthropic', enabled: true, cooldown_until: 61000, cooldown_reason: 'terms-required' };

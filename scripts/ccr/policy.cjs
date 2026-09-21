@@ -313,9 +313,16 @@ function unavailable(items, selection, now = Date.now(), protocol) {
   const problem = reasons.has('quota-exhausted') ? 'quota exhausted' : 'rate limit reached';
   const subscribed = selection.models.some(target => providerKind(target.provider) === 'subscription');
   const headline = rateLimited ? [subscribed ? `Subscription ${problem} on this route.` : `${problem[0].toUpperCase()}${problem.slice(1)} on this route.`] : [];
+  // Nothing transient is in the way: either no account serves this route at
+  // all, or every one of them is disabled, needs a new login, or cannot serve
+  // the model. None of that resolves by asking again, and a 5xx invites the
+  // client to keep asking — Claude Code spends ten backed-off retries on it
+  // and truncates the one line that says what to fix. Report it the way the
+  // terms case already does, as the caller's problem, so it surfaces at once.
+  const permanent = !eligibleBlocks.length && !retryAfter;
   return Object.assign(new Error([...headline, ...summaries, ...advice].join(' ')), {
-    code: 'subscription_accounts_unavailable', status: termsRequired ? 400 : rateLimited ? 429 : 503,
-    type: termsRequired ? 'invalid_request_error' : rateLimited ? 'rate_limit_error' : 'api_error', retryAfter
+    code: 'subscription_accounts_unavailable', status: termsRequired || permanent ? 400 : rateLimited ? 429 : 503,
+    type: termsRequired || permanent ? 'invalid_request_error' : rateLimited ? 'rate_limit_error' : 'api_error', retryAfter
   });
 }
 
