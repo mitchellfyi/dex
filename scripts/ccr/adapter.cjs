@@ -39,6 +39,28 @@ async function availablePorts() {
 function idle() {
   if (state.sessions().some(active)) throw new Error('Routed sessions are active. Finish them before changing the CCR runtime or model catalogue.');
 }
+// When the router's own sources were last edited. start() short-circuits on a
+// healthy gateway without comparing anything, so a router left running across
+// a Dex update keeps serving the code it loaded — including error messages and
+// routing rules the update replaced. That is invisible otherwise: the release
+// constant tracks the pinned CCR runtime, not this extension.
+function sourceChangedAt() {
+  let newest = 0;
+  // Diagnostics must survive an unreadable checkout: 0 reports nothing stale
+  // rather than failing dx router status, which is what someone runs first.
+  let names = []; try { names = fs.readdirSync(__dirname); } catch { return 0; }
+  for (const name of names) {
+    if (!name.endsWith('.cjs')) continue;
+    try { newest = Math.max(newest, fs.statSync(path.join(__dirname, name)).mtimeMs); } catch { /* A file racing a Dex update is not a staleness signal. */ }
+  }
+  return newest;
+}
+// A gateway with no start time predates this field, which places it before the
+// commit that added it, so it is stale by construction.
+function stale(health, changedAt = sourceChangedAt()) {
+  if (!health) return false;
+  return !Number.isFinite(health.started_at) || health.started_at < changedAt;
+}
 async function install() {
   return state.locked('runtime', async () => {
     idle();
@@ -179,4 +201,4 @@ async function openUI() {
     child.once('exit', code => { if (code === 0) resolve(); else { server.close(); reject(new Error('Could not open the CCR dashboard.')); } });
   });
 }
-module.exports = { RELEASE, PROVIDER_ENDPOINTS, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, start, stop, stopOwned, openUI };
+module.exports = { RELEASE, PROVIDER_ENDPOINTS, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, sourceChangedAt, stale, start, stop, stopOwned, openUI };

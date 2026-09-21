@@ -209,6 +209,34 @@ test('a routed launch refuses when routing is on but no account is behind it', a
   state.saveAccounts([{ id: 'one', name: 'main', provider: 'anthropic', enabled: false }]);
   await assert.rejects(launch(['--', 'prompt']), /no account is enabled/);
 });
+test('a gateway is stale when it loaded its code before the current sources', () => {
+  const changed = adapter.sourceChangedAt();
+  assert.ok(changed > 0);
+  // The gateway requires the extension once, at start, from the Dex checkout.
+  // A router left running across an update keeps serving the code it loaded.
+  assert.equal(adapter.stale({ pid: process.pid, started_at: changed - 1000 }), true);
+  assert.equal(adapter.stale({ pid: process.pid, started_at: changed + 1000 }), false);
+  // No start time at all places the gateway before the commit that added it.
+  assert.equal(adapter.stale({ pid: process.pid }), true);
+  assert.equal(adapter.stale(null), false);
+});
+test('a stale gateway is named in status, and start does not pass it off as current', async t => {
+  state.write(state.stateFile('config'), { ...state.config(), enabled: true });
+  t.mock.method(ipc, 'call', async () => ({ active_sessions: 0 }));
+  const start = t.mock.method(adapter, 'start', async () => {});
+  const health = t.mock.method(adapter, 'health', async () => ({ pid: process.pid, started_at: adapter.sourceChangedAt() - 60000 }));
+
+  assert.equal((await cli.routerCommand('status', {})).code_stale, true);
+  // start() returns the running endpoint without comparing anything, so
+  // reporting success here would leave the old code answering every request.
+  assert.match(await cli.routerCommand('start', {}), /dx router restart/);
+  assert.equal(start.mock.callCount(), 0);
+
+  health.mock.mockImplementation(async () => ({ pid: process.pid, started_at: adapter.sourceChangedAt() + 60000 }));
+  assert.equal((await cli.routerCommand('status', {})).code_stale, false);
+  assert.match(await cli.routerCommand('start', {}), /^CCR started\./);
+  assert.equal(start.mock.callCount(), 1);
+});
 test('deep health matches the live gateway identity without launching process scans', async t => {
   const settings = { pid: 2147483647, owner_identity: 'synthetic-owner', management: 'http://127.0.0.1:1', management_key: 'synthetic-key' };
   let identity = settings.owner_identity;

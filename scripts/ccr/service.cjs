@@ -90,6 +90,11 @@ class RouterService {
     this.tickets = new Map(); this.inFlight = new Set(); this.server = null;
     this.metricWrites = new Set(); this.telemetryFailures = 0;
     this.ownerIdentity = processIdentity(process.pid);
+    // The gateway requires this extension once, at start, from the Dex checkout
+    // it was launched from, and then serves that copy until it is replaced.
+    // Updating Dex therefore changes nothing for a running router, so report
+    // when this code was loaded and let the caller compare it with the sources.
+    this.startedAt = Date.now();
     // Delegate lazily: tests and recovery swap the broker and fetch after construction.
     this.codexCatalog = new CodexCatalog({ broker: { access: (...args) => this.broker.access(...args) }, fetchImpl: (...args) => this.fetch(...args) });
   }
@@ -125,7 +130,7 @@ class RouterService {
   async control(method, params) {
     // Routine probes must not wait for process checks on every registered session.
     if (method === 'health') return { version: 1, extension: 'dex-ccr', capabilities: ['messages', 'responses', 'native-auth'], pid: process.pid,
-      owner_identity: this.ownerIdentity, active_requests: this.inFlight.size, telemetry_failures: this.telemetryFailures,
+      owner_identity: this.ownerIdentity, active_requests: this.inFlight.size, telemetry_failures: this.telemetryFailures, started_at: this.startedAt,
       ...(params?.sessions ? { active_sessions: state.sessions().filter(active).length } : {}) };
     if (method === 'sessions') return state.sessions().map(publicSession);
     if (method === 'native-auth') {

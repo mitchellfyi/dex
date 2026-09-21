@@ -122,11 +122,12 @@ function render(group, action, value, options) {
   }
   if (group === 'router' && value?.release) {
     details([
-      ['CCR version', value.release], ['Runtime', value.health], ['Installed', value.installed ? 'yes' : 'no'],
+      ['CCR version', value.release], ['Runtime', value.code_stale ? `${value.health} (pre-update code)` : value.health], ['Installed', value.installed ? 'yes' : 'no'],
       ['Routing', value.enabled ? 'enabled' : 'disabled'], ['Plain CLI routing', value.native_routing ? 'through Dex' : 'native subscriptions'], ['Accounts', value.accounts],
       ['Models', value.models], ['Active sessions', value.active_sessions], ['Credentials', value.credential_store]
     ]);
     if (!value.installed) out('Run dx router setup to install the optional runtime.');
+    if (value.code_stale) out('The running gateway loaded its code before the current Dex version and keeps serving it. Finish routed sessions, then run dx router restart.');
     if (value.telemetry_failures) out(`Request telemetry could not be saved ${value.telemetry_failures} times. Inspect private router-state permissions before relying on request diagnostics.`);
     if (value.native_routing) out('Restore independent claude and codex launches with dx router native disable, then start new CLI sessions.');
     return;
@@ -529,13 +530,21 @@ async function routerCommand(action, options, args = []) {
   // had not. sync-context is the migration channel: it adopts what is missing
   // and leaves values edited by hand alone.
   if (action === 'restart') { await adapter.stop(); await adapter.start(); return `CCR restarted.${syncedNote(await syncNative())}`; }
-  if (action === 'start') { if (!state.config().enabled) throw new Error('Run dx router setup or enable first.'); await adapter.start(); return `CCR started.${syncedNote(await syncNative())}`; }
+  if (action === 'start') {
+    if (!state.config().enabled) throw new Error('Run dx router setup or enable first.');
+    // adapter.start() returns the existing endpoint when a gateway answers, so
+    // start alone cannot pick up a Dex update. Say so rather than report a
+    // success that leaves the old code serving every request.
+    const running = await adapter.health(true);
+    if (adapter.stale(running)) return 'CCR is already running, on code from before the current Dex version; dx router start leaves it in place. Finish routed sessions, then run dx router restart to load it.';
+    await adapter.start(); return `CCR started.${syncedNote(await syncNative())}`;
+  }
   if (action === 'update') { adapter.idle(); await adapter.install(); return `Using tested release ${adapter.RELEASE}. CCR upgrades ship with Dex after contract tests pass.`; }
   if (action === 'status' || action === 'doctor') {
     let installed = false; try { adapter.verifyRuntime(); installed = true; } catch { /* Report as a diagnostic. */ }
     const health = await adapter.health();
     const sessions = health ? await ipc.call('health', { sessions: true }) : null;
-    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
+    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', code_stale: adapter.stale(health), telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
   }
   if (action === 'check') {
     if (!state.config().enabled || !state.accounts().some(item => item.enabled)) throw new Error('CCR needs setup and an enabled account. Run dx router setup.');
