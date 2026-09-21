@@ -88,6 +88,39 @@ test('standalone sessions launch without phase files while workflows follow thei
   assert.equal(fs.readdirSync(directory).some(name => name.startsWith('launch-')), false, 'launch settings are removed after the child exits');
 });
 
+test('a print-mode launch drops the client notice for a routed model name and forwards the rest of stderr', async t => {
+  const { routedNotice, forwardStderr } = require('../scripts/ccr/launch.cjs');
+  assert.equal(routedNotice('[claude-code:unrecognized_model] {"model":"dex/active[1m]","query_source":"sdk"}'), true);
+  assert.equal(routedNotice('[claude-code:unrecognized_model] {"model":"dex/active","query_source":"sdk"}'), true);
+  assert.equal(routedNotice('[claude-code:unrecognized_model] {"model":"claude-opus-5","query_source":"sdk"}'), false, 'a first-party name the client rejects is real news');
+  assert.equal(routedNotice('dex: CCR recovery failed. Run dx router doctor before resuming this conversation.'), false);
+  const { PassThrough } = require('node:stream');
+  const stream = new PassThrough(); const written = [];
+  forwardStderr(stream, chunk => written.push(chunk));
+  stream.write('[claude-code:unrecognized_model] {"model":"dex/active[1m]","query_source":"sdk"}\nreal warning\n');
+  stream.write('split acr'); stream.write('oss chunks\n'); stream.end('tail without newline');
+  await new Promise(resolve => stream.on('end', resolve));
+  assert.deepEqual(written, ['real warning\n', 'split across chunks\n', 'tail without newline']);
+
+  const saved = Object.fromEntries(['PATH', 'DEX_SESSION_ID', 'DEX_SESSION_ONLY', 'DX_STATE_DIR'].map(key => [key, process.env[key]]));
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const bin = path.join(directory, 'notice-bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf \'[claude-code:unrecognized_model] {"model":"dex/active[1m]","query_source":"sdk"}\\n\' >&2\nprintf \'kept warning\\n\' >&2\nexit 0\n', { mode: 0o700 });
+  Object.assign(process.env, { PATH: `${bin}:${process.env.PATH}`, DEX_SESSION_ID: 'notice-test', DEX_SESSION_ONLY: '1', DX_STATE_DIR: directory });
+  state.saveAccounts([{ id: 'one', name: 'main', provider: 'anthropic', enabled: true }]);
+  t.mock.method(adapter, 'start', async () => ({ gateway: 'http://127.0.0.1:1234' }));
+  t.mock.method(ipc, 'call', async (method, fields) => method === 'register' ? { id: fields.id, context_limit: 64000 } : {});
+  const errors = []; t.mock.method(process.stderr, 'write', value => { errors.push(String(value)); return true; });
+  assert.equal(await launch(['-p', '--', 'review the change set']), 0);
+  const forwarded = errors.join('');
+  assert.doesNotMatch(forwarded, /unrecognized_model/);
+  assert.match(forwarded, /kept warning/);
+});
+
 test('route policy displays inherited Claude and explicit Codex routes without altering configuration', async t => {
   const config = { version: 1, enabled: true, default_model: 'anthropic/test', phases: { 0: { model: 'anthropic/test', fallbacks: ['openai/test'], effort: 'high' } },
     client_routes: { codex: { model: 'openai/test', fallbacks: [], effort: 'xhigh' } },

@@ -36,6 +36,12 @@ contains benchmark tooling, and there is no production review-loop script in
 Keep the owning session alive while the runner works. If the shell tool
 yields a running job, retain its handle and continue waiting on that job.
 Host-capacity queue messages mean the loop is waiting for a review slot.
+A wave that has started is working even when it prints nothing for many
+minutes: it is reading the change set and asking the model, and a routed
+client may print a `claude-code:unrecognized_model` notice for Dex's own
+model name, which is expected. Judge a wave by the loop's `Wave N` lines and
+its result, never by silence or client notices, and do not recover its fence
+or relaunch it before the wave timeout the loop announced.
 Report the runner's actual result and receipt; starting a job or reaching a
 tool timeout is not a successful review.
 

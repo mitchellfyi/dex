@@ -74,6 +74,27 @@ function launchEnvironment(settings, token, session, original = process.env, hel
   });
   return env;
 }
+// Claude Code checks a model name against the models it ships with and, in
+// print mode, reports one it does not know on stderr as
+// `[claude-code:unrecognized_model] {...}`. A routed launch always names Dex's
+// own route, which the client can never recognise, so the notice is expected
+// and carries nothing to act on. Left visible, it reads like a launch failure
+// to the agent that started the wave. Everything else on stderr passes
+// through untouched.
+function routedNotice(line) {
+  return /^\[claude-code:unrecognized_model\] \{.*"model":"dex\//.test(line);
+}
+function forwardStderr(stream, write = chunk => process.stderr.write(chunk)) {
+  let pending = '';
+  const emit = text => { if (!routedNotice(text)) write(text + '\n'); };
+  stream.setEncoding('utf8');
+  stream.on('data', chunk => {
+    pending += chunk;
+    let index;
+    while ((index = pending.indexOf('\n')) !== -1) { emit(pending.slice(0, index)); pending = pending.slice(index + 1); }
+  });
+  stream.on('end', () => { if (pending) { if (!routedNotice(pending)) write(pending); pending = ''; } });
+}
 function gatewayMonitor(session) {
   let checking = false, failures = 0, recoveries = 0, stopped = false, failed = false;
   const record = type => {
@@ -143,14 +164,20 @@ async function launch(args) {
       if (mcp.builtin_tools && !parsed.toolsExplicit) scopedArgs.push('--tools', mcp.builtin_tools.join(','));
       if (mcp.summary.missing_env.length) process.stderr.write(`dex: selected MCPs reference unset variables: ${mcp.summary.missing_env.join(', ')}. Check their authentication before relying on these tools.\n`);
     }
+    // Only a print-mode launch has its stderr filtered: an interactive session
+    // owns the terminal and keeps every stream inherited.
+    const headless = args.includes('-p') || args.includes('--print');
     return await new Promise((resolve, reject) => {
-      const child = spawn('claude', ['--settings', settingsFile, ...scopedArgs, ...parsed.args], { stdio: 'inherit', env: launchEnvironment(settings, token, session) });
+      const child = spawn('claude', ['--settings', settingsFile, ...scopedArgs, ...parsed.args],
+        { stdio: headless ? ['inherit', 'inherit', 'pipe'] : 'inherit', env: launchEnvironment(settings, token, session) });
+      if (headless) forwardStderr(child.stderr);
       const forward = signal => { if (!child.killed) child.kill(signal); };
       const interrupt = () => forward('SIGINT'); const terminate = () => forward('SIGTERM');
       process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
       const cleanup = () => { process.off('SIGINT', interrupt); process.off('SIGTERM', terminate); };
       child.once('error', error => { cleanup(); reject(error); });
-      child.once('exit', (code, signal) => { cleanup(); resolve(code ?? (signal === 'SIGINT' ? 130 : 143)); });
+      // close, not exit: a piped stderr is only fully forwarded once its stream has ended.
+      child.once('close', (code, signal) => { cleanup(); resolve(code ?? (signal === 'SIGINT' ? 130 : 143)); });
     });
   } finally {
     if (settingsDirectory) fs.rmSync(settingsDirectory, { recursive: true, force: true });
@@ -159,4 +186,4 @@ async function launch(args) {
     if (monitor.failed && !await adapter.health(true, 10000)) process.stderr.write('dex: CCR recovery failed. Run dx router doctor before resuming this conversation.\n');
   }
 }
-module.exports = { launchArguments, launchSettings, launchEnvironment, gatewayMonitor, launch };
+module.exports = { launchArguments, launchSettings, launchEnvironment, gatewayMonitor, launch, routedNotice, forwardStderr };
