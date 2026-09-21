@@ -294,10 +294,10 @@ test('account/model rows compare primary and fallback capacity without mixing mo
   ] } };
   let rows = cli.accountRows([account], now, config);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows[0], ['Work', '-', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '72% · 1h 0m', '40% · 1d 0h']);
+  assert.deepEqual(rows[0], ['Work', '-', 'anthropic', 'Fable 5.1', 'rate limited (12s)', '28% · 4h 0m', '72% · 1h 0m', '40% · 1d 0h']);
   // The long-term cell shows whichever cap binds, so an opus-only window at
   // zero replaces the weekly one for that model's row.
-  assert.deepEqual(rows[1], ['Work', '-', 'anthropic', 'Opus 5', 'exhausted', '72% · 1h 0m', '0% · 2h 0m']);
+  assert.deepEqual(rows[1], ['Work', '-', 'anthropic', 'Opus 5', 'exhausted', '28% · 4h 0m', '72% · 1h 0m', '0% · 2h 0m']);
   // These two differ in status, so they stay separate rows even though the
   // account and every quota reading is shared.
   assert.equal(cli.mergeModelRows(rows).length, 2);
@@ -307,7 +307,7 @@ test('account/model rows compare primary and fallback capacity without mixing mo
   account.model_ids = [primary];
   assert.equal(cli.accountRows([account], now, config)[1][4], 'not available');
   account.model_ids = [primary, fallback]; account.usage_error = 'unavailable';
-  assert.equal(cli.accountRows([account], now, config)[1][5], '72% · 1h 0m', 'a failed refresh still reports the cached reading');
+  assert.equal(cli.accountRows([account], now, config)[1][6], '72% · 1h 0m', 'a failed refresh still reports the cached reading');
   config.models.push({ id: 'openai/test', provider: 'openai' });
   config.phases[2].fallbacks.push('openai/test');
   assert.equal(cli.accountRows([{ name: 'Personal', provider: 'openai', enabled: true }], now, config)[0][3], 'test');
@@ -329,12 +329,14 @@ test('account rows compare quota windows side by side and distinguish due and un
   // One cell per window: the reset rides with the value it belongs to, and a
   // window with nothing to report is a dash rather than a word.
   assert.deepEqual(rows, [
-    ['Main', '-', 'anthropic', '-', 'ready', '72% · 2h 14m', '0% · due'],
-    ['Personal', '-', 'openai', '-', 'ready', '-', '91%'],
-    ['Backup', '-', 'openai', '-', 'disabled', '-', '-']
+    ['Main', '-', 'anthropic', '-', 'ready', '28% · 2h 46m', '72% · 2h 14m', '0% · due'],
+    // A week is too long to say what went into the last day, and with one
+    // reading there is nothing to measure, so this one declines to answer.
+    ['Personal', '-', 'openai', '-', 'ready', '-', '-', '91%'],
+    ['Backup', '-', 'openai', '-', 'disabled', '-', '-', '-']
   ]);
   account.usage_error = 'Refresh failed';
-  assert.equal(cli.accountRows([account], now)[0][5], '72% · 2h 14m', 'a failed refresh still reports the cached reading');
+  assert.equal(cli.accountRows([account], now)[0][6], '72% · 2h 14m', 'a failed refresh still reports the cached reading');
   account.status = 'reauth-required';
   account.cooldown_until = now + 60000;
   assert.equal(cli.accountRows([account], now)[0][4], 'reauth-required');
@@ -361,8 +363,8 @@ test('table rendering does not alter JSON output or saved account and model data
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  assert.match(run(['accounts']), /Account +Rank +Provider +Model +Status +Short term +Long term/);
-  assert.match(run(['accounts']), /A model on its own row has a status of its own/);
+  assert.match(run(['accounts']), /Account +Rank +Provider +Model +Status +Recent usage +Short term +Long term/);
+  assert.doesNotMatch(run(['accounts']), /Models follow configured routes/, 'the table says this itself');
   assert.match(run(['accounts']), /Tip: use dx accounts --live for updates\./);
   assert.match(run(['account', 'show', 'Main']), /test@example.test/);
   assert.match(run(['model', 'list']), /128,000/);
@@ -709,20 +711,21 @@ test('a metered account reports money where a subscription reports a reset', () 
   const now = Date.now();
   const subscription = { id: 'a', name: 'sub', provider: 'anthropic', enabled: true, rank: 1, created_at: 1,
     usage: { observed_at: now, windows: [
-      { name: '5h', remaining_ratio: 0.8, resets_at: now + 3600000 },
-      { name: 'weekly', remaining_ratio: 0.4, resets_at: now + 86400000 }] } };
+      { name: '5h', remaining_ratio: 0.8, resets_at: now + 3600000, period_ms: 5 * 3600000 },
+      { name: 'weekly', remaining_ratio: 0.4, resets_at: now + 86400000, period_ms: 7 * 86400000 }] } };
   const metered = { id: 'b', name: 'metered', provider: 'openrouter', enabled: true, rank: 2, created_at: 2,
     usage: { observed_at: now, windows: [
       // A balance never resets, so what it has left to say is money.
       { name: 'credit', remaining_ratio: 0.25, resets_at: null, remaining_amount: 2.458335 },
-      { name: 'spend-limit', remaining_ratio: 0.66, resets_at: now + 7200000, remaining_amount: 9.93 }] } };
+      { name: 'spend-limit', remaining_ratio: 0.66, resets_at: now + 7200000, remaining_amount: 9.93, period_ms: 86400000 }] } };
   const [sub, paid] = cli.accountRows([subscription, metered], now);
-  assert.deepEqual(sub.slice(5), ['80% · 1h 0m', '40% · 1d 0h'], 'a subscription reports when its window returns');
-  assert.deepEqual(paid.slice(5), ['25% · $2.46', '66% · 2h 0m'],
+  assert.deepEqual(sub.slice(5), ['20% · 4h 0m', '80% · 1h 0m', '40% · 1d 0h'], 'a subscription reports when its window returns');
+  // A balance has no period, so recent usage reads the daily cap.
+  assert.deepEqual(paid.slice(5), ['34% · 22h 0m', '25% · $2.46', '66% · 2h 0m'],
     'a balance reports what is left of it; a cap that resets reports when');
-  // Both providers occupy the same two columns, whatever their caps are called.
+  // Both providers occupy the same three columns, whatever their caps are called.
   assert.equal(sub.length, paid.length);
-  assert.equal(sub.length, 7);
+  assert.equal(sub.length, 8);
 });
 
 test('the accounts table rules between vendors, not between every account', () => {
@@ -746,10 +749,10 @@ test('the accounts table rules between vendors, not between every account', () =
 test('the accounts table keeps every reading without a column or row per model', () => {
   const now = Date.now();
   const merged = cli.mergeModelRows([
-    ['acct', 1, 'anthropic', 'Opus 5', 'ready', '80%', '-'],
-    ['acct', 1, 'anthropic', 'Fable 5.1', 'ready', '80%', '-'],
-    ['acct', 1, 'anthropic', 'Haiku', 'rate limited (3m)', '80%', '-'],
-    ['other', 2, 'openai', 'GPT', 'ready', '10%', '-']
+    ['acct', 1, 'anthropic', 'Opus 5', 'ready', '20% · 5h', '80%', '-'],
+    ['acct', 1, 'anthropic', 'Fable 5.1', 'ready', '20% · 5h', '80%', '-'],
+    ['acct', 1, 'anthropic', 'Haiku', 'rate limited (3m)', '20% · 5h', '80%', '-'],
+    ['other', 2, 'openai', 'GPT', 'ready', '90% · 7d', '10%', '-']
   ]);
   assert.deepEqual(merged.map(row => [row[3], row[4]]), [
     ['Opus 5, Fable 5.1', 'ready'],
@@ -771,6 +774,57 @@ test('the accounts table keeps every reading without a column or row per model',
   assert.equal(cli.windowDetail({ resets_at: now + 3600000 }, now), '1h 0m');
   assert.equal(cli.windowDetail({ resets_at: null, remaining_amount: 2.46 }, now), '$2.46');
   assert.equal(cli.windowDetail({ resets_at: null }, now), '', 'nothing to add rather than a dash inside the cell');
+});
+
+test('recent usage is what a window has spent, measured rather than inferred', () => {
+  const now = Date.UTC(2026, 8, 21, 9, 0, 0);
+  const account = (windows, extra = {}) => ({ usage: { observed_at: now, windows }, ...extra });
+  // A window no longer than a day opened empty, so what is missing from it
+  // went in since it opened, and how long ago that was is the span.
+  const session = [{ name: '5h', remaining_ratio: 0.19, resets_at: now + 3600000, period_ms: 5 * 3600000 },
+    { name: 'weekly', remaining_ratio: 0.09, resets_at: now + 86400000, period_ms: 7 * 86400000 }];
+  assert.equal(cli.recentCell(cli.recentUsage(session, account(session), now)), '81% · 4h 0m');
+  // Spent, so it moves the opposite way to the columns beside it.
+  const idle = [{ name: '5h', remaining_ratio: 1, resets_at: null, period_ms: 5 * 3600000 }];
+  assert.equal(cli.recentCell(cli.recentUsage(idle, account(idle), now)), '0%', 'a window that never opened has no span');
+  assert.equal(cli.recentCell(null), '-');
+
+  // A balance is not a period, so a metered key's recent usage is its daily cap.
+  const metered = [{ name: 'credit', remaining_ratio: 0.84 },
+    { name: 'spend-limit', remaining_ratio: 0.75, resets_at: now + 54000000, period_ms: 86400000 }];
+  assert.equal(cli.recentCell(cli.recentUsage(metered, account(metered), now)), '25% · 9h 0m');
+  assert.equal(cli.recentUsage([{ name: 'credit', remaining_ratio: 0.84 }], account([]), now), null,
+    'a balance alone says nothing about the last day');
+
+  // An exhausted week is not a day's work. Without a second reading to compare,
+  // the honest answer is no answer.
+  const week = [{ name: 'weekly', remaining_ratio: 0, resets_at: now + 86400000, period_ms: 7 * 86400000 }];
+  assert.equal(cli.recentCell(cli.recentUsage(week, account(week), now)), '-');
+  const watched = account(week, { usage_history: [
+    { at: now - 82800000, windows: { weekly: 0.08 } },
+    { at: now - 3600000, windows: { weekly: 0.02 } }
+  ] });
+  assert.equal(cli.recentCell(cli.recentUsage(week, watched, now)), '8% · 23h 0m',
+    'what the readings actually show going out of the window');
+  // A reset refills the window rather than crediting it back.
+  const reset = account(week, { usage_history: [
+    { at: now - 7200000, windows: { weekly: 0.6 } },
+    { at: now - 3600000, windows: { weekly: 0.9 } }
+  ] });
+  assert.equal(cli.recentCell(cli.recentUsage(week, reset, now)), '90% · 2h 0m');
+  // Older than the span, so there is nothing left to compare the reading with.
+  const stale = account(week, { usage_history: [{ at: now - 90000000, windows: { weekly: 0.5 } }] });
+  assert.equal(cli.recentCell(cli.recentUsage(week, stale, now)), '-');
+
+  // Readings taken before the gateway recorded window lengths still render:
+  // the name says the period, and a spend cap borrows its key limit's.
+  const cached = [{ name: '5h', remaining_ratio: 0.5, resets_at: now + 7200000 }];
+  assert.equal(cli.recentCell(cli.recentUsage(cached, account(cached), now)), '50% · 3h 0m');
+  const cap = [{ name: 'spend-limit', remaining_ratio: 0.25, resets_at: now + 43200000 }];
+  const keyed = { usage: { observed_at: now, windows: cap, spend: { key_limit_period: 'daily' } } };
+  assert.equal(cli.recentCell(cli.recentUsage(cap, keyed, now)), '75% · 12h 0m');
+  assert.equal(cli.recentUsage(cap, { usage: { observed_at: now, windows: cap, spend: {} } }, now), null,
+    'an unknown period is a dash, not a guess');
 });
 
 test('profile output is a table, not the raw value the command happens to return', t => {

@@ -10,7 +10,7 @@ const ipc = require('./ipc.cjs');
 const onboarding = require('./onboarding.cjs');
 const { launch } = require('./launch.cjs');
 const { table, liveScreen } = require('./output.cjs');
-const { PROVIDERS, providerKind } = require('./accounts.cjs');
+const { PROVIDERS, providerKind, periodLength, NAMED_PERIOD_MS } = require('./accounts.cjs');
 
 const clean = value => String(value ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
 const out = value => process.stdout.write(`${clean(value)}\n`);
@@ -155,14 +155,17 @@ async function configure(change, catalogueChange = false) {
     return config;
   }));
 }
+function spanLabel(milliseconds, round = Math.ceil) {
+  const minutes = round(milliseconds / 60000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
 function resetIn(timestamp, now) {
   // Nothing to say reads better as a dash than as a word.
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '-';
   if (timestamp <= now) return 'due';
-  const minutes = Math.ceil((timestamp - now) / 60000);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
+  return spanLabel(timestamp - now);
 }
 // Every cap an account has is either the one that comes back soon or the one
 // that comes back later. Naming the columns after the period suited one
@@ -174,6 +177,60 @@ function windowSlot(name) { return SHORT_TERM.has(name) ? 'short' : 'long'; }
 function slotWindow(windows, slot) {
   const found = windows.filter(window => windowSlot(window.name) === slot);
   return found.length ? found.reduce((a, b) => (a.remaining_ratio ?? 1) <= (b.remaining_ratio ?? 1) ? a : b) : null;
+}
+
+// Short term and Long term report what is left, not what has gone lately,
+// which is what a glance at a running account usually wants. Recent usage
+// reports that, where it can be known. A window no longer than a day gives it
+// directly: it opened empty, so what is missing from it went in since. A
+// weekly window does not; nothing left may be a week of steady work or one
+// afternoon of it. There it is measured across readings, and withheld until
+// there are two readings to compare.
+const RECENT_SPAN_MS = 86400000;
+
+// A reading taken before the gateway recorded window lengths still has to
+// render, so a name that implies a period is read as one, and a spend cap
+// falls back to the period its key limit resets on.
+function windowPeriod(window, usage, now) {
+  return window.period_ms ?? NAMED_PERIOD_MS[window.name]
+    ?? (window.name === 'spend-limit' ? periodLength(usage?.spend?.key_limit_period, now) : undefined);
+}
+// Shortest window first, and where two are the same length the one with least
+// left, for the same reason the columns beside it show that one.
+function shortestWindow(windows) {
+  return windows.reduce((a, b) => b.period_ms < a.period_ms
+    || (b.period_ms === a.period_ms && (b.remaining_ratio ?? 1) < (a.remaining_ratio ?? 1)) ? b : a);
+}
+// What successive readings of one window show going out of it. A window that
+// refills has reset rather than gained, so only the drops count as spending.
+function measuredUsage(history, window, observedAt, now) {
+  const readings = [...(Array.isArray(history) ? history : [])
+    .filter(sample => Number.isFinite(sample?.at) && sample.at < observedAt
+      && now - sample.at <= RECENT_SPAN_MS && Number.isFinite(sample.windows?.[window.name]))
+    .map(sample => ({ at: sample.at, remaining: sample.windows[window.name] })),
+    { at: observedAt, remaining: window.remaining_ratio ?? 1 }].sort((a, b) => a.at - b.at);
+  if (readings.length < 2) return null;
+  const used = readings.slice(1).reduce((total, reading, index) =>
+    total + Math.max(0, readings[index].remaining - reading.remaining), 0);
+  return { ratio: Math.min(1, used), span: readings[readings.length - 1].at - readings[0].at };
+}
+function recentUsage(windows, account, now = Date.now()) {
+  const usage = account?.usage;
+  const timed = windows.map(window => ({ ...window, period_ms: windowPeriod(window, usage, now) }))
+    .filter(window => Number.isFinite(window.period_ms) && window.period_ms > 0);
+  if (!timed.length) return null;
+  const short = timed.filter(window => window.period_ms <= RECENT_SPAN_MS);
+  if (!short.length) return measuredUsage(account?.usage_history, shortestWindow(timed), Number(usage?.observed_at) || now, now);
+  const window = shortestWindow(short);
+  // The window opened empty, so how long it has been open is the span its
+  // spending covers.
+  const elapsed = Number.isFinite(window.resets_at) && window.resets_at > now
+    ? Math.max(0, Math.min(window.period_ms, window.period_ms - (window.resets_at - now))) : null;
+  return { ratio: 1 - (window.remaining_ratio ?? 1), span: elapsed };
+}
+function recentCell(recent) {
+  if (!recent) return '-';
+  return `${Math.round(recent.ratio * 100)}%${recent.span ? ` · ${spanLabel(recent.span, Math.round)}` : ''}`;
 }
 
 // What a cap reports beside the percentage: when it comes back, or, for a
@@ -223,6 +280,7 @@ function accountRows(items, now = Date.now(), config = state.config()) {
       return `${label}${problem.until > now && problem.reason !== 'quota-exhausted' ? ` (${policy.retryIn(problem.until, now)})` : ''}`;
     }).join('; ') || 'ready' : summary;
     return [account.name, account.rank || '-', account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status,
+      recentCell(recentUsage(windows, account, now)),
       ...['short', 'long'].map(slot => {
       const window = slotWindow(windows, slot);
       if (!window) return '-';
@@ -274,9 +332,9 @@ function mergeModelRows(rows) {
 }
 
 function accountTable(items) {
-  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', 'Short term', 'Long term'];
+  const headers = ['Account', 'Rank', 'Provider', 'Model', 'Status', 'Recent usage', 'Short term', 'Long term'];
   return table(headers, groupByProvider(mergeModelRows(accountRows(items, Date.now()))),
-    { rightAlign: [1, 5, 6] });
+    { rightAlign: [1, 5, 6, 7] });
 }
 function showAccounts(items) {
   process.stdout.write(accountTable(items));
@@ -286,7 +344,7 @@ function accountsFrame(items, live, note = '') {
   const footer = live
     ? `View updated at ${new Date().toLocaleTimeString()}\nLive: every 30s. Ctrl+C to exit.`
     : 'Tip: use dx accounts --live for updates.';
-  return `Dex subscription accounts\n${rows}\nModels follow configured routes. A model on its own row has a status of its own.\n${note ? `${note}\n` : ''}${footer}\n`;
+  return `Dex subscription accounts\n${rows}\n${note ? `${note}\n` : ''}${footer}\n`;
 }
 async function accounts(options) {
   if (options.watch && options.json) throw new Error('--live/--watch cannot be combined with --json. Use dx accounts --json for a single snapshot.');
@@ -608,4 +666,4 @@ if (require.main === module) {
   process.umask(0o077);
   main(process.argv.slice(2)).catch(error => { info(error.message); process.exitCode = 1; });
 }
-module.exports = { clean, parse, question, configure, accountRows, accountTable, groupByProvider, mergeModelRows, slotWindow, windowDetail, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };
+module.exports = { clean, parse, question, configure, accountRows, accountTable, groupByProvider, mergeModelRows, slotWindow, windowDetail, recentUsage, recentCell, accountCommand, modelCommand, profileCommand, routeCommand, routerCommand, main };

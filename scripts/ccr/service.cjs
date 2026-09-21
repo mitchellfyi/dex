@@ -10,7 +10,7 @@ const state = require('./state.cjs');
 const policy = require('./policy.cjs');
 const { prepareHistory, prepareResponse } = require('./history.cjs');
 const ipc = require('./ipc.cjs');
-const { AccountBroker, authHeaders } = require('./accounts.cjs');
+const { AccountBroker, authHeaders, usageSamples } = require('./accounts.cjs');
 const { CodexCatalog } = require('./codex-catalog.cjs');
 const { responseMetrics, requestCost, providerRequestId } = require('./metrics.cjs');
 
@@ -188,7 +188,12 @@ class RouterService {
     if (method === 'usage') {
       const selected = params.account ? [state.getAccount(params.account)] : state.accounts();
       await Promise.all(selected.filter(item => item.enabled).map(async account => {
-        try { const usage = await this.broker.usage(account); await this.updateAccount(account.id, item => { item.usage = usage; delete item.usage_error; }); }
+        try {
+          const usage = await this.broker.usage(account);
+          // Keep what this reading saw before replacing it, so a window too
+          // long to report recent use can be measured across readings instead.
+          await this.updateAccount(account.id, item => { item.usage_history = usageSamples(item.usage_history, usage); item.usage = usage; delete item.usage_error; });
+        }
         catch (error) { await this.updateAccount(account.id, item => { item.usage_error = 'unavailable'; if (error.reauth) item.status = 'reauth-required'; }); }
       }));
       return state.accounts();

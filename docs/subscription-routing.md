@@ -271,13 +271,26 @@ also appear while they remain in the catalogue. Shared quota readings repeat
 across model rows; they are one allowance. Model-specific windows appear only
 on matching rows.
 
-The 5-hour and weekly quota appear side by side. Each window has a percentage
-left and a `Reset in` countdown, such as
-`4h 51m` or `3d 12h`. Additional windows, including model-specific quotas, get
-their own column pairs. A dash means that window was not reported; accounts
-with no readings show `unknown`, and old readings remain labelled `stale`.
-With CCR running, the dashboard refreshes usage; the extension also polls every
-minute. The Claude status line reads the cache without a network request.
+Three usage columns follow the status. Short term and Long term show what is
+left of the cap that comes back soon and the cap that comes back later,
+whatever each provider calls them: a 5-hour session and a weekly allowance for
+a subscription, a credit balance and a spend limit for a metered key. Each cell
+gives the percentage left, then when that cap returns (`4h 51m`, `3d 12h`), or,
+for a balance that never resets, how much money is left of it. Where several
+caps fall in the same column, the one with least left is the one shown, so a
+model-specific window replaces the account-wide one on that model's row.
+
+Recent usage gives what has been spent instead, and the span it was spent over.
+A window no longer than a day answers directly, because it opened empty: `91% ·
+1h 34m` is most of a 5-hour session spent in the hour and a half since that
+session started. A weekly window cannot answer that way, because nothing left
+may be a week of steady work or one afternoon of it. There Dex measures
+consumption across successive readings and reports the span it watched. Until
+it has two readings to compare, the cell is a dash rather than a guess.
+
+A dash means the reading is not available rather than zero. With CCR running,
+the dashboard refreshes usage; the extension also polls every minute. The
+Claude status line reads the cache without a network request.
 
 Use `dx accounts --live` (or `--watch`) to refresh every 30 seconds. The live
 view replaces the table on the same screen and restores your terminal when

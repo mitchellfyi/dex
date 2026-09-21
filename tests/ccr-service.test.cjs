@@ -454,6 +454,25 @@ test('all exhausted accounts preserve route state without claiming a successful 
   assert.equal((await send(token)).status, 429); assert.equal(calls.length, 2, 'retries during cooldown do not call the provider');
   const session = state.read(state.sessionFile('session')); assert.equal(session.active, true); assert.equal(session.paused_reason, 'no-completed-response');
 });
+test('each quota refresh keeps what it saw, so a week-long window can still be measured', async () => {
+  const start = Date.now() - 7200000;
+  let reading = { observed_at: start, windows: [{ name: 'weekly', remaining_ratio: 0.9, resets_at: start + 86400000 }] };
+  service.broker.usage = async () => reading;
+  await service.control('usage', {});
+  assert.deepEqual(state.getAccount('one').usage_history, [{ at: start, windows: { weekly: 0.9 } }]);
+
+  reading = { observed_at: start + 3600000, windows: [{ name: 'weekly', remaining_ratio: 0.82, resets_at: start + 86400000 }] };
+  await service.control('usage', {});
+  const account = state.getAccount('one');
+  assert.deepEqual(account.usage_history.map(sample => sample.windows.weekly), [0.9, 0.82]);
+  assert.equal(account.usage.observed_at, start + 3600000, 'the reading itself is still what the table shows');
+
+  // A refresh that fails has seen nothing, so it takes nothing away either.
+  service.broker.usage = async () => { throw new Error('unavailable'); };
+  await service.control('usage', {});
+  assert.deepEqual(state.getAccount('one').usage_history.map(sample => sample.at), [start, start + 3600000]);
+  assert.equal(state.getAccount('one').usage_error, 'unavailable');
+});
 for (const protocol of ['messages', 'responses']) test(`${protocol} reports weekly quota exhaustion without a server-error status`, async () => {
   const config = state.config(); config.models.push({ ...config.models[0], id: 'anthropic/fallback' });
   config.phases[0] = { model: 'anthropic/test', fallbacks: ['anthropic/fallback'] }; state.write(state.stateFile('config'), config);

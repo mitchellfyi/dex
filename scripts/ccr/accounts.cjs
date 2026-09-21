@@ -100,26 +100,73 @@ function readNative(provider, directory) {
 // confidently wrong reset time is worse than an honest unknown. The result is
 // an ISO string: a bare number in this position means Unix seconds to the
 // window reader, and these are not seconds.
+const PERIOD_BOUNDS = {
+  hourly: date => [[date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours()],
+    [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours() + 1]],
+  daily: date => [[date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()],
+    [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1]],
+  monthly: date => [[date.getUTCFullYear(), date.getUTCMonth(), 1],
+    [date.getUTCFullYear(), date.getUTCMonth() + 1, 1]]
+};
+function periodBounds(value, now) {
+  const bounds = PERIOD_BOUNDS[value];
+  return bounds ? bounds(new Date(now)).map(parts => Date.UTC(...parts)) : null;
+}
 function periodReset(value, now) {
   if (typeof value !== 'string' || !value) return null;
   const explicit = Date.parse(value);
   if (Number.isFinite(explicit)) return new Date(explicit).toISOString();
-  const date = new Date(now);
-  const next = { hourly: [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours() + 1],
-    daily: [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1],
-    monthly: [date.getUTCFullYear(), date.getUTCMonth() + 1, 1] }[value];
-  return next ? new Date(Date.UTC(...next)).toISOString() : null;
+  const bounds = periodBounds(value, now);
+  return bounds ? new Date(bounds[1]).toISOString() : null;
+}
+
+// How long a named period counts for: the distance between the boundary it
+// last crossed and the one it will cross next, measured rather than assumed,
+// because a month is not a fixed number of days. An explicit date says when
+// the cap comes back but not how long it has been counting, so it has none.
+function periodLength(value, now) {
+  const bounds = periodBounds(value, now);
+  return bounds ? bounds[1] - bounds[0] : undefined;
+}
+
+// The window a cap counts over, where the provider's own name for it already
+// says how long that is. A balance is not a period and has none.
+const NAMED_PERIOD_MS = { '5h': 5 * 3600000, daily: 86400000,
+  weekly: 7 * 86400000, 'weekly-opus': 7 * 86400000, 'weekly-sonnet': 7 * 86400000 };
+
+// A window longer than a day cannot say what went into the last day: nothing
+// left may be a week of steady work or one afternoon of it. The only way to
+// know is to compare readings over time, so every reading keeps what each
+// window had left, thinned to one sample a half hour and trimmed to a little
+// over a day. That is enough to measure a day's consumption without growing
+// the account registry.
+const SAMPLE_INTERVAL_MS = 1800000, SAMPLE_SPAN_MS = 86400000;
+function usageSamples(history, usage) {
+  const kept = (Array.isArray(history) ? history : []).filter(sample => Number.isFinite(sample?.at) && sample.windows);
+  const at = Number(usage?.observed_at);
+  if (!Number.isFinite(at)) return kept;
+  const windows = Object.fromEntries((usage.windows || [])
+    .filter(window => Number.isFinite(window.remaining_ratio))
+    .map(window => [window.name, Math.round(window.remaining_ratio * 10000) / 10000]));
+  const recent = kept.filter(sample => sample.at < at && at - sample.at <= SAMPLE_SPAN_MS + SAMPLE_INTERVAL_MS);
+  if (!Object.keys(windows).length) return recent;
+  const last = recent[recent.length - 1];
+  return last && at - last.at < SAMPLE_INTERVAL_MS ? recent : [...recent, { at, windows }];
 }
 
 function normalizeUsage(provider, data, now = Date.now()) {
   const windows = [];
   const spend = meteredSpend(provider, data);
   // `remaining_amount` is what is left in money, for a cap denominated in it.
-  // A time window has a reset instead; a spend cap has a number.
-  const add = (name, raw, used, reset, modelPool, remainingAmount) => {
+  // A time window has a reset instead; a spend cap has a number. `period_ms`
+  // is how long the window counts for, which the reset alone does not say:
+  // a cap two hours from returning may be a five-hour one or a weekly one.
+  const add = (name, raw, used, reset, modelPool, remainingAmount, periodMs) => {
     if (!raw || !Number.isFinite(used) || used < 0 || used > 100) return;
     const parsedReset = typeof reset === 'number' ? reset * 1000 : Date.parse(reset);
+    const period = Number.isFinite(periodMs) && periodMs > 0 ? periodMs : NAMED_PERIOD_MS[name];
     windows.push({ name, remaining_ratio: (100 - used) / 100, resets_at: Number.isFinite(parsedReset) ? parsedReset : null,
+      ...(period ? { period_ms: period } : {}),
       ...(modelPool ? { model_pool: modelPool } : {}),
       ...(Number.isFinite(remainingAmount) ? { remaining_amount: Number(remainingAmount) } : {}) });
   };
@@ -132,13 +179,25 @@ function normalizeUsage(provider, data, now = Date.now()) {
     const body = data?.data || data || {};
     // A balance has no reset, so what it reports is money left. A spend cap
     // does reset, so it reports that, like any other window.
-    for (const [name, cap, used, reset] of [
-      ['credit', body.total_credits, body.total_usage, null],
-      ['spend-limit', body.limit, body.usage, periodReset(body.limit_reset, now)]
+    //
+    // What counts against a cap that resets is what was spent in the period it
+    // resets on. The key's own `usage` is its cumulative spend, which is a
+    // different number: a key with $15.23 spent in total reported a $15 daily
+    // cap exhausted while the whole day's allowance was untouched, and routing
+    // skipped the account for it. Prefer the remaining allowance the provider
+    // states, then the period total that matches the cap. A cap whose period
+    // the key does not account for is left unreported rather than guessed at.
+    const periodUsage = { daily: body.usage_daily, weekly: body.usage_weekly, monthly: body.usage_monthly };
+    const limitRemaining = Number(body.limit_remaining);
+    const limitUsed = Number.isFinite(limitRemaining) ? Math.max(0, Number(body.limit) - limitRemaining)
+      : body.limit_reset ? periodUsage[body.limit_reset] : body.usage;
+    for (const [name, cap, used, reset, period] of [
+      ['credit', body.total_credits, body.total_usage, null, undefined],
+      ['spend-limit', body.limit, limitUsed, periodReset(body.limit_reset, now), periodLength(body.limit_reset, now)]
     ]) {
       const capValue = Number(cap), usedValue = Number(used);
       if (Number.isFinite(capValue) && capValue > 0 && Number.isFinite(usedValue) && usedValue >= 0) {
-        add(name, { cap, used }, Math.min(100, (usedValue / capValue) * 100), reset, undefined, capValue - usedValue);
+        add(name, { cap, used }, Math.min(100, (usedValue / capValue) * 100), reset, undefined, capValue - usedValue, period);
       }
     }
   } else if (provider === 'anthropic') {
@@ -148,8 +207,9 @@ function normalizeUsage(provider, data, now = Date.now()) {
   } else {
     for (const [field, name] of [['primary_window', 'session'], ['secondary_window', 'weekly']]) {
       const raw = data.rate_limit?.[field];
+      const seconds = Number(raw?.limit_window_seconds);
       const period = ({ 18000: '5h', 86400: 'daily', 604800: 'weekly' })[raw?.limit_window_seconds] || name;
-      add(period, raw, raw?.used_percent, raw?.reset_at);
+      add(period, raw, raw?.used_percent, raw?.reset_at, undefined, undefined, Number.isFinite(seconds) ? seconds * 1000 : undefined);
     }
   }
   return { observed_at: now, source: 'provider', confidence: windows.length ? 'provider-derived' : 'unknown', windows,
@@ -259,4 +319,4 @@ function authHeaders(provider, credentials) {
   return headers;
 }
 
-module.exports = { CredentialStore, AccountBroker, PROVIDERS, providerKind, meteredSpend, periodReset, keychain, jwt, normalizeTokens, normalizeApiKey, nativeEnv, readNative, normalizeUsage, authHeaders };
+module.exports = { CredentialStore, AccountBroker, PROVIDERS, providerKind, meteredSpend, periodReset, periodLength, NAMED_PERIOD_MS, usageSamples, keychain, jwt, normalizeTokens, normalizeApiKey, nativeEnv, readNative, normalizeUsage, authHeaders };

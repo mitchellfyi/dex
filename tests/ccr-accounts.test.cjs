@@ -96,6 +96,7 @@ test('a spend cap exhausts like a quota and an uncapped account reports no windo
   assert.equal(normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 12 } }, 1000).windows[0].remaining_ratio, 0,
     'spending past the balance clamps at exhausted, it does not go negative');
   // A key limit is a second, independent cap: either one stops the account.
+  // This cap does not reset, so what the key has ever spent is what counts.
   const both = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 5, limit: 2, usage: 2 } }, 1000);
   // The key's own cap is this account's near-term limit, so it shares the
   // near-term column rather than adding one to every table.
@@ -103,6 +104,27 @@ test('a spend cap exhausts like a quota and an uncapped account reports no windo
     [['credit', 0.5, 5], ['spend-limit', 0, 0]]);
   assert.deepEqual(normalizeUsage('openrouter', { data: { total_credits: null, total_usage: 3, limit: null, usage: 1 } }, 1000).windows, [],
     'no cap means no window to exhaust, not a window at zero');
+});
+
+test('a cap that resets counts the period it resets on, not what the key ever spent', () => {
+  // The live shape that exhausted a healthy account: a key that had spent
+  // $15.23 in its life against a $15 daily cap with the day untouched.
+  const now = Date.parse('2026-09-21T09:00:00Z');
+  const live = { data: { total_credits: 110, total_usage: 17.704526, limit: 15, usage: 15.234826,
+    limit_remaining: 15, limit_reset: 'daily', usage_daily: 0, usage_weekly: 0, usage_monthly: 15.234826 } };
+  const window = normalizeUsage('openrouter', live, now).windows.find(item => item.name === 'spend-limit');
+  assert.equal(window.remaining_ratio, 1, 'the whole daily allowance is still there');
+  assert.equal(window.remaining_amount, 15);
+  assert.equal(new Date(window.resets_at).toISOString(), '2026-09-22T00:00:00.000Z');
+
+  // Without the remaining allowance, the period total the cap resets on.
+  const totals = { ...live.data, limit_remaining: undefined, usage_daily: 3.75 };
+  assert.equal(normalizeUsage('openrouter', { data: totals }, now).windows.find(item => item.name === 'spend-limit').remaining_ratio, 0.75);
+
+  // A cap whose period the key does not account for is not reported at all;
+  // a guess here refuses routing to an account that is fine.
+  const unknown = normalizeUsage('openrouter', { data: { ...totals, usage_daily: undefined } }, now);
+  assert.deepEqual(unknown.windows.map(item => item.name), ['credit'], 'unknown is a missing window, not an invented one');
 });
 
 test('an exhausted spend cap stops the route instead of spending on', () => {
@@ -151,10 +173,55 @@ test('a spend cap that reports a period becomes a reset time only where UTC is u
   assert.equal(periodReset('2026-10-01T00:00:00Z', now), '2026-10-01T00:00:00.000Z');
   // A bare number in this position means Unix seconds to the window reader, so
   // the reset must not arrive as milliseconds.
-  const usage = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 7.54, limit: 15, usage: 5.07, limit_reset: 'daily' } }, now);
+  const usage = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 7.54, limit: 15, usage: 5.07, usage_daily: 5.07, limit_reset: 'daily' } }, now);
   const window = usage.windows.find(item => item.name === 'spend-limit');
   assert.equal(new Date(window.resets_at).toISOString(), '2026-09-20T00:00:00.000Z');
   assert.equal(usage.spend.key_limit, 15);
   assert.equal(usage.spend.key_remaining, undefined, 'absent when the provider does not report it');
   assert.equal(usage.spend.key_limit_period, 'daily');
+});
+
+test('readings are kept so a window too long to report recent use can be measured', () => {
+  const { usageSamples } = require('../scripts/ccr/accounts.cjs');
+  const reading = (at, remaining) => ({ observed_at: at, windows: [{ name: 'weekly', remaining_ratio: remaining }] });
+  const start = Date.parse('2026-09-20T09:00:00Z');
+  let history = usageSamples(undefined, reading(start, 0.9));
+  assert.deepEqual(history, [{ at: start, windows: { weekly: 0.9 } }]);
+  // A refresh a minute later is the same half hour, and the registry is not a
+  // time series; the sample already taken stands.
+  history = usageSamples(history, reading(start + 60000, 0.88));
+  assert.deepEqual(history, [{ at: start, windows: { weekly: 0.9 } }]);
+  history = usageSamples(history, reading(start + 2400000, 0.85));
+  assert.deepEqual(history.map(sample => sample.at), [start, start + 2400000]);
+  // Beyond a day there is nothing left to measure, so the sample goes.
+  history = usageSamples(history, reading(start + 90000000, 0.5));
+  assert.deepEqual(history.map(sample => sample.at), [start + 2400000, start + 90000000]);
+  // A reading with nothing in it keeps what was already watched.
+  assert.deepEqual(usageSamples(history, { observed_at: start + 90060000, windows: [] }), history);
+  assert.deepEqual(usageSamples(history, undefined), history);
+  assert.deepEqual(usageSamples('not a history', reading(start, 0.9)), [{ at: start, windows: { weekly: 0.9 } }]);
+});
+
+test('a window records how long it counts for, not only when it comes back', () => {
+  const { periodLength } = require('../scripts/ccr/accounts.cjs');
+  const now = Date.parse('2026-09-19T21:30:00Z');
+  assert.equal(periodLength('hourly', now), 3600000);
+  assert.equal(periodLength('daily', now), 86400000);
+  // September is 30 days, not an assumed 31 or 30.44.
+  assert.equal(periodLength('monthly', now), 30 * 86400000);
+  assert.equal(periodLength('2026-10-01T00:00:00Z', now), undefined, 'a date says when, not how long');
+  assert.equal(periodLength('weekly', now), undefined);
+
+  const subscription = normalizeUsage('anthropic', { five_hour: { utilization: 10, resets_at: '2026-09-19T23:00:00Z' },
+    seven_day: { utilization: 20, resets_at: '2026-09-24T00:00:00Z' } }, now);
+  assert.deepEqual(subscription.windows.map(item => [item.name, item.period_ms]),
+    [['5h', 5 * 3600000], ['weekly', 7 * 86400000]]);
+  // The provider states the period in seconds, so an unfamiliar one still has
+  // a length even though its name falls back.
+  const codex = normalizeUsage('openai', { rate_limit: { primary_window: { used_percent: 25, limit_window_seconds: 10800 } } });
+  assert.deepEqual(codex.windows.map(item => [item.name, item.period_ms]), [['session', 10800000]]);
+
+  const metered = normalizeUsage('openrouter', { data: { total_credits: 10, total_usage: 2, limit: 15, usage: 5, usage_daily: 5, limit_reset: 'daily' } }, now);
+  assert.deepEqual(metered.windows.map(item => [item.name, item.period_ms]), [['credit', undefined], ['spend-limit', 86400000]],
+    'a balance is not a period');
 });
