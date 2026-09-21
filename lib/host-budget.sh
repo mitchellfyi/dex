@@ -78,6 +78,7 @@ dx_host_memory_low() {
 # DEX_TEST_JOBS (1..32) is the explicit budget. Otherwise half the host's
 # cores are shared across the sessions expected to run at once, which defaults
 # to the review-wave admission limit, clamped to 1..4.
+# shellcheck disable=SC2120  # review-loop.sh and the tests pass the CPU count and wave limit
 dx_host_test_jobs() {
   local cpu_count="${1:-}" concurrent="${2:-}" configured="${DEX_TEST_JOBS:-}"
   if [[ -n "$configured" ]]; then

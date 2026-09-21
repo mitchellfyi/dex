@@ -106,14 +106,18 @@ dx_repo_root() {
   echo "$root"
 }
 
-# Wait without forking. Lock retries and timeout supervisors call this many
-# times a second, and a runtime owner does so for the life of its session; on
-# a shared host every `sleep` is a process the machine pays for. Bash 4+ reads
-# with a timeout from a pipe it holds both ends of, zsh selects on nothing
-# with a timeout, and anything older falls back to sleep. Never exits an
-# errexit caller: a timed-out wait is the expected outcome.
+# Wait cheaply. Lock retries and timeout supervisors call this many times a
+# second, and a runtime owner does so for the life of its session; on a shared
+# host every external `sleep` is a fork. zsh selects on nothing with a timeout,
+# and bash loads its own `sleep` builtin where the platform ships it (Debian
+# and Ubuntu package it as bash-builtins; Fedora installs it by default),
+# falling back to the external command elsewhere. Bash's `read -t` was tried
+# first: its alarm-driven timeout longjmps over a running trap handler, and
+# glibc aborts bash with "longjmp causes uninitialized stack frame" whenever a
+# signal lands inside a supervisor that traps it. A built-in sleep returns
+# through the normal path and leaves traps to run afterwards.
 dx_pause() {
-  local seconds="${1:-1}" wait_status=0
+  local seconds="${1:-1}"
   if [[ -n "${ZSH_VERSION:-}" ]]; then
     if zmodload zsh/zselect 2>/dev/null; then
       local hundredths
@@ -123,32 +127,12 @@ dx_pause() {
       zselect -t "$hundredths" 2>/dev/null || true
       return 0
     fi
-  elif [[ -n "${BASH_VERSION:-}" && "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
-    if [[ -z "${__DX_PAUSE_FD:-}" ]]; then
-      __dx_pause_open || __DX_PAUSE_FD=none
-    fi
-    if [[ "$__DX_PAUSE_FD" != none ]]; then
-      read -r -t "$seconds" -u "$__DX_PAUSE_FD" _ 2>/dev/null || wait_status=$?
-      [[ "$wait_status" -gt 128 ]] && return 0
-    fi
+  elif [[ -n "${BASH_VERSION:-}" && -z "${__DX_PAUSE_SLEEP:-}" ]]; then
+    # Once per shell. A `sleep` function defined by the caller still wins over
+    # the builtin, as functions do, so tests that shadow sleep keep working.
+    if enable -f sleep sleep 2>/dev/null; then __DX_PAUSE_SLEEP=builtin; else __DX_PAUSE_SLEEP=external; fi
   fi
   sleep "$seconds"
-}
-
-# Open the pipe dx_pause waits on, and prove a read on it times out rather
-# than hitting end of file: a pipe that reports EOF would turn every wait into
-# a busy loop, which is worse than the fork it replaces. The fd syntax is
-# evaluated late so bash 3.2, which never calls this, still parses the file.
-__dx_pause_open() {
-  local fd="" wait_status=0
-  eval 'exec {fd}<> <(:)' 2>/dev/null || return 1
-  [[ -n "$fd" ]] || return 1
-  read -r -t 0.01 -u "$fd" _ 2>/dev/null || wait_status=$?
-  if [[ "$wait_status" -le 128 ]]; then
-    eval 'exec {fd}>&-' 2>/dev/null || true
-    return 1
-  fi
-  __DX_PAUSE_FD="$fd"
 }
 
 # Source sibling libraries — guard each call so partial installs get a clear error.
