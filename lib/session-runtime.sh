@@ -1782,7 +1782,7 @@ __dx_session_runtime_owner_stop_process() { # <pid> <stable-identity>
   fi
   while __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" \
     && [[ "$elapsed_milliseconds" -lt 1000 ]]; do
-    sleep 0.05
+    dx_pause 0.05
     elapsed_milliseconds=$((elapsed_milliseconds + 50))
   done
   if __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"; then
@@ -1792,7 +1792,7 @@ __dx_session_runtime_owner_stop_process() { # <pid> <stable-identity>
     elapsed_milliseconds=0
     while __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" \
       && [[ "$elapsed_milliseconds" -lt 1000 ]]; do
-      sleep 0.05
+      dx_pause 0.05
       elapsed_milliseconds=$((elapsed_milliseconds + 50))
     done
   fi
@@ -2090,7 +2090,7 @@ EOF
     if [[ -n "$result_record" ]] || ! kill -0 "$owner_pid" 2>/dev/null; then
       break
     fi
-    sleep 0.05
+    dx_pause 0.05
     elapsed_milliseconds=$((elapsed_milliseconds + 50))
   done
 
@@ -2237,7 +2237,7 @@ EOF
       final_result=3
       break
     fi
-    sleep 0.05
+    dx_pause 0.05
     elapsed_milliseconds=$((elapsed_milliseconds + 50))
   done
 
@@ -2269,7 +2269,7 @@ EOF
 
     while __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity" \
       && [[ "$elapsed_milliseconds" -lt "$finish_timeout" ]]; do
-      sleep 0.05
+      dx_pause 0.05
       elapsed_milliseconds=$((elapsed_milliseconds + 50))
     done
     if __dx_session_runtime_owner_process_matches "$owner_pid" "$owner_identity"; then

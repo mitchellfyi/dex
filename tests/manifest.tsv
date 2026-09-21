@@ -50,6 +50,7 @@ maintenance-test.sh	slow	all	1200	hermetic
 output-format-test.sh	fast	all	600	hermetic
 override-policy-test.sh	fast	all	600	hermetic
 parser-drift-test.sh	fast	all	600	hermetic
+pause-test.sh	fast	all	120	hermetic
 phase-loop-ownership-test.sh	slow	all	1200	hermetic
 portability-test.sh	fast	all	600	hermetic
 post-commit-guard-test.sh	fast	all	600	hermetic

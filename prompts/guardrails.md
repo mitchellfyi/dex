@@ -146,6 +146,14 @@ at once. Treat CPU and memory as a shared budget:
   would. Reach for the full pipeline only when the cheap check cannot answer.
 - **Do not fan out on your own.** Subagents are capped per session; when a
   spawn is refused, do the work in this session rather than retrying.
+- **Wait; do not poll.** When something outside this session has to finish
+  first, such as an environment provisioning, a build, CI, or a queue, use the
+  blocking wait the host or tool provides, with the longest wait it allows,
+  and let it block. If nothing blocks, check at most once a minute. Never
+  leave a shell loop sleeping in the background to watch for a change, and
+  never run two watchers for the same thing. Each pass costs processes on a
+  machine that is already short of them, and it delays the very thing you are
+  waiting for.
 
 ## Implementation Principles
 

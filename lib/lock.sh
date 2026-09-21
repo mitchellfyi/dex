@@ -229,12 +229,12 @@ dx_lock_with() {
     dx_lock_acquire "$lock_dir" "$owner_token" && break
     acquire_status=$?
     [[ "$acquire_status" -eq 2 ]] && return 2
-    # The retry sleeps a tenth of a second, so the deadline is timeout * 10
+    # The retry waits a tenth of a second, so the deadline is timeout * 10
     # ticks — comparing ticks against seconds cut every wait to a tenth.
     if [[ "$waited_tenths" -ge $((timeout * 10)) ]]; then
       return 75
     fi
-    sleep 0.1
+    dx_pause 0.1
     waited_tenths=$((waited_tenths + 1))
   done
   "$@"

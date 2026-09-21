@@ -119,7 +119,7 @@ __dx_factory_sync_acquire_lock() {
     [[ "$lock_status" -eq 2 ]] && return 1
     attempts=$((attempts + 1))
     [[ "$attempts" -lt "$max_attempts" ]] || return 1
-    sleep 0.05
+    dx_pause 0.05
   done
 }
 

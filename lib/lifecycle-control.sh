@@ -926,7 +926,7 @@ __dx_lifecycle_control_lock_try() {
   [[ "$stale_after" =~ ^[0-9]+$ ]] || stale_after=2
 
   if [[ ! -e "$owner_file" && ! -L "$owner_file" ]]; then
-    sleep 0.05
+    dx_pause 0.05
     [[ ! -e "$owner_file" && ! -L "$owner_file" ]] || return 1
     lock_epoch=$(__dx_lifecycle_path_mtime "$lock_dir" 2>/dev/null || printf '0')
     now_epoch=$(date +%s)
@@ -972,7 +972,7 @@ dx_lifecycle_control_lock_acquire() {
       return 0
     fi
     attempt=$((attempt + 1))
-    [[ "$attempt" -lt "$attempts_raw" ]] && sleep 0.05
+    [[ "$attempt" -lt "$attempts_raw" ]] && dx_pause 0.05
   done
   return 1
 }

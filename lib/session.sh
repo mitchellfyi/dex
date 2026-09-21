@@ -1047,7 +1047,7 @@ dx_session_claim_acquire() {
     __dx_session_claim_checkpoint "$claim_role" contended "$session_id" \
       || return 2
     attempt=$((attempt + 1))
-    [[ "$attempt" -lt "$attempts_raw" ]] && sleep 0.05
+    [[ "$attempt" -lt "$attempts_raw" ]] && dx_pause 0.05
   done
   return 75
 }
@@ -2185,7 +2185,7 @@ __dx_run_with_timeout_core() {
           break
         fi
       fi
-      sleep 0.1 2>/dev/null || true
+      dx_pause 0.1
     done
   fi
 

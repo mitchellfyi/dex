@@ -258,7 +258,7 @@ __dx_review_run_with_parent_cancel() {
       [[ "$child_rc" -ne 0 ]] && return "$child_rc"
       return 1
     fi
-    sleep 0.1
+    dx_pause 0.1
   done
   wait "$child_pid" 2>/dev/null || true
   child_rc=$(cat "$result_file" 2>/dev/null || printf '%s\n' 1)

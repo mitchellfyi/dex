@@ -686,7 +686,7 @@ __dx_event_acquire_lock() {
     [[ "$lock_status" -eq 2 ]] && return 1
     attempts=$((attempts + 1))
     [[ "$attempts" -lt 100 ]] || return 1
-    sleep 0.05
+    dx_pause 0.05
   done
 }
 
