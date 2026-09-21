@@ -14,7 +14,10 @@ For each task in the approved plan:
 
 1. **Implemented?** — Is the task fully implemented (not partially)?
 2. **Tested?** — Does a test verify the implementation? (TDD: test should exist before or alongside the implementation)
-3. **Passing?** — Run the test suite. Do all tests pass?
+3. **Passing?** — Run the tests that cover the changed files, their modules,
+   and their direct consumers, within `DX_TEST_JOBS` workers. Do they pass?
+   Do not run the whole suite on every audit pass; Phase 4 runs the complete
+   required pipeline once (or CI does, under `DEX_VERIFY_FULL_SUITE=ci`).
 
 If any task is incomplete, implement it now. If any test is missing, write it now.
 
@@ -196,7 +199,9 @@ Phase 2 in-scope change.
 ALL of these must be true before you stop:
 - Every task from the approved plan is implemented
 - Every acceptance criterion has status MET in the evidence table (Step 3)
-- All tests pass (run the test suite one final time to confirm)
+- The focused tests for every changed surface pass on the final checkout
+  (rerun only the tests affected by later fixes; the complete suite is Phase
+  4's gate)
 - No acceptance criterion or verification gate is deferred, skipped, blocked, or delegated to future CI
 - Material implementation discoveries were handled under
   `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`
@@ -209,7 +214,7 @@ ALL of these must be true before you stop:
   the branch.
 - A newly created local branch with no branch-specific commit remains unpushed
   and blocks the ordinary Phase 2 handoff pending user direction.
-- No background processes or long-running verification commands started during Phase 2 are still in flight
+- No background processes or long-running verification commands started during Phase 2 are still in flight: every dev server, watcher, browser, and test runner this phase started has been stopped, and `ps` shows none of them
 - Any needed `.dex/` updates are committed and pushed with the implementation
   increment that required them
 - The UI proof decision is `READY`, `SKIPPED` with a reason, or `N/A` with a reason; a reasoned skip is valid and is not reported as a passed capture

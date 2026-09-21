@@ -128,7 +128,7 @@ If during implementation you discover:
 - For CLI tools: test every command for both success and error cases. Test with empty input, non-existent IDs, corrupted data files, and missing arguments. Organize tests into **at least three files**: (1) unit tests for individual modules/functions, (2) integration tests for end-to-end command flows, (3) edge case and error recovery tests (corrupted data, boundary values, concurrent access).
 
 **Non-interactive mistakes to avoid** (these cause the most quality failures):
-- Don't declare "done" without running the test suite and seeing all tests pass. If tests fail, read the error output and fix the root cause. "Tests should pass" is not the same as "tests pass."
+- Don't declare "done" without running the tests that cover the change and seeing them pass. If tests fail, read the error output and fix the root cause. "Tests should pass" is not the same as "tests pass." Run the complete suite once, at the end, not after every task; Phase 4 or CI runs it again as the final gate.
 - Don't install a library that extends the test framework or type system without configuring the type checker to recognize it. If tests run fine but the type checker reports errors on assertion matchers, you have a type registration problem — fix it.
 - Don't write 20 tests for one function and zero for another. Spread test coverage evenly across all public APIs, commands, or functions.
 - Don't create multiple interacting modules without an integration test. If Module A calls Module B, write a test that exercises A→B together, not just each in isolation.

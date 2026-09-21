@@ -123,6 +123,30 @@ caller-owned collections, objects, buffers, files, handles, or request data,
 include a side-effect probe: call the function, then assert the caller's input
 state is unchanged unless mutation is documented as part of the contract.
 
+## Resource Discipline
+
+Several Dex sessions usually share one machine. Each of them can start a test
+runner, a build, a dev server, or a browser, and the host pays for all of them
+at once. Treat CPU and memory as a shared budget:
+
+- **Run the tests that cover the change, not the suite.** Pick the test files
+  for the changed modules and their direct consumers. The complete suite runs
+  once, in Phase 4 or in CI, not after every task or audit pass.
+- **Stay within `DX_TEST_JOBS` workers.** Runners that read an environment
+  variable (vitest, pytest-xdist, cargo, go, make) already have it. Pass it to
+  the rest: `jest --maxWorkers=$DX_TEST_JOBS`, `playwright test
+  --workers=$DX_TEST_JOBS`, `pytest -n $DX_TEST_JOBS`.
+- **Never leave a process behind.** Stop every dev server, watcher, browser,
+  container, and background runner you started as soon as it has served its
+  purpose, and before the phase ends. Never run a test runner or bundler in
+  watch mode. If a command was moved to the background, read its output and
+  end it; do not start another copy.
+- **Prefer the cheap check.** A typecheck of the changed package, a targeted
+  lint, or a single test file usually answers the question a full pipeline
+  would. Reach for the full pipeline only when the cheap check cannot answer.
+- **Do not fan out on your own.** Subagents are capped per session; when a
+  spawn is refused, do the work in this session rather than retrying.
+
 ## Implementation Principles
 
 ### Common Mistakes to Avoid

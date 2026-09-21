@@ -128,7 +128,9 @@ Run /dxverify to execute the full quality verification pipeline:
 2. Lint — auto-fix where possible, manual fix where not
 3. Type-check — fix type errors
 4. Code generation — if applicable, run generators and check for uncommitted changes
-5. Test — run the full test suite
+5. Test — run the full test suite once, within `DX_TEST_JOBS` workers (or
+   delegate it to CI under `DEX_VERIFY_FULL_SUITE=ci` and run the focused
+   tests here)
 
 If any check fails, fix and re-run within the current budget from
 `prompts/failure-recovery.md`. If it still fails, run the exact generation-bound

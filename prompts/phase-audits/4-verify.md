@@ -15,6 +15,10 @@ Confirm every quality gate passed:
 - Lint: PASS? If not, fix lint errors (don't disable rules).
 - Typecheck: PASS? If not, fix type errors.
 - Tests: ALL passing? No skipped tests, no flaky failures? If any test was skipped or failed intermittently, investigate and fix the root cause.
+  Under `DEX_VERIFY_FULL_SUITE=ci`, the full suite runs in CI rather than
+  here: the focused tests for the change pass locally, the full-suite gate is
+  reported as `CI`, and Phase 6 treats a CI test failure as a verification
+  failure to fix. That policy is not a waiver and does not need one.
 
 Run /dxverify if you haven't already, or if you've made changes since the last run.
 
@@ -64,7 +68,11 @@ create an empty commit.
 ## Completion criteria
 
 ALL of these must be true before you stop:
-- All quality checks pass (format, lint, typecheck, tests)
+- All quality checks pass (format, lint, typecheck, tests), with the full
+  test suite either passed locally or explicitly delegated to CI by
+  `DEX_VERIFY_FULL_SUITE=ci`
+- Every process verification started (dev servers, browsers, watchers, test
+  runners) has been stopped
 - Commits are clean and atomic with conventional messages
 - No unwanted files in the diff
 - Any `.dex/` changes are committed cleanly
