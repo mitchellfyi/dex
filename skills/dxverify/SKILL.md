@@ -30,7 +30,12 @@ git diff --stat
 If `.dex/dex.md` exists, read it before discovering commands elsewhere. Treat
 its `## Quality Gates` section as authoritative:
 
-- Run every required command or check it names.
+- Every required command or check it names must have a passing result for the
+  final tree. `bash "$DEX_DIR/bin/gate-receipt.sh" <receipt-name>` answers
+  whether one already does (0 reuse, 1 run it, 3 it failed here) — the name is
+  the `--name` you gave `dx run-gate`, `full-gate` for the complete suite; run
+  the rest through `dx run-gate --name <receipt-name> <command>`, which records
+  the receipt Phase 4 reads.
 - Do not replace a named gate with an inferred, narrower alternative.
 - Treat a missing command, stale instruction, or un-runnable gate as a failure
   to resolve or report, not permission to skip it.
@@ -67,7 +72,8 @@ Prefer a canonical aggregate command only when it covers every required gate.
 Scope supplemental checks to affected workspaces where appropriate, but never
 scope away a command required by `.dex/dex.md`.
 
-Keep every runner inside the host budget. `DX_TEST_JOBS` is the number of
+Keep every runner inside the host budget — § Resource Discipline in
+`prompts/guardrails.md` is the contract. `DX_TEST_JOBS` is the number of
 workers this session may use; runners that read an environment variable
 (vitest, pytest-xdist, cargo, go, make) already have it, and the rest take it
 as a flag: `jest --maxWorkers=$DX_TEST_JOBS`, `playwright test
@@ -75,8 +81,12 @@ as a flag: `jest --maxWorkers=$DX_TEST_JOBS`, `playwright test
 watch mode, and stop any server or browser you started before reporting.
 
 This skill is where the complete required suite runs. Earlier phases run the
-tests that cover their change and leave the whole suite to this final gate,
-so do not assume it has already passed.
+tests that cover their change, so do not assume the whole suite has passed —
+check for a receipt on this exact tree, and run it when there is none. When
+`.dex/dex.md` § Resources declares `full_gate: ci`, the complete suite is CI's
+gate: run every fast gate and the focused tests here, report the full-suite gate
+as `CI`, and leave the PR a draft for Phase 6. A ticket that changed the gates,
+CI, or test infrastructure runs the full suite locally regardless.
 
 When a check fails:
 

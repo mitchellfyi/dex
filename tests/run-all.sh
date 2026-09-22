@@ -293,10 +293,32 @@ while IFS= read -r name; do
   rm -rf "${LOG_DIR:?}/${name%.sh}"
 done < "$selected_names"
 
+# Shim-based toolchain managers (volta, asdf, rbenv, pyenv, fnm, nvm) resolve
+# their real binaries through a home directory that defaults to a path under
+# $HOME. PATH is handed to a hermetic test, so the shim is reachable, but with
+# HOME pointing at the fake home the shim finds no toolchain and `node` fails
+# with "Node is not available" — a test that needs Node then fails only on such
+# a machine. Hand each manager its home explicitly: the caller's value when it
+# is set, the conventional directory when it exists, nothing otherwise.
+toolchain_env_lines() {
+  local pair name default value
+  for pair in VOLTA_HOME:.volta ASDF_DIR:.asdf ASDF_DATA_DIR:.asdf \
+      RBENV_ROOT:.rbenv PYENV_ROOT:.pyenv FNM_DIR:.fnm NVM_DIR:.nvm; do
+    name="${pair%%:*}"
+    default="${HOME:-}/${pair#*:}"
+    value="${!name:-}"
+    if [[ -z "$value" && -n "${HOME:-}" && -d "$default" ]]; then
+      value="$default"
+    fi
+    [[ -z "$value" ]] || printf '%s=%s\n' "$name" "$value"
+  done
+}
+
 run_one() {
   local name="$1" manifest_timeout="$2" isolation="$3"
   local start end rc effective_timeout test_root setup_failed=0
-  local -a test_command
+  local -a test_command toolchain_env=()
+  while IFS= read -r line; do toolchain_env+=("$line"); done < <(toolchain_env_lines)
 
   effective_timeout="${TIMEOUT_OVERRIDE:-$manifest_timeout}"
   start=$(date +%s)
@@ -319,6 +341,7 @@ run_one() {
     else
       test_command=(env -i
         "PATH=$PATH"
+        ${toolchain_env[@]+"${toolchain_env[@]}"}
         "LANG=C"
         "LC_ALL=C"
         "TZ=UTC"

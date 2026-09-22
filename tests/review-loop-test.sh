@@ -1874,14 +1874,27 @@ assert_eq "1" "$(call_count pass)" "churn stop pass count"
 assert_no_assessor "churn stop explicit tier"
 assert_no_receipt "churn stop"
 
+# Findings that fall pass over pass are a loop that is converging, only too
+# slowly for its budget: the budget, not the convergence guard, stops it.
 run_case "small-wave-budget-exhausted" "small" \
-  $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN'
+  $'FINDINGS_FIXED:3\nFINDINGS_FIXED:2\nFINDINGS_FIXED:1\nCLEAN'
 assert_failure "small wave budget exhausted"
 assert_eq "3" "$(call_count pass)" "small wave budget pass count"
 assert_no_assessor "small wave budget explicit tier"
 assert_no_receipt "small wave budget exhausted"
 assert_contains "Review paused: wave_budget_exhausted." "$CASE_OUTPUT"
 assert_contains "Iterations: 3/3" "$CASE_OUTPUT"
+
+# Three passes that each find something, with the count no lower than where
+# it started, is the convergence guard's signal: it names the pattern and asks
+# for a human before the budget is spent on a fourth identical pass.
+run_case "small-no-convergence" "small" \
+  $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN'
+assert_failure "small no convergence"
+assert_eq "3" "$(call_count pass)" "small no convergence pass count"
+assert_no_receipt "small no convergence"
+assert_contains "Review paused: no_convergence." "$CASE_OUTPUT"
+assert_contains "findings per pass 1/1/1" "$CASE_OUTPUT"
 
 run_case "success-at-wave-budget" "small" \
   $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN'

@@ -97,6 +97,54 @@ dx ui-capture install
 dx status
 ```
 
+### Where the browser servers are registered
+
+For Claude, `dx ui-capture install` registers `playwright` and
+`chrome-devtools` at **user** scope: once for the machine, in your own Claude
+configuration, so UI proof works in every repository. Keeping a browser out of
+a phase that needs none is the minimal-MCP launch's job (see
+[host-budget.md](host-budget.md)), not the scope's.
+
+The host-efficiency plan (Item 6) called for a scope Dex controls, and project
+scope was the default briefly. It was reverted: a project-scope registration
+writes an absolute Dex path into the repository's tracked `.mcp.json` — a
+machine-specific line in version control — and a lifecycle worktree never sees
+that file, because Dex links only `.claude/` into a worktree. Both scopes stay
+available as explicit choices:
+
+- `dx ui-capture install --project` (`DEX_UI_MCP_SCOPE=project`) registers at
+  the checkout root, whichever directory inside the repository you run it from,
+  and falls back to user scope outside a git checkout rather than leaving a
+  stray `.mcp.json` behind.
+- `--local` is the middle option: per repository, but recorded in your own
+  Claude configuration instead of the repository's tracked `.mcp.json`.
+
+`dx init`, `dx sync` and `dx tools` reach the same installer with the same
+default. `dx install` is the machine-wide install and always uses user scope.
+
+An upgrade from the bare `npx` entries older Dex versions installed still
+removes them from user scope, because that is where they were written.
+
+Codex has no scopes; its registration is unchanged.
+
+### Browser profiles
+
+A browser MCP started inside a Dex session puts its profile under
+`$DX_SESSION_TMP/browser-<server>` and records the path in
+`$DX_SESSION_TMP/browser-profiles.txt`. Dex removes that temp root when the
+session ends, so a profile cannot outlive the phase that opened it and a
+crashed browser cannot leave gigabytes of cache behind. Both servers take the
+directory on the command line, spelled `--user-data-dir` by Playwright MCP and
+`--userDataDir` by Chrome DevTools MCP, in place of the `--isolated` flag Dex
+passes when there is no session. Their temporary directory is left alone:
+screenshots, traces and screencasts are written under it, and the session temp
+root is removed at the end of the phase. Outside a Dex session — an
+interactive `claude`, or any other client — nothing changes: the servers
+behave exactly as they did before.
+
+Within a session the profile is shared by every instance of that server, the
+way one browser profile is shared by the windows of one browser.
+
 The speech model is loaded locally and does not need a cloud API key. When narration is disabled or the model is unavailable, Dex keeps a captioned MP4 and can still report `READY` if the other production checks pass. Audio that fails duration validation is discarded and leaves the bundle at `NEEDS_REVIEW`.
 
 ## Storyboard

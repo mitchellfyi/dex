@@ -764,6 +764,59 @@ DEX_FACTORY_EVENTS_ENDPOINT
 EOF
 }
 
+# Lifecycle phases that never open a browser: 1 (Plan), 4 (Verify), 5 (PR) and
+# 6 (Complete). Phase 0 (Setup), 2 (Implement) and 3 (Review) keep whatever MCP
+# servers the user configured — Phase 2 is where UI proof is captured, and a
+# review wave already disables its own (DEX_REVIEW_DISABLE_MCP). Nothing
+# outside a Dex lifecycle reaches this: an interactive `claude` session is not
+# launched through the provider layer, and its settings are never rewritten.
+#
+# What a launch may drop depends on how far it runs. An MCP configuration is
+# fixed for the life of the process, and an inline lifecycle advances phases
+# inside one provider session (hooks/phase-loop.sh), so a Phase 1 launch there
+# goes on to run Phase 2 and must keep the browser. Phases 4, 5 and 6 are
+# followed only by each other, so they can drop the servers either way. The
+# case an inline session cannot cover is a `dx control jump` backwards into
+# Phase 2 from one of those three.
+__dx_provider_minimal_mcp_phase() {
+  [[ "${DEX_LIFECYCLE_MINIMAL_MCP:-1}" != "0" ]] || return 1
+  [[ "${DEX_LOOP_ACTIVE:-0}" == "1" ]] || return 1
+  case "${DEX_LOOP_PHASE:-}" in
+    4|5|6) return 0 ;;
+    1)
+      if [[ "${DEX_PHASE_HANDOFF:-}" == "inline" ]]; then
+        return 1
+      fi
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# __dx_provider_args_set_mcp <args…> — did the caller already state its own MCP
+# configuration? Review waves and `dx context scope` both do, and theirs wins.
+__dx_provider_args_set_mcp() {
+  local mcp_arg
+  for mcp_arg in "$@"; do
+    case "$mcp_arg" in
+      --mcp-config|--mcp-config=*|--strict-mcp-config) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# __dx_provider_minimal_mcp_config prints the path to the empty MCP
+# configuration, the same file review waves launch with. `__dx_write_state`
+# (lib/session.sh, sourced before this module) is the shared atomic writer, so
+# a launch racing the review loop on identical content cannot read a partial
+# file.
+__dx_provider_minimal_mcp_config() {
+  local config_file="$DX_LOOP_DIR/empty-mcp.json"
+  mkdir -p "$DX_LOOP_DIR" || return 1
+  __dx_write_state "$config_file" '{"mcpServers":{}}' || return 1
+  printf '%s\n' "$config_file"
+}
+
 dx_provider_claude() {
   if [[ "${DEX_LOOP_ACTIVE:-0}" == 1 || "${DEX_REVIEW_PASS_ACTIVE:-0}" == 1 \
     || "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" == 1 || "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]]; then
@@ -798,6 +851,38 @@ dx_provider_claude() {
     # shellcheck disable=SC2163  # NAME=VALUE lines from dx_host_budget_env
     declare -x "$_budget_line"
   done < <(dx_host_budget_env 2>/dev/null || true)
+
+  # The host picture in numbers, so the session knows what else is on this
+  # machine instead of assuming it is alone: cores, memory, load, how many Dex
+  # sessions are live, how many heavy commands are running, and its own test-job
+  # budget. Measured here rather than at install time, and re-measured on every
+  # launch, because all six change while lifecycles come and go. Same scoping as
+  # the budget above: exported for the launched process, not for the caller.
+  local _snapshot_line
+  while IFS= read -r _snapshot_line; do
+    [[ -n "$_snapshot_line" ]] || continue
+    # shellcheck disable=SC2163  # NAME=VALUE lines from dx_host_snapshot
+    declare -x "$_snapshot_line"
+  done < <(dx_host_snapshot 2>/dev/null || true)
+
+  # A phase that never opens a browser launches with no MCP servers at all —
+  # the same empty configuration review waves use — so it does not fork a node
+  # sidecar, and a Chromium behind it, for servers it will not call. The user's
+  # own MCP registrations are read, not written, and a caller that already
+  # stated its own configuration keeps it.
+  #
+  # The flags go in front of everything the caller passed. A prompt reaches
+  # this function either as a trailing operand or as the value of `-p`
+  # (bin/test.sh does the latter), so "before the message" is only safe to
+  # express as "before the first argument".
+  local minimal_mcp_config
+  if __dx_provider_minimal_mcp_phase && ! __dx_provider_args_set_mcp "$@"; then
+    if minimal_mcp_config=$(__dx_provider_minimal_mcp_config); then
+      set -- --strict-mcp-config --mcp-config "$minimal_mcp_config" "$@"
+    else
+      dx_warn "Dex could not write the phase MCP configuration; this phase keeps the inherited MCP servers."
+    fi
+  fi
 
   case "$DX_PROVIDER_ENGINE" in
     ccr)

@@ -7,6 +7,8 @@ review-wave sessions. Review runs in the current checkout. It must not run Phase
 0 setup, create or switch worktrees, create or rename branches, or call
 `dx <ticket-or-task>`.
 
+Follow § Resource Discipline in `prompts/guardrails.md`; inside a review wave `bin/review-check.sh` is the heavy lease, not `dx run-gate`; own what you start.
+
 Apply `prompts/issue-hygiene.md` after the lifecycle owner accepts review
 findings. Fresh review children report out-of-scope issue candidates but never
 write to the tracker; the owner performs one duplicate search and one external
@@ -20,12 +22,14 @@ All of these must be true:
   scope before Phase 3 began. For a legacy or resumed lifecycle whose selection
   was missing or stale, a fresh read-only lifecycle assessor recorded a valid
   current-scope recovery selection before the first wave. The selected tier is
-  `small`, `normal`, or `complex`, with a deterministic set of reason codes.
-- `/dxreviewloop` reviewed the full caller-supplied scope: the current change
-  set, or the entire tracked codebase when no change set exists.
+  `trivial`, `small`, `normal`, or `complex`, with a deterministic set of reason
+  codes, and Dex may have raised it from the measured diff.
+- `/dxreviewloop` reviewed the full caller-supplied scope — the current change
+  set, or the entire tracked codebase — on its first pass and on every pass it
+  counted as clean; the passes between those reviewed the ledger and the delta.
 - The `/dxreviewloop` result is `SUCCESS`.
 - The loop reached the selected tier's global consecutive clean gate: 1 for
-  `small`, 2 for `normal`, and 3 for `complex`.
+  `trivial` and `small`, 2 for `normal`, and 3 for `complex`.
   `DEX_REVIEW_CLEAN_PASSES` may raise the launch requirement but cannot lower
   it. Candidate-branch policy edits do not change the active gate. An
   attributed `review.clean-passes` session override may lower the effective
@@ -33,15 +37,21 @@ All of these must be true:
   receipt remains bound to the global policy and override decision, and the
   phase outcome is `waived`. A full `dx control waive review.clean-passes`
   advances without a clean-review receipt.
-- The selected tier supplies a soft outer-wave budget: 3 for `small`, 6 for
-  `normal`, and 9 for `complex`. The loop re-reads an attributed
-  `review.max-waves` override between waves. Budget exhaustion pauses without
-  discarding valid clean credit and never counts as completion or a waiver.
+- The selected tier supplies a soft outer-wave budget: 2 for `trivial`, 3 for
+  `small`, 6 for `normal`, and 9 for `complex`. Confirmation passes that stay
+  clean do not spend it. The loop re-reads an attributed `review.max-waves`
+  override between waves. Budget exhaustion pauses without discarding valid
+  clean credit and never counts as completion or a waiver.
 - Every counted clean result came from a fresh pass-scoped agent session that
-  saw the current code and scope but no prior review reports, findings,
+  saw the current code, scope and findings ledger, but no prior review reports,
   fingerprints, clean-pass counts, telemetry, or stale conversation context.
-- Every counted wave wrote `CLEAN` after finding zero verified findings and
-  applying zero fixes.
+  The ledger carries open items to re-verify, never an earlier verdict.
+- Every counted wave wrote `CLEAN`, or `NOTES:N` for N items below the finding
+  bar, with zero verified findings and zero fixes. A `MECHANICAL:N` wave applied
+  only in-inputs deterministic autofixes: not clean, and the next wave reviews it.
+- A `CHURN:no-convergence` stop means findings did not fall across three consecutive review
+  passes: read those three reports, then decide whether fixes seed findings, the bar admits
+  noise, or scope grew; `dx review stats` shows passes, minutes and time to first clean.
 - Every counted wave supplied valid evidence version 3. For every approved
   objective, acceptance criterion, and verification requirement, the manifest
   recorded the exact ordered item hash, a `met` outcome, and substantive
@@ -79,10 +89,10 @@ All of these must be true:
   code change.
 - Accepted review findings were reconciled under
   `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`.
+- No session-owned background process in flight, per `dx ps`.
 
-The outer review loop pauses when its soft wave budget is spent. An agent or
-human may raise `review.max-waves` with an attributed reason and resume when
-another wave is justified.
+When the soft wave budget is spent the loop pauses; an agent or human may raise
+`review.max-waves` with an attributed reason and resume.
 
 If the Stop hook reports that an interrupt left a stale review fence whose
 owner PID is dead, do not delete the marker or wait for its timeout. Run the

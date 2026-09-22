@@ -78,12 +78,14 @@ assert_eq 124 "$check_exit" 'timeout preserved'
 [[ ! -e "$TMP_DIR/timeout.runs" ]] || assert_at $LINENO
 assert_eq 0 "$(DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_active_count)" 'command lease released'
 
-# Queue deadlines are failures, not evidence that a check ran.
+# A spent queue budget is not evidence that a check ran, and not a verdict on
+# the command either: it is `queued` (75). Only DEX_REVIEW_CHECK_QUEUE_TIMEOUT
+# ends a wait now — the execution budget stopped bounding the queue.
 DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_enqueue queue-holder queue-holder
 DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_try_acquire queue-holder queue-holder 1
 check_exit=0
-DEX_REVIEW_CHECK_TIMEOUT=1 run_check never >/dev/null || check_exit=$?
-assert_eq 124 "$check_exit" 'queue timeout preserved'
+DEX_REVIEW_CHECK_QUEUE_TIMEOUT=1 run_check never >/dev/null 2>&1 || check_exit=$?
+assert_eq 75 "$check_exit" 'queue budget preserved'
 DX_REVIEW_CAPACITY_DIR="$TMP_DIR/capacity/checks" dx_review_capacity_release queue-holder
 
 # Interrupt the public runner after its command has started.

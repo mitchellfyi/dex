@@ -2246,6 +2246,258 @@ def has_await_in_loop(text):
     return False
 
 
+DETACHED_LAUNCH_COMMANDS = {'nohup', 'setsid', 'disown'}
+
+
+def has_detached_process(text, depth=0):
+    """True when this command leaves work running past its own return.
+
+    Three shapes: a `nohup`/`setsid`/`disown` launcher in command position, and
+    a background `&` the same command never waits for. The reading comes from
+    hooks/shell_parse.py, which already knows `nohup` and `setsid` as prefix
+    wrappers, so a quoted payload, a heredoc, or a `bash -c` script is read
+    rather than pattern-matched.
+
+    `&` is not a reliable marker on its own — `2>&1`, `>&2` and `&>file` all
+    tokenize a bare `&` — so a redirect on either side of it disqualifies it.
+    A backgrounded command followed by `wait` is foreground work spelled
+    differently and leaves nothing behind, so it does not count either.
+    """
+    if depth > 8 or not text.strip():
+        return False
+
+    shell_text, heredoc_substitutions, heredoc_bodies = strip_heredoc_bodies(text)
+    for fragment in tuple(heredoc_substitutions) + tuple(heredoc_bodies):
+        if has_detached_process(fragment, depth + 1):
+            return True
+    tokens = shell_tokens(shell_text)
+    for fragment in extract_dollar_substitutions(shell_text):
+        if has_detached_process(fragment, depth + 1):
+            return True
+    for fragment in extract_executable_backticks(shell_text):
+        if has_detached_process(fragment, depth + 1):
+            return True
+    for script in shell_c_scripts(shell_text, collect_literal_variables(tokens)):
+        if isinstance(script, str) and has_detached_process(script, depth + 1):
+            return True
+
+    backgrounded = False
+    waited = False
+    command_position = True
+    for index, token in enumerate(tokens):
+        if token in SHELL_SEPARATORS:
+            if token == '&':
+                previous = tokens[index - 1] if index else ''
+                following = tokens[index + 1] if index + 1 < len(tokens) else ''
+                if (previous not in SHELL_REDIRECTS
+                        and following not in SHELL_REDIRECTS
+                        and previous not in ('', '&')):
+                    backgrounded = True
+            command_position = True
+            continue
+        if not command_position:
+            continue
+        base = token_basename(token)
+        if base in DETACHED_LAUNCH_COMMANDS:
+            return True
+        if base == 'wait':
+            waited = True
+        if not is_shell_assignment(token):
+            command_position = False
+    return backgrounded and not waited
+
+
+HEAVY_COMMAND_CACHE_ENTRIES = 32
+GATE_WRAPPER_SCRIPT = 'run-gate.sh'
+
+
+def _project_contract_reader():
+    """The `## Resources` parser from scripts/project-contract.py, imported once.
+
+    Loading it costs about 5 ms — importlib plus the module's own `pathlib`
+    import — against a 0.05 ms parse, which is why the answer is cached on disk
+    below and this import only happens on a miss. Reading the contract through
+    the shipped parser rather than a second regex here is deliberate: one
+    reading of the contract, the same way hooks share one reading of a shell
+    command.
+    """
+    if 'project_contract_reader' in _GUARD_PROCESS_CACHE:
+        return _GUARD_PROCESS_CACHE['project_contract_reader']
+    module = None
+    try:
+        import importlib.util
+        dex_dir = os.environ.get('DEX_DIR') or os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))
+        source = os.path.join(dex_dir, 'scripts', 'project-contract.py')
+        spec = importlib.util.spec_from_file_location('dex_project_contract', source)
+        if spec is not None and spec.loader is not None:
+            candidate = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(candidate)
+            if all(hasattr(candidate, name)
+                   for name in ('section_lines', 'fenced_block', 'parse_mapping')):
+                module = candidate
+    except Exception:  # noqa: BLE001 - an unreadable contract reader is "no contract"
+        module = None
+    _GUARD_PROCESS_CACHE['project_contract_reader'] = module
+    return module
+
+
+def _heavy_command_cache_file():
+    state_dir = os.environ.get(
+        'DX_STATE_DIR', os.path.join(os.path.expanduser('~'), '.claude', '.dex-phases')
+    )
+    return os.path.join(state_dir, 'guard-heavy-commands.json')
+
+
+def _heavy_command_cache_read(contract, stamp):
+    """(whole cache, this contract's commands or None when the stamp moved).
+
+    A miss keeps the rest of the cache, so re-reading one repository's changed
+    contract does not throw away every other repository's answer.
+    """
+    try:
+        with open(_heavy_command_cache_file(), 'r', encoding='utf-8') as handle:
+            cached = json.load(handle)
+    except Exception:  # noqa: BLE001 - any unusable cache just means "parse it"
+        return {}, None
+    if not isinstance(cached, dict):
+        return {}, None
+    entry = cached.get(contract)
+    if (isinstance(entry, dict) and entry.get('stamp') == list(stamp)
+            and isinstance(entry.get('commands'), list)):
+        return cached, [str(word) for word in entry['commands']]
+    return cached, None
+
+
+def _heavy_command_cache_write(cached, contract, stamp, commands):
+    cached = {key: value for key, value in cached.items() if key != contract}
+    # Bound the file: a host works in a handful of repositories, and the oldest
+    # entries are the ones least likely to be asked for again.
+    for key in list(cached)[:-(HEAVY_COMMAND_CACHE_ENTRIES - 1)]:
+        del cached[key]
+    cached[contract] = {'stamp': list(stamp), 'commands': commands}
+    target = _heavy_command_cache_file()
+    temporary = f'{target}.{os.getpid()}.tmp'
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        # O_EXCL at 0600: two hooks racing on one PID cannot share the temp
+        # file, and the mode is never wider than the final file's, even for a
+        # moment. The rename is what makes the replacement atomic.
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            json.dump(cached, handle)
+        os.replace(temporary, target)
+    except Exception:  # noqa: BLE001 - a cache that cannot be written is not an error
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+
+
+def declared_heavy_commands():
+    """The project's `## Resources` → `heavy_commands`, as token lists.
+
+    Empty whenever the repository declared nothing, which is the common case
+    and must cost one `stat`. The parsed answer is cached under the hook's
+    state directory and keyed by the contract's path, mtime and size, so an
+    unchanged contract never pays for the parser import again.
+    """
+    if 'declared_heavy_commands' in _GUARD_PROCESS_CACHE:
+        return _GUARD_PROCESS_CACHE['declared_heavy_commands']
+    words = []
+    root = git_toplevel()
+    contract = os.path.join(root, '.dex', 'dex.md') if root else ''
+    try:
+        info = os.stat(contract) if contract else None
+    except OSError:
+        info = None
+    if info is not None:
+        stamp = (info.st_mtime_ns, info.st_size)
+        cached, commands = _heavy_command_cache_read(contract, stamp)
+        if commands is None:
+            commands = _read_heavy_commands(contract)
+            _heavy_command_cache_write(cached, contract, stamp, commands)
+        for command in commands:
+            try:
+                tokens = shlex.split(command)
+            except ValueError:
+                continue
+            if tokens:
+                words.append([_undot(token) for token in tokens])
+    _GUARD_PROCESS_CACHE['declared_heavy_commands'] = words
+    return words
+
+
+def _read_heavy_commands(contract):
+    reader = _project_contract_reader()
+    if reader is None:
+        return []
+    try:
+        with open(contract, 'r', encoding='utf-8', errors='replace') as handle:
+            text = handle.read()
+        lines = reader.section_lines(text, 'Resources')
+        if lines is None:
+            return []
+        body = reader.fenced_block(lines)
+        if body is None:
+            return []
+        mapping = reader.parse_mapping(body)
+        if not mapping:
+            return []
+        declared = mapping.get('heavy_commands')
+    except Exception:  # noqa: BLE001 - a malformed contract declares nothing
+        return []
+    if isinstance(declared, str):
+        declared = [declared]
+    if not isinstance(declared, list):
+        return []
+    return [str(item) for item in declared if str(item).strip()]
+
+
+def _undot(token):
+    return token[2:] if token.startswith('./') and len(token) > 2 else token
+
+
+def _segment_runs_declared_heavy(segment, declared):
+    while segment and is_shell_assignment(segment[0]):
+        segment = segment[1:]
+    if not segment:
+        return False
+    # Already under the lease: `dx run-gate …` and the script behind it are the
+    # sanctioned way to run these, so saying so again is noise.
+    if token_basename(segment[0]) == 'dx' and segment[1:2] == ['run-gate']:
+        return False
+    if any(token_basename(token) == GATE_WRAPPER_SCRIPT for token in segment[:3]):
+        return False
+    head = [_undot(token) for token in segment]
+    return any(head[:len(command)] == command for command in declared)
+
+
+def has_declared_heavy_command(text):
+    """True when a command segment starts with one the project called heavy.
+
+    Whole-word prefix match per segment, so `bash tests/run-all.sh guards`
+    counts and `bash tests/check.sh` does not. Silent when the repository has
+    no `.dex/dex.md`, no `## Resources` block, or no `heavy_commands` key.
+
+    Top-level segments only: a declared gate buried in a heredoc or a `bash -c`
+    payload is not worth a second parse of every command on the host, and the
+    detached-process half of this guard already reads those shapes.
+    """
+    declared = declared_heavy_commands()
+    if not declared:
+        return False
+    segment = []
+    for token in shell_tokens(text):
+        if token in SHELL_SEPARATORS:
+            if _segment_runs_declared_heavy(segment, declared):
+                return True
+            segment = []
+            continue
+        segment.append(token)
+    return _segment_runs_declared_heavy(segment, declared)
+
+
 def guard_detector_matches(guard, text):
     detector = guard.get('detector', '')
     if not detector:
@@ -2256,6 +2508,11 @@ def guard_detector_matches(guard, text):
         return has_raw_codex_delegation(text)
     if detector == 'await-in-loop':
         return has_await_in_loop(text)
+    if detector == 'detached-process':
+        # One guard, one piece of advice: work the session should own and
+        # account for. A detached launch escapes the accounting; a declared
+        # heavy command run outside `dx run-gate` escapes the queue.
+        return has_detached_process(text) or has_declared_heavy_command(text)
     print(f"[guard:{guard.get('name', 'unnamed')}] skipped — unknown detector: {detector}", file=sys.stderr)
     return False
 

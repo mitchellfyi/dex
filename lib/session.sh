@@ -1744,18 +1744,37 @@ dx_kill_process_tree() {
   kill "-$signal" "$pid" 2>/dev/null || true
 }
 
-# __dx_timeout_token_pids <token_file> — find a supervised command after reparenting
+# __dx_timeout_token_pids <token_file> [candidates] [fd] [env_name]
+#   — find a supervised command after reparenting
 #
 # PPID walks stop working as soon as a command exits and one of its background
 # children is reparented. Every command launched by dx_run_with_timeout inherits
 # a unique token in both its environment and an open file descriptor, so cleanup
-# can still identify those children. Linux exposes both through /proc. macOS
-# exposes descriptor identity through libproc, with a bounded lsof fallback.
+# can still identify those children. Linux reads `/proc/<pid>/fd` directly, so
+# the reaper works on a headless host with no `lsof`. macOS exposes descriptor
+# identity through libproc, and `lsof` is the last fallback on either platform.
+#
+# The descriptor and environment-variable name are arguments because two tokens
+# are in play and they must not collide: `dx_run_with_timeout` owns one command
+# (`DX_TIMEOUT_PROCESS_TOKEN`, fd 9, the defaults here) and a session owns every
+# process started inside it (`DX_SESSION_PROCESS_TOKEN`, fd 8). A timed command
+# run inside a session therefore carries both, and reaping either one leaves the
+# other's ownership intact.
+#
+# Setting DX_TOKEN_SCAN_METHOD_FILE records which of proc/libproc/lsof answered,
+# so a caller can report the fallback it had to use. Nothing but the PID list is
+# ever written to stdout; existing callers read that unchanged.
 __dx_timeout_token_pids() {
   local token_file="$1" candidates="${2:-}"
+  local scan_fd="${3:-9}" scan_env="${4:-DX_TIMEOUT_PROCESS_TOKEN}"
   [[ -f "$token_file" ]] || return 0
+  [[ "$scan_fd" =~ ^[0-9]{1,3}$ ]] || return 0
+  [[ "$scan_env" =~ ^[A-Z][A-Z0-9_]{0,63}$ ]] || return 0
 
-  DX_TIMEOUT_PID_CANDIDATES="$candidates" python3 - "$token_file" <<'PY'
+  DX_TIMEOUT_PID_CANDIDATES="$candidates" \
+  DX_TOKEN_SCAN_FD="$scan_fd" \
+  DX_TOKEN_SCAN_ENV="$scan_env" \
+  python3 - "$token_file" <<'PY'
 import ctypes
 import os
 import re
@@ -1771,7 +1790,29 @@ except OSError:
     raise SystemExit(0)
 if not re.fullmatch(rb"[A-Za-z0-9._-]{16,160}", token):
     raise SystemExit(0)
-marker = b"DX_TIMEOUT_PROCESS_TOKEN=" + token
+scan_env = os.environ.get("DX_TOKEN_SCAN_ENV", "DX_TIMEOUT_PROCESS_TOKEN")
+if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", scan_env):
+    raise SystemExit(0)
+try:
+    scan_fd = int(os.environ.get("DX_TOKEN_SCAN_FD", "9"))
+except ValueError:
+    raise SystemExit(0)
+if not 0 <= scan_fd <= 999:
+    raise SystemExit(0)
+marker = scan_env.encode("ascii") + b"=" + token
+method_file = os.environ.get("DX_TOKEN_SCAN_METHOD_FILE", "")
+
+
+def record_method(name):
+    if not method_file:
+        return
+    try:
+        with open(method_file, "w", encoding="utf-8") as handle:
+            handle.write(name + "\n")
+    except OSError:
+        pass
+
+
 candidate_values = os.environ.get("DX_TIMEOUT_PID_CANDIDATES", "").split()
 candidates = set()
 for value in candidate_values:
@@ -1791,16 +1832,33 @@ if not 1 <= scan_timeout <= 30:
 
 
 def linux_processes(token_path):
-    matches = set()
+    """Read /proc directly. Returns None when /proc cannot answer at all.
+
+    `/proc/<pid>/fd/<n>` is a symlink the kernel renders as the open file's
+    current path, so one readlink per descriptor identifies every carrier
+    without `lsof` — which a headless Ubuntu host often does not have. The
+    inode comparison stays as a second opinion for the cases a path string
+    cannot cover, such as the same file reached through a bind mount.
+    """
     proc = Path("/proc")
+    if not proc.is_dir():
+        return None
+    try:
+        resolved_path = str(token_path.resolve())
+    except OSError:
+        return None
     try:
         token_stat = token_path.stat()
     except OSError:
-        return matches
+        return None
+    matches = set()
     if candidates:
         entries = tuple(proc / str(process_id) for process_id in candidates)
     else:
-        entries = proc.iterdir()
+        try:
+            entries = tuple(proc.iterdir())
+        except OSError:
+            return None
     for entry in entries:
         if not entry.name.isdigit():
             continue
@@ -1817,6 +1875,12 @@ def linux_processes(token_path):
         except OSError:
             continue
         for descriptor in descriptors:
+            try:
+                if os.readlink(descriptor) == resolved_path:
+                    matches.add(int(entry.name))
+                    break
+            except OSError:
+                continue
             try:
                 descriptor_stat = descriptor.stat()
             except OSError:
@@ -1864,27 +1928,118 @@ def darwin_processes(token_path):
             if process_id > 0
         }
     resolved_path = os.fsencode(token_path.resolve())
+    unmatched = []
     for process_id in process_ids:
         buffer = ctypes.create_string_buffer(4096)
         byte_count = libproc.proc_pidfdinfo(
             process_id,
-            9,
+            scan_fd,
             2,  # PROC_PIDFDVNODEPATHINFO
             buffer,
             len(buffer),
         )
         if byte_count > 0 and resolved_path in buffer.raw[:byte_count]:
             matches.add(process_id)
+        else:
+            unmatched.append(process_id)
+    matches.update(darwin_environment_processes(unmatched))
     return matches
 
 
-def lsof_processes(token_path, selected_candidates=None):
-    target_candidates = candidates if selected_candidates is None else selected_candidates
+def darwin_environment_processes(process_ids):
+    """Second macOS channel: the token in a process's own environment.
+
+    A descendant reached through a runtime that closes inherited descriptors —
+    Node, which is what the provider CLI is — does not carry fd 8, but it does
+    carry the exported variable, because a spawn passes the environment on.
+    Linux reads that from `/proc/<pid>/environ`; macOS exposes it through
+    `KERN_PROCARGS2` for processes this user owns whose binary is not a
+    platform binary. A process macOS refuses to describe is simply skipped:
+    this widens what the scan can find and never narrows it.
+    """
+    matched = set()
+    if not process_ids:
+        return matched
+    try:
+        libc = ctypes.CDLL("/usr/lib/libSystem.dylib", use_errno=True)
+    except OSError:
+        return matched
+    # Declared rather than left to ctypes' int default: `oldlenp` and `newlen`
+    # are pointer- and size_t-wide, and guessing at that is an ABI bug waiting
+    # for the other architecture.
+    libc.sysctl.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    libc.sysctl.restype = ctypes.c_int
+    control_kern, control_argmax, control_procargs2 = 1, 8, 49
+    argmax = ctypes.c_int(0)
+    argmax_size = ctypes.c_size_t(ctypes.sizeof(argmax))
+    argmax_mib = (ctypes.c_int * 2)(control_kern, control_argmax)
+    if libc.sysctl(argmax_mib, 2, ctypes.byref(argmax), ctypes.byref(argmax_size),
+                   None, 0) != 0 or argmax.value <= 0:
+        return matched
+    capacity = max(4096, min(argmax.value, 4 * 1024 * 1024))
+    buffer = ctypes.create_string_buffer(capacity)
+    for process_id in process_ids:
+        mib = (ctypes.c_int * 3)(control_kern, control_procargs2, process_id)
+        length = ctypes.c_size_t(capacity)
+        if libc.sysctl(mib, 3, buffer, ctypes.byref(length), None, 0) != 0:
+            continue
+        raw = buffer.raw[:length.value]
+        if len(raw) < 5:
+            continue
+        argument_count = int.from_bytes(raw[:4], sys.byteorder)
+        if argument_count < 0 or argument_count > 65536:
+            continue
+        rest = raw[4:]
+        # The layout is argc, the executable path, argc argv strings, then the
+        # environment. Walk past argv rather than searching the whole buffer,
+        # so a command line that merely mentions the token is not a match.
+        offset = rest.find(b"\0")
+        if offset < 0:
+            continue
+        while offset < len(rest) and rest[offset] == 0:
+            offset += 1
+        for _ in range(argument_count):
+            end = rest.find(b"\0", offset)
+            if end < 0:
+                offset = -1
+                break
+            offset = end + 1
+        if offset < 0:
+            continue
+        if marker in rest[offset:].split(b"\0"):
+            matched.add(process_id)
+    return matched
+
+
+def lsof_binary():
     lsof = shutil.which("lsof")
     if not lsof and sys.platform == "darwin":
         lsof = "/usr/sbin/lsof"
     if not lsof or not Path(lsof).is_file():
-        return set()
+        return ""
+    return lsof
+
+
+def lsof_processes(token_path, selected_candidates=None):
+    """Ask lsof. Returns None when lsof could not answer, never an empty set
+    for that case: the caller reads an empty set as "nothing is running" and
+    may delete the token on it, and a scan that failed has not shown that.
+
+    lsof exits 1 both for "no process has this open" and for an error, so the
+    exit status alone does not separate the two; its own `lsof:` diagnostics
+    (warnings excepted) do.
+    """
+    target_candidates = candidates if selected_candidates is None else selected_candidates
+    lsof = lsof_binary()
+    if not lsof:
+        return None
     try:
         command = [lsof]
         if target_candidates:
@@ -1894,19 +2049,29 @@ def lsof_processes(token_path, selected_candidates=None):
                     "-p",
                     ",".join(str(pid) for pid in sorted(target_candidates)),
                     "-d",
-                    "9",
+                    str(scan_fd),
                     "-Fpn",
                 ]
             )
         else:
             command.extend(["-t", "--", str(token_path)])
-        output = subprocess.check_output(
+        completed = subprocess.run(
             command,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             timeout=scan_timeout,
+            check=False,
         )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return set()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode not in (0, 1):
+        return None
+    if completed.returncode == 1 and any(
+        line.startswith(b"lsof:") and b"WARNING" not in line
+        for line in completed.stderr.splitlines()
+    ):
+        return None
+    output = completed.stdout
     if target_candidates:
         matches = set()
         selected_pid = None
@@ -1927,15 +2092,31 @@ def lsof_processes(token_path, selected_candidates=None):
     return matches
 
 
-if sys.platform.startswith("linux"):
-    matches = linux_processes(Path(sys.argv[1]))
+token_path = Path(sys.argv[1])
+matches = None
+method = "unavailable"
+# DX_TOKEN_SCAN_METHOD=lsof skips the first-choice scan: for a host whose /proc
+# or libproc answer is known to be wrong, and for the tests that have to reach
+# the fallback on a host where the first choice works.
+forced_method = os.environ.get("DX_TOKEN_SCAN_METHOD", "auto")
+if forced_method == "lsof":
+    pass
+elif sys.platform.startswith("linux"):
+    matches = linux_processes(token_path)
+    if matches is not None:
+        method = "proc"
 elif sys.platform == "darwin":
-    token_path = Path(sys.argv[1])
     matches = darwin_processes(token_path)
+    if matches is not None:
+        method = "libproc"
+if matches is None:
+    matches = lsof_processes(token_path)
     if matches is None:
-        matches = lsof_processes(token_path)
-else:
-    matches = lsof_processes(Path(sys.argv[1]))
+        matches = set()
+        method = "unavailable"
+    else:
+        method = "lsof"
+record_method(method)
 
 for process_id in sorted(matches):
     print(process_id)
@@ -2005,9 +2186,38 @@ EOF
   return 1
 }
 
+# __dx_timeout_pid_list_without <pids> <excluded_pids> — drop excluded PIDs
+#
+# A session reaper runs from inside the session it is reaping, so the shell
+# doing the killing, the hook above it, and the provider above that all carry
+# the same token. Signalling them first would stop the reaper mid-pass.
+__dx_timeout_pid_list_without() {
+  local pids="$1" excluded="${2:-}" pid
+  if [[ -z "$excluded" ]]; then
+    printf '%s' "$pids"
+    return 0
+  fi
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    case " $excluded " in
+      *" $pid "*) continue ;;
+    esac
+    printf '%s\n' "$pid"
+  done <<EOF
+$pids
+EOF
+}
+
 # __dx_timeout_terminate_processes <token_file> [root_pid] [candidate_file]
+#   [fd] [env_name] [excluded_pids]
+#
+# The last three arguments are what lets a session reuse this reaper: the
+# session token lives on its own descriptor and environment name, and the
+# caller's own ancestry is excluded so the pass cannot signal itself.
 __dx_timeout_terminate_processes() {
   local token_file="$1" root_pid="${2:-}" candidate_file="${3:-}"
+  local scan_fd="${4:-9}" scan_env="${5:-DX_TIMEOUT_PROCESS_TOKEN}"
+  local excluded="${6:-}"
   local candidates="" pids
   local fresh_candidates="" fresh_pids candidate_pid
 
@@ -2020,14 +2230,16 @@ __dx_timeout_terminate_processes() {
   elif [[ -f "$candidate_file" ]]; then
     candidates=$(cat "$candidate_file" 2>/dev/null || true)
   fi
-  pids=$(__dx_timeout_token_pids "$token_file" "$candidates" \
-    2>/dev/null || true)
+  pids=$(__dx_timeout_token_pids "$token_file" "$candidates" "$scan_fd" \
+    "$scan_env" 2>/dev/null || true)
   if [[ -z "$root_pid" && -n "$candidates" && -z "$pids" ]]; then
     # A child shell can daemonize its own child before the wrapper's EXIT
     # snapshot runs. Fall back to the invocation token only when the retained
     # ancestry no longer contains a matching process.
-    pids=$(__dx_timeout_token_pids "$token_file" 2>/dev/null || true)
+    pids=$(__dx_timeout_token_pids "$token_file" "" "$scan_fd" "$scan_env" \
+      2>/dev/null || true)
   fi
+  pids=$(__dx_timeout_pid_list_without "$pids" "$excluded")
   __dx_timeout_signal_pid_list "$pids" "" TERM
   if __dx_timeout_pid_list_alive "$pids"; then
     sleep 2 2>/dev/null || true
@@ -2045,7 +2257,8 @@ $pids
 EOF
       )
       fresh_pids=$(__dx_timeout_token_pids "$token_file" "$fresh_candidates" \
-        2>/dev/null || true)
+        "$scan_fd" "$scan_env" 2>/dev/null || true)
+      fresh_pids=$(__dx_timeout_pid_list_without "$fresh_pids" "$excluded")
       __dx_timeout_signal_pid_list "$fresh_pids" "" KILL
     fi
   fi
@@ -2275,6 +2488,7 @@ dx_run_with_timeout() {
 
   return "$timeout_status"
 }
+
 
 # dx_review_state_file <session_id> — review sub-loop clean pass counter (survives interrupts)
 dx_review_state_file() { dx_session_id_valid "${1:-}" || return 2; echo "${DX_LOOP_DIR}/${1}.review-state"; }
@@ -2701,6 +2915,16 @@ dx_review_work_files_cleanup() {
 dx_cleanup_session() {
   local sid="$1" completion_revoke_result=0
   dx_session_id_valid "$sid" || return 2
+  # This function removes state files. It deliberately stops no processes:
+  # its callers include a stale-file sweep over the current repository, which
+  # can name a session that is not actually finished, and killing there would
+  # be exactly the hidden janitor this design rejects. Removing the token
+  # would be as bad — it is the only way to find what the session still owns —
+  # so a session that took process ownership keeps it and is named instead.
+  # The terminal paths call dx_session_finish_processes; `dx ps` shows the rest.
+  if [[ -f "$(dx_session_process_token_file "$sid" 2>/dev/null)" ]]; then
+    __dx_session_report warn "Session ${sid} may still own processes; its state files are gone but its process token is kept. Run 'dx ps' to see them."
+  fi
   if command -v dx_completion_cleanup >/dev/null 2>&1; then
     if ! dx_completion_cleanup "$sid" 2>/dev/null; then
       __dx_completion_recover_cleanup "$sid" 2>/dev/null || completion_revoke_result=1

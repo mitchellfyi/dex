@@ -31,21 +31,31 @@ __dx_review_capacity_prepare_root() {
       2>/dev/null || true)" == "1" ]]
 }
 
-__dx_review_host_cpu_count() {
-  local cpu_count=""
-  cpu_count=$(getconf _NPROCESSORS_ONLN 2>/dev/null \
-    || sysctl -n hw.ncpu 2>/dev/null || true)
-  [[ "$cpu_count" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
-  printf '%s\n' "$cpu_count"
-}
-
 # dx_review_capacity_limit
-# Admit three independent reviews; heavy checks keep their separate budget.
-# Scout parallelism and test jobs remain bounded per wave.
+# Independent review waves this host admits at once. Derived the way
+# dx_host_heavy_limit is — max(1, min(cpus / 4, mem_gb / 8)), clamped to 8 —
+# because a wave is a provider session plus its checks and targeted tests,
+# about the footprint of one project gate. DEX_REVIEW_MAX_ACTIVE_WAVES (1..8)
+# replaces the calculation. Heavy checks keep their separate budget, and scout
+# parallelism and test jobs remain bounded per wave.
 dx_review_capacity_limit() {
-  local configured_limit="${DEX_REVIEW_MAX_ACTIVE_WAVES:-3}"
-  [[ "$configured_limit" =~ ^[1-8]$ ]] || return 1
-  printf '%s\n' "$configured_limit"
+  local configured_limit="${DEX_REVIEW_MAX_ACTIVE_WAVES:-}" cpu_count mem_gb
+  local by_cpu by_memory wave_limit
+  if [[ -n "$configured_limit" ]]; then
+    [[ "$configured_limit" =~ ^[1-8]$ ]] || return 1
+    printf '%s\n' "$configured_limit"
+    return 0
+  fi
+  cpu_count=$(dx_host_cpu_count)
+  mem_gb=$(dx_host_memory_total_gb 2>/dev/null) \
+    || mem_gb="$DX_HOST_FALLBACK_MEM_GB"
+  by_cpu=$((cpu_count / 4))
+  by_memory=$((mem_gb / 8))
+  wave_limit="$by_cpu"
+  [[ "$by_memory" -lt "$wave_limit" ]] && wave_limit="$by_memory"
+  [[ "$wave_limit" -ge 1 ]] || wave_limit=1
+  [[ "$wave_limit" -le 8 ]] || wave_limit=8
+  printf '%s\n' "$wave_limit"
 }
 
 dx_review_check_capacity_limit() {
@@ -291,9 +301,12 @@ dx_review_capacity_active_count() {
 
 # dx_review_capacity_wait <session-id> <owner-token> <limit> [cancel-callback]
 # The callback returns success when the caller should leave the queue.
+# DX_REVIEW_CAPACITY_SUBJECT names what is waiting in the one message this
+# prints, so a pool other than `waves` does not report itself as a review wave.
 dx_review_capacity_wait() {
   [[ $# -ge 3 && $# -le 4 ]] || return 2
   local session_id="$1" owner_token="$2" limit="$3"
+  local subject="${DX_REVIEW_CAPACITY_SUBJECT:-review wave}"
   local cancel_callback="${4:-}" recheck_seconds start_epoch claim_result
   recheck_seconds="${DX_REVIEW_CAPACITY_RECHECK_SECONDS:-1}"
   [[ "$recheck_seconds" =~ ^[1-9][0-9]*$ \
@@ -313,7 +326,7 @@ dx_review_capacity_wait() {
       || printf '%s\n' "0")
     if [[ "$active_now" =~ ^[1-9][0-9]*$ ]] && dx_host_memory_low; then
       if [[ "$memory_notice" -eq 0 ]]; then
-        dx_info "Host memory is below ${DEX_MIN_FREE_MEMORY_PERCENT:-10}% free; holding this review wave until it recovers"
+        dx_info "Host memory is below ${DEX_MIN_FREE_MEMORY_PERCENT:-10}% free; holding this ${subject} until it recovers"
         memory_notice=1
       fi
       claim_result=1
@@ -342,4 +355,243 @@ dx_review_capacity_wait() {
     fi
     sleep "$recheck_seconds"
   done
+}
+
+# ─── Named capacity pools ───────────────────────────────────────────────────
+#
+# Review waves were the first host-wide admission problem, so the FIFO lease
+# above is written in their vocabulary. The mechanics are not review-specific:
+# anything that competes for the whole machine wants the same queue, the same
+# PID-reuse-safe stale-owner recovery, and the same refusal to over-admit.
+#
+# Three pools share it. `waves` is the original one and keeps the original
+# directory, so every existing caller, every environment override and every
+# existing test mean exactly what they meant before. `checks` is the
+# deterministic check runner's, scoped the way bin/review-check.sh has scoped
+# it since it was added. `heavy` is new: project gates, test suites and builds,
+# in any phase, from any skill — the work that actually takes the host down
+# when several sessions do it at once. A dev server is not in it: it starts
+# directly and is session-owned, because a lease held for a server's whole life
+# is a lease never returned.
+#
+# Each pool is its own directory with its own sequence and its own limit, so a
+# queued review wave and a queued test suite never block each other.
+
+# dx_capacity_pool_valid <pool>
+dx_capacity_pool_valid() {
+  case "${1:-}" in
+    waves|checks|heavy) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# dx_capacity_pool_root <pool>
+# `waves` is the base root — what DX_REVIEW_CAPACITY_DIR names — and every
+# other pool is a directory inside it.
+#
+# DX_CAPACITY_POOL_BASE is how this stays re-entrant. The wrappers below select
+# a pool by shadowing DX_REVIEW_CAPACITY_DIR, which is dynamically scoped, so
+# anything they call — a wait loop's heartbeat callback asking where the pool is
+# — would otherwise resolve the pool root relative to the pool root and look in
+# `heavy/heavy`. Pinning the base once means nesting answers the same as the
+# outermost call.
+dx_capacity_pool_root() {
+  local pool="${1:-}" base="${DX_CAPACITY_POOL_BASE:-}"
+  dx_capacity_pool_valid "$pool" || return 2
+  [[ -n "$base" ]] || base=$(dx_review_capacity_root) || return 2
+  if [[ "$pool" == "waves" ]]; then
+    printf '%s\n' "$base"
+    return 0
+  fi
+  printf '%s/%s\n' "$base" "$pool"
+}
+
+# dx_capacity_pool_limit <pool>
+dx_capacity_pool_limit() {
+  case "${1:-}" in
+    waves) dx_review_capacity_limit ;;
+    checks) dx_review_check_capacity_limit ;;
+    heavy) dx_host_heavy_limit ;;
+    *) return 2 ;;
+  esac
+}
+
+# __dx_capacity_pool_record_files <pool-root> <wait|lease>
+# `find` rather than a glob: zsh, which sources lib/ through dx.sh, makes an
+# unmatched glob an error rather than an empty list, and an empty pool is the
+# normal case here.
+__dx_capacity_pool_record_files() {
+  local pool_root="$1" kind="$2"
+  [[ -d "$pool_root" ]] || return 0
+  find "$pool_root" -maxdepth 1 -type f -name "${kind}-*" 2>/dev/null \
+    | LC_ALL=C sort || true
+}
+
+# __dx_capacity_pool_record_field <record-file> <1|2>
+# The sequence or the owner PID from a lease/wait record, read by the shell so
+# a status read costs no fork. __dx_review_capacity_record remains the
+# validating reader that admission decisions use.
+__dx_capacity_pool_record_field() {
+  local record_file="$1" field="$2" record_line="" record_rest=""
+  read -r record_line < "$record_file" 2>/dev/null || return 1
+  case "$field" in
+    1) printf '%s\n' "${record_line%%$'\t'*}" ;;
+    2)
+      record_rest="${record_line#*$'\t'}"
+      printf '%s\n' "${record_rest%%$'\t'*}"
+      ;;
+    *) return 2 ;;
+  esac
+}
+
+# dx_capacity_pool_live_count <pool> [lease|wait]
+# Records of one kind whose recorded owner is still running, without taking
+# the pool lock: `lease` (the default) is the held side, `wait` the queue.
+# Advisory: it is the number a status line, `dx doctor` or a host snapshot
+# shows, cheap enough to compute on every phase start.
+# dx_capacity_pool_active_count is the locked, pruning count that decides
+# admission.
+dx_capacity_pool_live_count() {
+  local pool="${1:-}" kind="${2:-lease}" pool_root record_file owner_pid
+  local live_count=0
+  dx_capacity_pool_valid "$pool" || return 2
+  case "$kind" in
+    lease|wait) ;;
+    *) return 2 ;;
+  esac
+  pool_root=$(dx_capacity_pool_root "$pool") || return 2
+  while IFS= read -r record_file; do
+    [[ -n "$record_file" ]] || continue
+    owner_pid=$(__dx_capacity_pool_record_field "$record_file" 2) || continue
+    [[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || continue
+    kill -0 "$owner_pid" 2>/dev/null || continue
+    live_count=$((live_count + 1))
+  done < <(__dx_capacity_pool_record_files "$pool_root" "$kind")
+  printf '%s\n' "$live_count"
+}
+
+# dx_capacity_pool_queue_status <pool> <owner-token>
+# Two numbers for a caller that has to tell someone why it is waiting:
+#
+#   <owners ahead of this one> <TAB> <age of the oldest running lease|->
+#
+# "Ahead" counts every live lease plus every waiter that enqueued earlier, so
+# it is the number of owners that must finish or give up first. The age is `-`
+# when nothing is running, which is what a caller held back by low memory
+# rather than by a full pool sees.
+dx_capacity_pool_queue_status() {
+  [[ $# -eq 2 ]] || return 2
+  local pool="$1" owner_token="$2" pool_root record_file owner_pid
+  local own_sequence="" record_sequence ahead=0 oldest_epoch="" record_epoch
+  local oldest_age="-" now_epoch
+  dx_capacity_pool_valid "$pool" || return 2
+  __dx_review_capacity_token_valid "$owner_token" || return 2
+  pool_root=$(dx_capacity_pool_root "$pool") || return 2
+  for record_file in "$pool_root/wait-$owner_token" \
+    "$pool_root/lease-$owner_token"; do
+    [[ -f "$record_file" ]] || continue
+    own_sequence=$(__dx_capacity_pool_record_field "$record_file" 1) \
+      || own_sequence=""
+  done
+  while IFS= read -r record_file; do
+    [[ -n "$record_file" ]] || continue
+    owner_pid=$(__dx_capacity_pool_record_field "$record_file" 2) || continue
+    [[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || continue
+    kill -0 "$owner_pid" 2>/dev/null || continue
+    ahead=$((ahead + 1))
+    record_epoch=$(dx_path_mtime "$record_file" 2>/dev/null || true)
+    [[ "$record_epoch" =~ ^[0-9]+$ ]] || continue
+    if [[ -z "$oldest_epoch" || "$record_epoch" -lt "$oldest_epoch" ]]; then
+      oldest_epoch="$record_epoch"
+    fi
+  done < <(__dx_capacity_pool_record_files "$pool_root" lease)
+  if [[ "$own_sequence" =~ ^[1-9][0-9]*$ ]]; then
+    while IFS= read -r record_file; do
+      [[ -n "$record_file" ]] || continue
+      [[ "${record_file##*/}" == "wait-$owner_token" ]] && continue
+      record_sequence=$(__dx_capacity_pool_record_field "$record_file" 1) \
+        || continue
+      [[ "$record_sequence" =~ ^[1-9][0-9]*$ ]] || continue
+      [[ "$record_sequence" -lt "$own_sequence" ]] || continue
+      ahead=$((ahead + 1))
+    done < <(__dx_capacity_pool_record_files "$pool_root" wait)
+  fi
+  if [[ -n "$oldest_epoch" ]]; then
+    now_epoch=$(date +%s)
+    oldest_age=$((now_epoch - oldest_epoch))
+    [[ "$oldest_age" -ge 0 ]] || oldest_age=0
+  fi
+  printf '%s\t%s\n' "$ahead" "$oldest_age"
+}
+
+# dx_capacity_pool_mark_started <pool> <owner-token>
+# Stamp the lease with the moment the work actually began.
+#
+# A lease file arrives by rename from the waiter record, so until this runs its
+# mtime is when the owner joined the queue — and "oldest started 40m ago" about
+# a command that spent 38 of those minutes queued is the wrong number to show
+# someone deciding whether to wait for it.
+dx_capacity_pool_mark_started() {
+  [[ $# -eq 2 ]] || return 2
+  local pool="$1" owner_token="$2" pool_root lease_file
+  dx_capacity_pool_valid "$pool" || return 2
+  __dx_review_capacity_token_valid "$owner_token" || return 2
+  pool_root=$(dx_capacity_pool_root "$pool") || return 2
+  lease_file="$pool_root/lease-$owner_token"
+  [[ -f "$lease_file" ]] || return 1
+  touch "$lease_file" 2>/dev/null || return 1
+}
+
+# The pool-scoped entry points. DX_REVIEW_CAPACITY_DIR is the pool selector the
+# lease functions already read, so each wrapper resolves the pool root first and
+# then shadows that variable for the call. `local` is dynamically scoped in both
+# bash and zsh, so the lease functions see the pool root and the caller's own
+# value is untouched once the wrapper returns. Two details matter: resolve
+# before shadowing, or a declared-but-empty local hides the caller's
+# DX_REVIEW_CAPACITY_DIR from dx_capacity_pool_root itself; and pin
+# DX_CAPACITY_POOL_BASE too, so anything called from inside the wrapper still
+# resolves the same pool rather than a pool inside it.
+
+# dx_capacity_pool_wait <pool> <session-id> <owner-token> [cancel-callback]
+dx_capacity_pool_wait() {
+  [[ $# -ge 3 && $# -le 4 ]] || return 2
+  local pool="$1" pool_base pool_root pool_limit pool_subject
+  shift
+  pool_base="${DX_CAPACITY_POOL_BASE:-}"
+  [[ -n "$pool_base" ]] || pool_base=$(dx_review_capacity_root) || return 2
+  pool_root=$(dx_capacity_pool_root "$pool") || return 2
+  pool_limit=$(dx_capacity_pool_limit "$pool") || return 2
+  case "$pool" in
+    waves) pool_subject="review wave" ;;
+    checks) pool_subject="check" ;;
+    *) pool_subject="heavy command" ;;
+  esac
+  local DX_CAPACITY_POOL_BASE="$pool_base"
+  local DX_REVIEW_CAPACITY_DIR="$pool_root"
+  local DX_REVIEW_CAPACITY_SUBJECT="$pool_subject"
+  dx_review_capacity_wait "$1" "$2" "$pool_limit" "${3:-}"
+}
+
+# dx_capacity_pool_release <pool> <owner-token>
+dx_capacity_pool_release() {
+  [[ $# -eq 2 ]] || return 2
+  local pool="$1" owner_token="$2" pool_base pool_root
+  pool_base="${DX_CAPACITY_POOL_BASE:-}"
+  [[ -n "$pool_base" ]] || pool_base=$(dx_review_capacity_root) || return 2
+  pool_root=$(dx_capacity_pool_root "$pool") || return 2
+  local DX_CAPACITY_POOL_BASE="$pool_base"
+  local DX_REVIEW_CAPACITY_DIR="$pool_root"
+  dx_review_capacity_release "$owner_token"
+}
+
+# dx_capacity_pool_active_count <pool>
+dx_capacity_pool_active_count() {
+  [[ $# -eq 1 ]] || return 2
+  local pool="$1" pool_base pool_root
+  pool_base="${DX_CAPACITY_POOL_BASE:-}"
+  [[ -n "$pool_base" ]] || pool_base=$(dx_review_capacity_root) || return 2
+  pool_root=$(dx_capacity_pool_root "$pool") || return 2
+  local DX_CAPACITY_POOL_BASE="$pool_base"
+  local DX_REVIEW_CAPACITY_DIR="$pool_root"
+  dx_review_capacity_active_count
 }

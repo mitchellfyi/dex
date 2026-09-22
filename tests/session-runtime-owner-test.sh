@@ -706,6 +706,121 @@ case "$PARENT_OWNER_STATE" in
   *) fail "runtime supervisor remained ${PARENT_OWNER_STATE:-unverifiable} after its monitored launcher" ;;
 esac
 
+# A dead launcher also means nothing else will reap what the session owns, so
+# the supervisor does — on positive evidence that the launcher is gone. The
+# launcher here attaches the session token after starting the supervisor (the
+# real launch order), starts a carrier, and is killed.
+SID_LAUNCHER_REAP="runtime-owner-launcher-reap"
+LAUNCHER_REAP_INFO="$TMP_DIR/launcher-reap.info"
+LAUNCHER_REAP_HANDLE_FILE="$TMP_DIR/launcher-reap.handle"
+LAUNCHER_REAP_CARRIER="$TMP_DIR/launcher-reap.carrier"
+DEX_REAP_TEST_SESSION="$SID_LAUNCHER_REAP" \
+DEX_REAP_TEST_WORKSPACE="$WORKSPACE" \
+DEX_REAP_TEST_INFO="$LAUNCHER_REAP_INFO" \
+DEX_REAP_TEST_HANDLE="$LAUNCHER_REAP_HANDLE_FILE" \
+DEX_REAP_TEST_CARRIER="$LAUNCHER_REAP_CARRIER" \
+bash -c '
+  source "$DEX_DIR/lib/common.sh"
+  dx_session_runtime_owner_start \
+    "$DEX_REAP_TEST_SESSION" claude "$DEX_REAP_TEST_WORKSPACE"
+  dx_session_process_token_attach "$DEX_REAP_TEST_SESSION"
+  /bin/sleep 300 &
+  printf "%s\n" "$!" > "$DEX_REAP_TEST_CARRIER"
+  printf "%s\n" "$DX_SESSION_RUNTIME_OWNER_HANDLE" > "$DEX_REAP_TEST_HANDLE"
+  printf "%s\n" "$DX_SESSION_RUNTIME_OWNER_PID" > "$DEX_REAP_TEST_INFO"
+  while true; do sleep 1; done
+' > /dev/null 2>&1 &
+LAUNCHER_REAP_PID=$!
+TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${LAUNCHER_REAP_PID}"
+wait_for_value "$LAUNCHER_REAP_INFO"
+wait_for_value "$LAUNCHER_REAP_CARRIER"
+LAUNCHER_REAP_OWNER=$(cat "$LAUNCHER_REAP_INFO")
+LAUNCHER_REAP_CARRIER_PID=$(cat "$LAUNCHER_REAP_CARRIER")
+LAUNCHER_REAP_DIRECTORY=$(dx_session_runtime_owner_handle_path \
+  "$(cat "$LAUNCHER_REAP_HANDLE_FILE")")
+TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${LAUNCHER_REAP_OWNER} ${LAUNCHER_REAP_CARRIER_PID}"
+kill -0 "$LAUNCHER_REAP_CARRIER_PID" 2>/dev/null || fail "the carrier did not start"
+kill -KILL "$LAUNCHER_REAP_PID"
+wait "$LAUNCHER_REAP_PID" 2>/dev/null || true
+wait_for_runtime_field "$SID_LAUNCHER_REAP" status abandoned
+REAP_ATTEMPT=0
+while kill -0 "$LAUNCHER_REAP_CARRIER_PID" 2>/dev/null && [[ "$REAP_ATTEMPT" -lt 200 ]]; do
+  sleep 0.05
+  REAP_ATTEMPT=$((REAP_ATTEMPT + 1))
+done
+if kill -0 "$LAUNCHER_REAP_CARRIER_PID" 2>/dev/null; then
+  fail "the supervisor did not reap the session's carrier after its launcher died"
+fi
+# The report is printed after the reap settles, and the token is handed back
+# after the report, so wait for the supervisor itself to finish.
+OWNER_EXIT_ATTEMPT=0
+while kill -0 "$LAUNCHER_REAP_OWNER" 2>/dev/null && [[ "$OWNER_EXIT_ATTEMPT" -lt 200 ]]; do
+  sleep 0.05
+  OWNER_EXIT_ATTEMPT=$((OWNER_EXIT_ATTEMPT + 1))
+done
+if kill -0 "$LAUNCHER_REAP_OWNER" 2>/dev/null; then
+  fail "the supervisor did not exit after reaping"
+fi
+assert_contains "reaped pid=${LAUNCHER_REAP_CARRIER_PID}" "$LAUNCHER_REAP_DIRECTORY/output"
+[[ ! -d "$(dx_session_process_dir "$SID_LAUNCHER_REAP")" ]] \
+  || fail "a full reap left the session's process token behind"
+
+# The reap needs that positive evidence. An identity probe that fails while
+# the launcher is alive — a fork-starved host does this — closes the lease as
+# abandoned, as it always did, and stops nothing: the provider is a sibling of
+# the supervisor, not an ancestor, and would otherwise die mid-phase.
+SID_PROBE_FAIL="runtime-owner-probe-fail"
+PROBE_FAIL_SITE="$TMP_DIR/probe-fail-site"
+PROBE_FAIL_FLAG="$TMP_DIR/probe-fail.flag"
+mkdir -p "$PROBE_FAIL_SITE"
+printf '%s\n' \
+  'import os' \
+  'import sys' \
+  '' \
+  '# Once the flag exists, every identity probe for a PID other than the' \
+  '# probing process itself fails, the way a fork-starved host fails it.' \
+  'if (len(sys.argv) > 2 and sys.argv[1] == "identity"' \
+  '        and os.path.exists(os.environ.get("DX_TEST_PROBE_FAIL_FLAG", ""))' \
+  '        and sys.argv[2] != str(os.getppid())):' \
+  '    sys.exit(3)' \
+  > "$PROBE_FAIL_SITE/sitecustomize.py"
+PROBE_FAIL_INFO="$TMP_DIR/probe-fail.info"
+PROBE_FAIL_CARRIER="$TMP_DIR/probe-fail.carrier"
+DEX_REAP_TEST_SESSION="$SID_PROBE_FAIL" \
+DEX_REAP_TEST_WORKSPACE="$WORKSPACE" \
+DEX_REAP_TEST_INFO="$PROBE_FAIL_INFO" \
+DEX_REAP_TEST_CARRIER="$PROBE_FAIL_CARRIER" \
+DX_TEST_PROBE_FAIL_FLAG="$PROBE_FAIL_FLAG" \
+PYTHONPATH="$PROBE_FAIL_SITE" \
+bash -c '
+  source "$DEX_DIR/lib/common.sh"
+  dx_session_runtime_owner_start \
+    "$DEX_REAP_TEST_SESSION" claude "$DEX_REAP_TEST_WORKSPACE"
+  dx_session_process_token_attach "$DEX_REAP_TEST_SESSION"
+  /bin/sleep 300 &
+  printf "%s\n" "$!" > "$DEX_REAP_TEST_CARRIER"
+  printf "%s\n" "$DX_SESSION_RUNTIME_OWNER_PID" > "$DEX_REAP_TEST_INFO"
+  while true; do sleep 1; done
+' > /dev/null 2>&1 &
+PROBE_FAIL_LAUNCHER=$!
+TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${PROBE_FAIL_LAUNCHER}"
+wait_for_value "$PROBE_FAIL_INFO"
+wait_for_value "$PROBE_FAIL_CARRIER"
+PROBE_FAIL_OWNER=$(cat "$PROBE_FAIL_INFO")
+PROBE_FAIL_CARRIER_PID=$(cat "$PROBE_FAIL_CARRIER")
+TEST_CHILD_PIDS="${TEST_CHILD_PIDS} ${PROBE_FAIL_OWNER} ${PROBE_FAIL_CARRIER_PID}"
+: > "$PROBE_FAIL_FLAG"
+wait_for_runtime_field "$SID_PROBE_FAIL" status abandoned
+sleep 1
+kill -0 "$PROBE_FAIL_LAUNCHER" 2>/dev/null || fail "the launcher died on its own"
+kill -0 "$PROBE_FAIL_CARRIER_PID" 2>/dev/null \
+  || fail "a failed identity probe reaped the session's carrier while its launcher was alive"
+assert_file "$(dx_session_process_token_file "$SID_PROBE_FAIL")"
+rm -f "$PROBE_FAIL_FLAG"
+kill "$PROBE_FAIL_CARRIER_PID" 2>/dev/null || true
+kill "$PROBE_FAIL_LAUNCHER" 2>/dev/null || true
+wait "$PROBE_FAIL_LAUNCHER" 2>/dev/null || true
+
 # A heartbeat timeout remains the first failure even if the lock becomes
 # available for the EXIT finalizer. A later completed request cannot accept it.
 SID_HEARTBEAT_FAIL="runtime-owner-heartbeat-fail"

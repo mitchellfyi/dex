@@ -62,6 +62,8 @@ DEBT_FILE=$(dx_debt_file "${DEX_SESSION_ID:-$(dx_session_id)}")
 
 If the file exists and has content, include a "Technical Debt" section in the PR description with the ledger contents. This makes debt visible to reviewers.
 
+If the plan carried a `## Coherence Contract`, list every deviation from it with its reason, and any review note recorded below the severity floor. A deviation the reviewer can see and weigh is not a defect; a silent one is.
+
 Check if the project has a PR description template or prompt (referenced in AGENTS.md, CLAUDE.md, or `.dex/dex.md`). If so, follow that template.
 
 Otherwise, read the PR description template from the Dex prompts directory (`prompts/pr-description.md`) and follow its structure. Fill in every section with specifics from the implementation.
@@ -220,6 +222,10 @@ PR_DRAFT=$(gh pr view "$PR_NUM" --json isDraft -q .isDraft)
 Do not report Phase 5 complete while the PR remains a draft. If GitHub refuses
 the transition, report the error and leave the lifecycle in Phase 5 so it can
 be retried.
+
+One exception: when the project's `.dex/dex.md` § Resources declares
+`full_gate: ci`, the complete suite is CI's job. Leave the PR as a draft, say so
+in the handoff, and let Phase 6 mark it ready once CI is green.
 
 ### 7. Update Ticket (if tracker configured)
 

@@ -1,9 +1,13 @@
 # Review turnaround
 
-Review still requires 1, 2, or 3 independent clean waves for small, normal,
-or complex changes. Each wave reviews the full current scope. Findings are
-verified before the active wave applies a batch of fixes; any fix resets the
-clean streak. Phase 4 remains the final quality gate.
+Review still requires 1, 1, 2, or 3 independent clean waves for trivial,
+small, normal, or complex changes. The first wave of a loop reviews the full
+current scope; a wave that already holds clean credit re-verifies the findings
+ledger and the delta since the previous wave, then the whole ticket diff under
+the coherence lens before it may declare a clean result. Findings are verified
+before the active wave applies a batch of fixes; a verified finding above the
+severity floor resets the clean streak, while notes below it do not. Phase 4
+remains the final quality gate.
 
 The turnaround changes remove repeated mechanical work:
 
@@ -70,9 +74,12 @@ override the separate host budgets, which default to three waves and one
 check command. Use `DEX_REVIEW_MAX_ACTIVE_WAVES=1` to return to single-wave
 admission. Reload the shell functions with `dx reload` for new invocations;
 loops already running keep the wave limit captured at startup.
-`DEX_REVIEW_CHECK_TIMEOUT` defaults to 900
-seconds for queue waiting and, separately, execution. It does not extend the
-outer wave deadline. Existing scout and test-job limits still apply.
+`DEX_REVIEW_CHECK_TIMEOUT` defaults to 900 seconds and now bounds execution
+only: a command past it is reported `over-budget` and still recorded, and
+`DEX_REVIEW_CHECK_HARD_TIMEOUT` (4× it) is the only deadline that stops one.
+Queue waiting is unbounded unless `DEX_REVIEW_CHECK_QUEUE_TIMEOUT` is set;
+spending it is exit 75 with a `queued` line and nothing run. Neither extends
+the outer wave deadline. Existing scout and test-job limits still apply.
 
 ## Verification
 
@@ -87,11 +94,11 @@ Verification on 2026-09-08:
 | Criterion | Implementation (`file:line`) | Test (`file:line`) | Status |
 |---|---|---|---|
 | Reuse requires matching bounded inputs | `scripts/review_checks.py:153` | `tests/review-check-cache-test.py:32`; `tests/review-check-runner-test.sh:127` | MET |
-| Failures and cancellation preserve their result without reusable success | `bin/review-check.sh:80`; `lib/session.sh:2061` | `tests/review-check-runner-test.sh:69` | MET |
+| Failures and cancellation preserve their result without reusable success, and a late pass is recorded `over-budget` rather than discarded | `bin/review-check.sh:162-168`; `lib/session.sh:2367`, `lib/session.sh:2385` | `tests/review-check-runner-test.sh:69`; `tests/review-check-budget-test.sh:78`, `tests/review-check-budget-test.sh:105` | MET |
 | Check admission is separate from model admission | `lib/review-capacity.sh:78` | `tests/review-check-runner-test.sh:110` | MET |
 | Prepared scope facts do not count as reviewed evidence | `lib/review.sh:1806` | `tests/review-report-test.sh:104` | MET |
 | Report automation retains criterion, receipt, and clean-wave gates | `bin/review-result.sh:24`; `prompts/review-wave.md:10` | `tests/review-report-test.sh:62`; `tests/review-loop-test.sh:1696` | MET |
-| Session cleanup removes new state; vendored runtimes contain the helpers | `lib/session.sh:2675` | `tests/session-forget-test.sh:178`; `tests/review-evaluation-harness-test.sh:235` | MET |
+| Session cleanup removes new state; vendored runtimes contain the helpers | `lib/session-process.sh:648` | `tests/session-forget-test.sh:178`; `tests/review-evaluation-harness-test.sh:235` | MET |
 
 Manual checks used an isolated Python fixture repository:
 

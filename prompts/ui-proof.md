@@ -31,6 +31,10 @@ commit it. Use local or explicitly authorized test data, keep credentials out of
 storyboards and media, and do not point the recorder at production unless the
 user explicitly requested and authorized that environment.
 
+Follow § Resource Discipline in `prompts/guardrails.md`: a capture is heavy
+work, so it runs through `dx run-gate`, and this session owns — and stops —
+every process it starts, servers included.
+
 ## Establish the comparison
 
 Work from the repository root and preserve the current checkout exactly as it
@@ -74,19 +78,23 @@ baseline from Git even when implementation is already complete:
 ```bash
 proof_temp_root=$(mktemp -d "${TMPDIR:-/tmp}/dex-ui-proof.XXXXXX") || exit 1
 baseline_checkout="$proof_temp_root/baseline"
-git -C "$repo_root" worktree add --detach "$baseline_checkout" "$baseline_commit"
+dx worktree add-baseline "$baseline_checkout" "$baseline_commit"
 ```
 
 Install dependencies and start the baseline app from `baseline_checkout` using
-the project's documented development setup. Do not edit, stash, reset, or
-switch the user's current checkout to obtain the old state. Use an isolated
-local database or deterministic fixture data when the two revisions are not
-schema-compatible.
+the project's documented development setup. Start it directly, not under
+`dx run-gate`: the capture below takes the one heavy lease this proof needs,
+and a server holding a second one would wait for itself on a host whose limit
+is one. Do not edit, stash, reset, or switch the user's current checkout to
+obtain the old state. Use an isolated local database or deterministic fixture
+data when the two revisions are not schema-compatible.
 
 Run the before and after applications sequentially on the same port when that
-is simplest, or on separate ports when both need to remain live. Either way,
-use equivalent data, authentication, route, viewport, and actions. Record every
-process you start so it can be stopped at handoff.
+is simplest, or on separate ports when both need to remain live. Reuse a port
+this session already owns; if a port you did not start is busy, report it
+rather than fighting it. Either way, use equivalent data, authentication,
+route, viewport, and actions. Record every process you start so it can be
+stopped at handoff.
 
 Use `after_only` only when no meaningful baseline exists or the old revision
 cannot be reproduced safely. In manual proof mode, explain this limitation to
@@ -122,7 +130,7 @@ Start the baseline app, wait until it is healthy, and capture its complete
 representative flow:
 
 ```bash
-dx ui-capture capture \
+dx run-gate -- bash "$DEX_DIR/bin/ui-capture.sh" capture \
   --stage before \
   --script "$storyboard" \
   --url "$before_url"
@@ -132,7 +140,7 @@ Stop the baseline server. Start the current checkout without altering its Git
 state, wait until it is healthy, then replay the matched flow:
 
 ```bash
-dx ui-capture capture \
+dx run-gate -- bash "$DEX_DIR/bin/ui-capture.sh" capture \
   --stage after \
   --script "$storyboard" \
   --url "$after_url"
@@ -178,8 +186,7 @@ baseline worktree created by this run:
 ```bash
 if [[ -n "${proof_temp_root:-}" && -n "${baseline_checkout:-}" \
   && "$baseline_checkout" == "$proof_temp_root/baseline" ]]; then
-  git -C "$repo_root" worktree remove --force "$baseline_checkout"
-  rmdir "$proof_temp_root" 2>/dev/null || true
+  dx worktree remove-baseline "$baseline_checkout"
 fi
 ```
 

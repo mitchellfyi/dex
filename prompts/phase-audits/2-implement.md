@@ -2,6 +2,10 @@ Before stopping, audit your implementation for completeness. Do NOT stop until e
 
 The dedicated Review phase (Phase 3) will handle adversarial code review. Your job here is to ensure the implementation is **functionally complete** — all tasks done, tests passing, no obvious gaps.
 
+Read the plan's `## Coherence Contract` before writing code and follow it: mirror the canonical files, reuse the helpers it names, honor the rules it cites, and change the docs, configuration, and tests it lists together with the code. Where you deviate, say so and why — Phase 3's coherence lens and Phase 5's PR body both read those deviations.
+
+Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start.
+
 Apply `prompts/issue-hygiene.md` to material implementation discoveries.
 Update the working issue and existing PR when their current descriptions are
 stale, keep accepted related work in the same PR, and create a linked follow-up
@@ -63,22 +67,20 @@ branch, keep it unpushed and do not complete Phase 2. Ask the user whether to
 stop the lifecycle as no-change or choose an explicit lifecycle control action;
 do not advance into a PR flow that cannot complete.
 
-## Step 2.6: Publish Reusable Deterministic Evidence
+## Step 2.6: The Complete Gate, When You Run It, Under Admission
 
-After the final checkout content is committed and every project-wide expensive
-gate has passed, publish those exact commands for Phase 3:
-
-```bash
-dx_review_baseline_publish "$SESSION_ID" "$PWD" \
-  "<short gate name>" "<exact command>" "<measured duration in seconds>" \
-  ["<next gate name>" "<exact command>" "<measured duration in seconds>" ...]
-```
-
-Only include commands that cover the whole project or every applicable target.
-Do not include focused tests, partial checks, failed commands, estimates, or a
-command that changed the checkout. If the content changes after publication,
-rerun the affected full gate and publish a new baseline from the final state.
-If no command qualifies, leave the baseline absent and say so in the evidence.
+The ladder: the tests covering the changed files while you work, the project's
+fast gates on the changed set at each commit, and the complete gate once on the
+final tree — in Phase 4, or here when the change's reach warrants it. When you
+run the complete gate in Phase 2, run it as
+`dx run-gate --name full-gate <the project's aggregate gate command>`: its
+receipt is keyed by the checkout and working-tree fingerprints, so Phase 4
+reuses it instead of running the same gate on the same tree twice, and a receipt
+from an earlier tree is not evidence about this one. Review waves never run the
+aggregate gate. Optionally publish the passing project-wide commands for Phase 3
+with `dx_review_baseline_publish "$SESSION_ID" "$PWD" "<gate name>" "<exact
+command>" "<measured seconds>"`, excluding anything focused, partial, failed,
+estimated, or that changed the checkout.
 
 ## Step 3: Evidence Table
 
@@ -155,15 +157,19 @@ rule wins:
   CI, deployment, or packaging; broad cross-module behavior; or a concrete gap
   in the supplied scope or verification that leaves material behavior
   unbounded.
+- Choose `trivial` only for a documentation-only or test-only change, a rename
+  with no behavior change, or a dependency bump whose full gate is green, using
+  `localized-change,focused-verification,no-behavior-change`.
 - Choose `small` only when every change is localized and mechanically direct,
   impact is narrow, focused verification is available, and no `complex`
   condition applies.
 - Choose `normal` for everything else.
 
 Use one or more comma-separated lowercase reason codes from this set:
-`localized-change`, `focused-verification`, `bounded-production-change`,
-`cross-module`, `public-contract`, `security-sensitive`, `data-migration`,
-`concurrency`, `shell-hooks-ci`, `deployment-packaging`, `broad-impact`, or
+`localized-change`, `focused-verification`, `no-behavior-change`,
+`bounded-production-change`, `cross-module`, `public-contract`,
+`security-sensitive`, `data-migration`, `concurrency`, `shell-hooks-ci`,
+`deployment-packaging`, `declared-sensitive-path`, `broad-impact`, or
 `uncertain-coverage`. Do not persist free-form rationale, paths, source text,
 prompts, or secrets.
 
@@ -175,22 +181,22 @@ In a terminal `dx` lifecycle, record the selection for the current scope:
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
-REVIEW_TIER="<small|normal|complex>"
+REVIEW_TIER="<trivial|small|normal|complex>"
 REVIEW_REASON_CODES="<comma-separated-reason-codes>"
 dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIEW_REASON_CODES" "$PWD"
 ```
 
-The tier selects Dex's fixed global clean-wave policy: 1 for `small`, 2 for
-`normal`, and 3 for `complex`, plus a soft outer-wave budget of 3, 6, or 9.
+The tier selects Dex's fixed global clean-wave policy: 1 for `trivial` and
+`small`, 2 for `normal`, 3 for `complex`, with a soft wave budget of 2, 3, 6, or
+9. Dex may raise the tier from the measured diff at wave time, never lower it.
 The persisted selection is bound to the clean-wave policy. Candidate-branch
-edits cannot lower the active gate, and
-`DEX_REVIEW_CLEAN_PASSES` can only raise it. For an outlier, ask the human or
-record an attributed session decision with
-`dx control override review.clean-passes <1-30> --source agent --reason "<why>"`.
-A lower target still requires that many independent clean waves and produces a
-waiver-bound receipt; it does not claim the trusted policy passed. Use
-`dx control waive review.clean-passes` only when the decision is to skip the
-remaining review gate entirely.
+edits cannot lower the active gate, and `DEX_REVIEW_CLEAN_PASSES` can only
+raise it. For an outlier, ask the human or record an attributed session decision
+with `dx control override review.clean-passes <1-30> --source agent --reason
+"<why>"`. A lower target still requires that many independent clean waves and
+produces a waiver-bound receipt; it does not claim the trusted policy passed.
+Use `dx control waive review.clean-passes` only when the decision is to skip
+the remaining review gate entirely.
 
 The selection is not a review pass and does not count toward the clean gate.
 Because it is tied to the current scope fingerprint, rewrite it after any later
@@ -201,9 +207,9 @@ Phase 2 in-scope change.
 ALL of these must be true before you stop:
 - Every task from the approved plan is implemented
 - Every acceptance criterion has status MET in the evidence table (Step 3)
-- The focused tests for every changed surface pass on the final checkout
-  (rerun only the tests affected by later fixes; the complete suite is Phase
-  4's gate)
+- The focused tests for every changed surface pass on the final checkout (rerun
+  only the tests affected by later fixes), and the complete gate either has a
+  passing `dx run-gate` receipt for this tree or is left to Phase 4
 - No acceptance criterion or verification gate is deferred, skipped, blocked, or delegated to future CI
 - Material implementation discoveries were handled under
   `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`
@@ -216,13 +222,15 @@ ALL of these must be true before you stop:
   the branch.
 - A newly created local branch with no branch-specific commit remains unpushed
   and blocks the ordinary Phase 2 handoff pending user direction.
-- No background processes or long-running verification commands started during Phase 2 are still in flight: every dev server, watcher, browser, and test runner this phase started has been stopped, and `ps` shows none of them
+- No background processes or long-running verification commands started during Phase 2 are still in flight: every dev server, watcher, browser, and test runner this phase started has been stopped, and `dx ps` shows none of them
 - Any needed `.dex/` updates are committed and pushed with the implementation
   increment that required them
 - The UI proof decision is `READY`, `SKIPPED` with a reason, or `N/A` with a reason; a reasoned skip is valid and is not reported as a passed capture
-- A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
-  recorded for the final current scope and bound to the trusted clean-wave
-  policy
+- A deterministic `trivial`, `small`, `normal`, or `complex` Phase 3 risk
+  selection is recorded for the final current scope and bound to the trusted
+  clean-wave policy
+- The review lenses ran over this diff in this session, what they found is
+  fixed, and the findings ledger is seeded for Phase 3
 - The Phase 1 review-criteria artifact still validates and includes every
   approved requirement, including any plan change the user approved in Phase 2
 

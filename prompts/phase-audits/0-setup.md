@@ -5,6 +5,14 @@
 
 Before stopping, audit your ticket bootstrap. Each item below must be verifiable. If any item is unmet, finish it now instead of stopping.
 
+Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start.
+
+This worktree needs its own resources: a database, port, cache or fixture set
+another checkout is using is not yours to share. If `.dex/dex.md` § Worktree
+Hooks declares `after_create`, they exist already; otherwise stand them up by
+the project's own setup path before anything runs against them, and record
+what you created so the phase that finishes can tear it down.
+
 Read and apply `prompts/issue-hygiene.md`. Phase 0 owns the full duplicate and
 relationship search, reconciliation of accepted decisions into the working
 issue, and reconciliation of any existing open PR. End the phase summary with
@@ -109,6 +117,7 @@ ALL of these must be true before you stop:
 - Every applicable item in §§1–6 is done or explicitly N/A.
 - Issue and PR hygiene is complete, and the summary contains `Issue/PR work:`.
 - The ready marker (§7) is written.
-- No Phase 0 background process is still running.
+- This worktree's own resources exist (hook or by hand), and the summary names what was created.
+- No Phase 0 background process is still running, per `dx ps`.
 
 When all criteria are met, stop. The Stop hook will audit this phase and advance to Phase 1 (Plan) automatically.

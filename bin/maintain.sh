@@ -25,6 +25,8 @@ __dx_maintain_cleanup() {
     rm -rf "$MAINTAIN_GH_CONFIG_DIR" 2>/dev/null || true
   fi
   if [[ -n "${MAINTAIN_RESPONSE_WORKTREE_REPO:-}" && -n "${MAINTAIN_RESPONSE_WORKTREE_DIR:-}" ]]; then
+    dx_worktree_hook_run before_remove "$MAINTAIN_RESPONSE_WORKTREE_REPO" \
+      "$MAINTAIN_RESPONSE_WORKTREE_DIR" "${MAINTAIN_RESPONSE_WORKTREE_DIR##*/}" 2>/dev/null || true
     git -C "$MAINTAIN_RESPONSE_WORKTREE_REPO" worktree remove --force "$MAINTAIN_RESPONSE_WORKTREE_DIR" >/dev/null 2>&1 || rm -rf "$MAINTAIN_RESPONSE_WORKTREE_DIR" 2>/dev/null || true
     rmdir "$(dirname "$MAINTAIN_RESPONSE_WORKTREE_DIR")" >/dev/null 2>&1 || true
   fi
@@ -591,19 +593,28 @@ __dx_maintain_prepare_publish_worktree() {
   __dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "publish" "deferred publish state"
 }
 
+# A provider works in the respond worktree, so the project gets to stand it up
+# the way it does for a lifecycle worktree. The hook writes to stderr: this
+# function's stdout is the worktree path its caller captures.
 __dx_maintain_prepare_response_worktree() {
-  __dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "respond" "response state"
+  local wt_dir
+  wt_dir=$(__dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "respond" "response state") || return 1
+  dx_worktree_hook_run after_create "$1" "$wt_dir" "${wt_dir##*/}" >&2
+  printf '%s\n' "$wt_dir"
 }
 
 __dx_maintain_prepare_response_temp_worktree() {
-  local wt_parent
+  local wt_parent wt_dir
   wt_parent=$(mktemp -d "${TMPDIR:-/tmp}/dex-maintain-respond.XXXXXX") || return 1
-  __dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "respond" "response state" "$wt_parent"
+  wt_dir=$(__dx_maintain_prepare_state_worktree "$1" "$2" "$3" "$4" "respond" "response state" "$wt_parent") || return 1
+  dx_worktree_hook_run after_create "$1" "$wt_dir" "${wt_dir##*/}" >&2
+  printf '%s\n' "$wt_dir"
 }
 
 __dx_maintain_cleanup_response_worktree() {
   local repo_root="$1" wt_dir="$2"
   [[ -n "$wt_dir" && -d "$wt_dir" ]] || return 0
+  dx_worktree_hook_run before_remove "$repo_root" "$wt_dir" "${wt_dir##*/}"
   git -C "$repo_root" worktree remove --force "$wt_dir" >/dev/null 2>&1 || rm -rf "$wt_dir"
   rmdir "$(dirname "$wt_dir")" >/dev/null 2>&1 || true
 }
@@ -703,6 +714,9 @@ __dx_maintain_prepare_worktree() {
     return 1
   fi
   git -C "$repo_root" worktree add -b "$branch" "$wt_dir" "$base_ref" >/dev/null
+  # Same stdout discipline as the respond worktree: the caller reads the path
+  # and the branch from here.
+  dx_worktree_hook_run after_create "$repo_root" "$wt_dir" "$run_id" >&2
   printf '%s\t%s\n' "$wt_dir" "$branch"
 }
 

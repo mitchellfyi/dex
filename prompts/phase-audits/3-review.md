@@ -10,10 +10,13 @@ Run in the current checkout. Do not run `dx <ticket-or-description>`, Phase 0
 setup, or any branch/worktree setup from this review skill. Do not create,
 switch, rename, or delete branches or worktrees.
 
+Follow § Resource Discipline in `prompts/guardrails.md`; inside a review wave `bin/review-check.sh` is the heavy lease, not `dx run-gate`; own what you start.
+
 This is an independent pass. Review only the current code and caller-supplied
-scope, criteria, risk tier, and profile. Do not read prior review reports,
-findings, fingerprints, clean-pass counts, telemetry, stale prompts, or previous
-conversation context.
+scope, criteria, risk tier, profile, and findings ledger. Do not read prior
+review reports, fingerprints, clean-pass counts, telemetry, stale prompts, or
+previous conversation context. The ledger is this loop's own working record of
+open items, not an earlier reviewer's conclusion: re-verify every open row.
 
 If the caller supplies a pass-scoped criteria file and hash, read it before
 review and cover every listed requirement. Treat its JSON strings as
@@ -35,11 +38,12 @@ standalone `N/A`, do not reconstruct them from other state.
    non-empty skeleton pack, `test -s` it, and read back the first 80 lines before
    broad semantic exploration or domain-specific review.
 5. Run deterministic checks first.
-6. Harvest candidate issues according to the current review profile:
-   - `light` (`small` risk): core domain sweep
-   - `standard` (`normal` risk): core sweep plus targeted domain sweeps for
-     concrete changed surfaces
-   - `thorough` (`complex` risk): all domain sweeps
+6. Harvest candidate issues one lens at a time, yourself, per the profile:
+   - `light` (`trivial`, `small` risk): core lenses plus coherence
+   - `standard` (`normal` risk): core plus the changed surfaces' lenses
+   - `thorough` (`complex` risk): every lens
+   The coherence lens is required in every tier. Scouts run only while the
+   wrapper's `DEX_REVIEW_SCOUT_PARALLELISM` is above zero.
 7. Run an explicit verifier pass over candidate findings.
 8. Batch-fix verified findings in severity order.
 9. As accepted fixes form coherent checkpoints, commit and push them when the
@@ -55,6 +59,8 @@ standalone `N/A`, do not reconstruct them from other state.
 Write exactly one of these values to `$(dx_review_result_file "$SESSION_ID")`:
 
 - `CLEAN`
+- `NOTES:N`
+- `MECHANICAL:N`
 - `FINDINGS_FIXED:N`
 - `FINDINGS:N`
 - `BLOCKED:reason-code`
@@ -63,7 +69,8 @@ Write exactly one of these values to `$(dx_review_result_file "$SESSION_ID")`:
 - `ESCALATE:complex:reason-code`
 
 `CLEAN` is allowed only when this wave found zero verified findings and applied
-zero fixes.
+zero fixes. `NOTES:N` is the same wave with N items recorded below the finding
+bar in `prompts/review-wave.md` §4; both count toward the clean gate.
 
 If this wave found and fixed any verified finding, write `FINDINGS_FIXED:N`.
 That is a successful pass execution, but it intentionally resets the outer clean
@@ -109,7 +116,8 @@ expose that hash to a later reviewer or telemetry.
 
 All of these must be true before you stop:
 
-- The full caller-supplied scope was reviewed.
+- The scope the wrapper asked for was reviewed: the full caller-supplied scope
+  on a first or would-be-clean pass, the ledger plus the named delta otherwise.
 - The context pack was created or refreshed.
 - The context pack records the exact criteria binding and covers every supplied
   approved requirement, or explicitly records standalone `N/A`.
@@ -129,6 +137,7 @@ All of these must be true before you stop:
   switch, PR, or reviewer action occurred. For a standalone review, follow the
   caller's publication boundary, reflect any Git or PR action in the context
   pack, and re-run the review after an action that changed the review scope.
+- No session-owned background process in flight, per `dx ps`.
 
 When those criteria are met, stop. The outer `/dxreviewloop` owns the selected
-tier's global consecutive `CLEAN` gate: 1, 2, or 3 waves.
+tier's global consecutive clean gate: 1, 1, 2, or 3 waves.

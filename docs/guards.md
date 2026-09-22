@@ -81,6 +81,7 @@ For `env_var: DX_PROVIDER_ENGINE`, `guard-handler.py` treats the current Dex ses
 | `warn-review-assessment-bash` | bash | warn | Any Bash command while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor is read-only |
 | `warn-review-assessment-file-edits` | file | warn | Any file edit while `DEX_REVIEW_ASSESSMENT_ACTIVE=1`; the review risk assessor must not modify the tree |
 | `warn-ccr-live-state` | bash | warn | Ad-hoc `node`/`python` evaluation (`-e`, `-p`, `-c`, stdin heredoc) referencing CCR router internals (`scripts/ccr/` modules such as `native.cjs`, `state.cjs`, `service.cjs`, or calls to `clientSettings`, `syncContext`, `saveBackend`) or the live router state under `~/.dex/router/`; the sanctioned paths are the `dx router` CLI and a `DEX_ROUTER_HOME` sandbox, and writes outside them have locked users out of `claude` and `codex` |
+| `warn-detached-processes` | bash | warn | Work that outlives the command: `nohup`, `setsid` or `disown` in command position — including inside a heredoc, a `bash -c` payload or a command substitution — and a background `&` the same command never `wait`s for. Not flagged, because the `&` is not a separator there: `2>&1`, `>&2`, `&>file`, `&&`, and an `&` inside quotes. The session owns what it starts and stops it at session end, so the advice is to expect that, and to record a reason when something genuinely must survive. Cannot see the tool's own `run_in_background` flag, which is not in the guard payload, so the message names it instead. Also flags a command segment whose first words are one of the project's declared `heavy_commands`, with the advice to run it through `dx run-gate` so it queues and is owned — same guard because it is the same rule about work the session should own and account for |
 
 ### Built-in detectors
 
@@ -91,6 +92,36 @@ Some guards set `detector:` instead of `pattern:` to use a parser in `hooks/guar
 | `destructive-commands` | `warn-destructive-commands` | Shell tokenization of `rm -rf` / `dd` / `mkfs` targets, incl. wrappers, nested payloads, and a command word held in a variable or a default expansion |
 | `raw-codex-delegation` | `warn-raw-codex-delegation` | Shell/script delegation to the Codex CLI under the `codex-plugin` provider |
 | `await-in-loop` | `warn-await-in-loop` | Common `for`/`foreach`/`while` loop bodies, flagging an `await` that isn't inside a nested closure or method |
+| `detached-process` | `warn-detached-processes` | Shell tokenization of `nohup`/`setsid`/`disown` in command position and of a background `&`, with redirect forms of `&` and a `wait`ed background job excluded. Also whole-word prefix matching of each top-level command segment against the project's declared `heavy_commands` (see below) |
+
+#### Declared heavy commands
+
+The `detached-process` detector also reads `heavy_commands` from the fenced
+block under `## Resources` in the repository's `.dex/dex.md`, through the same
+`scripts/project-contract.py` parser every other reader uses. A command
+segment whose first words match one of them is advised toward `dx run-gate`.
+
+- **Silent by default.** No repository root, no `.dex/dex.md`, no `##
+  Resources` block, no `heavy_commands` key, or a malformed block: the
+  detector contributes nothing and the guard behaves exactly as before.
+- **Matching** is whole-token prefix per top-level segment, after leading
+  `VAR=value` assignments and a leading `./` are dropped, so `bash
+  tests/run-all.sh guards` matches a declared `bash tests/run-all.sh` and
+  `bash tests/check.sh` does not. A segment already inside `dx run-gate`, or
+  running `run-gate.sh`, is not flagged. Heredocs and `bash -c` payloads are
+  not re-parsed for this half.
+- **Known blind spots.** A declared command reached through a prefix wrapper
+  — `env`, `timeout`, `nice`, `time`, `xargs` — does not match, because the
+  declared words are no longer the segment's first words. Nor does the tool's
+  own background flag, which is not in the guard payload. This is an advisory
+  that catches the common spelling, not a wrapper-proof detector; widening it
+  costs a parse on every Bash call for shapes that barely occur.
+- **Cost.** The parsed list is cached in `guard-heavy-commands.json` under
+  `$DX_STATE_DIR` (default `~/.claude/.dex-phases/`), keyed by the contract's
+  path, mtime and size, written atomically at 0600 and capped at 32
+  repositories. A hit is one `stat` plus one small JSON read; only a changed
+  contract pays for the parser import. A cache that cannot be read or written
+  is not an error — the detector just parses again.
 
 Note: Conventional commit format validation is handled by `hooks/post-commit-guard.sh` directly (not via guards) because commit events combine file paths and the message into a single text, making it impossible to write a guard pattern that targets only the commit message.
 

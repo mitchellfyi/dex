@@ -31,6 +31,11 @@
 #   dx run --spec <file>    Run from a structured headless run spec
 #   dx control <action>     Pause, stop, advance, jump, or resume a lifecycle
 #   dx sessions             Inspect and diagnose lifecycle sessions
+#   dx ps                   List what each session owns; reap orphaned processes
+#   dx doctor               One read-only screen of this host's Dex health
+#   dx run-gate <cmd>       Run one heavy command under host-wide admission
+#   dx worktree audit       Compare Dex, git and the project's own worktree resources
+#   dx review stats         Report review-loop history per risk tier
 #   dx ui-capture           Capture or inspect temporary UI proof
 #   dex                   Alias for dx
 #   dexter                Alias for dx
@@ -92,6 +97,11 @@ __dx_cli() {
     run)       __dx_run_spec_cli "$@" ;;
     control)   bash "$DEX_DIR/bin/control.sh" "$@" ;;
     sessions)  bash "$DEX_DIR/bin/sessions.sh" "$@" ;;
+    ps)        bash "$DEX_DIR/bin/ps.sh" "$@" ;;
+    doctor)    bash "$DEX_DIR/bin/doctor.sh" "$@" ;;
+    run-gate)  bash "$DEX_DIR/bin/run-gate.sh" "$@" ;;
+    worktree)  bash "$DEX_DIR/bin/worktree.sh" "$@" ;;
+    review)    bash "$DEX_DIR/bin/review.sh" "$@" ;;
     ui-capture) bash "$DEX_DIR/bin/ui-capture.sh" "$@" ;;
     research)
       local _dx_has_max_cycles=0 _dx_has_runner=0 _dx_research_help=0 _dx_arg
@@ -179,6 +189,11 @@ __dx_cli() {
       echo "  dx run --spec-url URL --run-token TOKEN"
       echo "  dx control          Pause, stop, advance, jump, or resume the current lifecycle"
       echo "  dx sessions         Inspect and diagnose lifecycle sessions"
+      echo "  dx ps               List what each session owns; reap orphaned processes"
+      echo "  dx doctor           One read-only screen of this host's Dex health"
+      echo "  dx run-gate <cmd>   Run one heavy command under host-wide admission"
+      echo "  dx worktree audit   Compare Dex, git and the project's own worktree resources"
+      echo "  dx review stats     Review-loop history per risk tier, from telemetry"
       echo "  dx ui-capture       Capture, revise, inspect, or skip temporary UI proof"
       echo "  dx research         Run autonomous research orchestrator"
       echo "                        Defaults: --max-cycles 20; SCENARIO_TIMEOUT 3600s (1h) per scenario"
@@ -383,7 +398,7 @@ The dxplan skill writes the required Phase 1 lifecycle markers. Honor the Phase 
 
 For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval." \
   "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact. Phase focus: implementation, testing, and trustworthy proof. Follow prompts/commit-format.md. Commit small coherent checkpoints early and often, and push immediately after every commit. Do not wait for full verification, task completion, or phase completion; keep failed and pending checks explicit and continue toward a verified branch. Use natural history boundaries rather than arbitrary splits. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If the approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 is the final PR gate. When done, stop — the audit loop will verify your work." \
-  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: small requires 1, normal 2, and complex 3 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and parallel read-only domain scouting, verifies findings, batch-fixes safe issues, and rechecks. Fixes reset the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit and push accepted review fixes as small coherent checkpoints from the active wave; do not wait for Phase 4 or final verification, and keep failed or pending checks explicit. Do not switch branches or create or update a PR. When the loop writes a valid success receipt, stop — the audit loop will verify." \
+  "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: trivial and small require 1, normal 2, and complex 3 consecutive independent clean waves (CLEAN or NOTES:N). Each fresh wave builds its own context pack, runs deterministic checks and its domain lenses in sequence with the coherence lens — scouts only when the wrapper offers them — verifies findings, batch-fixes safe issues, and rechecks. Any fix, MECHANICAL:N included, resets the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit and push accepted review fixes as small coherent checkpoints from the active wave; do not wait for Phase 4 or final verification, and keep failed or pending checks explicit. Do not switch branches or create or update a PR. When the loop writes a valid success receipt, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). This is the final PR gate. Fix failures and rerun until green; as repairs form natural coherent checkpoints, invoke skill: \"dxcommit\" to commit and push each coherent repair checkpoint immediately without waiting for the rest of the pipeline. Keep failing checks explicit. When the complete pipeline passes, confirm the working tree is clean and local HEAD matches origin. A newly created local branch with no branch-specific commits cannot enter the ordinary PR flow; return to Phase 2's user-direction path instead of publishing it. PR creation and broader implementation fixes remain available when useful. When the branch is verified and current, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, create or update the PR, attach current UI proof media when GitHub CLI supports it, attach the configured 'request' reviewers from dex.md § Reviewers, and mark the PR ready for review. Phase focus: PR creation, description, automatic visual attachment with a warned local fallback, reviewer attachment, and readiness. Do not stop while the PR is still a draft. Posting @mentions, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxcomplete\". Phase 6 follows the cycle-loop audit prompt: verify the PR is ready and repair any remaining draft state, request reviewers from dex.md § Reviewers, post @mention comments for mention-type reviewers, launch /loop 5m /dxwatchpr, re-read the current completion wait/cycle defaults, address CI failures and review comments via the PR watcher, re-request reviewers after each push, and close the ticket when CI is green and all successfully requested reviewers have approved. If the current bounded wait expires, pause with manual follow-up instructions. Stop — the audit loop will verify." \
@@ -890,6 +905,9 @@ __dx_setup_worktree_claimed() {
   # Share ignored dependency and build trees so this lifecycle does not pay a
   # cold install and build the host has already done once.
   dx_link_build_caches_to_worktree "$_dx_repo_root" "$_dx_wt_dir"
+  # Let the project stand up whatever else a worktree of it needs — a database,
+  # a port, a container. Declared under `## Worktree Hooks`; absent runs nothing.
+  dx_worktree_hook_run after_create "$_dx_repo_root" "$_dx_wt_dir" "$_dx_wt_name"
   __dx_record_session_branch "$_dx_session_id" "$_dx_wt_dir" || return 1
   local _dx_original_head
   _dx_original_head=$(git -C "$_dx_wt_dir" rev-parse --verify 'HEAD^{commit}') || return 1
@@ -3159,6 +3177,11 @@ __dx_run_phases_inline() {
         __dx_kill_process_tree "$watch_target" TERM
         sleep 2
         __dx_kill_process_tree "$watch_target" KILL
+        # The tree walk cannot reach a process that reparented itself away
+        # from the provider. The session token can, so finish the kill with a
+        # reap pass, which prints what it stopped. This subshell carries no
+        # session token, so nothing here is in its own candidate set.
+        dx_session_finish_processes "$session_id" watchdog-kill || true
         break
       fi
       sleep 1
@@ -3173,6 +3196,15 @@ __dx_run_phases_inline() {
 
   (
     sh -c 'echo $PPID' > "$_dx_pidfile"
+    # Own every process this phase starts. The attach opens the session token
+    # on fd 8 and exports DX_SESSION_PROCESS_TOKEN plus DX_SESSION_TMP in this
+    # subshell, so each descendant carries them — including one that later
+    # nohup/disown/setsid's itself out of the process tree, where the watchdog's
+    # PPID walk can no longer reach it. No timeout comes with this: fd 9 and
+    # dx_run_with_timeout still own per-command deadlines.
+    if ! dx_session_process_token_attach "$session_id"; then
+      dx_warn "Dex could not take process ownership of this phase; processes it starts may outlive it."
+    fi
     cd "$wt_dir" && \
     DEX_SESSION_ID="$session_id" \
     DEX_RUN_ID="$run_id" \
@@ -3195,6 +3227,10 @@ __dx_run_phases_inline() {
   [[ -s "$_dx_watchdog_reason_file" ]] \
     && watchdog_reason=$(<"$_dx_watchdog_reason_file")
   rm -f "$_dx_pidfile" "$_dx_watchdog_reason_file"
+  # Normal provider exit. The SessionEnd hook reaps for Claude; this covers
+  # every other way a provider can return — a provider without that hook, a
+  # crash that skipped it, or a hook the host cut short. Errors stay visible.
+  dx_session_finish_processes "$session_id" phase-exit || true
   if [[ -n "$watchdog_reason" && -n "$_dx_watchdog_pid" ]]; then
     # The watchdog fired and may be mid TERM→KILL escalation. Killing it
     # between the two signals would leave TERM-ignoring children running,
@@ -3206,7 +3242,12 @@ __dx_run_phases_inline() {
       _dx_watch_wait=$((_dx_watch_wait + 1))
     done
   fi
-  [[ -n "$_dx_watchdog_pid" ]] && kill "$_dx_watchdog_pid" 2>/dev/null
+  # The watchdog loops on the provider's liveness, so once the phase-exit reap
+  # above has run it has usually exited on its own; a kill that finds nothing
+  # is the expected case, not an error, and must not trip a caller's `set -e`.
+  if [[ -n "$_dx_watchdog_pid" ]]; then
+    kill "$_dx_watchdog_pid" 2>/dev/null || true
+  fi
   if [[ -n "$watchdog_reason" ]]; then
     if ! dx_lifecycle_pause "$session_id" "$watchdog_reason" phase-loop; then
       dx_error "Dex could not safely pause after the runtime watchdog fired."
@@ -3852,7 +3893,7 @@ __dx_show_header() {
 { unalias __dx_task_commands; unfunction __dx_task_commands; } 2>/dev/null || true
 __dx_task_commands() {
   printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
-    test config provider run control sessions ui-capture research install uninstall uninit status \
+    test config provider run control sessions ps doctor run-gate worktree review ui-capture research install uninstall uninit status \
     reload help revert log triage refine setup account accounts model route profile router context
 }
 
@@ -4079,7 +4120,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$dx_command_input" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|profile|context|run|control|sessions|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|profile|context|run|run-gate|worktree|review|control|sessions|ps|doctor|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
@@ -5024,7 +5065,7 @@ dxrm() {
         echo "Removing ${wt_name}..."
         dx_cleanup_checkpoints "$wt_dir"
         dx_unlink_claude_from_worktree "$wt_dir"
-        if ! dx_wt_remove "$wt_dir"; then
+        if ! dx_wt_remove "$wt_dir" "$repo_root"; then
           dx_error "Failed to remove worktree ${wt_name}; its branch and session state were left intact."
           removal_failed=1
           continue
@@ -5180,7 +5221,7 @@ dxrm() {
   if [[ $has_dir -eq 1 ]]; then
     dx_cleanup_checkpoints "$wt_dir"
     dx_unlink_claude_from_worktree "$wt_dir"
-    if ! dx_wt_remove "$wt_dir"; then
+    if ! dx_wt_remove "$wt_dir" "$repo_root"; then
       dx_error "Failed to remove worktree ${wt_name}; its branch and session state were left intact."
       return 1
     fi
@@ -5380,13 +5421,37 @@ dxcd() {
 
 { unalias dxclean; unfunction dxclean; } 2>/dev/null || true
 dxclean() {
-  if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
-    echo "Usage: dxclean"
+  local clean_apply=0 clean_help=0 clean_arg=""
+  for clean_arg in "$@"; do
+    case "$clean_arg" in
+      -h|--help) clean_help=1 ;;
+      --apply)   clean_apply=1 ;;
+      *)
+        dx_error "Unknown dxclean option: $clean_arg"
+        return 1
+        ;;
+    esac
+  done
+  if [[ $clean_help -eq 1 ]]; then
+    echo "Usage: dxclean [--apply]"
     echo "Remove stale Dex worktrees, branches, and session files."
+    echo ""
+    echo "Then report what sessions that are gone have left on this host: their"
+    echo "temp roots and process tokens, the browser profiles Dex minted inside"
+    echo "them, gate receipts no session remembers, the processes they still"
+    echo "own, and whatever this project's orphan_resources probe reports that"
+    echo "is not a worktree Dex or git still lists."
+    echo ""
+    echo "  --apply   Remove what that report listed. Processes are stopped"
+    echo "            through 'dx ps --reap-orphans' and nothing else, and it"
+    echo "            re-derives the orphan list when it runs — a session that"
+    echo "            came back to life in between is left alone, and the"
+    echo "            reconciliation line says what was actually stopped."
+    echo ""
+    echo "The report walks every session's process token when any session is"
+    echo "gone, which costs a full 'dx ps' listing; a host with no leftovers"
+    echo "pays nothing."
     return 0
-  elif [[ $# -gt 0 ]]; then
-    dx_error "dxclean does not accept arguments."
-    return 1
   fi
   local repo_root
   repo_root=$(dx_repo_root) || return 1
@@ -5439,7 +5504,7 @@ dxclean() {
 
       echo "  Removing stale worktree: ${wt_name}"
       dx_unlink_claude_from_worktree "$wt_dir"
-      if ! dx_wt_remove "$wt_dir"; then
+      if ! dx_wt_remove "$wt_dir" "$repo_root"; then
         dx_error "Failed to remove stale worktree ${wt_name}; its branch and session state were left intact."
         cleanup_failed=1
         continue
@@ -5549,7 +5614,7 @@ dxclean() {
     echo "  Cleaned ${old_review_credit} old review credit bundle(s)"
     cleaned=$((cleaned + old_review_credit))
   fi
-  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context review-criteria.json review-criteria-approval review-selection review-evidence.json review-receipt busy busy-notice started ready watch-pause watch-lock" 7)
+  old_files=$(dx_cleanup_stale_files "$DX_LOOP_DIR" "state complete active owner prompt config findings debt provider review-state review-result review-context review-criteria.json review-criteria-approval review-selection review-evidence.json review-findings.json review-receipt busy busy-notice started ready watch-pause watch-lock" 7)
   if [[ "$old_files" -gt 0 ]]; then
     echo "  Cleaned ${old_files} old loop state file(s)"
     cleaned=$((cleaned + old_files))
@@ -5566,10 +5631,220 @@ dxclean() {
   # can still retrieve it after a PR completes.
   dx_ui_capture_cleanup "$(dx_ui_capture_retention_days)" || cleanup_failed=1
 
-  if [[ $cleaned -eq 0 ]]; then
-    echo "Nothing to clean."
-  else
+  # 6. Host-wide leftovers.
+  #
+  # Everything above is about this checkout. What follows belongs to the
+  # machine: the temp roots and process tokens of sessions that are gone, the
+  # browser profiles Dex minted inside them, the gate receipts of sessions
+  # nothing else remembers, the processes those sessions still own, and
+  # whatever this project's own orphan_resources probe reports. It is always
+  # reported and never removed without --apply, because a listing that is
+  # safe to run is what makes the removal worth trusting.
+  local leftover_dir="" leftover_session="" leftover_holder="" leftover_carriers=""
+  local leftover_line="" leftover_traces="" leftover_profile_file=""
+  local leftover_total=0 leftover_shown=0
+  local clean_probe_result=0 clean_probe_output="" clean_probe_note=""
+  local clean_ps_output="" clean_ps_reaped=0 clean_ps_roots=0
+  local -a gone_sessions=() minted_profiles=() stale_receipts=() project_orphans=()
+  local -a reported_live=()
+  if [[ -d "$DX_LOOP_DIR" ]]; then
+    # A session is gone on exactly the rule `dx ps` uses: the shell that
+    # opened the token is no longer one of the processes carrying it. That is
+    # PID-reuse safe, and it is also true of a session whose state files were
+    # removed by `dx sessions forget`, `dx_cleanup_session`, or pass 1 above —
+    # none of those reap, so their `.process` directories arrive here.
+    while IFS= read -r leftover_dir; do
+      [[ -n "$leftover_dir" ]] || continue
+      leftover_session="${leftover_dir##*/}"
+      leftover_session="${leftover_session%.process}"
+      dx_session_id_valid "$leftover_session" || continue
+      leftover_carriers=" $(dx_session_process_carriers "$leftover_session" 2>/dev/null | tr '\n' ' ') "
+      leftover_holder=$(dx_session_process_holder_pid "$leftover_session" 2>/dev/null) \
+        || leftover_holder=""
+      if [[ -n "$leftover_holder" && "$leftover_carriers" == *" ${leftover_holder} "* ]]; then
+        continue
+      fi
+      gone_sessions+=("$leftover_session")
+      # The profiles Dex minted for that session's browsers, as the browser
+      # launcher recorded them. Listed in their own right so a human can see
+      # what the temp root is actually holding.
+      leftover_profile_file="$(dx_session_tmp_dir "$leftover_session")/browser-profiles.txt"
+      if [[ -f "$leftover_profile_file" ]]; then
+        while IFS= read -r leftover_line; do
+          [[ -n "$leftover_line" && -d "$leftover_line" ]] || continue
+          minted_profiles+=("$leftover_line")
+        done < "$leftover_profile_file"
+      fi
+    done < <(find "$DX_LOOP_DIR" -maxdepth 1 -type d -name '*.process' 2>/dev/null | LC_ALL=C sort)
+
+    # Gate receipts outlive the gate on purpose — a resumed lifecycle reads
+    # them back — so only a session nothing else remembers is stale: no phase
+    # state, no loop state, no process token, nothing but the receipts.
+    while IFS= read -r leftover_dir; do
+      [[ -n "$leftover_dir" ]] || continue
+      leftover_session="${leftover_dir##*/}"
+      leftover_session="${leftover_session%.gate-receipts}"
+      dx_session_id_valid "$leftover_session" || continue
+      leftover_traces=$(find "$DX_LOOP_DIR" -maxdepth 1 -name "${leftover_session}.*" \
+        ! -name "${leftover_session}.gate-receipts" 2>/dev/null | head -1)
+      if [[ -z "$leftover_traces" && -d "$DX_STATE_DIR" ]]; then
+        leftover_traces=$(find "$DX_STATE_DIR" -maxdepth 1 -name "${leftover_session}.*" 2>/dev/null | head -1)
+      fi
+      if [[ -n "$leftover_traces" ]]; then
+        continue
+      fi
+      stale_receipts+=("$leftover_session")
+    done < <(find "$DX_LOOP_DIR" -maxdepth 1 -type d -name '*.gate-receipts' 2>/dev/null | LC_ALL=C sort)
+  fi
+
+  # Only the project knows what a worktree of it costs beyond disk. No
+  # 2>/dev/null and no `|| true`: lib/worktree.sh distinguishes "no probe" (1)
+  # from "the probe failed" (2) and "the probe reported nothing" (3), and a
+  # crashed probe reading as "this repository is clean" is the answer that
+  # would let a leak hide behind a green report.
+  clean_probe_output=$(dx_worktree_orphan_resources "$repo_root") \
+    || clean_probe_result=$?
+  case "$clean_probe_result" in
+    0)
+      # A live worktree is never an orphan. A probe of the ordinary shape
+      # lists the resources of every worktree it can see, including the one
+      # someone is working in, so a reported line naming it would otherwise
+      # have --apply drop that checkout's database. dx_worktree_name_is_live
+      # is the same rule `dx worktree audit` uses, matching a bare name, a
+      # recorded path and a resolved path, case-folded — see
+      # docs/worktree-hooks.md § "A live worktree is never an orphan".
+      #
+      # Without that reader Dex cannot tell which worktrees are live, and the
+      # safe answer is to offer nothing rather than to guess.
+      if ! command -v dx_worktree_name_is_live >/dev/null 2>&1; then
+        clean_probe_note="Dex cannot check reported resources against the live worktrees (dx_worktree_name_is_live is missing), so it is offering none of them"
+        clean_probe_output=""
+      elif ! dx_worktree_live_names "$repo_root" >/dev/null 2>&1; then
+        # A working listing always includes the main checkout. Without one,
+        # every reported line reads as live below; this line says why.
+        clean_probe_note="git could not list this repository's worktrees, so every reported resource is treated as live and none is offered"
+      fi
+      while IFS= read -r leftover_line; do
+        [[ -n "$leftover_line" ]] || continue
+        if dx_worktree_name_is_live "$repo_root" "$leftover_line"; then
+          reported_live+=("$leftover_line")
+        else
+          project_orphans+=("$leftover_line")
+        fi
+      done <<< "$clean_probe_output"
+      ;;
+    2) clean_probe_note="the orphan_resources probe failed; Dex cannot tell whether this project is clean" ;;
+  esac
+
+  leftover_total=$(( ${#gone_sessions[@]} + ${#minted_profiles[@]} \
+    + ${#stale_receipts[@]} + ${#project_orphans[@]} ))
+  leftover_shown=$(( leftover_total + ${#reported_live[@]} ))
+  if [[ -n "$clean_probe_note" ]]; then
+    leftover_shown=$((leftover_shown + 1))
+  fi
+  if [[ $leftover_shown -gt 0 ]]; then
+    echo "Host leftovers:"
+    for leftover_session in "${gone_sessions[@]}"; do
+      echo "  session temp root  ${leftover_session}"
+    done
+    for leftover_line in "${minted_profiles[@]}"; do
+      echo "  browser profile    ${leftover_line}"
+    done
+    for leftover_session in "${stale_receipts[@]}"; do
+      echo "  gate receipts      ${leftover_session}"
+    done
+    for leftover_line in "${project_orphans[@]}"; do
+      echo "  project resource   ${leftover_line}"
+    done
+    for leftover_line in "${reported_live[@]}"; do
+      echo "  live worktree      ${leftover_line}  reported, but Dex still has this worktree — not touched"
+    done
+    if [[ -n "$clean_probe_note" ]]; then
+      echo "  probe             ${clean_probe_note}"
+    fi
+    # The processes those sessions still own, from the one command that knows
+    # how to find them. Skipped entirely when no session is gone, because the
+    # token scan is the expensive part of this sweep.
+    if [[ ${#gone_sessions[@]} -gt 0 ]]; then
+      echo "  orphan processes ('dx ps' also lists the live sessions it leaves alone):"
+      bash "$DEX_DIR/bin/ps.sh" 2>&1 | sed 's/^/    /'
+    fi
+
+    if [[ $leftover_total -eq 0 ]]; then
+      : # nothing actionable; the lines above are informational
+    elif [[ $clean_apply -eq 0 ]]; then
+      dx_info "Nothing under 'Host leftovers' was removed. Re-run as 'dxclean --apply' to remove exactly that list."
+    else
+      # Profiles first, while the temp root holding them still exists, and
+      # only inside Dex's own state directory: browser-profiles.txt is a
+      # record of what Dex minted, not a licence to remove any path in it.
+      for leftover_line in "${minted_profiles[@]}"; do
+        case "$leftover_line" in
+          "$DX_LOOP_DIR"/*)
+            echo "  Removing browser profile: ${leftover_line}"
+            command rm -rf "$leftover_line" || cleanup_failed=1
+            cleaned=$((cleaned + 1))
+            ;;
+          *)
+            dx_warn "Leaving a recorded browser profile outside Dex state in place: ${leftover_line}"
+            ;;
+        esac
+      done
+      # Processes, and the temp roots that are the only way to find them
+      # again, go through 'dx ps --reap-orphans'. It is the one path that
+      # stops anything, it names every process it stopped, and it keeps the
+      # token of a session whose process would not die.
+      if [[ ${#gone_sessions[@]} -gt 0 ]]; then
+        echo "  Stopping orphaned processes and removing their session temp roots:"
+        clean_ps_output=$(bash "$DEX_DIR/bin/ps.sh" --reap-orphans 2>&1) \
+          || cleanup_failed=1
+        printf '%s\n' "$clean_ps_output" | sed 's/^/    /'
+        # `dx ps --reap-orphans` re-derives the orphan list when it runs, so
+        # the set it acts on is the set that is still orphaned now — not the
+        # one printed above, which may be seconds old. Count what it actually
+        # did rather than what was reported: a session that came back to
+        # life, or one whose process refused to die, keeps its token and is
+        # not cleaned.
+        clean_ps_reaped=$(printf '%s\n' "$clean_ps_output" \
+          | grep -c ': reaped pid=') || clean_ps_reaped=0
+        clean_ps_roots=0
+        for leftover_session in "${gone_sessions[@]}"; do
+          if [[ ! -d "${DX_LOOP_DIR}/${leftover_session}.process" ]]; then
+            clean_ps_roots=$((clean_ps_roots + 1))
+          fi
+        done
+        echo "  Stopped ${clean_ps_reaped} process(es); removed ${clean_ps_roots} of ${#gone_sessions[@]} reported session temp root(s)."
+        cleaned=$((cleaned + clean_ps_reaped + clean_ps_roots))
+      fi
+      for leftover_session in "${stale_receipts[@]}"; do
+        echo "  Removing gate receipts of a session that no longer exists: ${leftover_session}"
+        command rm -rf "${DX_LOOP_DIR}/${leftover_session}.gate-receipts" || cleanup_failed=1
+        cleaned=$((cleaned + 1))
+      done
+      # A reported orphan has no directory left to run in, so the project's
+      # own before_remove hook runs with the reported line verbatim — the
+      # same contract 'dx worktree audit --apply' uses.
+      for leftover_line in "${project_orphans[@]}"; do
+        echo "  Tearing down the resource this project reported: ${leftover_line}"
+        dx_worktree_hook_run before_remove "$repo_root" \
+          "${worktrees_dir}/${leftover_line}" "$leftover_line" || cleanup_failed=1
+        cleaned=$((cleaned + 1))
+      done
+    fi
+  fi
+
+  # "Nothing to clean" has to stay true: a report that just listed five
+  # leftovers and then said there was nothing would be the one line a reader
+  # remembers. With leftovers and no --apply, the info line above is the
+  # closing word instead.
+  if [[ $cleaned -gt 0 ]]; then
     echo "Cleaned ${cleaned} item(s)."
+  elif [[ $leftover_total -eq 0 ]]; then
+    if [[ -n "$clean_probe_note" ]]; then
+      dx_warn "Nothing else to clean, but ${clean_probe_note}."
+    else
+      echo "Nothing to clean."
+    fi
   fi
   [[ $cleanup_failed -eq 0 ]]
 }

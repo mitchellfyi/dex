@@ -80,7 +80,92 @@ Current lifecycle event types include:
 - `review.completed`
 - `review.paused`
 - `artifact.created`
+- `session.reaped`
+- `session.reap.completed`
+- `session.summary`
+- `gate.queued`
+- `gate.started`
+- `gate.finished`
 - `plan.created` and other event types emitted by future lifecycle helpers
+
+## Session Process Ownership
+
+Every process started inside a session carries that session's token, on a file
+descriptor and in its environment, so one that detached itself with `nohup`,
+`disown`, `setsid`, or a background launch is still identifiable after the
+process tree no longer connects it to anything. When the session ends, the
+reaper stops what it owns and says what it stopped.
+
+| Event | When emitted | Data fields |
+|-------|--------------|-------------|
+| `session.reaped` | One per process the reaper stopped | `pid`, `ppid`, `age_seconds`, `rss_kb`, `cwd`, `command` (truncated to 200 characters), `method`, `reason` |
+| `session.reap.completed` | Once per reap pass that found at least one owned process | `reason`, `scope`, `method`, `candidates`, `reaped`, `survived` |
+| `session.summary` | Once per provider session, after the reap that ended it | `reason`, `phase`, `heavy_commands`, `heavy_seconds`, `queue_seconds`, `over_budget_commands`, `peak_rss_mb`, `peak_rss_samples`, `reaped`, `survived` |
+
+`session.summary` completes the pair: the reap events say what was still
+running, and the summary says what the session spent getting there, with the
+reap's own counts carried into it so one event answers both. It is emitted
+from the same `dx_session_finish_processes` call, after the reap, for the four
+reasons that end a session. See § Session Telemetry for every field.
+
+`method` names how the host identified the owned processes: `proc` for a Linux
+`/proc/<pid>/fd` scan, `libproc` for the macOS descriptor lookup, `lsof` for
+the fallback, `unavailable` when the host could supply none of them. Reading
+it is how you tell a host that answered cheaply from one that needed `lsof`
+installed.
+
+`reason` records what ended the session: `session-end` (the SessionEnd hook),
+`phase-exit` (the provider returned), `watchdog-kill` (the phase runtime budget
+expired), `launcher-stopped` (the runtime supervisor found its launcher gone),
+`control-cancel` (`dx control stop` or `dx control cancel`), or
+`ps-reap-orphans` (`dx ps --reap-orphans`). `dx control pause` and
+`dx control detach` reap nothing: pause is resumable and detach hands control
+back, so neither ends the session's processes. Removing a session's state files
+does not reap either — it keeps the token and says so, because the token is the
+only way to find what the session still owns.
+
+`scope` is `session` for a pass that stops everything the session owns, and
+`detached` for one that spares the live provider's own process tree and stops
+only what already escaped it. A reap pass never signals the caller's own
+ancestry, so the hook running it, the provider above it, and the shell holding
+the token survive long enough to finish.
+
+A process that refuses to stop is reported as a survivor rather than logged as
+reaped, it gets no `session.reaped` event, the summary counts it under
+`survived`, and its session keeps its token and temp root so `dx ps` can find
+it again. Only a pass with no survivors removes them.
+
+A pass that found nothing emits nothing. `dx ps` shows the same ownership
+without stopping anything.
+
+## Heavy Gates
+
+`dx run-gate` runs one heavy command — a project gate, a test suite, a build;
+never a dev server, which starts directly and is session-owned — under
+host-wide admission. Three events cover its life, so a run
+journal shows how long the host made it wait as distinct from how long the work
+itself took.
+
+| Event | When emitted | Data fields |
+|-------|--------------|-------------|
+| `gate.queued` | Before the gate waits for a `heavy` lease | `gate`, `pool`, `limit`, `priority_wrapper` |
+| `gate.started` | After admission, immediately before the command runs | `gate`, `pool`, `limit`, `queue_seconds`, `priority_wrapper`, `test_jobs`, `command`, `timeout_seconds` |
+| `gate.finished` | After the command exits, whatever its status | `gate`, `pool`, `exit_code`, `duration_seconds`, `queue_seconds`, `priority_wrapper`, `test_jobs`, `checkout_fingerprint`, `working_fingerprint`, `stable`, `command`, `timeout_seconds`, `over_budget`, `receipt` |
+
+`priority_wrapper` names the reduced-priority wrapper the command actually ran
+under: `nice+taskpolicy` on macOS, `systemd-run` or `nice+ionice` on Linux,
+`nice` where only that worked, `none` where the host would not even renice.
+Each candidate is probed by running it, so the value records what happened
+rather than what was configured.
+
+`stable` is false when the working tree changed while the gate was running. The
+result is still real and still recorded — a completed result is never
+discarded — but it describes neither the tree before nor the tree now, so
+`dx_gate_receipt_lookup` never matches it.
+
+A gate cancelled while it waits emits `gate.queued` and nothing else. One
+cancelled while it runs emits `gate.finished` with the signal's exit code,
+because the command genuinely ended.
 
 ## Review Telemetry
 
@@ -103,17 +188,33 @@ reading agent transcripts.
 | `review.completed` | The effective consecutive clean target succeeds | `tier`, `profile`, `required_clean`, `trusted_required_clean`, `assurance_outcome` (`completed` or `waived`), `clean_passes`, `iterations`, `max_waves`, `findings_fixed`, `total_duration_seconds`, `reason=clean_gate_reached` |
 | `review.paused` | Review needs intervention | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `max_waves`, `findings_fixed`, `total_duration_seconds`, normalized `reason` |
 
-Tier selection is `small`/`normal`/`complex`, mapping to `light`/`standard`/
-`thorough` review. The global consecutive clean-wave requirements are 1 for
-`small`, 2 for `normal`, and 3 for `complex`. Dex binds that policy to the
+Tier selection is `trivial`/`small`/`normal`/`complex`, mapping to
+`light`/`light`/`standard`/`thorough` review. The global consecutive clean-wave
+requirements are 1 for `trivial` and `small`, 2 for `normal`, and 3 for
+`complex`. A tier is also derived from the measured diff at wave time and can
+raise, never lower, what the agent selected. Dex binds that policy to the
 selection, review state, pass evidence, clean ledger, and final receipt. An
 attributed `review.clean-passes` session override can select
 a lower effective target without altering the global policy. Such a run still
 performs the selected number of independent clean waves, but its completion
 event and receipt outcome are marked `waived` rather than `completed`.
-The operational outer-wave budget defaults to 3/6/9 for those tiers. A
+The operational outer-wave budget defaults to 2/3/6/9 for those tiers, and a
+confirmation pass (`clean_before` at least 1) that stays clean does not spend it. A
 `review.max-waves` override changes only that budget; exhausting it pauses the
 loop without producing a completion receipt.
+
+`review.pass.finished` carries `result_kind=notes` for a `NOTES:N` wave: no
+verified finding above the finding bar, no fix, N notes recorded in the
+findings ledger. It counts toward the clean gate exactly as `clean` does. The
+loop pauses with `reason=no_convergence` when `findings` has not fallen across
+three consecutive passes that each found something — the `CHURN:no-convergence`
+stop. `dx review stats` reads these same events back per tier.
+
+`result_kind=mechanical` marks a `MECHANICAL:N` wave: a deterministic autofix
+inside one check's declared inputs. It is a fix, not clean credit — the streak
+resets, the pass appends to the findings history and the churn detector, and the
+deterministic tier floor is re-derived from the moved tree; one such wave per
+loop does not spend the wave budget.
 
 Evidence version 3 records the ordered hash, outcome, and substantive
 context-pack references for every lifecycle criterion. It also binds the
@@ -387,3 +488,70 @@ for line in open(sys.argv[1], encoding="utf-8"):
     print(event["sequence"], event["type"], event["phase"], event["message"])
 PY
 ```
+
+## Session Telemetry
+
+A session that swamped the machine leaves nothing behind to look at unless
+something wrote the numbers down while it ran. `dx run-gate` records what each
+heavy command cost, the runtime supervisor samples how much memory the session
+was holding, and one event at the end says what the whole thing came to. The
+next regression is then a diff between two numbers rather than a machine that
+swapped again for reasons nobody can reconstruct.
+
+`session.summary` is listed with the reap events it completes, under
+§ Session Process Ownership. What each of its fields means:
+
+`reason` is the reap reason that ended the session — `session-end`,
+`phase-exit`, `watchdog-kill` or `launcher-stopped`. The other two reap
+reasons emit nothing: `dx control stop` stops only what already detached from
+a session that is still running, and `dx ps --reap-orphans` cleans up after a
+session that ended without anyone watching, which has no journal left to
+write to.
+
+`phase` is the lifecycle phase this session was running, as a string, or null
+outside a lifecycle. The ownership token and `DX_SESSION_TMP` belong to one
+provider session, which in a lifecycle is **one phase**, so the summary is per
+phase and names it. A lifecycle produces one summary per phase it ran, not one
+for the whole ticket.
+
+`heavy_commands`, `heavy_seconds` and `queue_seconds` come from the gate
+ledger the session keeps beside its token — one row per `dx run-gate` that
+finished, so the same gate run twice counts twice. `over_budget_commands`
+counts the ones that reached their deadline. Heavy work run outside a gate is
+not counted, because nothing observed it.
+
+`peak_rss_mb` is the largest total resident size the session's token-carrying
+process tree reached, in whole megabytes. The runtime supervisor samples it on
+the heartbeat it already runs (every 30 seconds by default;
+`DEX_SESSION_RSS_SAMPLE_SECONDS` changes the interval), summing `ps -o rss=`
+over exactly the PIDs the ownership scan produces, and keeps the running peak
+in the session's `.process` directory. `peak_rss_samples` says how many
+samples that peak is drawn from. A session with no supervisor, or a host that
+will not report resident size, records `peak_rss_mb: null` and no samples: a
+peak nobody measured must not read as a peak of zero.
+
+`reaped` and `survived` repeat the reap pass's own counts, so one event
+answers "what did this cost and did it clean up" without joining two.
+
+The same numbers are printed once, as a line a human reads:
+
+```
+[info]  worktree-cc-700: session summary: phase 4, 3 heavy command(s) (812s running, 41s queued), peak RSS 1842 MB, 2 reaped, 0 survived
+```
+
+An unsampled host prints `peak RSS unavailable` in place of the megabytes, and
+a session outside a lifecycle prints `phase -`. A session that never took
+process ownership has nothing to summarise and prints nothing.
+
+### Heavy-gate fields
+
+The gate events carry the per-command half of the same picture. Their full
+field lists are under § Heavy Gates; what the four telemetry fields there
+mean:
+
+| Field | On | Meaning |
+|-------|----|---------|
+| `command` | both | The gate's command line, truncated to 200 characters |
+| `timeout_seconds` | both | The deadline the gate was given; `0` is no deadline, the default |
+| `over_budget` | `gate.finished` | True when the gate reached that deadline. The real exit code and duration are recorded either way — a completed result is never discarded, and a stopped one is still a thing that happened |
+| `receipt` | `gate.finished` | Path of the receipt this result was written to, empty when the write failed |

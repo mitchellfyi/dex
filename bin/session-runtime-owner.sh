@@ -38,7 +38,9 @@ OWNER_FINISHED=0
 OWNER_FINAL_RESULT=3
 HEARTBEAT_ELAPSED_MS=0
 MONITOR_ELAPSED_MS=0
+RSS_ELAPSED_MS=0
 POLL_MILLISECONDS=50
+monitor_state=""
 
 owner_atomic_write() { # <file-name> <content>
   local file_name="$1" file_content="$2"
@@ -100,11 +102,57 @@ owner_purge() { # <generation>
   return "$OWNER_FINAL_RESULT"
 }
 
-owner_monitor_matches() {
-  local observed_identity
-  [[ "$PPID" == "$MONITOR_PID" ]] || return 1
+# owner_current_parent — the PID this supervisor is a child of right now.
+#
+# `$PPID` is fixed when bash starts, so it still names the launcher after the
+# launcher has died and the kernel has handed this process to init or a
+# subreaper. The live answer has to come from the host: /proc on Linux, `ps`
+# elsewhere. Prints nothing when neither answers.
+owner_current_parent() {
+  local parent_pid="" status_line
+  if [[ -r "/proc/$$/status" ]]; then
+    while IFS= read -r status_line; do
+      case "$status_line" in
+        PPid:*)
+          parent_pid="${status_line#PPid:}"
+          break
+          ;;
+      esac
+    done < "/proc/$$/status"
+    parent_pid="${parent_pid//[[:space:]]/}"
+  fi
+  if [[ ! "$parent_pid" =~ ^[0-9]+$ ]]; then
+    parent_pid=$(ps -o ppid= -p "$$" 2>/dev/null | tr -d '[:space:]') || parent_pid=""
+  fi
+  [[ "$parent_pid" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$parent_pid"
+}
+
+# owner_monitor_state — live | gone | unverifiable
+#
+# `gone` takes positive evidence: this process now has a different parent, so
+# the launcher has exited. The identity probe forks python3, and under fork
+# exhaustion or a slow `ps` it returns nothing while the launcher is alive;
+# that is `unverifiable`, never `gone`. So is an identity that disagrees with
+# the recorded one while the parent is unchanged.
+owner_monitor_state() {
+  local observed_identity current_parent
+  current_parent=$(owner_current_parent 2>/dev/null || true)
+  if [[ -n "$current_parent" && "$current_parent" != "$MONITOR_PID" ]]; then
+    printf 'gone\n'
+    return 0
+  fi
   observed_identity=$(dx_session_runtime_process_identity "$MONITOR_PID" 2>/dev/null || true)
-  [[ "$observed_identity" == "$MONITOR_IDENTITY" ]]
+  if [[ -n "$observed_identity" && "$observed_identity" == "$MONITOR_IDENTITY" ]]; then
+    printf 'live\n'
+    return 0
+  fi
+  printf 'unverifiable\n'
+}
+
+owner_monitor_matches() {
+  [[ "$PPID" == "$MONITOR_PID" ]] || return 1
+  [[ "$(owner_monitor_state)" == "live" ]]
 }
 
 owner_finish() { # <terminal-status> <result-detail> <generation> [first-failure]
@@ -207,6 +255,19 @@ esac
 [[ "$HEARTBEAT_MILLISECONDS" -ge 50 && "$HEARTBEAT_MILLISECONDS" -le 600000 ]] || exit 3
 [[ "$MONITOR_MILLISECONDS" -ge 50 && "$MONITOR_MILLISECONDS" -le 60000 ]] || exit 3
 
+# Peak-RSS telemetry rides the heartbeat that already runs; it gets no loop,
+# no deadline and no failure mode of its own. The interval is its own value
+# because a shortened heartbeat — tests run one every 100 ms — would otherwise
+# turn an ownership scan into a hot loop. A malformed value falls back to the
+# default rather than refusing to supervise the session.
+RSS_SAMPLE_SECONDS="${DEX_SESSION_RSS_SAMPLE_SECONDS:-30}"
+case "$RSS_SAMPLE_SECONDS" in
+  ""|*[!0-9]*) RSS_SAMPLE_SECONDS=30 ;;
+esac
+[[ "$RSS_SAMPLE_SECONDS" -ge 1 && "$RSS_SAMPLE_SECONDS" -le 3600 ]] \
+  || RSS_SAMPLE_SECONDS=30
+RSS_SAMPLE_MILLISECONDS=$((RSS_SAMPLE_SECONDS * 1000))
+
 start_result=0
 token_read_result=0
 token_record=""
@@ -288,8 +349,23 @@ EOF
 
   if [[ "$MONITOR_ELAPSED_MS" -ge "$MONITOR_MILLISECONDS" ]]; then
     MONITOR_ELAPSED_MS=0
-    if ! owner_monitor_matches; then
+    monitor_state=$(owner_monitor_state)
+    if [[ "$monitor_state" == "gone" ]]; then
       owner_finish abandoned launcher-stopped "$OWNER_GENERATION" \
+        2>/dev/null || true
+      # The launcher is gone, so nothing else will run the session's reaper.
+      # This supervisor is not a token carrier — it is started before the
+      # provider subshell takes ownership — so the pass has no reason to
+      # exclude anything but its own ancestry. Its report goes to whatever
+      # launched this supervisor rather than to /dev/null.
+      dx_session_finish_processes "$SESSION_ID" launcher-stopped || true
+      exit 0
+    elif [[ "$monitor_state" != "live" ]]; then
+      # The probe could not confirm the launcher, and nothing says it is gone.
+      # Close the lease the way this always did and stop nothing: the provider
+      # is a sibling of this supervisor, not an ancestor, and a reap on a
+      # failed probe would take every token carrier with it mid-phase.
+      owner_finish abandoned launcher-unverifiable "$OWNER_GENERATION" \
         2>/dev/null || true
       exit 0
     fi
@@ -304,6 +380,14 @@ EOF
       owner_finish failed heartbeat-failed "$OWNER_GENERATION" \
         "$heartbeat_result" 2>/dev/null || true
       exit "$heartbeat_result"
+    fi
+    RSS_ELAPSED_MS=$((RSS_ELAPSED_MS + HEARTBEAT_MILLISECONDS))
+    if [[ "$RSS_ELAPSED_MS" -ge "$RSS_SAMPLE_MILLISECONDS" ]]; then
+      RSS_ELAPSED_MS=0
+      # The running peak resident size of everything this session owns, so
+      # the summary at session end has a number. A host that will not report
+      # RSS records nothing and the summary says so.
+      dx_session_peak_rss_sample "$SESSION_ID" >/dev/null 2>&1 || true
     fi
   fi
 done

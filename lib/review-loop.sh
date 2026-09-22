@@ -425,6 +425,9 @@ __dx_review_pause_intervention() {
     repeated_fingerprint|alternating_fingerprints|wave_reported_churn)
       printf '%s\n' "Inspect the repeating or oscillating fixes, stabilize the implementation, then rerun dxreviewloop."
       ;;
+    no_convergence)
+      printf 'Read the last three wave reports (findings per pass %s): decide whether the fixes are seeding new findings, the bar is admitting noise, or the scope has grown, then rerun dxreviewloop.\n' "${detail:-unchanged}"
+      ;;
     wave_budget_exhausted)
       printf '%s\n' "Raise the review.max-waves override with an attributed reason, then rerun dxreviewloop."
       ;;
@@ -437,6 +440,22 @@ __dx_review_pause_intervention() {
   esac
 }
 
+# __dx_review_convergence_stalled <oldest> <previous> <latest> <samples>
+#
+# The loop does not converge on its own. Across 66 recorded loops the share of
+# passes that found something was flat from pass 1 to pass 10 (56, 47, 44, 48,
+# 57, 56, 56, 46, 34, 47 percent) and 31 loops never reached the gate, holding
+# 44 percent of all wave time. Three consecutive passes that each found
+# something, with the count no lower than where it started, is the signal to
+# stop and ask a human rather than spend a twentieth pass.
+__dx_review_convergence_stalled() {
+  local oldest="${1:-0}" previous="${2:-0}" latest="${3:-0}" samples="${4:-0}"
+  [[ "$samples" =~ ^[0-9]+$ && "$samples" -ge 3 ]] || return 1
+  [[ "$oldest" =~ ^[0-9]+$ && "$previous" =~ ^[0-9]+$ && "$latest" =~ ^[0-9]+$ ]] || return 1
+  [[ "$oldest" -ge 1 && "$previous" -ge 1 && "$latest" -ge 1 ]] || return 1
+  [[ "$latest" -ge "$oldest" ]]
+}
+
 __dx_review_default_pass_timeout() {
   case "${1:-}" in
     light) printf '%s\n' "900" ;;
@@ -445,6 +464,9 @@ __dx_review_default_pass_timeout() {
     *) return 1 ;;
   esac
 }
+# Scout groups are the delegable domain sweeps. Coherence is never one of them:
+# it is the lens that needs the whole picture in one head, so it stays with the
+# top-level reviewer even when scouts are running.
 __dx_review_scout_count() {
   case "${1:-}" in
     light) printf '%s\n' "2" ;;
@@ -452,24 +474,66 @@ __dx_review_scout_count() {
     *) return 1 ;;
   esac
 }
+# Lens groups per profile, from the roster in prompts/review-wave.md §4:
+# 1 correctness/contracts/tests, 2 security/architecture/devops,
+# 3 frontend/performance/observability, 4 coherence. `light` runs 1, 2 and 4;
+# `standard` adds 3; `thorough` runs all four. Coherence is in every tier, so
+# this is the scout count plus one — but derived from the roster, not from it,
+# because the two drift apart the moment a group is added to either.
+__dx_review_lens_count() {
+  case "${1:-}" in
+    light) printf '%s\n' "3" ;;
+    standard|thorough) printf '%s\n' "4" ;;
+    *) return 1 ;;
+  esac
+}
+# Which pass results leave the tier's wave budget alone. A confirmation pass is
+# delta-only and scout-free, so it costs minutes; anything that found or fixed
+# something did the work the budget exists to bound. Read after the transition,
+# never before it: a wave that starts with clean credit and then fixes five
+# findings is not cheap, and exempting it let an alternating clean/fix loop run
+# forever.
+__dx_review_budget_exempt() {
+  case "${1:-}" in
+    clean|notes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# __dx_review_scout_parallelism <scout-count> <capacity-limit> [profile]
+#   [changed-files]
+#
+# Zero by default. Scouts were the largest single cost in the loop — 35% of all
+# wave time on the incident host, a median 24 minutes of a 38-minute pass — and
+# each one re-reads the same diff, which is also what splits the picture a
+# coherence lens needs. The wave's own reviewer runs the lens groups instead.
+# They are allowed back only where they can still pay for themselves: the
+# deepest profile, a host with no heavy command running, and a diff larger than
+# the project's declared `review_scout_min_files`. An explicit
+# DEX_REVIEW_SCOUT_PARALLELISM (0..3) always wins.
 __dx_review_scout_parallelism() {
-  local scout_count="$1" capacity_limit="$2"
+  local scout_count="$1" capacity_limit="$2" profile="${3:-}"
+  local changed_files="${4:-0}" scout_minimum="" active_heavy=""
   local configured_parallelism="${DEX_REVIEW_SCOUT_PARALLELISM:-}"
   __dx_review_is_positive_integer "$scout_count" || return 1
   [[ "$capacity_limit" =~ ^[1-8]$ ]] || return 1
   if [[ -n "$configured_parallelism" ]]; then
-    [[ "$configured_parallelism" =~ ^[1-3]$ ]] || return 1
+    [[ "$configured_parallelism" =~ ^[0-3]$ ]] || return 1
     if [[ "$configured_parallelism" -gt "$scout_count" ]]; then
       configured_parallelism="$scout_count"
     fi
     printf '%s\n' "$configured_parallelism"
     return 0
   fi
-  if [[ "$capacity_limit" -eq 1 ]]; then
-    printf '%s\n' "$scout_count"
-  else
-    printf '%s\n' "1"
-  fi
+  [[ "$profile" == "thorough" ]] || { printf '%s\n' "0"; return 0; }
+  # An unreadable heavy count reads as busy: the host facts are measured, and
+  # the conservative answer when they are missing is not to fan out.
+  active_heavy="${DX_HOST_ACTIVE_HEAVY:-0}"
+  [[ "$active_heavy" =~ ^[0-9]+$ ]] || active_heavy=1
+  [[ "$active_heavy" -eq 0 ]] || { printf '%s\n' "0"; return 0; }
+  [[ "$changed_files" =~ ^[0-9]+$ ]] || { printf '%s\n' "0"; return 0; }
+  scout_minimum=$(__dx_review_contract_number "$PWD" review_scout_min_files 40)
+  [[ "$changed_files" -ge "$scout_minimum" ]] || { printf '%s\n' "0"; return 0; }
+  printf '%s\n' "$scout_count"
 }
 __dx_review_test_jobs() {
   local cpu_count="${1:-}" capacity_limit="${2:-1}"
@@ -779,11 +843,13 @@ the audit prompt, and \`prompts/review-wave.md\` for the full workflow and resul
 contract. Record \`Criteria binding: __REVIEW_CRITERIA_BINDING__\` exactly in the
 context pack.
 
-This wave may cover __REVIEW_SCOUT_COUNT__ scout groups, with at most
-__REVIEW_SCOUT_PARALLELISM__ scouts running at once. Keep verification within
-__REVIEW_TEST_JOBS__ concurrent test jobs (\`DX_TEST_JOBS\` is already set).
-Fall back to top-level sequential coverage when a scout cannot start; do not
-immediately retry provider-capacity failures.
+__REVIEW_SCOUTS__
+Keep verification within __REVIEW_TEST_JOBS__ concurrent test jobs
+(\`DX_TEST_JOBS\` is already set).
+
+Findings ledger for this loop: \`__REVIEW_LEDGER__\`
+Read it before reviewing, re-verify every open row, and append what this wave
+finds or notes. __REVIEW_DELTA__
 
 Before context, checks, scouting, verification, and fixes, call
 \`dx_review_metrics_mark \"\$DEX_REVIEW_METRICS_FILE\" \"<stage>\"\` with
@@ -954,7 +1020,7 @@ dx_review_loop_run() {
     return 1
   fi
   if [[ -n "$requested_tier" ]] && ! dx_review_normalize_tier "$requested_tier" >/dev/null 2>&1; then
-    dx_error "Unknown DEX_REVIEW_TIER '${requested_tier}'. Use small, normal, or complex."
+    dx_error "Unknown DEX_REVIEW_TIER '${requested_tier}'. Use trivial, small, normal, or complex."
     return 1
   fi
   if [[ -n "$requested_profile" && "$requested_profile" != "auto" ]] && ! dx_review_normalize_tier "$requested_profile" >/dev/null 2>&1; then
@@ -1596,6 +1662,33 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     fi
   fi
 
+  # The tier is derived from measured change facts as well as chosen: files and
+  # lines changed, sensitive surfaces the project declared, dependency moves,
+  # and whether the full gate is green for this tree. It only ever raises what
+  # the agent selected — dx_review_write_selection already refuses a selection
+  # below the floor, so a lower derived tier changes nothing here either.
+  # An explicit operator override keeps the carve-out dx_review_write_selection
+  # already gives it: `environment` and `wave-escalation` sources are not
+  # measured against the floor, so the loop does not measure them either.
+  local derived_record="" derived_tier="" derived_reasons=""
+  local derived_rank="" selected_rank=""
+  case "$selection_source" in
+    environment|wave-escalation) derived_record="" ;;
+    *) derived_record=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true) ;;
+  esac
+  IFS=$'\t' read -r derived_tier derived_reasons <<< "$derived_record"
+  derived_rank=$(dx_review_tier_rank "$derived_tier" 2>/dev/null || true)
+  selected_rank=$(dx_review_tier_rank "$review_tier" 2>/dev/null || true)
+  if [[ "$derived_rank" =~ ^[0-9]+$ && "$selected_rank" =~ ^[0-9]+$ \
+    && "$derived_rank" -gt "$selected_rank" ]] \
+    && dx_review_selection_reason_codes_valid "$derived_tier" \
+      deterministic-floor "$derived_reasons"; then
+    dx_warn "Review tier raised from ${review_tier} to ${derived_tier} by the measured change facts (${derived_reasons})."
+    review_tier="$derived_tier"
+    selection_reasons="$derived_reasons"
+    selection_source="deterministic-floor"
+  fi
+
   review_profile=$(dx_review_tier_profile "$review_tier") || {
     dx_error "Could not resolve the review depth for tier '${review_tier}'."
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
@@ -1707,6 +1800,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
             || review_start_cleanup_rc=1
           dx_review_ledger_reset "$session_id" 2>/dev/null \
             || review_start_cleanup_rc=1
+          dx_review_findings_ledger_reset "$session_id" 2>/dev/null || true
         fi
       else
         rm -f "$(dx_review_state_file "$session_id")" \
@@ -1714,6 +1808,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
           || review_start_cleanup_rc=1
         dx_review_ledger_reset "$session_id" 2>/dev/null \
           || review_start_cleanup_rc=1
+        dx_review_findings_ledger_reset "$session_id" 2>/dev/null || true
       fi
     fi
     if [[ "$review_start_cleanup_rc" -eq 0 ]]; then
@@ -1774,8 +1869,26 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   [[ -f "$audit_file" ]] && audit_prompt=$(cat "$audit_file")
 
   local terminal_reason="" terminal_detail="" terminal_exit=1 parent_findings_file message_template=""
-  local review_baseline_file=""
+  local review_baseline_file="" review_findings_ledger=""
   local terminal_selection_op="keep" terminal_state_op="write" terminal_preserve_credit=0
+  # Waves after the first re-verify the ledger's open rows instead of
+  # re-deriving them, and confirmation passes review only the delta. The ledger
+  # is a working aid the waves themselves write, so it is deliberately outside
+  # the attestation chain: a malformed one is replaced, never trusted.
+  local budget_confirmation_waves=0 budget_mechanical_used=0
+  local convergence_older=0 convergence_previous=0 convergence_latest=0
+  local convergence_samples=0
+  # What the previous wave turned out to be, so the next one knows how much of
+  # the scope it has to re-read.
+  local previous_result_kind="none" previous_iteration=0
+  review_findings_ledger=$(dx_review_findings_ledger_file "$session_id") || {
+    dx_error "Could not resolve the review findings ledger path."
+    return 1
+  }
+  if ! dx_review_findings_ledger_init "$session_id"; then
+    dx_warn "The review findings ledger was unreadable; starting a fresh one."
+    dx_review_findings_ledger_reset "$session_id" 2>/dev/null || true
+  fi
   parent_findings_file=$(dx_findings_file "$session_id")
   review_baseline_file=$(dx_review_baseline_file "$session_id") || {
     dx_error "Could not resolve the deterministic review baseline path."
@@ -1831,9 +1944,12 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         max_waves_int="$max_waves" iteration_int="$review_iteration"
       dx_info "Review wave budget changed: ${max_waves} waves."
     fi
-    if [[ $review_iteration -ge $max_waves ]]; then
+    # Confirmation passes are delta-only and scout-free by construction, so
+    # they cost minutes rather than a full pass. The budget exists to bound
+    # review effort, and a pass that only re-verifies the ledger is not that.
+    if [[ $((review_iteration - budget_confirmation_waves)) -ge $max_waves ]]; then
       terminal_reason="wave_budget_exhausted"
-      terminal_detail="${review_iteration}/${max_waves}"
+      terminal_detail="$((review_iteration - budget_confirmation_waves))/${max_waves}"
       terminal_preserve_credit=1
       break
     fi
@@ -2022,7 +2138,7 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
       break
     }
     scout_parallelism=$(__dx_review_scout_parallelism "$scout_count" \
-      "$review_capacity_limit") || {
+      "$review_capacity_limit" "$pass_profile" "$files_changed") || {
       terminal_reason="invalid_capacity_configuration"
       __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
       current_review_child_session=""
@@ -2055,6 +2171,47 @@ Prefer the structured report publisher in prompts/review-report.md; the authoriz
     message="${message//__REVIEW_BASELINE_FILE__/$review_baseline_file}"
     message="${message//__REVIEW_BASELINE_MODE__/$baseline_mode}"
     message="${message//__REVIEW_BASELINE_BINDING__/$baseline_binding}"
+    # The wave prompt reads as sequential lenses or as scout groups, never as
+    # both: a template that mentions scouts while the cap is zero is how an
+    # agent ends up trying to spawn one and reporting a capacity failure.
+    local scout_block="" delta_block="" scout_subagent_cap=1 lens_count=""
+    local review_confirmation=0
+    [[ "$clean_passes" -ge 1 ]] && review_confirmation=1
+    lens_count=$(__dx_review_lens_count "$pass_profile") || {
+      terminal_reason="tier_resolution_error"
+      __dx_review_cleanup_pass "$session_id" "$pass_session_id" "${review_interrupt_reason:-${terminal_reason:-}}"
+      current_review_child_session=""
+      break
+    }
+    if [[ "$scout_parallelism" -gt 0 ]]; then
+      scout_subagent_cap="$scout_parallelism"
+      scout_block="This wave covers ${lens_count} lens groups. ${scout_count} of them may go to scouts,
+with at most ${scout_parallelism} running at once; the coherence lens is never
+one of them — it needs the whole picture and stays yours. Fall back to
+top-level sequential coverage when a scout cannot start; do not immediately
+retry provider-capacity failures."
+    else
+      scout_block="Cover the ${lens_count} lens groups yourself, in this session, one lens at a
+time, with no scouts and no subagents. Parallelism here means independent
+read-only tool calls issued in a single turn."
+    fi
+    local previous_lenses=""
+    if [[ "$previous_result_kind" == "findings_fixed" ]]; then
+      previous_lenses=$(dx_review_findings_ledger_lenses "$session_id" fixed \
+        "$previous_iteration" 2>/dev/null || true)
+    fi
+    if [[ "$previous_result_kind" == "mechanical" ]]; then
+      delta_block="Wave ${previous_iteration} applied a deterministic autofix and rechecked it, and found nothing else: review that mechanical delta and the ledger's open rows, then the whole ticket diff under the coherence lens before declaring a clean result."
+    elif [[ "$previous_result_kind" == "findings_fixed" ]]; then
+      delta_block="Wave ${previous_iteration} fixed findings under ${previous_lenses:-the lenses its ledger rows name}: re-run those lenses in full over the paths the fix touched, keep the others to the delta since that wave plus the ledger's open rows, then review the whole ticket diff under the coherence lens before declaring a clean result."
+    elif [[ "$review_confirmation" -eq 1 ]]; then
+      delta_block="This is a confirmation pass (${clean_passes}/${required_clean} clean): re-verify the ledger and review the diff added since the previous wave, then the whole ticket diff under the coherence lens before declaring a clean result."
+    else
+      delta_block="This is a full review pass over the supplied scope."
+    fi
+    message="${message//__REVIEW_SCOUTS__/$scout_block}"
+    message="${message//__REVIEW_DELTA__/$delta_block}"
+    message="${message//__REVIEW_LEDGER__/$review_findings_ledger}"
     message="${message//__REVIEW_SCOUT_COUNT__/$scout_count}"
     message="${message//__REVIEW_SCOUT_PARALLELISM__/$scout_parallelism}"
     message="${message//__REVIEW_TEST_JOBS__/$review_test_jobs}"
@@ -2201,7 +2358,7 @@ Set its policy_binding field to:
 Set its pass_binding field to:
   ${pass_binding}
 
-Allowed results: CLEAN, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, CHURN:reason, ESCALATE:normal:reason, ESCALATE:complex:reason, ESCALATE_THOROUGH:reason.
+Allowed results: CLEAN, NOTES:N, MECHANICAL:N, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, CHURN:reason, ESCALATE:normal:reason, ESCALATE:complex:reason, ESCALATE_THOROUGH:reason.
 
 ${message}"
 
@@ -2233,9 +2390,11 @@ ${message}"
       DEX_REVIEW_CLEAN_BEFORE="$clean_passes" \
       DEX_REVIEW_REQUIRED_CLEAN="$required_clean" \
       DEX_REVIEW_SCOUT_PARALLELISM="$scout_parallelism" \
+      DEX_REVIEW_LEDGER_FILE="$review_findings_ledger" \
+      DEX_REVIEW_CONFIRMATION="$review_confirmation" \
       DEX_REVIEW_TEST_JOBS="$review_test_jobs" \
       DX_TEST_JOBS="$review_test_jobs" \
-      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="$scout_parallelism" \
+      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="$scout_subagent_cap" \
       CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1 \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
@@ -2276,9 +2435,11 @@ ${message}"
       DEX_REVIEW_CLEAN_BEFORE="$clean_passes" \
       DEX_REVIEW_REQUIRED_CLEAN="$required_clean" \
       DEX_REVIEW_SCOUT_PARALLELISM="$scout_parallelism" \
+      DEX_REVIEW_LEDGER_FILE="$review_findings_ledger" \
+      DEX_REVIEW_CONFIRMATION="$review_confirmation" \
       DEX_REVIEW_TEST_JOBS="$review_test_jobs" \
       DX_TEST_JOBS="$review_test_jobs" \
-      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="$scout_parallelism" \
+      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="$scout_subagent_cap" \
       CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1 \
       DEX_DIR="$DEX_DIR" \
       __dx_review_run_with_parent_cancel "$session_id" "$parent_busy_token" \
@@ -2612,11 +2773,49 @@ ${message}"
     result_kind=$(dx_review_result_kind "$result")
     result_count=$(dx_review_result_count "$result")
 
+    previous_result_kind="$result_kind"
+    previous_iteration="$review_iteration"
+
+    # A cheap pass does not spend the tier's wave budget. The decision is made
+    # here, on what the pass turned out to be, not on what it started as.
+    if [[ "$review_confirmation" -eq 1 ]] \
+      && __dx_review_budget_exempt "$result_kind"; then
+      budget_confirmation_waves=$((budget_confirmation_waves + 1))
+    elif [[ "$result_kind" == "mechanical" && "$budget_mechanical_used" -eq 0 ]]; then
+      # Budget relief, not attestation relief, and only once: a formatter pass
+      # should not cost a wave of review effort, but a loop that keeps
+      # producing them is a loop in trouble and the budget should bind.
+      budget_mechanical_used=1
+      budget_confirmation_waves=$((budget_confirmation_waves + 1))
+    fi
+
+    # Findings per pass, oldest to newest, for the convergence guard. A clean
+    # or notes-only pass is progress and empties the window; notes are below
+    # the finding bar and are not counted as findings.
+    case "$result_kind" in
+      findings|findings_fixed)
+        convergence_older="$convergence_previous"
+        convergence_previous="$convergence_latest"
+        convergence_latest="$result_count"
+        convergence_samples=$((convergence_samples + 1))
+        ;;
+      clean|notes)
+        convergence_older=0
+        convergence_previous=0
+        convergence_latest=0
+        convergence_samples=0
+        ;;
+    esac
+
     if [[ "$branch_after" != "$branch_before" ]]; then
       terminal_reason="review_identity_changed"
       clean_passes=0
     elif [[ "$head_after" != "$head_before" ]]; then
-      if [[ "$result_kind" != "findings_fixed" || "$scope_changed" != "true" ]]; then
+      # A wave that fixed something is told to commit it, and a mechanical
+      # autofix is a fix like any other in that respect. Anything else moving
+      # HEAD under a review is a changed identity, not a result.
+      if [[ ( "$result_kind" != "findings_fixed" && "$result_kind" != "mechanical" ) \
+        || "$scope_changed" != "true" ]]; then
         terminal_reason="review_identity_changed"
         clean_passes=0
       fi
@@ -2628,7 +2827,10 @@ ${message}"
 
     local empty_findings_hash=""
     empty_findings_hash=$(dx_review_empty_findings_hash)
-    if [[ "$result_kind" == "clean" && "$findings_hash" != "$empty_findings_hash" ]] || \
+    # `notes` carries a count of items below the finding bar and `mechanical` a
+    # count of deterministic autofixes, so neither has verified findings — and
+    # therefore neither may carry anything but the empty fingerprint.
+    if { [[ "$result_kind" == "clean" || "$result_kind" == "notes" || "$result_kind" == "mechanical" ]] && [[ "$findings_hash" != "$empty_findings_hash" ]]; } || \
        { [[ "$result_kind" == "findings" || "$result_kind" == "findings_fixed" ]] && [[ "$findings_hash" == "$empty_findings_hash" ]]; }; then
       terminal_reason="inconsistent_findings_evidence"
       clean_passes=0
@@ -2647,9 +2849,16 @@ ${message}"
       local transition_fixed_total="$findings_fixed_total"
 
       case "$result_kind" in
-        findings_fixed)
+        findings_fixed|mechanical)
           if [[ "$scope_changed" == "true" || "$working_changed" == "true" ]]; then
-            transition_fixed_total=$((findings_fixed_total + result_count))
+            # A mechanical pass fixed no finding, so it adds nothing to the
+            # fixed total — but it moved the tree, so it gets both of the
+            # guards a fix gets: its fingerprint reaches the churn detector
+            # (three formatter-only waves in a row is churn), and the
+            # deterministic floor is re-derived, so an autofix that lands on a
+            # sensitive path can still raise the tier.
+            [[ "$result_kind" == "mechanical" ]] \
+              || transition_fixed_total=$((findings_fixed_total + result_count))
             if ! transition_churn_kind=$(dx_review_findings_history_preview "$parent_findings_file" "$findings_hash"); then
               terminal_reason="findings_history_write_failed"
             else
@@ -2847,6 +3056,15 @@ ${message}"
             clean_passes=0
             ;;
         esac
+      fi
+
+      if [[ -z "$terminal_reason" ]] && __dx_review_convergence_stalled \
+        "$convergence_older" "$convergence_previous" "$convergence_latest" \
+        "$convergence_samples"; then
+        terminal_reason="no_convergence"
+        terminal_detail="${convergence_older}/${convergence_previous}/${convergence_latest}"
+        dx_warn "Wave ${review_iteration} · CHURN:no-convergence · findings per pass ${terminal_detail} · three passes without the count falling"
+        dx_info "Either the fixes are seeding new findings, the finding bar is admitting noise, or the scope has grown past the ticket. A human decides which; another wave would not."
       fi
 
     fi
@@ -3181,7 +3399,7 @@ ${message}"
       dx_done "Review complete: ${clean_passes} consecutive clean ${clean_pass_noun}."
     fi
     echo "  Risk tier: ${review_tier} (${review_profile})"
-    echo "  Iterations: ${review_iteration}/${max_waves}"
+    echo "  Iterations: ${review_iteration}/${max_waves} ($(dx_format_duration "$(( $(date +%s) - review_started_epoch ))") in this run, ${budget_confirmation_waves} not charged)"
     echo "  Findings fixed: ${findings_fixed_total}"
     if [[ "$assurance_outcome" == "waived" ]]; then
       echo "  Assurance: WAIVED (${required_clean}/${trusted_required_clean} clean passes required)"
@@ -3251,9 +3469,10 @@ ${message}"
   fi
   dx_info "Review paused: ${terminal_reason:-unknown}."
   echo "  Risk tier: ${review_tier} (${review_profile})"
-  echo "  Iterations: ${review_iteration}/${max_waves}"
+  echo "  Iterations: ${review_iteration}/${max_waves} ($(dx_format_duration "$(( $(date +%s) - review_started_epoch ))") in this run, ${budget_confirmation_waves} not charged)"
   echo "  Consecutive clean: ${clean_passes}/${required_clean}"
   echo "  Findings fixed: ${findings_fixed_total}"
+  echo "  History: dx review stats"
   echo "  Result: PAUSED"
   echo "  Exit reason: ${terminal_reason:-unknown}"
   echo "  Intervention: $(__dx_review_pause_intervention "${terminal_reason:-unknown}" "$terminal_detail")"

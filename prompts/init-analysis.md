@@ -19,6 +19,13 @@ Explore the repo to understand:
 - Find the exact commands for: formatting, linting, type checking, testing, code generation
 - Note any "verify" or "ci" meta-commands that run everything
 
+### Resources
+- Which environment variable sets the test runner's worker count (`JEST_WORKERS`,
+  `PYTEST_XDIST_AUTO_NUM_WORKERS`, a project-specific name)? Which Quality Gate
+  commands are heavy — minutes long, or gigabytes while they run? Is there a
+  command that runs only the tests covering given files? Omit the section when
+  none has an answer: a wrong value misbudgets every session, absent means "Dex decides".
+
 ### Project Structure
 - Is it a monorepo or single app?
 - What directories contain what? (e.g., `src/`, `frontend/`, `backend/`, `packages/`)
@@ -48,11 +55,10 @@ Write these files:
 ### `.dex/dex.md`
 
 Read the existing `.dex/dex.md` before rewriting it. Preserve its Maintenance
-section, including custom values, `_none_`, and omitted settings; missing
-`issue_label` deliberately leaves legacy ticket intake paused. If an existing
-file has no Maintenance section, leave it absent. Use the defaults below only
-when creating a file that did not exist. The init launcher has already written
-these defaults for a new repository. Do not create labels or enable GitHub
+section as is — custom values, `_none_`, omitted settings (a missing
+`issue_label` deliberately leaves legacy ticket intake paused), or its absence.
+Use the defaults below only for a file that did not exist; the init launcher
+already wrote them for a new repository. Create no labels and enable no GitHub
 workflows during analysis.
 
 ```markdown
@@ -70,6 +76,39 @@ workflows during analysis.
 | Test | [exact command] | [which packages/apps] |
 | Generate | [exact command or "N/A"] | [what it generates] |
 | All | [single command if available or "N/A"] | [full pipeline] |
+
+## Resources
+
+Optional, like `## Worktree Hooks`: a fenced flat YAML mapping Dex reads and
+never writes. Omit a key with no real answer, and a section none of whose keys apply.
+
+```yaml
+# parallelism_env is set to the session's DX_TEST_JOBS budget at launch and
+# under `dx run-gate`; heavy_commands take the host-wide lease (run them as
+# `dx run-gate <command>`); targeted_tests runs only the tests for {files}.
+parallelism_env: [WORKER_COUNT_VARIABLE]
+heavy_commands:
+  - [exact command]
+targeted_tests: "[exact command] {files}"
+full_gate: local  # or ci: the PR stays a draft and CI is the gate Phase 6 fixes through
+# Review-tier derivation: extra sensitive globs, the size bounds for `trivial`
+# and for a broad change, and the diff size above which thorough may use scouts.
+review_sensitive_paths: ["**/migrations/**", "**/auth*"]
+review_trivial_max_files: 10
+review_trivial_max_lines: 500
+review_broad_impact_files: 10
+review_scout_min_files: 40
+```
+
+## Worktree Hooks
+
+```yaml
+# One shell command each, run in the worktree; see docs/worktree-hooks.md.
+after_create: [exact command]      # stand this worktree's resources up
+before_remove: [exact command]     # give them back; never blocks a removal
+on_session_end: [exact command]    # release what the session alone held
+orphan_resources: [exact command]  # names `dx worktree audit` and `dxclean` hand back
+```
 
 ## Project Structure
 [Brief description of directory layout and what each area contains]
@@ -160,44 +199,32 @@ workflow, review, or CI changes.
 
 ### `.dex/rules/*.md` (one per major area of the codebase)
 
-For each significant area (e.g., backend, frontend, shared library), generate a rule file with:
-- Architecture patterns specific to this codebase
-- Naming conventions observed in existing code
-- Testing patterns and expectations
-- Common pitfalls or patterns to follow
-- Framework-specific conventions (based on what's actually used)
-
-Name them descriptively: `backend.md`, `frontend.md`, `api.md`, `database.md`, etc.
+For each significant area (backend, frontend, shared library), generate a rule
+file with the architecture patterns, naming conventions, testing patterns and
+expectations, common pitfalls, and framework-specific conventions actually
+observed in that area. Name them descriptively: `backend.md`, `api.md`, `database.md`.
 
 Only generate rules for areas that have enough established patterns to document. Don't generate rules for trivial or obvious things. Each rule file should be genuinely useful for someone working in that area.
 
 ### `.dex/review-rules.md` (path-specific review focus)
 
-Generate this file when the codebase has meaningful path-specific review focus.
-Use it to tell Dex review waves where domain sweeps should spend attention.
-Include concise sections for applicable areas such as:
-
-- frontend/UI paths: accessibility, responsive layout, state/data contracts,
-  UI capture expectations
-- backend/API paths: authn/authz, input validation, contract compatibility,
-  observability
-- database/migration paths: additive migration safety, indexes, rollback risk,
-  generated types
-- CI/devops paths: workflow triggers, secrets, caches, artifacts, deploy gates
-- shell/tooling paths: shell language boundaries, quoting, cleanup, syntax checks
-- generated/docs paths: freshness checks and stale-documentation risk
-
-Do not duplicate generic review criteria from `prompts/review.md`; capture only
-project-specific focus by path or subsystem.
+Generate this file when the codebase has meaningful path-specific review focus,
+to tell Dex review waves where domain sweeps should spend attention. Include
+concise sections for applicable areas: frontend/UI (accessibility, responsive
+layout, state/data contracts, UI capture expectations); backend/API (authn/authz,
+input validation, contract compatibility, observability); database/migrations
+(additive safety, indexes, rollback risk, generated types); CI/devops (workflow
+triggers, secrets, caches, artifacts, deploy gates); shell/tooling (language
+boundaries, quoting, cleanup, syntax checks); generated/docs (freshness and
+stale-documentation risk). Do not duplicate generic criteria from
+`prompts/review.md`; capture only project-specific focus by path or subsystem.
 
 ### `.dex/memory/index.md`
 
-Create `.dex/memory/index.md` as the retrieval map for durable repo memory.
-This file should be compact. It tells future agents which memory domain files to
-load for specific paths, phases, commands, or workflows.
-
-Initial repos often do not have enough evidence for durable memory. In that
-case, create the index with an explicit empty state:
+Create `.dex/memory/index.md` as the compact retrieval map for durable repo
+memory: which domain files future agents load for specific paths, phases,
+commands, or workflows. Initial repos often lack the evidence for durable
+memory; then create the index with an explicit empty state:
 
 ```markdown
 # Dex Memory Index
@@ -215,30 +242,17 @@ maintenance runs, or durable workflow lessons create evidence worth preserving.
 
 If the repo already contains strong, current, evidenced conventions, create
 focused memory files under `.dex/memory/domains/` and reference them from the
-index. Let the repo shape the domains: choose names based on how future agents
-need context, such as `review-quality`, `verification-ci`,
-`architecture-decisions`, `security-guards`, `workflow-operations`, or a
-repo-specific subsystem such as `auth`, `migrations`, or `frontend-ui`.
+index. Let the repo shape the domains, named for how future agents need context
+(`review-quality`, `verification-ci`, `architecture-decisions`, `security-guards`,
+`workflow-operations`, or a subsystem such as `auth`, `migrations`, `frontend-ui`);
+never a catch-all such as `misc`, `general`, or `learnings` — a lesson without a
+clear domain waits until `/dxsync` has enough evidence to organize it. Promote
+only durable lessons evidenced in current files, docs, tests, CI, or git history;
+never speculative memory.
 
-Avoid catch-all domains such as `misc`, `general`, or `learnings`. If a lesson
-does not fit a clear domain, leave it out until `/dxsync` has enough evidence to
-organize it.
-
-Only promote durable lessons that have evidence in current files, docs, tests,
-CI, or git history. Do not create speculative memory.
-
-Memory entries must include:
-
-- `Domain`
-- `Status`
-- `Scope`
-- `Applies to phases`
-- `Applies to paths`
-- `Last verified`
-- `Recheck when`
-- `Lesson`
-- `Evidence`
-- `Future agent behavior`
+Memory entries must include `Domain`, `Status`, `Scope`, `Applies to phases`,
+`Applies to paths`, `Last verified`, `Recheck when`, `Lesson`, `Evidence`, and
+`Future agent behavior`.
 
 Do not create `.dex/learnings.md`. Session observations belong in external
 Dex run state until `/dxsync` promotes them through a reviewable diff.
@@ -266,17 +280,9 @@ Only generate guards that are specific to THIS project. Generic guards (destruct
 
 ## Step 4: Update Instruction Entrypoints
 
-Ensure `.dex/AGENTS.md` is the source of truth for generated Dex project context and imports the generated dex.md:
-
-```
-@dex.md
-```
-
-Ensure `.dex/CLAUDE.md` remains a compatibility pointer to `.dex/AGENTS.md`:
-
-```
-@AGENTS.md
-```
+`.dex/AGENTS.md` is the source of truth for generated Dex project context and
+contains only `@dex.md`; `.dex/CLAUDE.md` stays a compatibility pointer whose
+only content is `@AGENTS.md`.
 
 ## Guidelines
 

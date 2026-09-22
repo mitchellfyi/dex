@@ -66,11 +66,12 @@ context for the same checkout, not a fresh git workspace.
 Resolve one risk tier before the first review wave. The tier controls review
 depth and selects the global clean-wave policy:
 
-| Risk tier | Review profile | Required consecutive `CLEAN` waves |
-|-----------|----------------|-------------------------------------|
-| `small` | `light` | 1 |
-| `normal` | `standard` | 2 |
-| `complex` | `thorough` | 3 |
+| Risk tier | Review profile | Required consecutive clean waves | Wave budget |
+|-----------|----------------|----------------------------------|-------------|
+| `trivial` | `light` | 1 | 2 |
+| `small` | `light` | 1 | 3 |
+| `normal` | `standard` | 2 | 6 |
+| `complex` | `thorough` | 3 | 9 |
 
 Use `prompts/review-risk-assessment.md` as the source of truth. Its first
 matching rule wins:
@@ -119,10 +120,10 @@ override launches the same read-only assessment in a fresh session and records
 `standalone-assessor` as the source. An assessment is not a clean pass and must
 not edit the checkout.
 
-`DEX_REVIEW_TIER=small|normal|complex` is the canonical launch override and
+`DEX_REVIEW_TIER=trivial|small|normal|complex` is the canonical launch override and
 takes precedence. `DEX_REVIEW_PROFILE=light|standard|thorough` remains a legacy
 alias. `DEX_REVIEW_CLEAN_PASSES` may raise the launch gate but cannot lower the
-selected tier's global policy requirement. The wrapper binds the fixed 1/2/3
+selected tier's global policy requirement. The wrapper binds the fixed 1/1/2/3
 policy to selection, progress, pass evidence, and the final receipt. Review may
 escalate to a higher tier, but it never downgrades.
 
@@ -135,11 +136,12 @@ records Phase 3 as waived rather than claiming trusted policy passed. Use
 `dx control waive review.clean-passes` only to skip the remaining gate and
 advance without a clean-review receipt.
 
-The outer loop has a soft wave budget of 3 for `small`, 6 for `normal`, and 9
-for `complex`. It re-reads `review.max-waves` between waves. An agent or human
-may change that value from 1 through 30 with an attributed override when the
-evidence warrants more or fewer attempts. Exhausting the budget pauses review,
-preserves valid clean credit, and never weakens or waives the clean-pass gate.
+The outer loop has a soft wave budget of 2 for `trivial`, 3 for `small`, 6 for
+`normal`, and 9 for `complex`, which a confirmation pass that stays clean and
+the first mechanical wave of a loop do not spend. It re-reads `review.max-waves` between
+waves; an agent or human may change it from 1 through 30 with an attributed
+override. Exhausting the budget pauses review, preserves valid clean credit,
+and never weakens or waives the clean-pass gate.
 
 ## Scope
 
@@ -170,21 +172,22 @@ review. Record the supplied `Criteria binding: ...` line exactly under
 criteria artifact pauses the loop and earns no clean credit. Standalone review
 must not reconstruct criteria from prior state or conversation context.
 
-Do not give a wave prior review reports, prior findings, findings fingerprints,
-clean-pass counts, telemetry, or previous conversation context. The outer
-wrapper owns that history. This prevents a later wave from anchoring on an
-earlier reviewer's conclusion.
+Do not give a wave prior review reports, findings fingerprints, clean-pass
+counts, telemetry, or previous conversation context: the wrapper owns that
+history and a later wave must not anchor on an earlier conclusion. The findings
+ledger is the one exception it passes, for re-verification rather than reuse.
 
 Every wave must:
 
 1. Build a non-empty compact context pack in its pass-scoped global Dex state.
 2. Run deterministic checks before semantic review.
-3. Harvest candidates across the full supplied scope at the selected depth.
+3. Harvest candidates across the scope the wrapper names, at the selected depth:
+   the full supplied scope on the first pass and on any pass that would be
+   clean, the ledger plus the delta in between.
 4. Verify and deduplicate candidates before fixing.
 5. Batch-fix verified findings that are safe and in scope.
 6. When the caller permits publication, commit and push each coherent
-   accepted-fix checkpoint without waiting for the full wave or final PR
-   verification. Keep failed and pending checks explicit.
+   accepted-fix checkpoint at once; keep failed and pending checks explicit.
 7. Re-run affected checks and targeted review.
 8. Write one result signal, exactly one lowercase 16-character findings hash,
    and the exact generation-bound receipt supplied for that pass, then stop.
@@ -216,6 +219,9 @@ detection before deleting the remaining pass-scoped state.
 
 - `CLEAN`: zero verified findings and zero fixes; increment the consecutive
   clean count.
+- `NOTES:N`: as clean, with N items below the finding bar that reach the PR
+  body. `MECHANICAL:N`: N in-inputs deterministic autofixes — no clean credit,
+  the streak restarts, the next wave reviews that delta, and one per loop is free.
 - `FINDINGS_FIXED:N`: N verified findings were fixed and rechecked; reset the
   clean count and start another fresh wave.
 - `ESCALATE:normal:reason-code` or `ESCALATE:complex:reason-code`: raise the
@@ -230,7 +236,11 @@ detection before deleting the remaining pass-scoped state.
 `ESCALATE_THOROUGH:reason` remains accepted for backward compatibility and maps
 to `ESCALATE:complex:reason`. New waves should use the tiered form.
 
-Only `CLEAN` increments the gate. Any in-scope change invalidates prior clean
+The loop writes `CHURN:no-convergence` when findings have not fallen across
+three consecutive passes; a human decides whether fixes seed findings, the bar
+admits noise, or scope grew. `dx review stats` reports the history per tier.
+
+Only `CLEAN` and `NOTES:N` increment the gate. Any in-scope change invalidates prior clean
 credit. After a wave applies fixes, retain or raise the selected tier, bind it
 to the updated scope fingerprint, reset progress to zero, and start another
 fresh wave. The outer wrapper also pauses on missing or malformed results,

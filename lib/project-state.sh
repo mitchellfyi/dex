@@ -1,5 +1,48 @@
 # shellcheck shell=bash
-# Dex shared library - project file ownership tracking
+# Dex shared library - project file ownership tracking and the machine-readable
+# half of the `.dex/dex.md` project contract.
+
+# dx_project_contract_values <repo-dir> <section> <key>
+# Read one key out of the fenced block under `## <section>` in the repository's
+# `.dex/dex.md`, one value per line.
+#
+# This is the only entry point for the machine-readable part of the project
+# contract, so every section that grows one — `## Resources` and
+# `## Worktree Hooks` today — parses the same way and a caller never
+# re-implements the reading. The parser is
+# scripts/project-contract.py: stdlib only, a flat mapping of scalars and lists.
+#
+# Returns 0 with the value, 1 when the file, the section, the block or the key
+# is absent — which every caller must treat as "this project declared nothing"
+# and carry on — and 2 when the block exists but is not a flat mapping, with
+# the reason on stderr.
+dx_project_contract_values() {
+  [[ $# -eq 3 ]] || return 2
+  local repo_dir="$1" contract_section="$2" contract_key="$3" contract_file
+  [[ -n "$repo_dir" && -n "$contract_section" && -n "$contract_key" ]] || return 2
+  contract_file="$repo_dir/.dex/dex.md"
+  [[ -f "$contract_file" ]] || return 1
+  python3 "$DEX_DIR/scripts/project-contract.py" "$contract_file" \
+    "$contract_section" "$contract_key"
+}
+
+# dx_project_worktree_hook <repo-dir> <hook-name>
+# The shell command a project declared for one worktree lifecycle hook, from
+# the fenced block under `## Worktree Hooks` in its `.dex/dex.md`.
+#
+# The same parser and the same return codes as dx_project_contract_values,
+# which this is a named front door for. The difference is the closed key set:
+# a misspelled hook name is a Dex bug, so it returns 2 here instead of looking
+# like a project that declared nothing.
+dx_project_worktree_hook() {
+  [[ $# -eq 2 ]] || return 2
+  local hook_repo="$1" hook_key="$2"
+  case "$hook_key" in
+    after_create | before_remove | on_session_end | orphan_resources) ;;
+    *) return 2 ;;
+  esac
+  dx_project_contract_values "$hook_repo" "Worktree Hooks" "$hook_key"
+}
 
 dx_project_state_file() {
   local repo_root="$1"

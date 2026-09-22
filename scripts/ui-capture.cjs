@@ -425,9 +425,12 @@ function locatorFor(page, spec) {
   }
 }
 
+// Returns true when the overlay had to be rebuilt: a full page load (as
+// opposed to a Turbo body swap) discards it with the old document.
 async function ensureOverlay(page, stage) {
-  await page.evaluate((stageName) => {
+  return page.evaluate((stageName) => {
     let root = document.getElementById('__dex_ui_proof');
+    const created = !root;
     if (!root) {
       root = document.createElement('div');
       root.id = '__dex_ui_proof';
@@ -446,17 +449,23 @@ async function ensureOverlay(page, stage) {
       document.documentElement.appendChild(style);
     }
     root.querySelector('.dex-stage').textContent = stageName;
+    return created;
   }, stage);
 }
 
-async function showChapter(page, chapter) {
-  await ensureOverlay(page, chapter.stage);
+async function setCaption(page, chapter) {
   await page.evaluate(({ title, narration }) => {
     const caption = document.querySelector('#__dex_ui_proof .dex-caption');
+    if (!caption) return;
     caption.querySelector('strong').textContent = title;
     caption.querySelector('span').textContent = narration;
     caption.style.opacity = '1';
   }, chapter);
+}
+
+async function showChapter(page, chapter) {
+  await ensureOverlay(page, chapter.stage);
+  await setCaption(page, chapter);
   await page.waitForTimeout(900);
 }
 
@@ -468,7 +477,7 @@ async function pointAt(page, locator) {
   const y = box.y + box.height / 2;
   await page.evaluate(({ xPos, yPos }) => {
     const cursor = document.querySelector('#__dex_ui_proof .dex-cursor');
-    cursor.style.transform = `translate(${xPos}px,${yPos}px)`;
+    if (cursor) cursor.style.transform = `translate(${xPos}px,${yPos}px)`;
   }, { xPos: x, yPos: y });
   await page.mouse.move(x, y, { steps: 12 });
   const previousStyle = await locator.evaluate((element) => ({
@@ -485,11 +494,14 @@ async function pointAt(page, locator) {
   return {
     async dispose() {
       try {
+        // A click that navigates leaves nothing to restore; without a short
+        // timeout Playwright waits its default 30s for the vanished element
+        // and the recording freezes on the new page for that long.
         await locator.evaluate((element, original) => {
           element.style.outline = original.outline;
           element.style.outlineOffset = original.outlineOffset;
           element.style.boxShadow = original.boxShadow;
-        }, previousStyle);
+        }, previousStyle, { timeout: 750 });
       } catch (_) {
         // A click may intentionally navigate away before the highlight clears.
       }
@@ -497,7 +509,7 @@ async function pointAt(page, locator) {
   };
 }
 
-async function runAction({ page, action, baseUrl, screenshot, stage }) {
+async function runAction({ page, action, baseUrl, screenshot, stage, chapter }) {
   if (action.action === 'goto') {
     await safeGoto(page, webUrl(new URL(action.path, baseUrl).toString(), 'goto URL'));
     await ensureOverlay(page, stage);
@@ -528,6 +540,10 @@ async function runAction({ page, action, baseUrl, screenshot, stage }) {
     await page.waitForTimeout(450);
     return;
   }
+
+  // A click that navigated with a full page load (not a Turbo body swap)
+  // took the overlay with the old document; rebuild it and restore the caption.
+  if (await ensureOverlay(page, stage) && chapter) await setCaption(page, chapter);
 
   const locator = locatorFor(page, action.locator);
   if (action.action === 'assert') {
@@ -577,6 +593,7 @@ async function runStoryboardStage({ page, options, storyboard, viewportName, out
       await runAction({
         page,
         action,
+        chapter,
         baseUrl: options.url,
         stage: options.stage,
         screenshot: async (name) => {

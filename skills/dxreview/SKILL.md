@@ -26,26 +26,32 @@ Run the single-pass workflow only when the invocation includes
 
 Follow `prompts/review-wave.md` as the source of truth. In one wave:
 
-1. Review the caller-supplied full current change set. When no change set
-   exists, review the supplied whole-codebase inventory.
+1. Review the caller-supplied full current change set on a loop's first pass
+   and on any pass that would be clean; in between, re-verify the ledger and
+   review the delta the wrapper names. With no change set, review the supplied
+   whole-codebase inventory.
 2. Read the wrapper's fresh factual input pack and keep compact review notes.
 3. Run deterministic checks through the runner in `prompts/review-checks.md`.
 4. Create lightweight repro probes for suspected correctness, contract, or
    regression findings when the repo has runnable tests or scripts.
-5. Harvest candidate issues at the supplied profile:
-   - `light` (`small` risk): core domain sweep
-   - `standard` (`normal` risk): core sweep plus targeted domain sweeps for
-     concrete changed surfaces
-   - `thorough` (`complex` risk): all domain sweeps across the full scope
+5. Harvest candidate issues one lens at a time, in this session, at the
+   supplied profile:
+   - `light` (`trivial`, `small` risk): core lenses plus coherence
+   - `standard` (`normal` risk): core plus the changed surfaces' lenses
+   - `thorough` (`complex` risk): every lens across the full scope
+   Read the wrapper's findings ledger first, re-verify its open rows, and
+   append what this wave finds. The coherence lens is required in every tier.
 6. Verify, deduplicate, and rank candidates before changing code.
 7. Batch-fix all verified findings that are safe and in scope, then rerun
    affected checks and targeted review once.
 8. Publish one report using `prompts/review-report.md`; its helper validates
    the evidence and writes the result, findings fingerprint, and receipt.
 
-Treat `DEX_REVIEW_SCOUT_PARALLELISM` as a concurrency ceiling, not a coverage
-limit. If a scout cannot start because the provider is at capacity, cover its
-group in the top-level session instead of retrying it immediately. Keep project
+`DEX_REVIEW_SCOUT_PARALLELISM` is a concurrency ceiling, not a coverage limit,
+and it is zero by default: the sweeps are yours to run in sequence, with
+parallelism coming from independent read-only tool calls in one turn. When it
+is above zero and a scout cannot start because the provider is at capacity,
+cover its group in this session instead of retrying it immediately. Keep project
 test runners within `DEX_REVIEW_TEST_JOBS`; Dex's runner receives the same value
 through `DX_TEST_JOBS`.
 
@@ -54,9 +60,10 @@ setup, or any branch/worktree setup from this skill. Do not create, switch,
 rename, or delete branches or worktrees.
 
 This wave must remain independent. Use only the current code, caller-supplied
-scope, supplied acceptance criteria, and current profile. Do not read or infer
-prior review reports, prior findings, findings fingerprints, clean-pass counts,
-telemetry, stale session prompts, previous turns, or unrelated ticket context.
+scope, supplied acceptance criteria, current profile, and the wrapper's findings
+ledger. Do not read or infer prior review reports, findings fingerprints,
+clean-pass counts, telemetry, stale session prompts, previous turns, or
+unrelated ticket context.
 
 When the caller supplies `DEX_REVIEW_CRITERIA_FILE` and a SHA-256
 `DEX_REVIEW_CRITERIA_BINDING`, read that pass-scoped JSON file before review.
@@ -91,6 +98,8 @@ wave's authorized generation; the helper writes its receipt last.
 Allowed results:
 
 - `CLEAN`
+- `NOTES:N`
+- `MECHANICAL:N`
 - `FINDINGS_FIXED:N`
 - `FINDINGS:N`
 - `BLOCKED:reason-code`
@@ -98,9 +107,10 @@ Allowed results:
 - `ESCALATE:normal:reason-code`
 - `ESCALATE:complex:reason-code`
 
-Only `CLEAN` means the wave found zero verified findings and applied zero fixes.
-Any fix writes `FINDINGS_FIXED:N`. If the supplied tier is too low for the
-observed risk, request the next adequate tier. Never request a downgrade.
+`CLEAN` and `NOTES:N` both mean zero verified findings above the bar and zero
+fixes; `NOTES:N` carries N ledger notes below it, and `MECHANICAL:N` N
+deterministic autofixes inside one check's declared `inputs`. Any other fix
+writes `FINDINGS_FIXED:N`. Escalate a tier too low for the risk; never downgrade.
 
 Use short, lowercase reason codes. Do not put source text, file paths, prompts,
 credentials, or other free-form content in result suffixes. The legacy

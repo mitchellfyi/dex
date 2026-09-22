@@ -666,7 +666,15 @@ dx_bootstrap_agent_tooling() {
     dx_skip "Codex CLI not found; skipping Codex skills"
   fi
 
-  dx_install_ui_capture_tooling || failed=1
+  # `dx install` is the machine-wide install and runs wherever the user
+  # happens to be standing, so its browser MCP servers go to user scope rather
+  # than into that directory's `.mcp.json`. A caller that names a repository
+  # — `dx init`, `dx sync`, `dx tools` — takes the project-scope default.
+  if [[ -n "$root" ]]; then
+    dx_install_ui_capture_tooling || failed=1
+  else
+    dx_install_ui_capture_tooling --user || failed=1
+  fi
   dx_install_rtk_tooling || failed=1
   dx_install_openai_docs_mcp_servers || failed=1
   dx_install_safe_official_claude_plugins "$root" || failed=1

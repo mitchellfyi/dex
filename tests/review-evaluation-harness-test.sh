@@ -200,6 +200,7 @@ runtime_contract_files=(
   lib/review-policy.sh
   lib/session-catalog.sh
   lib/session-management.sh
+  lib/session-process.sh
   lib/session-runtime.sh
   lib/session.sh
   scripts/review_checks.py
@@ -473,10 +474,19 @@ PY
 
 (
   cd "$smoke_workspace"
+  # Forward the toolchain-manager homes the runner handed us, or the volta/asdf
+  # shim on PATH resolves nothing under the fake HOME (see tests/run-all.sh).
   env -i \
     HOME="$smoke_home" \
     CODEX_HOME="$smoke_home/.codex" \
     PATH="$PATH" \
+    ${VOLTA_HOME:+VOLTA_HOME="$VOLTA_HOME"} \
+    ${ASDF_DIR:+ASDF_DIR="$ASDF_DIR"} \
+    ${ASDF_DATA_DIR:+ASDF_DATA_DIR="$ASDF_DATA_DIR"} \
+    ${RBENV_ROOT:+RBENV_ROOT="$RBENV_ROOT"} \
+    ${PYENV_ROOT:+PYENV_ROOT="$PYENV_ROOT"} \
+    ${FNM_DIR:+FNM_DIR="$FNM_DIR"} \
+    ${NVM_DIR:+NVM_DIR="$NVM_DIR"} \
     TMPDIR="${TMPDIR:-/tmp}" \
     USER="${USER:-}" \
     SHELL="${SHELL:-/bin/zsh}" \

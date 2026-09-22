@@ -39,6 +39,9 @@ would write a new issue. Reconcile accepted clarifications, related scope, and
 the existing open PR before approval. End the phase handoff with the exact
 `Issue/PR work:` line from the contract.
 
+Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start.
+Planning is CPU-light work — it is what to do while a gate is queued.
+
 ### 1. Gather Context
 
 Use the integrations configured in dex.md § Integrations. Skip any that are "not configured".
@@ -95,24 +98,31 @@ target state:
    needs from any assumed implementation detail in the ticket or prompt.
 2. **Find codebase prior art.** Search for existing patterns, extension points,
    shared helpers, nearby tests, and constraints that should shape the plan.
-3. **Research current practice.** When the change involves a framework,
-   language feature, dependency, platform API, security-sensitive behavior, data
-   modeling, accessibility, performance, or deployment concern, use online
-   research if available. Prefer official docs, standards, release notes,
-   migration guides, maintainer-written material, and primary sources. Use
-   secondary articles only to identify pitfalls, then verify claims against
-   primary sources.
+   Write what you find into the plan's `## Coherence Contract` below.
+3. **Research current practice.** For a framework, language feature,
+   dependency, platform API, security-sensitive behavior, data modeling,
+   accessibility, performance, or deployment concern, research online if
+   available. Prefer official docs, standards, release notes, migration guides,
+   maintainer material, and primary sources; use secondary articles only to
+   identify pitfalls, then verify every claim against a primary source.
 4. **Compare alternatives.** Consider at least the smallest viable change, the
-   codebase-idiomatic change, and one clearly different approach. Reject
-   options that add avoidable scope, contradict established local patterns, or
-   depend on unverified assumptions.
+   codebase-idiomatic change, and one clearly different approach. Reject any that
+   add avoidable scope, contradict local patterns, or rest on unverified guesses.
 5. **Check holistic fit.** Ask whether the approach improves or harms module
    boundaries, reuse, testability, operational behavior, security posture,
-   accessibility, and future maintenance.
+   accessibility, and future maintenance; record the answer in the contract too.
 6. **Decide deliberately.** Choose the approach that best satisfies the outcome
-   while fitting the existing system. If the best approach differs from the
-   literal request, surface that tradeoff to the user before presenting the
-   plan.
+   while fitting the existing system. If it differs from the literal request,
+   surface that tradeoff to the user before presenting the plan.
+
+**The Coherence Contract.** Every non-trivial plan carries a
+`## Coherence Contract` section naming the canonical files this change must
+mirror and why; the helpers, services, and extension points to reuse; the
+project rules and invariants that apply, cited from `AGENTS.md` and
+`.dex/rules/`; the naming and layering conventions of the touched area; and the
+docs, configuration, and tests that must change together with the code. Phase 2
+cites it when it deviates, Phase 3's coherence lens checks the diff against it,
+and Phase 5 lists every deviation. Keep it under a screen; longer is a plan problem.
 
 If online research tools are unavailable, say so in the plan and rely on local
 docs, dependency source, installed package metadata, and codebase precedent. Do
@@ -224,7 +234,7 @@ Before presenting, invoke the `humanizer` skill on the user-facing plan text. Pr
 
 Include:
 - The numbered plan with task descriptions
-- Files that will be modified
+- Files that will be modified, and the `## Coherence Contract` for the change
 - **Approach recommendation** — the chosen approach, alternatives rejected,
   why the choice fits this codebase, and any external sources that materially
   changed the plan

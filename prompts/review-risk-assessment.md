@@ -13,25 +13,29 @@ Apply this ordered rubric. The first matching rule wins:
    CI, deployment, or packaging; broad cross-module behavior; or when material
    uncertainty prevents the supplied scope or its verification from being
    bounded.
-2. Choose `small` only when every change is localized and mechanically direct,
+2. Choose `trivial` only when the change carries no behavior: documentation
+   only, tests only, a rename with no behavior change, or a dependency bump
+   whose full gate is already green for this tree.
+3. Choose `small` only when every change is localized and mechanically direct,
    impact is narrow, focused verification is available, and none of the
    `complex` conditions applies.
-3. Choose `normal` for everything else.
+4. Choose `normal` for everything else.
 
 Use one or more of these comma-separated reason codes:
 
-`localized-change`, `focused-verification`, `bounded-production-change`,
-`cross-module`, `public-contract`, `security-sensitive`, `data-migration`,
-`concurrency`, `shell-hooks-ci`, `deployment-packaging`, `broad-impact`,
-`uncertain-coverage`.
+`localized-change`, `focused-verification`, `no-behavior-change`,
+`bounded-production-change`, `cross-module`, `public-contract`,
+`security-sensitive`, `data-migration`, `concurrency`, `shell-hooks-ci`,
+`deployment-packaging`, `declared-sensitive-path`, `broad-impact`, `uncertain-coverage`.
 
-The codes must agree with the tier. `small` uses both
+The codes must agree with the tier. `trivial` uses exactly
+`localized-change,focused-verification,no-behavior-change`. `small` uses both
 `localized-change,focused-verification` and no other code. `complex` includes at
 least one matching complex-risk code: `cross-module`, `public-contract`,
 `security-sensitive`, `data-migration`, `concurrency`, `shell-hooks-ci`,
-`deployment-packaging`, `broad-impact`, or `uncertain-coverage`. `normal` uses
-only non-complex codes and must not claim the exact `small` pair;
-`bounded-production-change` is the usual normal-tier reason.
+`deployment-packaging`, `declared-sensitive-path`, `broad-impact`, or
+`uncertain-coverage`. `normal` uses only non-complex codes and must not claim
+the exact `small` pair; `bounded-production-change` is the usual normal reason.
 
 Use `uncertain-coverage` only when a concrete gap in the supplied scope or
 available verification leaves material behavior unbounded. Do not use it just
@@ -47,6 +51,12 @@ field. The tier maps deterministically to the required consecutive clean waves:
 the caller resolves the exact requirement from the trusted review policy before
 the first wave.
 
-The same tier supplies a soft outer-wave budget of 3, 6, or 9 respectively.
+The same tier supplies a soft outer-wave budget of 2, 3, 6, or 9 respectively.
 That budget is operational and may be changed through an attributed
 `review.max-waves` override without changing the assurance tier.
+
+Dex also derives a tier from the measured diff — files and lines changed,
+sensitive surfaces the project declared under `## Resources`
+(`review_sensitive_paths`), dependency manifests, and whether the full gate is
+green for this tree — and takes the higher of the two. A selection below that
+floor is refused, so `trivial` holds only when the facts agree with it.

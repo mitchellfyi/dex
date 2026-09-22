@@ -82,9 +82,10 @@ line, including when all fields are unchanged or N/A.
    Phase 4 owns the final PR verification gate, and Phase 5 normally owns the
    PR description.
 8. After the final in-scope change, select and persist the Phase 3 risk
-   tier for the current scope: `small`, `normal`, or `complex`, with a
-   deterministic set of reason codes. The tier selects Dex's fixed global
-   clean-wave policy: 1 for `small`, 2 for `normal`, and 3 for `complex`.
+   tier for the current scope: `trivial`, `small`, `normal`, or `complex`,
+   with a deterministic set of reason codes; Dex may raise it from the measured
+   diff, never lower it. The tier selects Dex's fixed global clean-wave policy:
+   1 for `trivial` and `small`, 2 for `normal`, and 3 for `complex`.
 9. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
    shows all criteria MET, implementation commits are pushed, and the
    review-risk selection matches the final scope fingerprint and trusted
@@ -109,8 +110,10 @@ line, including when all fields are unchanged or N/A.
    `FINDINGS_FIXED:N`, reset the clean counter, and force the next iteration to
    re-review the full change set.
 4. The loop uses the selected tier's global clean-wave requirement: 1 for
-   `small`, 2 for `normal`, and 3 for `complex`. A candidate branch cannot
-   lower the active gate. The soft outer-wave budgets are 3, 6, and 9. For an
+   `trivial` and `small`, 2 for `normal`, and 3 for `complex`; a `NOTES:N`
+   wave counts as clean, and any fix — `MECHANICAL:N` included — resets the
+   streak. A candidate branch cannot lower the active gate. The soft outer-wave
+   budgets are 2, 3, 6, and 9. For an
    outlier, `dx control override review.clean-passes <1-30>` keeps independent
    review while changing the target. A lower target is bound to the attributed
    decision and records Phase 3 as waived. Agents and humans may change the
@@ -258,7 +261,7 @@ The phase audit loop continues until:
    Stop-hook audit, separate from `/dxreviewloop`'s clean-pass loop
 3. **User interrupts** — the user can always take over
 
-The outer `/dxreviewloop` uses the selected tier's 3/6/9 soft wave budget. It
+The outer `/dxreviewloop` uses the selected tier's 2/3/6/9 soft wave budget. It
 stops after its clean gate succeeds, pauses when the budget is spent, or pauses
 for a blocker, residual finding, churn condition, provider failure, invalid
 result, user interruption, or direct intervention.

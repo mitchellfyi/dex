@@ -125,38 +125,48 @@ state is unchanged unless mutation is documented as part of the contract.
 
 ## Resource Discipline
 
-Several Dex sessions usually share one machine. Each of them can start a test
-runner, a build, a dev server, or a browser, and the host pays for all of them
-at once. Treat CPU and memory as a shared budget:
+You are one of several Dex sessions sharing this machine. Before any heavy
+command read `DX_HOST_ACTIVE_SESSIONS`, `DX_HOST_ACTIVE_HEAVY`, `DX_HOST_LOAD1`
+and `DX_TEST_JOBS` from your launch environment (`DX_HOST_CPUS` and
+`DX_HOST_MEM_GB` say what the host has); if heavy work is already running,
+expect to queue. Treat CPU and memory as a shared budget:
 
-- **Run the tests that cover the change, not the suite.** Pick the test files
-  for the changed modules and their direct consumers. The complete suite runs
-  once, in Phase 4, not after every task or audit pass. Running it earlier is
-  your call, and the right one when the change's reach makes it relevant: a
-  shared module, a schema, build or test configuration, a fix whose blast
-  radius you cannot bound.
-- **Stay within `DX_TEST_JOBS` workers.** Runners that read an environment
-  variable (vitest, pytest-xdist, cargo, go, make) already have it. Pass it to
-  the rest: `jest --maxWorkers=$DX_TEST_JOBS`, `playwright test
-  --workers=$DX_TEST_JOBS`, `pytest -n $DX_TEST_JOBS`.
-- **Never leave a process behind.** Stop every dev server, watcher, browser,
-  container, and background runner you started as soon as it has served its
-  purpose, and before the phase ends. Never run a test runner or bundler in
-  watch mode. If a command was moved to the background, read its output and
-  end it; do not start another copy.
-- **Prefer the cheap check.** A typecheck of the changed package, a targeted
-  lint, or a single test file usually answers the question a full pipeline
-  would. Reach for the full pipeline only when the cheap check cannot answer.
-- **Do not fan out on your own.** Subagents are capped per session; when a
-  spawn is refused, do the work in this session rather than retrying.
-- **Wait; do not poll.** When something outside this session has to finish
-  first, such as an environment provisioning, a build, CI, or a queue, use the
-  blocking wait the host or tool provides, with the longest wait it allows,
-  and let it block. If nothing blocks, check at most once a minute. Never
-  leave a shell loop sleeping in the background to watch for a change, and
-  never run two watchers for the same thing. Each pass costs processes on a
-  machine that is already short of them, and it delays the very thing you are
-  waiting for.
+- **Climb the verification ladder, and say which rung you are on.** A
+  typecheck of the changed package, a targeted lint, or the test files for the
+  changed modules and their direct consumers usually answers the question a
+  full pipeline would; name the rung in the transcript when you run tests. The
+  complete suite runs once, in Phase 4, not after every task or audit pass —
+  earlier only when the change's reach makes it relevant: a shared module, a
+  schema, build or test configuration, a blast radius you cannot bound. Stay
+  within `DX_TEST_JOBS` workers: vitest, pytest-xdist, cargo, go and make read
+  it from the environment; pass it to the rest (`jest --maxWorkers=$DX_TEST_JOBS`,
+  `playwright test --workers=$DX_TEST_JOBS`, `pytest -n $DX_TEST_JOBS`).
+- **Heavy work goes through `dx run-gate`.** A project gate, a full test suite
+  or a build goes `dx run-gate <command>` (`## Resources` in `.dex/dex.md` may
+  list them): it queues for host capacity, runs at reduced priority, streams to
+  a log you can poll later, and dies with this session. Waiting is correct;
+  running it outside the lease slows everyone. One
+  lease per unit of work: a gate inside a gate queues behind its own parent, so
+  a dev server starts directly and is session-owned, not leased, and inside a
+  review wave `bin/review-check.sh` is that lease.
+- **Use the wait; never poll.** While a build, a queue, CI, or provisioning has
+  to finish first, do the work that needs no CPU: read the next file, draft the
+  PR body, write the next test. Use the longest blocking wait the host or tool
+  provides; if nothing blocks, check at most once a minute.
+  Never sit in a tool-call loop, sleep a shell loop in the background, or run two watchers.
+- **Own what you start.** `dx ps` lists what this session owns, and the end of
+  the phase stops it — including `DX_SESSION_TMP`, the per-phase temp root your
+  scratch files belong under. If something genuinely must survive that, say so
+  in the transcript and why. Reuse a port this session already owns rather than
+  opening the next one. Never run a runner or bundler in watch mode; if a
+  command went to the background, read its output and end it, not start another.
+- **Leave the tree the way the next agent needs it.** Stop every dev server,
+  watcher, browser, container, and background runner, and drop temp data,
+  before you declare the phase done. The audit checks the ledger, not your word.
+- **When the host is saturated, stop adding to it.** Finish the step you are
+  on, then read, plan, and write until `dx run-gate` reports capacity. Do not
+  compensate by splitting into more parallel subagents: they are capped per
+  session, and a refused spawn means doing the work here, not retrying.
 
 ## Implementation Principles
 

@@ -5,6 +5,8 @@ Phase 5 focuses on PR creation, description, ticket links, attaching
 review. Phase 6 verifies readiness and handles `@mention` comments, monitoring,
 feedback, and ticket closure.
 
+Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start.
+
 Apply `prompts/issue-hygiene.md` before finalizing PR copy. Reconcile the
 working issue, related issues, and any existing open PR so the title, body,
 links, scope, risks, and verification reflect accepted current context without
@@ -102,7 +104,9 @@ that state so Phase 6 does not duplicate them.
 
 ## Step 6: Ready for review
 
-Mark the PR ready if it is still a draft, then verify the result:
+Mark the PR ready if it is still a draft, then verify the result — unless
+`.dex/dex.md` § Resources declares `full_gate: ci`, which leaves it a draft
+until Phase 6's CI gate:
 
 ```bash
 PR_DRAFT=$(gh pr view "$PR_NUM" --json isDraft -q .isDraft)
@@ -112,8 +116,9 @@ fi
 gh pr view "$PR_NUM" --json isDraft -q .isDraft
 ```
 
-The final command must return `false`. If it does not, keep Phase 5 open and
-report the failure instead of claiming completion.
+The final command must return `false`, unless `full_gate: ci` applies. If it
+does not match that expectation, keep Phase 5 open and report the failure
+instead of claiming completion.
 
 ## Completion criteria
 
@@ -122,12 +127,13 @@ All of these must be true before you stop:
 - PR description title/body has passed through `humanizer`
 - PR description attributes generation to Dex only, with no Claude Code generated-by footer
 - PR scope matches the plan — no unrelated changes, nothing missing
-- The PR is ready for review (`gh pr view "$PR_NUM" --json isDraft -q .isDraft` returns `false`)
+- The PR is ready for review (`gh pr view "$PR_NUM" --json isDraft -q .isDraft` returns `false`) — or, when `.dex/dex.md` § Resources declares `full_gate: ci`, it is deliberately still a draft and the handoff says so
 - UI proof is attached for READY, has a warned local handoff when automatic attachment is unavailable/incomplete, or records SKIPPED/N/A with a reason
 - All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR,
   or GitHub rejected them as non-requestable and Dex recorded the warning (or
   the section is empty/`_none_`)
 - Issue and PR reconciliation followed `prompts/issue-hygiene.md`, and the
   summary contains `Issue/PR work:`
+- No session-owned background process in flight, per `dx ps`
 
 When all criteria are met, stop. The Stop hook will verify your work and provide completion instructions.

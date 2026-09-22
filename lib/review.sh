@@ -3,6 +3,7 @@
 
 dx_review_normalize_tier() {
   case "${1:-}" in
+    trivial) printf '%s\n' "trivial" ;;
     small|light) printf '%s\n' "small" ;;
     normal|standard) printf '%s\n' "normal" ;;
     complex|thorough|high|high-risk) printf '%s\n' "complex" ;;
@@ -10,11 +11,15 @@ dx_review_normalize_tier() {
   esac
 }
 
+# `trivial` shares the `light` depth on purpose: the three depth profiles bind
+# evidence, ledger rows and receipts, and a fourth would have to be threaded
+# through all of them to say "light, but even lighter". What `trivial` changes
+# is the gate — one clean wave, two waves of budget — not how the wave reviews.
 dx_review_tier_profile() {
   local tier
   tier=$(dx_review_normalize_tier "${1:-}") || return 1
   case "$tier" in
-    small) printf '%s\n' "light" ;;
+    trivial|small) printf '%s\n' "light" ;;
     normal) printf '%s\n' "standard" ;;
     complex) printf '%s\n' "thorough" ;;
   esac
@@ -24,9 +29,10 @@ dx_review_tier_rank() {
   local tier
   tier=$(dx_review_normalize_tier "${1:-}") || return 1
   case "$tier" in
-    small) printf '%s\n' "1" ;;
-    normal) printf '%s\n' "2" ;;
-    complex) printf '%s\n' "3" ;;
+    trivial) printf '%s\n' "1" ;;
+    small) printf '%s\n' "2" ;;
+    normal) printf '%s\n' "3" ;;
+    complex) printf '%s\n' "4" ;;
   esac
 }
 
@@ -60,7 +66,7 @@ dx_review_assessment_reason_codes_valid() {
   while [[ -n "$value" ]]; do
     code="${value%%,*}"
     case "$code" in
-      localized-change|focused-verification|bounded-production-change|cross-module|public-contract|security-sensitive|data-migration|concurrency|shell-hooks-ci|deployment-packaging|broad-impact|uncertain-coverage) ;;
+      localized-change|focused-verification|no-behavior-change|bounded-production-change|cross-module|public-contract|security-sensitive|data-migration|concurrency|shell-hooks-ci|deployment-packaging|declared-sensitive-path|broad-impact|uncertain-coverage) ;;
       *) return 1 ;;
     esac
     if [[ "$value" == *,* ]]; then
@@ -73,7 +79,7 @@ dx_review_assessment_reason_codes_valid() {
 
 dx_review_tier_reason_codes_valid() {
   local requested_tier="${1:-}" value="${2:-}" tier code
-  local has_localized=0 has_focused=0 has_bounded=0 has_complex=0
+  local has_localized=0 has_focused=0 has_bounded=0 has_complex=0 has_trivial=0
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_assessment_reason_codes_valid "$value" || return 1
   while [[ -n "$value" ]]; do
@@ -81,8 +87,9 @@ dx_review_tier_reason_codes_valid() {
     case "$code" in
       localized-change) has_localized=1 ;;
       focused-verification) has_focused=1 ;;
+      no-behavior-change) has_trivial=1 ;;
       bounded-production-change) has_bounded=1 ;;
-      cross-module|public-contract|security-sensitive|data-migration|concurrency|shell-hooks-ci|deployment-packaging|broad-impact|uncertain-coverage)
+      cross-module|public-contract|security-sensitive|data-migration|concurrency|shell-hooks-ci|deployment-packaging|declared-sensitive-path|broad-impact|uncertain-coverage)
         has_complex=1
         ;;
     esac
@@ -94,8 +101,11 @@ dx_review_tier_reason_codes_valid() {
   done
 
   case "$tier" in
+    trivial)
+      [[ $has_trivial -eq 1 && $has_localized -eq 1 && $has_focused -eq 1 && $has_bounded -eq 0 && $has_complex -eq 0 ]]
+      ;;
     small)
-      [[ $has_localized -eq 1 && $has_focused -eq 1 && $has_bounded -eq 0 && $has_complex -eq 0 ]]
+      [[ $has_localized -eq 1 && $has_focused -eq 1 && $has_trivial -eq 0 && $has_bounded -eq 0 && $has_complex -eq 0 ]]
       ;;
     normal)
       [[ $has_complex -eq 0 ]] &&
@@ -903,7 +913,7 @@ dx_review_result_valid() {
   [[ -n "$result" && "$result" != *$'\n'* && "$result" != *$'\r'* ]] || return 1
   case "$result" in
     CLEAN) return 0 ;;
-    FINDINGS_FIXED:[1-9]*|FINDINGS:[1-9]*)
+    NOTES:[1-9]*|MECHANICAL:[1-9]*|FINDINGS_FIXED:[1-9]*|FINDINGS:[1-9]*)
       dx_review_is_positive_integer "${result#*:}"
       return $?
       ;;
@@ -922,6 +932,8 @@ dx_review_result_kind() {
   dx_review_result_valid "$result" || return 1
   case "$result" in
     CLEAN) printf '%s\n' "clean" ;;
+    NOTES:*) printf '%s\n' "notes" ;;
+    MECHANICAL:*) printf '%s\n' "mechanical" ;;
     FINDINGS_FIXED:*) printf '%s\n' "findings_fixed" ;;
     FINDINGS:*) printf '%s\n' "findings" ;;
     BLOCKED:*) printf '%s\n' "blocked" ;;
@@ -930,10 +942,13 @@ dx_review_result_kind() {
   esac
 }
 
+# The count a result carries. For `NOTES:N` those are notes below the finding
+# bar, not verified findings: the loop's convergence window and the clean streak
+# both read the kind, never this number alone.
 dx_review_result_count() {
   local result="${1:-}"
   case "$result" in
-    FINDINGS_FIXED:*|FINDINGS:*) printf '%s\n' "${result#*:}" ;;
+    NOTES:*|MECHANICAL:*|FINDINGS_FIXED:*|FINDINGS:*) printf '%s\n' "${result#*:}" ;;
     *) printf '%s\n' "0" ;;
   esac
 }
@@ -1217,7 +1232,12 @@ profile = os.environ["DX_REVIEW_EVIDENCE_PROFILE"]
 core = {"correctness", "security", "contracts", "tests", "architecture"}
 all_domains = core | {"frontend", "devops", "performance", "observability"}
 
-if result == "CLEAN":
+# `NOTES:N` is CLEAN plus N notes the wave recorded below the finding bar, and
+# `MECHANICAL:N` is CLEAN plus N deterministic autofixes the wave applied and
+# rechecked. Neither is a verified finding, so both must still show zero
+# verified findings, zero fixes and an unchanged verdict here; what separates
+# them is the tree, which the controller checks, not this manifest.
+if result == "CLEAN" or result.startswith(("NOTES:", "MECHANICAL:")):
     if payload["deterministic_checks"] != "pass" or payload["verifier"] != "pass":
         raise SystemExit(1)
     if payload["verified_findings"] != 0 or payload["fixes_applied"] != 0:
@@ -1514,11 +1534,83 @@ dx_review_scope_boundary() {
   printf '%s\t%s\t%s\n' "$scope_mode" "$comparison_ref" "$merge_base"
 }
 
+# __dx_review_contract_values <repo_dir> <key>
+# What the project declared under `## Resources` in .dex/dex.md, or nothing.
+# An absent file, section or key and a malformed block all read the same here:
+# this is a safety floor, and a typo in someone's contract must not fail the
+# review loop. Nothing declared changes nothing.
+__dx_review_contract_values() {
+  command -v dx_project_contract_values >/dev/null 2>&1 || return 0
+  dx_project_contract_values "$1" Resources "$2" 2>/dev/null || return 0
+}
+
+# __dx_review_contract_number <repo_dir> <key> <default>
+__dx_review_contract_number() {
+  local declared=""
+  declared=$(__dx_review_contract_values "$1" "$2" | head -n 1)
+  [[ "$declared" =~ ^[1-9][0-9]{0,5}$ ]] || declared="$3"
+  printf '%s\n' "$declared"
+}
+
+# __dx_review_full_gate_green <repo_dir>
+# 1 only when this session's `full-gate` receipt — the name Phase 2 gives the
+# project's complete gate under `dx run-gate --name full-gate` — covers this
+# exact tree and passed. A failing receipt for the same tree is not a green
+# gate, no receipt at all is not evidence either way, and a receipt for some
+# other gate (a linter run through `dx run-gate`) says nothing about the whole
+# suite. Only this session's receipts count: the fingerprints hash the tree,
+# not the environment, and cross-session sharing is an explicit opt-in.
+__dx_review_full_gate_green() {
+  local repo_dir="$1" checkout="" working="" rows="" gate_session=""
+  command -v dx_gate_receipt_lookup >/dev/null 2>&1 || { printf '0\n'; return 0; }
+  gate_session="${DEX_SESSION_ID:-}"
+  if [[ -z "$gate_session" ]]; then
+    gate_session=$(cd "$repo_dir" 2>/dev/null && dx_session_id 2>/dev/null) \
+      || gate_session=""
+  fi
+  dx_session_id_valid "$gate_session" 2>/dev/null || { printf '0\n'; return 0; }
+  checkout=$(git -C "$repo_dir" rev-parse --verify HEAD 2>/dev/null) \
+    || checkout="unborn"
+  working=$(dx_review_working_fingerprint "$repo_dir" 2>/dev/null) || {
+    printf '0\n'
+    return 0
+  }
+  rows=$(dx_gate_receipt_lookup "$gate_session" "$checkout" "$working" \
+    "$DX_GATE_FULL_GATE_NAME" 2>/dev/null) || {
+    printf '0\n'
+    return 0
+  }
+  if printf '%s\n' "$rows" | LC_ALL=C awk -F'\t' '
+      NF >= 3 && $3 == "0" { green = 1 }
+      NF >= 3 && $3 != "0" { failed = 1 }
+      END { exit !(green && !failed) }
+    '; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+}
+
 # dx_review_scope_minimum_tier <repo_dir> — deterministic safety floor
+#
+# Measured change facts, not opinion: which paths changed, how many, how many
+# lines, whether any of them is a surface the project marked sensitive, whether
+# dependencies moved, and whether the full gate is green for this tree. The
+# floor only ever raises a chosen tier (dx_review_write_selection refuses a
+# selection below it), so `trivial` is reachable only when every fact says so.
 dx_review_scope_minimum_tier() {
-  local repo_dir="${1:-$PWD}" descriptor
+  local repo_dir="${1:-$PWD}" descriptor sensitive="" gate_green="0"
   descriptor=$(dx_review_scope_descriptor "$repo_dir") || return 1
-  DX_REVIEW_REPO_DIR="$repo_dir" DX_REVIEW_SCOPE_DESCRIPTOR="$descriptor" python3 - <<'PY'
+  sensitive=$(__dx_review_contract_values "$repo_dir" review_sensitive_paths)
+  gate_green=$(__dx_review_full_gate_green "$repo_dir")
+  DX_REVIEW_REPO_DIR="$repo_dir" DX_REVIEW_SCOPE_DESCRIPTOR="$descriptor" \
+  DX_REVIEW_SENSITIVE_PATHS="$sensitive" \
+  DX_REVIEW_GATE_GREEN="$gate_green" \
+  DX_REVIEW_BROAD_IMPACT_FILES="$(__dx_review_contract_number "$repo_dir" review_broad_impact_files 10)" \
+  DX_REVIEW_TRIVIAL_MAX_FILES="$(__dx_review_contract_number "$repo_dir" review_trivial_max_files 10)" \
+  DX_REVIEW_TRIVIAL_MAX_LINES="$(__dx_review_contract_number "$repo_dir" review_trivial_max_lines 500)" \
+    python3 - <<'PY'
+import fnmatch
 import os
 import re
 import subprocess
@@ -1567,22 +1659,115 @@ def matches(pattern):
     return any(re.search(pattern, path) for path in decoded)
 
 
-if matches(r"(^|/)(auth|security|permissions?|secrets?|payments?)(/|[._-])"):
+def declared(patterns):
+    """A surface the project marked sensitive. Patterns are globs, and a leading
+    `**/` also matches at the top level, where fnmatch alone would not."""
+    for path in decoded:
+        for pattern in patterns:
+            if fnmatch.fnmatch(path, pattern):
+                return True
+            if pattern.startswith("**/") and fnmatch.fnmatch(path, pattern[3:]):
+                return True
+    return False
+
+
+def changed_lines():
+    """Added plus deleted lines across the same comparisons. Binary and rename
+    records carry no counts and are skipped; an untracked file counts zero,
+    which is why size alone never grants `trivial`."""
+    ranges = [("diff", "--numstat", "-z", "--")]
+    if mode == "changes":
+        ranges.append(("diff", "--numstat", "-z", merge_base, "HEAD", "--"))
+    ranges.append(("diff", "--cached", "--numstat", "-z", "--"))
+    total = 0
+    for arguments in ranges:
+        for record in git(*arguments).split(b"\0"):
+            fields = record.split(b"\t")
+            if len(fields) >= 2 and fields[0].isdigit() and fields[1].isdigit():
+                total += int(fields[0]) + int(fields[1])
+    return total
+
+
+DEPENDENCY_MANIFESTS = {
+    "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml",
+    "yarn.lock", "gemfile", "gemfile.lock", "requirements.txt", "pipfile",
+    "pipfile.lock", "poetry.lock", "pyproject.toml", "go.mod", "go.sum",
+    "cargo.toml", "cargo.lock", "composer.json", "composer.lock", "mix.exs",
+    "mix.lock", "pubspec.yaml", "pubspec.lock", "pom.xml", "build.gradle",
+    "build.gradle.kts", "gradle.lockfile",
+}
+DOCUMENTATION_SUFFIXES = (".md", ".mdx", ".rst", ".txt", ".adoc")
+DOCUMENTATION_NAMES = {"license", "notice", "authors", "changelog", "codeowners"}
+TEST_DIRECTORIES = ("test", "tests", "spec", "specs", "__tests__", "testdata")
+
+
+def documentation(path):
+    name = path.rsplit("/", 1)[-1]
+    return (
+        path.endswith(DOCUMENTATION_SUFFIXES)
+        or name in DOCUMENTATION_NAMES
+        or path.startswith("docs/")
+        or "/docs/" in path
+    )
+
+
+def test_only(path):
+    name = path.rsplit("/", 1)[-1]
+    segments = path.split("/")[:-1]
+    return (
+        any(segment in TEST_DIRECTORIES for segment in segments)
+        or name.startswith("test_")
+        or bool(re.search(r"([._-]test|[._-]spec)\.[^.]+$", name))
+    )
+
+
+def contract_paths():
+    raw = os.environ.get("DX_REVIEW_SENSITIVE_PATHS", "")
+    return [line.strip().lower() for line in raw.splitlines() if line.strip()]
+
+
+def bound(name, fallback):
+    value = os.environ.get(name, "")
+    return int(value) if value.isdigit() and value != "0" else fallback
+
+
+if matches(r"(^|/)(auth|security|permissions?|secrets?|payments?)(/|[._-])") or matches(
+    r"(^|/)[^/]*(pii|secret|credential)[^/]*(/|$)"
+):
     print("complex\tsecurity-sensitive")
-elif matches(r"(^|/)(migrations?|schemas?)(/|[._-])|\.sql$"):
+elif matches(r"(^|/)(migrations?|schemas?|db)(/|[._-])|\.sql$"):
     print("complex\tdata-migration")
-elif matches(r"(^|/)(hooks?|guards?|\.github/workflows|\.gitlab-ci)(/|$)|(^|/)(ci|pipeline)[._-]"):
+elif matches(r"(^|/)(hooks?|guards?|\.github|\.gitlab-ci)(/|$)|(^|/)(ci|pipeline)[._-]"):
     print("complex\tshell-hooks-ci")
-elif matches(r"(^|/)(deploy|deployment|packaging|docker|helm|terraform)(/|[._-])|(^|/)(install|release)\.sh$"):
+elif matches(r"(^|/)(deploy|deployment|packaging|docker|helm|terraform)(/|[._-])|(^|/)dockerfile|(^|/)(install|release)\.sh$"):
     print("complex\tdeployment-packaging")
 elif matches(r"(^|/)(bin/|dx\.sh$|settings\.json$)|(^|/)(cli|config)(/|[._-])"):
     print("complex\tpublic-contract")
 elif matches(r"^lib/(review|session|provider|worktree|events|run-spec|factory)\.sh$"):
     print("complex\tcross-module")
-elif len(paths) >= 10 or len({path.split("/", 1)[0] for path in decoded}) >= 4:
+elif declared(contract_paths()):
+    print("complex\tdeclared-sensitive-path")
+elif len(paths) >= bound("DX_REVIEW_BROAD_IMPACT_FILES", 10) or len(
+    {path.split("/", 1)[0] for path in decoded}
+) >= 4:
     print("complex\tbroad-impact")
 else:
-    print("small\tlocalized-change,focused-verification")
+    small_enough = (
+        len(paths) <= bound("DX_REVIEW_TRIVIAL_MAX_FILES", 10)
+        and changed_lines() <= bound("DX_REVIEW_TRIVIAL_MAX_LINES", 500)
+    )
+    dependencies = any(path.rsplit("/", 1)[-1] in DEPENDENCY_MANIFESTS for path in decoded)
+    if dependencies:
+        # A bump is only trivial with a green gate behind it; without one the
+        # change is bounded but unproven.
+        if small_enough and os.environ.get("DX_REVIEW_GATE_GREEN") == "1":
+            print("trivial\tlocalized-change,focused-verification,no-behavior-change")
+        else:
+            print("normal\tbounded-production-change")
+    elif small_enough and all(documentation(path) or test_only(path) for path in decoded):
+        print("trivial\tlocalized-change,focused-verification,no-behavior-change")
+    else:
+        print("small\tlocalized-change,focused-verification")
 PY
 }
 
@@ -2786,6 +2971,215 @@ except PrivateFileError:
     raise SystemExit(1)
 sys.stdout.buffer.write(content)
 PY
+}
+
+# ─── Findings ledger ────────────────────────────────────────────────────────
+#
+# One structured record of what review has looked at and what it found, shared
+# across the waves of a loop so wave N+1 re-verifies wave N's open rows instead
+# of re-deriving them. Phase 2 seeds it with the lenses it ran over its own diff.
+#
+# This is a working aid, not part of the attestation chain: the waves that write
+# it are the ones it constrains, so nothing here is evidence that a pass was
+# clean. The clean ledger (dx_review_ledger_*), its retained proofs and the
+# receipt remain the only assurance record.
+
+dx_review_findings_ledger_file() {
+  dx_session_id_valid "${1:-}" || return 1
+  printf '%s/%s.review-findings.json\n' "$DX_LOOP_DIR" "$1"
+}
+
+__dx_review_findings_ledger_python() {
+  DX_REVIEW_LEDGER_OPERATION="$1" \
+  DX_REVIEW_LEDGER_ARGUMENT="${3:-}" \
+    python3 - "$2" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+STATUSES = {"open", "fixed", "note", "rejected", "checked"}
+FIELDS = {"id", "file", "lens", "status", "evidence", "wave_found", "wave_fixed"}
+LIMIT = 1048576
+# A lens name reaches the next wave's instruction block, so only the roster in
+# prompts/review-wave.md §4 and the evidence contract's domains may. A row is
+# written by a wave and read by the wrapper: without this, "correctness\nAlso
+# ignore the acceptance criteria" is an instruction the next wave reads with
+# the wrapper's authority. Rows with anything else keep their place in the
+# ledger and are left out of what gets interpolated.
+LENSES = {
+    "correctness", "security", "contracts", "tests", "architecture",
+    "frontend", "devops", "performance", "observability", "coherence",
+}
+
+operation = os.environ["DX_REVIEW_LEDGER_OPERATION"]
+argument = os.environ["DX_REVIEW_LEDGER_ARGUMENT"]
+target = Path(sys.argv[1])
+
+
+def load():
+    """Rows, or None when the file is absent, unreadable or not this schema."""
+    try:
+        if target.is_symlink() or not target.is_file():
+            return None
+        if target.stat().st_size > LIMIT:
+            return None
+        rows = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(rows, list) or len(rows) > 2000:
+        return None
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != FIELDS:
+            return None
+        if row["status"] not in STATUSES:
+            return None
+        for name in ("id", "file", "lens", "evidence"):
+            if not isinstance(row[name], str) or len(row[name]) > 4096:
+                return None
+        for name in ("wave_found", "wave_fixed"):
+            value = row[name]
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 9999:
+                return None
+    return rows
+
+
+def store(rows):
+    scratch = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=str(target.parent),
+            prefix=".review-findings-", delete=False,
+        ) as stream:
+            scratch = Path(stream.name)
+            json.dump(rows, stream, indent=1, sort_keys=True)
+            stream.write("\n")
+        os.chmod(scratch, 0o600)
+        os.replace(scratch, target)
+        scratch = None
+    finally:
+        if scratch is not None:
+            scratch.unlink(missing_ok=True)
+
+
+rows = load()
+if operation == "valid":
+    raise SystemExit(0 if rows is not None else 1)
+if operation == "count":
+    if rows is None:
+        raise SystemExit(1)
+    print(sum(1 for row in rows if not argument or row["status"] == argument))
+    raise SystemExit(0)
+if operation == "lenses":
+    # "<status>" or "<status>:<wave>". The lenses a fix touched are what the
+    # next wave has to re-run in full; everything else stays delta-only.
+    if rows is None:
+        raise SystemExit(1)
+    wanted, _, wave = argument.partition(":")
+    seen = set()
+    for row in rows:
+        if wanted and row["status"] != wanted:
+            continue
+        if wave and str(row["wave_fixed"]) != wave:
+            continue
+        lens = row["lens"]
+        if lens in LENSES and len(lens) <= 64 and not set(lens) & set(",\t\n\r"):
+            seen.add(lens)
+    print(",".join(sorted(seen)))
+    raise SystemExit(0)
+if operation == "init":
+    if rows is not None:
+        raise SystemExit(0)
+    if target.exists() or target.is_symlink():
+        # Something is there and it is not a ledger. Report it and let the
+        # caller decide; only the explicit reset throws content away.
+        raise SystemExit(1)
+    store([])
+    raise SystemExit(0)
+if operation == "seed":
+    rows = rows if rows is not None else []
+    # The prompt names the groups as `correctness/contracts/tests`, so a caller
+    # may hand over a group or a single lens; either way one row per lens.
+    lenses = [part.strip() for item in argument.split(",")
+              for part in item.split("/") if part.strip()]
+    if not lenses or len(lenses) > 32:
+        raise SystemExit(2)
+    known = {row["id"] for row in rows}
+    for lens in lenses:
+        if lens not in LENSES:
+            raise SystemExit(2)
+        identifier = f"self-review-{lens}"
+        if identifier in known:
+            continue
+        rows.append({
+            "id": identifier,
+            "file": "-",
+            "lens": lens,
+            "status": "checked",
+            "evidence": "implementer self-review before Phase 3",
+            "wave_found": 0,
+            "wave_fixed": 0,
+        })
+    store(rows)
+    raise SystemExit(0)
+raise SystemExit(2)
+PY
+}
+
+# dx_review_findings_ledger_init <session-id>
+# Create an empty ledger, or accept the existing one. A ledger that is not this
+# schema is reported so the caller can reset it; it is never silently trusted.
+dx_review_findings_ledger_init() {
+  local ledger_file
+  ledger_file=$(dx_review_findings_ledger_file "${1:-}") || return 1
+  mkdir -p "$(dirname "$ledger_file")" || return 1
+  __dx_review_findings_ledger_python init "$ledger_file"
+}
+
+dx_review_findings_ledger_valid() {
+  local ledger_file
+  ledger_file=$(dx_review_findings_ledger_file "${1:-}") || return 1
+  __dx_review_findings_ledger_python valid "$ledger_file"
+}
+
+# dx_review_findings_ledger_reset <session-id>
+dx_review_findings_ledger_reset() {
+  local ledger_file
+  ledger_file=$(dx_review_findings_ledger_file "${1:-}") || return 1
+  command rm -f "$ledger_file" 2>/dev/null || return 1
+  dx_review_findings_ledger_init "$1"
+}
+
+# dx_review_findings_ledger_count <session-id> [status]
+dx_review_findings_ledger_count() {
+  local ledger_file
+  ledger_file=$(dx_review_findings_ledger_file "${1:-}") || return 1
+  __dx_review_findings_ledger_python count "$ledger_file" "${2:-}"
+}
+
+# dx_review_findings_ledger_lenses <session-id> <status> [wave]
+# The distinct lenses of the rows with that status, comma-separated. Used to
+# tell the next wave which lenses a fix invalidated: their inputs moved, so
+# they are re-run in full while the others stay delta-only. Per-lens clean
+# status is deliberately not a thing — a fix moves the tree, and every clean
+# ledger row is bound to a fingerprint, so the streak still resets as a whole.
+dx_review_findings_ledger_lenses() {
+  local ledger_file
+  [[ $# -eq 2 || $# -eq 3 ]] || return 1
+  ledger_file=$(dx_review_findings_ledger_file "$1") || return 1
+  __dx_review_findings_ledger_python lenses "$ledger_file" "${2}${3:+:$3}"
+}
+
+# dx_review_findings_ledger_seed <session-id> <lens,lens,...>
+# Phase 2 records the lenses it ran over its own diff, so the first review wave
+# starts from what was already checked.
+dx_review_findings_ledger_seed() {
+  local ledger_file
+  [[ $# -eq 2 && -n "${2:-}" ]] || return 1
+  ledger_file=$(dx_review_findings_ledger_file "$1") || return 1
+  mkdir -p "$(dirname "$ledger_file")" || return 1
+  __dx_review_findings_ledger_python seed "$ledger_file" "$2"
 }
 
 dx_review_write_receipt() {

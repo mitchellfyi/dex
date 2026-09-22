@@ -25,13 +25,28 @@ assert_eq "2" "$(DEX_REVIEW_MAX_ACTIVE_WAVES=2 dx_review_capacity_limit)" \
   "explicit host review-wave capacity"
 assert_eq "1" "$(DEX_REVIEW_MAX_ACTIVE_WAVES=1 dx_review_capacity_limit)" \
   "single-wave rollback override"
+# Without an override the limit is derived from the host the way the heavy
+# limit is: one wave per four cores and per eight gigabytes, whichever is
+# fewer, at least one and at most eight.
 default_capacity="$(
   unset DEX_REVIEW_MAX_ACTIVE_WAVES
-  dx_review_capacity_limit
+  DX_HOST_CPUS_OVERRIDE=12 DX_HOST_MEM_GB_OVERRIDE=64 dx_review_capacity_limit
 )"
-assert_eq "3" "$default_capacity" "default host review-wave capacity"
-assert_eq "3" "$(DEX_REVIEW_MAX_ACTIVE_WAVES='' dx_review_capacity_limit)" \
-  "empty override uses the default"
+assert_eq "3" "$default_capacity" "derived host review-wave capacity"
+assert_eq "3" "$(DEX_REVIEW_MAX_ACTIVE_WAVES='' DX_HOST_CPUS_OVERRIDE=12 \
+  DX_HOST_MEM_GB_OVERRIDE=64 dx_review_capacity_limit)" \
+  "empty override derives from the host"
+assert_eq "1" "$(DEX_REVIEW_MAX_ACTIVE_WAVES='' DX_HOST_CPUS_OVERRIDE=2 \
+  DX_HOST_MEM_GB_OVERRIDE=8 dx_review_capacity_limit)" \
+  "a small host still admits one wave"
+assert_eq "2" "$(DEX_REVIEW_MAX_ACTIVE_WAVES='' DX_HOST_CPUS_OVERRIDE=32 \
+  DX_HOST_MEM_GB_OVERRIDE=16 dx_review_capacity_limit)" \
+  "memory bounds the wave count"
+assert_eq "8" "$(DEX_REVIEW_MAX_ACTIVE_WAVES='' DX_HOST_CPUS_OVERRIDE=128 \
+  DX_HOST_MEM_GB_OVERRIDE=512 dx_review_capacity_limit)" \
+  "the derived limit is capped at eight"
+[[ "$(unset DEX_REVIEW_MAX_ACTIVE_WAVES; dx_review_capacity_limit)" =~ ^[1-8]$ ]] \
+  || assert_at $LINENO
 assert_eq "1" "$(DEX_REVIEW_MAX_ACTIVE_CHECKS=1 dx_review_check_capacity_limit)" \
   "separate deterministic check budget"
 assert_eq "1" "$(unset DEX_REVIEW_MAX_ACTIVE_CHECKS; dx_review_check_capacity_limit)" \
@@ -48,18 +63,23 @@ if DEX_REVIEW_MAX_ACTIVE_WAVES=9 dx_review_capacity_limit >/dev/null 2>&1; then
   exit 1
 fi
 
-assert_eq "3" "$(__dx_review_scout_parallelism 3 1)" \
-  "single-wave scout parallelism"
-assert_eq "1" "$(__dx_review_scout_parallelism 3 2)" \
-  "multi-wave scout parallelism"
-assert_eq "1" "$(__dx_review_scout_parallelism 3 "$default_capacity")" \
-  "three-wave admission retains the scout throttle"
+# Scouts are off by default now: the wave's own reviewer runs the lens groups
+# in sequence. tests/review-tier-derivation-test.sh owns the full matrix; these
+# keep the capacity-shaped cases honest.
+assert_eq "0" "$(__dx_review_scout_parallelism 3 1)" \
+  "single-wave admission no longer implies scouts"
+assert_eq "0" "$(__dx_review_scout_parallelism 3 2)" \
+  "multi-wave admission does not either"
+assert_eq "0" "$(__dx_review_scout_parallelism 3 "$default_capacity")" \
+  "three-wave admission does not either"
 assert_eq "2" "$(DEX_REVIEW_SCOUT_PARALLELISM=2 __dx_review_scout_parallelism 3 1)" \
   "explicit scout parallelism"
 assert_eq "2" "$(DEX_REVIEW_SCOUT_PARALLELISM=3 __dx_review_scout_parallelism 2 1)" \
   "scout parallelism bounded by group count"
-if DEX_REVIEW_SCOUT_PARALLELISM=0 __dx_review_scout_parallelism 3 1 >/dev/null 2>&1; then
-  printf 'zero scout parallelism was accepted\n' >&2
+assert_eq "0" "$(DEX_REVIEW_SCOUT_PARALLELISM=0 __dx_review_scout_parallelism 3 1)" \
+  "an explicit zero is a value, not an error"
+if DEX_REVIEW_SCOUT_PARALLELISM=4 __dx_review_scout_parallelism 3 1 >/dev/null 2>&1; then
+  printf 'out-of-range scout parallelism was accepted\n' >&2
   exit 1
 fi
 

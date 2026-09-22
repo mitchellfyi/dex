@@ -50,7 +50,8 @@ MINIMAL_LOOP_DIR="$TMP_DIR/minimal-loops"
 mkdir -p "$MINIMAL_RUNTIME/hooks" "$MINIMAL_RUNTIME/lib" \
   "$MINIMAL_STATE_DIR" "$MINIMAL_LOOP_DIR"
 cp "$ROOT/hooks/session-end.sh" "$MINIMAL_RUNTIME/hooks/session-end.sh"
-cp "$ROOT/lib/common.sh" "$ROOT/lib/session.sh" "$MINIMAL_RUNTIME/lib/"
+cp "$ROOT/lib/common.sh" "$ROOT/lib/session.sh" "$ROOT/lib/session-process.sh" \
+  "$MINIMAL_RUNTIME/lib/"
 
 MINIMAL_SESSION_ID="minimal-session-end-test"
 MINIMAL_TIMES_FILE="$MINIMAL_STATE_DIR/${MINIMAL_SESSION_ID}.times"

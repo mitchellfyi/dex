@@ -405,13 +405,20 @@ dx_codex_mcp_server_exists() { __dx_mcp_server_exists codex "$1"; }
 DX_UI_MCP_SERVERS='playwright @playwright/mcp@latest
 chrome-devtools chrome-devtools-mcp@latest'
 
-# __dx_install_ui_mcp_servers <label> <cli> [scope args...]
+# __dx_install_ui_mcp_servers <label> <cli> [scope]
 # Install every browser MCP server for one agent CLI, skipping ones already
-# configured, upgrading only Dex’s original bare npx defaults.
+# configured, upgrading only Dex’s original bare npx defaults. An empty
+# scope is for a CLI that has none (Codex).
 __dx_install_ui_mcp_servers() {
-  local label="$1" cli="$2"
-  shift 2
-  local scope_args=("$@")
+  local label="$1" cli="$2" scope="${3:-}"
+  local scope_args=() legacy_scope_args=()
+  if [[ -n "$scope" ]]; then
+    scope_args=(--scope "$scope")
+    # browser-mcp-legacy.py only reads the user-scope registrations, so a
+    # legacy entry it recognises is always a user-scope one — whatever scope
+    # this install is adding into.
+    legacy_scope_args=(--scope user)
+  fi
 
   if ! command -v "$cli" >/dev/null 2>&1; then
     dx_skip "${label} CLI not found; skipping ${label} MCP browser servers"
@@ -427,7 +434,7 @@ __dx_install_ui_mcp_servers() {
         dx_ok "${label} MCP server '${name}' already configured"
         continue
       fi
-      if ! "$cli" mcp remove ${scope_args[@]+"${scope_args[@]}"} "$name" >/dev/null; then
+      if ! "$cli" mcp remove ${legacy_scope_args[@]+"${legacy_scope_args[@]}"} "$name" >/dev/null; then
         dx_warn "Could not upgrade ${label} MCP server '${name}'"
         failed=1
         continue
@@ -440,7 +447,7 @@ __dx_install_ui_mcp_servers() {
     else
       dx_warn "Could not install ${label} MCP server '${name}'"
       if [[ "$upgrading" == "1" ]]; then
-        "$cli" mcp add ${scope_args[@]+"${scope_args[@]}"} "$name" -- npx -y "$package" >/dev/null || dx_warn "Could not restore the previous browser MCP entry"
+        "$cli" mcp add ${legacy_scope_args[@]+"${legacy_scope_args[@]}"} "$name" -- npx -y "$package" >/dev/null || dx_warn "Could not restore the previous browser MCP entry"
       fi
       failed=1
     fi
@@ -451,19 +458,83 @@ EOF
   return "$failed"
 }
 
+# The Claude MCP scope Dex installs the browser servers into. User scope is the
+# default: one registration per machine, in the user's own configuration.
+# Project scope was the default briefly and was reverted — it writes an
+# absolute Dex path into the repository's tracked `.mcp.json`, and a lifecycle
+# worktree never sees that file, because dx_link_claude_to_worktree links
+# `.claude/` only. Keeping a browser out of a phase that needs none is the
+# minimal `--strict-mcp-config` launch's job, not the scope's. `--project` and
+# `--local` (or DEX_UI_MCP_SCOPE) stay as explicit choices; `local` is per
+# project but held in the user's own configuration rather than `.mcp.json`.
+DX_UI_MCP_DEFAULT_SCOPE=user
+
+# dx_ui_mcp_scope [requested] — print the Claude MCP scope an install should
+# use. Project scope writes `.mcp.json` into the current directory, so a
+# directory that is not a git checkout falls back to user scope and says so
+# instead of leaving a stray file wherever the install happened to run.
+dx_ui_mcp_scope() {
+  local requested="${1:-${DEX_UI_MCP_SCOPE:-$DX_UI_MCP_DEFAULT_SCOPE}}"
+  case "$requested" in
+    user|project|local) ;;
+    *)
+      dx_error "Unknown MCP scope: ${requested}. Use user, project, or local."
+      return 1
+      ;;
+  esac
+  if [[ "$requested" == "project" ]] \
+    && ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+    dx_warn "Not inside a git checkout; registering the browser MCP servers at user scope instead of project scope"
+    requested=user
+  fi
+  printf '%s\n' "$requested"
+}
+
+# dx_install_claude_ui_mcp_servers [scope]
+# A project-scope add writes `.mcp.json` into the *working directory*, not the
+# checkout root, so run it from the root — otherwise the file lands in
+# whichever subdirectory the caller was standing in and no other directory in
+# the repository sees it.
 dx_install_claude_ui_mcp_servers() {
-  __dx_install_ui_mcp_servers "Claude" claude --scope user
+  local resolved_scope repo_top
+  resolved_scope=$(dx_ui_mcp_scope "${1:-}") || return 1
+  if [[ "$resolved_scope" != "project" ]]; then
+    __dx_install_ui_mcp_servers "Claude" claude "$resolved_scope"
+    return $?
+  fi
+  if ! repo_top=$(git rev-parse --show-toplevel 2>/dev/null) || [[ -z "$repo_top" ]]; then
+    dx_warn "Could not resolve the checkout root for a project-scope MCP install"
+    return 1
+  fi
+  (
+    cd "$repo_top" || exit 1
+    __dx_install_ui_mcp_servers "Claude" claude "$resolved_scope"
+  )
 }
 
 dx_install_codex_ui_mcp_servers() {
   __dx_install_ui_mcp_servers "Codex" codex
 }
 
+# dx_install_ui_capture_tooling [--user|--project|--local]
 dx_install_ui_capture_tooling() {
-  local failed=0
+  local failed=0 requested=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --user) requested=user ;;
+      --project) requested=project ;;
+      --local) requested=local ;;
+      *)
+        dx_error "Unknown ui-capture install option: $1"
+        return 2
+        ;;
+    esac
+    shift
+  done
 
   dx_install_ui_capture_playwright || failed=1
-  dx_install_claude_ui_mcp_servers || failed=1
+  dx_install_claude_ui_mcp_servers "$requested" || failed=1
   dx_install_codex_ui_mcp_servers || failed=1
 
   return "$failed"

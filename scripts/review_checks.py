@@ -32,6 +32,7 @@ CONTROL_ENV = {
     "DEX_REVIEW_BUSY_TOKEN", "DEX_REVIEW_WAVE_NUMBER", "DEX_REVIEW_CLEAN_BEFORE",
     "DEX_REVIEW_REQUIRED_CLEAN", "DEX_REVIEW_CONTEXT_FILE",
     "DEX_REVIEW_INPUT_FILE", "DEX_REVIEW_CHECK_CACHE_SESSION",
+    "DEX_REVIEW_CONFIRMATION", "DEX_REVIEW_LEDGER_FILE",
 }
 
 
@@ -53,8 +54,18 @@ def regular_json(filename, maximum=262144):
 
 
 def validate_spec(spec):
-    """Validate a command and its declared non-checkout inputs."""
-    if not isinstance(spec, dict) or set(spec) != {"name", "argv", "cache", "inputs", "tools"}:
+    """Validate a command and its declared non-checkout inputs.
+
+    `autofix` is optional and the runner does nothing with it: it is how a
+    review wave declares that this command rewrites its own declared inputs
+    deterministically, which is the condition for reporting `MECHANICAL:N`
+    instead of an ordinary fix. Keeping it optional leaves every existing spec
+    — and its receipts — exactly as they were.
+    """
+    if (not isinstance(spec, dict)
+            or set(spec) - {"autofix"} != {"name", "argv", "cache", "inputs", "tools"}
+            or "name" not in spec
+            or not isinstance(spec.get("autofix", False), bool)):
         raise CheckError("Check spec needs name, argv, cache, inputs, and tools")
     if (not isinstance(spec["name"], str) or not 1 <= len(spec["name"]) <= 160
             or spec["name"] != spec["name"].strip()
@@ -163,11 +174,22 @@ def fingerprint(spec, bindings, environment, include_checkout=False):
     # This supervisor token identifies descendants for cancellation; checks
     # must not treat it as application data. Keep it on the launched process.
     effective.pop("DX_TIMEOUT_PROCESS_TOKEN", None)
-    payload = ["dex-review-check-v1", os.getcwd(), bindings, spec, effective,
-               list(os.uname())]
+    # A check that declares its inputs is bound to exactly those paths, so a fix
+    # elsewhere in the checkout leaves its receipt valid. A check that declares
+    # none keeps the whole checkout — and the caller's scope and working-tree
+    # fingerprints — as its binding, which is the safe default. The two modes
+    # carry different payload markers, so one can never reuse the other's key.
+    scoped = bool(spec["inputs"])
+    if scoped:
+        payload = ["dex-review-check-v1-inputs", os.getcwd(),
+                   ["scoped", "scoped", bindings[2], bindings[3]], spec,
+                   effective, list(os.uname())]
+    else:
+        payload = ["dex-review-check-v1", os.getcwd(), bindings, spec, effective,
+                   list(os.uname())]
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode())
     budget = [100000, 1024 * 1024 * 1024]
-    if include_checkout:
+    if include_checkout and not scoped:
         digest_checkout(digest, budget)
     for filename in sorted(set(spec["inputs"])):
         digest_path(Path(filename).absolute(), digest, budget=budget)

@@ -8,6 +8,8 @@
 
 Before stopping, critically audit your plan:
 
+Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start.
+
 Apply `prompts/issue-hygiene.md` if planning uncovered material context that
 changes the working issue, relates this work to another issue, or warrants a
 distinct follow-up. Keep related, bounded work in this plan and the same PR;
@@ -41,6 +43,12 @@ the contract's exact `Issue/PR work:` line.
      future maintenance?
    - If the best approach differs from the literal request, was that tradeoff
      surfaced to the user before approval?
+   - Is there a `## Coherence Contract` naming the canonical files to mirror,
+     the helpers and extension points to reuse, the project rules that apply,
+     the conventions of the touched area, and the docs, configuration, and
+     tests that must change with the code? Required unless the ticket is
+     expected to be `trivial` (docs-only, test-only, a pure rename), where one
+     line saying so is enough. Add it now if missing; keep it under a screen.
 
 5. DEPENDENCIES — Are tasks correctly ordered?
    - Would any task fail if run before another?
@@ -97,6 +105,8 @@ If you find gaps in any of the above, fix them and re-present the plan.
 - Edge cases are accounted for
 - The plan challenged the first apparent implementation and explains why the
   chosen approach fits the codebase better than rejected alternatives
+- A `## Coherence Contract` records what the change must mirror, reuse, and
+  change together, or the ticket is recorded as trivial
 - Current best-practice claims are backed by primary sources or explicitly
   marked as unavailable when online research tools were not available
 - Every material risk has a mitigation, fallback, or explicit user acceptance

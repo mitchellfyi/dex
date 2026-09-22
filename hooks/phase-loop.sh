@@ -518,7 +518,7 @@ EOF
       ;;
     3)
       cat <<'EOF'
-Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop". Use the current Phase 2 risk selection: small requires 1, normal 2, and complex 3 consecutive independent CLEAN waves. Each fresh wave builds its own context pack, runs deterministic checks and parallel read-only domain scouting, verifies findings, batch-fixes safe issues, and rechecks. Any fix resets the clean streak. Residual findings, blockers, churn, invalid results, or provider failures pause the loop instead of counting as clean. Phase focus: review and fixes. Commit and push accepted review fixes as small coherent checkpoints from the active wave; do not wait for Phase 4 or final verification, and keep failed or pending checks explicit. Do not switch branches or create or update a PR. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance.
+Begin Phase 3: Review. Invoke the Skill tool with skill: "dxreviewloop". Use the current Phase 2 risk selection: trivial and small require 1, normal 2, and complex 3 consecutive independent clean waves (CLEAN or NOTES:N). Each fresh wave builds its own context pack, runs deterministic checks and its domain lenses in sequence, verifies findings, batch-fixes safe issues, and rechecks. Any fix, MECHANICAL:N included, resets the clean streak. Residual findings, blockers, churn, invalid results, or provider failures pause the loop instead of counting as clean. Phase focus: review and fixes. Commit and push accepted review fixes as small coherent checkpoints from the active wave; do not wait for Phase 4 or final verification, and keep failed or pending checks explicit. Do not switch branches or create or update a PR. When the loop writes a valid success receipt, stop so the Stop hook can audit and advance.
 EOF
       ;;
     4)
@@ -528,7 +528,7 @@ EOF
       ;;
     5)
       cat <<'EOF'
-Begin Phase 5: PR. Invoke the Skill tool with skill: "dxpr" to generate the PR description, create or update the PR, attach current UI proof media when GitHub CLI supports it, attach configured request reviewers, and mark the PR ready for review. Use a warned local handoff when automatic attachment is unavailable or incomplete. Do not stop while the PR is still a draft. @mention comments, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop so the Stop hook can audit and advance.
+Begin Phase 5: PR. Invoke the Skill tool with skill: "dxpr" to generate the PR description, create or update the PR, attach current UI proof media when GitHub CLI supports it, attach configured request reviewers, and mark the PR ready for review. Use a warned local handoff when automatic attachment is unavailable or incomplete. Do not stop while the PR is still a draft, unless .dex/dex.md § Resources declares full_gate: ci, which leaves it a draft for Phase 6 to mark ready once CI is green. @mention comments, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop so the Stop hook can audit and advance.
 EOF
       ;;
     6)
@@ -1169,6 +1169,7 @@ if [[ "$CONTROL_VALID" -eq 1 ]]; then
             printf '\n--- Dex phase changed by %s ---\n\n' "$CONTROL_ACTOR"
             printf 'Continue at Phase %s (%s). Earlier gates carry explicit override outcomes in the lifecycle ledger.\n\n' \
               "$CONTROL_TARGET" "$(dx_phase_name "$CONTROL_TARGET")"
+            printf '%s\n\n' "$(dx_host_handoff_line)"
             dx_inline_phase_message "$CONTROL_TARGET"
           } >&2
           exit 2
@@ -1636,7 +1637,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
       printf '%s\n' '```bash' >&2
       printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
       printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
-      printf '%s\n' "printf '%s\n' '<CLEAN|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|CHURN:reason|ESCALATE:normal:reason|ESCALATE:complex:reason>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
+      printf '%s\n' "printf '%s\n' '<CLEAN|NOTES:N|MECHANICAL:N|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|CHURN:reason|ESCALATE:normal:reason|ESCALATE:complex:reason>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
       printf '%s\n' '```' >&2
       printf '%s\n' "" >&2
       dx_print_rejected_receipt_command
@@ -1760,13 +1761,13 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
       printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
       printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
       printf '%s\n' "" >&2
-      printf '%s\n' "Choose the review risk tier for the implementation you just completed: small, normal, or complex. Use the ordered rubric in prompts/review-risk-assessment.md and persist comma-separated reason codes." >&2
+      printf '%s\n' "Choose the review risk tier for the implementation you just completed: trivial, small, normal, or complex. Use the ordered rubric in prompts/review-risk-assessment.md and persist comma-separated reason codes." >&2
       printf '%s\n' "" >&2
       printf '%s\n' "Record the current-scope choice, then stop again:" >&2
       printf '%s\n' '```bash' >&2
       printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
       printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
-      printf '%s\n' "dx_review_write_selection \"\$SESSION_ID\" \"<small|normal|complex>\" \"lifecycle-agent\" \"<comma-separated-reason-codes>\" \"\$PWD\"" >&2
+      printf '%s\n' "dx_review_write_selection \"\$SESSION_ID\" \"<trivial|small|normal|complex>\" \"lifecycle-agent\" \"<comma-separated-reason-codes>\" \"\$PWD\"" >&2
       printf '%s\n' '```' >&2
       printf '%s\n' "" >&2
       dx_print_rejected_receipt_command
@@ -1950,6 +1951,9 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
     HANDOFF_REASON=$(
       printf '%s\n\n' "Dex Phase Handoff: Phase ${CURRENT_PHASE} complete → Phase ${NEXT_PHASE} ($(dx_phase_name "$NEXT_PHASE"))"
       printf '%s\n\n' "Continue in this same agent session. Do not ask the user whether to proceed."
+      # An inline handoff does not relaunch the provider, so the snapshot it was
+      # started with is as old as the session. This line is the refresh.
+      printf '%s\n\n' "$(dx_host_handoff_line)"
       dx_inline_phase_message "$NEXT_PHASE"
       printf '\n%s\n' "When Phase ${NEXT_PHASE} is genuinely complete, stop so the Stop hook can audit it."
     )

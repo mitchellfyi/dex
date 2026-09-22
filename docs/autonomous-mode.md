@@ -94,10 +94,10 @@ phase reports issue and PR work explicitly, including unchanged and N/A cases.
 
 The review audit (Phase 3) is risk-selected. After the final Phase 2 in-scope
 change, the implementation agent applies the ordered rubric and records the
-highest matching tier with bounded reason codes. `small` maps to a `light`
-profile, `normal` maps to `standard`, and `complex` maps to `thorough`. The
-global consecutive clean-wave requirements are 1, 2, and 3, and the
-corresponding soft outer-wave budgets are 3, 6, and 9. Trust boundaries;
+highest matching tier with bounded reason codes. `trivial` and `small` map to a
+`light` profile, `normal` maps to `standard`, and `complex` maps to `thorough`.
+The global consecutive clean-wave requirements are 1, 1, 2, and 3, and the
+corresponding soft outer-wave budgets are 2, 3, 6, and 9. Trust boundaries;
 authentication, authorization, permissions, secrets, payments, or destructive
 behavior; persistence, schemas, or migrations; public API, CLI, configuration,
 or compatibility contracts; concurrency or process lifecycle; hooks, guards,
@@ -105,7 +105,12 @@ CI, deployment, or packaging; broad cross-module behavior; and material
 uncertainty that prevents the supplied scope or its verification from being
 bounded require `complex` review.
 
-The 1/2/3 policy is fixed across repositories. Dex stores its binding in the
+A documentation-only or test-only change, a rename with no behavior change, or
+a dependency bump whose full gate is green is `trivial`: one clean wave, at
+most two waves of budget, with the coherence lens still required. The tier is
+also derived from the measured diff at wave time and can only be raised by it.
+
+The 1/1/2/3 policy is fixed across repositories. Dex stores its binding in the
 selection, resumable state, pass evidence, clean ledger, and final receipt.
 `DEX_REVIEW_CLEAN_PASSES` may raise the requirement for a run, but it cannot
 lower it.
@@ -223,7 +228,23 @@ that fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
 fresh review of the updated scope. A valid upward escalation also resets the
 counter. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid
 results, provider failures, and deterministic findings-fingerprint churn pause
-the loop. Spending the selected tier's 3/6/9 wave budget also pauses the loop
+the loop. A `NOTES:N` wave counts as clean and carries N items below the
+finding bar into the ledger and the PR body. A `MECHANICAL:N` wave applied N
+deterministic autofixes from a check that declared `autofix: true`, with every
+changed path inside that check's declared `inputs`, and found nothing else.
+Because a wave declares that itself, the attestation does not take its word for
+anything: clean credit resets with the fingerprint, the findings history is
+appended so the repeated- and alternating-fingerprint churn detector sees a
+formatter that keeps rewriting the tree, and the deterministic floor is
+re-derived so an autofix on a sensitive path can still raise the tier. The
+relief is operational and bounded: one mechanical wave per loop does not spend
+the wave budget, and the wave after it reviews that delta rather than the whole
+scope — but the pass that would be declared clean reviews the whole diff under
+the coherence lens as always. Anything outside the subset test is an ordinary
+fix. The loop writes
+`CHURN:no-convergence` when findings have not fallen across three consecutive
+passes that each found something, and stops for a human.
+Spending the selected tier's 2/3/6/9 wave budget also pauses the loop
 without discarding valid clean credit. An attributed `review.max-waves`
 override from an agent or human can change that operational budget while the
 loop is running; it does not lower the clean-pass assurance gate.
@@ -377,7 +398,7 @@ The built-in operational gates are:
 | `phase.min-audits` | Minimum Stop-hook audits before normal completion |
 | `loop.max-iterations`, `loop.stall-timeout`, `loop.stall-escalate` | Audit-loop attempt and stall budgets |
 | `review.clean-passes` | Effective target from 1 through 30; lowering the trusted tier target requires real clean waves and records Phase 3 as waived |
-| `review.max-waves` | Effective outer-wave budget from 1 through 30; defaults to 3/6/9 for small/normal/complex and pauses without changing assurance when exhausted |
+| `review.max-waves` | Effective outer-wave budget from 1 through 30; defaults to 2/3/6/9 for trivial/small/normal/complex, is not spent by a confirmation pass that stays clean, and pauses without changing assurance when exhausted |
 | `review.pass-timeout`, `review.recheck-seconds` | Review provider and quiet Phase 3 recheck budgets; `0` disables the provider deadline |
 | `watch.pause-ttl`, `watch.cycle-timeout`, `watch.command-timeout` | Phase 6 watcher pause, lease, and command budgets |
 | `complete.max-cycles`, `complete.wait-minutes` | Phase 6 idle-cycle and wait defaults |
@@ -912,19 +933,22 @@ use an override-bound lower target; other assurance gates use
 | `DEX_HEADLESS_RUN_SPEC_FILE` | unset | Normalized run spec path passed into the launched lifecycle |
 | `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | spec value | Whether Phase 1 must wait for interactive plan approval |
 | `DEX_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DEX_PHASE_2_MIN_AUDITS=5`) |
-| `DEX_REVIEW_TIER` | agent-selected | Canonical explicit risk-tier override: `small`, `normal`, or `complex`; takes precedence over the legacy profile alias |
+| `DEX_REVIEW_TIER` | agent-selected | Canonical explicit risk-tier override: `trivial`, `small`, `normal`, or `complex`; takes precedence over the legacy profile alias |
 | `DEX_REVIEW_PROFILE` | unset | Legacy alias: `light`, `standard`, or `thorough` map to `small`, `normal`, or `complex` |
 | `DEX_REVIEW_CLEAN_PASSES` | resolved policy | Launch-only higher consecutive `CLEAN` requirement; use the attributed `review.clean-passes` session override to lower or change a running loop |
 | `DEX_REVIEW_PASS_TIMEOUT` | profile-based | Seconds a review wave or risk assessment may run before its provider process tree is stopped and review pauses; defaults are 15 minutes for risk assessment and light waves, 30 minutes for standard waves, and 60 minutes for thorough waves; `0` disables the timeout |
 | `DEX_REVIEW_PASS_RECHECK_SECONDS` | `45` (45s) | Seconds the Stop hook quietly polls for a busy Phase 3 review pass to finish before re-blocking |
-| `DEX_REVIEW_MAX_ACTIVE_WAVES` | `3` | Host-wide active review-wave limit from 1 to 8 across separate checkouts; set to 1 to return to single-wave admission |
+| `DEX_REVIEW_MAX_ACTIVE_WAVES` | host cores/memory-derived (1-8) | Host-wide active review-wave limit across separate checkouts, derived the way `lib/review-capacity.sh`'s `dx_review_capacity_limit` derives it: `max(1, min(cpus/4, mem_gb/8))` clamped to 8; set an explicit 1-8 override, or 1 to return to single-wave admission |
 | `DEX_REVIEW_MAX_ACTIVE_CHECKS` | `1` | Host-wide active commands through the review check runner, from 1 to 8; separate from model admission |
-| `DEX_REVIEW_CHECK_TIMEOUT` | `900` | Maximum seconds for check admission and, separately, command execution; the outer wave timeout still applies |
-| `DEX_REVIEW_SCOUT_PARALLELISM` | capacity-aware | Concurrent scouts per wave from 1 to 3; coverage groups that cannot run concurrently stay with the top-level reviewer |
+| `DEX_REVIEW_CHECK_TIMEOUT` | `900` | Execution budget for one check. A command past it is reported `over-budget`, not stopped: its real exit code and duration are recorded and cached |
+| `DEX_REVIEW_CHECK_HARD_TIMEOUT` | `4 ×` the execution budget | The only deadline that stops a check; reaching it is exit 124 with no reusable result |
+| `DEX_REVIEW_CHECK_QUEUE_TIMEOUT` | `0` | Seconds a check may wait for the host check pool; `0` waits with a heartbeat. A spent cap is exit 75 with a `queued` line, meaning nothing ran |
+| `DEX_REVIEW_CHECK_HEARTBEAT_SECONDS` | `30 × DEX_REVIEW_CAPACITY_RECHECK_SECONDS` | How often a queued check prints its queue position and the age of the oldest running check |
+| `DEX_REVIEW_SCOUT_PARALLELISM` | `0` | Provider-native scouts per wave, 0 to 3. `0` — the default in every tier — runs the lens groups in sequence in the wave's own reviewer; only `thorough` on an idle host with a diff above `review_scout_min_files` turns them on by itself |
 | `DEX_REVIEW_TEST_JOBS` | capacity-aware (max `4`) | Per-wave test-runner job limit from 1 to 32; also exported as `DX_TEST_JOBS` for Dex's manifest runner |
 | `DEX_TEST_JOBS` | capacity-aware (max `4`) | Host-wide test-runner job budget for every Dex-launched session, exported as `DX_TEST_JOBS` plus the runner variables in [host-budget.md](host-budget.md); `DEX_REVIEW_TEST_JOBS` still wins inside a wave |
 | `DEX_MIN_FREE_MEMORY_PERCENT` | `10` | A review wave that would join others already running waits until free memory is above this; the first wave is always admitted; `0` disables |
-| `DEX_MAX_CONCURRENT_SUBAGENTS` | `4` | Cap on concurrent subagents per Dex-launched session; waves are capped at their scout parallelism |
+| `DEX_MAX_CONCURRENT_SUBAGENTS` | `4` | Cap on concurrent subagents per Dex-launched session; waves are capped at their scout parallelism, or at 1 when it is 0 |
 | `DEX_MAX_SUBAGENT_SPAWN_DEPTH` | `2` | Cap on subagent nesting per Dex-launched session; waves use 1 |
 | `DEX_WORKTREE_SHARED_DIRS` | `node_modules target .venv vendor .next .nuxt` | Ignored directories a new worktree links from the main checkout instead of rebuilding |
 | `DEX_WATCH_CYCLE_TIMEOUT_SECONDS` | `120` (2m 0s) | Maximum runtime budget for one scheduled Phase 6 watcher invocation. A cycle that outruns it hands the lease to the next tick; a watcher that exits hands it over immediately, without waiting out the budget. `0` means no budget, as it does for the phase timeouts |
@@ -965,7 +989,7 @@ timeout it is enforcing. A retried command can change that fallback bound with
 ### Loop doesn't stop
 
 The phase Stop-hook audit pauses after `DEX_LOOP_MAX_ITERATIONS` attempts. The
-outer review loop uses the selected tier's 3/6/9 soft wave budget and pauses
+outer review loop uses the selected tier's 2/3/6/9 soft wave budget and pauses
 when it is spent. Raise `review.max-waves` with an attributed override when the
 evidence warrants another wave. Press Ctrl+C to interrupt immediately;
 unchanged review state can resume later.

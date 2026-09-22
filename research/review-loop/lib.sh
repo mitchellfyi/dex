@@ -260,7 +260,10 @@ if deadline_text:
     timeout = min(timeout, remaining)
 subprocess_environment = {
     key: os.environ[key]
-    for key in ("LANG", "LC_ALL", "PATH", "TMPDIR")
+    # The toolchain-manager homes ride along with PATH: a volta, asdf, rbenv,
+    # pyenv, fnm or nvm shim on PATH resolves nothing without its home.
+    for key in ("LANG", "LC_ALL", "PATH", "TMPDIR", "VOLTA_HOME", "ASDF_DIR",
+                "ASDF_DATA_DIR", "RBENV_ROOT", "PYENV_ROOT", "FNM_DIR", "NVM_DIR")
     if key in os.environ
 }
 
@@ -387,7 +390,10 @@ if deadline_text and not deadline_text.isdigit():
     raise SystemExit("invalid review evaluation trial deadline")
 subprocess_environment = {
     key: os.environ[key]
-    for key in ("LANG", "LC_ALL", "PATH", "TMPDIR")
+    # The toolchain-manager homes ride along with PATH: a volta, asdf, rbenv,
+    # pyenv, fnm or nvm shim on PATH resolves nothing without its home.
+    for key in ("LANG", "LC_ALL", "PATH", "TMPDIR", "VOLTA_HOME", "ASDF_DIR",
+                "ASDF_DATA_DIR", "RBENV_ROOT", "PYENV_ROOT", "FNM_DIR", "NVM_DIR")
     if key in os.environ
 }
 rows = []
@@ -1283,7 +1289,12 @@ def version(command):
             stderr=subprocess.STDOUT,
             text=True,
             timeout=10,
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            # PATH plus the toolchain-manager homes its shims need (volta, asdf,
+            # rbenv, pyenv, fnm, nvm); without them `node` fails under a bare env.
+            env={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                **{key: os.environ[key] for key in ("VOLTA_HOME", "ASDF_DIR", "ASDF_DATA_DIR", "RBENV_ROOT", "PYENV_ROOT", "FNM_DIR", "NVM_DIR") if key in os.environ},
+            },
         )
     except (OSError, subprocess.SubprocessError):
         return "unavailable"
@@ -1617,9 +1628,20 @@ __review_eval_run_provider() {
 
   (
     builtin cd "$workspace" || exit 2
+    # PATH reaches a shim-based toolchain (volta, asdf, rbenv, pyenv, fnm, nvm), but a
+    # shim resolves its real binary through a home that defaults to a path under
+    # $HOME; with HOME replaced it finds nothing and `node` exits 126. Forward each
+    # manager's home when the caller has one.
     exec env -i \
       HOME="$trial_home" \
       PATH="${PATH:-/usr/bin:/bin}" \
+      ${VOLTA_HOME:+VOLTA_HOME="$VOLTA_HOME"} \
+      ${ASDF_DIR:+ASDF_DIR="$ASDF_DIR"} \
+      ${ASDF_DATA_DIR:+ASDF_DATA_DIR="$ASDF_DATA_DIR"} \
+      ${RBENV_ROOT:+RBENV_ROOT="$RBENV_ROOT"} \
+      ${PYENV_ROOT:+PYENV_ROOT="$PYENV_ROOT"} \
+      ${FNM_DIR:+FNM_DIR="$FNM_DIR"} \
+      ${NVM_DIR:+NVM_DIR="$NVM_DIR"} \
       LANG="${LANG:-}" \
       LC_ALL="${LC_ALL:-}" \
       TMPDIR="${TMPDIR:-/tmp}" \
@@ -1666,6 +1688,9 @@ child_environment = {
     "HOME": trial_home,
     "CODEX_HOME": str(Path(trial_home) / ".codex"),
     "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    # The toolchain-manager homes PATH's shims resolve through (volta, asdf,
+    # rbenv, pyenv, fnm, nvm); a shim with no home finds no toolchain.
+    **{key: os.environ[key] for key in ("VOLTA_HOME", "ASDF_DIR", "ASDF_DATA_DIR", "RBENV_ROOT", "PYENV_ROOT", "FNM_DIR", "NVM_DIR") if key in os.environ},
     "LANG": os.environ.get("LANG", ""),
     "LC_ALL": os.environ.get("LC_ALL", ""),
     "TMPDIR": os.environ.get("TMPDIR", "/tmp"),

@@ -217,7 +217,7 @@ env_value: optional-exact-value
   `warn-claude-attribution`, `warn-destructive-commands`, `warn-raw-codex-delegation`,
   `warn-review-assessment-bash`, `warn-review-assessment-file-edits`,
   `warn-await-in-loop`, `warn-hardcoded-secrets`, `warn-sensitive-files`,
-  `warn-ccr-live-state`
+  `warn-ccr-live-state`, `warn-detached-processes`
 - Every built-in guard advises rather than denies. The message reaches the agent as context
   and the tool call proceeds — the agent is expected to read it and decide, which is why the
   wording is guidance rather than a verdict. `action: block` still works for anyone who wants
@@ -241,7 +241,7 @@ Stored in `prompts/`. Skills reference them by plain repo-relative path, e.g.
 "read the implementation guardrails from `prompts/guardrails.md`".
 
 - `guardrails.md` — Implementation discipline (shared across implement/review skills)
-- `review-risk-assessment.md` — Deterministic small/normal/complex review-tier selection before review waves
+- `review-risk-assessment.md` — Deterministic trivial/small/normal/complex review-tier selection before review waves
 - `review.md` — 12-pass review criteria (A-L) with confidence scoring
 - `review-wave.md` — Review-wave contract and domain output schema (used by `/dxreview --single-pass` and Phase 3)
 - `commit-format.md` — Conventional Commits specification
@@ -330,7 +330,7 @@ Hooks defined in `settings.json`, referenced by paths to Dex scripts:
 | PostToolUse | `Bash` | `post-commit-guard.sh` | Validate commit format via guards |
 | Stop | Interactive agent tries to stop | `phase-loop.sh`, `stop-sound.sh` | Phase audit loop (when active) plus best-effort macOS sound notification |
 | PreCompact | Before compaction | `pre-compact.sh` | Preserve Dex context across compaction |
-| SessionEnd | Session ends | `session-end.sh` | Record session end metadata |
+| SessionEnd | Session ends | `session-end.sh` | Record session end metadata, reap the processes the session owns, remove its temp root |
 
 ### Phase audit loops
 
@@ -367,8 +367,27 @@ agent --reason ...` command instead of deleting state by hand. Use it only for
 the dead-owner diagnosis: it refuses live or malformed state, revokes
 completion, and leaves Phase 3 paused for `/dxresume` or `/dxskip`.
 
-The outer review loop is separate. The Phase 2 agent selects `small`, `normal` or `complex`;
-those map to consecutive-clean requirements of 1, 2 and 3 and soft wave budgets of 3, 6 and 9.
+The outer review loop is separate. The Phase 2 agent selects `trivial`, `small`, `normal` or
+`complex`; those map to consecutive-clean requirements of 1, 1, 2 and 3 and soft wave budgets
+of 2, 3, 6 and 9. `dx_review_scope_minimum_tier` derives a tier from the measured diff — files,
+lines, sensitive surfaces the project declared under `## Resources`, dependency manifests, a
+green gate receipt — and that floor can only raise the selection, never lower it.
+
+One reviewer per wave runs the domain lenses in sequence; `DEX_REVIEW_SCOUT_PARALLELISM` is 0
+by default and provider-native scouts return only for `thorough` on an idle host with a large
+diff. A wave reads and appends to the session's findings ledger
+(`dx_review_findings_ledger_*`, `<session>.review-findings.json`), which is a working aid
+outside the attestation chain. `NOTES:N` is a clean wave carrying N items below the finding
+bar; `MECHANICAL:N` is a deterministic autofix inside one check's declared inputs. The attestation
+never depends on a wave calling its own change mechanical, so it is a fix in every way that
+protects the chain — clean credit resets, the findings history and the churn detector see it,
+and the deterministic floor may raise the tier. The relief is operational only: one mechanical
+wave per loop does not spend the wave budget, and the next wave reviews that delta, while the
+pass that would be declared clean still reviews the whole diff. The loop writes
+`CHURN:no-convergence` when findings stop falling across three passes.
+Per-lens clean status deliberately does not exist — a fix moves the tree, so the streak resets
+as a whole, and the ledger's lens and file columns are what make the next pass cheap instead.
+`dx review stats` reports what the loop has actually cost, per tier, from the run journals.
 
 - Every assessor and wave gets a temporary pass-scoped copy of the approved criteria.
 - The sealed criteria hash and global policy bind to resumable state, the risk selection,
@@ -381,6 +400,66 @@ those map to consecutive-clean requirements of 1, 2 and 3 and soft wave budgets 
   credit. An attributed `review.max-waves` override changes the budget, never the assurance.
 - Changed or partly covered criteria, residual findings, blockers, churn, invalid results and
   provider failures also pause the loop.
+
+### Session process ownership
+
+The provider session opens its session token file on **fd 8** and exports
+`DX_SESSION_PROCESS_TOKEN`, so every descendant carries both — including one
+that later `nohup`/`disown`/`setsid`s itself out of the process tree, where a
+PPID walk can no longer reach it. `dx_run_with_timeout` keeps its own
+per-command token on fd 9; the two never share a descriptor, so a timed gate
+inside a session cannot take the session's other processes with it.
+
+Session end reaps what the token identifies (TERM, grace, KILL) and removes
+`DX_SESSION_TMP`, the temp root every session-scoped scratch file belongs
+under — one per lifecycle phase, since a provider session is one phase. Go
+through `dx_session_finish_processes`: it prints what it
+stopped and keeps the token when something survived, because the token is the
+only way to find that process again. A reap pass never signals the caller's own
+ancestry. Removing a session's state files (`dx_cleanup_session`) stops
+nothing — its callers include a sweep that can name a live session. `dx control
+pause` and `dx control detach` stop nothing either; `stop`/`cancel` stop only
+what already left the provider's tree. `dx ps` shows the same ownership
+read-only, and `dx ps --reap-orphans` is the only path that stops anything on
+request. See docs/events.md § Session Process Ownership for the
+`session.reaped` journal.
+
+Limit worth knowing: on macOS a descendant that both closes inherited
+descriptors and starts a new session is only reachable when the host will
+describe its environment, which it refuses for platform binaries such as
+`/bin/sleep`. Linux reads `/proc/<pid>/environ` and has no such gap.
+
+### Host-wide admission for heavy work
+
+`lib/review-capacity.sh` owns one FIFO lease mechanism with three named pools:
+`waves`, `checks`, and `heavy` for project gates, test suites and builds in any
+phase; a dev server is never leased — it starts directly and is session-owned.
+Reach a pool through `dx_capacity_pool_wait`,
+`dx_capacity_pool_release` and their siblings rather than setting
+`DX_REVIEW_CAPACITY_DIR` yourself. `heavy`'s limit comes from measured host
+facts in `lib/host-budget.sh` — `max(1, min(cpus/4, mem_gb/8))`, capped at 8,
+overridable with `DEX_MAX_ACTIVE_HEAVY`.
+
+`dx run-gate <command…>` is how a heavy command runs: it leases, waits with a
+heartbeat that never fails on wait time, sets the parallelism variables the
+project declared, runs at reduced priority (`nice`, plus `taskpolicy` on macOS
+or `ionice`/`systemd-run` on Linux when they work — probed, never assumed),
+logs to `$DX_SESSION_TMP/gates/`, and writes a receipt under
+`$DX_LOOP_DIR/<session>.gate-receipts/` keyed by the checkout and working
+fingerprints. `dx_gate_receipt_lookup` reads those receipts back. A completed
+result is never discarded, pass or fail.
+
+Every host fact is measured at runtime on both platforms with a conservative
+fallback that is recorded (`DX_HOST_FALLBACKS=fallback=mem_gb`), never
+hard-coded. `dx_host_snapshot` exports `DX_HOST_CPUS`, `DX_HOST_MEM_GB`,
+`DX_HOST_LOAD1`, `DX_HOST_ACTIVE_SESSIONS`, `DX_HOST_ACTIVE_HEAVY` and
+`DX_TEST_JOBS` to every provider launch, and `dx_host_handoff_line` refreshes
+the same numbers in each phase handoff. See docs/host-budget.md.
+
+A project declares its own resource facts in a fenced YAML block under
+`## Resources` in `.dex/dex.md` (`parallelism_env`, `heavy_commands`,
+`targeted_tests`). Read it only through `dx_project_contract_values`; an absent
+section means "Dex decides" and must change nothing.
 
 ### Session IDs
 

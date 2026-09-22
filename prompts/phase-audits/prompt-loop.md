@@ -128,7 +128,9 @@ Run /dxverify to execute the full quality verification pipeline:
 2. Lint — auto-fix where possible, manual fix where not
 3. Type-check — fix type errors
 4. Code generation — if applicable, run generators and check for uncommitted changes
-5. Test — run the full test suite once, within `DX_TEST_JOBS` workers
+5. Test — the full suite once for this tree, within `DX_TEST_JOBS` workers and
+   through `dx run-gate --name full-gate`, or a matching `full-gate` receipt
+   that already covers it (`bash "$DEX_DIR/bin/gate-receipt.sh" full-gate`)
 
 If any check fails, fix and re-run within the current budget from
 `prompts/failure-recovery.md`. If it still fails, run the exact generation-bound

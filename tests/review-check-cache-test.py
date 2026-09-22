@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -31,12 +32,84 @@ class ReviewCheckCacheTest(unittest.TestCase):
     def test_same_inputs_have_same_key(self):
         self.assertEqual(self.key(), self.key())
 
-    def test_each_binding_invalidates(self):
-        original = self.key()
+    def test_each_binding_invalidates_without_declared_inputs(self):
+        spec = {**self.spec, "inputs": []}
+        original = self.key(spec=spec)
         for index in range(4):
             bindings = self.bindings.copy()
             bindings[index] = "d" * 64
+            self.assertNotEqual(original, self.key(spec=spec, bindings=bindings))
+
+    def test_declared_inputs_scope_the_key_to_those_paths(self):
+        """Declaring inputs narrows the binding to them.
+
+        The scope and working-tree fingerprints are whole-checkout values, so
+        keeping them in the key would mean any fix anywhere invalidated the
+        receipt — the rule this replaces. The criteria and policy bindings stay:
+        they say what the check was run to prove.
+        """
+        original = self.key()
+        for index in (0, 1):
+            bindings = self.bindings.copy()
+            bindings[index] = "d" * 64
+            self.assertEqual(original, self.key(bindings=bindings))
+        for index in (2, 3):
+            bindings = self.bindings.copy()
+            bindings[index] = "d" * 64
             self.assertNotEqual(original, self.key(bindings=bindings))
+
+    def test_scoped_and_unscoped_keys_never_collide(self):
+        self.assertNotEqual(self.key(), self.key(spec={**self.spec, "inputs": []}))
+
+    def test_autofix_is_optional_and_declared(self):
+        """`autofix` is how a wave earns the right to report MECHANICAL:N.
+
+        The runner does nothing with it, but it is part of the spec, so it is
+        part of the key: a command that starts rewriting its inputs must not
+        reuse the receipt it earned while it did not.
+        """
+        checks.validate_spec({**self.spec, "autofix": True})
+        self.assertNotEqual(self.key(), self.key(spec={**self.spec, "autofix": True}))
+        for invalid in ({**self.spec, "autofix": "yes"}, {**self.spec, "unknown": 1}):
+            with self.assertRaises(checks.CheckError):
+                checks.validate_spec(invalid)
+
+    def test_unrelated_checkout_change_keeps_a_scoped_receipt(self):
+        """The point of the narrowing: a fix elsewhere is not this check's problem."""
+        repo = self.root / "repo"
+        (repo / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        watched = repo / "src" / "watched.txt"
+        watched.write_text("watched")
+        (repo / "src" / "other.txt").write_text("other")
+        for command in (["add", "-A"], ["-c", "user.email=d@e.test", "-c",
+                                        "user.name=Dex", "commit", "-qm", "init"]):
+            subprocess.run(["git", "-C", str(repo), *command], check=True)
+        scoped = {**self.spec, "inputs": [str(watched)]}
+        unscoped = {**self.spec, "inputs": []}
+        previous = os.getcwd()
+        os.chdir(repo)
+        try:
+            scoped_before = checks.fingerprint(
+                scoped, self.bindings, {"PATH": os.environ["PATH"]},
+                include_checkout=True)
+            unscoped_before = checks.fingerprint(
+                unscoped, self.bindings, {"PATH": os.environ["PATH"]},
+                include_checkout=True)
+            (repo / "src" / "other.txt").write_text("other, edited")
+            self.assertEqual(scoped_before, checks.fingerprint(
+                scoped, self.bindings, {"PATH": os.environ["PATH"]},
+                include_checkout=True))
+            self.assertNotEqual(unscoped_before, checks.fingerprint(
+                unscoped, self.bindings, {"PATH": os.environ["PATH"]},
+                include_checkout=True))
+            # A change to a declared input still invalidates its receipt.
+            watched.write_text("watched, edited")
+            self.assertNotEqual(scoped_before, checks.fingerprint(
+                scoped, self.bindings, {"PATH": os.environ["PATH"]},
+                include_checkout=True))
+        finally:
+            os.chdir(previous)
 
     def test_command_and_environment_invalidate(self):
         self.assertNotEqual(self.key(), self.key(spec={**self.spec, "argv":

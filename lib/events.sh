@@ -695,6 +695,32 @@ __dx_event_release_lock() {
   dx_lock_release "$1" "events-$DX_LOCK_SELF_PID" || true
 }
 
+# dx_event_json_string <value> [max-characters] — one quoted JSON string
+#
+# Event payloads are assembled with printf templates. That is safe for a
+# number and for a value Dex itself constrains, and unsafe for anything that
+# came from a command line, a filesystem path or host output: one embedded
+# quote, backslash or newline and the event line stops being JSON at all.
+# Interpolate the result with a bare %s — it brings its own quotes.
+dx_event_json_string() {
+  DX_EVENT_JSON_VALUE="${1:-}" DX_EVENT_JSON_LIMIT="${2:-0}" python3 - <<'PY'
+import json
+import os
+
+value = os.environ.get("DX_EVENT_JSON_VALUE", "")
+# Environment bytes that are not valid UTF-8 arrive as lone surrogates, which
+# json.dumps will happily write and a strict reader will reject.
+value = value.encode("utf-8", "replace").decode("utf-8", "replace")
+try:
+    limit = int(os.environ.get("DX_EVENT_JSON_LIMIT", "0"))
+except ValueError:
+    limit = 0
+if limit > 0:
+    value = value[:limit]
+print(json.dumps(value))
+PY
+}
+
 dx_event_emit() {
   local run_id="$1" event_type="$2" severity="${3:-info}" message="${4:-}"
   local phase="${5:-}" data_json="${6:-}"

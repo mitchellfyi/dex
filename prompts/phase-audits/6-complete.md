@@ -5,11 +5,18 @@ review comments through the PR watcher, address failures, and close the ticket
 once CI is green and actionable review feedback is resolved. Do not merge the
 PR.
 
+When `.dex/dex.md` § Resources declares `full_gate: ci`, Phase 5 deliberately
+left the PR a draft and CI is this ticket's complete gate: fix and re-push
+through this same loop until it is green, then mark the PR ready before
+completing. CI is the final arbiter either way.
+
 This phase runs as a **cycle loop**. Each cycle is one Stop hook iteration. Between cycles you wait — the loop infrastructure handles wall-clock time, not you.
 
 Before posting PR comments, ticket updates, or free-form status summaries, invoke
 the `humanizer` skill. Preserve reviewer handles, PR numbers, ticket IDs,
 commands, counts, status labels, and required audit wording exactly.
+
+Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start, the PR watcher loop included.
 
 Apply `prompts/issue-hygiene.md` whenever CI, review comments, or completion
 work reveals material new context. Reconcile accepted findings once through
@@ -253,5 +260,7 @@ or `/dxcomplete` to resume completion.
   block Phase 6. Report merge-review state in the maintainer handoff.
 - Material CI and review findings were handled under
   `prompts/issue-hygiene.md`, and the terminal summary contains `Issue/PR work:`.
+- No session-owned background process in flight, per `dx ps`, except the PR
+  watcher loop, which must itself be session-owned.
 
 Do NOT emit `DEX_TICKET_COMPLETE` until the Stop hook authorizes completion via the audit-iteration threshold. Follow the standard pattern.

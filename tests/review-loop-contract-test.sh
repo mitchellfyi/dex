@@ -254,8 +254,31 @@ PY
       [[ "$invocation" == *"$DEX_REVIEW_PASS_ID"* ]] || return 1
       [[ "$invocation" == *"$DEX_REVIEW_POLICY_BINDING"* ]] || return 1
       [[ "$invocation" == *"$DEX_REVIEW_PASS_BINDING"* ]] || return 1
-      [[ "$invocation" == *"scouts running at once"* ]] || return 1
-      [[ "${DEX_REVIEW_SCOUT_PARALLELISM:-}" =~ ^[1-3]$ ]] || return 1
+      # The wave prompt reads as sequential lenses or as scout groups, never
+      # as both, and the provider always gets a positive subagent cap.
+      [[ "${DEX_REVIEW_SCOUT_PARALLELISM:-}" =~ ^[0-3]$ ]] || return 1
+      if [[ "${DEX_REVIEW_SCOUT_PARALLELISM:-}" == "0" ]]; then
+        [[ "$invocation" == *"with no scouts and no subagents"* ]] || return 1
+        [[ "$invocation" != *"scouts running at once"* ]] || return 1
+        [[ "${CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS:-}" == "1" ]] || return 1
+      else
+        [[ "$invocation" == *"scouts running at once"* ]] || return 1
+        [[ "${CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS:-}" == "${DEX_REVIEW_SCOUT_PARALLELISM}" ]] || return 1
+      fi
+      # The findings ledger reaches the wave, exists, and belongs to it.
+      [[ "${DEX_REVIEW_LEDGER_FILE:-}" == "$(dx_review_findings_ledger_file "$DEX_POLICY_SESSION_ID")" ]] || return 1
+      [[ -f "$DEX_REVIEW_LEDGER_FILE" ]] || return 1
+      [[ "$invocation" == *"$DEX_REVIEW_LEDGER_FILE"* ]] || return 1
+      [[ "${DEX_REVIEW_CONFIRMATION:-}" =~ ^[01]$ ]] || return 1
+      if [[ "${DEX_REVIEW_CLEAN_BEFORE:-0}" -ge 1 ]]; then
+        [[ "${DEX_REVIEW_CONFIRMATION}" == "1" ]] || return 1
+        [[ "$invocation" == *"confirmation pass"* ]] || return 1
+      else
+        [[ "${DEX_REVIEW_CONFIRMATION}" == "0" ]] || return 1
+        [[ "$invocation" == *"full review pass"* ]] || return 1
+      fi
+      # A wave never runs the aggregate project gate; Phase 4 owns that rung.
+      [[ "$invocation" != *"dx run-gate"* ]] || return 1
       [[ "${DEX_REVIEW_TEST_JOBS:-}" =~ ^[1-9][0-9]*$ ]] || return 1
       [[ "${DX_TEST_JOBS:-}" == "$DEX_REVIEW_TEST_JOBS" ]] || return 1
       if [[ "$TEST_AGENT_HOST" == "claude" ]]; then

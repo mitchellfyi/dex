@@ -57,8 +57,11 @@ the five core domains above plus `frontend`, `devops`, `performance`, and
 actually reviewed. Record justified N/A surfaces in the coverage notes.
 
 Allowed results remain those in `prompts/review-wave.md`. Counts must agree.
-`CLEAN` and `FINDINGS_FIXED:N` require passing checks and verifier, full required
-coverage, and every supplied criterion `met`. Lifecycle `FINDINGS:N` needs at
+`CLEAN`, `NOTES:N`, `MECHANICAL:N` and `FINDINGS_FIXED:N` require passing checks
+and verifier, full required coverage, and every supplied criterion `met`.
+`NOTES:N` and `MECHANICAL:N` leave `findings` empty and `fixes_applied` at zero
+— their N items are notes below the finding bar and deterministic autofixes
+respectively, and belong in the findings ledger. Lifecycle `FINDINGS:N` needs at
 least one `not_met` or `blocked` item; lifecycle `BLOCKED:reason` needs a
 `blocked` item. Never report `CLEAN` after a fix.
 

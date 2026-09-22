@@ -57,8 +57,16 @@ dx_review_transition() {
   current_rank=$(dx_review_tier_rank "$current_tier") || return 1
 
   case "$event_kind" in
-    clean)
-      [[ $event_count -eq 0 && "$event_reason" == "none" && "$churn_kind" == "none" ]] || return 1
+    clean|notes)
+      # `notes` is a clean wave that also recorded N items below the finding
+      # bar. Nothing was fixed and the tree is unchanged, so it earns clean
+      # credit on exactly CLEAN's terms; only the count differs.
+      if [[ "$event_kind" == "notes" ]]; then
+        [[ $event_count -gt 0 ]] || return 1
+      else
+        [[ $event_count -eq 0 ]] || return 1
+      fi
+      [[ "$event_reason" == "none" && "$churn_kind" == "none" ]] || return 1
       [[ $candidate_present -eq 0 && "$invalidate_authorization" == "false" ]] || return 1
       if [[ "$scope_changed" == "true" ]]; then
         printf '1\tpause\t%s\t%s\t0\tclean_mutated_scope\t-\treset\tkeep\tinvalidate\tinvalidate\tinvalidate\n' \
@@ -72,6 +80,44 @@ dx_review_transition() {
       else
         printf '1\tcount\t%s\t%s\t%s\tnone\t-\tappend\tkeep\tkeep\twrite\tkeep\n' \
           "$current_tier" "$current_required" "$next_clean"
+      fi
+      ;;
+    mechanical)
+      # A deterministic autofix inside one check's declared inputs. It found no
+      # finding, so it earns no clean credit; it moved the tree, so the clean
+      # ledger — whose rows are bound to the previous fingerprint — resets with
+      # it. The attestation must never depend on a wave calling its own change
+      # mechanical, so this branch is a fix in every respect that protects the
+      # chain: the findings history is appended (churn sees repeated or
+      # alternating formatter waves), a deterministic-floor candidate may raise
+      # the tier, and a claimed autofix that changed nothing pauses. The only
+      # relief is operational, and the loop grants it: one mechanical wave per
+      # loop does not spend the wave budget, and the next pass reviews the
+      # mechanical delta rather than the whole scope — up to the pass that
+      # would be declared clean, which reviews the whole diff again.
+      [[ $event_count -gt 0 && "$event_reason" == "none" ]] || return 1
+      [[ "$invalidate_authorization" == "false" ]] || return 1
+      if [[ $candidate_present -eq 1 && "$candidate_source" != "deterministic-floor" ]]; then
+        return 1
+      fi
+      if [[ "$scope_changed" != "true" && "$working_changed" != "true" ]]; then
+        printf '1\tpause\t%s\t%s\t0\tclaimed_fix_without_change\t-\treset\tkeep\tkeep\twrite\tinvalidate\n' \
+          "$current_tier" "$current_required"
+        return 0
+      fi
+      if [[ "$churn_kind" != "none" ]]; then
+        printf '1\tpause\t%s\t%s\t0\t%s\t-\treset\tappend\tinvalidate\tinvalidate\tinvalidate\n' \
+          "$current_tier" "$current_required" "$churn_kind"
+        return 0
+      fi
+      if [[ $candidate_present -eq 1 && $candidate_rank -gt $current_rank ]]; then
+        next_required="$current_required"
+        [[ $candidate_required -gt $next_required ]] && next_required="$candidate_required"
+        printf '1\tescalate_continue\t%s\t%s\t0\tnone\t-\treset\tappend\trefresh\twrite\tinvalidate\n' \
+          "$candidate_tier" "$next_required"
+      else
+        printf '1\treset_continue\t%s\t%s\t0\tnone\t-\treset\tappend\trefresh\twrite\tinvalidate\n' \
+          "$current_tier" "$current_required"
       fi
       ;;
     findings_fixed)

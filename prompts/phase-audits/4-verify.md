@@ -3,6 +3,8 @@ not reserve commits until verification is green: while repairing a failing
 gate, commit and push each coherent checkpoint as it forms, then continue the
 pipeline. The complete required pipeline must pass before Phase 5.
 
+Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start.
+
 Apply `prompts/issue-hygiene.md` when verification exposes material new
 requirements, a distinct defect, or stale issue/PR context. Do not create an
 issue for a transient test failure that was fixed as part of the accepted
@@ -15,8 +17,18 @@ Confirm every quality gate passed:
 - Lint: PASS? If not, fix lint errors (don't disable rules).
 - Typecheck: PASS? If not, fix type errors.
 - Tests: ALL passing? No skipped tests, no flaky failures? If any test was skipped or failed intermittently, investigate and fix the root cause.
-  This is the phase that runs the complete required suite; earlier phases
-  were expected to run only what covered their change.
+
+Every required gate needs a passing result for *this* tree, and this is the
+phase that runs the complete suite. Before running it, ask
+`bash "$DEX_DIR/bin/gate-receipt.sh" full-gate` (0 reuse, 1 run it, 3 it failed here):
+a `full-gate` receipt Phase 2 wrote on this exact checkout and working tree is
+the evidence, so reuse it and say so; a receipt for any other gate is not.
+Otherwise run `dx run-gate --name full-gate <project aggregate gate>` now, which
+records the receipt; one that failed on this tree is a gate to fix, not to
+re-run. When `.dex/dex.md` § Resources declares `full_gate: ci`, run the fast
+gates and focused tests here, leave the complete suite to CI, keep the PR a
+draft, and let Phase 6 treat CI as the final gate — unless this ticket
+changed the gates, CI, or test infrastructure, which runs locally regardless.
 
 Run /dxverify if you haven't already, or if you've made changes since the last run.
 
@@ -34,10 +46,9 @@ Review your commit history (`git log --oneline origin/<default-branch>..HEAD`):
 ## Step 2.5: `.dex/` in commits
 
 Earlier phases should already have committed and pushed any `.dex/` updates
-required by implementation or review. If final verification added further
-`.dex/` changes, commit them as a coherent checkpoint, ideally as a separate
-`docs(.dex): sync project config` commit. Do not move an implementation-owned
-`.dex/` update into Phase 4 merely because it was left staged.
+implementation or review required. If final verification added more, commit them
+as a coherent checkpoint, ideally `docs(.dex): sync project config`. Do not move
+an implementation-owned `.dex/` update into Phase 4 because it was left staged.
 
 ## Step 3: Diff review
 
@@ -52,8 +63,7 @@ Earlier phases should already have pushed their implementation and review-fix
 checkpoints. Confirm local HEAD matches `origin/<current-branch>`. If final
 verification still left changes, split them only at natural logical boundaries,
 commit and push each coherent repair checkpoint immediately, and rerun the
-affected checks. Do not wait for the rest of the pipeline to pass before
-recording a checkpoint.
+affected checks; do not wait for the rest of the pipeline before recording one.
 
 If you pushed and got errors (e.g., remote rejection, hook failures), fix the issues and push again.
 
@@ -66,9 +76,9 @@ create an empty commit.
 ## Completion criteria
 
 ALL of these must be true before you stop:
-- All quality checks pass (format, lint, typecheck, tests)
-- Every process verification started (dev servers, browsers, watchers, test
-  runners) has been stopped
+- Every required gate has a passing result for this tree: a reused `dx run-gate`
+  receipt with a matching fingerprint, a fresh run, or CI under `full_gate: ci`
+- No session-owned background process in flight, per `dx ps`
 - Commits are clean and atomic with conventional messages
 - No unwanted files in the diff
 - Any `.dex/` changes are committed cleanly

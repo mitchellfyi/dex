@@ -425,6 +425,18 @@ case "$COMMAND" in
       exit 1
     fi
     dx_done "Dex ${ACTION} accepted for Phase ${CURRENT_PHASE:-unknown}. The workspace and phase state are preserved."
+    # Only stop and cancel reap. Pause is the resumable path and detach hands
+    # control back to the human; neither of them ends the session, so neither
+    # may end its processes. ACTION is `cancel` for exactly stop and cancel.
+    #
+    # `detached` scope spares the live provider's own process tree, so this
+    # keeps its promise to preserve the workspace while the processes that
+    # already escaped that tree stop here instead of outliving it. The
+    # session's own end reaps the rest, and the token stays either way.
+    # Nothing is stopped silently: the call names every process it stopped.
+    if [[ "$ACTION" == "cancel" ]]; then
+      dx_session_finish_processes "$SESSION_ID" control-cancel detached || true
+    fi
     ;;
   done|complete|waive)
     [[ "$DURABLE_LIFECYCLE" -eq 1 ]] || {

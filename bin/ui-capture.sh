@@ -19,7 +19,7 @@ Commands:
   dx ui-capture skip --reason TEXT [--session ID]
   dx ui-capture not-applicable --reason TEXT [--session ID]
   dx ui-capture clean [--older-than DAYS]
-  dx ui-capture install
+  dx ui-capture install [--user|--project|--local]
 
 Capture options:
   --name NAME        Short artifact label
@@ -230,6 +230,20 @@ trace=0
 narration=1
 show_json=0
 show_open=0
+install_scope=""
+
+# set_install_scope <flag> — the MCP scope for `dx ui-capture install`. Two of
+# them together is a contradiction, not a last-one-wins preference, and they
+# mean nothing to the other subcommands.
+set_install_scope() {
+  local flag="$1"
+  if [[ -n "$install_scope" && "$install_scope" != "$flag" ]]; then
+    dx_error "${install_scope} and ${flag} cannot both be given"
+    usage >&2
+    exit 2
+  fi
+  install_scope="$flag"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -256,13 +270,20 @@ while [[ $# -gt 0 ]]; do
     --json) show_json=1; shift ;;
     --open) show_open=1; shift ;;
     --install-only) mode="install"; shift ;;
+    --user|--project|--local) set_install_scope "$1"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) dx_error "Unknown ui-capture option: $1"; usage >&2; exit 2 ;;
   esac
 done
 
+if [[ -n "$install_scope" && "$mode" != "install" ]]; then
+  dx_error "${install_scope} applies to 'dx ui-capture install' only"
+  usage >&2
+  exit 2
+fi
+
 if [[ "$mode" == "install" ]]; then
-  dx_install_ui_capture_tooling
+  dx_install_ui_capture_tooling ${install_scope:+"$install_scope"}
   exit $?
 fi
 

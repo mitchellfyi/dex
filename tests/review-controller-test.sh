@@ -65,6 +65,58 @@ run_shell_suite() {
       "clean scope mutation pauses" \
       small 3 2 clean 0 none true true - 0 - - none false
 
+    # NOTES:N is a clean wave that also recorded items below the finding bar.
+    # It earns credit on exactly the same terms, so the only difference from
+    # `clean` is that the count is required to be positive.
+    assert_transition \
+      "1\tcount\tsmall\t3\t2\tnone\t-\tappend\tkeep\tkeep\twrite\tkeep" \
+      "notes increment the streak" \
+      small 3 1 notes 4 none false false - 0 - - none false
+
+    assert_transition \
+      "1\tcomplete\tsmall\t3\t3\tnone\t-\tappend\tkeep\tkeep\tinvalidate\tfinalize" \
+      "notes at the gate complete" \
+      small 3 2 notes 1 none false false - 0 - - none false
+
+    assert_transition \
+      "1\tpause\tsmall\t3\t0\tclean_mutated_scope\t-\treset\tkeep\tinvalidate\tinvalidate\tinvalidate" \
+      "notes that mutated the scope pause like a clean wave" \
+      small 3 2 notes 2 none true true - 0 - - none false
+
+    assert_rejected "notes without a count" \
+      small 3 1 notes 0 none false false - 0 - - none false
+    assert_rejected "notes with a reason code" \
+      small 3 1 notes 2 fix-cycle false false - 0 - - none false
+
+    # A deterministic autofix moved the tree, so the fingerprint-bound clean
+    # ledger cannot follow it: no credit, and the streak restarts. Everything
+    # that protects the chain behaves as it does for a fix, because the wave is
+    # the one calling its own change mechanical.
+    assert_transition \
+      "1\treset_continue\tsmall\t3\t0\tnone\t-\treset\tappend\trefresh\twrite\tinvalidate" \
+      "a mechanical autofix resets the streak and reaches the churn detector" \
+      small 3 2 mechanical 1 none true true - 0 - - none false
+
+    assert_transition \
+      "1\tpause\tsmall\t3\t0\tclaimed_fix_without_change\t-\treset\tkeep\tkeep\twrite\tinvalidate" \
+      "a mechanical result that changed nothing is a false claim" \
+      small 3 1 mechanical 2 none false false - 0 - - none false
+
+    assert_transition \
+      "1\tpause\tsmall\t3\t0\trepeated_fingerprint\t-\treset\tappend\tinvalidate\tinvalidate\tinvalidate" \
+      "a formatter that keeps rewriting the tree is churn" \
+      small 3 1 mechanical 1 none true true - 0 - - repeated_fingerprint false
+
+    assert_transition \
+      "1\tescalate_continue\tcomplex\t3\t0\tnone\t-\treset\tappend\trefresh\twrite\tinvalidate" \
+      "an autofix on a sensitive path can still raise the tier" \
+      small 3 1 mechanical 1 none true true complex 3 deterministic-floor security-sensitive none false
+
+    assert_rejected "mechanical without a count" \
+      small 3 1 mechanical 0 none true true - 0 - - none false
+    assert_rejected "mechanical cannot carry a wave escalation" \
+      small 3 1 mechanical 1 none true true complex 3 wave-escalation wave-escalation none false
+
     assert_transition \
       "1\treset_continue\tsmall\t3\t0\tnone\t-\treset\tappend\trefresh\twrite\tinvalidate" \
       "fixed findings reset the streak" \

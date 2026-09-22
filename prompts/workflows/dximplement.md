@@ -128,7 +128,7 @@ If during implementation you discover:
 - For CLI tools: test every command for both success and error cases. Test with empty input, non-existent IDs, corrupted data files, and missing arguments. Organize tests into **at least three files**: (1) unit tests for individual modules/functions, (2) integration tests for end-to-end command flows, (3) edge case and error recovery tests (corrupted data, boundary values, concurrent access).
 
 **Non-interactive mistakes to avoid** (these cause the most quality failures):
-- Don't declare "done" without running the tests that cover the change and seeing them pass. If tests fail, read the error output and fix the root cause. "Tests should pass" is not the same as "tests pass." Run the complete suite once, at the end, not after every task; Phase 4 runs it again as the final gate.
+- Don't declare "done" without running the tests that cover the change and seeing them pass. If tests fail, read the error output and fix the root cause. "Tests should pass" is not the same as "tests pass." Run the complete suite at most once here, at the end, not after every task — through `dx run-gate --name full-gate`, so Phase 4 reuses the receipt or runs it.
 - Don't install a library that extends the test framework or type system without configuring the type checker to recognize it. If tests run fine but the type checker reports errors on assertion matchers, you have a type registration problem — fix it.
 - Don't write 20 tests for one function and zero for another. Spread test coverage evenly across all public APIs, commands, or functions.
 - Don't create multiple interacting modules without an integration test. If Module A calls Module B, write a test that exercises A→B together, not just each in isolation.
@@ -181,11 +181,11 @@ gate to be exactly `MET`. Treat `NOT MET`, `NOT FOUND`, `DEFERRED`, `SKIPPED`,
 `BLOCKED`, `N/A`, "CI will cover it", "port busy", "tool unavailable", or an
 equivalent result as unresolved. Resolve it, ask the user for a plan change, or
 apply a reasoned phase waiver under the shared guardrails. Never relabel a
-waived or unverified result as `MET`. If a local port is busy, normally use
-another port or stop the conflicting process and rerun the check.
+waived or unverified result as `MET`. Reuse the port your session owns; if a
+port you did not start is busy, report it, do not fight it.
 
-Before declaring PASS, confirm that no implementation helper, UI capture, test
-runner, dev server, or other Phase 2 background process is still in flight.
+Before declaring PASS, confirm that `dx ps` shows no implementation helper, UI
+capture, test runner, dev server, or other Phase 2 process still in flight.
 
 If the final inventory is empty and the evidence table has zero NOT FOUND
 entries: implementation is complete. When run via `dx`, the next phase (Review)
@@ -194,10 +194,11 @@ follows automatically after the Stop hook audits this phase.
 ### 6. Final Implementation Checks
 
 After the implementation inventory passes and the evidence table has zero NOT
-FOUND entries, run the project's relevant deterministic checks one more time and
-update the evidence table with final pass/fail status. Do not invoke `/dxreview`
-from Phase 2; the dedicated Phase 3 `/dxreviewloop` handles adversarial review
-after implementation is complete.
+FOUND entries, run the project's relevant deterministic checks one more time —
+each project-wide or long one through `dx run-gate <command>`, which queues it
+and records the receipt Phase 4 reads — and update the evidence table with
+final pass/fail status. Do not invoke `/dxreview` from Phase 2; the dedicated
+Phase 3 `/dxreviewloop` handles adversarial review after implementation is complete.
 
 Once the final checkout content is committed, publish any passing project-wide
 expensive gates with `dx_review_baseline_publish`. Supply the exact command and
@@ -222,12 +223,21 @@ Use `NEEDS_REVIEW` while a selected capture is incomplete or needs another produ
 
 A green test suite is not the same as a working feature. Before marking Phase 2 ready, exercise the change end-to-end the way a human reviewer would — run it locally and watch it actually work.
 
-- **Run the change end-to-end locally**, not just the test suite. Start the app/server/CLI the way the project runs it (reuse the dev-server startup documented in `dxuicapture` for web apps), then drive the real user-facing path this ticket changed.
+- **Run the change end-to-end locally**, not just the test suite. Start the app/server/CLI the way the project runs it (reuse the dev-server startup documented in `dxuicapture` for web apps) — directly, not under `dx run-gate`, so it is session-owned and stopped before the phase ends rather than holding a heavy lease for as long as it runs — then drive the real user-facing path this ticket changed.
 - **Prefer a real browser, fall back to Playwright.** For browser-facing changes, drive the flow with the Claude-in-Chrome browser tools (`mcp__claude-in-chrome__*`) when a live browser is available; otherwise fall back to Playwright (the Playwright MCP, or the pinned install `dxuicapture` provisions with `dx ui-capture install`). For non-UI changes, exercise it the matching way: hit the endpoint, run the command, trigger the job, or call the public API against a running instance.
 - **Seed local data when the flow needs it.** Use the project's seeding path if one exists (factories, seed scripts, fixtures); otherwise insert the minimal rows the flow requires directly into the local dev/test database. Seed only what the flow needs.
 - **Judge it like a reviewer**: confirm it works *effectively* (the happy path does the right thing), is *robust* (a representative bad/edge input is handled gracefully, not a crash or 500), and is backed by *good test coverage* (the path you just exercised by hand has corresponding automated tests). If the smoke test exposes a coverage gap, add the test before finishing.
 - **Clean up after yourself.** Stop every process/server you started, remove any rows, temp data, or fixture files you created, and leave no Phase 2 background process in flight. Smoke-test artifacts follow the same rule as UI capture — do not commit them.
 - **Record the result** in the implementation evidence: what you ran, how you drove it (browser vs Playwright vs API/CLI), what you observed, and the cleanup you performed. If the change genuinely cannot be exercised locally, record `Manual smoke test: N/A — <reason>` instead of silently skipping it; the reason must clear the same bar as any other `N/A` (see the blocker rule above).
+
+### 8.5 Review Your Own Diff
+
+Before marking Phase 2 ready, run the Phase 3 lenses over your own diff, in this
+session, with no subagent: correctness/contracts/tests, security/architecture/
+devops, frontend/performance/observability, then coherence against the plan's
+`## Coherence Contract`. Fix what you find, then seed the ledger so Phase 3
+starts from it — after the same `source`/`SESSION_ID` preamble as the §9 snippet
+below: `dx_review_findings_ledger_seed "$SESSION_ID" "<lens>,..."`.
 
 ### 9. Select Phase 3 Review Risk
 
@@ -242,20 +252,21 @@ rule wins:
   CI, deployment, or packaging; broad cross-module behavior; or a concrete gap
   in the supplied scope or verification that leaves material behavior
   unbounded.
+- Choose `trivial` only for a documentation-only or test-only change, a rename
+  with no behavior change, or a dependency bump whose full gate is green, using
+  `localized-change,focused-verification,no-behavior-change`.
 - Choose `small` only when every change is localized and mechanically direct,
   impact is narrow, focused verification is available, and no `complex`
   condition applies.
 - Choose `normal` for everything else.
 
 Record one or more comma-separated lowercase reason codes from this set:
-`localized-change`, `focused-verification`, `bounded-production-change`,
-`cross-module`, `public-contract`, `security-sensitive`, `data-migration`,
-`concurrency`, `shell-hooks-ci`, `deployment-packaging`, `broad-impact`, and
+`localized-change`, `focused-verification`, `no-behavior-change`,
+`bounded-production-change`, `cross-module`, `public-contract`,
+`security-sensitive`, `data-migration`, `concurrency`, `shell-hooks-ci`,
+`deployment-packaging`, `declared-sensitive-path`, `broad-impact`, and
 `uncertain-coverage`. Do not use free-form prose, paths, source excerpts,
-prompts, or secrets.
-
-Follow the tier-specific reason combination rules in the assessment prompt. An
-allowed code paired with a contradictory tier is invalid.
+prompts, or secrets; follow the assessment prompt's tier combination rules.
 
 In a terminal `dx` lifecycle, persist the selection against the current scope
 fingerprint:
@@ -263,24 +274,22 @@ fingerprint:
 ```bash
 source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
 SESSION_ID="${DEX_SESSION_ID:-$(dx_session_id)}"
-REVIEW_TIER="<small|normal|complex>"
+REVIEW_TIER="<trivial|small|normal|complex>"
 REVIEW_REASON_CODES="<comma-separated-reason-codes>"
 dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIEW_REASON_CODES" "$PWD"
 ```
 
-The tier selects Dex's fixed global clean-wave policy: 1 for `small`, 2 for
-`normal`, and 3 for `complex`, plus a soft outer-wave budget of 3, 6, or 9.
-The persisted selection is bound to the clean-wave policy.
-Candidate-branch edits cannot lower the active gate, and the launch-only
-`DEX_REVIEW_CLEAN_PASSES` value can only raise it. An attributed
-`dx control override review.clean-passes <1-30>` may lower the effective target
-without changing the trusted policy: the loop still requires that many genuine
-clean waves, binds the receipt to the decision, and records Phase 3 as waived.
-Use `dx control waive review.clean-passes` only when skipping the remaining
-review gate entirely.
+The tier selects Dex's fixed clean-wave policy: 1 for `trivial` and `small`, 2
+for `normal`, 3 for `complex`, with a soft wave budget of 2, 3, 6, or 9; Dex may
+raise it from the measured diff at wave time, never lower it. The persisted
+selection is bound to that policy; candidate-branch edits cannot lower the gate
+and the launch-only `DEX_REVIEW_CLEAN_PASSES` can only raise it. An attributed
+`dx control override review.clean-passes <1-30>` lowers the effective target
+without changing the trusted policy: that many genuine clean waves are still
+required, the receipt binds the decision, and Phase 3 is recorded as waived.
+Use `dx control waive review.clean-passes` only to skip the remaining gate.
 
-The selection is not a review pass. Rewrite it if any later Phase 2 edit changes
-the scope.
+The selection is not a review pass. Rewrite it if a later edit changes the scope.
 
 ### 10. Mark Phase 2 Ready
 
@@ -291,7 +300,8 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
   phase has a named, reasoned waiver that will be recorded as a waiver.
 - No evidence entry is deferred, skipped, blocked, missing, or delegated to
   future CI without a user-approved plan change or recorded agent waiver.
-- Final deterministic checks passed locally.
+- Final deterministic checks passed locally, and the review lenses ran over
+  this diff with the findings ledger seeded for Phase 3.
 - The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
 - The UI proof decision is recorded as `READY`, `SKIPPED` with a reason, or `N/A` with a reason. Choosing `SKIPPED` is allowed when a walkthrough would not improve the review.
 - Every implementation change is committed, every implementation commit has
@@ -303,9 +313,9 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
   lifecycle control action instead of advancing into a PR flow that cannot
   complete.
 - No Phase 2 background processes or long-running commands are still in flight.
-- A deterministic `small`, `normal`, or `complex` Phase 3 risk selection is
-  recorded for the final current scope and bound to the trusted clean-wave
-  policy.
+- A deterministic `trivial`, `small`, `normal`, or `complex` Phase 3 risk
+  selection is recorded for the final current scope and bound to the trusted
+  clean-wave policy.
 - The approved review-criteria artifact has a matching approval seal and
   reflects any plan change the user approved during implementation.
 

@@ -17,12 +17,18 @@ dx_review_policy_binding() {
     "$small" "$normal" "$complex" | dx_review_sha256_stdin
 }
 
+# `trivial` is one clean pass and is not part of the bound policy triple: the
+# binding attests the small/normal/complex floor, and 1 is already that floor's
+# minimum, so a `trivial` requirement can never be lower than what the triple
+# promises. Keeping the binding format fixed also keeps resumable state, ledger
+# rows and receipts written before this tier existed valid.
 dx_review_policy_tier_clean_passes() {
   [[ $# -eq 4 ]] || return 1
   local tier small="$2" normal="$3" complex="$4"
   tier=$(dx_review_normalize_tier "$1") || return 1
   dx_review_policy_binding "$small" "$normal" "$complex" >/dev/null || return 1
   case "$tier" in
+    trivial) printf '%s\n' "1" ;;
     small) printf '%s\n' "$((10#$small))" ;;
     normal) printf '%s\n' "$((10#$normal))" ;;
     complex) printf '%s\n' "$((10#$complex))" ;;
@@ -35,6 +41,7 @@ dx_review_policy_tier_max_waves() {
   local tier
   tier=$(dx_review_normalize_tier "$1") || return 1
   case "$tier" in
+    trivial) printf '%s\n' "2" ;;
     small) printf '%s\n' "3" ;;
     normal) printf '%s\n' "6" ;;
     complex) printf '%s\n' "9" ;;

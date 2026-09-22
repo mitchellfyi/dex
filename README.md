@@ -119,17 +119,20 @@ advancement requires the generated, generation-bound receipt for that phase.
 Review waves have their own clean-pass counter: a wave that finds
 and fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
 fresh full-scope review before Phase 4 can start. Before Phase 3, the
-implementation agent selects `small`, `normal`, or `complex`. Dex requires 1,
+implementation agent selects `trivial`, `small`, `normal`, or `complex`, and
+Dex raises that tier when the measured diff says it should. It requires 1, 1,
 2, or 3 clean waves, respectively. A standalone
 `dxreviewloop` without an explicit tier/profile override starts with a read-only
 risk assessor. Every counted wave runs in a fresh context without prior review
 conclusions or telemetry.
 
-The outer loop uses a soft wave budget of 3 for `small`, 6 for `normal`, and 9
-for `complex`. If the clean gate has not succeeded when the budget is spent,
+The outer loop uses a soft wave budget of 2 for `trivial`, 3 for `small`, 6 for
+`normal`, and 9 for `complex`, and a confirmation pass that stays clean does
+not spend it. If
+the clean gate has not succeeded when the budget is spent,
 review pauses with its valid clean credit intact. Residual findings, blockers,
 churn, invalid results, and provider failures also pause instead of being
-treated as clean or retried indefinitely. The 1/2/3 clean gates are global so
+treated as clean or retried indefinitely. The 1/1/2/3 clean gates are global so
 review assurance does not vary by repository. `DEX_REVIEW_CLEAN_PASSES` can
 raise the launch gate but cannot lower it. An attributed
 `dx control override review.clean-passes <1-30>` can change the live target;
@@ -188,6 +191,12 @@ dx control waive review.clean-passes --source human --reason "approved in this s
 dx sessions list           # List trusted lifecycle sessions in this repository
 dx sessions resume ticket:999  # Resume a specific lifecycle and provider conversation
 dx sessions doctor         # Diagnose inconsistent, dead, or unsafe session state
+dx ps                      # List the processes each session owns, and any orphans
+dx ps --reap-orphans       # Stop the orphaned ones and print what was stopped
+dx doctor                  # One read-only screen: sessions, pools, orphans, load, trees
+dx run-gate bin/verify     # Run one heavy command under host-wide admission
+dx review stats            # Review-loop history per risk tier, from telemetry
+dx worktree audit          # Compare Dex, git and this project's own worktree resources
 dx test                    # Test Dex here, or verify another initialized project
 dx log                     # Show recent run events and summaries
 dx tools bootstrap         # Install/refresh RTK, browser MCPs, docs MCP, and plugins
