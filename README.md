@@ -510,6 +510,9 @@ independent repository maintenance remains available. See
   output-filtering CLI and how to disable it.
 - [Subscription routing](docs/subscription-routing.md) covers CCR setup,
   multiple accounts, model policy, quota and recovery.
+- [Model upgrade](docs/model-upgrade.md) applies a preferred model setup
+  across providers to an existing router install, for reuse when the
+  preferred models change.
 
 ## Contributing
 
