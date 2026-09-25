@@ -1,6 +1,6 @@
 'use strict';
 // The router's own sources, as the running gateway sees them. Kept free of
-// other Dex modules so the extension shim can load it once and keep it.
+// other Dex modules: the reload path loads it before anything else.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');

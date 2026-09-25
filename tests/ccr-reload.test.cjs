@@ -119,3 +119,14 @@ test('the watcher reloads settled edits and waits out a git operation', async ()
   fs.rmSync(lock);
   assert.ok(await until(async () => (await ipc.call('health')).marker === 'third'));
 });
+
+test('a reload replaces the reload logic itself, and a shim edit is reported for restart', async () => {
+  edit('host.cjs', source => source.replace("shim_changed: shimChanged(live) }", "shim_changed: shimChanged(live), host_marker: 'new' }"));
+  const result = await ipc.call('reload');
+  assert.equal(result.reloaded, true, result.last_reload_error);
+  const health = await ipc.call('health');
+  assert.equal(health.host_marker, 'new');
+  assert.equal(health.shim_changed, false);
+  edit('extension.cjs', source => `${source}\n// edited\n`);
+  assert.ok(await until(async () => (await ipc.call('health')).shim_changed === true));
+});

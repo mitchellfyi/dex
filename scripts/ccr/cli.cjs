@@ -130,6 +130,7 @@ function render(group, action, value, options) {
     if (!value.installed) out('Run dx router setup to install the optional runtime.');
     if (value.last_reload_error) out(`The last hot reload failed, so the previous code is still serving: ${value.last_reload_error}`);
     else if (value.code_stale) out('The running gateway loaded its code before the current Dex sources. Run dx router reload to load them; routed sessions keep running.');
+    if (value.shim_changed) out('scripts/ccr/extension.cjs changed after the gateway started, and a reload cannot replace it. Run dx router restart once routed sessions finish.');
     if (value.telemetry_failures) out(`Request telemetry could not be saved ${value.telemetry_failures} times. Inspect private router-state permissions before relying on request diagnostics.`);
     if (value.native_routing) out('Restore independent claude and codex launches with dx router native disable, then start new CLI sessions.');
     return;
@@ -632,7 +633,7 @@ async function routerCommand(action, options, args = []) {
     let installed = false; try { adapter.verifyRuntime(); installed = true; } catch { /* Report as a diagnostic. */ }
     const health = await adapter.health();
     const sessions = health ? await ipc.call('health', { sessions: true }) : null;
-    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', code_stale: adapter.stale(health), reload_count: health?.reload_count || 0, last_reload_error: health?.last_reload_error || null, telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
+    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', code_stale: adapter.stale(health), reload_count: health?.reload_count || 0, last_reload_error: health?.last_reload_error || null, shim_changed: health?.shim_changed === true, telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
   }
   if (action === 'check') {
     if (!state.config().enabled || !state.accounts().some(item => item.enabled)) throw new Error('CCR needs setup and an enabled account. Run dx router setup.');

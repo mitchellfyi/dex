@@ -24,7 +24,7 @@ match the new behavior. The running gateway reloads Dex's router code on its
 own once the sources in `scripts/ccr/` stop changing (see
 [Hot reload](#hot-reload)), so routed sessions keep running across a source
 update. A restart is still required for a new CCR runtime, a model catalogue
-change, or an edit to `extension.cjs` or `source.cjs`. Finish routed sessions
+change, or an edit to the `extension.cjs` shim. Finish routed sessions
 first, then run:
 
 ```sh
@@ -773,9 +773,11 @@ Manual stop, installation and catalogue changes require idle routed sessions.
 
 ### Hot reload
 
-CCR loads `scripts/ccr/extension.cjs` once. That file is a small shim: it hands
-every request to a router service it can replace, and it watches the other
-`scripts/ccr/*.cjs` files. When they change, it waits until they have stayed
+CCR loads `scripts/ccr/extension.cjs` once. That file is a small shim that
+holds only the references CCR keeps and forwards them to `host.cjs`. The host
+runs a router service it can replace and watches the `scripts/ccr/*.cjs` files.
+A reload loads the host again too, so the reload logic can change without a
+restart. When they change, it waits until they have stayed
 the same for a full second and no git operation holds the index lock. It then
 compiles every file without running it, loads the modules again and swaps the
 service. Requests already streaming finish on the code they started with;
@@ -791,7 +793,8 @@ dx router status     # "Hot reloads" count, or the last reload error
 Set `DEX_ROUTER_HOT_RELOAD=0` before `dx router start` to turn off the watcher;
 `dx router reload` still works. What a reload cannot change still needs an idle
 restart: the pinned CCR runtime, ports, the provider and model catalogue CCR was
-configured with, and the shim itself (`extension.cjs`, `source.cjs`). A gateway
+configured with, and the shim itself (`extension.cjs`, which `dx router status`
+flags when it changes). A gateway
 started before hot reload existed needs one restart to load the shim.
 
 On a host that deploys Dex by resetting its checkout, every push to `main` that
