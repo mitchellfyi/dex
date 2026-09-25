@@ -170,12 +170,27 @@ function resetIn(timestamp, now) {
 // Every cap an account has is either the one that comes back soon or the one
 // that comes back later. Naming the columns after the period suited one
 // provider; naming them after the horizon suits all of them.
-const SHORT_TERM = new Set(['5h', 'credit']);
-function windowSlot(name) { return SHORT_TERM.has(name) ? 'short' : 'long'; }
+//
+// The horizon is the window's own length, not its name. A set of names put a
+// credit account's columns the wrong way round: its prepaid balance, which
+// never resets, sat under Short term, and its daily spend cap under Long term.
+// A day or less is what one session runs into; longer is what a week of work
+// runs into. A balance has no length at all — it is spent down rather than
+// refilled — so it belongs on the far horizon, where the money it has left
+// reads beside a subscription's weekly reset.
+//
+// A cap whose length cannot be established reads as long, which is the safer
+// way to be wrong: a glance at the near column is about the next few hours,
+// and a cap that may count over a week does not belong in that answer.
+const SHORT_TERM_MAX_MS = 86400000;
+function windowSlot(window, usage, now) {
+  const period = windowPeriod(window, usage, now);
+  return Number.isFinite(period) && period > 0 && period <= SHORT_TERM_MAX_MS ? 'short' : 'long';
+}
 
 // The cap that binds is the one with least left, so that is the one shown.
-function slotWindow(windows, slot) {
-  const found = windows.filter(window => windowSlot(window.name) === slot);
+function slotWindow(windows, slot, usage, now = Date.now()) {
+  const found = windows.filter(window => windowSlot(window, usage, now) === slot);
   return found.length ? found.reduce((a, b) => (a.remaining_ratio ?? 1) <= (b.remaining_ratio ?? 1) ? a : b) : null;
 }
 
@@ -282,7 +297,7 @@ function accountRows(items, now = Date.now(), config = state.config()) {
     return [account.name, account.rank || '-', account.provider, model ? (model.display_name || model.id.split('/')[1]).replace(/^Claude /, '') : '-', status,
       recentCell(recentUsage(windows, account, now)),
       ...['short', 'long'].map(slot => {
-      const window = slotWindow(windows, slot);
+      const window = slotWindow(windows, slot, usage, now);
       if (!window) return '-';
       const detail = windowDetail(window, now);
       return `${Math.round(window.remaining_ratio * 100)}%${detail ? ` · ${detail}` : ''}`;
@@ -344,7 +359,7 @@ function accountsFrame(items, live, note = '') {
   const footer = live
     ? `View updated at ${new Date().toLocaleTimeString()}\nLive: every 30s. Ctrl+C to exit.`
     : 'Tip: use dx accounts --live for updates.';
-  return `Dex subscription accounts\n${rows}\n${note ? `${note}\n` : ''}${footer}\n`;
+  return `Dex routed accounts\n${rows}\n${note ? `${note}\n` : ''}${footer}\n`;
 }
 async function accounts(options) {
   if (options.watch && options.json) throw new Error('--live/--watch cannot be combined with --json. Use dx accounts --json for a single snapshot.');
@@ -378,7 +393,7 @@ async function addAccount(provider, options, previous) {
     provider = { 1: 'anthropic', 2: 'openai', 3: 'openrouter' }[selected];
     if (!provider) throw new Error('Choose 1, 2 or 3.');
   }
-  const metered = providerKind(provider) === 'api-key';
+  const metered = providerKind(provider) === 'credit';
   const name = options.name || previous?.name || await question('Account name', `${provider}-${state.accounts().filter(item => item.provider === provider).length + 1}`);
   let apiKey;
   if (metered) {

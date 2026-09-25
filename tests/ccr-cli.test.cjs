@@ -754,8 +754,11 @@ test('a metered account reports money where a subscription reports a reset', () 
   const [sub, paid] = cli.accountRows([subscription, metered], now);
   assert.deepEqual(sub.slice(5), ['20% · 4h 0m', '80% · 1h 0m', '40% · 1d 0h'], 'a subscription reports when its window returns');
   // A balance has no period, so recent usage reads the daily cap.
-  assert.deepEqual(paid.slice(5), ['34% · 22h 0m', '25% · $2.46', '66% · 2h 0m'],
-    'a balance reports what is left of it; a cap that resets reports when');
+  // Both kinds sort the same way: the cap that comes back within the day is the
+  // near one, so the daily spend cap sits where a subscription's 5h window sits,
+  // and the balance sits where its weekly window sits.
+  assert.deepEqual(paid.slice(5), ['34% · 22h 0m', '66% · 2h 0m', '25% · $2.46'],
+    'a cap that resets reports when; a balance reports what is left of it');
   // Both providers occupy the same three columns, whatever their caps are called.
   assert.equal(sub.length, paid.length);
   assert.equal(sub.length, 8);
@@ -800,8 +803,19 @@ test('the accounts table keeps every reading without a column or row per model',
   ];
   assert.equal(cli.slotWindow(windows, 'long').name, 'weekly-opus');
   assert.equal(cli.slotWindow(windows, 'short'), null, 'no short-term cap is a dash, not an error');
-  // A balance falls on the near horizon, a resetting cap on the far one.
-  assert.equal(cli.slotWindow([{ name: 'credit', remaining_ratio: 0.25 }], 'short').name, 'credit');
+  // The horizon is the window's length, not its name. A daily spend cap comes
+  // back within the day, so it is near; a balance never comes back at all, so
+  // it is far. Reading the names instead put both of them in the wrong column.
+  assert.equal(cli.slotWindow([{ name: 'spend-limit', remaining_ratio: 0.66, period_ms: 86400000 }], 'short').name, 'spend-limit');
+  assert.equal(cli.slotWindow([{ name: 'credit', remaining_ratio: 0.25 }], 'long').name, 'credit');
+  assert.equal(cli.slotWindow([{ name: 'credit', remaining_ratio: 0.25 }], 'short'), null);
+  // A reading taken before the gateway recorded window lengths still sorts, from
+  // the period the key's own limit resets on.
+  assert.equal(cli.slotWindow([{ name: 'spend-limit', remaining_ratio: 0.66 }], 'short',
+    { spend: { key_limit_period: 'daily' } }, now).name, 'spend-limit');
+  // A cap whose length cannot be established reads as far rather than near: a
+  // glance at the near column asks about the next few hours, and a cap that may
+  // count over a week does not answer that.
   assert.equal(cli.slotWindow([{ name: 'spend-limit', remaining_ratio: 0.66 }], 'long').name, 'spend-limit');
   // What a cap reports beside its percentage: a reset if it has one, else money.
   assert.equal(cli.windowDetail({ resets_at: now + 3600000 }, now), '1h 0m');

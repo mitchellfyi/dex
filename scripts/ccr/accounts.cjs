@@ -8,9 +8,17 @@ const state = require('./state.cjs');
 
 // Public native-client identifiers; these are not client secrets.
 //
-// `kind` is what the rest of Dex branches on, not the provider name:
-//   subscription  a renewable OAuth login owned by a native client
-//   api-key       a metered key that is itself the credential and never refreshes
+// `kind` is what the rest of Dex branches on, not the provider name. It names
+// how the account is billed, because that is what decides how its limits read:
+//   subscription  a renewable OAuth login owned by a native client, billed as
+//                 a plan, whose caps are windows that refill on a reset
+//   credit        a metered key billed per token against a prepaid balance,
+//                 whose caps are money: a balance that is spent down and never
+//                 refills, and optionally a spend limit set on the key itself
+// This is not the same field as a stored credential's `kind`, which stays
+// 'api-key': that one names the shape of the secret rather than the billing,
+// and existing records in the credential store carry it.
+//
 // A key is resolved from the OS credential store or the named environment
 // variable below, and is never written to repository configuration or telemetry.
 const PROVIDERS = {
@@ -19,7 +27,7 @@ const PROVIDERS = {
   // `identity` names the key; `usage` reads the account balance, which is the
   // cap that actually stops requests — a key can carry no limit of its own and
   // still fail once the account behind it runs dry.
-  openrouter: { kind: 'api-key', key_env: 'DEX_OPENROUTER_API_KEY', label: 'OpenRouter',
+  openrouter: { kind: 'credit', key_env: 'DEX_OPENROUTER_API_KEY', label: 'OpenRouter',
     identity: 'https://openrouter.ai/api/v1/key', usage: 'https://openrouter.ai/api/v1/credits',
     base: 'https://openrouter.ai/api/v1' }
 };
@@ -56,7 +64,7 @@ function normalizeApiKey(raw) {
 }
 
 function normalizeTokens(provider, raw) {
-  if (providerKind(provider) === 'api-key') return normalizeApiKey(raw);
+  if (providerKind(provider) === 'credit') return normalizeApiKey(raw);
   const tokens = provider === 'anthropic' ? raw?.claudeAiOauth || raw : raw?.tokens || raw;
   if (!tokens || typeof tokens !== 'object') throw new Error('No subscription OAuth credentials were returned.');
   const access = tokens.accessToken || tokens.access_token;
@@ -170,7 +178,7 @@ function normalizeUsage(provider, data, now = Date.now()) {
       ...(modelPool ? { model_pool: modelPool } : {}),
       ...(Number.isFinite(remainingAmount) ? { remaining_amount: Number(remainingAmount) } : {}) });
   };
-  if (providerKind(provider) === 'api-key') {
+  if (providerKind(provider) === 'credit') {
     // Two independent caps: the account's credit balance, and a spend limit on
     // the key itself. Either can stop the account, so both are reported and the
     // exhausted one excludes it. Neither is required — an account with credit
@@ -219,7 +227,7 @@ function normalizeUsage(provider, data, now = Date.now()) {
 // What a metered account has actually spent, in money rather than percentages.
 // A subscription has no equivalent: its cost is the plan, not the request.
 function meteredSpend(provider, data) {
-  if (providerKind(provider) !== 'api-key') return undefined;
+  if (providerKind(provider) !== 'credit') return undefined;
   const body = data?.data || data || {};
   const money = value => Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(Number(value).toFixed(6)) : undefined;
   const used = money(body.total_usage), limit = money(body.total_credits);
@@ -282,7 +290,7 @@ class AccountBroker {
       // A metered account reports the balance that stops requests and the
       // key's own spend from two endpoints. The balance is required; the key
       // detail only enriches, so losing it must not lose the quota answer.
-      const extra = providerKind(account.provider) === 'api-key' && provider.identity ? provider.identity : null;
+      const extra = providerKind(account.provider) === 'credit' && provider.identity ? provider.identity : null;
       const request = url => this.fetch(url, {
         headers: authHeaders(account.provider, credentials), redirect: 'error', signal: AbortSignal.timeout(15000)
       });

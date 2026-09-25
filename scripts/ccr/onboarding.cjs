@@ -12,7 +12,7 @@ function accountName(value) {
   return value.trim();
 }
 async function identity(provider, credentials, fetchImpl = fetch) {
-  if (providerKind(provider) === 'api-key') {
+  if (providerKind(provider) === 'credit') {
     const response = await fetchImpl(PROVIDERS[provider].identity || PROVIDERS[provider].usage, { headers: authHeaders(provider, credentials), redirect: 'error', signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`${PROVIDERS[provider].label} rejected this API key. Check the key and retry.`);
     const key = (await response.json())?.data || {};
@@ -36,7 +36,7 @@ function loginCommand(provider, device = false) {
     if (device) throw new Error('Claude login requires its native browser flow; --device is available for OpenAI.');
     return ['claude', ['auth', 'login', '--claudeai']];
   }
-  if (providerKind(provider) === 'api-key') throw new Error(`${PROVIDERS[provider].label} authenticates with an API key, not a browser login.`);
+  if (providerKind(provider) === 'credit') throw new Error(`${PROVIDERS[provider].label} authenticates with an API key, not a browser login.`);
   if (provider !== 'openai') throw new Error('Provider must be anthropic or openai.');
   return ['bash', [path.resolve(__dirname, '../../bin/dxcodex.sh'), 'auth-login', ...(device ? ['--device-auth'] : [])]];
 }
@@ -86,7 +86,7 @@ async function registerApiKey({ provider, name, apiKey, reauth, confirm = async 
 }
 
 async function register({ provider, name, device = false, reauth, apiKey, confirm = async () => true, login = nativeLogin, resolveIdentity = identity, store = new CredentialStore() }) {
-  if (providerKind(provider) === 'api-key') return registerApiKey({ provider, name, apiKey, reauth, confirm, resolveIdentity, store });
+  if (providerKind(provider) === 'credit') return registerApiKey({ provider, name, apiKey, reauth, confirm, resolveIdentity, store });
   loginCommand(provider, device); name = accountName(name);
   const previous = reauth ? state.getAccount(reauth) : null;
   if (previous && previous.provider !== provider) throw new Error('Reauthentication must use the existing provider.');
@@ -168,7 +168,7 @@ async function discover(account, broker = new AccountBroker(), fetchImpl = fetch
   // A metered catalogue is thousands of models priced per token. Importing it
   // wholesale would make an expensive model routable without anyone choosing
   // it, so these providers take explicit dx model add entries instead.
-  if (providerKind(account.provider) === 'api-key') {
+  if (providerKind(account.provider) === 'credit') {
     throw new Error(`${PROVIDERS[account.provider].label} models are added explicitly with dx model add, so a metered model is never routable by accident.`);
   }
   const credentials = await broker.access(account);

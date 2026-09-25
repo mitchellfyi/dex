@@ -60,7 +60,7 @@ test('account refresh never falls back to the global native login', async t => {
 });
 
 test('a metered provider authenticates with a key instead of a renewable login', async () => {
-  assert.equal(providerKind('openrouter'), 'api-key');
+  assert.equal(providerKind('openrouter'), 'credit');
   assert.equal(providerKind('anthropic'), 'subscription');
   assert.equal(providerKind('not-a-provider'), 'subscription', 'unknown providers keep the subscription error path');
   const credentials = normalizeTokens('openrouter', { api_key: `sk-or-v1-${'a'.repeat(40)}` });
