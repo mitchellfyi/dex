@@ -262,6 +262,9 @@ test('a stale gateway is named in status, and start does not pass it off as curr
   assert.equal((await cli.routerCommand('status', {})).code_stale, true);
   // start() returns the running endpoint without comparing anything, so
   // reporting success here would leave the old code answering every request.
+  assert.match(await cli.routerCommand('start', {}), /before hot reload.*dx router restart/);
+  health.mock.mockImplementation(async () => ({ pid: process.pid, started_at: adapter.sourceChangedAt() - 60000, reload_count: 0 }));
+  assert.equal((await cli.routerCommand('status', {})).hot_reload, true);
   assert.match(await cli.routerCommand('start', {}), /dx router reload/);
   assert.equal(start.mock.callCount(), 0);
 
