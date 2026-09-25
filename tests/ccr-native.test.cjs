@@ -524,3 +524,21 @@ test('enable retires the pinned compaction percentage that doctor points at', ()
   native.clientSettings('enable', config, settings);
   assert.equal(JSON.parse(fs.readFileSync(config.claude_file)).env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '55');
 });
+
+test('re-enabling keeps a Codex /model pick among offered models and still refuses a hand edit', () => {
+  const routing = state.config();
+  routing.models.push({ id: 'openai/sol', provider: 'openai', context_window: 128000 });
+  state.write(state.stateFile('config'), routing);
+  native.clientSettings('enable', config, settings);
+  assert.equal(toml(config.codex_file).model, 'dex/active');
+  // Codex's /model writes the choice into config.toml; dx install re-enables.
+  fs.writeFileSync(config.codex_file, fs.readFileSync(config.codex_file, 'utf8').replace('model = "dex/active"', 'model = "sol"'));
+  native.clientSettings('enable', config, settings);
+  assert.equal(toml(config.codex_file).model, 'sol', 'the pick survives re-enabling');
+  native.clientSettings('enable', config, settings);
+  native.clientSettings('disable', config, settings);
+  assert.equal(toml(config.codex_file).model_provider, 'work', 'disable still restores what Dex replaced');
+  native.clientSettings('enable', config, settings);
+  fs.writeFileSync(config.codex_file, fs.readFileSync(config.codex_file, 'utf8').replace('model = "dex/active"', 'model = "not-offered"'));
+  assert.throws(() => native.clientSettings('enable', config, settings), /Native Codex settings were edited/);
+});

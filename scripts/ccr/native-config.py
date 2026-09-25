@@ -185,6 +185,12 @@ def picked_model(document, models):
     return plain + "[1m]" if plain in models else None
 
 
+def picked_codex_model(document, models):
+    """The Codex model the user picked with /model, when the route offers it; otherwise None."""
+    current = document.get("model")
+    return current if isinstance(current, str) and current in models else None
+
+
 def sync_managed_field(document, entries, field, value):
     """Install a field Dex manages, adopting it when the install predates it.
 
@@ -277,10 +283,13 @@ def apply(request):
             preserved.append("codex.model_providers.dex-ccr")
     else:
         offered = picked_model(claude, request.get("claude_models", []))
+        codex_pick = picked_codex_model(codex, request.get("codex_models", []))
         if saved["provider_content"]:
             if saved["provider_content"] not in sources[codex_file]:
                 raise ValueError("Native Codex settings were edited. Disable native routing before enabling it again.")
             for entry in saved["codex"]:
+                if entry["field"] == "model" and codex_pick:
+                    continue
                 if get_field(codex, [entry["field"]]) != {"present": True, "value": entry["installed"]}:
                     raise ValueError("Native Codex settings were edited. Disable native routing before enabling it again.")
             for entry in saved["claude"]:
@@ -311,8 +320,10 @@ def apply(request):
         if saved["provider_content"]:
             codex_source = codex_source.replace(saved["provider_content"], "", 1)
         for entry in codex_fields:
-            codex_source = set_root(codex_source, entry["field"], entry["value"])
-            next(item for item in saved["codex"] if item["field"] == entry["field"])["installed"] = entry["value"]
+            # Re-enabling keeps a /model pick rather than moving back to the route default.
+            value = codex_pick if entry["field"] == "model" and codex_pick and saved["provider_content"] else entry["value"]
+            codex_source = set_root(codex_source, entry["field"], value)
+            next(item for item in saved["codex"] if item["field"] == entry["field"])["installed"] = value
         # An install that predates the long-context repair still carries the
         # pinned percentage. sync is what doctor points at, so it has to be
         # able to retire it; only the sync-context path did before.

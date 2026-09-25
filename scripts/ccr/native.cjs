@@ -94,6 +94,9 @@ function clientSettings(action, native, settings, config) {
       { field: 'model_provider', value: 'dex-ccr' }, { field: 'model', value: codexModel(config, 'codex') },
       { field: 'model_context_window', value: codexContext }, { field: 'model_auto_compact_token_limit', value: Math.floor(codexContext * 0.8) }
     ];
+    // Codex's /model writes its choice into config.toml. A name the gateway
+    // answers to is a pick among the models Dex offers, not a hand edit.
+    request.codex_models = ['dex/active', ...config.models.flatMap(item => [item.id, item.upstream_id || item.id.split('/')[1]])];
     request.provider_content = [
       '# Dex native routing: managed provider',
       '[model_providers.dex-ccr]', 'name = "Dex subscription accounts"',
