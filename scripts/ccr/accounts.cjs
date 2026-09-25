@@ -251,6 +251,11 @@ class AccountBroker {
   constructor({ store = new CredentialStore(), fetchImpl = fetch, now = Date.now } = {}) {
     this.store = store; this.fetch = fetchImpl; this.now = now; this.refreshes = new Map(); this.usageRequests = new Map();
   }
+  // Shares the replaced broker's pending operations across a reload.
+  adopt(previous) {
+    if (previous?.refreshes instanceof Map) this.refreshes = previous.refreshes;
+    if (previous?.usageRequests instanceof Map) this.usageRequests = previous.usageRequests;
+  }
   async access(account, force = false) {
     if (this.refreshes.has(account.id)) return this.refreshes.get(account.id);
     const operation = state.locked(`credential-${state.checkedId(account.id)}`, async () => {

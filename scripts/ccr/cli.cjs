@@ -124,10 +124,12 @@ function render(group, action, value, options) {
     details([
       ['CCR version', value.release], ['Runtime', value.code_stale ? `${value.health} (pre-update code)` : value.health], ['Installed', value.installed ? 'yes' : 'no'],
       ['Routing', value.enabled ? 'enabled' : 'disabled'], ['Plain CLI routing', value.native_routing ? 'through Dex' : 'native subscriptions'], ['Accounts', value.accounts],
-      ['Models', value.models], ['Active sessions', value.active_sessions], ['Credentials', value.credential_store]
+      ['Models', value.models], ['Active sessions', value.active_sessions], ['Credentials', value.credential_store],
+      ...(value.reload_count ? [['Hot reloads', value.reload_count]] : [])
     ]);
     if (!value.installed) out('Run dx router setup to install the optional runtime.');
-    if (value.code_stale) out('The running gateway loaded its code before the current Dex version and keeps serving it. Finish routed sessions, then run dx router restart.');
+    if (value.last_reload_error) out(`The last hot reload failed, so the previous code is still serving: ${value.last_reload_error}`);
+    else if (value.code_stale) out('The running gateway loaded its code before the current Dex sources. Run dx router reload to load them; routed sessions keep running.');
     if (value.telemetry_failures) out(`Request telemetry could not be saved ${value.telemetry_failures} times. Inspect private router-state permissions before relying on request diagnostics.`);
     if (value.native_routing) out('Restore independent claude and codex launches with dx router native disable, then start new CLI sessions.');
     return;
@@ -568,6 +570,10 @@ async function syncNative() {
   try { return await state.locked('config', () => require('./native.cjs').syncContext()) || null; }
   catch (error) { return { error: error.message }; }
 }
+function reloaded(result) {
+  if (!result.reloaded) throw new Error(`The router kept its previous code; the new sources did not load: ${result.last_reload_error}`);
+  return 'CCR reloaded its code in place.';
+}
 function syncedNote(result) {
   if (!result) return '';
   if (result.error) return ` Client settings were not refreshed: ${result.error}`;
@@ -602,14 +608,23 @@ async function routerCommand(action, options, args = []) {
   // change, and a restart would look like it had applied the upgrade when it
   // had not. sync-context is the migration channel: it adopts what is missing
   // and leaves values edited by hand alone.
-  if (action === 'restart') { await adapter.stop(); await adapter.start(); return `CCR restarted.${syncedNote(await syncNative())}`; }
+  if (action === 'reload') return reloaded(await adapter.reload());
+  if (action === 'restart') {
+    // Busy sessions refuse a restart, but new extension code does not need
+    // one. Reload in place and say what still waits for the idle restart.
+    try { adapter.idle(); } catch (error) {
+      if (!(await adapter.health())) throw error;
+      return `${reloaded(await adapter.reload())} Routed sessions are active, so the gateway reloaded its code in place instead of restarting. A runtime or catalogue change still needs dx router restart once they finish.`;
+    }
+    await adapter.stop(); await adapter.start(); return `CCR restarted.${syncedNote(await syncNative())}`;
+  }
   if (action === 'start') {
     if (!state.config().enabled) throw new Error('Run dx router setup or enable first.');
     // adapter.start() returns the existing endpoint when a gateway answers, so
     // start alone cannot pick up a Dex update. Say so rather than report a
     // success that leaves the old code serving every request.
     const running = await adapter.health(true);
-    if (adapter.stale(running)) return 'CCR is already running, on code from before the current Dex version; dx router start leaves it in place. Finish routed sessions, then run dx router restart to load it.';
+    if (adapter.stale(running)) return 'CCR is already running, on code from before the current Dex sources; dx router start leaves it in place. Run dx router reload to load them.';
     await adapter.start(); return `CCR started.${syncedNote(await syncNative())}`;
   }
   if (action === 'update') { adapter.idle(); await adapter.install(); return `Using tested release ${adapter.RELEASE}. CCR upgrades ship with Dex after contract tests pass.`; }
@@ -617,7 +632,7 @@ async function routerCommand(action, options, args = []) {
     let installed = false; try { adapter.verifyRuntime(); installed = true; } catch { /* Report as a diagnostic. */ }
     const health = await adapter.health();
     const sessions = health ? await ipc.call('health', { sessions: true }) : null;
-    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', code_stale: adapter.stale(health), telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
+    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', code_stale: adapter.stale(health), reload_count: health?.reload_count || 0, last_reload_error: health?.last_reload_error || null, telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
   }
   if (action === 'check') {
     if (!state.config().enabled || !state.accounts().some(item => item.enabled)) throw new Error('CCR needs setup and an enabled account. Run dx router setup.');

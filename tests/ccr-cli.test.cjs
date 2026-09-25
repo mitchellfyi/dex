@@ -262,13 +262,33 @@ test('a stale gateway is named in status, and start does not pass it off as curr
   assert.equal((await cli.routerCommand('status', {})).code_stale, true);
   // start() returns the running endpoint without comparing anything, so
   // reporting success here would leave the old code answering every request.
-  assert.match(await cli.routerCommand('start', {}), /dx router restart/);
+  assert.match(await cli.routerCommand('start', {}), /dx router reload/);
   assert.equal(start.mock.callCount(), 0);
 
   health.mock.mockImplementation(async () => ({ pid: process.pid, started_at: adapter.sourceChangedAt() + 60000 }));
   assert.equal((await cli.routerCommand('status', {})).code_stale, false);
   assert.match(await cli.routerCommand('start', {}), /^CCR started\./);
   assert.equal(start.mock.callCount(), 1);
+});
+test('reload swaps the running code, and a busy restart reloads instead of refusing', async t => {
+  const reload = t.mock.method(adapter, 'reload', async () => ({ reloaded: true, reload_count: 1 }));
+  assert.equal(await cli.routerCommand('reload', {}), 'CCR reloaded its code in place.');
+  reload.mock.mockImplementation(async () => ({ reloaded: false, last_reload_error: 'Unexpected token' }));
+  await assert.rejects(cli.routerCommand('reload', {}), /kept its previous code; the new sources did not load: Unexpected token/);
+
+  reload.mock.mockImplementation(async () => ({ reloaded: true, reload_count: 2 }));
+  t.mock.method(adapter, 'idle', () => { throw new Error('Routed sessions are active.'); });
+  const stop = t.mock.method(adapter, 'stop', async () => {});
+  const health = t.mock.method(adapter, 'health', async () => ({ pid: process.pid }));
+  assert.match(await cli.routerCommand('restart', {}), /reloaded its code in place instead of restarting/);
+  assert.equal(stop.mock.callCount(), 0, 'busy sessions are never restarted');
+  // With no gateway running there is nothing to reload into.
+  health.mock.mockImplementation(async () => null);
+  await assert.rejects(cli.routerCommand('restart', {}), /Routed sessions are active/);
+});
+test('a gateway from before hot reload says it needs one idle restart', async t => {
+  t.mock.method(ipc, 'call', async () => { throw new Error('Unknown extension operation.'); });
+  await assert.rejects(adapter.reload(), /predates hot reload.*dx router restart once/);
 });
 test('deep health matches the live gateway identity without launching process scans', async t => {
   const settings = { pid: 2147483647, owner_identity: 'synthetic-owner', management: 'http://127.0.0.1:1', management_key: 'synthetic-key' };

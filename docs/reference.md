@@ -64,6 +64,7 @@ the gate map.
 | `DX_LOOP_DIR` | Loop state directory | `~/.claude/.dex-loops` |
 | `DX_ARTIFACT_DIR` | Dex-generated screenshots, videos, traces, and logs | `~/.claude/.dex-artifacts` |
 | `DX_TOOL_DIR` | Dex-managed external tooling cache | `~/.claude/.dex-tools` |
+| `DEX_ROUTER_HOT_RELOAD` | `0` turns off the router gateway's automatic reload of changed `scripts/ccr/` sources; read by `dx router start` | on |
 | `DX_RUN_ROOT` | Dex run directories, event journals, summaries, and run artifacts | `~/.dex/runs` |
 | `DEX_RUN_ID` | Current run ID passed into hooks/provider subprocesses | unset |
 | `DEX_HEADLESS_RUN` | Internal marker for lifecycle sessions started by `dx run` | unset |

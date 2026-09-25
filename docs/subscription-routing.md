@@ -20,8 +20,11 @@ credentials and temporary session overrides stay outside Git. Reprovisioning
 must preserve account state and deliberate local policy changes.
 
 After a Dex update, verify the host installer and native-client hooks still
-match the new behavior. Source updates do not replace router code already
-loaded into memory. When a router restart is required, finish routed sessions
+match the new behavior. The running gateway reloads Dex's router code on its
+own once the sources in `scripts/ccr/` stop changing (see
+[Hot reload](#hot-reload)), so routed sessions keep running across a source
+update. A restart is still required for a new CCR runtime, a model catalogue
+change, or an edit to `extension.cjs` or `source.cjs`. Finish routed sessions
 first, then run:
 
 ```sh
@@ -760,11 +763,41 @@ dx router doctor
 dx router start
 dx router stop
 dx router restart
+dx router reload
 dx router disable
 ```
 
-Manual stop, restart, installation and catalogue changes require idle routed
-sessions. Disabling affects new launches; active sessions can finish. Select
+Manual stop, installation and catalogue changes require idle routed sessions.
+`dx router restart` with sessions running reloads the code in place instead
+(below). Disabling affects new launches; active sessions can finish.
+
+### Hot reload
+
+CCR loads `scripts/ccr/extension.cjs` once. That file is a small shim: it hands
+every request to a router service it can replace, and it watches the other
+`scripts/ccr/*.cjs` files. When they change, it waits until they have stayed
+the same for a full second and no git operation holds the index lock. It then
+compiles every file without running it, loads the modules again and swaps the
+service. Requests already streaming finish on the code they started with;
+credential tickets, pending OAuth refreshes and the control socket carry over.
+If the new sources fail to compile or load, the previous code keeps serving and
+`dx router status` shows the error.
+
+```sh
+dx router reload     # reload now, without waiting for the watcher
+dx router status     # "Hot reloads" count, or the last reload error
+```
+
+Set `DEX_ROUTER_HOT_RELOAD=0` before `dx router start` to turn off the watcher;
+`dx router reload` still works. What a reload cannot change still needs an idle
+restart: the pinned CCR runtime, ports, the provider and model catalogue CCR was
+configured with, and the shim itself (`extension.cjs`, `source.cjs`). A gateway
+started before hot reload existed needs one restart to load the shim.
+
+On a host that deploys Dex by resetting its checkout, every push to `main` that
+touches `scripts/ccr/` goes live in its running router this way. A change that
+loads but behaves wrongly is not rolled back automatically. Push the fix, or
+revert, and the router reloads that too. Select
 `claude-subscription` or `codex-subscription` through `dx provider use` to run
 directly again.
 

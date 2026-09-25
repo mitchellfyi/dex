@@ -343,6 +343,12 @@ test('pinned CCR authenticates two accounts and translates OpenAI in the same se
     await ipc.call('register', { id: 'test-session', token, owner_pid: process.pid, resume: true });
     const afterRestart = await send();
     assert.equal(afterRestart.status, 200); assert.match(await afterRestart.text(), /OpenAI answer/);
+    // The gateway swaps the extension's code in place; the session stays registered.
+    const reloaded = await adapter.reload();
+    assert.equal(reloaded.reloaded, true, reloaded.last_reload_error);
+    const afterReload = await send();
+    assert.equal(afterReload.status, 200); assert.match(await afterReload.text(), /OpenAI answer/);
+    assert.equal((await adapter.health(true)).reload_count, 1);
   } finally {
     try { await ipc.call('finish', { id: 'test-session', token }); } catch { /* Startup may have failed. */ }
     await adapter.stopOwned(state.backend(null));

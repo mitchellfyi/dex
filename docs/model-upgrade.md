@@ -107,9 +107,10 @@ state only through the `dx` CLI.
 
 There's one hard limit. If this session is routed through Dex
 (`ANTHROPIC_BASE_URL` contains `/plugins/dex`), catalogue changes (`dx account
-add`, `dx account reauth`, `dx model discover`, `dx model add`, `dx router
-restart`) are refused while it's live, and the same goes for any other routed
-session. So you prepare and verify, and the user applies from a plain
+add`, `dx account reauth`, `dx model discover`, `dx model add`) are refused
+while it's live, and the same goes for any other routed session. `dx router
+restart` only reloads the code in place then, so it does not apply a runtime or
+catalogue change. So you prepare and verify, and the user applies from a plain
 terminal. Don't try to get around the lock.
 
 1. **Inspect** (read-only): `dx router status`, `dx route policy`, `dx accounts`.

@@ -1,7 +1,19 @@
 'use strict';
+const path = require('node:path');
 const ipc = require('./ipc.cjs');
-const { restoreAnthropic, wrapAnthropicResponse } = require('./history.cjs');
-const { PROVIDER_ENDPOINTS, chatReasoning } = require('./policy.cjs');
+const { PROVIDER_ENDPOINTS } = require('./policy.cjs');
+
+// CCR loads this module once, possibly outside the extension's module
+// registry. When the extension reports that it reloaded, load the helpers
+// again from the same sources; keep the working copies if that fails.
+const helpers = { revision: undefined, history: require('./history.cjs'), policy: require('./policy.cjs') };
+function follow(revision) {
+  if (revision === undefined || revision === helpers.revision) return;
+  try {
+    for (const key of Object.keys(require.cache)) if (path.dirname(key) === __dirname && ![__filename, require.resolve('./ipc.cjs')].includes(key)) delete require.cache[key];
+    Object.assign(helpers, { revision, history: require('./history.cjs'), policy: require('./policy.cjs') });
+  } catch { /* The next credential call retries. */ }
+}
 
 const CLAUDE_SUBSCRIPTION_PRELUDE = "You are Claude Code, Anthropic's official CLI for Claude.";
 
@@ -21,6 +33,8 @@ function createGatewayPlugin() {
       const ticket = input.request?.headers?.['x-ccr-dex-account-ticket'];
       if (typeof ticket !== 'string') return { ok: false, error: 'Dex account authorization is required.' };
       const result = await ipc.call('credential', { ticket, provider });
+      follow(result.source_revision);
+      const { restoreAnthropic } = helpers.history, { chatReasoning } = helpers.policy;
       const headers = { ...input.upstreamRequest.headers };
       for (const name of Object.keys(headers)) if (['authorization', 'x-api-key', 'x-ccr-dex-account-ticket'].includes(name.toLowerCase())) delete headers[name];
       Object.assign(headers, result.headers);
@@ -57,7 +71,7 @@ function createGatewayPlugin() {
     },
     transformResponse(input) {
       return { ok: true, value: provider === 'anthropic' && input.sourceAdapterKey === 'openai_responses'
-        ? wrapAnthropicResponse(input.upstreamPayload) : input.upstreamPayload };
+        ? helpers.history.wrapAnthropicResponse(input.upstreamPayload) : input.upstreamPayload };
     }
   })) };
 }

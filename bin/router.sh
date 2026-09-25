@@ -7,7 +7,7 @@ source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-Usage: dx router <setup|install|start|stop|restart|status|doctor|ui|enable|disable|update>
+Usage: dx router <setup|install|start|stop|restart|reload|status|doctor|ui|enable|disable|update>
        dx router native <enable|disable|status>
        dx account add [anthropic|openai|openrouter] [--name <name>] [--device] [--yes]
        dx account <show|rename|rank|enable|disable|reauth|remove|doctor> <name>
@@ -38,6 +38,9 @@ Press Ctrl+C to exit the live view. Live mode requires a terminal and cannot use
 Model profiles name the role a model plays: dx profile set cheap <provider/model>,
 then dx route configure @cheap --phase implement. Re-point the profile once and
 every route naming it follows.
+The running gateway reloads its code when Dex's router sources change; routed
+sessions keep running. 'dx router reload' does it on demand. Set
+DEX_ROUTER_HOT_RELOAD=0 before starting the router to turn off the automatic reload.
 Context refresh reads provider defaults and maxima without restarting the gateway.
 Budget changes apply to new client launches. Doctor reads saved sessions and compact history.
 EOF

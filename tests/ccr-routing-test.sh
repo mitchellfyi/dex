@@ -23,4 +23,4 @@ if [[ -z "${DEX_ROUTER_HOME:-}" ]]; then
   mkdir -p "$DEX_ROUTER_HOME" "$CLAUDE_CONFIG_DIR" "$CODEX_HOME"
 fi
 
-node --test tests/ccr-accounts.test.cjs tests/ccr-policy.test.cjs tests/ccr-cli.test.cjs tests/ccr-context.test.cjs tests/ccr-mcp.test.cjs tests/ccr-metrics.test.cjs tests/ccr-service.test.cjs tests/ccr-core-plugin.test.cjs tests/ccr-history.test.cjs tests/ccr-native.test.cjs tests/ccr-runtime.test.cjs
+node --test tests/ccr-accounts.test.cjs tests/ccr-policy.test.cjs tests/ccr-cli.test.cjs tests/ccr-context.test.cjs tests/ccr-mcp.test.cjs tests/ccr-metrics.test.cjs tests/ccr-service.test.cjs tests/ccr-reload.test.cjs tests/ccr-core-plugin.test.cjs tests/ccr-history.test.cjs tests/ccr-native.test.cjs tests/ccr-runtime.test.cjs

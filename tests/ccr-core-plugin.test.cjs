@@ -120,3 +120,19 @@ test('a metered provider gets its account credential and none of the client key'
   assert.equal(result.value.headers['anthropic-beta'], undefined);
   assert.equal(result.value.body.model, 'z-ai/glm-5.3', 'the upstream ID is what the provider is called');
 });
+
+test('the helpers are loaded again when the extension reports a new source revision', async t => {
+  const file = require.resolve('../scripts/ccr/history.cjs');
+  let revision = 'first';
+  t.mock.method(ipc, 'call', async () => ({ headers: { authorization: 'Bearer synthetic' }, source_revision: revision }));
+  const hook = createGatewayPlugin().providerHooks.find(item => item.providerName === 'dex-anthropic');
+  const call = () => hook.authenticate({ sourceAdapterKey: 'anthropic_messages', request: { headers: { 'x-ccr-dex-account-ticket': 'synthetic-ticket' } }, upstreamRequest: { headers: {}, body: { messages: [] } } });
+  assert.equal((await call()).ok, true);
+  const loaded = require.cache[file];
+  assert.ok(loaded);
+  assert.equal((await call()).ok, true);
+  assert.equal(require.cache[file], loaded, 'an unchanged revision keeps the loaded helpers');
+  revision = 'second';
+  assert.equal((await call()).ok, true);
+  assert.notEqual(require.cache[file], loaded, 'a new revision loads them again');
+});

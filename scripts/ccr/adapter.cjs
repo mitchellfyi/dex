@@ -10,6 +10,7 @@ const policy = require('./policy.cjs');
 const ipc = require('./ipc.cjs');
 const { nativeEnv } = require('./accounts.cjs');
 const { active, processIdentity } = require('./service.cjs');
+const { sourceChangedAt } = require('./source.cjs');
 
 const RELEASE = '3.1.0-gateway-1.0.21';
 const runtime = () => path.join(state.root(), 'runtimes', RELEASE);
@@ -39,24 +40,11 @@ async function availablePorts() {
 function idle() {
   if (state.sessions().some(active)) throw new Error('Routed sessions are active. Finish them before changing the CCR runtime or model catalogue.');
 }
-// When the router's own sources were last edited. start() short-circuits on a
-// healthy gateway without comparing anything, so a router left running across
-// a Dex update keeps serving the code it loaded — including error messages and
-// routing rules the update replaced. That is invisible otherwise: the release
-// constant tracks the pinned CCR runtime, not this extension.
-function sourceChangedAt() {
-  let newest = 0;
-  // Diagnostics must survive an unreadable checkout: 0 reports nothing stale
-  // rather than failing dx router status, which is what someone runs first.
-  let names = []; try { names = fs.readdirSync(__dirname); } catch { return 0; }
-  for (const name of names) {
-    if (!name.endsWith('.cjs')) continue;
-    try { newest = Math.max(newest, fs.statSync(path.join(__dirname, name)).mtimeMs); } catch { /* A file racing a Dex update is not a staleness signal. */ }
-  }
-  return newest;
-}
-// A gateway with no start time predates this field, which places it before the
-// commit that added it, so it is stale by construction.
+// start() short-circuits on a healthy gateway without comparing anything, and
+// the extension reloads only when it sees a change settle, so a gateway can
+// still be serving code older than the checkout. started_at is when the code it
+// serves was loaded. A gateway with no start time predates this field, which
+// places it before the commit that added it, so it is stale by construction.
 function stale(health, changedAt = sourceChangedAt()) {
   if (!health) return false;
   return !Number.isFinite(health.started_at) || health.started_at < changedAt;
@@ -151,6 +139,8 @@ async function start({ directory = runtime(), endpoints, extension, recovery = f
     settings.management = `http://127.0.0.1:${settings.management_port}`; settings.gateway = `http://127.0.0.1:${settings.gateway_port}`;
     state.saveBackend(settings);
     const env = nativeEnv('anthropic', state.privateDir(path.join(state.root(), 'unused-auth')));
+    // The extension watches its sources and reloads them; 0 turns that off.
+    if (process.env.DEX_ROUTER_HOT_RELOAD) env.DEX_ROUTER_HOT_RELOAD = process.env.DEX_ROUTER_HOT_RELOAD;
     Object.assign(env, { DEX_ROUTER_HOME: state.root(), CCR_INTERNAL_HOME_DIR: state.privateDir(path.join(state.root(), 'ccr-home')), CCR_INTERNAL_USER_DATA_DIR: state.privateDir(path.join(state.root(), 'ccr-data')), CCR_WEB_AUTH_TOKEN: settings.management_key, CODEX_HOME: state.privateDir(path.join(state.root(), 'unused-codex')) });
     if (!fs.existsSync(path.join(env.CCR_INTERNAL_HOME_DIR, '.claude-code-router', 'config.sqlite'))) {
       state.write(path.join(env.CCR_INTERNAL_HOME_DIR, '.claude-code-router', 'config.json'), managedConfig({}, settings, state.config(), endpoints, extension));
@@ -182,6 +172,16 @@ async function stopOwned(settings) {
   for (let count = 0; count < 50; count++) { if (processIdentity(settings.pid) !== settings.owner_identity) return; await delay(100); }
   throw new Error('CCR is still stopping. Retry dx router status.');
 }
+// Swaps the extension's code inside the running gateway. Sessions and requests
+// already streaming carry on; only a runtime, port or catalogue change needs
+// the idle-gated restart.
+async function reload() {
+  try { return await ipc.call('reload', {}, 60000); }
+  catch (error) {
+    if (/Unknown extension operation/.test(error.message)) throw new Error('The running gateway predates hot reload. Finish routed sessions, then run dx router restart once.');
+    throw error;
+  }
+}
 async function stop() { return state.locked('runtime', async () => { idle(); await stopOwned(state.backend(null)); return { stopped: true }; }); }
 async function openUI() {
   idle();
@@ -201,4 +201,4 @@ async function openUI() {
     child.once('exit', code => { if (code === 0) resolve(); else { server.close(); reject(new Error('Could not open the CCR dashboard.')); } });
   });
 }
-module.exports = { RELEASE, PROVIDER_ENDPOINTS, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, sourceChangedAt, stale, start, stop, stopOwned, openUI };
+module.exports = { RELEASE, PROVIDER_ENDPOINTS, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, sourceChangedAt, stale, reload, start, stop, stopOwned, openUI };

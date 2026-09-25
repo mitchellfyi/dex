@@ -90,15 +90,16 @@ class RouterService {
     this.tickets = new Map(); this.inFlight = new Set(); this.server = null;
     this.metricWrites = new Set(); this.telemetryFailures = 0;
     this.ownerIdentity = processIdentity(process.pid);
-    // The gateway requires this extension once, at start, from the Dex checkout
-    // it was launched from, and then serves that copy until it is replaced.
-    // Updating Dex therefore changes nothing for a running router, so report
-    // when this code was loaded and let the caller compare it with the sources.
+    // An instance serves the code it was loaded with. The extension replaces it
+    // when the sources change, so report when this code was loaded and let the
+    // caller compare it with the sources.
     this.startedAt = Date.now();
     // Delegate lazily: tests and recovery swap the broker and fetch after construction.
     this.codexCatalog = new CodexCatalog({ broker: { access: (...args) => this.broker.access(...args) }, fetchImpl: (...args) => this.fetch(...args) });
   }
-  async start() {
+  // dispatch lets the extension route control calls to whichever instance is
+  // current, so the socket survives a reload that replaces this one.
+  async start({ dispatch = (method, params) => this.control(method, params) } = {}) {
     const socket = ipc.socketPath();
     if (fs.existsSync(socket)) {
       try { await ipc.call('health', {}, 500); throw new Error('A Dex router is already running.'); }
@@ -109,15 +110,34 @@ class RouterService {
         if (request.method !== 'POST' || request.url !== '/dex/v1') { ipc.json(response, 404, { error: 'Unknown local endpoint.' }); return; }
         const payload = await ipc.body(request);
         if (payload.version !== 1) throw new Error('Unsupported extension interface version.');
-        ipc.json(response, 200, await this.control(payload.method, payload.params || {}));
+        ipc.json(response, 200, await dispatch(payload.method, payload.params || {}));
       } catch (error) { ipc.json(response, 400, { error: error.message }); }
     });
     await new Promise((resolve, reject) => { this.server.once('error', reject); this.server.listen(socket, resolve); });
     fs.chmodSync(socket, 0o600);
+    this.startTimers();
+  }
+  startTimers() {
     this.timer = setInterval(() => { for (const [key, value] of this.tickets) if (value.expires < Date.now()) this.tickets.delete(key); }, 30000);
     this.timer.unref();
     this.quotaTimer = setInterval(() => { this.control('usage', {}).catch(() => {}); }, 60000);
     this.quotaTimer.unref();
+  }
+  // Takes over a running instance's socket and the state its requests still
+  // use: a ticket issued by the old code is redeemed through the new one, and
+  // an OAuth refresh already under way is joined rather than repeated, since
+  // the provider rotates the refresh token. Nothing here can fail halfway.
+  adopt(previous) {
+    this.server = previous.server; this.tickets = previous.tickets; this.inFlight = previous.inFlight;
+    this.metricWrites = previous.metricWrites; this.telemetryFailures = previous.telemetryFailures;
+    if (typeof this.broker.adopt === 'function') this.broker.adopt(previous.broker);
+    this.startTimers();
+  }
+  // The replaced instance keeps answering requests it already accepted, on the
+  // code they started with; it only stops its own timers.
+  retire() {
+    clearInterval(this.timer);
+    clearInterval(this.quotaTimer);
   }
   async stop() {
     clearInterval(this.timer);
