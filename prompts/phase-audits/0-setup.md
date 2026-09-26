@@ -63,9 +63,10 @@ Evidence: tracker output shows the assignee, or N/A.
 - A newly created branch with no branch-specific commits was not pushed merely
   to establish upstream tracking. No empty bootstrap commit was created. Phase
   2 will push the branch immediately after its first implementation commit.
-- Draft PR creation was left for Phase 5 by default. If the user requested a PR
-  during setup but the branch had no branch-specific commits, the setup summary
-  records that publication is deferred until the first implementation commit.
+- No PR was opened during setup. The draft PR is opened right after the first
+  implementation commit is pushed in Phase 2, and Phase 5 marks it ready for
+  review. If the user requested a PR during setup, the summary records that it
+  will open as a draft with that first commit.
 - The Dex meta sidecar reflects the resolved branch: run
 
   ```bash

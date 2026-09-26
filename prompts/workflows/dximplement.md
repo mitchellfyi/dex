@@ -84,7 +84,9 @@ For each task in the approved plan:
    branch with no upstream, the first real branch-specific commit establishes
    `origin/<current-branch>` as upstream; later commits push to that upstream.
    Never push the new branch before that commit, and never create an empty
-   commit just to publish it.
+   commit just to publish it. Right after that first push, open a draft PR for
+   the branch as `skills/dxcommit/SKILL.md` describes; later pushes update it.
+   Do not mark it ready for review: that is Phase 5.
 6. After completing the task, run deterministic quality checks (format, lint,
    typecheck) across all files changed by that task. Fix issues before moving to
    the next task. If tests use libraries that extend the assertion framework,

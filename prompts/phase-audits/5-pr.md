@@ -1,8 +1,9 @@
 Before stopping, audit the pull request quality.
 
-Phase 5 focuses on PR creation, description, ticket links, attaching
-`request`-type reviewers from `dex.md § Reviewers`, and leaving the PR ready for
-review. Phase 6 verifies readiness and handles `@mention` comments, monitoring,
+Phase 5 focuses on turning the draft PR opened with the first Phase 2 push
+into the reviewable PR: description, ticket links, attaching `request`-type
+reviewers from `dex.md § Reviewers`, and marking it ready for review. Create
+the PR here only if Phase 2 could not. Phase 6 verifies readiness and handles `@mention` comments, monitoring,
 feedback, and ticket closure.
 
 Follow § Resource Discipline in `prompts/guardrails.md`: heavy work queues through `dx run-gate`; own what you start.

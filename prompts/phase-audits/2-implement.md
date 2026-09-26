@@ -59,6 +59,9 @@ commits relative to the default branch:
   no empty bootstrap commit was used to publish it.
 - The first implementation commit established upstream tracking, and every
   later commit was pushed immediately after it was created.
+- A draft PR exists for the branch, opened after the first push, and it is
+  still a draft: Phase 5 marks it ready. If `gh` could not open it, the phase
+  summary says so and Phase 5 creates it.
 - The working tree contains no completed implementation work waiting to be
   committed, and local HEAD matches `origin/<current-branch>`.
 

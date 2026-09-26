@@ -9,6 +9,13 @@ history while doing the work: whenever the current changes form a small,
 coherent checkpoint, commit them and push the commit immediately. Do not wait
 for the task, phase, full test suite, or final verification to finish.
 
+Commit earliest at the start. The first checkpoint lands as soon as there is
+a coherent slice (a failing test and its skeleton is enough), and the early
+commits stay small while the shape of the change settles. The first push of a
+new branch also opens a draft PR (see `skills/dxcommit/SKILL.md`), so the work
+is visible and CI runs from then on. Phase 5 turns that draft into the
+reviewable PR and marks it ready; nothing earlier marks it ready.
+
 A checkpoint may capture incomplete work or a state with a known failing
 check. Keep the commit logically understandable, describe what it actually
 changes, report any failing or unrun checks honestly, and continue toward a

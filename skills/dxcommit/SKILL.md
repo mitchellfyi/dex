@@ -77,6 +77,28 @@ For each logical group, finish all four steps before starting the next group:
    because the remote diverged, investigate; do not force-push without user
    approval.
 
+5. **Open a draft PR after the first push.** Once the branch's first
+   branch-specific commit is on `origin`, the work is visible as a draft PR
+   from then on, so CI runs on every checkpoint and anyone can follow it.
+   Skip this on the default branch, and when a PR for the branch already
+   exists in any state:
+
+   ```bash
+   default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+   current_branch=$(git branch --show-current)
+   if [[ -n "$current_branch" && "$current_branch" != "${default_branch:-main}" ]] \
+     && [[ -z "$(gh pr list --head "$current_branch" --state all --json number -q '.[0].number' 2>/dev/null)" ]]; then
+     gh pr create --draft --fill-first
+   fi
+   ```
+
+   `--fill-first` titles the draft from the first commit, which is already a
+   conventional message. Keep the body short: link the ticket and say it is a
+   work in progress. Phase 5 writes the real description with
+   `prompts/pr-description.md` and marks the PR ready for review; never mark
+   it ready here. If `gh` is unavailable or unauthenticated, report that the
+   draft is pending and continue; publication is not a reason to stop work.
+
 ### 3. Final Sync Check
 
 Confirm the working tree is clean, the current branch contains at least one
