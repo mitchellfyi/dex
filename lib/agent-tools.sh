@@ -173,11 +173,17 @@ dx_set_session_messaging_preference() {
 }
 
 # Prints "accept" when a Dex launch should deliver peer messages unattended.
-# Managed settings and stricter project files apply on their own under
-# Claude's precedence rules; only the user-scope value needs checking here.
+# Delivery is on unless the user answered off: Dex sessions coordinate
+# through these messages, and a held message is lost when nobody is watching.
+# An unreadable preference passes nothing rather than guessing. Managed
+# settings and stricter project files apply on their own under Claude's
+# precedence rules; only the user-scope value needs checking here.
 dx_session_messaging_launch_value() {
   command -v python3 >/dev/null 2>&1 || return 0
-  [[ "$(dx_session_messaging_preference 2>/dev/null)" == on ]] || return 0
+  case "$(dx_session_messaging_preference 2>/dev/null)" in
+    on|unset) ;;
+    *) return 0 ;;
+  esac
   case "$(dx_claude_inbound_setting 2>/dev/null)" in
     hold|refuse) return 0 ;;
   esac

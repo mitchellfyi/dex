@@ -62,9 +62,12 @@ rm -f "$STATE"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 
-# What a launch passes: accept only when the user opted in and their own Claude
-# settings do not already hold or refuse.
-assert_eq '' "$(dx_session_messaging_launch_value)" 'no preference'
+# What a launch passes: accept unless the user answered off or their own
+# Claude settings already hold or refuse.
+assert_eq 'accept' "$(dx_session_messaging_launch_value)" 'no preference means on'
+printf '%s\n' '{"crossSessionInbound":"hold"}' > "$SETTINGS"
+assert_eq '' "$(dx_session_messaging_launch_value)" 'no preference, user hold'
+rm -f "$SETTINGS"
 dx_set_session_messaging_preference on
 assert_eq 'accept' "$(dx_session_messaging_launch_value)" 'preference on, no user value'
 printf '%s\n' '{"crossSessionInbound":"accept"}' > "$SETTINGS"
@@ -103,6 +106,7 @@ assert_eq '{"statusLine": {"type": "command", "command": "bash status.sh"}}' \
 # Claude sessions learn their name and what delivery to expect; Codex has no
 # peer messaging and gets nothing.
 export DX_PROVIDER_APPLIED=1 DX_PROVIDER_ENGINE=claude
+dx_set_session_messaging_preference off
 dx_session_messaging_prompt 'ticket-42' > "$TMP_DIR/prompt-off.txt"
 assert_contains 'named "ticket-42"' "$TMP_DIR/prompt-off.txt"
 assert_contains 'ListAgents' "$TMP_DIR/prompt-off.txt"

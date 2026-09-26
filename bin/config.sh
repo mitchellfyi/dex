@@ -153,10 +153,8 @@ ask_yn "Datadog (observability + APM)?" "n" && DATADOG_STATUS="enabled"
 if command -v python3 >/dev/null 2>&1; then
   session_messaging_pref=$(dx_session_messaging_preference 2>/dev/null || echo unset)
   if [[ "$session_messaging_pref" == unset && -t 0 ]]; then
-    session_messaging_default=n
-    # An accept that an earlier Dex wrote to the user's Claude settings keeps
-    # its effect, so the default follows it.
-    [[ "$(dx_claude_inbound_setting 2>/dev/null || true)" == accept ]] && session_messaging_default=y
+    # On by default: Dex sessions coordinate through these messages.
+    session_messaging_default=y
     session_messaging_pref=off
     ask_yn "Deliver messages between your Dex sessions without approval (all repos)?" \
       "$session_messaging_default" && session_messaging_pref=on

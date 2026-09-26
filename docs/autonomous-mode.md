@@ -154,8 +154,10 @@ so a message from an editor or plain CLI session is held for the Dex session's
 approval and dropped after five minutes when nobody answers. An unattended Dex
 session loses it silently.
 
-`dx config` asks once, `Deliver messages between your Dex sessions without
-approval (all repos)?`, and records the answer in
+Delivery is on by default, so Dex sessions can coordinate with each other:
+until you answer otherwise, every Dex launch accepts messages from your other
+sessions. `dx config` asks once, `Deliver messages between your Dex sessions
+without approval (all repos)?`, defaulting to yes, and records the answer in
 `~/.claude/.dex-install-state.json`. Change it later, with or without a
 terminal:
 
@@ -164,7 +166,7 @@ dx config --session-messaging on
 dx config --session-messaging off
 ```
 
-When the answer is on, every Dex launch (lifecycle phases and `dxloop`) passes
+When the answer is on or not yet given, every Dex launch (lifecycle phases and `dxloop`) passes
 `crossSessionInbound: accept` in its `--settings` value, so the change reaches
 only sessions Dex starts. Dex does not edit `~/.claude/settings.json` for
 this. A `hold` or `refuse` you set there yourself wins and Dex passes nothing;
@@ -172,8 +174,7 @@ managed settings and stricter project files apply on their own under Claude
 Code's precedence rules. Because `--settings` sets the key, Claude Code hides
 its own `/config` row **Messages from your other sessions** inside Dex
 sessions; use that row in any other session, or the flag above, to change the
-value. `dx sync` mentions the flag while no answer is recorded, so a repository
-that never ran `dx config` still learns of it.
+value. `dx sync` mentions the flag while the answer is off.
 
 An earlier Dex release wrote `accept` straight into `~/.claude/settings.json`.
 That value applies to every session, not only Dex's; remove it through Claude
