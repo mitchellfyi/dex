@@ -252,12 +252,15 @@ function recentCell(recent) {
   return `${Math.round(recent.ratio * 100)}%${recent.span ? ` · ${spanLabel(recent.span, Math.round)}` : ''}`;
 }
 
-// What a cap reports beside the percentage: when it comes back, or, for a
-// balance that never resets, how much of it is left.
+// What a cap reports beside the percentage: how much money is left when the
+// cap is denominated in it, and when it comes back when it resets. A metered
+// key's daily cap needs both: a percentage of an unknown sum reads as the
+// balance, which is how a $92 balance was once read as the day's allowance.
 function windowDetail(window, now) {
   const reset = resetIn(window.resets_at, now);
-  if (reset !== '-') return reset;
-  return Number.isFinite(window.remaining_amount) ? `$${window.remaining_amount.toFixed(2)}` : '';
+  const amount = Number.isFinite(window.remaining_amount) ? `$${window.remaining_amount.toFixed(2)}` : '';
+  if (reset === '-') return amount;
+  return amount ? `${amount} · ${reset}` : reset;
 }
 function accountModels(account, config, now) {
   const ids = [...new Set([config.default_model, ...Object.values(config.phases).flatMap(route => [route.model, ...(route.fallbacks || [])]),

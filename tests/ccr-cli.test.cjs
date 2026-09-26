@@ -780,8 +780,8 @@ test('a metered account reports money where a subscription reports a reset', () 
   // Both kinds sort the same way: the cap that comes back within the day is the
   // near one, so the daily spend cap sits where a subscription's 5h window sits,
   // and the balance sits where its weekly window sits.
-  assert.deepEqual(paid.slice(5), ['34% · 22h 0m', '66% · 2h 0m', '25% · $2.46'],
-    'a cap that resets reports when; a balance reports what is left of it');
+  assert.deepEqual(paid.slice(5), ['34% · 22h 0m', '66% · $9.93 · 2h 0m', '25% · $2.46'],
+    'a spend cap reports what is left and when it resets; a balance reports what is left of it');
   // Both providers occupy the same three columns, whatever their caps are called.
   assert.equal(sub.length, paid.length);
   assert.equal(sub.length, 8);
