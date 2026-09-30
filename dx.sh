@@ -3148,6 +3148,11 @@ __dx_run_phases_inline() {
     claude_args=("${(@)claude_args:#--chrome}")
     claude_args+=(--print --verbose --output-format stream-json)
   fi
+  # Claude's own debug log (hook start/finish, API retries) for diagnosing a
+  # session that stalls without saying why.
+  if [[ -n "${DX_CLAUDE_DEBUG_FILE:-}" ]]; then
+    claude_args+=(--debug-file "$DX_CLAUDE_DEBUG_FILE")
+  fi
   claude_args+=(--append-system-prompt-file "$ctx_file")
   # Status line plus, when the user opted in, unattended delivery of messages
   # from their other sessions. A build failure skips both rather than passing

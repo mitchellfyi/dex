@@ -208,6 +208,10 @@ if command -v zsh >/dev/null 2>&1; then
     'source "$DEX_DIR/dx.sh" >/dev/null 2>&1; __dx_phase_message 2 "task" in-place "$PWD"')
   [[ "$BENCH_MESSAGE" == *"never push, open a PR, or touch a tracker"* ]] || assert_at $LINENO
   [[ "$BENCH_MESSAGE" != *"prompts/issue-hygiene.md"* ]] || assert_at $LINENO
+  PLAN_MESSAGE=$(DEX_WORKFLOW=benchmark zsh -fc \
+    'source "$DEX_DIR/dx.sh" >/dev/null 2>&1; __dx_phase_message 1 "task" in-place "$PWD"')
+  # No plan mode to hold the line, so the text has to: planning edits nothing.
+  [[ "$PLAN_MESSAGE" == *"Phase 1 is read-only"* ]] || assert_at $LINENO
   TICKET_MESSAGE=$(zsh -fc \
     'source "$DEX_DIR/dx.sh" >/dev/null 2>&1; __dx_phase_message 2 "task" in-place "$PWD"')
   [[ "$TICKET_MESSAGE" == *"prompts/issue-hygiene.md"* ]] || assert_at $LINENO

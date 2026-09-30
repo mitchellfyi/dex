@@ -16,12 +16,12 @@ dx_benchmark_phase_message() {
   case "${1:-}" in
     1)
       cat <<'EOF'
-Begin Phase 1: Plan. This is a benchmark run: the requested task below is the whole request, there is no ticket or tracker, and an automated verifier will score the working tree you leave behind. Invoke the Skill tool with skill: "dxplan" now. Do not call EnterPlanMode and do not wait for approval: the run spec sets workflow.requires_plan_approval=false, so it authorizes the plan once the normal plan quality checks pass; follow the dxplan headless instructions. Skip tracker intake, ticket updates and issue searches. When the plan and its review criteria are ready, write the Phase 1 ready marker and stop so the Stop hook can audit and advance.
+Begin Phase 1: Plan. This is a benchmark run: the requested task below is the whole request, there is no ticket or tracker, and an automated verifier will score the working tree you leave behind. Invoke the Skill tool with skill: "dxplan" now. Phase 1 is read-only, exactly as it would be in plan mode: read, explore and run commands that inspect, but do not create, edit or delete project files, and do not run commands that change them. The only files you write are dxplan's own artifacts, the review criteria and the ready marker. Implementation starts in Phase 2, however small the task. Plan mode itself stays off because nobody can answer an ExitPlanMode prompt here: do not call EnterPlanMode and do not wait for approval. The run spec sets workflow.requires_plan_approval=false, so it authorizes the plan once the normal plan quality checks pass; follow the dxplan headless instructions. Skip tracker intake, ticket updates and issue searches. When the plan and its review criteria are ready, write the Phase 1 ready marker and stop so the Stop hook can audit and advance.
 EOF
       ;;
     2)
       cat <<'EOF'
-The plan is approved. Invoke the Skill tool with skill: "dximplement" to begin implementation. Phase focus: implement and test the change in this checkout. Commit coherent checkpoints locally if you like, but never push, open a PR, or touch a tracker; there is no remote and no reviewer. Record UI proof as N/A. Run the tests that cover your change rather than the whole suite unless the suite is small. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance to review.
+The plan is approved. Invoke the Skill tool with skill: "dximplement" to begin implementation. Phase focus: implement and test the change in this checkout. Commit coherent checkpoints locally if you like, but never push, open a PR, or touch a tracker; there is no remote and no reviewer. Record UI proof as N/A. Run the tests that cover your change rather than the whole suite unless the suite is small. Before the Phase 2 ready marker, record the review risk tier with dx_review_write_selection as dximplement describes; the Stop hook rejects Phase 2 without it. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance to review.
 EOF
       ;;
     3)
@@ -39,6 +39,7 @@ dx_benchmark_scope_lines() {
     1)
       cat <<'EOF'
 - DO invoke the dxplan skill immediately; do not call EnterPlanMode
+- Phase 1 is read-only: no project file changes, however small the task; implementation starts in Phase 2
 - The run spec authorizes the plan once its quality checks pass; do not wait for approval
 - Skip tracker intake and ticket updates; there is no tracker
 EOF
@@ -47,6 +48,7 @@ EOF
       cat <<'EOF'
 - DO implement, test, and verify completeness via the dximplement skill
 - Local commits are optional; never push, open a PR, or update a tracker
+- Record the review risk tier (dx_review_write_selection) before the ready marker
 - Record UI proof as N/A
 EOF
       ;;
