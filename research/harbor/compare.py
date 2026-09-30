@@ -5,8 +5,12 @@ Usage:
   compare.py JOBS_DIR                 # latest paired run per dataset
   compare.py BASELINE_RUN DEX_RUN     # two explicit runs
   compare.py --summary RUN            # one arm on its own, e.g. a screening run
-  compare.py --tasks failed|passed RUN [--sample N]
+  compare.py --tasks failed|passed|errored RUN [--sample N]
                                       # task names from one run, for run.sh
+
+failed means the verifier ran and scored the task below 1. errored means it
+never scored the task (setup time-out, cancelled trial): that is not the
+agent failing, and those tasks stay out of a hard set.
 
 A RUN is a job directory, or the job-name prefix of a run.sh --one-at-a-time
 run, whose tasks each have a <prefix>--<task> job directory.
@@ -114,12 +118,17 @@ def pick_jobs(jobs_dir: Path) -> list[tuple[str, dict[str, Path]]]:
 
 
 def select_tasks(kind: str, job_dir: Path, sample: int | None) -> list[str]:
-    """Tasks a job failed (reward below 1, or no reward) or passed."""
+    """Tasks a run passed, failed (scored below 1) or errored (never scored)."""
     chosen = []
     for task, runs in sorted(load_trials(job_dir).items()):
         reward = mean([t["reward"] for t in runs])
-        passed = reward is not None and reward >= 1.0
-        if passed == (kind == "passed"):
+        if reward is None:
+            outcome = "errored"
+        elif reward >= 1.0:
+            outcome = "passed"
+        else:
+            outcome = "failed"
+        if outcome == kind:
             chosen.append(task)
     if sample is not None and sample < len(chosen):
         # A fixed seed keeps a sample reproducible across reruns.
@@ -198,7 +207,7 @@ def main(argv: list[str]) -> int:
                   f"{','.join(sorted({t['error'] for t in runs if t['error']}))}")
         print("\n  " + summarize("run", trials))
         return 0
-    if len(argv) >= 4 and argv[1] == "--tasks" and argv[2] in ("failed", "passed"):
+    if len(argv) >= 4 and argv[1] == "--tasks" and argv[2] in ("failed", "passed", "errored"):
         sample = None
         if len(argv) == 6 and argv[4] == "--sample":
             sample = int(argv[5])

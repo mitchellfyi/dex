@@ -83,6 +83,8 @@ python3 research/harbor/compare.py ~/.dex/bench/jobs
 | `--task-file FILE` | unset | Task names, one per line |
 | `--one-at-a-time` | off | One job per task, so a failure does not stop the rest |
 | `--prune-images` | off | Delete each task's benchmark images after its job; general images are never touched |
+| `--setup-timeout-multiplier X` | 3 | Time allowed to install the agent. Under emulation it outlasts Harbor's 6 minutes; the agent's own time limit is unaffected |
+| `--stamp STAMP` | new | Continue a `--one-at-a-time` run: verified tasks are skipped, errored ones rerun |
 | `--dataset NAME@VERSION` | `terminal-bench-sample@2.0` | `harbor datasets list --legacy` lists the rest |
 | `--model MODEL` | `anthropic/claude-sonnet-5-5` | Both arms use the same model |
 | `--tasks N` / `--task GLOB` | all | Limit the task set |
@@ -144,6 +146,9 @@ containers a reachable endpoint.
   arms, and remember that a leaderboard submission has to use the defaults.
 - With a few dozen tasks, look at the tasks only one arm solved, not the
   percentage. `compare.py` lists both.
+- A task whose verifier never ran (setup time-out, cancelled trial) is
+  errored, not failed. `compare.py --tasks errored RUN` lists them, rerunning
+  with `--stamp` retries them, and they never enter a hard set.
 - Report cost and time per solved task next to the solve rate.
 - The `dex lifecycle` column shows how far each Dex run got: `complete`,
   `paused@N`, or `incomplete` when the time limit ended it.

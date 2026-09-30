@@ -19,6 +19,9 @@
 #   --concurrency N                Trials at once (default: 1)
 #   --attempts K                   Attempts per task (default: 1)
 #   --timeout-multiplier X         Agent timeout multiplier for both arms (default: 1)
+#   --setup-timeout-multiplier X   Agent install time multiplier (default: 3). Setup only:
+#                                  under emulation installing Claude Code outlasts
+#                                  Harbor's 6 minutes, which is not the agent failing
 #   --effort LEVEL                 low|medium|high|xhigh|max for both arms
 #   --failed-in JOB                Add the tasks JOB failed (a screening run)
 #   --passed-in JOB                Add the tasks JOB passed
@@ -27,6 +30,8 @@
 #   --one-at-a-time                Run each task as its own job (needs named tasks)
 #   --prune-images                 After each job, delete the task images it pulled or
 #                                  built; only benchmark images are touched
+#   --stamp STAMP                  Continue an earlier --one-at-a-time run: tasks with a
+#                                  verified result are skipped, errored ones rerun
 #   --oracle                       Run the reference solutions instead (checks the setup)
 #
 # Needs Docker and Harbor (`uv tool install harbor`), plus ANTHROPIC_API_KEY or
@@ -39,6 +44,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Everything runs inside main, which bash parses whole before it starts. A
+# screen runs for hours, and bash reads a script file as it executes it, so an
+# edit to this file mid-run would otherwise change what the rest of it does.
+main() {
+
 AGENT="both"
 DATASET="terminal-bench-sample@2.0"
 MODEL="anthropic/claude-sonnet-5-5"
@@ -47,6 +57,8 @@ TASK_GLOBS=()
 CONCURRENCY=1
 ATTEMPTS=1
 TIMEOUT_MULTIPLIER=1
+SETUP_TIMEOUT_MULTIPLIER=3
+STAMP=""
 EFFORT=""
 REVIEW_TIER=""
 FAILED_IN=""
@@ -59,7 +71,7 @@ EXTRA_ARGS=()
 JOBS_DIR="${DEX_BENCH_JOBS_DIR:-$HOME/.dex/bench/jobs}"
 
 usage() {
-  sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 require_value() {
@@ -79,6 +91,8 @@ while [[ $# -gt 0 ]]; do
     --concurrency) require_value "$@"; CONCURRENCY="$2"; shift 2 ;;
     --attempts) require_value "$@"; ATTEMPTS="$2"; shift 2 ;;
     --timeout-multiplier) require_value "$@"; TIMEOUT_MULTIPLIER="$2"; shift 2 ;;
+    --setup-timeout-multiplier) require_value "$@"; SETUP_TIMEOUT_MULTIPLIER="$2"; shift 2 ;;
+    --stamp) require_value "$@"; STAMP="$2"; shift 2 ;;
     --effort) require_value "$@"; EFFORT="$2"; shift 2 ;;
     --review-tier) require_value "$@"; REVIEW_TIER="$2"; shift 2 ;;
     --failed-in) require_value "$@"; FAILED_IN="$2"; shift 2 ;;
@@ -165,7 +179,7 @@ if [[ ( -n "$FAILED_IN" || -n "$PASSED_IN" ) && ${#TASK_GLOBS[@]} -eq 0 ]]; then
 fi
 
 mkdir -p "$JOBS_DIR"
-STAMP=$(date +%Y%m%d-%H%M%S)
+[[ -n "$STAMP" ]] || STAMP=$(date +%Y%m%d-%H%M%S)
 DATASET_SLUG="${DATASET//[^A-Za-z0-9._-]/-}"
 
 if [[ "$ONE_AT_A_TIME" -eq 1 && ${#TASK_GLOBS[@]} -eq 0 ]]; then
@@ -174,7 +188,8 @@ if [[ "$ONE_AT_A_TIME" -eq 1 && ${#TASK_GLOBS[@]} -eq 0 ]]; then
 fi
 
 base_args=(-d "$DATASET" -o "$JOBS_DIR" -n "$CONCURRENCY" -k "$ATTEMPTS"
-  --agent-timeout-multiplier "$TIMEOUT_MULTIPLIER" -y)
+  --agent-timeout-multiplier "$TIMEOUT_MULTIPLIER"
+  --agent-setup-timeout-multiplier "$SETUP_TIMEOUT_MULTIPLIER" -y)
 common_args=("${base_args[@]}")
 [[ -n "$N_TASKS" ]] && common_args+=(-l "$N_TASKS")
 for glob in ${TASK_GLOBS[@]+"${TASK_GLOBS[@]}"}; do
@@ -202,6 +217,22 @@ prune_task_images() { # [task...]
   return 0
 }
 
+# Did this job's verifier run? A trial that errored or was stopped before
+# verification has no reward, and says nothing about the agent.
+job_verified() { # <job_dir>
+  python3 - "$1" <<'PY'
+import glob
+import json
+import sys
+
+for path in glob.glob(sys.argv[1] + "/*/result.json"):
+    with open(path, encoding="utf-8") as handle:
+        if (json.load(handle).get("verifier_result") or {}).get("rewards"):
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
 run_arm() { # <label> <harbor agent args...>
   local label="$1"
   shift
@@ -217,6 +248,15 @@ run_arm() { # <label> <harbor agent args...>
   # One job per task, named <run>--<task>; compare.py merges them back into
   # one run. A failed or cancelled task does not stop the ones after it.
   for task in "${TASK_GLOBS[@]}"; do
+    local job_dir="$JOBS_DIR/${job_name}--${task}"
+    if [[ -d "$job_dir" ]]; then
+      if job_verified "$job_dir"; then
+        printf 'run.sh: %s already has a verified result; skipping\n' "$task"
+        continue
+      fi
+      # An earlier attempt at this run errored or was stopped: start it again.
+      command rm -rf "$job_dir"
+    fi
     printf '\n==> %s: %s (job %s--%s)\n' "$label" "$DATASET" "$job_name" "$task"
     PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" harbor run \
       "${base_args[@]}" -i "$task" --job-name "${job_name}--${task}" "$@" \
@@ -228,7 +268,7 @@ run_arm() { # <label> <harbor agent args...>
 
 if [[ "$ORACLE" -eq 1 ]]; then
   run_arm oracle -a oracle
-  exit 0
+  return 0
 fi
 
 agent_args=(-m "$MODEL")
@@ -259,4 +299,8 @@ done
 
 printf '\nJobs: %s\nBrowse: harbor view jobs -o %s\nCompare: python3 %s/compare.py %s\n' \
   "$JOBS_DIR" "$JOBS_DIR" "$SCRIPT_DIR" "$JOBS_DIR"
-exit "$status"
+return "$status"
+}
+
+main "$@"
+exit $?
