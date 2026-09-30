@@ -55,6 +55,10 @@ Prerequisites:
 - `ANTHROPIC_API_KEY` in the environment (or `CLAUDE_CODE_OAUTH_TOKEN` from
   `claude setup-token`). Use an API key for anything beyond a smoke test:
   subscription rate limits turn into timeouts, and those skew the result.
+  An organisation-level key, one not created inside a workspace, is rejected
+  with "API key is not scoped to a workspace"; also set
+  `ANTHROPIC_WORKSPACE_ID` and `run.sh` sends the `anthropic-workspace-id`
+  header for both arms.
 
 Check that Harbor and Docker work, with no model involved:
 

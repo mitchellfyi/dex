@@ -72,8 +72,9 @@ ln -sfn "$DEX_DIR/skills" "$CLAUDE_CONFIG_DIR/skills"
 
 # Dex strips ANTHROPIC_* from the environment it launches Claude with, so
 # provider isolation holds on a developer machine. In here the key reaches
-# Claude as an apiKeyHelper, and a custom base URL through settings env. The
-# key file stays out of /logs, which Harbor copies back to the host.
+# Claude as an apiKeyHelper, and a custom base URL or the workspace header
+# through settings env. The key file stays out of /logs, which Harbor copies
+# back to the host.
 (
   umask 077
   if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
@@ -94,8 +95,9 @@ if os.path.exists(source):
 if os.environ.get("ANTHROPIC_API_KEY"):
     key_file = os.path.join(os.environ["DEX_BENCH_DIR"], "api-key")
     settings["apiKeyHelper"] = f"cat {key_file}"
-if os.environ.get("ANTHROPIC_BASE_URL"):
-    settings.setdefault("env", {})["ANTHROPIC_BASE_URL"] = os.environ["ANTHROPIC_BASE_URL"]
+for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"):
+    if os.environ.get(name):
+        settings.setdefault("env", {})[name] = os.environ[name]
 with open(target, "w", encoding="utf-8") as handle:
     json.dump(settings, handle, indent=2)
 PY

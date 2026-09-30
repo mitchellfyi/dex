@@ -16,7 +16,8 @@
 #   --oracle                       Run the reference solutions instead (checks the setup)
 #
 # Needs Docker and Harbor (`uv tool install harbor`), plus ANTHROPIC_API_KEY or
-# CLAUDE_CODE_OAUTH_TOKEN for the agent arms. Results land in
+# CLAUDE_CODE_OAUTH_TOKEN for the agent arms. An organisation-level key also
+# needs ANTHROPIC_WORKSPACE_ID. Results land in
 # ${DEX_BENCH_JOBS_DIR:-~/.dex/bench/jobs}; `harbor view jobs -o <dir>` browses them.
 # See docs/benchmarks.md.
 
@@ -127,6 +128,11 @@ fi
 
 agent_args=(-m "$MODEL")
 [[ -n "$EFFORT" ]] && agent_args+=(--ak "reasoning_effort=$EFFORT")
+# An organisation-level API key is rejected unless each request names the
+# workspace to bill. Claude Code sends extra headers from this variable.
+if [[ -n "${ANTHROPIC_WORKSPACE_ID:-}" ]]; then
+  agent_args+=(--ae "ANTHROPIC_CUSTOM_HEADERS=anthropic-workspace-id: $ANTHROPIC_WORKSPACE_ID")
+fi
 
 status=0
 if [[ "$AGENT" == "claude-code" || "$AGENT" == "both" ]]; then
