@@ -47,9 +47,10 @@ dx_lifecycle_phase_promise() {
 
 # The workflow decides which phases a lifecycle runs. ticket_to_pr, the
 # default, runs Setup through Complete. benchmark runs Plan, Implement and
-# Review only: an evaluation harness scores the working tree Dex leaves
+# Review at most: an evaluation harness scores the working tree Dex leaves
 # behind, so there is no ticket to set up and no branch to push or PR to open.
-# `dx run` sets DEX_WORKFLOW from the run spec's workflow.name.
+# `dx run` sets DEX_WORKFLOW from the run spec's workflow.name and
+# DEX_BENCHMARK_PHASES from workflow.phases.
 
 # dx_lifecycle_workflow — ticket_to_pr or benchmark
 dx_lifecycle_workflow() {
@@ -63,21 +64,44 @@ dx_lifecycle_benchmark() {
   [[ "$(dx_lifecycle_workflow)" == "benchmark" ]]
 }
 
+# dx_lifecycle_benchmark_phases — which benchmark phases this run keeps, from
+# DEX_BENCHMARK_PHASES (run spec workflow.phases). Implement always runs; Plan
+# and Review can each be left out to measure what they contribute.
+dx_lifecycle_benchmark_phases() {
+  case "${DEX_BENCHMARK_PHASES:-}" in
+    implement,review|plan,implement|implement) printf '%s\n' "$DEX_BENCHMARK_PHASES" ;;
+    *) printf '%s\n' "plan,implement,review" ;;
+  esac
+}
+
+# dx_lifecycle_benchmark_runs <plan|implement|review>
+dx_lifecycle_benchmark_runs() {
+  dx_lifecycle_benchmark || return 1
+  case ",$(dx_lifecycle_benchmark_phases)," in
+    *",$1,"*) return 0 ;;
+  esac
+  return 1
+}
+
 # dx_lifecycle_first_phase — the phase a new lifecycle starts in
 dx_lifecycle_first_phase() {
-  if dx_lifecycle_benchmark; then
+  if ! dx_lifecycle_benchmark; then
+    printf '%s\n' "0"
+  elif dx_lifecycle_benchmark_runs plan; then
     printf '%s\n' "1"
   else
-    printf '%s\n' "0"
+    printf '%s\n' "2"
   fi
 }
 
 # dx_lifecycle_final_phase — the phase whose completion ends the lifecycle
 dx_lifecycle_final_phase() {
-  if dx_lifecycle_benchmark; then
+  if ! dx_lifecycle_benchmark; then
+    printf '%s\n' "6"
+  elif dx_lifecycle_benchmark_runs review; then
     printf '%s\n' "3"
   else
-    printf '%s\n' "6"
+    printf '%s\n' "2"
   fi
 }
 

@@ -463,6 +463,19 @@ if benchmark and requires_plan_approval:
     fail("workflow.requires_plan_approval must be false for the benchmark workflow")
 if benchmark and harness_name == "codex":
     fail("the benchmark workflow supports the claude-code harness only")
+BENCHMARK_PHASE_ORDER = ("plan", "implement", "review")
+phases = workflow.get("phases")
+if phases is None:
+    phases = list(BENCHMARK_PHASE_ORDER) if benchmark else None
+elif not benchmark:
+    fail("workflow.phases applies only to the benchmark workflow")
+elif not isinstance(phases, list) or any(p not in BENCHMARK_PHASE_ORDER for p in phases):
+    fail("workflow.phases must list phases from: plan, implement, review")
+else:
+    # Implement always runs; Plan and Review can each be left out.
+    phases = [p for p in BENCHMARK_PHASE_ORDER if p in phases]
+    if "implement" not in phases:
+        fail("workflow.phases must include implement")
 auto_merge = bool_at(workflow, "auto_merge", "workflow", False)
 requires_ui_evidence = workflow.get("requires_ui_evidence", "never" if benchmark else "auto")
 if isinstance(requires_ui_evidence, bool):
@@ -541,6 +554,7 @@ normalized["harness"] = {
 }
 normalized["workflow"] = {
     **workflow,
+    **({"phases": phases} if phases is not None else {}),
     "name": workflow_name,
     "version": workflow_version,
     "requires_plan_approval": requires_plan_approval,

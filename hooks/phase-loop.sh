@@ -1756,46 +1756,50 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
       dx_print_rejected_receipt_command
       exit 2
     fi
-    REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
-    REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
-    if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]]; then
-      if ! dx_rotate_rejected_receipt; then
-        printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
+    # The sealed criteria and the risk tier exist to feed Review. A benchmark
+    # configured without Review ends here, so neither gate applies.
+    if [[ "$(dx_lifecycle_final_phase)" -ge 3 ]]; then
+      REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
+      REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
+      if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]]; then
+        if ! dx_rotate_rejected_receipt; then
+          printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
+          exit 2
+        fi
+        printf '\n%s\n\n' "--- Dex Phase 2 Gate: approved review criteria missing, invalid, or changed after approval ---" >&2
+        printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
+        printf '%s\n' "" >&2
+        printf '%s\n' "Restore the approved Phase 1 requirements at:" >&2
+        printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
+        printf '%s\n' "Use the version 1 schema from dxplan Step 9. If the user approved a plan change during implementation, replace the artifact and explicitly rotate its approval with dx_review_approve_criteria before continuing." >&2
+        printf '%s\n' "" >&2
+        dx_print_rejected_receipt_command
         exit 2
       fi
-      printf '\n%s\n\n' "--- Dex Phase 2 Gate: approved review criteria missing, invalid, or changed after approval ---" >&2
-      printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
-      printf '%s\n' "" >&2
-      printf '%s\n' "Restore the approved Phase 1 requirements at:" >&2
-      printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
-      printf '%s\n' "Use the version 1 schema from dxplan Step 9. If the user approved a plan change during implementation, replace the artifact and explicitly rotate its approval with dx_review_approve_criteria before continuing." >&2
-      printf '%s\n' "" >&2
-      dx_print_rejected_receipt_command
-      exit 2
-    fi
-    REVIEW_POLICY_RECORD=$(dx_review_policy_resolve "$(pwd)" 2>/dev/null || true)
-    IFS=$'\t' read -r _ _ _ REVIEW_POLICY_BINDING _ <<< "$REVIEW_POLICY_RECORD"
-    if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
-       ! dx_review_policy_binding_valid "$REVIEW_POLICY_BINDING" ||
-       ! dx_review_selection_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING"; then
-      if ! dx_rotate_rejected_receipt; then
-        printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
+      REVIEW_POLICY_RECORD=$(dx_review_policy_resolve "$(pwd)" 2>/dev/null || true)
+      IFS=$'\t' read -r _ _ _ REVIEW_POLICY_BINDING _ <<< "$REVIEW_POLICY_RECORD"
+      if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
+         ! dx_review_policy_binding_valid "$REVIEW_POLICY_BINDING" ||
+         ! dx_review_selection_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING"; then
+        if ! dx_rotate_rejected_receipt; then
+          printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
+          exit 2
+        fi
+        printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
+        printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
+        printf '%s\n' "" >&2
+        printf '%s\n' "Choose the review risk tier for the implementation you just completed: trivial, small, normal, or complex. Use the ordered rubric in prompts/review-risk-assessment.md and persist comma-separated reason codes." >&2
+        printf '%s\n' "" >&2
+        printf '%s\n' "Record the current-scope choice, then stop again:" >&2
+        printf '%s\n' '```bash' >&2
+        printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
+        printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
+        printf '%s\n' "dx_review_write_selection \"\$SESSION_ID\" \"<trivial|small|normal|complex>\" \"lifecycle-agent\" \"<comma-separated-reason-codes>\" \"\$PWD\"" >&2
+        printf '%s\n' '```' >&2
+        printf '%s\n' "" >&2
+        dx_print_rejected_receipt_command
         exit 2
       fi
-      printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
-      printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
-      printf '%s\n' "" >&2
-      printf '%s\n' "Choose the review risk tier for the implementation you just completed: trivial, small, normal, or complex. Use the ordered rubric in prompts/review-risk-assessment.md and persist comma-separated reason codes." >&2
-      printf '%s\n' "" >&2
-      printf '%s\n' "Record the current-scope choice, then stop again:" >&2
-      printf '%s\n' '```bash' >&2
-      printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
-      printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
-      printf '%s\n' "dx_review_write_selection \"\$SESSION_ID\" \"<trivial|small|normal|complex>\" \"lifecycle-agent\" \"<comma-separated-reason-codes>\" \"\$PWD\"" >&2
-      printf '%s\n' '```' >&2
-      printf '%s\n' "" >&2
-      dx_print_rejected_receipt_command
-      exit 2
     fi
   fi
 

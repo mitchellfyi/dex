@@ -91,6 +91,15 @@ write_approved_criteria() { # <session-id>
 [[ "$(DEX_WORKFLOW=benchmark dx_lifecycle_final_phase)" == "3" ]] || assert_at $LINENO
 # An unknown name is the default lifecycle, not a partial one.
 [[ "$(DEX_WORKFLOW=bench dx_lifecycle_final_phase)" == "6" ]] || assert_at $LINENO
+# workflow.phases leaves Plan or Review out; an unknown set means all three.
+[[ "$(DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=implement,review dx_lifecycle_first_phase)" == "2" ]] \
+  || assert_at $LINENO
+[[ "$(DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=plan,implement dx_lifecycle_final_phase)" == "2" ]] \
+  || assert_at $LINENO
+[[ "$(DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=implement dx_lifecycle_first_phase)$(DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=implement dx_lifecycle_final_phase)" == "22" ]] \
+  || assert_at $LINENO
+[[ "$(DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=review dx_lifecycle_final_phase)" == "3" ]] \
+  || assert_at $LINENO
 
 # --- run spec normalization ---
 write_spec() { # <path> <workflow-json>
@@ -135,6 +144,24 @@ if dx_run_spec_normalize "$TMP_DIR/bench-codex.json" "$TMP_DIR/x.json" 2>"$TMP_D
   assert_at $LINENO
 fi
 grep -Fq "supports the claude-code harness only" "$TMP_DIR/err" || assert_at $LINENO
+
+# workflow.phases is canonicalised, must include implement, and is benchmark-only.
+write_spec "$TMP_DIR/bench-phases.json" '{"name":"benchmark","phases":["review","implement"]}'
+dx_run_spec_normalize "$TMP_DIR/bench-phases.json" "$TMP_DIR/bench-phases.normalized.json"
+[[ "$(dx_run_spec_field "$TMP_DIR/bench-phases.normalized.json" workflow.phases)" == '["implement","review"]' ]] \
+  || assert_at $LINENO
+[[ "$(dx_run_spec_field "$TMP_DIR/bench.normalized.json" workflow.phases)" == '["plan","implement","review"]' ]] \
+  || assert_at $LINENO
+write_spec "$TMP_DIR/bench-noimpl.json" '{"name":"benchmark","phases":["plan","review"]}'
+if dx_run_spec_normalize "$TMP_DIR/bench-noimpl.json" "$TMP_DIR/x.json" 2>"$TMP_DIR/err"; then
+  assert_at $LINENO
+fi
+grep -Fq "workflow.phases must include implement" "$TMP_DIR/err" || assert_at $LINENO
+write_spec "$TMP_DIR/ticket-phases.json" '{"name":"ticket_to_pr","phases":["implement"]}'
+if dx_run_spec_normalize "$TMP_DIR/ticket-phases.json" "$TMP_DIR/x.json" 2>"$TMP_DIR/err"; then
+  assert_at $LINENO
+fi
+grep -Fq "applies only to the benchmark workflow" "$TMP_DIR/err" || assert_at $LINENO
 
 # The default workflow keeps its defaults.
 write_spec "$TMP_DIR/ticket.json" '{"name":"ticket_to_pr"}'
@@ -202,12 +229,50 @@ chmod -R u+w "$(dx_review_proof_dir "$SID")" 2>/dev/null || true
 rm -rf "$(dx_review_proof_dir "$SID")"
 rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
 
+# --- Stop hook: without Review, Implement ends the lifecycle ---
+# No sealed criteria and no risk tier: both exist to feed Review.
+SID="bench-noreview"
+start_inline_phase "$SID" 2 2-implement
+touch "$DX_LOOP_DIR/$SID.phase-2.ready"
+write_completion "$SID" 2
+set +e
+OUT="$(cd "$REPO" && printf '{"session_id":"claude-bench-noreview"}' | env \
+  DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=plan,implement DEX_SESSION_ID="$SID" \
+  DEX_LOOP_ACTIVE=1 DEX_LOOP_PHASE=2 DEX_PHASE_HANDOFF=inline bash "$HOOK" 2>&1)"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || assert_at $LINENO
+[[ "$OUT" == *"benchmark lifecycle is complete"* ]] || assert_at $LINENO
+[[ "$OUT" != *"review risk selection missing"* ]] || assert_at $LINENO
+[[ "$(cat "$DX_STATE_DIR/$SID.phase")" == "7" ]] || assert_at $LINENO
+DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=plan,implement dx_lifecycle_terminal_commit_valid "$SID" \
+  || assert_at $LINENO
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
+# --- without Plan, the task text becomes sealed acceptance criteria ---
+SID="bench-noplan"
+dx_benchmark_seed_criteria "$SID" "$TMP_DIR/bench.normalized.json" || assert_at $LINENO
+dx_review_criteria_valid "$(dx_review_criteria_file "$SID")" || assert_at $LINENO
+grep -Fq "Fix the bug." "$(dx_review_criteria_file "$SID")" || assert_at $LINENO
+[[ "$(dx_review_read_criteria_approval "$SID")" =~ ^[a-f0-9]{64}$ ]] || assert_at $LINENO
+# A second call leaves the sealed criteria alone.
+dx_benchmark_seed_criteria "$SID" "$TMP_DIR/bench.normalized.json" || assert_at $LINENO
+rm -f "$DX_LOOP_DIR/$SID".* "$DX_STATE_DIR/$SID".*
+
 # --- dx.sh: launch text and completion ---
 if command -v zsh >/dev/null 2>&1; then
   BENCH_MESSAGE=$(DEX_WORKFLOW=benchmark zsh -fc \
     'source "$DEX_DIR/dx.sh" >/dev/null 2>&1; __dx_phase_message 2 "task" in-place "$PWD"')
   [[ "$BENCH_MESSAGE" == *"never push, open a PR, or touch a tracker"* ]] || assert_at $LINENO
   [[ "$BENCH_MESSAGE" != *"prompts/issue-hygiene.md"* ]] || assert_at $LINENO
+  NOPLAN_MESSAGE=$(DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=implement,review zsh -fc \
+    'source "$DEX_DIR/dx.sh" >/dev/null 2>&1; __dx_phase_message 2 "task" in-place "$PWD"')
+  [[ "$NOPLAN_MESSAGE" == *"has no planning phase"* ]] || assert_at $LINENO
+  [[ "$NOPLAN_MESSAGE" == *"dx_review_write_selection"* ]] || assert_at $LINENO
+  NOREVIEW_MESSAGE=$(DEX_WORKFLOW=benchmark DEX_BENCHMARK_PHASES=plan,implement zsh -fc \
+    'source "$DEX_DIR/dx.sh" >/dev/null 2>&1; __dx_phase_message 2 "task" in-place "$PWD"')
+  [[ "$NOREVIEW_MESSAGE" == *"no review follows"* ]] || assert_at $LINENO
+  [[ "$NOREVIEW_MESSAGE" != *"dx_review_write_selection"* ]] || assert_at $LINENO
   PLAN_MESSAGE=$(DEX_WORKFLOW=benchmark zsh -fc \
     'source "$DEX_DIR/dx.sh" >/dev/null 2>&1; __dx_phase_message 1 "task" in-place "$PWD"')
   # No plan mode to hold the line, so the text has to: planning edits nothing.

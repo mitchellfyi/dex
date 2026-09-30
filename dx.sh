@@ -3577,11 +3577,15 @@ __dx_run_spec_apply_env() {
   default_branch=$(dx_run_spec_field "$spec_file" "repository.default_branch")
   export DEX_HEADLESS_DEFAULT_BRANCH="$default_branch"
 
-  # lib/lifecycle-control.sh reads this to decide which phases run.
+  # lib/lifecycle-control.sh reads these to decide which phases run.
   if [[ "$(dx_run_spec_field "$spec_file" "workflow.name")" == "benchmark" ]]; then
     export DEX_WORKFLOW=benchmark
+    local benchmark_phases
+    benchmark_phases=$(dx_run_spec_field "$spec_file" "workflow.phases")
+    export DEX_BENCHMARK_PHASES="${benchmark_phases//[\[\]\" ]/}"
   else
     export DEX_WORKFLOW=""
+    export DEX_BENCHMARK_PHASES=""
   fi
 }
 
@@ -3600,7 +3604,7 @@ __dx_run_spec_cli() {
   local -x DX_MODEL_OVERRIDE="${DX_MODEL_OVERRIDE:-}"
   local -x DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="${DEX_HEADLESS_REQUIRES_PLAN_APPROVAL:-}"
   local -x DEX_HEADLESS_DEFAULT_BRANCH="${DEX_HEADLESS_DEFAULT_BRANCH:-}"
-  local -x DEX_WORKFLOW=""
+  local -x DEX_WORKFLOW="" DEX_BENCHMARK_PHASES=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --spec)
@@ -3795,6 +3799,13 @@ __dx_run_spec_cli() {
       __dx_startup_claim_release || true
       return 1
     }
+  fi
+
+  if dx_lifecycle_benchmark && ! dx_lifecycle_benchmark_runs plan \
+    && ! dx_benchmark_seed_criteria "$session_id" "$final_spec"; then
+    dx_error "Could not seal acceptance criteria from the task text for a benchmark run without Plan."
+    __dx_startup_claim_release || true
+    return 1
   fi
 
   dx_info "Starting headless Dex run ${run_id}"
