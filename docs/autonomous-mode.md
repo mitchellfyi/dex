@@ -726,6 +726,10 @@ launches the in-place lifecycle in `repository.working_directory`. Manual CLI
 usage is unchanged. See [run-specs.md](run-specs.md) for the spec schema and
 startup commands.
 
+A spec with `workflow.name: "benchmark"` starts at Phase 1, runs Claude in
+print mode, and ends when Phase 3 succeeds, leaving the change in the checkout
+for an evaluation harness to score. See [benchmarks.md](benchmarks.md).
+
 ## Safety Controls
 
 ### Phase Audit Iterations
@@ -940,6 +944,7 @@ use an override-bound lower target; other assurance gates use
 | `DEX_HEADLESS_RUN` | unset | Internal marker for lifecycle sessions started by `dx run` |
 | `DEX_HEADLESS_RUN_SPEC_FILE` | unset | Normalized run spec path passed into the launched lifecycle |
 | `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | spec value | Whether Phase 1 must wait for interactive plan approval |
+| `DEX_WORKFLOW` | unset | Set by `dx run` from `workflow.name`; `benchmark` runs Phases 1-3 only |
 | `DEX_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DEX_PHASE_2_MIN_AUDITS=5`) |
 | `DEX_REVIEW_TIER` | agent-selected | Canonical explicit risk-tier override: `trivial`, `small`, `normal`, or `complex`; takes precedence over the legacy profile alias |
 | `DEX_REVIEW_PROFILE` | unset | Legacy alias: `light`, `standard`, or `thorough` map to `small`, `normal`, or `complex` |

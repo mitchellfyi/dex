@@ -22,7 +22,8 @@ it.
 | `events.sh` | Run IDs, local run directories, JSONL event journals, redacted logs, artifact manifests, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_log_append()`, `dx_run_register_artifact()`, `dx_run_write_summary()` |
 | `factory.sh` | Optional Dex Factory event sync over HTTP | `dx_factory_sync_pending_events()`, `dx_factory_events_endpoint()`, `dx_factory_sync_requested()` |
 | `git.sh` | Git helpers, including safe tracker-branch adoption | `dx_default_branch()`, `dx_ticket_branch_prepare()`, `dx_slugify()` |
-| `lifecycle-control.sh` | Human/agent lifecycle pause, stop, phase transition, ownership, and audit receipts | `dx_write_lifecycle_control()`, `dx_lifecycle_control_read()`, `dx_lifecycle_control_lock_acquire()` |
+| `lifecycle-control.sh` | Human/agent lifecycle pause, stop, phase transition, ownership, audit receipts, and the per-workflow phase range | `dx_write_lifecycle_control()`, `dx_lifecycle_control_read()`, `dx_lifecycle_control_lock_acquire()`, `dx_lifecycle_final_phase()` |
+| `benchmark.sh` | Prompt text for the benchmark workflow: phase messages, scope lines, system context, and the audit addendum | `dx_benchmark_phase_message()`, `dx_benchmark_context()`, `dx_benchmark_audit_addendum()` |
 | `maintenance.sh` | Background maintenance config, workflow install, run IDs, locks, and reviewer normalization | `dx_maintenance_event_mode()`, `dx_maintenance_install_workflow()`, `dx_maintenance_run_id()`, `dx_maintenance_request_reviewer()`, `dx_maintenance_pr_review_state()` |
 | `override.sh` | Session policy journal, validation, expiry, and effective-value resolution | `dx_override_set()`, `dx_override_clear()`, `dx_override_list()`, `dx_override_effective()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
@@ -70,6 +71,7 @@ the gate map.
 | `DEX_HEADLESS_RUN` | Internal marker for lifecycle sessions started by `dx run` | unset |
 | `DEX_HEADLESS_RUN_SPEC_FILE` | Normalized run spec path passed into the launched lifecycle | unset |
 | `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | Whether Phase 1 must wait for interactive plan approval | spec value |
+| `DEX_WORKFLOW` | Set by `dx run` from `workflow.name`; `benchmark` runs Phases 1-3 only | unset |
 | `DX_RTK_ENABLED` | Enable RTK token-reduction bootstrap (`0` disables) | `1` |
 | `DX_RTK_BIN` | Override RTK binary path used by Dex hooks/checks | unset |
 | `DX_RTK_INSTALL_DIR` | RTK binary install directory | `$DX_TOOL_DIR/rtk/bin` |
