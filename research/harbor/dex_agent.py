@@ -23,6 +23,11 @@ Agent kwargs (``--ak key=value``):
   phase_timeout     Seconds one lifecycle phase may run before Dex stops it
                     (default 1200). A stalled session then fails fast instead
                     of spending the whole task budget.
+  phases            Benchmark phases to run, comma-separated (default
+                    plan,implement,review). Leave out plan or review to
+                    measure what each contributes.
+  review_tier       Force the review depth: trivial, small, normal, complex.
+                    Unset lets Implement choose, as a normal lifecycle does.
 
 Harbor imports this module inside its own tool environment, so it may only
 use the standard library and Harbor's own packages.
@@ -161,9 +166,15 @@ class DexAgent(ClaudeCode):
         *args: Any,
         dex_dir: str | None = None,
         phase_timeout: int = 1200,
+        phases: str = "plan,implement,review",
+        review_tier: str | None = None,
         **kwargs: Any,
     ):
         self._phase_timeout = int(phase_timeout)
+        self._phases = [p.strip() for p in str(phases).split(",") if p.strip()]
+        if review_tier not in (None, "trivial", "small", "normal", "complex"):
+            raise ValueError(f"review_tier must be trivial, small, normal or complex: {review_tier}")
+        self._review_tier = review_tier
         default_dir = Path(__file__).resolve().parents[2]
         self._dex_dir = Path(dex_dir).expanduser().resolve() if dex_dir else default_dir
         if not (self._dex_dir / "dx.sh").is_file():
@@ -244,7 +255,7 @@ class DexAgent(ClaudeCode):
             },
             "source": {"type": "task", "title": "Benchmark task", "body": instruction},
             "harness": harness,
-            "workflow": {"name": "benchmark", "version": "v1"},
+            "workflow": {"name": "benchmark", "version": "v1", "phases": self._phases},
         }
 
     async def run(
@@ -269,6 +280,8 @@ class DexAgent(ClaudeCode):
                 "DEX_PHASE_TIMEOUT": str(self._phase_timeout),
             }
         )
+        if self._review_tier:
+            env["DEX_REVIEW_TIER"] = self._review_tier
         env.update(self._resolved_env_vars)
 
         await self.exec_as_agent(environment, command=PREPARE_SCRIPT, env=env)

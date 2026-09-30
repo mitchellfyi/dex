@@ -4,7 +4,14 @@
 # Usage:
 #   research/harbor/run.sh [options] [-- extra harbor run args]
 #
-#   --agent dex|claude-code|both   Which arm to run (default: both)
+#   --agent ARMS                   Comma-separated arms (default: both):
+#                                    claude-code   Harbor's plain Claude Code
+#                                    dex           Plan, Implement, Review
+#                                    dex-noplan    Implement, Review
+#                                    dex-noreview  Plan, Implement
+#                                    dex-implement Implement only
+#                                  both = claude-code,dex; all = every arm
+#   --review-tier TIER             Force Dex's review depth: trivial|small|normal|complex
 #   --dataset NAME@VERSION         Harbor dataset (default: terminal-bench-sample@2.0)
 #   --model MODEL                  Model for both arms (default: anthropic/claude-sonnet-5-5)
 #   --tasks N                      Run the first N tasks (harbor -l)
@@ -16,6 +23,10 @@
 #   --failed-in JOB                Add the tasks JOB failed (a screening run)
 #   --passed-in JOB                Add the tasks JOB passed
 #   --sample N                     Take N of the --passed-in tasks (fixed seed)
+#   --task-file FILE               Add the task names listed in FILE, one per line
+#   --one-at-a-time                Run each task as its own job (needs named tasks)
+#   --prune-images                 After each job, delete the task images it pulled or
+#                                  built; only benchmark images are touched
 #   --oracle                       Run the reference solutions instead (checks the setup)
 #
 # Needs Docker and Harbor (`uv tool install harbor`), plus ANTHROPIC_API_KEY or
@@ -37,15 +48,18 @@ CONCURRENCY=1
 ATTEMPTS=1
 TIMEOUT_MULTIPLIER=1
 EFFORT=""
+REVIEW_TIER=""
 FAILED_IN=""
 PASSED_IN=""
 SAMPLE=""
+ONE_AT_A_TIME=0
+PRUNE_IMAGES=0
 ORACLE=0
 EXTRA_ARGS=()
 JOBS_DIR="${DEX_BENCH_JOBS_DIR:-$HOME/.dex/bench/jobs}"
 
 usage() {
-  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 require_value() {
@@ -66,9 +80,20 @@ while [[ $# -gt 0 ]]; do
     --attempts) require_value "$@"; ATTEMPTS="$2"; shift 2 ;;
     --timeout-multiplier) require_value "$@"; TIMEOUT_MULTIPLIER="$2"; shift 2 ;;
     --effort) require_value "$@"; EFFORT="$2"; shift 2 ;;
+    --review-tier) require_value "$@"; REVIEW_TIER="$2"; shift 2 ;;
     --failed-in) require_value "$@"; FAILED_IN="$2"; shift 2 ;;
     --passed-in) require_value "$@"; PASSED_IN="$2"; shift 2 ;;
     --sample) require_value "$@"; SAMPLE="$2"; shift 2 ;;
+    --task-file)
+      require_value "$@"
+      [[ -f "$2" ]] || { printf 'run.sh: no such task file: %s\n' "$2" >&2; exit 1; }
+      while IFS= read -r line; do
+        line="${line%%#*}"; line="${line//[[:space:]]/}"
+        [[ -n "$line" ]] && TASK_GLOBS+=("$line")
+      done < "$2"
+      shift 2 ;;
+    --one-at-a-time) ONE_AT_A_TIME=1; shift ;;
+    --prune-images) PRUNE_IMAGES=1; shift ;;
     --oracle) ORACLE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; EXTRA_ARGS=("$@"); break ;;
@@ -77,9 +102,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$AGENT" in
-  dex|claude-code|both) ;;
-  *) printf 'run.sh: --agent must be dex, claude-code or both\n' >&2; exit 1 ;;
+  both) AGENT="claude-code,dex" ;;
+  all) AGENT="claude-code,dex,dex-noplan,dex-noreview,dex-implement" ;;
 esac
+IFS=',' read -r -a ARMS <<< "$AGENT"
+for arm in "${ARMS[@]}"; do
+  case "$arm" in
+    claude-code|dex|dex-noplan|dex-noreview|dex-implement) ;;
+    *) printf 'run.sh: unknown arm %s\n' "$arm" >&2; exit 1 ;;
+  esac
+done
 
 command -v harbor >/dev/null 2>&1 || {
   printf 'run.sh: harbor not found; install it with: uv tool install harbor\n' >&2
@@ -136,21 +168,62 @@ mkdir -p "$JOBS_DIR"
 STAMP=$(date +%Y%m%d-%H%M%S)
 DATASET_SLUG="${DATASET//[^A-Za-z0-9._-]/-}"
 
-common_args=(-d "$DATASET" -o "$JOBS_DIR" -n "$CONCURRENCY" -k "$ATTEMPTS"
+if [[ "$ONE_AT_A_TIME" -eq 1 && ${#TASK_GLOBS[@]} -eq 0 ]]; then
+  printf 'run.sh: --one-at-a-time needs named tasks (--task, --task-file, --failed-in or --passed-in)\n' >&2
+  exit 1
+fi
+
+base_args=(-d "$DATASET" -o "$JOBS_DIR" -n "$CONCURRENCY" -k "$ATTEMPTS"
   --agent-timeout-multiplier "$TIMEOUT_MULTIPLIER" -y)
+common_args=("${base_args[@]}")
 [[ -n "$N_TASKS" ]] && common_args+=(-l "$N_TASKS")
 for glob in ${TASK_GLOBS[@]+"${TASK_GLOBS[@]}"}; do
   common_args+=(-i "$glob")
 done
 
+# Task images are several GB each and Docker keeps every one it pulls. Remove
+# what a finished job used: the task's base and prebuilt images, read from
+# Harbor's task cache, and Harbor's own hb__ builds. Nothing else is touched,
+# and `docker rmi` without -f refuses an image a container still uses.
+prune_task_images() { # [task...]
+  local image used
+  local -a images=()
+  while IFS= read -r image; do
+    [[ -n "$image" ]] && images+=("$image")
+  done < <(python3 "$SCRIPT_DIR/task_images.py" "$@")
+  while IFS= read -r image; do
+    [[ -n "$image" ]] && images+=("$image")
+  done < <(docker images --format '{{.Repository}}:{{.Tag}}' | awk '/^hb__/')
+  used=$(docker ps -a --format '{{.Image}}')
+  for image in ${images[@]+"${images[@]}"}; do
+    grep -qxF "$image" <<< "$used" && continue
+    docker rmi "$image" >/dev/null 2>&1 && printf 'run.sh: removed image %s\n' "$image"
+  done
+  return 0
+}
+
 run_arm() { # <label> <harbor agent args...>
   local label="$1"
   shift
-  local job_name="${DATASET_SLUG}-${label}-${STAMP}"
-  printf '\n==> %s: %s (job %s)\n' "$label" "$DATASET" "$job_name"
-  PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" harbor run \
-    "${common_args[@]}" --job-name "$job_name" "$@" \
-    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+  local job_name="${DATASET_SLUG}-${label}-${STAMP}" task arm_status=0
+  if [[ "$ONE_AT_A_TIME" -eq 0 ]]; then
+    printf '\n==> %s: %s (job %s)\n' "$label" "$DATASET" "$job_name"
+    PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" harbor run \
+      "${common_args[@]}" --job-name "$job_name" "$@" \
+      ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} || arm_status=$?
+    [[ "$PRUNE_IMAGES" -eq 1 ]] && prune_task_images ${TASK_GLOBS[@]+"${TASK_GLOBS[@]}"}
+    return "$arm_status"
+  fi
+  # One job per task, named <run>--<task>; compare.py merges them back into
+  # one run. A failed or cancelled task does not stop the ones after it.
+  for task in "${TASK_GLOBS[@]}"; do
+    printf '\n==> %s: %s (job %s--%s)\n' "$label" "$DATASET" "$job_name" "$task"
+    PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" harbor run \
+      "${base_args[@]}" -i "$task" --job-name "${job_name}--${task}" "$@" \
+      ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} || arm_status=$?
+    [[ "$PRUNE_IMAGES" -eq 1 ]] && prune_task_images "$task"
+  done
+  return "$arm_status"
 }
 
 if [[ "$ORACLE" -eq 1 ]]; then
@@ -166,13 +239,23 @@ if [[ -n "${ANTHROPIC_WORKSPACE_ID:-}" ]]; then
   agent_args+=(--ae "ANTHROPIC_CUSTOM_HEADERS=anthropic-workspace-id: $ANTHROPIC_WORKSPACE_ID")
 fi
 
+dex_args=()
+[[ -n "$REVIEW_TIER" ]] && dex_args+=(--ak "review_tier=$REVIEW_TIER")
+
 status=0
-if [[ "$AGENT" == "claude-code" || "$AGENT" == "both" ]]; then
-  run_arm claude-code -a claude-code "${agent_args[@]}" || status=$?
-fi
-if [[ "$AGENT" == "dex" || "$AGENT" == "both" ]]; then
-  run_arm dex -a dex_agent:DexAgent "${agent_args[@]}" || status=$?
-fi
+for arm in "${ARMS[@]}"; do
+  case "$arm" in
+    claude-code) run_arm claude-code -a claude-code "${agent_args[@]}" || status=$? ;;
+    dex) phases="plan,implement,review" ;;
+    dex-noplan) phases="implement,review" ;;
+    dex-noreview) phases="plan,implement" ;;
+    dex-implement) phases="implement" ;;
+  esac
+  if [[ "$arm" == dex* ]]; then
+    run_arm "$arm" -a dex_agent:DexAgent --ak "phases=$phases" \
+      "${agent_args[@]}" ${dex_args[@]+"${dex_args[@]}"} || status=$?
+  fi
+done
 
 printf '\nJobs: %s\nBrowse: harbor view jobs -o %s\nCompare: python3 %s/compare.py %s\n' \
   "$JOBS_DIR" "$JOBS_DIR" "$SCRIPT_DIR" "$JOBS_DIR"

@@ -77,7 +77,12 @@ python3 research/harbor/compare.py ~/.dex/bench/jobs
 
 | Option | Default | Notes |
 |--------|---------|-------|
-| `--agent dex\|claude-code\|both` | `both` | `claude-code` is Harbor's built-in agent |
+| `--agent ARMS` | `both` | Comma-separated: `claude-code`, `dex`, `dex-noplan`, `dex-noreview`, `dex-implement`; `both` or `all` |
+| `--review-tier TIER` | unset | Forces Dex's review depth: `trivial`, `small`, `normal`, `complex` |
+| `--failed-in RUN` / `--passed-in RUN` | unset | Take tasks from an earlier run's failures or passes; `--sample N` limits the passes |
+| `--task-file FILE` | unset | Task names, one per line |
+| `--one-at-a-time` | off | One job per task, so a failure does not stop the rest |
+| `--prune-images` | off | Delete each task's benchmark images after its job; general images are never touched |
 | `--dataset NAME@VERSION` | `terminal-bench-sample@2.0` | `harbor datasets list --legacy` lists the rest |
 | `--model MODEL` | `anthropic/claude-sonnet-5-5` | Both arms use the same model |
 | `--tasks N` / `--task GLOB` | all | Limit the task set |
@@ -142,6 +147,56 @@ containers a reachable endpoint.
 - Report cost and time per solved task next to the solve rate.
 - The `dex lifecycle` column shows how far each Dex run got: `complete`,
   `paused@N`, or `incomplete` when the time limit ended it.
+
+## Which parts of Dex to test
+
+The aim is the best score per dollar, and knowing which parts earn it. Each
+part of the benchmark lifecycle is a hypothesis about how agents fail on these
+tasks:
+
+| Part | Failure it targets | Cost | Expectation on SWE-bench-style tasks |
+|------|--------------------|------|--------------------------------------|
+| Plan | Fixing the wrong place; missing a requirement buried in the issue | 1-3 minutes, a few cents | Helps on large repositories and indirect issues; little on precise ones |
+| Implement discipline and audit loop | Stopping before running the tests; incomplete fixes; untested edge cases | Small: extra turns in one session | Most of the gain per dollar, if there is gain |
+| Review waves | Edge cases and missed requirements that the author's own context hides | The bulk of Dex's cost: a fresh session per wave | Rescues some hard tasks; risks churn and time-outs on easy ones |
+| Review depth (tier) | Too few waves on a risky change, or too many on a trivial one | One wave per step up | Implement's own choice should match forced depth at lower cost |
+
+`run.sh` names the configurations that test these:
+
+| Arm | Phases | Answers |
+|-----|--------|---------|
+| `claude-code` | – | The baseline |
+| `dex` | Plan, Implement, Review | Does Dex help at all? |
+| `dex-implement` | Implement | Is the cheap part most of it? |
+| `dex-noplan` | Implement, Review | What Plan adds on top of Review |
+| `dex-noreview` | Plan, Implement | What Review adds on top of Plan |
+| any Dex arm with `--review-tier complex` | as the arm | Whether more review waves pay |
+
+Without Plan, the task text is sealed as the acceptance criteria that Implement
+and Review work against. Without Review, Implement ends the lifecycle and its
+risk-tier and criteria gates do not apply.
+
+Run it in rounds, each cheaper than the one it saves:
+
+1. **Screen**: `claude-code` on a spread of tasks
+   (`research/harbor/tasksets/swebenchpro-screen.txt`: two from each of
+   SWE-bench Pro's 11 repositories). Its failures are the hard set.
+2. **Does it help**: `claude-code,dex,dex-implement` on the hard set plus a
+   small sample of the screen's passes (`--failed-in` / `--passed-in --sample`).
+   The rerun of `claude-code` is the baseline's own retry rate; a Dex rescue
+   only counts above it. The passes catch Dex breaking easy tasks and give the
+   overhead cost.
+3. **Where it helps**, only if round 2 shows a lift: `dex-noplan,dex-noreview`
+   on the hard set, to split the gain between Plan and Review.
+4. **How much review**: `--review-tier complex` on the tasks where Review
+   mattered, against the tier Implement chose.
+
+The result that matters is per task, not the headline rate: which kinds of
+task each part rescues, and what it costs. If Review only rescues large or
+cross-cutting changes, the tier thresholds in `dx_review_scope_minimum_tier`
+are the place to encode that, and Dex gets cheaper on small tasks without
+losing the rescues. A leaderboard submission then uses the best configuration
+at the benchmark's own time limits.
 
 ## Limits
 
