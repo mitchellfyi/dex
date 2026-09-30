@@ -28,7 +28,7 @@ mkdir -p "$HOME"
 source "$ROOT/tests/helpers.sh"
 
 RUNS="$TMP_DIR/runs"
-mkdir -p "$RUNS/run_a" "$RUNS/run_b" "$RUNS/run_c" "$RUNS/run_d"
+mkdir -p "$RUNS/run_a" "$RUNS/run_b" "$RUNS/run_c" "$RUNS/run_d" "$RUNS/run_e"
 
 event() {
   printf '{"run_id":"%s","type":"%s","data":%s}\n' "$1" "$2" "$3"
@@ -80,6 +80,17 @@ event() {
   event run_d review.pass.finished '{"result_kind":"findings","clean_before":0,"findings":2,"duration_seconds":600}'
   event run_d review.paused '{"reason":"unresolved_findings"}'
 } > "$RUNS/run_d/events.jsonl"
+
+# Loop 6: selected complex, one clean pass, then a clean wave that lowered the
+# tier to small and completed on the credit already earned. A loop is reported
+# under the tier it finished at, and the report says it went down.
+{
+  event run_e review.tier.selected '{"tier":"complex","profile":"thorough","required_clean":3}'
+  event run_e review.pass.finished '{"result_kind":"clean","clean_before":0,"findings":0,"duration_seconds":600}'
+  event run_e review.tier.deescalated '{"from_tier":"complex","tier":"small","profile":"light","required_clean":1,"clean_passes":2}'
+  event run_e review.pass.finished '{"result_kind":"deescalate","clean_before":1,"findings":0,"duration_seconds":600}'
+  event run_e review.completed '{"tier":"small","reason":"clean_gate_reached"}'
+} > "$RUNS/run_e/events.jsonl"
 
 OUT="$TMP_DIR/out"
 bash "$ROOT/bin/review.sh" stats --root "$RUNS" > "$OUT" 2>&1 || fail "dx review stats failed"
@@ -138,16 +149,23 @@ assert_eq "50" "$(field complex found_after_clean_share)" "which is half of them
 assert_eq "1" "$(field complex loops_reversing_clean)" \
   "one loop had an earlier clean reversed"
 
-assert_eq "2" "$(field small loops)" \
-  "one journal with two finished loops counts as two"
-assert_eq "1" "$(field small reached_gate)" "the first one reached its gate"
+assert_eq "3" "$(field small loops)" \
+  "one journal with two finished loops counts as two, plus the loop that finished at small"
+assert_eq "2" "$(field small reached_gate)" "the first one and the de-escalated one reached their gates"
 assert_eq "1" "$(field small never_reached)" "the second one stalled"
-assert_eq "1" "$(field small loops_reaching_clean)" "only the first went clean"
-assert_eq "5" "$(field small minutes_to_first_clean)" "after five minutes"
+assert_eq "2" "$(field small loops_reaching_clean)" "two of the three went clean"
+assert_eq "1" "$(field small loops_deescalated)" "one of them got to small by de-escalating"
+assert_eq "0" "$(field complex loops_deescalated)" \
+  "a loop that left complex is not counted under complex"
+assert_eq "1" "$(field small passes_after_clean)" \
+  "the de-escalating wave ran with clean credit banked"
+assert_eq "0" "$(field small found_after_clean)" "and found nothing"
 
-assert_eq "5" "$(field all loops)" "five loops across four journals"
-assert_eq "2" "$(field all reached_gate)" "two loops reached their gate"
+assert_eq "6" "$(field all loops)" "six loops across five journals"
+assert_eq "3" "$(field all reached_gate)" "three loops reached their gate"
 assert_eq "3" "$(field all never_reached)" "the other three did not"
+assert_eq "1" "$(field all loops_deescalated)" "one loop de-escalated"
+assert_contains "down" "$OUT"
 
 # An empty or absent journal directory is a reportable condition, not a crash.
 mkdir -p "$TMP_DIR/empty"

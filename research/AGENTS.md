@@ -75,6 +75,13 @@ install`, and the suite is hermetic.
 
 Every iteration:
 
+`research/loop.sh` now judges changes by outcomes by default (`--objective
+outcomes`): each suite is a `research/compare` run of the dex arm, and
+`research/compare/objective.py` keeps a change only for a measured gain in
+hidden tests, fuzzing, changeability, cost or code size. The steps below are
+the legacy, rubric-driven loop (`--objective legacy`), still useful for the
+scenarios without a `compare/` suite.
+
 1. **Run a suite**: `bash research/run.sh --skip-llm-judge` — each scenario has a 1-hour budget by default (set in `research/config.sh` via `SCENARIO_TIMEOUT`; per-scenario overrides live in `scenarios/<name>/scenario.json`). Pass `dx research --scenario-timeout N` to force a different budget across all scenarios. Most scenarios finish well before the budget; the cap is a backstop, not a target. Use `--runner codex` or `RESEARCH_RUNNER=codex` to execute scenarios through Codex CLI instead of Claude.
 2. **Analyze results**: Read scores.tsv, identify low-scoring scenarios and dimensions
 3. **Diagnose**: Is the low score a rubric bug or a DX weakness?
@@ -86,8 +93,8 @@ Every iteration:
 
 ## Scenarios
 
-`research/scenarios/` is the source of truth for the current catalog (25
-scenarios at the time of writing; list them with
+`research/scenarios/` is the source of truth for the current catalog (27
+scenarios at the time of writing, six of them with a `compare/` suite; list them with
 `ls research/scenarios | grep -v _template`). Newer workflow-focused
 scenarios (review loops, refinement, maintenance intake, scope control)
 follow the same `scenario.json` + `prompt.md` layout. The two original
@@ -124,10 +131,59 @@ groups:
 | Issue Detection | 10% | `_score_issue_detection_default()` | DX self-reviewed and iterated (shared) |
 | Code Quality | 10% | LLM-judged | Idiomatic, clean, well-structured (or default 50 when `--skip-llm-judge`) |
 
+These six are `research/run.sh`'s rubric, and several reward process rather than
+outcome. `test_quality` pays for test counts over 15, 25 and 35. `robustness`
+counts `try {` and `throw`. The default `issue_detection` pays for running
+commands and making more than three edits. They are still what `loop.sh` and
+`improve.sh` optimise, so read a gain on them with that in mind.
+
+### Outcome and quality dimensions (`research/compare/`)
+
+The arm comparison measures what the code does and what it will cost the next
+person. It does not use a weighted total: each dimension is reported on its
+own, with the Dex-minus-bare delta and a bootstrap interval. A scenario opts in
+with a `compare/` directory, and each dimension below applies where the
+scenario provides what it needs.
+
+| Group | Dimension | Measured by | Needs in `compare/` |
+|-------|-----------|-------------|---------------------|
+| Correctness | Hidden tests (`[spec]`, `[robust]`, `[preserve]`) | `measure.py`, node:test suites the agent never sees | `hidden/` |
+| Correctness | Differential fuzzing | `js/fuzz-runner.js`: random operation sequences against the reference solution | `fuzz.js`, `reference/` |
+| Tests | Mutation score | `measure.py`: planted operator flips the agent's own tests must catch | `compare.json` `mutation` |
+| Tests | Suite health | `quality.py`: 5 runs for flakiness, median runtime, files left in the workspace and temp dir | — |
+| Performance | Time and memory vs reference | `js/perf-runner.js`: scaled workloads, alternating order, median ratio | `perf.js`, `reference/` |
+| Maintainability | Changeability | a fixed follow-up agent: success, regressions, cost, diff size | `followup/` |
+| Maintainability | Static health | `quality.py`: eslint findings per KLOC, complexity, function length, nesting, duplication (jscpd) | — |
+| Maintainability | Dependencies | `quality.py`: declared, installed, `npm audit` findings | — |
+| Scope | Diff size and scope | `measure.py`: lines by category, files outside allowed paths | `compare.json` `scope` |
+| Conventions | CLI conventions | `quality.py`: stderr, exit codes, usage text, messages naming the bad input | `quality.json` `cli` |
+| Docs | README accuracy | `quality.py`: the README's commands and code samples are run | — |
+| Honesty | False "tests pass" claim | `measure.py`: the closing message against the suite result | — |
+| Honesty | Report accuracy | `judge.py`: the closing message against the measured facts | — |
+| Review | Blind pairwise preference | `judge.py`: anonymised diffs judged in both orders, per criterion | — |
+| Cost | Dollars, tokens, turns, wall time | `measure.py` from the stream's `result` event | — |
+
+Security, concurrency and API design are not covered yet. They need scenarios
+with that surface: `auth-jwt-api` and `sql-orm-api` are candidates.
+
 ## Key Technical Details
 
 ### Workspace Isolation
 Each scenario runs in `research/workspaces/<scenario>/` with `git init`. The workspace is separate from the parent repo. `lib/capture.sh` injects runner-specific guardrails from `prompts/guardrails.md`: `CLAUDE.md` for Claude and `AGENTS.md` for Codex.
+
+The agent itself is not isolated. `claude -p` here loads the operator's user
+settings, so every run inherits their hooks, plugins, MCP servers and
+`~/.claude/CLAUDE.md`. Scores from two machines, or from before and after a
+plugin install, are not measuring the same thing.
+
+### Arm Comparison
+`research/compare/` runs Dex and bare Claude on the same model, both isolated
+(`--setting-sources project,local --strict-mcp-config`). It grades them on
+outcomes: hidden tests, mutation score, diff size, the accuracy of the closing
+claim, and how a fixed follow-up agent copes with the result. It also records
+cost and time. See `research/compare/README.md`. Scenarios opt in with a
+`compare/` directory, and `tests/research-compare-test.sh` checks their hidden
+suites against a reference solution.
 
 ### Rubric Pitfalls (common issues to watch for)
 

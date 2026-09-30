@@ -2273,14 +2273,13 @@ __dx_timeout_stop_watchdog() {
 
 __dx_timeout_remove_state() {
   local temp_dir="${1:-}" marker_file="${2:-}" token_file="${3:-}"
-  local candidate_file="${4:-}"
+  local candidate_file="${4:-}" candidate_tmp
   # A second signal can interrupt the command's EXIT snapshot before rename.
-  # Not a `read -d` loop: zsh's `read -d` resets the terminal's modes even when
-  # it reads a pipe, and that alone stops a shell outside the terminal's
-  # foreground process group.
   if [[ -n "$candidate_file" && "${candidate_file%/*}" == "$temp_dir" && -d "$temp_dir" ]]; then
-    (command find "$temp_dir" -mindepth 1 -maxdepth 1 -type f \
-      -name "${candidate_file##*/}.tmp.*" -exec rm -f {} +) 2>/dev/null || true
+    while IFS= read -r -d '' candidate_tmp; do
+      (command rm -f "$candidate_tmp") 2>/dev/null || true
+    done < <(find "$temp_dir" -mindepth 1 -maxdepth 1 -type f \
+      -name "${candidate_file##*/}.tmp.*" -print0 2>/dev/null)
   fi
   # Bash 3.2 can apply errexit to `command` even behind `|| true`. Isolate
   # best-effort cleanup so it cannot turn a timeout or signal into exit 1.
@@ -2457,13 +2456,14 @@ dx_run_with_timeout() {
   # zsh can scope traps to this function. Bash 3.2 cannot, so preserve and
   # restore its caller's handlers explicitly after the supervisor exits.
   #
-  # nomonitor because an interactive zsh — dxrm, dxclean and worktree
-  # creation call this straight from the user's prompt — gives the supervisor
-  # below a process group of its own, which the terminal treats as a
-  # background job. The first thing the supervisor or its command then does to
-  # the terminal stops it with SIGTTOU, and the `wait` below waits for a
-  # stopped job forever. Without job control it stays in the caller's process
-  # group, which is how every script caller already runs it.
+  # nomonitor: `dx` runs as a function of the operator's interactive zsh, so
+  # the `&` below would otherwise make the supervisor a job in its own process
+  # group. A background process group that touches the terminal (zsh's own
+  # tty bookkeeping around the inner job, not the command's output, which the
+  # caller may already have redirected) is stopped with SIGTTOU, the shell
+  # prints "suspended (tty output)", and the `wait` below never returns. Keeping
+  # the supervisor in the shell's process group removes both the stop and the
+  # "[n] pid" job notice.
   if [[ -n "${ZSH_VERSION:-}" ]]; then
     setopt localoptions localtraps nomonitor
   elif [[ -n "${BASH_VERSION:-}" ]]; then

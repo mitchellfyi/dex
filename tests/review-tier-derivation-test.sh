@@ -5,10 +5,12 @@ set -euo pipefail
 # ledger, the scout default, and the convergence guard.
 #
 # The derivation is the part worth pinning: it decides how much review a change
-# has to pay for, it reads thresholds a project can declare, and
-# dx_review_write_selection refuses any selection below it — so a wrong answer
-# here either buys a documentation fix three clean waves or lets a migration
-# through on one.
+# is advised to pay for, it reads thresholds a project can declare, and its
+# `hard` mode is the one part dx_review_write_selection still enforces — a
+# surface the project declared under review_sensitive_paths. Everything else it
+# measures is advice the agent may go below with tier-consistent reason codes,
+# so a wrong answer here either nags a documentation fix or lets a declared
+# surface through on one clean wave.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dex-review-tier.XXXXXX")"
@@ -164,7 +166,7 @@ cat > "$REPO/.dex/dex.md" <<'CONTRACT'
 ## Resources
 
 ```yaml
-review_sensitive_paths: ["src/app.js", "**/vendor/**"]
+review_sensitive_paths: ["src/app.js", "**/vendor/**", "src/auth/**"]
 review_trivial_max_files: 1
 review_trivial_max_lines: 3
 ```
@@ -172,6 +174,13 @@ CONTRACT
 git -C "$REPO" add .dex/dex.md
 git -C "$REPO" commit -qm "declare resources"
 git -C "$REPO" update-ref refs/remotes/origin/main HEAD
+
+hard_floor_tier() {
+  dx_review_scope_minimum_tier "$REPO" hard | cut -f1
+}
+hard_floor_reason() {
+  dx_review_scope_minimum_tier "$REPO" hard | cut -f2
+}
 
 assert_eq "10" "$(__dx_review_contract_number "$TMP_DIR/absent" review_trivial_max_files 10)" \
   "no contract keeps the default"
@@ -183,6 +192,34 @@ assert_eq "10" "$(__dx_review_contract_number "$REPO" review_broad_impact_files 
 printf 'more\n' >> "$REPO/src/app.js"
 assert_eq "complex" "$(derived_tier)" "a declared sensitive path is complex"
 assert_eq "declared-sensitive-path" "$(derived_reason)" "and says why"
+# The hard floor is the declared surface and nothing else: the only part of the
+# derivation a selection cannot go below.
+assert_eq "complex" "$(hard_floor_tier)" "a declared sensitive path is the hard floor"
+assert_eq "declared-sensitive-path" "$(hard_floor_reason)" "and the hard floor says why"
+assert_rejected "a selection below the hard floor is refused" \
+  dx_review_write_selection "worktree-ticket-4246" small standalone-assessor \
+  "localized-change,focused-verification" "$REPO"
+hard_floor_refusal=$(DX_REVIEW_SELECTION_QUIET=1 dx_review_write_selection \
+  "worktree-ticket-4246" small standalone-assessor \
+  "localized-change,focused-verification" "$REPO" 2>&1 >/dev/null || true)
+[[ "$hard_floor_refusal" == *"below the hard floor"* ]] || assert_at $LINENO
+dx_review_write_selection "worktree-ticket-4246" complex standalone-assessor \
+  "declared-sensitive-path" "$REPO" || assert_at $LINENO
+reset_repo
+
+# A declared surface that also matches an earlier built-in rule reports that
+# rule as the advisory reason, but the hard floor still names the declaration.
+mkdir -p "$REPO/src/auth"
+printf 'login\n' > "$REPO/src/auth/login.js"
+assert_eq "security-sensitive" "$(derived_reason)" \
+  "the advisory floor reports the first matching rule"
+assert_eq "declared-sensitive-path" "$(hard_floor_reason)" \
+  "the hard floor reports the declaration regardless of rule order"
+reset_repo
+
+printf 'a\n' > "$REPO/docs/a.md"
+assert_eq "-" "$(hard_floor_tier)" "no declared surface means no hard floor"
+assert_eq "-" "$(hard_floor_reason)" "and no hard-floor reason"
 reset_repo
 
 # One docs file is within the declared bound; two are not.
@@ -202,17 +239,38 @@ git -C "$REPO" rm -q .dex/dex.md
 git -C "$REPO" commit -qm "drop resources"
 git -C "$REPO" update-ref refs/remotes/origin/main HEAD
 
-# A selection below the floor is refused: the derivation may raise a chosen
-# tier, never lower it.
+# Below the measured floor the derivation is advice: the selection is accepted
+# with the codes the lower tier demands, the warning names the floor it went
+# under, and the read-back keeps the lower tier. With no declaration there is
+# no hard floor to refuse it.
 printf 'more\n' >> "$REPO/src/app.js"
 floor_record=$(dx_review_scope_minimum_tier "$REPO")
 IFS=$'\t' read -r floor_tier _floor_reason <<< "$floor_record"
 assert_eq "small" "$floor_tier" "the floor for a production change"
 [[ "$(dx_review_tier_rank trivial)" -lt "$(dx_review_tier_rank "$floor_tier")" ]] \
   || assert_at $LINENO
-assert_rejected "trivial selection below the floor" \
-  dx_review_write_selection "worktree-ticket-4243" trivial lifecycle-agent \
-  "localized-change,focused-verification,no-behavior-change" "$REPO"
+assert_eq "-" "$(dx_review_scope_minimum_tier "$REPO" hard | cut -f1)" \
+  "an undeclared repository has no hard floor"
+below_floor_warning=$(dx_review_write_selection "worktree-ticket-4243" trivial \
+  standalone-assessor "localized-change,focused-verification,no-behavior-change" \
+  "$REPO" 2>&1 >/dev/null) || assert_at $LINENO
+[[ "$below_floor_warning" == *"below the measured floor"* ]] || assert_at $LINENO
+[[ "$below_floor_warning" == *"small"* ]] || assert_at $LINENO
+assert_eq "trivial" \
+  "$(dx_review_read_selection "worktree-ticket-4243" "$REPO" | cut -f1)" \
+  "the selection below the floor reads back at the lower tier"
+assert_eq "" \
+  "$(dx_review_write_selection "worktree-ticket-4243" small standalone-assessor \
+    "localized-change,focused-verification" "$REPO" 2>&1 >/dev/null)" \
+  "a selection at the floor is silent"
+# The review loop prints its own below-floor warning once and asks the writer
+# to stay quiet, so the same line does not appear on every selection rewrite.
+# The hard-floor refusal is never quiet.
+assert_eq "" \
+  "$(DX_REVIEW_SELECTION_QUIET=1 dx_review_write_selection "worktree-ticket-4243" trivial \
+    standalone-assessor "localized-change,focused-verification,no-behavior-change" \
+    "$REPO" 2>&1 >/dev/null)" \
+  "a quiet writer prints no below-floor warning"
 reset_repo
 
 cd "$ROOT"
@@ -291,6 +349,44 @@ assert_eq "findings_fixed" "$(dx_review_result_kind FINDINGS_FIXED:1)" "fixes"
 for bad in NOTES:0 MECHANICAL:0 MECHANICAL NOTES MECHANICAL:x "MECHANICAL: 1"; do
   assert_rejected "an invalid result: $bad" dx_review_result_valid "$bad"
 done
+
+# A clean wave may report that the scope carries less risk than the selected
+# tier. The token names the lower tier and carries the codes that tier
+# demands, so a request to go to `trivial` has to claim no behavior changed.
+assert_eq "deescalate" \
+  "$(dx_review_result_kind DEESCALATE:small:localized-change,focused-verification)" \
+  "a de-escalation is its own result kind"
+assert_eq "0" "$(dx_review_result_count DEESCALATE:small:localized-change,focused-verification)" \
+  "a de-escalation carries no count"
+assert_eq "small" \
+  "$(dx_review_deescalation_tier DEESCALATE:small:localized-change,focused-verification)" \
+  "and names its tier"
+assert_eq "trivial" \
+  "$(dx_review_deescalation_tier DEESCALATE:trivial:localized-change,focused-verification,no-behavior-change)" \
+  "down to trivial with the no-behavior-change code"
+assert_eq "normal" "$(dx_review_deescalation_tier DEESCALATE:normal:bounded-production-change)" \
+  "and to normal with its usual code"
+for bad in \
+  DEESCALATE:complex:cross-module \
+  DEESCALATE:small:localized-change \
+  DEESCALATE:trivial:localized-change,focused-verification \
+  DEESCALATE:normal:cross-module \
+  DEESCALATE:small:wave-deescalation \
+  DEESCALATE:small: \
+  DEESCALATE:small; do
+  assert_rejected "an invalid de-escalation: $bad" dx_review_result_valid "$bad"
+done
+assert_rejected "an escalation token is not a de-escalation" \
+  dx_review_deescalation_tier ESCALATE:normal:cross-module
+
+# The selection source a de-escalation is recorded under carries the tier's
+# own codes, not a reserved word: the record has to say why the lower tier held.
+dx_review_selection_reason_codes_valid small wave-deescalation \
+  "localized-change,focused-verification" || assert_at $LINENO
+assert_rejected "a de-escalation source with a reserved word" \
+  dx_review_selection_reason_codes_valid small wave-deescalation wave-deescalation
+assert_rejected "a de-escalation source with codes for another tier" \
+  dx_review_selection_reason_codes_valid small wave-deescalation bounded-production-change
 
 # ─── Lens groups and what the wave budget pays for ──────────────────────────
 

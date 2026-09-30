@@ -632,14 +632,27 @@ async function routerCommand(action, options, args = []) {
     if (adapter.stale(running)) return Number.isInteger(running.reload_count)
       ? 'CCR is already running, on code from before the current Dex sources; dx router start leaves it in place. Run dx router reload to load them.'
       : 'CCR is already running, on code from before hot reload; dx router start leaves it in place. Run dx router restart once routed sessions finish.';
+    // Live routed sessions still use the stopped gateway's address and keys. A
+    // fresh start would issue new ones, so idle() refuses it. Their launchers
+    // restart it on the old endpoint once a longer probe confirms it is down;
+    // do the same here.
+    const routed = running ? 0 : adapter.activeSessions();
+    if (routed && !(await adapter.health(true, 10000))) {
+      const sessions = routed === 1 ? '1 routed session is' : `${routed} routed sessions are`;
+      if (!state.backend(null)) throw new Error(`CCR is stopped, but ${sessions} still active. The record of the endpoint and keys they use is missing, so CCR cannot restart on it, and a fresh start would cut them off. Finish them, then run dx router start.`);
+      await adapter.start({ recovery: true });
+      return `CCR restarted on its previous endpoint and keys, as a routed session's own recovery would, because ${sessions} still using them.${syncedNote(await syncNative())}`;
+    }
     await adapter.start(); return `CCR started.${syncedNote(await syncNative())}`;
   }
   if (action === 'update') { adapter.idle(); await adapter.install(); return `Using tested release ${adapter.RELEASE}. CCR upgrades ship with Dex after contract tests pass.`; }
   if (action === 'status' || action === 'doctor') {
     let installed = false; try { adapter.verifyRuntime(); installed = true; } catch { /* Report as a diagnostic. */ }
     const health = await adapter.health();
-    const sessions = health ? await ipc.call('health', { sessions: true }) : null;
-    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', code_stale: adapter.stale(health), reload_count: health?.reload_count || 0, last_reload_error: health?.last_reload_error || null, shim_changed: health?.shim_changed === true, hot_reload: health ? Number.isInteger(health.reload_count) : null, telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions?.active_sessions || 0, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
+    // A stopped gateway cannot count its sessions. Count their files instead,
+    // with the predicate start and idle() use.
+    const sessions = health ? (await ipc.call('health', { sessions: true }))?.active_sessions || 0 : adapter.activeSessions();
+    return { version: 1, enabled: state.config().enabled, native_routing: state.config().native?.enabled === true, release: adapter.RELEASE, installed, health: health ? 'running' : 'stopped', code_stale: adapter.stale(health), reload_count: health?.reload_count || 0, last_reload_error: health?.last_reload_error || null, shim_changed: health?.shim_changed === true, hot_reload: health ? Number.isInteger(health.reload_count) : null, telemetry_failures: health?.telemetry_failures || 0, active_sessions: sessions, accounts: state.accounts().length, models: state.config().models.length, credential_store: process.platform === 'darwin' ? 'macOS Keychain' : 'owner-only file' };
   }
   if (action === 'check') {
     if (!state.config().enabled || !state.accounts().some(item => item.enabled)) throw new Error('CCR needs setup and an enabled account. Run dx router setup.');

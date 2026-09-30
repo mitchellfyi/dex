@@ -197,6 +197,64 @@ run_shell_suite() {
       "a mutating escalation pauses" \
       small 3 2 escalate 0 cross-module true true normal 6 wave-escalation wave-escalation none false
 
+    # A clean wave may say the scope carries less risk than the selected tier.
+    # The wave itself is clean, so it earns credit; the credit already earned
+    # at the deeper tier stays, and the gate becomes the one the lower tier
+    # sets. The selection is refreshed under the codes of the lower tier.
+    assert_transition \
+      "1\tdeescalate_continue\tnormal\t2\t1\tnone\t-\tappend\tkeep\trefresh\twrite\tinvalidate" \
+      "a clean de-escalation continues at the lower tier" \
+      complex 3 0 deescalate 0 none false false normal 2 wave-deescalation bounded-production-change none false
+
+    assert_transition \
+      "1\tcomplete\tnormal\t2\t2\tnone\t-\tappend\tkeep\trefresh\tinvalidate\tfinalize" \
+      "a de-escalation whose credit meets the new gate completes" \
+      complex 3 1 deescalate 0 none false false normal 2 wave-deescalation bounded-production-change none false
+
+    assert_transition \
+      "1\tcomplete\tsmall\t1\t3\tnone\t-\tappend\tkeep\trefresh\tinvalidate\tfinalize" \
+      "a de-escalation with more credit than the new gate needs completes" \
+      complex 3 2 deescalate 0 none false false small 1 wave-deescalation localized-change,focused-verification none false
+
+    assert_transition \
+      "1\tdeescalate_continue\tnormal\t5\t1\tnone\t-\tappend\tkeep\trefresh\twrite\tinvalidate" \
+      "a de-escalation keeps the requirement the caller resolved" \
+      complex 5 0 deescalate 0 none false false normal 5 wave-deescalation bounded-production-change none false
+
+    assert_transition \
+      "1\tpause\tnormal\t2\t0\tinvalid_deescalation\tnormal\treset\tkeep\tkeep\twrite\tinvalidate" \
+      "a de-escalation to the same tier pauses" \
+      normal 2 1 deescalate 0 none false false normal 2 wave-deescalation bounded-production-change none false
+
+    assert_transition \
+      "1\tpause\tsmall\t1\t0\tinvalid_deescalation\tnormal\treset\tkeep\tkeep\twrite\tinvalidate" \
+      "an upward request through the de-escalation token pauses" \
+      small 1 0 deescalate 0 none false false normal 2 wave-deescalation bounded-production-change none false
+
+    assert_transition \
+      "1\tpause\tcomplex\t3\t0\tdeescalation_mutated_scope\tnormal\treset\tkeep\tinvalidate\tinvalidate\tinvalidate" \
+      "a mutating de-escalation pauses" \
+      complex 3 1 deescalate 0 none true true normal 2 wave-deescalation bounded-production-change none false
+
+    assert_rejected "de-escalation without a candidate" \
+      complex 3 1 deescalate 0 none false false - 0 - - none false
+    assert_rejected "de-escalation with a count" \
+      complex 3 1 deescalate 1 none false false normal 2 wave-deescalation bounded-production-change none false
+    assert_rejected "de-escalation with an event reason" \
+      complex 3 1 deescalate 0 cross-module false false normal 2 wave-deescalation bounded-production-change none false
+    assert_rejected "de-escalation under the escalation source" \
+      complex 3 1 deescalate 0 none false false normal 2 wave-escalation wave-escalation none false
+    assert_rejected "de-escalation codes that contradict the lower tier" \
+      complex 3 1 deescalate 0 none false false normal 2 wave-deescalation cross-module none false
+    assert_rejected "de-escalation with churn" \
+      complex 3 1 deescalate 0 none false false normal 2 wave-deescalation bounded-production-change repeated_fingerprint false
+    assert_rejected "de-escalation with authorization invalidation" \
+      complex 3 1 deescalate 0 none false false normal 2 wave-deescalation bounded-production-change none true
+    assert_rejected "a fix cannot carry a de-escalation" \
+      complex 3 1 findings_fixed 1 none true true normal 2 wave-deescalation bounded-production-change none false
+    assert_rejected "an autofix cannot carry a de-escalation" \
+      complex 3 1 mechanical 1 none true true normal 2 wave-deescalation bounded-production-change none false
+
     assert_transition \
       "1\tpause\tsmall\t3\t0\tprovider_error\t-\treset\tkeep\tkeep\twrite\tinvalidate" \
       "an ordinary failure preserves resumable authorization" \

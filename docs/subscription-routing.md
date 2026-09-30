@@ -810,6 +810,13 @@ Manual stop, installation and catalogue changes require idle routed sessions.
 `dx router restart` with sessions running reloads the code in place instead
 (below). Disabling affects new launches; active sessions can finish.
 
+With the gateway stopped, `dx router status` counts active routed sessions from
+their session files, the same check `start` and `stop` make. If the gateway
+stops while routed sessions are still running, `dx router start` restarts it on
+its previous endpoint and keys, as the launcher's recovery does, so those
+sessions keep working. It refuses only when the record of that endpoint
+(`backend.json`) is missing.
+
 ### Hot reload
 
 CCR loads `scripts/ccr/extension.cjs` once. That file is a small shim that

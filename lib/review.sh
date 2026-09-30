@@ -129,7 +129,9 @@ dx_review_selection_reason_codes_valid() {
     wave-escalation)
       [[ "$reason_codes" == "wave-escalation" ]]
       ;;
-    deterministic-floor)
+    wave-deescalation|deterministic-floor)
+      # A de-escalation is recorded under the lower tier's own codes: the
+      # record has to say why the lower tier held, not that a wave asked.
       dx_review_tier_reason_codes_valid "$tier" "$reason_codes"
       ;;
     *)
@@ -922,6 +924,16 @@ dx_review_result_valid() {
     ESCALATE:normal:*) reason="${result#ESCALATE:normal:}" ;;
     ESCALATE:complex:*) reason="${result#ESCALATE:complex:}" ;;
     ESCALATE_THOROUGH:*) reason="${result#ESCALATE_THOROUGH:}" ;;
+    DEESCALATE:trivial:*|DEESCALATE:small:*|DEESCALATE:normal:*)
+      # `DEESCALATE:<tier>:<codes>` is a clean wave saying the scope carries
+      # less risk than the selected tier. The suffix is the lower tier's own
+      # reason codes and has to satisfy that tier, so going to `trivial` means
+      # claiming no behavior changed. There is no `DEESCALATE:complex`: it is
+      # the top tier, and a wave that wants it escalates.
+      reason="${result#DEESCALATE:}"
+      dx_review_tier_reason_codes_valid "${reason%%:*}" "${result#DEESCALATE:*:}"
+      return $?
+      ;;
     *) return 1 ;;
   esac
   dx_review_reason_codes_valid "$reason"
@@ -939,6 +951,7 @@ dx_review_result_kind() {
     BLOCKED:*) printf '%s\n' "blocked" ;;
     CHURN:*) printf '%s\n' "churn" ;;
     ESCALATE:*|ESCALATE_THOROUGH:*) printf '%s\n' "escalate" ;;
+    DEESCALATE:*) printf '%s\n' "deescalate" ;;
   esac
 }
 
@@ -960,6 +973,26 @@ dx_review_escalation_tier() {
     ESCALATE:complex:*|ESCALATE_THOROUGH:*) printf '%s\n' "complex" ;;
     *) return 1 ;;
   esac
+}
+
+# The tier a valid `DEESCALATE:<tier>:<codes>` result asks for.
+dx_review_deescalation_tier() {
+  local result="${1:-}" tier
+  dx_review_result_valid "$result" || return 1
+  case "$result" in
+    DEESCALATE:*) ;;
+    *) return 1 ;;
+  esac
+  tier="${result#DEESCALATE:}"
+  printf '%s\n' "${tier%%:*}"
+}
+
+# The reason codes a valid `DEESCALATE:<tier>:<codes>` result carries: the
+# lower tier's own codes, which the selection is then recorded under.
+dx_review_deescalation_codes() {
+  local result="${1:-}"
+  dx_review_deescalation_tier "$result" >/dev/null || return 1
+  printf '%s\n' "${result#DEESCALATE:*:}"
 }
 
 __dx_review_regular_files_bounded() {
@@ -1267,7 +1300,10 @@ elif result.startswith("FINDINGS:"):
 elif result.startswith("BLOCKED:"):
     if binding != "standalone" and "blocked" not in outcomes:
         raise SystemExit(1)
-elif result.startswith("ESCALATE:") or result.startswith("ESCALATE_THOROUGH:"):
+elif result.startswith(("ESCALATE:", "ESCALATE_THOROUGH:", "DEESCALATE:")):
+    # A tier change in either direction comes from a wave that verified and
+    # fixed nothing: a wave that moved the tree cannot also vouch for how much
+    # risk the scope carries.
     if payload["verifier"] != "pass" or payload["fixes_applied"] != 0:
         raise SystemExit(1)
 PY
@@ -1591,19 +1627,32 @@ __dx_review_full_gate_green() {
   fi
 }
 
-# dx_review_scope_minimum_tier <repo_dir> — deterministic safety floor
+# dx_review_scope_minimum_tier <repo_dir> [hard] — the measured floor
 #
 # Measured change facts, not opinion: which paths changed, how many, how many
 # lines, whether any of them is a surface the project marked sensitive, whether
-# dependencies moved, and whether the full gate is green for this tree. The
-# floor only ever raises a chosen tier (dx_review_write_selection refuses a
-# selection below it), so `trivial` is reachable only when every fact says so.
+# dependencies moved, and whether the full gate is green for this tree.
+#
+# Without `hard` this is advice. It is printed beside a selection and
+# journaled, and dx_review_write_selection accepts a tier below it when the
+# reason codes for that tier hold — the built-in rules are heuristics, and a
+# comment fix in a core library file should not have to buy three thorough
+# waves. With `hard` it prints only the part a selection may never go below: a
+# surface the project declared under `review_sensitive_paths`, as
+# `complex<TAB>declared-sensitive-path`, or `-<TAB>-` when none changed. The
+# declaration is checked on its own here because the advisory rules run first
+# and would otherwise report `security-sensitive` for a declared `auth/` path.
 dx_review_scope_minimum_tier() {
-  local repo_dir="${1:-$PWD}" descriptor sensitive="" gate_green="0"
+  local repo_dir="${1:-$PWD}" floor_mode="${2:-}" descriptor sensitive="" gate_green="0"
+  case "$floor_mode" in
+    ""|hard) ;;
+    *) return 1 ;;
+  esac
   descriptor=$(dx_review_scope_descriptor "$repo_dir") || return 1
   sensitive=$(__dx_review_contract_values "$repo_dir" review_sensitive_paths)
   gate_green=$(__dx_review_full_gate_green "$repo_dir")
   DX_REVIEW_REPO_DIR="$repo_dir" DX_REVIEW_SCOPE_DESCRIPTOR="$descriptor" \
+  DX_REVIEW_FLOOR_MODE="$floor_mode" \
   DX_REVIEW_SENSITIVE_PATHS="$sensitive" \
   DX_REVIEW_GATE_GREEN="$gate_green" \
   DX_REVIEW_BROAD_IMPACT_FILES="$(__dx_review_contract_number "$repo_dir" review_broad_impact_files 10)" \
@@ -1648,8 +1697,10 @@ paths.update(item for item in git("diff", "--cached", "--name-only", "-z", "--")
 paths.update(item for item in git("diff", "--name-only", "-z", "--").split(b"\0") if item)
 paths.update(item for item in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if item)
 
+hard_only = os.environ.get("DX_REVIEW_FLOOR_MODE") == "hard"
+
 if not paths:
-    print("complex\tbroad-impact")
+    print("-\t-" if hard_only else "complex\tbroad-impact")
     raise SystemExit(0)
 
 decoded = [os.fsdecode(path).replace("\\", "/").lower() for path in paths]
@@ -1730,6 +1781,10 @@ def bound(name, fallback):
     value = os.environ.get(name, "")
     return int(value) if value.isdigit() and value != "0" else fallback
 
+
+if hard_only:
+    print("complex\tdeclared-sensitive-path" if declared(contract_paths()) else "-\t-")
+    raise SystemExit(0)
 
 if matches(r"(^|/)(auth|security|permissions?|secrets?|payments?)(/|[._-])") or matches(
     r"(^|/)[^/]*(pii|secret|credential)[^/]*(/|$)"
@@ -2143,15 +2198,17 @@ dx_review_write_selection() {
   [[ -n "$session_id" && "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_selection_reason_codes_valid "$tier" "$source" "$reason_codes" || return 1
-  if [[ "$source" != "environment" && "$source" != "wave-escalation" ]]; then
+  if __dx_review_selection_measured_against_floor "$source"; then
+    __dx_review_selection_above_hard_floor "$tier" "$repo_dir" report || return 1
     floor_record=$(dx_review_scope_minimum_tier "$repo_dir") || return 1
     IFS=$'\t' read -r floor_tier floor_reason <<EOF
 $floor_record
 EOF
-    : "$floor_reason"
     tier_rank=$(dx_review_tier_rank "$tier") || return 1
     floor_rank=$(dx_review_tier_rank "$floor_tier") || return 1
-    [[ "$tier_rank" -ge "$floor_rank" ]] || return 1
+    if [[ "$tier_rank" -lt "$floor_rank" ]]; then
+      __dx_review_selection_message warn "Review tier '${tier}' is below the measured floor '${floor_tier}' (${floor_reason}); recorded as an attributed downgrade"
+    fi
   fi
   policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
   IFS=$'\t' read -r tier_min policy_binding _ <<EOF
@@ -2187,7 +2244,6 @@ EOF
 dx_review_read_selection() {
   local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" expected_policy_binding="${4:-}" selection_file raw
   local version tier source reason_codes required_clean fingerprint criteria_binding policy_binding override_binding extra current_fingerprint tier_min
-  local floor_record floor_tier floor_reason tier_rank floor_rank
   local current_binding policy_record current_policy_binding
   selection_file=$(dx_review_selection_file "$session_id") || return 1
   [[ ! -e "$(dx_review_selection_revocation_file "$session_id")" \
@@ -2203,15 +2259,8 @@ EOF
   tier=$(dx_review_normalize_tier "$tier") || return 1
   [[ "$source" =~ ^[a-z][a-z0-9_-]*$ ]] || return 1
   dx_review_selection_reason_codes_valid "$tier" "$source" "$reason_codes" || return 1
-  if [[ "$source" != "environment" && "$source" != "wave-escalation" ]]; then
-    floor_record=$(dx_review_scope_minimum_tier "$repo_dir") || return 1
-    IFS=$'\t' read -r floor_tier floor_reason <<EOF
-$floor_record
-EOF
-    : "$floor_reason"
-    tier_rank=$(dx_review_tier_rank "$tier") || return 1
-    floor_rank=$(dx_review_tier_rank "$floor_tier") || return 1
-    [[ "$tier_rank" -ge "$floor_rank" ]] || return 1
+  if __dx_review_selection_measured_against_floor "$source"; then
+    __dx_review_selection_above_hard_floor "$tier" "$repo_dir" || return 1
   fi
   policy_record=$(dx_review_policy_for_tier "$repo_dir" "$tier" "$expected_policy_binding") || return 1
   IFS=$'\t' read -r tier_min current_policy_binding _ <<EOF
@@ -2245,6 +2294,54 @@ EOF
     "$tier" "$source" "$reason_codes" "$required_clean" "$fingerprint" "$criteria_binding" "$policy_binding"
 }
 
+# The sources whose tier the measured floor has something to say about. An
+# operator's environment override and a wave's tier change are recorded as
+# written here: the review loop holds both to the hard floor before it writes
+# them, so this file does not measure them again.
+__dx_review_selection_measured_against_floor() {
+  case "${1:-}" in
+    environment|wave-escalation|wave-deescalation) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# __dx_review_selection_above_hard_floor <tier> <repo_dir> [report]
+# Succeed unless the tier is below the hard floor for this scope. With
+# `report`, say why on stderr: the caller is usually the agent's own shell,
+# and a bare failed status would leave it guessing.
+__dx_review_selection_above_hard_floor() {
+  local tier="$1" repo_dir="$2" report="${3:-}" hard_record hard_tier hard_reason tier_rank hard_rank
+  hard_record=$(dx_review_scope_minimum_tier "$repo_dir" hard) || return 1
+  IFS=$'\t' read -r hard_tier hard_reason <<EOF
+$hard_record
+EOF
+  [[ "$hard_tier" != "-" ]] || return 0
+  tier_rank=$(dx_review_tier_rank "$tier") || return 1
+  hard_rank=$(dx_review_tier_rank "$hard_tier") || return 1
+  [[ "$tier_rank" -lt "$hard_rank" ]] || return 0
+  if [[ "$report" == "report" ]]; then
+    __dx_review_selection_message error "Review tier '${tier}' is below the hard floor '${hard_tier}' (${hard_reason}): a surface this project declared under review_sensitive_paths changed"
+  fi
+  return 1
+}
+
+# lib/review.sh otherwise returns status and lets its caller speak. These two
+# messages are the exception because the caller is the agent's shell snippet.
+# The output helpers come from lib/output.sh via common.sh; a standalone source
+# of this file still gets the line on stderr. The review loop warns about the
+# floor once itself and sets DX_REVIEW_SELECTION_QUIET while it rewrites the
+# selection, so the warning is not repeated on every rewrite. A refusal is
+# never quiet.
+__dx_review_selection_message() {
+  local level="$1" message="$2"
+  [[ "$level" != "warn" || "${DX_REVIEW_SELECTION_QUIET:-0}" != "1" ]] || return 0
+  if command -v "dx_${level}" >/dev/null 2>&1; then
+    "dx_${level}" "$message"
+  else
+    printf '%s\n' "$message" >&2
+  fi
+}
+
 dx_review_selection_valid() {
   dx_review_read_selection "$@" >/dev/null
 }
@@ -2253,7 +2350,7 @@ dx_review_write_state() {
   local session_id="$1" requested_tier="$2" required_clean="$3" iteration="$4" clean_count="$5" repo_dir="${6:-$PWD}"
   local expected_binding="${7:-}" expected_policy_binding="${8:-}" tier tier_min fingerprint state_file criteria_binding
   local policy_record policy_binding override_binding
-  local findings_fixed_total="${9:-0}"
+  local findings_fixed_total="${9:-0}" requested_budget_tier="${10:-}" budget_tier previous_budget_tier candidate_budget_tier
   tier=$(dx_review_normalize_tier "$requested_tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
@@ -2274,28 +2371,66 @@ EOF
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   state_file=$(dx_review_state_file "$session_id") || return 1
-  dx_review_write_atomic "$state_file" "5"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"$'\t'"${override_binding}"$'\t'"${findings_fixed_total}"
+  # The wave budget follows the deepest tier the loop has run at, and the loop
+  # only exists across a pause because this record does. The review loop
+  # passes the tier it is budgeting by; the field is also carried forward from
+  # the record being replaced, for writers that do not know it (the acceptance
+  # checkpoint). The deepest of the three wins, so a de-escalated loop that
+  # pauses and resumes keeps the budget it had; a fresh loop starts at its tier.
+  budget_tier="$tier"
+  previous_budget_tier=$(dx_review_state_budget_tier "$session_id" 2>/dev/null || true)
+  for candidate_budget_tier in "$previous_budget_tier" "$requested_budget_tier"; do
+    [[ -n "$candidate_budget_tier" ]] || continue
+    candidate_budget_tier=$(dx_review_normalize_tier "$candidate_budget_tier") || return 1
+    if [[ $(dx_review_tier_rank "$candidate_budget_tier") -gt $(dx_review_tier_rank "$budget_tier") ]]; then
+      budget_tier="$candidate_budget_tier"
+    fi
+  done
+  dx_review_write_atomic "$state_file" "6"$'\t'"${tier}"$'\t'"${required_clean}"$'\t'"${iteration}"$'\t'"${clean_count}"$'\t'"${fingerprint}"$'\t'"${criteria_binding}"$'\t'"${policy_binding}"$'\t'"${override_binding}"$'\t'"${findings_fixed_total}"$'\t'"${budget_tier}"
+}
+
+# The deepest tier the saved loop has run at, from the raw state record: the
+# 11th field of a v6 record, or the tier itself for an older record. Read only
+# after dx_review_read_state has validated the record for this scope, except
+# from dx_review_write_state, which carries it forward from whatever it is
+# replacing.
+dx_review_state_budget_tier() {
+  local state_record fields_tier fields_budget
+  state_record=$(__dx_review_read_private_record "$(dx_review_state_file "$1")" 4096) || return 1
+  fields_tier=$(printf '%s\n' "$state_record" | cut -f2)
+  fields_budget=$(printf '%s\n' "$state_record" | cut -f11)
+  [[ -n "$fields_budget" ]] || fields_budget="$fields_tier"
+  dx_review_normalize_tier "$fields_budget"
 }
 
 dx_review_read_state() {
   local session_id="$1" repo_dir="${2:-$PWD}" expected_binding="${3:-}" expected_policy_binding="${4:-}" state_file raw
   local version tier tier_min required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding extra current_fingerprint current_binding
   local policy_record current_policy_binding
-  local findings_fixed_total=""
+  local findings_fixed_total="" budget_tier=""
   state_file=$(dx_review_state_file "$session_id") || return 1
   [[ -f "$state_file" ]] || return 1
   raw=$(cat "$state_file" 2>/dev/null) || return 1
   [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
-  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding findings_fixed_total extra <<EOF
+  IFS=$'\t' read -r version tier required_clean iteration clean_count fingerprint criteria_binding policy_binding override_binding findings_fixed_total budget_tier extra <<EOF
 $raw
 EOF
+  tier=$(dx_review_normalize_tier "$tier") || return 1
   case "$version" in
-    4) [[ -z "$findings_fixed_total" ]] || return 1 ;;
-    5) dx_review_is_nonnegative_integer "$findings_fixed_total" || return 1 ;;
+    4) [[ -z "$findings_fixed_total" && -z "$budget_tier" ]] || return 1 ;;
+    5)
+      dx_review_is_nonnegative_integer "$findings_fixed_total" || return 1
+      [[ -z "$budget_tier" ]] || return 1
+      ;;
+    6)
+      # The budget tier is the deepest tier run, so it is never below the tier.
+      dx_review_is_nonnegative_integer "$findings_fixed_total" || return 1
+      budget_tier=$(dx_review_normalize_tier "$budget_tier") || return 1
+      [[ $(dx_review_tier_rank "$budget_tier") -ge $(dx_review_tier_rank "$tier") ]] || return 1
+      ;;
     *) return 1 ;;
   esac
   [[ -z "$extra" ]] || return 1
-  tier=$(dx_review_normalize_tier "$tier") || return 1
   dx_review_is_positive_integer "$required_clean" || return 1
   dx_review_is_nonnegative_integer "$iteration" || return 1
   dx_review_is_nonnegative_integer "$clean_count" || return 1
@@ -2785,6 +2920,10 @@ policy_binding = os.environ["DX_REVIEW_LEDGER_POLICY_BINDING"]
 profile = os.environ["DX_REVIEW_LEDGER_PROFILE"]
 ledger = Path(sys.argv[1])
 proof_root = Path(os.environ["DX_REVIEW_PROOF_ROOT"])
+# A row reviewed at a deeper profile counts toward a shallower gate: a loop
+# that de-escalates keeps the clean credit it earned at the deeper tier. The
+# reverse never holds, so a row shallower than the expected profile fails.
+PROFILE_RANK = {"light": 1, "standard": 2, "thorough": 3}
 
 
 def read_private(path, maximum, mode):
@@ -2864,7 +3003,7 @@ for line in lines:
         raise SystemExit(1)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,179}", pass_id):
         raise SystemExit(1)
-    if recorded_profile != profile:
+    if PROFILE_RANK.get(recorded_profile, 0) < PROFILE_RANK[profile]:
         raise SystemExit(1)
     if recorded_fingerprint != fingerprint or recorded_binding != criteria_binding:
         raise SystemExit(1)
@@ -3200,11 +3339,13 @@ EOF
   else
     override_binding="-"
   fi
-  [[ $((10#$clean_count)) -eq $((10#$required_clean)) ]] || return 1
+  # A de-escalated loop may hold more clean passes than the final tier needs;
+  # every one of them is a ledger row, so the ledger is checked at the count.
+  [[ $((10#$clean_count)) -ge $((10#$required_clean)) ]] || return 1
   dx_review_policy_binding_valid "$policy_binding" || return 1
   fingerprint=$(dx_review_scope_fingerprint "$repo_dir") || return 1
   criteria_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
-  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$criteria_binding" \
+  dx_review_ledger_valid "$session_id" "$clean_count" "$fingerprint" "$criteria_binding" \
     "$policy_binding" "$profile" || return 1
   ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
@@ -3241,7 +3382,7 @@ EOF
   else
     [[ "$override_binding" == "-" ]] || return 1
   fi
-  [[ $((10#$clean_count)) -eq $((10#$required_clean)) ]] || return 1
+  [[ $((10#$clean_count)) -ge $((10#$required_clean)) ]] || return 1
   [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || return 1
   [[ "$ledger_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
   dx_review_policy_binding_valid "$policy_binding" || return 1
@@ -3252,7 +3393,7 @@ EOF
   dx_review_criteria_binding_valid "$criteria_binding" || return 1
   current_binding=$(dx_review_resolve_criteria_binding "$session_id" "$expected_binding") || return 1
   [[ "$current_binding" == "$criteria_binding" ]] || return 1
-  dx_review_ledger_valid "$session_id" "$required_clean" "$fingerprint" "$current_binding" \
+  dx_review_ledger_valid "$session_id" "$clean_count" "$fingerprint" "$current_binding" \
     "$policy_binding" "$profile" || return 1
   current_ledger_hash=$(dx_review_ledger_hash "$session_id") || return 1
   [[ "$current_ledger_hash" == "$ledger_hash" ]] || return 1
@@ -3291,7 +3432,7 @@ EOF
     dx_override_binding "$session_id" review.clean-passes \
       "$receipt_required" 3 >/dev/null || return 1
   fi
-  [[ $((10#$receipt_clean)) -eq $((10#$receipt_required)) ]] || return 1
+  [[ $((10#$receipt_clean)) -ge $((10#$receipt_required)) ]] || return 1
   [[ "$selection_policy_binding" == "$expected_policy_binding" ]] || return 1
   : "$selection_source" "$selection_reasons" "$receipt_ledger_hash"
   [[ "$receipt_tier" == "$selection_tier" && \

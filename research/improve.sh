@@ -5,6 +5,10 @@
 # Usage:
 #   ./research/improve.sh <run-dir>
 #   ./research/improve.sh run-20260321-120000
+#   ./research/improve.sh research/results/compare/<run-id>   # outcome evidence
+#
+# Given a research/compare run, the analysis works from outcomes (hidden
+# tests, fuzzing, follow-up, blind review, cost) instead of rubric points.
 
 set -euo pipefail
 
@@ -35,6 +39,11 @@ if [[ ! -f "$RUN_DIR/summary.json" ]]; then
 fi
 
 log_step "Analyzing results from: $(basename "$RUN_DIR")"
+
+OUTCOME_MODE=0
+if [[ -d "$RUN_DIR/trials" && -f "$RUN_DIR/run.json" ]]; then
+  OUTCOME_MODE=1
+fi
 
 # ── Gather failure details ─────────────────────────────────────────────────
 
@@ -116,7 +125,17 @@ PYEOF
 }
 
 # Build the analysis prompt
-ANALYSIS_PROMPT="You are analyzing the results of an AI agent testing harness for Dex (DX), a workflow automation framework for Claude Code.
+if [[ "$OUTCOME_MODE" == 1 ]]; then
+  ANALYSIS_PROMPT="You are analyzing results from a benchmark of Dex (DX), a workflow automation framework for Claude Code.
+
+The benchmark runs Dex and the same model without Dex on coding tasks, then measures outcomes: hidden tests the agent never saw, differential fuzzing against a reference solution, how well a fixed follow-up agent can extend the code, blind review of the diffs, and what each run cost. Your job is to propose specific changes to Dex's prompts that improve those outcomes.
+
+A proposed change is kept only when it measurably improves correctness, fuzz agreement or changeability, or holds them while cutting cost or code. A change that makes Dex write more code, tests, files or documents without catching more bugs is measured and reverted. Removing or narrowing a rule is as valid a proposal as adding one.
+
+$(python3 "$SCRIPT_DIR/compare/evidence.py" "$RUN_DIR" --arm dex 2>/dev/null || echo "(no evidence)")
+"
+else
+  ANALYSIS_PROMPT="You are analyzing the results of an AI agent testing harness for Dex (DX), a workflow automation framework for Claude Code.
 
 The harness runs DX against predefined scenarios (coding tasks), then scores its output with deterministic rubrics. Your job is to propose specific improvements to DX's skill prompts and audit criteria to improve scores.
 
@@ -126,8 +145,10 @@ $(cat "$RUN_DIR/summary.json")
 
 ## Failure Details
 "
+fi
 
-# Add per-scenario details for low-scoring, weak-dimension, or timed-out scenarios.
+# Add per-scenario details for low-scoring, weak-dimension, or timed-out
+# scenarios. A compare run keeps its trials under trials/, so this finds none.
 for scenario_dir in "$RUN_DIR"/*/; do
   [[ -d "$scenario_dir" ]] || continue
   scenario=$(basename "$scenario_dir")
@@ -191,6 +212,9 @@ ANALYSIS_PROMPT+="
 ### prompts/guardrails.md:
 $(cat "$DEX_DIR/prompts/guardrails.md" 2>/dev/null || echo "(not found)")
 
+### prompts/workflows/dximplement.md (the non-interactive section is injected into every benchmark run):
+$(awk '/\*\*When running non-interactively\*\*/{found=1} found{if(/^When stopping for scope/)exit; print}' "$DEX_DIR/prompts/workflows/dximplement.md" 2>/dev/null || echo "(not found)")
+
 ### prompts/phase-audits/prompt-loop.md:
 $(cat "$DEX_DIR/prompts/phase-audits/prompt-loop.md" 2>/dev/null || echo "(not found)")
 
@@ -246,7 +270,7 @@ For each proposed change:
 2. Show the EXACT change in unified diff format
 3. Verify the change is **language/framework-agnostic** — rephrase if it isn't
 
-Focus on the lowest-scoring scenarios first. Prefer small, precise edits over broad rewrites. Prefer adding anti-patterns (like 'avoid doing X') alongside existing positive guidance over adding new framework-specific sections.
+Focus on the lowest-scoring scenarios first (in a benchmark run: the failures listed above, and what the blind reviewer said). Prefer small, precise edits over broad rewrites. Prefer adding anti-patterns (like 'avoid doing X') alongside existing positive guidance over adding new framework-specific sections.
 
 Output your proposed changes as a series of unified diffs that can be applied with git apply. Wrap each diff in a markdown code block with the diff language tag.
 "

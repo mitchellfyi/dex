@@ -23,7 +23,8 @@ All of these must be true:
   was missing or stale, a fresh read-only lifecycle assessor recorded a valid
   current-scope recovery selection before the first wave. The selected tier is
   `trivial`, `small`, `normal`, or `complex`, with a deterministic set of reason
-  codes, and Dex may have raised it from the measured diff.
+  codes. Dex journaled the measured floor beside it, and raised it only when a
+  surface the project declared under `review_sensitive_paths` changed.
 - `/dxreviewloop` reviewed the full caller-supplied scope — the current change
   set, or the entire tracked codebase — on its first pass and on every pass it
   counted as clean; the passes between those reviewed the ledger and the delta.
@@ -66,7 +67,11 @@ All of these must be true:
   in commits, pushed them, reset the clean counter, and restarted review
   against the updated full scope in another fresh session.
 - Any escalation raised the tier, reset the clean counter, and restarted review
-  at the higher depth. The tier was never downgraded.
+  at the higher depth. Any de-escalation came from a clean wave, carried the
+  lower tier's reason codes, kept the clean credit already earned, and lowered
+  the gate to the lower tier's requirement; the loop then completed as
+  `completed`, not `waived`. No de-escalation went below a surface the project
+  declared under `review_sensitive_paths`.
 - No `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, missing or
   malformed result, provider failure, repeated-fingerprint churn, or
   alternating-fingerprint churn remains. Each of these pauses rather than
@@ -76,8 +81,8 @@ All of these must be true:
   and any lower-target override. A prose `SUCCESS` claim without that receipt
   does not satisfy Phase 3.
 - Review ran again after the most recent in-scope change. After review fixes,
-  the loop retained or raised the tier, rebound its selection to the updated
-  fingerprint, and reset progress. Any out-of-band scope change invalidated
+  the loop kept the tier (or raised it for a declared sensitive surface),
+  rebound its selection to the updated fingerprint, and reset progress. Any out-of-band scope change invalidated
   selection, progress, and receipts before counting resumed.
 - Any criteria or trusted-policy binding change invalidated prior selection,
   progress, clean credit, and receipts before review resumed.

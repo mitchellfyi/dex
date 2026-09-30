@@ -133,8 +133,10 @@ the clean gate has not succeeded when the budget is spent,
 review pauses with its valid clean credit intact. Residual findings, blockers,
 churn, invalid results, and provider failures also pause instead of being
 treated as clean or retried indefinitely. The 1/1/2/3 clean gates are global so
-review assurance does not vary by repository. `DEX_REVIEW_CLEAN_PASSES` can
-raise the launch gate but cannot lower it. An attributed
+review assurance does not vary by repository. A clean wave can lower the tier
+when the change satisfies a lower tier's reason codes, keeping the clean credit
+already earned; only a surface the project declared sensitive holds the tier.
+`DEX_REVIEW_CLEAN_PASSES` can raise the launch gate but cannot lower it. An attributed
 `dx control override review.clean-passes <1-30>` can change the live target;
 lowering it still requires that many independent clean waves and records the
 review phase as waived. Agents and humans can change the operational budget

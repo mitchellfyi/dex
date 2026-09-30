@@ -5017,8 +5017,9 @@ Use the humanizer skill before posting user-facing PR or ticket prose."
 # build/refresh a compact context pack, run deterministic checks, collect
 # read-only review findings, verify/dedupe, batch-fix, re-check, then write a
 # review-result signal. Only a wave with zero verified findings and zero fixes
-# writes CLEAN. A preflight risk selection resolves small/normal/complex to
-# the global policy's required clean waves, and a wave may escalate that tier upward.
+# writes CLEAN. A preflight risk selection resolves trivial/small/normal/complex
+# to the global policy's required clean waves; a wave may escalate that tier, or
+# a clean wave may de-escalate it and keep the credit already earned.
 
 
 

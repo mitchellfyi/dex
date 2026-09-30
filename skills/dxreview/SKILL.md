@@ -110,7 +110,9 @@ Allowed results:
 `CLEAN` and `NOTES:N` both mean zero verified findings above the bar and zero
 fixes; `NOTES:N` carries N ledger notes below it, and `MECHANICAL:N` N
 deterministic autofixes inside one check's declared `inputs`. Any other fix
-writes `FINDINGS_FIXED:N`. Escalate a tier too low for the risk; never downgrade.
+writes `FINDINGS_FIXED:N`. Escalate a tier too low for the risk. A wave that
+found and fixed nothing may write `DEESCALATE:<tier>:codes` when the whole change
+satisfies the lower tier's reason codes; the loop keeps the clean credit earned.
 
 Use short, lowercase reason codes. Do not put source text, file paths, prompts,
 credentials, or other free-form content in result suffixes. The legacy

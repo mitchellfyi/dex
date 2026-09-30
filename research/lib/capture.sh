@@ -5,22 +5,28 @@
 # shellcheck source=research/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-# _inject_workspace_context <workspace_dir> <runner>
+# _inject_workspace_context <workspace_dir> <runner> [guardrails_file] [implement_file]
 # Create the agent context file with guardrails and implementation guidance.
 # The workspace has its own .git root (from git init), so the agent won't see the
-# parent repo's files. This function bridges that gap.
+# parent repo's files. This function bridges that gap. The optional files let
+# research/compare run an arm on the prompts of another revision.
 _inject_workspace_context() {
   local ws="$1"
   local runner="${2:-claude}"
-  local guardrails_file="$DEX_DIR/prompts/guardrails.md"
-  local implement_skill="$DEX_DIR/skills/dximplement/SKILL.md"
+  local guardrails_file="${3:-$DEX_DIR/prompts/guardrails.md}"
+  # The non-interactive guidance moved from skills/dximplement/SKILL.md to the
+  # workflow prompt; reading the old file found nothing and silently used the
+  # fallback below instead.
+  local implement_file="${4:-$DEX_DIR/prompts/workflows/dximplement.md}"
   local context_file="CLAUDE.md"
   [[ "$runner" == "codex" ]] && context_file="AGENTS.md"
 
-  # Extract the non-interactive mode guidance from dximplement
   local noninteractive_guidance=""
-  if [[ -f "$implement_skill" ]]; then
-    noninteractive_guidance=$(awk '/\*\*When running non-interactively\*\*/{found=1} found{if(/^When stopping for scope/)exit; print}' "$implement_skill")
+  if [[ -f "$implement_file" ]]; then
+    noninteractive_guidance=$(awk '/\*\*When running non-interactively\*\*/{found=1} found{if(/^When stopping for scope/)exit; print}' "$implement_file")
+  fi
+  if [[ -z "$noninteractive_guidance" ]]; then
+    log_warn "No non-interactive guidance found in $implement_file; using the fallback"
   fi
 
   cat > "$ws/$context_file" <<CLAUDEMD
@@ -30,7 +36,7 @@ You are building production-quality code. Follow these guardrails strictly.
 
 ## Handling Ambiguity
 
-${noninteractive_guidance:-Choose the most comprehensive reasonable interpretation. For algorithmic choices, implement at least two approaches. Default to per-client isolation with configurable limits. Include a README explaining design decisions.}
+${noninteractive_guidance:-Choose the interpretation a reviewer would most likely expect, and record your assumptions in your closing summary.}
 
 ## Guardrails
 
@@ -54,10 +60,24 @@ _context_file_for_runner() {
   esac
 }
 
+# _scenario_seeded <scenario> — does the workspace start with seed code?
+_scenario_seeded() {
+  [[ -d "$(scenario_dir "$1")/seed" ]]
+}
+
+# _build_dxloop_prompt <prompt> <context_file> [seeded]
+# A seeded scenario starts from existing code. Telling the agent the directory
+# is empty and to create every file from scratch contradicts the task there.
 _build_dxloop_prompt() {
-  local prompt="$1" context_file="$2"
+  local prompt="$1" context_file="$2" seeded="${3:-0}"
+  local opening="You are working in an empty project directory."
+  local closing="Work autonomously. Create all files from scratch. Do not ask questions — make reasonable assumptions for anything unspecified."
+  if [[ "$seeded" == 1 ]]; then
+    opening="You are working in an existing project directory."
+    closing="Work autonomously. Do not ask questions — make reasonable assumptions for anything unspecified."
+  fi
   cat <<EOF
-You are working in an empty project directory. Your task:
+${opening} Your task:
 
 ${prompt}
 
@@ -69,7 +89,7 @@ Instructions:
 5. Fix any issues you find — iterate until everything works correctly.
 6. Do a final self-review: check for edge cases, error handling, input validation, and code quality.
 
-Work autonomously. Create all files from scratch. Do not ask questions — make reasonable assumptions for anything unspecified.
+${closing}
 EOF
 }
 
@@ -192,7 +212,9 @@ _capture_dxloop() {
 
   # Build the full prompt with DX skill instructions
   local full_prompt
-  full_prompt=$(_build_dxloop_prompt "$prompt" "$(_context_file_for_runner claude)")
+  local seeded=0
+  _scenario_seeded "$scenario" && seeded=1
+  full_prompt=$(_build_dxloop_prompt "$prompt" "$(_context_file_for_runner claude)" "$seeded")
 
   # Generate unique session ID for this run
   local session_id
@@ -337,7 +359,9 @@ _capture_codex_dxloop() {
   _inject_workspace_context "$ws" "codex"
 
   local full_prompt
-  full_prompt=$(_build_dxloop_prompt "$prompt" "$context_file")
+  local seeded=0
+  _scenario_seeded "$scenario" && seeded=1
+  full_prompt=$(_build_dxloop_prompt "$prompt" "$context_file" "$seeded")
 
   _capture_codex_exec "$ws" "$result_dir" "stream.jsonl" "stderr.log" "last-message.txt" "$full_prompt" "$timeout"
 }

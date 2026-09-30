@@ -144,6 +144,15 @@ the gate map.
 | `DX_CODEX_READ_ONLY` | Internal marker that switches Codex delegation to an ephemeral read-only sandbox and forbids dangerous bypass flags | `0` |
 | `DX_CLAUDE_EFFORT` | Override Claude Code `--effort` | profile effort, else session default |
 | `DX_PLAN_EFFORT` | Override Phase 1/plan effort | `DX_CLAUDE_EFFORT`, profile plan effort, else session default |
+| `DX_EFFORT` / `DX_EFFORT_OVERRIDE` | Effort override for the selected agent; a run spec's `harness.effort` sets the override | profile effort |
+| `DX_CODEX_EFFORT` | Resolved Codex reasoning effort passed as `-c model_reasoning_effort` through `bin/dxcodex.sh` | effort override, else profile effort, else Codex default |
+| `DX_CODEX_JSON` | Add `--json` to a `bin/dxcodex.sh exec` delegation (`0` or `1`); no shipped caller sets it | `0` |
+| `DX_CODEX_OUTPUT_LAST_MESSAGE` | Internal: file that receives Codex's last message (`-o`) from a `bin/dxcodex.sh exec` run, used by the read-only risk assessor | unset |
+| `DX_ROUTER_SESSION_ID` | Internal: the routed session ID the CCR launch hands to the provider child | set by `dx router launch` |
+| `DEX_ROUTER_HOME` | Router state directory (`config.json`, `backend.json`, credentials); tests point it at a temporary directory | `~/.dex/router` |
+| `DEX_OPENROUTER_API_KEY` | API key for the router's metered `openrouter` provider | unset |
+| `DEX_POLICY_SESSION_ID` | Internal: the lifecycle session whose phase route a review assessor or wave follows | the parent session |
+| `DEX_REVIEW_WAVE_NUMBER` | Internal: the wave index a review pass runs as; the router rotates the phase's model chain by it for reviewer diversity | set per wave |
 | `DX_ALLOW_API_BILLED_AUTH` | Allow `dx provider doctor` to tolerate API/gateway env vars | `0` |
 | `DX_ALLOW_REPO_GATEWAY_PROVIDER` | Explicitly allow a trusted repo-local gateway/API provider profile for the current invocation | `0` |
 | `DX_ALLOW_FORK_PR_CHECKOUT` | Skill-level opt-in letting `/dxprreview` check out fork PRs | `0` |

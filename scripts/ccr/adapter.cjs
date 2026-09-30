@@ -40,6 +40,9 @@ async function availablePorts() {
 function idle() {
   if (state.sessions().some(active)) throw new Error('Routed sessions are active. Finish them before changing the CCR runtime or model catalogue.');
 }
+// What idle() checks, as a count. It reads the session files, so it still
+// answers while the gateway is stopped.
+function activeSessions() { return state.sessions().filter(active).length; }
 // start() short-circuits on a healthy gateway without comparing anything, and
 // the extension reloads only when it sees a change settle, so a gateway can
 // still be serving code older than the checkout. started_at is when the code it
@@ -201,4 +204,4 @@ async function openUI() {
     child.once('exit', code => { if (code === 0) resolve(); else { server.close(); reject(new Error('Could not open the CCR dashboard.')); } });
   });
 }
-module.exports = { RELEASE, PROVIDER_ENDPOINTS, runtime, availablePorts, idle, install, verifyRuntime, rpc, managedConfig, health, sourceChangedAt, stale, reload, start, stop, stopOwned, openUI };
+module.exports = { RELEASE, PROVIDER_ENDPOINTS, runtime, availablePorts, idle, activeSessions, install, verifyRuntime, rpc, managedConfig, health, sourceChangedAt, stale, reload, start, stop, stopOwned, openUI };

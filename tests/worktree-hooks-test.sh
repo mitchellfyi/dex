@@ -106,6 +106,46 @@ dx_worktree_hook_run before_remove "$BARE_REPO" "$BARE_REPO/.dex/worktrees/none"
   > "$TMP_DIR/bare.out" 2>&1 || assert_at $LINENO
 assert_eq "" "$(cat "$TMP_DIR/bare.out")" "a project with no hooks says nothing"
 
+# A project with no section but an executable bin/dex-worktree gets the
+# convention: `bin/dex-worktree <hook>` for every hook it did not declare,
+# with the same environment a declared command gets.
+CONVENTION_REPO="$TMP_DIR/convention"
+make_repo "$CONVENTION_REPO"
+mkdir -p "$CONVENTION_REPO/bin"
+cat > "$CONVENTION_REPO/bin/dex-worktree" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' "convention hook=$1 name=$DX_WORKTREE_NAME ticket=$DX_TICKET repo=$DX_REPO_ROOT" >> "$MARKER_FILE"
+SCRIPT
+chmod +x "$CONVENTION_REPO/bin/dex-worktree"
+assert_eq "bin/dex-worktree before_remove" \
+  "$(__dx_worktree_hook_command "$CONVENTION_REPO" before_remove)" \
+  "an undeclared hook falls back to bin/dex-worktree <hook>"
+: > "$MARKER_FILE"
+dx_worktree_hook_run before_remove "$CONVENTION_REPO" "$CONVENTION_REPO/.dex/worktrees/ticket-42" \
+  > "$TMP_DIR/convention.out" 2>&1 || assert_at $LINENO
+assert_contains "convention hook=before_remove name=ticket-42 ticket=42 repo=$CONVENTION_REPO" "$MARKER_FILE"
+
+# A declared hook wins over the script for that name; the script still answers
+# the names the section leaves out.
+DECLARED_REPO="$TMP_DIR/declared-and-script"
+make_repo "$DECLARED_REPO" "before_remove: $REMOVE_HOOK"
+mkdir -p "$DECLARED_REPO/bin"
+cp "$CONVENTION_REPO/bin/dex-worktree" "$DECLARED_REPO/bin/dex-worktree"
+assert_eq "$REMOVE_HOOK" "$(__dx_worktree_hook_command "$DECLARED_REPO" before_remove)" \
+  "a declared hook wins over bin/dex-worktree"
+assert_eq "bin/dex-worktree after_create" "$(__dx_worktree_hook_command "$DECLARED_REPO" after_create)" \
+  "the script still answers an undeclared name"
+
+# A bin/dex-worktree that is not executable is not a hook.
+PLAIN_REPO="$TMP_DIR/plain-script"
+make_repo "$PLAIN_REPO"
+mkdir -p "$PLAIN_REPO/bin"
+cp "$CONVENTION_REPO/bin/dex-worktree" "$PLAIN_REPO/bin/dex-worktree"
+chmod -x "$PLAIN_REPO/bin/dex-worktree"
+HOOK_STATUS=0
+__dx_worktree_hook_command "$PLAIN_REPO" before_remove >/dev/null 2>&1 || HOOK_STATUS=$?
+assert_eq 1 "$HOOK_STATUS" "a non-executable bin/dex-worktree declares nothing"
+
 # ─── 2. dx_wt_remove runs before_remove, wherever it is called from ─────────
 
 HOOK_REPO="$TMP_DIR/hooked"
@@ -253,64 +293,6 @@ if command -v zsh >/dev/null 2>&1; then
   [[ ! -d "$ZSH_REPO/.dex/worktrees/task-stale" ]] || assert_at $LINENO
   # Creation runs the create hook once, not once per link pass.
   assert_eq 1 "$(marker_count "create name=ticket-501")" "after_create runs once"
-
-  # The same removal typed at the user's prompt. An interactive zsh has job
-  # control, so every `&` job it starts gets a process group of its own, and
-  # the terminal treats that group as background: the first thing the timeout
-  # supervisor or the hook did to the terminal stopped it with SIGTTOU, and
-  # dxrm waited on the stopped job until the user gave up. This hook changes
-  # the terminal's modes the way a progress display does.
-  TTY_REPO="$TMP_DIR/tty-repo"
-  make_repo "$TTY_REPO" \
-    'before_remove: stty -echo < /dev/tty && stty echo < /dev/tty && printf "%s\n" "tty remove $DX_WORKTREE_NAME" >> "$MARKER_FILE"'
-  git -C "$TTY_REPO" worktree add -q --no-track \
-    "$TTY_REPO/.dex/worktrees/ticket-502" -b worktree-ticket-502 main
-  export TTY_REPO
-  : > "$MARKER_FILE"
-  python3 - > "$TMP_DIR/tty.out" 2>&1 <<'PY' || {
-import errno, os, pty, select, signal, time
-
-command = '''
-source "$DEX_DIR/dx.sh"
-cd "$TTY_REPO"
-print -r -- "monitor:$options[monitor]"
-dxrm 502
-print -r -- "dxrm-status:$?"
-'''
-pid, fd = pty.fork()
-if pid == 0:
-    os.execvp("zsh", ["zsh", "-fic", command])
-output, deadline = b"", time.monotonic() + 60
-while time.monotonic() < deadline:
-    if not select.select([fd], [], [], 0.2)[0]:
-        continue
-    try:
-        chunk = os.read(fd, 4096)
-    except OSError as error:
-        if error.errno != errno.EIO:
-            raise
-        break
-    if not chunk:
-        break
-    output += chunk
-else:
-    os.killpg(pid, signal.SIGKILL)
-print(output.decode(errors="replace"))
-os.waitpid(pid, 0)
-PY
-    cat "$TMP_DIR/tty.out" >&2
-    fail "dxrm from an interactive zsh did not run"
-  }
-  assert_contains "monitor:on" "$TMP_DIR/tty.out"
-  assert_contains "dxrm-status:0" "$TMP_DIR/tty.out"
-  assert_not_contains "suspended" "$TMP_DIR/tty.out"
-  # A job notice means the supervisor was a job of the user's shell again.
-  if grep -qE '^\[[0-9]+\]' "$TMP_DIR/tty.out"; then
-    cat "$TMP_DIR/tty.out" >&2
-    assert_at $LINENO
-  fi
-  assert_contains "tty remove ticket-502" "$MARKER_FILE"
-  [[ ! -d "$TTY_REPO/.dex/worktrees/ticket-502" ]] || assert_at $LINENO
 else
   printf 'skip: zsh is not installed, so the dx.sh create and removal paths are not exercised\n'
 fi

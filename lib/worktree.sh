@@ -99,6 +99,14 @@ __dx_worktree_hook_timeout() {
 # The declared command, or nothing. Prints a warning for a contract Dex can
 # read the shape of but not the contents — a malformed block and a list where
 # a command belongs are both worth saying out loud, once, where they happen.
+# A hook the project did not declare falls back to a convention: a repository
+# that ships an executable bin/dex-worktree gets `bin/dex-worktree <hook>` for
+# every undeclared hook, so a project's teardown lives in one script beside
+# its setup rather than in four lines of dex.md that each new project has to
+# know to write. A declared hook always wins; the script is only asked when
+# dex.md says nothing for that name.
+DEX_WORKTREE_HOOK_SCRIPT="bin/dex-worktree"
+
 __dx_worktree_hook_command() {
   local hook_repo="$1" hook_name="$2" hook_command="" hook_read=0
   hook_command=$(dx_project_worktree_hook "$hook_repo" "$hook_name" 2>/dev/null) \
@@ -107,7 +115,11 @@ __dx_worktree_hook_command() {
     dx_warn "Ignoring '## Worktree Hooks' in ${hook_repo}/.dex/dex.md: it is not a flat mapping of shell commands."
     return 1
   fi
-  [[ "$hook_read" -eq 0 && -n "$hook_command" ]] || return 1
+  if [[ "$hook_read" -ne 0 || -z "$hook_command" ]]; then
+    [[ -x "$hook_repo/$DEX_WORKTREE_HOOK_SCRIPT" ]] || return 1
+    printf '%s %s\n' "$DEX_WORKTREE_HOOK_SCRIPT" "$hook_name"
+    return 0
+  fi
   if [[ "$hook_command" == *$'\n'* ]]; then
     dx_warn "Ignoring the ${hook_name} worktree hook: each hook is one shell command, not a list."
     return 1
@@ -121,6 +133,7 @@ __dx_worktree_hook_command() {
 __dx_worktree_hook_exec() {
   local hook_name="$1" hook_repo="$2" hook_dir="$3" hook_label="$4"
   local hook_ticket="$5" hook_command="$6" hook_cwd hook_seconds hook_result=0
+  local hook_log="" hook_line=""
 
   # Run in the worktree. A before_remove for an orphan whose directory is
   # already gone still has a database or a port to free, so fall back to the
@@ -130,15 +143,38 @@ __dx_worktree_hook_exec() {
   [[ -d "$hook_cwd" ]] || return 0
 
   hook_seconds=$(__dx_worktree_hook_timeout)
+  # The supervisor runs the hook as a background job of the operator's shell.
+  # A background job that writes to a terminal with `tostop` set, or reads
+  # from it, is stopped by the kernel and `dx` sits at "suspended (tty
+  # output)" until someone types `fg`. So the hook gets no terminal: stdin is
+  # /dev/null and its output lands in a file, replayed here once it is done.
+  hook_log=$(mktemp "${TMPDIR:-/tmp}/dex-worktree-hook.XXXXXX" 2>/dev/null) || hook_log=""
   # Not `cd` in this shell: the caller is mid-removal and its working
   # directory is its own business.
-  dx_run_with_timeout "$hook_seconds" env \
-    DX_WORKTREE_NAME="$hook_label" \
-    DX_WORKTREE_PATH="$hook_dir" \
-    DX_TICKET="$hook_ticket" \
-    DX_REPO_ROOT="$hook_repo" \
-    bash -c 'cd "$1" || exit 1; shift; eval "$1"' \
-    dex-worktree-hook "$hook_cwd" "$hook_command" || hook_result=$?
+  if [[ -n "$hook_log" ]]; then
+    dx_run_with_timeout "$hook_seconds" env \
+      DX_WORKTREE_NAME="$hook_label" \
+      DX_WORKTREE_PATH="$hook_dir" \
+      DX_TICKET="$hook_ticket" \
+      DX_REPO_ROOT="$hook_repo" \
+      bash -c 'cd "$1" || exit 1; shift; eval "$1"' \
+      dex-worktree-hook "$hook_cwd" "$hook_command" \
+      </dev/null >"$hook_log" 2>&1 || hook_result=$?
+    if [[ -s "$hook_log" ]]; then
+      while IFS= read -r hook_line || [[ -n "$hook_line" ]]; do
+        dx_info "  ${hook_name}: ${hook_line}"
+      done < "$hook_log"
+    fi
+    rm -f "$hook_log"
+  else
+    dx_run_with_timeout "$hook_seconds" env \
+      DX_WORKTREE_NAME="$hook_label" \
+      DX_WORKTREE_PATH="$hook_dir" \
+      DX_TICKET="$hook_ticket" \
+      DX_REPO_ROOT="$hook_repo" \
+      bash -c 'cd "$1" || exit 1; shift; eval "$1"' \
+      dex-worktree-hook "$hook_cwd" "$hook_command" </dev/null || hook_result=$?
+  fi
   return "$hook_result"
 }
 

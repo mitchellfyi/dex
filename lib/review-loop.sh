@@ -422,6 +422,15 @@ __dx_review_pause_intervention() {
     completion_receipt_missing|context_pack_missing|findings_hash_invalid|invalid_result|inconsistent_findings_evidence|evidence_manifest_invalid|pass_attestation_invalid)
       printf '%s\n' "Correct the review-wave result contract, then rerun dxreviewloop."
       ;;
+    invalid_escalation)
+      printf 'The wave asked to escalate to %s, which is not above the current tier; use DEESCALATE:<tier>:<codes> to go down, then rerun dxreviewloop.\n' "${detail:-a tier}"
+      ;;
+    invalid_deescalation)
+      printf 'The wave asked to de-escalate to %s, which is not below the current tier; use ESCALATE:<tier>:<reason> to go up, then rerun dxreviewloop.\n' "${detail:-a tier}"
+      ;;
+    escalation_mutated_scope|deescalation_mutated_scope)
+      printf '%s\n' "A wave that changes the tier must leave the tree alone; commit or revert the stray change, then rerun dxreviewloop."
+      ;;
     repeated_fingerprint|alternating_fingerprints|wave_reported_churn)
       printf '%s\n' "Inspect the repeating or oscillating fixes, stabilize the implementation, then rerun dxreviewloop."
       ;;
@@ -494,8 +503,9 @@ __dx_review_lens_count() {
 # findings is not cheap, and exempting it let an alternating clean/fix loop run
 # forever.
 __dx_review_budget_exempt() {
+  # A de-escalating wave is a clean wave that also lowered the tier.
   case "${1:-}" in
-    clean|notes) return 0 ;;
+    clean|notes|deescalate) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -635,6 +645,7 @@ ${criteria_block}
 $(__dx_review_assessment_inspection_guidance "$provider_agent")
 
 Trusted clean-pass policy for this decision:
+- trivial: 1 consecutive CLEAN wave
 - small: ${policy_small} consecutive CLEAN waves
 - normal: ${policy_normal} consecutive CLEAN waves
 - complex: ${policy_complex} consecutive CLEAN waves
@@ -644,7 +655,7 @@ Choose the tier up front; its mapped streak is the deterministic requirement.
 ${rubric}
 
 Return exactly one JSON object and no prose or markdown:
-\`{\"tier\":\"<small|normal|complex>\",\"reason_codes\":\"<comma-separated-reason-codes>\",\"completion_generation\":\"${completion_generation}\"}\`
+\`{\"tier\":\"<trivial|small|normal|complex>\",\"reason_codes\":\"<comma-separated-reason-codes>\",\"completion_generation\":\"${completion_generation}\"}\`
 
 Do not run a review wave, edit files, change git state, install tooling, commit,
 push, create a PR, or write review state. The wrapper records a valid decision.
@@ -901,6 +912,11 @@ dx_review_loop_run() {
   fi
   __dx_refresh_provider || return 1
 
+  # The loop warns about the measured floor once, itself; the selection writer
+  # stays quiet for every rewrite this function and its helpers make. A local,
+  # not an export: the flag is for this process, not the review waves.
+  # shellcheck disable=SC2034  # read by __dx_review_selection_message through dynamic scope
+  local DX_REVIEW_SELECTION_QUIET=1
   local provider_agent
   provider_agent=$(__dx_resolved_provider_agent) || return 1
   __dx_require_resolved_provider_cli || return 1
@@ -1288,31 +1304,25 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   local selection_record="" prior_selection_record="" prior_tier="" prior_source="" prior_reasons="" prior_required="" prior_fingerprint="" prior_binding="" prior_policy_binding=""
   if prior_selection_record=$(dx_review_read_selection "$session_id" "$PWD" "$review_criteria_binding" "$review_policy_binding" 2>/dev/null); then
     IFS=$'\t' read -r prior_tier prior_source prior_reasons prior_required prior_fingerprint prior_binding prior_policy_binding <<< "$prior_selection_record"
-    : "$prior_fingerprint" "$prior_binding" "$prior_policy_binding"
+    : "$prior_source" "$prior_reasons" "$prior_fingerprint" "$prior_binding" "$prior_policy_binding"
   else
     rm -f "$(dx_review_state_file "$session_id")" "$(dx_review_receipt_file "$session_id")" "$(dx_findings_file "$session_id")" 2>/dev/null
     dx_review_ledger_reset "$session_id" 2>/dev/null || true
   fi
 
-  if [[ -n "$requested_tier" ]]; then
-    review_tier=$(dx_review_normalize_tier "$requested_tier" 2>/dev/null || true)
+  if [[ -n "$requested_tier" || ( -n "$requested_profile" && "$requested_profile" != "auto" ) ]]; then
+    # An operator's tier stands as written, in either direction. A prior
+    # selection at a different tier is replaced, and the saved state, ledger
+    # and receipt that were bound to it are reset when the loop loads state
+    # below, so lowering a resumed loop starts it fresh at the lower tier.
+    review_tier=$(dx_review_normalize_tier "${requested_tier:-$requested_profile}" 2>/dev/null || true)
     selection_source="environment"
     selection_reasons="operator-override"
-    if [[ -n "$prior_tier" && $(dx_review_tier_rank "$prior_tier") -gt $(dx_review_tier_rank "$review_tier") ]]; then
-      review_tier="$prior_tier"
-      selection_source="$prior_source"
-      selection_reasons="$prior_reasons"
-      selection_required="$prior_required"
-    fi
-  elif [[ -n "$requested_profile" && "$requested_profile" != "auto" ]]; then
-    review_tier=$(dx_review_normalize_tier "$requested_profile" 2>/dev/null || true)
-    selection_source="environment"
-    selection_reasons="operator-override"
-    if [[ -n "$prior_tier" && $(dx_review_tier_rank "$prior_tier") -gt $(dx_review_tier_rank "$review_tier") ]]; then
-      review_tier="$prior_tier"
-      selection_source="$prior_source"
-      selection_reasons="$prior_reasons"
-      selection_required="$prior_required"
+    if [[ -n "$prior_tier" && -n "$review_tier" && "$prior_tier" != "$review_tier" ]]; then
+      dx_warn "Review tier ${review_tier} set by the environment replaces the recorded ${prior_tier} selection; the loop starts fresh at ${review_tier}."
+      # The count the replaced selection carried goes with it, or a loop
+      # lowered to small would still owe complex's three clean waves.
+      prior_required=""
     fi
   elif [[ -n "$prior_selection_record" && ( $standalone_review_prompt -eq 0 || $review_recovered_checkpoint -eq 1 ) ]]; then
     selection_record="$prior_selection_record"
@@ -1565,23 +1575,31 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
         selection_source="$assessment_source"
         local proposed_tier="$review_tier" proposed_reasons="$selection_reasons"
         local floor_record="" floor_tier="" floor_reason="" assessed_rank="" floor_rank=""
+        local hard_floor_record="" hard_floor_tier="" hard_floor_reason="" hard_floor_rank=""
+        # The measured floor is advice beside the assessor's tier: journaled,
+        # and warned about when the tier went under it. Only a surface the
+        # project declared sensitive raises the tier. A prior selection at
+        # another tier does not: the fresh assessment replaces it.
         floor_record=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
         IFS=$'\t' read -r floor_tier floor_reason <<< "$floor_record"
+        hard_floor_record=$(dx_review_scope_minimum_tier "$PWD" hard 2>/dev/null || true)
+        IFS=$'\t' read -r hard_floor_tier hard_floor_reason <<< "$hard_floor_record"
         assessed_rank=$(dx_review_tier_rank "$review_tier" 2>/dev/null || true)
         floor_rank=$(dx_review_tier_rank "$floor_tier" 2>/dev/null || true)
-        if [[ "$assessed_rank" =~ ^[0-9]+$ && "$floor_rank" =~ ^[0-9]+$ && "$floor_rank" -gt "$assessed_rank" ]]; then
-          review_tier="$floor_tier"
-          selection_reasons="$floor_reason"
+        hard_floor_rank=$(dx_review_tier_rank "$hard_floor_tier" 2>/dev/null || true)
+        if [[ "$assessed_rank" =~ ^[0-9]+$ && "$hard_floor_rank" =~ ^[0-9]+$ && "$hard_floor_rank" -gt "$assessed_rank" ]]; then
+          dx_warn "Review tier raised from ${review_tier} to ${hard_floor_tier}: a surface this project declared under review_sensitive_paths changed."
+          review_tier="$hard_floor_tier"
+          selection_reasons="$hard_floor_reason"
           selection_source="deterministic-floor"
+        elif [[ "$assessed_rank" =~ ^[0-9]+$ && "$floor_rank" =~ ^[0-9]+$ && "$floor_rank" -gt "$assessed_rank" ]]; then
+          dx_warn "Review tier ${review_tier} is below the measured floor ${floor_tier} (${floor_reason}); recorded as an attributed downgrade."
         fi
-        if [[ -n "$prior_tier" && $(dx_review_tier_rank "$prior_tier") -gt $(dx_review_tier_rank "$review_tier") ]]; then
-          review_tier="$prior_tier"
-          selection_reasons="$prior_reasons"
-          selection_source="$prior_source"
-          selection_required="$prior_required"
-        fi
+        # A fresh assessment at another tier replaces the prior selection, and
+        # the count that selection carried goes with it.
+        [[ -z "$prior_tier" || "$prior_tier" == "$review_tier" ]] || prior_required=""
         if dx_review_write_selection "$session_id" "$review_tier" "$selection_source" "$selection_reasons" \
-          "$PWD" "" "$review_criteria_binding" "$review_policy_binding"; then
+          "$PWD" "" "$review_criteria_binding" "$review_policy_binding" 2>/dev/null; then
           assessment_ok=1
           # The floor is why a tier gets raised, and until now it was computed
           # here and thrown away: the trail recorded the tier proposed and the
@@ -1662,31 +1680,49 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     fi
   fi
 
-  # The tier is derived from measured change facts as well as chosen: files and
-  # lines changed, sensitive surfaces the project declared, dependency moves,
-  # and whether the full gate is green for this tree. It only ever raises what
-  # the agent selected — dx_review_write_selection already refuses a selection
-  # below the floor, so a lower derived tier changes nothing here either.
-  # An explicit operator override keeps the carve-out dx_review_write_selection
-  # already gives it: `environment` and `wave-escalation` sources are not
-  # measured against the floor, so the loop does not measure them either.
+  # The tier is measured as well as chosen: files and lines changed, sensitive
+  # surfaces the project declared, dependency moves, and whether the full gate
+  # is green for this tree. The measured floor is advice — it is journaled
+  # beside the selection and warned about when the tier went under it — and
+  # only the hard floor, a surface the project declared under
+  # `review_sensitive_paths`, raises what was selected. An operator's
+  # environment override is not measured against the advisory floor, but the
+  # hard floor holds it too: the declaration is project policy, and the agent
+  # can set the variable before it launches the loop. A wave's tier change is
+  # not measured at all, because the loop clamped it before recording it.
   local derived_record="" derived_tier="" derived_reasons=""
   local derived_rank="" selected_rank=""
+  local selection_floor_tier="-" selection_floor_reason="-" selection_below_floor="false"
+  local selection_floor_record="" selection_floor_rank=""
   case "$selection_source" in
-    environment|wave-escalation) derived_record="" ;;
-    *) derived_record=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true) ;;
+    wave-escalation|wave-deescalation) ;;
+    *) derived_record=$(dx_review_scope_minimum_tier "$PWD" hard 2>/dev/null || true) ;;
   esac
+  if __dx_review_selection_measured_against_floor "$selection_source"; then
+    selection_floor_record=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
+  fi
   IFS=$'\t' read -r derived_tier derived_reasons <<< "$derived_record"
+  # zsh does not expand a `$'…'` default inside `${:-}`, so the dash record is
+  # assigned outright rather than defaulted in the expansion.
+  [[ -n "$selection_floor_record" ]] || selection_floor_record=$'-\t-'
+  IFS=$'\t' read -r selection_floor_tier selection_floor_reason <<< "$selection_floor_record"
   derived_rank=$(dx_review_tier_rank "$derived_tier" 2>/dev/null || true)
   selected_rank=$(dx_review_tier_rank "$review_tier" 2>/dev/null || true)
   if [[ "$derived_rank" =~ ^[0-9]+$ && "$selected_rank" =~ ^[0-9]+$ \
     && "$derived_rank" -gt "$selected_rank" ]] \
     && dx_review_selection_reason_codes_valid "$derived_tier" \
       deterministic-floor "$derived_reasons"; then
-    dx_warn "Review tier raised from ${review_tier} to ${derived_tier} by the measured change facts (${derived_reasons})."
+    dx_warn "Review tier raised from ${review_tier} to ${derived_tier}: a surface this project declared under review_sensitive_paths changed."
     review_tier="$derived_tier"
     selection_reasons="$derived_reasons"
     selection_source="deterministic-floor"
+    selected_rank="$derived_rank"
+  fi
+  selection_floor_rank=$(dx_review_tier_rank "$selection_floor_tier" 2>/dev/null || true)
+  if [[ "$selection_floor_rank" =~ ^[0-9]+$ && "$selected_rank" =~ ^[0-9]+$ \
+    && "$selection_floor_rank" -gt "$selected_rank" ]]; then
+    selection_below_floor="true"
+    dx_warn "Review tier ${review_tier} is below the measured floor ${selection_floor_tier} (${selection_floor_reason}); recorded as an attributed downgrade."
   fi
 
   review_profile=$(dx_review_tier_profile "$review_tier") || {
@@ -1730,8 +1766,11 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     return 1
   }
   required_clean=$((10#$required_clean))
-  local default_max_waves="" max_waves=""
-  default_max_waves=$(dx_review_policy_tier_max_waves "$review_tier") || {
+  # The wave budget follows the deepest tier the loop has run at. Going down
+  # never shrinks a budget the loop already had, or a late de-escalation
+  # meant to save waves would pause the loop on the lower tier's allowance.
+  local default_max_waves="" max_waves="" review_budget_tier="$review_tier"
+  default_max_waves=$(dx_review_policy_tier_max_waves "$review_budget_tier") || {
     dx_error "Could not resolve the review wave budget for tier '${review_tier}'."
     [[ $standalone_review_prompt -eq 1 ]] && __dx_review_finish_standalone_run "$review_run_id" "$telemetry_session_id" failed tier_resolution_error "$session_id"
     return 1
@@ -1756,7 +1795,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
   __dx_review_emit_event "$review_run_id" "review.tier.selected" "info" "Review tier selected" "$review_phase" \
     tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" source="$selection_source" reason_codes="$selection_reasons" \
     policy_small_int="$review_policy_small" policy_normal_int="$review_policy_normal" policy_complex_int="$review_policy_complex" \
-    max_waves_int="$max_waves"
+    max_waves_int="$max_waves" \
+    floor="$selection_floor_tier" floor_reason="$selection_floor_reason" below_floor_bool="$selection_below_floor"
 
   local review_promise
   local review_start_lock_rc=0 review_start_cleanup_rc=0
@@ -1793,6 +1833,14 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
             "$review_policy_binding" "$review_profile"; then
           review_iteration=$((10#$state_iteration))
           clean_passes=$((10#$state_clean))
+          # The saved record carries the deepest tier this loop ran at, so a
+          # de-escalated loop resumes with the budget it already had.
+          local saved_budget_tier=""
+          saved_budget_tier=$(dx_review_state_budget_tier "$session_id" 2>/dev/null || true)
+          if [[ -n "$saved_budget_tier" ]] && [[ $(dx_review_tier_rank "$saved_budget_tier" 2>/dev/null || echo 0) -gt \
+            $(dx_review_tier_rank "$review_budget_tier" 2>/dev/null || echo 0) ]]; then
+            review_budget_tier="$saved_budget_tier"
+          fi
           findings_fixed_total=$(dx_review_state_fixed_total "$session_id") || review_start_cleanup_rc=1
         else
           rm -f "$(dx_review_state_file "$session_id")" \
@@ -1814,7 +1862,8 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     if [[ "$review_start_cleanup_rc" -eq 0 ]]; then
       if ! dx_review_write_state "$session_id" "$review_tier" \
         "$required_clean" "$review_iteration" "$clean_passes" "$PWD" \
-        "$review_criteria_binding" "$review_policy_binding" "$findings_fixed_total"; then
+        "$review_criteria_binding" "$review_policy_binding" "$findings_fixed_total" \
+        "$review_budget_tier"; then
         review_start_cleanup_rc=1
       fi
     fi
@@ -1922,7 +1971,7 @@ No ticket, plan, or acceptance criteria were supplied by this wrapper. Treat pla
     fi
     [[ $clean_passes -lt $required_clean ]] || break
     local live_default_max_waves="" live_max_waves=""
-    live_default_max_waves=$(dx_review_policy_tier_max_waves "$review_tier") || {
+    live_default_max_waves=$(dx_review_policy_tier_max_waves "$review_budget_tier") || {
       terminal_reason="tier_resolution_error"
       break
     }
@@ -2358,7 +2407,7 @@ Set its policy_binding field to:
 Set its pass_binding field to:
   ${pass_binding}
 
-Allowed results: CLEAN, NOTES:N, MECHANICAL:N, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, CHURN:reason, ESCALATE:normal:reason, ESCALATE:complex:reason, ESCALATE_THOROUGH:reason.
+Allowed results: CLEAN, NOTES:N, MECHANICAL:N, FINDINGS_FIXED:N, FINDINGS:N, BLOCKED:reason, CHURN:reason, ESCALATE:normal:reason, ESCALATE:complex:reason, ESCALATE_THOROUGH:reason, DEESCALATE:trivial:codes, DEESCALATE:small:codes, DEESCALATE:normal:codes.
 
 ${message}"
 
@@ -2799,7 +2848,8 @@ ${message}"
         convergence_latest="$result_count"
         convergence_samples=$((convergence_samples + 1))
         ;;
-      clean|notes)
+      clean|notes|deescalate)
+        # A de-escalating wave found nothing, so it is progress like CLEAN.
         convergence_older=0
         convergence_previous=0
         convergence_latest=0
@@ -2829,8 +2879,9 @@ ${message}"
     empty_findings_hash=$(dx_review_empty_findings_hash)
     # `notes` carries a count of items below the finding bar and `mechanical` a
     # count of deterministic autofixes, so neither has verified findings — and
-    # therefore neither may carry anything but the empty fingerprint.
-    if { [[ "$result_kind" == "clean" || "$result_kind" == "notes" || "$result_kind" == "mechanical" ]] && [[ "$findings_hash" != "$empty_findings_hash" ]]; } || \
+    # therefore neither may carry anything but the empty fingerprint. A
+    # de-escalating wave is a clean wave and is held to the same rule.
+    if { [[ "$result_kind" == "clean" || "$result_kind" == "notes" || "$result_kind" == "mechanical" || "$result_kind" == "deescalate" ]] && [[ "$findings_hash" != "$empty_findings_hash" ]]; } || \
        { [[ "$result_kind" == "findings" || "$result_kind" == "findings_fixed" ]] && [[ "$findings_hash" == "$empty_findings_hash" ]]; }; then
       terminal_reason="inconsistent_findings_evidence"
       clean_passes=0
@@ -2847,6 +2898,7 @@ ${message}"
       local transition_receipt_op="" transition_extra="" old_tier="$review_tier"
       local transition_findings_appended=0 transition_schema_valid=1
       local transition_fixed_total="$findings_fixed_total"
+      local transition_event_kind="$result_kind"
 
       case "$result_kind" in
         findings_fixed|mechanical)
@@ -2854,9 +2906,11 @@ ${message}"
             # A mechanical pass fixed no finding, so it adds nothing to the
             # fixed total — but it moved the tree, so it gets both of the
             # guards a fix gets: its fingerprint reaches the churn detector
-            # (three formatter-only waves in a row is churn), and the
-            # deterministic floor is re-derived, so an autofix that lands on a
-            # sensitive path can still raise the tier.
+            # (three formatter-only waves in a row is churn), and the hard
+            # floor is re-derived, so an autofix that lands on a surface the
+            # project declared sensitive still raises the tier. The advisory
+            # floor is not re-applied here: the agent chose the tier knowing
+            # it, and the next wave's reviewer can ESCALATE on what it sees.
             [[ "$result_kind" == "mechanical" ]] \
               || transition_fixed_total=$((findings_fixed_total + result_count))
             if ! transition_churn_kind=$(dx_review_findings_history_preview "$parent_findings_file" "$findings_hash"); then
@@ -2864,10 +2918,12 @@ ${message}"
             else
               transition_findings_appended=1
               local post_fix_floor="" post_fix_tier="" post_fix_reason="" post_fix_required=""
-              post_fix_floor=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
+              post_fix_floor=$(dx_review_scope_minimum_tier "$PWD" hard 2>/dev/null || true)
               IFS=$'\t' read -r post_fix_tier post_fix_reason <<< "$post_fix_floor"
-              post_fix_required=$(dx_review_policy_tier_clean_passes "$post_fix_tier" \
-                "$review_policy_small" "$review_policy_normal" "$review_policy_complex" 2>/dev/null || true)
+              if [[ -n "$post_fix_tier" && "$post_fix_tier" != "-" ]]; then
+                post_fix_required=$(dx_review_policy_tier_clean_passes "$post_fix_tier" \
+                  "$review_policy_small" "$review_policy_normal" "$review_policy_complex" 2>/dev/null || true)
+              fi
               if [[ -n "$post_fix_required" ]] &&
                  dx_review_selection_reason_codes_valid "$post_fix_tier" "deterministic-floor" "$post_fix_reason"; then
                 transition_candidate_tier="$post_fix_tier"
@@ -2889,12 +2945,52 @@ ${message}"
           transition_candidate_source="wave-escalation"
           transition_candidate_reasons="wave-escalation"
           ;;
+        deescalate)
+          # A clean wave asking for a lower tier. A surface the project declared
+          # sensitive keeps the tier where it is: the request is refused and the
+          # wave counts as the clean wave it was. Otherwise the lower tier's
+          # requirement is resolved the way the loop resolved the first one —
+          # the policy, raised to any explicit operator gate, then the live
+          # review.clean-passes override.
+          local deescalation_tier="" deescalation_codes="" deescalation_rank=""
+          local deescalation_floor_record="" deescalation_floor_tier="" deescalation_floor_reason="" deescalation_floor_rank=""
+          deescalation_tier=$(dx_review_deescalation_tier "$result") || terminal_reason="tier_resolution_error"
+          deescalation_codes=$(dx_review_deescalation_codes "$result") || terminal_reason="tier_resolution_error"
+          deescalation_floor_record=$(dx_review_scope_minimum_tier "$PWD" hard 2>/dev/null || true)
+          IFS=$'\t' read -r deescalation_floor_tier deescalation_floor_reason <<< "$deescalation_floor_record"
+          deescalation_rank=$(dx_review_tier_rank "$deescalation_tier" 2>/dev/null || true)
+          deescalation_floor_rank=$(dx_review_tier_rank "$deescalation_floor_tier" 2>/dev/null || true)
+          if [[ -z "$terminal_reason" && "$deescalation_rank" =~ ^[0-9]+$ && "$deescalation_floor_rank" =~ ^[0-9]+$ \
+            && "$deescalation_rank" -lt "$deescalation_floor_rank" ]]; then
+            dx_warn "Wave ${review_iteration} · de-escalation to ${deescalation_tier} refused · a surface this project declared under review_sensitive_paths keeps the tier at ${review_tier} (${deescalation_floor_reason}); the wave counts as CLEAN"
+            # The pass itself is journaled as the de-escalation it reported;
+            # this is the record that it did not happen and why.
+            __dx_review_emit_event "$review_run_id" "review.tier.deescalation_refused" "warn" "Review de-escalation refused" "$review_phase" \
+              tier="$review_tier" requested_tier="$deescalation_tier" floor="$deescalation_floor_tier" \
+              floor_reason="$deescalation_floor_reason" iteration_int="$review_iteration"
+            transition_event_kind="clean"
+          elif [[ -z "$terminal_reason" ]]; then
+            transition_candidate_tier="$deescalation_tier"
+            transition_candidate_required=$(dx_review_policy_tier_clean_passes "$deescalation_tier" \
+              "$review_policy_small" "$review_policy_normal" "$review_policy_complex") || terminal_reason="tier_resolution_error"
+            if [[ -z "$terminal_reason" && -n "$explicit_clean_gate" \
+              && $((10#$explicit_clean_gate)) -gt $((10#$transition_candidate_required)) ]]; then
+              transition_candidate_required="$explicit_clean_gate"
+            fi
+            if [[ -z "$terminal_reason" ]]; then
+              transition_candidate_required=$(dx_override_effective "$session_id" review.clean-passes \
+                "$transition_candidate_required" 3) || terminal_reason="override_journal_invalid"
+            fi
+            transition_candidate_source="wave-deescalation"
+            transition_candidate_reasons="$deescalation_codes"
+          fi
+          ;;
       esac
 
       if [[ -z "$terminal_reason" ]]; then
         transition_record=$(dx_review_transition \
           "$review_tier" "$required_clean" "$clean_passes" \
-          "$result_kind" "$result_count" "$transition_event_reason" \
+          "$transition_event_kind" "$result_count" "$transition_event_reason" \
           "$scope_changed" "$working_changed" \
           "$transition_candidate_tier" "$transition_candidate_required" \
           "$transition_candidate_source" "$transition_candidate_reasons" \
@@ -2903,7 +2999,7 @@ ${message}"
           transition_required transition_clean transition_terminal transition_detail \
           transition_ledger_op transition_findings_op transition_selection_op \
           transition_state_op transition_receipt_op transition_extra <<< "$transition_record"
-        case "$transition_action" in count|complete|reset_continue|escalate_continue|pause) ;; *) transition_schema_valid=0 ;; esac
+        case "$transition_action" in count|complete|reset_continue|escalate_continue|deescalate_continue|pause) ;; *) transition_schema_valid=0 ;; esac
         case "$transition_ledger_op" in append|reset) ;; *) transition_schema_valid=0 ;; esac
         case "$transition_findings_op" in append|keep) ;; *) transition_schema_valid=0 ;; esac
         case "$transition_selection_op" in keep|refresh|invalidate) ;; *) transition_schema_valid=0 ;; esac
@@ -2983,20 +3079,33 @@ ${message}"
 
       if [[ -z "$terminal_reason" ]]; then
         if [[ "$transition_tier" != "$review_tier" ]]; then
-          local escalated_policy_required=""
-          escalated_policy_required=$(dx_review_policy_tier_clean_passes \
+          local changed_policy_required=""
+          changed_policy_required=$(dx_review_policy_tier_clean_passes \
             "$transition_tier" "$review_policy_small" \
             "$review_policy_normal" "$review_policy_complex") \
             || terminal_reason="tier_resolution_error"
           if [[ -z "$terminal_reason" ]]; then
-            trusted_required_clean="$escalated_policy_required"
+            trusted_required_clean="$changed_policy_required"
           fi
           if [[ -z "$terminal_reason" \
-            && "$escalated_policy_required" -gt "$default_required_clean" ]]; then
-            default_required_clean="$escalated_policy_required"
+            && "$transition_candidate_source" == "wave-deescalation" ]]; then
+            # Going down, the default follows the lower tier's policy; only an
+            # explicit operator gate still holds it up.
+            default_required_clean="$changed_policy_required"
+            if [[ -n "$explicit_clean_gate" \
+              && $((10#$explicit_clean_gate)) -gt $((10#$default_required_clean)) ]]; then
+              default_required_clean="$explicit_clean_gate"
+            fi
+          elif [[ -z "$terminal_reason" \
+            && "$changed_policy_required" -gt "$default_required_clean" ]]; then
+            default_required_clean="$changed_policy_required"
           fi
         fi
         review_tier="$transition_tier"
+        if [[ $(dx_review_tier_rank "$review_tier" 2>/dev/null || echo 0) -gt \
+          $(dx_review_tier_rank "$review_budget_tier" 2>/dev/null || echo 0) ]]; then
+          review_budget_tier="$review_tier"
+        fi
         required_clean=$((10#$transition_required))
         clean_passes=$((10#$transition_clean))
         findings_fixed_total="$transition_fixed_total"
@@ -3021,15 +3130,48 @@ ${message}"
           && "$transition_selection_op" == "invalidate" ]]; then
           rm -f "$(dx_review_selection_file "$session_id")" 2>/dev/null || true
         fi
+        if [[ -z "$terminal_reason" && "$transition_selection_op" == "refresh" ]]; then
+          # A refreshed selection is bound to a scope that has just moved, so
+          # the floor measured at loop start no longer describes it. Journal
+          # the floor for the new scope the way review.tier.selected did for
+          # the first one; sources the floor does not measure record a dash.
+          local refreshed_floor_record="" refreshed_floor_tier="-" refreshed_floor_reason="-"
+          local refreshed_below_floor="false" refreshed_floor_rank="" refreshed_rank=""
+          if __dx_review_selection_measured_against_floor "$selection_source"; then
+            refreshed_floor_record=$(dx_review_scope_minimum_tier "$PWD" 2>/dev/null || true)
+            [[ -n "$refreshed_floor_record" ]] || refreshed_floor_record=$'-\t-'
+            IFS=$'\t' read -r refreshed_floor_tier refreshed_floor_reason <<< "$refreshed_floor_record"
+            refreshed_floor_rank=$(dx_review_tier_rank "$refreshed_floor_tier" 2>/dev/null || true)
+            refreshed_rank=$(dx_review_tier_rank "$review_tier" 2>/dev/null || true)
+            if [[ "$refreshed_floor_rank" =~ ^[0-9]+$ && "$refreshed_rank" =~ ^[0-9]+$ \
+              && "$refreshed_floor_rank" -gt "$refreshed_rank" ]]; then
+              refreshed_below_floor="true"
+            fi
+          fi
+          __dx_review_emit_event "$review_run_id" "review.tier.refreshed" "info" "Review selection refreshed" "$review_phase" \
+            tier="$review_tier" source="$selection_source" iteration_int="$review_iteration" \
+            floor="$refreshed_floor_tier" floor_reason="$refreshed_floor_reason" below_floor_bool="$refreshed_below_floor"
+        fi
         if [[ "$transition_receipt_op" == "invalidate" ]]; then
           rm -f "$(dx_review_receipt_file "$session_id")" 2>/dev/null || true
         fi
+      fi
+
+      if [[ -z "$terminal_reason" && "$transition_candidate_source" == "wave-deescalation" \
+        && "$transition_action" != "pause" && "$review_tier" != "$old_tier" ]]; then
+        __dx_review_emit_event "$review_run_id" "review.tier.deescalated" "info" "Review tier de-escalated" "$review_phase" \
+          from_tier="$old_tier" tier="$review_tier" profile="$review_profile" required_clean_int="$required_clean" \
+          clean_passes_int="$clean_passes" iteration_int="$review_iteration" reason_codes="$transition_candidate_reasons"
+        dx_warn "Wave ${review_iteration} · de-escalated to ${review_tier} · ${clean_passes}/${required_clean} clean"
       fi
 
       if [[ -z "$terminal_reason" ]]; then
         case "$transition_action" in
           count|complete)
             dx_ok "Wave ${review_iteration} · CLEAN · ${clean_passes}/${required_clean} clean"
+            ;;
+          deescalate_continue)
+            # Reported above, beside the event.
             ;;
           reset_continue)
             dx_info "Wave ${review_iteration} · ${result} · clean streak reset"
@@ -3073,7 +3215,8 @@ ${message}"
       case "$transition_state_op" in
         write)
           if ! dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" \
-            "$PWD" "$review_criteria_binding" "$review_policy_binding" "$findings_fixed_total"; then
+            "$PWD" "$review_criteria_binding" "$review_policy_binding" "$findings_fixed_total" \
+            "$review_budget_tier"; then
             terminal_reason="state_write_failed"
             clean_passes=0
           fi
@@ -3440,7 +3583,8 @@ ${message}"
   case "$terminal_state_op" in
     write)
       dx_review_write_state "$session_id" "$review_tier" "$required_clean" "$review_iteration" "$clean_passes" \
-        "$PWD" "$review_criteria_binding" "$review_policy_binding" "$findings_fixed_total" 2>/dev/null || true
+        "$PWD" "$review_criteria_binding" "$review_policy_binding" "$findings_fixed_total" \
+        "$review_budget_tier" 2>/dev/null || true
       ;;
     invalidate)
       rm -f "$(dx_review_state_file "$session_id")" 2>/dev/null || true

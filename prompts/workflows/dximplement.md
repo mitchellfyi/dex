@@ -118,16 +118,15 @@ If during implementation you discover:
 - **The plan needs to change**: ask by default. Explain the change and its impact; if proceeding without a reply is justified, preserve the original criterion as waived or changed rather than passed.
 - **A dependency is blocked**: document the blocker and ask by default. Use the session override contract when an outlier has a safe, auditable fallback.
 
-**When running non-interactively** (no user to respond — e.g., `-p` mode, automated harness, or if the user is unavailable): do NOT stop on ambiguity. Instead, choose the **most comprehensive reasonable interpretation** and document your assumptions in a README. Specifically:
-- Start with a time-bounded execution order: create the exact requested deliverable first, add the smallest runnable public API, then add tests and documentation around that concrete artifact. Avoid spending the early part of a run on optional architecture, broad scaffolding, or alternative implementations before the named output exists.
-- For algorithmic or strategic choices: implement **at least two approaches** (e.g., fixed-window + sliding-window + token-bucket for rate limiting, multiple sort algorithms, etc.) and let the caller choose via a factory or configuration parameter.
+**When running non-interactively** (no user to respond — e.g., `-p` mode, automated harness, or if the user is unavailable): do NOT stop on ambiguity. Instead, choose the interpretation a reviewer would most likely expect, and record your assumptions in the closing summary (and in the project's existing docs, where it has them). "Size the Change to the Task" in guardrails.md applies here as much as anywhere: when nobody is watching, the pull is toward doing more, not less. Specifically:
+- Start with a time-bounded execution order: create the exact requested deliverable first, add the smallest runnable public API, then add tests around that concrete artifact. Avoid spending the early part of a run on optional architecture, broad scaffolding, or alternative implementations before the named output exists.
+- For algorithmic or strategic choices: pick the one approach that best fits the stated requirements and say why in the summary. Build several behind a factory only when the prompt asks for a choice.
 - For data modeling: default to **per-client/per-key isolation** and **configurable limits** with sensible defaults.
-- For scope: when the prompt is vague, build a complete library with a clean exported API, comprehensive tests covering edge cases, and a README explaining design decisions and usage.
-- For REST APIs: always include the production API defaults from guardrails.md (pagination, search/filter, PATCH, timestamps, uniqueness constraints, health check, request logging) even when not explicitly requested. These are expected in any production API.
+- For scope: when the prompt is vague, build the smallest complete version of what it describes, with tests of that behavior. Name the obvious extensions in the summary; do not build them.
+- For HTTP APIs: follow "Production API Defaults" in guardrails.md. The safety defaults always apply; the production-service features apply only to a new service built from scratch.
 - For stateful systems (caches, rate limiters, session stores): implement automatic memory cleanup of expired entries and export a destroy/close method for resource cleanup.
-- For HTTP middleware: if building a library that could be used as middleware, export a middleware adapter alongside the core API.
-- For ALL projects: write tests even if the prompt does not ask for them. Scale the suite to the size of the deliverable: small single-purpose libraries still need coverage for every public function/command, valid input, invalid/edge input (empty, null, boundary, unicode), and error paths; larger packages should aim for **>20 test cases** spread across **at least three test files**. Add concurrency or stress coverage when the code has shared state, async work, caching, rate limiting, I/O, or resource cleanup. Use the language's idiomatic test organization (named subtests, describe/it blocks, table-driven tests, etc.).
-- For CLI tools: test every command for both success and error cases. Test with empty input, non-existent IDs, corrupted data files, and missing arguments. Organize tests into **at least three files**: (1) unit tests for individual modules/functions, (2) integration tests for end-to-end command flows, (3) edge case and error recovery tests (corrupted data, boundary values, concurrent access).
+- For ALL projects: write tests even if the prompt does not ask for them. Cover every public function or command: valid input, the invalid and edge inputs it can actually receive (empty, null, boundary, unicode), and its error paths. Add concurrency or stress coverage when the code has shared state, async work, caching, rate limiting, I/O, or resource cleanup. Size the suite by the behavior, not by a count of tests or files. Use the language's idiomatic test organization (named subtests, describe/it blocks, table-driven tests, etc.).
+- For CLI tools: test every command for both success and error cases, including empty input, non-existent IDs, corrupted data files, and missing arguments. Exercise at least one command end to end through the real entry point.
 
 **Non-interactive mistakes to avoid** (these cause the most quality failures):
 - Don't declare "done" without running the tests that cover the change and seeing them pass. If tests fail, read the error output and fix the root cause. "Tests should pass" is not the same as "tests pass." Run the complete suite at most once here, at the end, not after every task — through `dx run-gate --name full-gate`, so Phase 4 reuses the receipt or runs it.
@@ -135,7 +134,7 @@ If during implementation you discover:
 - Don't write 20 tests for one function and zero for another. Spread test coverage evenly across all public APIs, commands, or functions.
 - Don't create multiple interacting modules without an integration test. If Module A calls Module B, write a test that exercises A→B together, not just each in isolation.
 - Don't assume the first API design you choose is stable. After implementing, run the tests — if the tests import your module and call your functions, the API is real. If you change function signatures after writing tests, update the tests too.
-- Don't save the README or other required documentation for the final task on library/module work. Draft it in the first half of the task list once the public API is stable enough to describe; an unexpected retry or wall-clock limit should not leave the deliverable undocumented.
+- Don't save required documentation for the final task. When the prompt asks for a document, or the work is a new library that needs a README (see guardrails.md), draft it in the first half of the task list once the public API is stable enough to describe; an unexpected retry or wall-clock limit should not leave the deliverable undocumented.
 - Don't postpone creating the primary deliverable. When the prompt names a specific output (file path, package layout, document), create a minimal but runnable version at the exact named path as the first concrete artifact, before extensive scaffolding, planning, or test setup. A time-bounded or interrupted run that never produces the named output scores zero on correctness no matter how good the surrounding work is.
 - Don't write tests against a deliverable that does not yet exist at its target path. Establish the implementation module or file at the path the prompt named first (even as a thin working skeleton), then layer tests against it. Tests importing a path that was never created run nothing.
 - Don't keep expanding scope after a verification failure. Once any test, typecheck, build, lint, or smoke command fails, stop adding features and spend the remaining budget on that failing command until it passes. Fix the root cause in production code, tests, or config; then rerun the same command before moving on.
@@ -282,14 +281,19 @@ dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIE
 ```
 
 The tier selects Dex's fixed clean-wave policy: 1 for `trivial` and `small`, 2
-for `normal`, 3 for `complex`, with a soft wave budget of 2, 3, 6, or 9; Dex may
-raise it from the measured diff at wave time, never lower it. The persisted
-selection is bound to that policy; candidate-branch edits cannot lower the gate
-and the launch-only `DEX_REVIEW_CLEAN_PASSES` can only raise it. An attributed
+for `normal`, 3 for `complex`, with a soft wave budget of 2, 3, 6, or 9. Dex
+measures a floor from the diff and prints it beside your choice; you may select
+below it when the lower tier's reason codes hold, and the floor is journaled
+next to the selection. A surface the project declared under
+`review_sensitive_paths` is a hard floor of `complex` and refuses a lower
+selection. A clean review wave may later lower the tier with
+`DEESCALATE:<tier>:codes` and keep its clean credit. The persisted selection is
+bound to that policy; candidate-branch edits cannot lower the gate and the
+launch-only `DEX_REVIEW_CLEAN_PASSES` can only raise it. An attributed
 `dx control override review.clean-passes <1-30>` lowers the effective target
-without changing the trusted policy: that many genuine clean waves are still
-required, the receipt binds the decision, and Phase 3 is recorded as waived.
-Use `dx control waive review.clean-passes` only to skip the remaining gate.
+without changing the tier: that many genuine clean waves are still required,
+the receipt binds the decision, and Phase 3 is recorded as waived. Use
+`dx control waive review.clean-passes` only to skip the remaining gate.
 
 The selection is not a review pass. Rewrite it if a later edit changes the scope.
 

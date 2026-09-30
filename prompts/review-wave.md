@@ -60,14 +60,26 @@ exact text is evidence. Orient with `rg`, `git diff --name-only`, `--stat` and
   findings stop falling across three passes.
 - `ESCALATE:normal:reason-code` or `ESCALATE:complex:reason-code` - the current
   tier is too low for the observed risk.
+- `DEESCALATE:trivial:codes`, `DEESCALATE:small:codes`, or
+  `DEESCALATE:normal:codes` - this wave found nothing and the scope carries
+  less risk than the selected tier. The suffix is the lower tier's own
+  comma-separated reason codes from `prompts/review-risk-assessment.md`, and
+  they have to hold for the change: `trivial` requires
+  `localized-change,focused-verification,no-behavior-change`, `small` requires
+  exactly `localized-change,focused-verification`, `normal` usually
+  `bounded-production-change`. Write it only from a wave that fixed nothing.
 
-Only `CLEAN` and `NOTES:N` increment the outer clean counter. `FINDINGS_FIXED:N`
-and a valid upward escalation reset the counter and continue in a fresh session.
-`FINDINGS:N`, `BLOCKED:reason-code`, and `CHURN:reason-code` reset the counter
-and pause the outer loop. Use short lowercase reason codes; never put source
-text, file paths, prompts, credentials, or other free-form content in a result
-suffix. `ESCALATE_THOROUGH:reason` is accepted only as a legacy alias for
-`ESCALATE:complex:reason`.
+Only `CLEAN`, `NOTES:N`, and `DEESCALATE:<tier>:codes` increment the outer clean
+counter. A de-escalation keeps the clean credit already earned, lowers the gate
+to the lower tier's requirement, and completes the loop if that credit already
+meets it. A surface the project declared under `review_sensitive_paths` keeps
+the tier where it is; the loop then counts the wave as `CLEAN`.
+`FINDINGS_FIXED:N` and a valid upward escalation reset the counter and continue
+in a fresh session. `FINDINGS:N`, `BLOCKED:reason-code`, and `CHURN:reason-code`
+reset the counter and pause the outer loop. Use short lowercase reason codes;
+never put source text, file paths, prompts, credentials, or other free-form
+content in a result suffix. `ESCALATE_THOROUGH:reason` is accepted only as a
+legacy alias for `ESCALATE:complex:reason`.
 
 ## 1. Context Pack
 
@@ -202,7 +214,8 @@ performance; logs/metrics/traces/health/audit trails -> observability.
 If this session cannot review a required domain with enough confidence, write
 `ESCALATE:normal:depth-gap` or `ESCALATE:complex:depth-gap` when a higher tier
 resolves the gap, or `BLOCKED:missing-tooling` when required local tooling or
-context cannot be obtained. Never request a lower tier.
+context cannot be obtained. A lower tier is a result the top-level wave writes
+after a clean verification, never a way to skip a domain.
 
 Candidate output must be `NO_FINDINGS`, `N/A`, a valid upward escalation, or
 JSON lines:
@@ -221,7 +234,9 @@ The top-level wave runs an explicit verifier pass over the merged candidate
 inventory: deduplicate by root cause, re-read cited code, check project context
 and caller-supplied accepted debt, reject weak or stale evidence, confirm change
 relevance, and normalize severity. Only verified findings may drive fixes. If a
-valid upward escalation survives verification, write it instead of fixing.
+valid upward escalation survives verification, write it instead of fixing. If
+verification found nothing and the whole change satisfies a lower tier's reason
+codes, write `DEESCALATE:<tier>:codes` instead of `CLEAN`.
 
 ## 6. Batch Fix
 
@@ -305,5 +320,5 @@ Final output:
 - Deterministic checks: PASS | FAIL | PARTIAL | UNAVAILABLE
 - Verified findings: N (notes below the bar: N)
 - Fixes applied this wave: N
-- Result signal: CLEAN | NOTES:N | MECHANICAL:N | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason-code | CHURN:reason-code | ESCALATE:normal:reason-code | ESCALATE:complex:reason-code
+- Result signal: CLEAN | NOTES:N | MECHANICAL:N | FINDINGS_FIXED:N | FINDINGS:N | BLOCKED:reason-code | CHURN:reason-code | ESCALATE:normal:reason-code | ESCALATE:complex:reason-code | DEESCALATE:trivial:codes | DEESCALATE:small:codes | DEESCALATE:normal:codes
 ```

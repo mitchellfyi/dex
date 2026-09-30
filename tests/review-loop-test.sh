@@ -79,9 +79,12 @@ assert_no_receipt() {
   fi
 }
 
-assert_receipt() {
+assert_receipt() { # <tier> <required> <label> [override] [clean-count]
   local expected_tier="$1" expected_required="$2" label="$3"
   local expected_override="${4:--}"
+  # A loop that de-escalated keeps every clean pass it earned, so the receipt
+  # may carry more than the final tier requires.
+  local expected_clean="${5:-$expected_required}"
   local receipt="$CASE_LOOP_DIR/${CASE_SESSION_ID}.review-receipt"
   local version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding override_binding extra
   local expected_binding="standalone" expected_policy_binding expected_profile
@@ -94,7 +97,7 @@ assert_receipt() {
 
   IFS=$'\t' read -r version tier profile required clean_count fingerprint ledger_hash criteria_binding policy_binding override_binding extra < "$receipt"
   case "$expected_tier" in
-    small) expected_profile="light" ;;
+    trivial|small) expected_profile="light" ;;
     normal) expected_profile="standard" ;;
     complex) expected_profile="thorough" ;;
   esac
@@ -102,7 +105,7 @@ assert_receipt() {
   assert_eq "$expected_tier" "$tier" "$label receipt tier"
   assert_eq "$expected_profile" "$profile" "$label receipt profile"
   assert_eq "$expected_required" "$required" "$label receipt requirement"
-  assert_eq "$expected_required" "$clean_count" "$label receipt clean count"
+  assert_eq "$expected_clean" "$clean_count" "$label receipt clean count"
   if [[ "$expected_override" == "active" ]]; then
     expected_override=$(DEX_DIR="$ROOT" HOME="$CASE_HOME" \
       DX_STATE_DIR="$CASE_STATE_DIR" DX_LOOP_DIR="$CASE_LOOP_DIR" \
@@ -235,6 +238,29 @@ PY
   fi
 }
 
+assert_event_field() { # <event-type> <field> <expected> <label>
+  local event_type="$1" field="$2" expected="$3" label="$4" actual
+  actual=$(python3 - "$CASE_DIR/runs" "$event_type" "$field" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+run_root, event_type, field = sys.argv[1:4]
+for events_file in sorted(Path(run_root).glob("run_*/events.jsonl")):
+    for line in events_file.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event.get("type") == event_type:
+            value = event.get("data", {}).get(field, "<missing>")
+            print(value if isinstance(value, str) else json.dumps(value))
+            raise SystemExit(0)
+print("<no event>")
+PY
+  ) || actual="<error>"
+  assert_eq "$expected" "$actual" "$label"
+}
+
 assert_fresh_passes() {
   local expected="$1" label="$2"
   local unique_sessions unique_contexts unique_criteria contaminated missing_context_path invalid_criteria
@@ -312,11 +338,20 @@ run_case() {
       printf '%s\n' '| normal_clean_passes | 2 |'
       printf '%s\n' '| complex_clean_passes | 3 |'
     } > "$CASE_REPO/.dex/dex.md"
+  elif [[ "$setup_mode" == "declared-sensitive" ]]; then
+    # The fixture change set is app.txt, so declaring it makes the hard floor
+    # `complex` for every case in this mode.
+    mkdir -p "$CASE_REPO/.dex"
+    {
+      printf '%s\n' '# Fixture' '' '## Resources' '' '```yaml'
+      printf '%s\n' 'review_sensitive_paths: ["app.txt"]'
+      printf '%s\n' '```'
+    } > "$CASE_REPO/.dex/dex.md"
   fi
   printf 'base\n' > "$CASE_REPO/app.txt"
   if [[ "$setup_mode" != "unborn" ]]; then
     git -C "$CASE_REPO" add app.txt
-    if [[ "$setup_mode" == "one-pass-policy" ]]; then
+    if [[ "$setup_mode" == "one-pass-policy" || "$setup_mode" == "declared-sensitive" ]]; then
       git -C "$CASE_REPO" add .dex/dex.md
     fi
     git -C "$CASE_REPO" commit -qm "test: initialize review fixture"
@@ -603,9 +638,16 @@ PY
               printf "assessor-mutation-%s\n" "$assessment_index" >> "$CASE_REPO/app.txt"
               printf "%s\n" "{\"tier\":\"small\",\"reason_codes\":\"localized-change,focused-verification\",\"completion_generation\":\"${assessment_generation}\"}"
             else
-              local selected_tier="$CASE_ASSESSOR_TIER"
+              local selected_tier="$CASE_ASSESSOR_TIER" selected_codes="localized-change,focused-verification"
               [[ "$selected_tier" == "mutate-once" ]] && selected_tier="small"
-              printf "{\"tier\":\"%s\",\"reason_codes\":\"localized-change,focused-verification\",\"completion_generation\":\"%s\"}\n" "$selected_tier" "$assessment_generation"
+              # Answer with the codes the requested tier demands, so a case can
+              # start a loop at any tier through the assessor.
+              case "$selected_tier" in
+                trivial) selected_codes="localized-change,focused-verification,no-behavior-change" ;;
+                normal) selected_codes="bounded-production-change" ;;
+                complex) selected_codes="cross-module" ;;
+              esac
+              printf "{\"tier\":\"%s\",\"reason_codes\":\"%s\",\"completion_generation\":\"%s\"}\n" "$selected_tier" "$selected_codes" "$assessment_generation"
             fi
             return 0
           fi
@@ -754,7 +796,8 @@ PY
             apply_fix=1
             ;;
         esac
-        [[ "$result" == "CLEAN" ]] && hash=$(dx_review_empty_findings_hash)
+        # A de-escalating wave is a clean wave, so it carries the empty findings hash.
+        [[ "$result" == "CLEAN" || "$result" == DEESCALATE:* ]] && hash=$(dx_review_empty_findings_hash)
         [[ -n "$hash" ]] || hash=$(printf "%016x" "$pass_index")
         printf "%s\n" "$hash" >| "$(dx_findings_file "$DEX_SESSION_ID")"
 
@@ -1001,6 +1044,19 @@ PY
           # but should not race scheduler load.
           export DEX_REVIEW_PASS_TIMEOUT=10
         fi
+        dxreviewloop
+        review_status=$?
+      elif [[ "$CASE_INVOCATION_MODE" == "lower-between" ]]; then
+        # The first run records a complex selection and pauses; the second
+        # run lowers the tier through the environment and must start fresh.
+        export DEX_REVIEW_TIER=complex
+        dxreviewloop
+        first_status=$?
+        printf "invocation\tfirst\t%s\n" "$first_status" >> "$CASE_CALLS"
+        dx_lifecycle_control_lock_acquire "$CASE_SESSION_ID" || return 99
+        dx_lifecycle_pause_clear_unlocked "$CASE_SESSION_ID" || return 99
+        dx_lifecycle_control_lock_release "$CASE_SESSION_ID" || return 99
+        export DEX_REVIEW_TIER="$CASE_TIER"
         dxreviewloop
         review_status=$?
       elif [[ "$CASE_INVOCATION_MODE" == "twice" ]]; then
@@ -1746,6 +1802,12 @@ assert_eq "2" "$(call_count pass)" "normal gate pass count"
 assert_no_assessor "normal gate explicit tier"
 assert_receipt "normal" "2" "normal gate"
 assert_contains "Review wave budget: 6 waves." "$CASE_OUTPUT"
+# An environment tier is not measured against the floor, and the journal says
+# so with a bare dash. The runner is zsh, which is where a bash-only default
+# expansion would leak into this field.
+assert_event_field review.tier.selected floor "-" "normal gate journals no floor for an environment tier"
+assert_event_field review.tier.selected floor_reason "-" "normal gate journals no floor reason"
+assert_event_field review.tier.selected below_floor "false" "normal gate is not below a floor"
 
 run_case "normal-lowered-target" "normal" 'CLEAN' "" \
   "standalone" "" "" "" "single" "derived" "" "" "1"
@@ -1772,12 +1834,16 @@ assert_no_assessor "fix reset explicit tier"
 assert_receipt "small" "3" "fix reset"
 assert_standalone_telemetry "completed" "6" "fix reset telemetry"
 
-run_case "scope-refresh-codebase" "small" $'FINDINGS_FIXED_CLEAR_SCOPE:1\nCLEAN\nCLEAN\nCLEAN' "" \
+# A fix that clears the change set moves the review to the whole codebase. The
+# measured floor for that scope is `complex`, but the floor is advice: the tier
+# the operator selected stands, the next wave reviews the codebase at that
+# tier, and its reviewer may ESCALATE if the wider scope warrants it.
+run_case "scope-refresh-codebase" "small" $'FINDINGS_FIXED_CLEAR_SCOPE:1\nCLEAN' "" \
   "standalone" "" "" "expect-codebase"
 assert_success "scope refresh from changes to codebase"
-assert_eq "4" "$(call_count pass)" "scope refresh to codebase pass count"
-assert_eq "3" "$(call_count scope-refresh-codebase)" "scope refresh to codebase prompt count"
-assert_receipt "complex" "3" "scope refresh from changes to codebase"
+assert_eq "2" "$(call_count pass)" "scope refresh to codebase pass count"
+assert_eq "1" "$(call_count scope-refresh-codebase)" "scope refresh to codebase prompt count"
+assert_receipt "small" "1" "scope refresh from changes to codebase"
 
 run_case "scope-refresh-changes" "complex" $'FINDINGS_FIXED_ADD_UNTRACKED:1\nCLEAN\nCLEAN\nCLEAN' "" \
   "standalone" "clean-codebase" "" "expect-changes"
@@ -1902,8 +1968,11 @@ assert_success "success at wave budget"
 assert_eq "3" "$(call_count pass)" "success at wave budget pass count"
 assert_receipt "small" "1" "success at wave budget"
 
+# The finding count falls across the three fix passes, so the convergence
+# guard stays quiet and the budget raise after the third pass is what lets
+# the fourth run. Three identical counts would pause first (see above).
 run_case "live-wave-budget-extension" "small" \
-  $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN' "" \
+  $'FINDINGS_FIXED:2\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nCLEAN' "" \
   "standalone" "" "" "raise-wave-budget-after-third"
 assert_success "live wave budget extension"
 assert_eq "4" "$(call_count pass)" "live wave budget extension pass count"
@@ -1931,6 +2000,108 @@ assert_success "escalation raises explicit gate to tier floor"
 assert_eq "3" "$(call_count pass)" "escalation raised gate pass count"
 assert_no_assessor "escalation raised gate explicit tier"
 assert_receipt "normal" "2" "escalation raised gate"
+
+# A clean wave may lower the tier. The credit already earned stays, the
+# de-escalating wave counts, and when that meets the lower gate the loop
+# completes at the lower tier — as completed, not waived.
+run_case "clean-deescalation" "complex" $'CLEAN\nDEESCALATE:small:localized-change,focused-verification'
+assert_success "clean de-escalation"
+assert_eq "2" "$(call_count pass)" "clean de-escalation pass count"
+assert_no_assessor "clean de-escalation explicit tier"
+assert_receipt "small" "1" "clean de-escalation" "-" "2"
+assert_contains "de-escalated to small" "$CASE_OUTPUT"
+assert_contains "Assurance: COMPLETED" "$CASE_OUTPUT"
+assert_standalone_telemetry "completed" "2" "clean de-escalation telemetry"
+
+run_case "deescalation-continues" "complex" $'DEESCALATE:normal:bounded-production-change\nCLEAN'
+assert_success "de-escalation continues at the lower gate"
+assert_eq "2" "$(call_count pass)" "de-escalation continues pass count"
+assert_receipt "normal" "2" "de-escalation continues"
+assert_contains "de-escalated to normal" "$CASE_OUTPUT"
+
+# A wave cannot lower the tier below a surface the project declared
+# sensitive. The request is taken as a clean wave at the selected tier.
+run_case "deescalation-hard-floor" "complex" \
+  $'DEESCALATE:small:localized-change,focused-verification\nCLEAN\nCLEAN' "" \
+  "standalone" "declared-sensitive"
+assert_success "de-escalation held by the hard floor"
+assert_eq "3" "$(call_count pass)" "hard floor pass count"
+assert_receipt "complex" "3" "de-escalation held by the hard floor"
+assert_contains "declared" "$CASE_OUTPUT"
+assert_not_contains "de-escalated to" "$CASE_OUTPUT"
+# The refusal is a journal entry, not only a warning: a reader of the events
+# sees which tier was asked for and what held it.
+assert_event_field review.tier.deescalation_refused requested_tier "small" \
+  "the refused request names the tier it asked for"
+assert_event_field review.tier.deescalation_refused tier "complex" \
+  "the refused request names the tier that held"
+assert_event_field review.tier.deescalation_refused floor_reason "declared-sensitive-path" \
+  "the refused request names what held it"
+
+# Escalation still resets credit and still refuses to go down; a de-escalation
+# request that does not go down at all pauses like a bad escalation.
+run_case "deescalation-upward" "small" "DEESCALATE:normal:bounded-production-change"
+assert_failure "de-escalation upward pauses"
+assert_eq "1" "$(call_count pass)" "de-escalation upward pass count"
+assert_no_receipt "de-escalation upward"
+assert_contains "invalid_deescalation" "$CASE_OUTPUT"
+
+# An environment tier is trusted as written against the advisory floor, but a
+# surface the project declared sensitive still holds it.
+run_case "env-hard-floor" "small" $'CLEAN\nCLEAN\nCLEAN' "" \
+  "standalone" "declared-sensitive"
+assert_success "environment tier held by the hard floor"
+assert_eq "3" "$(call_count pass)" "environment hard floor pass count"
+assert_receipt "complex" "3" "environment tier held by the hard floor"
+assert_contains "declared" "$CASE_OUTPUT"
+
+# Lowering a recorded selection through the environment starts the loop fresh
+# at the lower tier: the lower tier's own requirement, not the count the
+# earlier selection carried.
+run_case "env-lowers-prior" "small" $'FINDINGS:1\nCLEAN' "" \
+  "standalone" "" "" "" "lower-between"
+assert_success "environment lowers a prior selection"
+assert_eq "2" "$(call_count pass)" "environment lowers a prior selection pass count"
+assert_receipt "small" "1" "environment lowers a prior selection"
+assert_contains "starts fresh at small" "$CASE_OUTPUT"
+
+# A de-escalating wave is a clean wave: it empties the convergence window like
+# CLEAN does, so a later fix does not read as a third pass without progress.
+run_case "deescalation-resets-convergence" "complex" \
+  $'FINDINGS_FIXED:1\nFINDINGS_FIXED:1\nDEESCALATE:normal:bounded-production-change\nFINDINGS_FIXED:1\nCLEAN\nCLEAN'
+assert_success "de-escalation resets the convergence window"
+assert_eq "6" "$(call_count pass)" "convergence reset pass count"
+assert_receipt "normal" "2" "de-escalation resets the convergence window"
+assert_not_contains "no_convergence" "$CASE_OUTPUT"
+
+# Going down does not shrink the wave budget the loop already has: a loop that
+# spent six waves at complex and then de-escalates to normal is not paused on
+# normal's six-wave budget.
+run_case "deescalation-keeps-budget" "complex" \
+  $'FINDINGS_FIXED:1\nCLEAN\nFINDINGS_FIXED:1\nCLEAN\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nDEESCALATE:normal:bounded-production-change\nCLEAN'
+assert_success "de-escalation keeps the wave budget"
+assert_eq "8" "$(call_count pass)" "budget kept pass count"
+assert_receipt "normal" "2" "de-escalation keeps the wave budget"
+assert_not_contains "wave_budget_exhausted" "$CASE_OUTPUT"
+
+# The deepest tier the loop ran at is carried in its state, so a loop that
+# de-escalated late, paused, and resumed still has the budget it had. The
+# lifecycle path reuses the recorded selection on resume; a fix pass also
+# refreshes the selection and journals the measured floor beside it.
+run_case "deescalation-budget-survives-resume" "" \
+  $'FINDINGS_FIXED:1\nCLEAN\nFINDINGS_FIXED:1\nFINDINGS_FIXED:1\nDEESCALATE:normal:bounded-production-change\nFINDINGS:1\nCLEAN\nCLEAN' \
+  "complex" "lifecycle" "" "" "" "resume-between"
+assert_success "de-escalation budget survives a resume"
+assert_eq "8" "$(call_count pass)" "budget survives resume pass count"
+assert_receipt "normal" "2" "de-escalation budget survives a resume"
+assert_not_contains "wave_budget_exhausted" "$CASE_OUTPUT"
+assert_event_field review.tier.refreshed source "lifecycle-assessor" \
+  "a fix pass refreshes the selection under its source"
+# The fixture edits app.txt, which the floor reads as documentation.
+assert_event_field review.tier.refreshed floor "trivial" \
+  "and journals the measured floor beside it"
+assert_event_field review.tier.refreshed below_floor "false" \
+  "complex is not below a trivial floor"
 
 run_concurrent_case
 

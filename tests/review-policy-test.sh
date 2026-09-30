@@ -566,7 +566,7 @@ dx_cleanup_session "$standalone_session_id"
 
 dx_review_write_state "$session_id" normal "$policy_normal" 4 1 "$REPO" \
   "$session_criteria_hash" "$policy_binding"
-[[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "5" ]] || {
+[[ "$(cut -f1 "$(dx_review_state_file "$session_id")")" == "6" ]] || {
   printf 'state was not written with the current policy-bound schema\n' >&2
   exit 1
 }
@@ -596,6 +596,34 @@ dx_review_write_state \
   "$session_id" normal "$policy_normal" "$policy_normal" "$policy_normal" "$REPO" \
   "$session_criteria_hash" "$policy_binding"
 dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding" >/dev/null
+
+# The state carries the deepest tier the loop has run at: going down keeps it,
+# going up raises it, and a paused loop that de-escalated late resumes with the
+# budget it already had. Records written before the field existed still read.
+assert_eq "normal" "$(dx_review_state_budget_tier "$session_id")" \
+  "the budget tier starts at the tier"
+dx_review_write_state "$session_id" small "$policy_small" 5 1 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+assert_eq "normal" "$(dx_review_state_budget_tier "$session_id")" \
+  "going down keeps the deeper budget tier"
+dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding" >/dev/null
+dx_review_write_state "$session_id" complex "$policy_complex" 6 1 "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
+assert_eq "complex" "$(dx_review_state_budget_tier "$session_id")" \
+  "going up raises the budget tier"
+printf '5\tnormal\t%s\t4\t1\t%s\t%s\t%s\t-\t0\n' "$policy_normal" "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" > "$(dx_review_state_file "$session_id")"
+dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding" >/dev/null \
+  || assert_at $LINENO
+assert_eq "normal" "$(dx_review_state_budget_tier "$session_id")" \
+  "a record without the field reads its tier as the budget tier"
+printf '6\tnormal\t%s\t4\t1\t%s\t%s\t%s\t-\t0\tsmall\n' "$policy_normal" "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" > "$(dx_review_state_file "$session_id")"
+assert_rejected "a budget tier below the tier is malformed" \
+  dx_review_read_state "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+dx_review_write_state \
+  "$session_id" normal "$policy_normal" "$policy_normal" "$policy_normal" "$REPO" \
+  "$session_criteria_hash" "$policy_binding"
 
 assert_rejected "small receipt below trusted policy gate" dx_review_write_receipt \
   "$session_id" small "$((policy_small - 1))" "$((policy_small - 1))" \
@@ -693,6 +721,50 @@ assert_rejected "receipt reader rejects below trusted policy gate" dx_review_rea
   "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
 assert_rejected "receipt validator rejects below trusted policy gate" dx_review_receipt_valid \
   "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding"
+
+# A loop that de-escalates keeps the clean credit it earned at the deeper tier.
+# A row reviewed at a deeper profile counts toward a shallower gate, never the
+# other way round, and the receipt may then carry more clean passes than the
+# lower tier requires.
+dx_review_ledger_reset "$session_id"
+mixed_evidence="$TMP_DIR/${session_id}-mixed.evidence.json"
+mixed_context="$TMP_DIR/${session_id}-mixed.context.md"
+dx_test_write_clean_review_proof "$session_id" mixed-1 thorough "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" "$mixed_evidence" "$mixed_context"
+dx_review_ledger_append "$session_id" 1 mixed-1 thorough "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" "$mixed_evidence" "$mixed_context"
+dx_test_write_clean_review_proof "$session_id" mixed-2 standard "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" "$mixed_evidence" "$mixed_context"
+dx_review_ledger_append "$session_id" 2 mixed-2 standard "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" "$mixed_evidence" "$mixed_context" \
+  || assert_at $LINENO
+rm -f "$mixed_evidence" "$mixed_context"
+dx_review_ledger_valid "$session_id" 2 "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" standard || assert_at $LINENO
+dx_review_ledger_valid "$session_id" 2 "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" light || assert_at $LINENO
+assert_rejected "a shallower row cannot count toward a deeper gate" \
+  dx_review_ledger_valid "$session_id" 2 "$base_fingerprint" \
+  "$session_criteria_hash" "$policy_binding" thorough
+dx_review_write_receipt "$session_id" small "$policy_small" 2 \
+  "$REPO" "$session_criteria_hash" "$policy_binding" || assert_at $LINENO
+IFS=$'\t' read -r receipt_tier receipt_required receipt_clean _ < <(dx_review_read_receipt \
+  "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding")
+assert_eq "small" "$receipt_tier" "de-escalated receipt tier"
+assert_eq "$policy_small" "$receipt_required" "de-escalated receipt requirement"
+assert_eq "2" "$receipt_clean" "de-escalated receipt keeps every clean pass"
+dx_review_write_selection "$session_id" small lifecycle-agent \
+  "localized-change,focused-verification" "$REPO" "$policy_small" \
+  "$session_criteria_hash" "$policy_binding" 2>/dev/null || assert_at $LINENO
+rm -f "$(dx_review_state_file "$session_id")"
+dx_review_receipt_valid "$session_id" "$REPO" "$session_criteria_hash" "$policy_binding" \
+  || assert_at $LINENO
+assert_eq "completed" "$(dx_review_receipt_outcome "$session_id" "$REPO" \
+  "$session_criteria_hash" "$policy_binding")" "a de-escalated loop completes, it is not waived"
+assert_rejected "a receipt still cannot claim fewer clean passes than required" \
+  dx_review_write_receipt "$session_id" normal "$policy_normal" 1 \
+  "$REPO" "$session_criteria_hash" "$policy_binding"
+
 dx_review_write_selection "$session_id" normal lifecycle-agent bounded-production-change \
   "$REPO" "$policy_normal" "$session_criteria_hash" "$policy_binding"
 dx_review_ledger_reset "$session_id"

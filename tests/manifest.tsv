@@ -67,6 +67,7 @@ provider-command-test.sh	fast	all	600	hermetic
 provider-session-recovery-test.sh	fast	all	600	hermetic
 public-command-args-test.sh	fast	all	600	hermetic
 push-guards-test.sh	fast	all	600	hermetic
+research-compare-test.sh	fast	all	600	hermetic
 research-orchestrate-args-test.sh	fast	all	600	hermetic
 research-score-test.sh	fast	all	600	hermetic
 review-acceptance-test.sh	fast	all	600	hermetic
@@ -126,6 +127,7 @@ ticket-branch-instructions-test.sh	fast	all	600	hermetic
 triage-command-test.sh	fast	all	600	hermetic
 triage-hooks-test.sh	fast	all	600	hermetic
 ui-capture-test.sh	fast	all	600	hermetic
+untrusted-input-contract-test.sh	fast	all	600	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-hooks-test.sh	fast	all	300	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic

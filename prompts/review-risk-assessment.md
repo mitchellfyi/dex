@@ -58,5 +58,8 @@ That budget is operational and may be changed through an attributed
 Dex also derives a tier from the measured diff — files and lines changed,
 sensitive surfaces the project declared under `## Resources`
 (`review_sensitive_paths`), dependency manifests, and whether the full gate is
-green for this tree — and takes the higher of the two. A selection below that
-floor is refused, so `trivial` holds only when the facts agree with it.
+green for this tree. That measured floor is advice: it is journaled beside the
+selection, and a selection below it is accepted with a warning as long as the
+reason codes for the lower tier hold. One part is not advice. A change to a
+surface the project declared under `review_sensitive_paths` is a hard floor of
+`complex`, and a selection below it is refused.

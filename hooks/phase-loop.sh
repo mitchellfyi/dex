@@ -1661,7 +1661,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
       printf '%s\n' '```bash' >&2
       printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
       printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
-      printf '%s\n' "printf '%s\n' '<CLEAN|NOTES:N|MECHANICAL:N|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|CHURN:reason|ESCALATE:normal:reason|ESCALATE:complex:reason>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
+      printf '%s\n' "printf '%s\n' '<CLEAN|NOTES:N|MECHANICAL:N|FINDINGS_FIXED:N|FINDINGS:N|BLOCKED:reason|CHURN:reason|ESCALATE:normal:reason|ESCALATE:complex:reason|DEESCALATE:trivial:codes|DEESCALATE:small:codes|DEESCALATE:normal:codes>' > \"\$(dx_review_result_file \"\$SESSION_ID\")\"" >&2
       printf '%s\n' '```' >&2
       printf '%s\n' "" >&2
       dx_print_rejected_receipt_command

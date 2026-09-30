@@ -19,6 +19,16 @@ orphan_resources: bin/dex-worktree orphans
 Every key is optional, and so is the whole section. With none of it, every
 path below still works and runs nothing.
 
+## The convention: `bin/dex-worktree`
+
+A repository can skip the block entirely by shipping an executable
+`bin/dex-worktree`. For every hook `.dex/dex.md` does not declare, Dex runs
+`bin/dex-worktree <hook>` — `bin/dex-worktree before_remove`,
+`bin/dex-worktree orphan_resources`, and so on — with the same environment and
+deadline as a declared command. A declared hook always wins over the script,
+and a repository with neither runs nothing, as before. The script decides
+which hooks it answers; exiting 0 for one it has nothing to do for is fine.
+
 ## The four keys
 
 | Key | When Dex runs it |

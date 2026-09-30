@@ -164,6 +164,9 @@ elif mode == "duplicate-refs":
     payload["criteria_evidence"]["objectives"][0]["evidence_refs"] *= 2
 elif mode == "extra-field":
     payload["criteria_evidence"]["objectives"][0]["note"] = "unbounded prose"
+elif mode == "fixed-one":
+    payload["verified_findings"] = 1
+    payload["fixes_applied"] = 1
 
 with open(os.environ["EVIDENCE_FILE"], "w", encoding="utf-8") as handle:
     json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
@@ -209,6 +212,22 @@ for mode in version-2 wrong-policy wrong-pass missing-item wrong-item bad-outcom
   write_evidence "$mode"
   assert_rejected "gating evidence rejects ${mode}" validate_evidence
 done
+
+# A tier change in either direction has to come from a wave that verified and
+# fixed nothing: a wave that moved the tree cannot also vouch for the risk the
+# scope carries.
+DEESCALATION_RESULT="DEESCALATE:small:localized-change,focused-verification"
+write_evidence valid
+dx_review_evidence_valid "$EVIDENCE_FILE" "$DEESCALATION_RESULT" light "$SCOPE_FINGERPRINT" \
+  "$CRITERIA_BINDING" "$CRITERIA_FILE" "$PASS_ID" "$POLICY_BINDING" "$CONTEXT_FILE" \
+  || assert_at $LINENO
+write_evidence fixed-one
+assert_rejected "a de-escalation from a wave that fixed something" \
+  dx_review_evidence_valid "$EVIDENCE_FILE" "$DEESCALATION_RESULT" light "$SCOPE_FINGERPRINT" \
+  "$CRITERIA_BINDING" "$CRITERIA_FILE" "$PASS_ID" "$POLICY_BINDING" "$CONTEXT_FILE"
+assert_rejected "an escalation from a wave that fixed something" \
+  dx_review_evidence_valid "$EVIDENCE_FILE" ESCALATE:normal:cross-module light "$SCOPE_FINGERPRINT" \
+  "$CRITERIA_BINDING" "$CRITERIA_FILE" "$PASS_ID" "$POLICY_BINDING" "$CONTEXT_FILE"
 
 write_evidence valid
 write_context 0

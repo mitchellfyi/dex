@@ -229,6 +229,57 @@ test('router status requests a detailed session count explicitly', async t => {
   state.write(state.stateFile('config'), { ...state.config(), native: { enabled: true } });
   assert.equal((await cli.routerCommand('doctor', {})).native_routing, true);
 });
+test('a stopped gateway reports the live routed sessions that start and stop check', async t => {
+  // The gateway counted its sessions, so a stopped one reported none while
+  // start refused on seven live owners.
+  const { processIdentity } = require('../scripts/ccr/service.cjs');
+  t.mock.method(adapter, 'health', async () => null);
+  const call = t.mock.method(ipc, 'call', async () => { throw new Error('Router is not running. Run dx router start.'); });
+  state.write(state.sessionFile('live'), { version: 1, id: 'live', active: true, owner_pid: process.pid, owner_identity: processIdentity(process.pid) });
+  state.write(state.sessionFile('ended'), { version: 1, id: 'ended', active: true, owner_pid: process.pid, owner_identity: 'a-previous-process' });
+  state.write(state.sessionFile('closed'), { version: 1, id: 'closed', active: false, owner_pid: process.pid, owner_identity: processIdentity(process.pid) });
+  const status = await cli.routerCommand('status', {});
+  assert.equal(status.health, 'stopped');
+  assert.equal(status.active_sessions, 1);
+  assert.equal((await cli.routerCommand('doctor', {})).active_sessions, 1);
+  assert.equal(adapter.activeSessions(), 1);
+  assert.equal(call.mock.callCount(), 0);
+  // The count does not relax the idle check behind stop, restart and catalogue changes.
+  assert.throws(() => adapter.idle(), /Routed sessions are active/);
+  await assert.rejects(cli.routerCommand('stop', {}), /Routed sessions are active/);
+});
+test('start recovers a stopped gateway on its previous endpoint while routed sessions are live', async t => {
+  state.write(state.stateFile('config'), { ...state.config(), enabled: true });
+  t.mock.method(require('../scripts/ccr/native.cjs'), 'syncContext', () => undefined);
+  const probes = [];
+  const health = t.mock.method(adapter, 'health', async (...args) => { probes.push(args); return null; });
+  const start = t.mock.method(adapter, 'start', async () => ({}));
+  const live = t.mock.method(adapter, 'activeSessions', () => 7);
+
+  // With no record of the endpoint the sessions hold, there is nothing to recover onto.
+  await assert.rejects(cli.routerCommand('start', {}), /CCR is stopped, but 7 routed sessions are still active\. The record of the endpoint and keys they use is missing.*Finish them, then run dx router start\./);
+  assert.equal(start.mock.callCount(), 0);
+
+  state.saveBackend({ version: 1, gateway_port: 1, core_port: 2, management_port: 3, management_key: 'synthetic-management', client_key: 'synthetic-client' });
+  assert.equal(await cli.routerCommand('start', {}), 'CCR restarted on its previous endpoint and keys, as a routed session\'s own recovery would, because 7 routed sessions are still using them.');
+  assert.deepEqual(start.mock.calls.map(item => item.arguments), [[{ recovery: true }]]);
+  // Like the launcher's watchdog, it confirms the gateway is down with the longer probe first.
+  assert.equal(probes.filter(([, timeout]) => timeout === 10000).length, 2);
+  live.mock.mockImplementation(() => 1);
+  assert.match(await cli.routerCommand('start', {}), /because 1 routed session is still using them\.$/);
+
+  // A gateway that answers the longer probe is slow, not down, and is not recovered.
+  health.mock.mockImplementation(async (_deep, timeout) => timeout === 10000 ? { pid: process.pid, started_at: adapter.sourceChangedAt() + 60000 } : null);
+  assert.equal(await cli.routerCommand('start', {}), 'CCR started.');
+  assert.deepEqual(start.mock.calls.at(-1).arguments, []);
+
+  // With no live sessions, start is the ordinary fresh start.
+  health.mock.mockImplementation(async () => null);
+  live.mock.mockImplementation(() => 0);
+  assert.equal(await cli.routerCommand('start', {}), 'CCR started.');
+  assert.deepEqual(start.mock.calls.at(-1).arguments, []);
+  assert.equal(start.mock.calls.filter(item => item.arguments[0]?.recovery).length, 2);
+});
 test('a routed launch refuses when routing is on but no account is behind it', async t => {
   // dx router enable makes ccr-subscription the global default without asking
   // for an account, and register only checks that routing is on. The session

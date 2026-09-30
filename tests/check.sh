@@ -21,6 +21,7 @@ BASH_FILES=(
   "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/hooks/*.sh "$ROOT"/bin/*.sh
   "$ROOT"/tests/*.sh "$ROOT"/research/*.sh "$ROOT"/research/lib/*.sh
   "$ROOT"/research/review-loop/*.sh "$ROOT"/research/scenarios/*/*.sh
+  "$ROOT"/research/compare/*.sh
 )
 
 # dx.sh and the evaluation launcher are zsh; everything else must parse as bash.
@@ -59,7 +60,7 @@ if command -v python3 >/dev/null 2>&1; then
   # (dex_test_http.py) and research/*.py otherwise surface a syntax error as
   # an opaque test failure instead of a named one.
   python3 -m py_compile "$ROOT"/hooks/*.py "$ROOT"/scripts/*.py "$ROOT"/scripts/ccr/*.py \
-    "$ROOT"/tests/*.py "$ROOT"/research/*.py \
+    "$ROOT"/tests/*.py "$ROOT"/research/*.py "$ROOT"/research/compare/*.py \
     "$ROOT"/research/review-loop/scenarios/*/hidden/oracle.py \
     || fail "python3 -m py_compile"
   # Most of Dex's Python is not in those files: it is embedded in shell
@@ -113,6 +114,14 @@ if command -v node >/dev/null 2>&1; then
   node --check "$ROOT/scripts/ui-capture.cjs" || fail "node --check scripts/ui-capture.cjs"
   for ccr_script in "$ROOT"/scripts/ccr/*.cjs "$ROOT"/tests/ccr-*.test.cjs; do
     node --check "$ccr_script" || fail "node --check $ccr_script"
+  done
+  # The comparison's hidden suites: a syntax error in one reads as every trial
+  # failing its hidden tests, which is the wrong answer arriving quietly.
+  for hidden_js in "$ROOT"/research/scenarios/*/compare/hidden/*.js \
+    "$ROOT"/research/scenarios/*/compare/followup/hidden/*.js \
+    "$ROOT"/research/scenarios/*/compare/*.js "$ROOT"/research/compare/js/*.js; do
+    [[ -f "$hidden_js" ]] || continue
+    node --check "$hidden_js" || fail "node --check ${hidden_js#"$ROOT"/}"
   done
 else
   printf 'SKIP node syntax (node not installed)\n'

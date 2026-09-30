@@ -77,6 +77,10 @@ Current lifecycle event types include:
 - `review.pass.started`
 - `review.pass.finished`
 - `review.tier.escalated`
+- `review.tier.deescalated`
+- `review.tier.deescalation_refused`
+- `review.tier.refreshed`
+- `review.gate.overridden`
 - `review.completed`
 - `review.paused`
 - `artifact.created`
@@ -179,25 +183,34 @@ reading agent transcripts.
 | Event | When emitted | Data fields |
 |-------|--------------|-------------|
 | `review.tier.assessed` | After a fresh read-only assessor returns a valid risk decision | `tier`, `source`, `reason_codes`, `floor`, `floor_reason` |
-| `review.tier.selected` | Before the first review wave | `tier`, `profile`, `required_clean`, `source`, `reason_codes`, `policy_small`, `policy_normal`, `policy_complex`, `max_waves` |
+| `review.tier.selected` | Before the first review wave | `tier`, `profile`, `required_clean`, `source`, `reason_codes`, `policy_small`, `policy_normal`, `policy_complex`, `max_waves`, `floor`, `floor_reason`, `below_floor` (the measured floor beside the tier, and whether the selection went under it; `-` when the source is not measured) |
 | `review.wave_budget.changed` | A live override or tier escalation changes the outer-wave budget | `max_waves`, `iteration` |
 | `review.pass.queued` | Before a wave waits for host capacity | `pass_id`, `tier`, `profile`, `iteration`, `capacity_limit` |
 | `review.pass.started` | After host admission, immediately before a fresh wave starts | `pass_id`, `tier`, `profile`, `iteration`, `clean_before`, `required_clean`, `scope_fingerprint`, baseline fields, scout count/parallelism, capacity limit/active/wait, and test jobs |
 | `review.pass.finished` | After the wave result is validated and counters update | Core result/evidence fields plus `provider_exit`, `provider_failure_class`, deterministic-baseline reuse, scout and capacity settings, queue time, test jobs, and wrapper-clocked context/check/scout/verifier/fix durations with completeness/source fields |
 | `review.tier.escalated` | A verified risk signal raises the tier | `from_tier`, `tier`, `profile`, `required_clean`, `iteration` |
+| `review.tier.deescalated` | A clean wave lowers the tier; clean credit is kept | `from_tier`, `tier`, `profile`, `required_clean`, `clean_passes`, `iteration`, `reason_codes` |
+| `review.tier.deescalation_refused` | A clean wave asked for a lower tier and a surface declared under `review_sensitive_paths` held it; the pass still counts as clean | `tier` (kept), `requested_tier`, `floor`, `floor_reason`, `iteration` |
+| `review.tier.refreshed` | A fix or tier change rebound the selection to a moved scope | `tier`, `source`, `iteration`, `floor`, `floor_reason`, `below_floor` (the floor measured for the new scope; `-` when the source is not measured) |
+| `review.gate.overridden` | A live `review.clean-passes` override changed the effective target between waves | `required_clean`, `trusted_required_clean` |
 | `review.completed` | The effective consecutive clean target succeeds | `tier`, `profile`, `required_clean`, `trusted_required_clean`, `assurance_outcome` (`completed` or `waived`), `clean_passes`, `iterations`, `max_waves`, `findings_fixed`, `total_duration_seconds`, `reason=clean_gate_reached` |
 | `review.paused` | Review needs intervention | `tier`, `profile`, `required_clean`, `clean_passes`, `iterations`, `max_waves`, `findings_fixed`, `total_duration_seconds`, normalized `reason` |
 
 Tier selection is `trivial`/`small`/`normal`/`complex`, mapping to
 `light`/`light`/`standard`/`thorough` review. The global consecutive clean-wave
 requirements are 1 for `trivial` and `small`, 2 for `normal`, and 3 for
-`complex`. A tier is also derived from the measured diff at wave time and can
-raise, never lower, what the agent selected. Dex binds that policy to the
-selection, review state, pass evidence, clean ledger, and final receipt. An
-attributed `review.clean-passes` session override can select
-a lower effective target without altering the global policy. Such a run still
-performs the selected number of independent clean waves, but its completion
-event and receipt outcome are marked `waived` rather than `completed`.
+`complex`. Dex also measures a floor from the diff and records it on
+`review.tier.selected`. The agent may select below that floor, and a clean wave
+may lower the tier with a `review.tier.deescalated` event; only a surface the
+project declared under `review_sensitive_paths` raises the tier on its own. A
+loop that de-escalated keeps the clean passes it earned, so `review.completed`
+may report more `clean_passes` than `required_clean`, and its outcome is
+`completed`. Dex binds the policy to the selection, review state, pass
+evidence, clean ledger, and final receipt. An attributed `review.clean-passes`
+session override can select a lower effective target without altering the
+tier. Such a run still performs the selected number of independent clean waves,
+but its completion event and receipt outcome are marked `waived` rather than
+`completed`.
 The operational outer-wave budget defaults to 2/3/6/9 for those tiers, and a
 confirmation pass (`clean_before` at least 1) that stays clean does not spend it. A
 `review.max-waves` override changes only that budget; exhausting it pauses the
@@ -236,8 +249,8 @@ context-pack contents. It stores validated reason codes and normalized result or
 exit categories instead. Findings fingerprints stay in transient global Dex
 state and exist only for deterministic repeated/alternating churn detection.
 `operator-override` and `wave-escalation` are wrapper-reserved selection reason
-codes; assessor decisions use the bounded codes from
-`prompts/review-risk-assessment.md`.
+codes; assessor decisions and `wave-deescalation` selections use the bounded
+codes from `prompts/review-risk-assessment.md`.
 
 Event redaction remains a backstop, not permission to emit arbitrary review
 text. Events may be sent to the configured Factory collector, so review payloads

@@ -865,18 +865,21 @@ if expected == "paused" and not selected:
     if pause_reasons[0] == "assessment_timeout" and paused[0].get("data", {}).get("provider_exit") != 124:
         raise SystemExit(1)
     raise SystemExit(0)
+TIERS = {"trivial", "small", "normal", "complex"}
 if (
     len(assessments) != 1
-    or assessments[0].get("tier") not in {"small", "normal", "complex"}
+    or assessments[0].get("tier") not in TIERS
     or len(selected) != 1
-    or selected[0].get("data", {}).get("tier") not in {"small", "normal", "complex"}
+    or selected[0].get("data", {}).get("tier") not in TIERS
 ):
     raise SystemExit(1)
 resolved_tier = selected[0]["data"]["tier"]
 for event in events:
-    if event.get("type") == "review.tier.escalated":
+    # The tier can move in either direction while the loop runs; the last
+    # change is the tier the loop finished at.
+    if event.get("type") in {"review.tier.escalated", "review.tier.deescalated"}:
         candidate = event.get("data", {}).get("tier")
-        if candidate not in {"small", "normal", "complex"}:
+        if candidate not in TIERS:
             raise SystemExit(1)
         resolved_tier = candidate
 if expected == "completed":
@@ -891,28 +894,34 @@ if expected == "completed":
         raise SystemExit(1)
     completion = review_completed[0]
     completion_data = completion.get("data", {})
-    required = {"small": 1, "normal": 2, "complex": 3}[resolved_tier]
+    required = {"trivial": 1, "small": 1, "normal": 2, "complex": 3}[resolved_tier]
     started = [event.get("data", {}) for event in events if event.get("type") == "review.pass.started"]
     finished = [event.get("data", {}) for event in events if event.get("type") == "review.pass.finished"]
     started_keys = [(event.get("iteration"), event.get("pass_id")) for event in started]
     finished_keys = [(event.get("iteration"), event.get("pass_id")) for event in finished]
+    # A loop that de-escalated keeps the clean passes it earned, so the
+    # completion may hold more than the final tier requires; every one of
+    # them is a clean or de-escalating wave counted in order.
+    clean_passes = completion_data.get("clean_passes")
     if (
         completion_data.get("tier") != resolved_tier
         or completion_data.get("required_clean") != required
-        or completion_data.get("clean_passes") != required
+        or not isinstance(clean_passes, int)
+        or isinstance(clean_passes, bool)
+        or clean_passes < required
         or completion_data.get("iterations") != len(finished)
-        or len(finished) < required
+        or len(finished) < clean_passes
         or started_keys != finished_keys
         or len({pass_id for _, pass_id in finished_keys}) != len(finished_keys)
         or any(not isinstance(pass_id, str) or not pass_id for _, pass_id in finished_keys)
     ):
         raise SystemExit(1)
-    final_gate = finished[-required:]
+    final_gate = finished[-clean_passes:]
     if [event.get("iteration") for event in finished] != list(range(1, len(finished) + 1)):
         raise SystemExit(1)
-    if any(event.get("result_kind") != "clean" for event in final_gate):
+    if any(event.get("result_kind") not in {"clean", "deescalate"} for event in final_gate):
         raise SystemExit(1)
-    if [event.get("clean_after") for event in final_gate] != list(range(1, required + 1)):
+    if [event.get("clean_after") for event in final_gate] != list(range(1, clean_passes + 1)):
         raise SystemExit(1)
 else:
     if (
@@ -2486,7 +2495,7 @@ for scenario, replica, runner in matrix:
     product_finished = []
     for event_file in sorted((trial / "dex-runs").glob("run_*/events.jsonl")):
         for event in read_json_lines(event_file):
-            if event.get("type") in {"review.tier.selected", "review.tier.escalated"}:
+            if event.get("type") in {"review.tier.selected", "review.tier.escalated", "review.tier.deescalated"}:
                 resolved_tier = event.get("data", {}).get("tier", resolved_tier)
             if event.get("type") == "review.pass.finished":
                 product_finished.append(event.get("data", {}))

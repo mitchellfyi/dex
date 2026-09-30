@@ -112,7 +112,7 @@ Before writing implementation code, design the test strategy:
 - Start with tests. Write or update the first failing test against the requested public behavior before implementing the behavior. If the target file, module, route, command, or package does not exist yet, create the smallest runnable skeleton first, then write the failing test against that exact surface.
 - Think through the full use-case space before choosing test files: expected use, invalid input, empty/null values, boundaries, unusually large inputs, unicode or locale-sensitive input, duplicate data, permission failures, dependency failures, timing/concurrency, persistence/restart behavior, and cleanup paths where relevant.
 - Put tests at the right level. Use unit tests for isolated logic, integration tests for cross-module or storage behavior, contract/API tests for public interfaces, and end-to-end tests for user-visible flows, CLI commands, API routes, background jobs, and external integrations.
-- Make the suite robust and balanced. Every public behavior needs at least one success case and one meaningful failure, boundary, or outlier case unless the behavior is genuinely non-branching and documented as such.
+- Make the suite robust and balanced. Every public behavior needs a success case, plus the failure, boundary or outlier cases it can actually hit. Choose each case for the bug it would catch.
 - Do not treat end-to-end coverage as optional for user-facing or operational workflows. If a real end-to-end test is impractical, add the closest automated integration path and record the gap in the evidence.
 
 ### Review Probe Discipline
@@ -173,6 +173,34 @@ expect to queue. Treat CPU and memory as a shared budget:
 
 ## Implementation Principles
 
+### Size the Change to the Task
+
+Aim for the smallest change that fully meets the request, including the edge
+cases it implies. More files, layers, options, tests or documents do not make a
+change better. Each one is something a reviewer has to read and the next change
+has to work around.
+
+- **Every addition needs a reason.** Before adding a file, abstraction,
+  option, test or document, name what it is for: a requirement, a failure mode
+  it guards against, or a reader who needs it. If the only reason is that a
+  guideline mentions it, leave it out.
+- **These guidelines describe mistakes to avoid, not things to produce.** When
+  following one literally would add code, tests, files or documents the task
+  does not need, the task wins. Say in your summary which guideline you judged
+  not to apply, and why.
+- **A test is worth its lines when it would catch a bug.** For each test, name
+  the plausible mistake that would make it fail. Cover every behavior that can
+  fail and the boundaries the task implies. Do not add tests that exercise the
+  same path with different values, and do not aim for a number of tests or
+  test files.
+- **Fit the change to what is there.** In an existing codebase, follow its
+  structure. In a fix or a refactor, change the code the task needs plus the
+  small cleanups in Codebase Stewardship for lines you already touch; do not
+  restructure, rename, reformat or re-document the rest.
+- **Unrequested features are scope creep, even useful ones.** If something
+  beyond the request looks worth doing, name it in your summary as a follow-up
+  and do not build it.
+
 ### Common Mistakes to Avoid
 
 These are recurring mistakes observed across many implementations. Check against this list before declaring done:
@@ -182,8 +210,8 @@ These are recurring mistakes observed across many implementations. Check against
   push coherent checkpoints during remediation; describe the failing gate
   honestly and do not move to PR handoff or declare done until it passes.
 - **Don't mix module systems.** Pick one module system per project and use it everywhere. Mixing module conventions in the same project causes subtle runtime errors that are hard to debug.
-- **Don't put all production code in a single file.** Separate the entry point (CLI parsing, route handling, UI rendering) from core logic (business rules, data operations), and separate I/O or storage from pure computation. Even small projects benefit from at least three source files — a monolithic approach prevents isolated testing and makes the codebase harder to navigate.
-- **Don't write tests that only cover happy paths.** For every success test, write at least one error/edge test. A test suite with 20 happy-path tests and zero error tests is worse than 10 tests with proper error coverage — it creates false confidence.
+- **Don't tangle I/O with logic.** Keep the entry point (CLI parsing, route handling, UI rendering) and I/O or storage apart from the core logic (business rules, data operations), so the logic can be tested without them. Split into files when that separation or the code's size calls for it, not to reach a file count. A small tool can be one well-organized module.
+- **Don't write tests that only cover happy paths.** A suite of success cases with no error or edge tests gives false confidence. Test the failure modes and boundaries the behavior actually has. Do not pad the suite to hit a count either: ten tests that each catch a different bug are better than thirty that overlap.
 - **Don't assume your code works without running it.** After writing implementation code, run the tests. After writing tests, run them. After fixing a bug, run the tests again. "It should work" is not verification.
 - **Don't ignore test failures.** If most tests fail, the implementation has a fundamental problem — don't declare done. Read the error output, identify the root cause, and fix it. Common root causes: missing type definitions in config, wrong import paths, missing dependencies.
 - **Don't expand scope after verification fails.** Once a test, typecheck, build, lint, or smoke command fails, stop adding features and spend the remaining budget on that failing command until it passes. Fix the root cause in production code, tests, or config; then rerun the same command before moving on.
@@ -225,30 +253,38 @@ When a fix attempt fails:
 
 ### Production API Defaults
 
-When building HTTP APIs (REST, GraphQL, RPC), always include these unless explicitly scoped out:
+These are defaults for choices the spec leaves open when building an HTTP API
+(REST, GraphQL, RPC). An explicit choice in the spec always wins: if it asks for
+integer IDs or a bare array, build that. In an existing service, follow the
+service's conventions.
 
-- **CORS**: Enable cross-origin requests via middleware or manual response headers.
+Always, because they are about correctness and safety:
+
 - **Request size limits**: Set explicit body size limits to prevent abuse.
-- **UUIDs for resource IDs**: Use random UUIDs — never sequential integers (they leak information and are guessable).
 - **Graceful shutdown**: Handle termination signals to close the server and release resources cleanly.
-- **Module structure**: Separate route definitions from the app/server setup. Each resource gets its own route file, imported by the main app.
-- **PATCH for partial updates**: If the API supports PUT (full replacement), also implement PATCH (partial update) on the same resource. PATCH merges provided fields with the existing record, preserving unmentioned fields.
 - **JSON error bodies**: Every error response must be structured (JSON or equivalent) with a descriptive message field. Never return raw strings or stack traces.
 - **Status code discipline**: Use the correct code for each outcome — `201` for creation, `204` for deletion, `400` for validation failure, `404` for missing resources, `409` for conflicts.
-- **Pagination**: Every list endpoint must support pagination via query parameters. Return items plus metadata (`total`, `page`, `limit`), not a bare array. Default to sensible values when parameters are omitted.
-- **Search and filtering**: List endpoints must support filtering by key fields via query parameters. Filter on at least the most important field for the resource.
-- **Timestamps**: Auto-populate `createdAt` and `updatedAt` fields on every resource. Use ISO 8601 format.
 - **Uniqueness constraints**: If a resource has a naturally unique field (ISBN, email, SKU), enforce uniqueness on creation and return `409 Conflict` on duplicates.
-- **Request logging**: Log method, path, status, and duration for every request.
-- **Health check**: Add a `GET /health` endpoint that returns `200 OK` with a status indicator. Standard for deployment readiness checks.
+- **Random resource IDs**: When the spec does not say, prefer random UUIDs to sequential integers, which leak information and are guessable.
 
-These are implied requirements for any production-quality API, even when the spec does not list them.
+When building a new service from scratch and the spec does not scope them out,
+also include the features a production service is expected to have. For a
+narrower task (one endpoint, a fix, an API the spec describes exactly), do not
+add them; list them as follow-ups instead.
+
+- **CORS**: Enable cross-origin requests via middleware or manual response headers.
+- **Module structure**: Separate route definitions from the app/server setup. Each resource gets its own route file, imported by the main app.
+- **PATCH for partial updates**: If the API supports PUT (full replacement), also implement PATCH (partial update) on the same resource. PATCH merges provided fields with the existing record, preserving unmentioned fields.
+- **Pagination**: List endpoints support pagination via query parameters and return items plus metadata (`total`, `page`, `limit`), with sensible defaults when parameters are omitted.
+- **Search and filtering**: List endpoints support filtering on the most important field for the resource.
+- **Timestamps**: Auto-populate `createdAt` and `updatedAt` fields on every resource. Use ISO 8601 format.
+- **Request logging**: Log method, path, status, and duration for every request.
+- **Health check**: A `GET /health` endpoint that returns `200 OK` with a status indicator.
 
 **API anti-patterns to avoid:**
-- Don't return bare arrays from list endpoints. Always wrap in an object with metadata (items, total, page, limit). Bare arrays break pagination and make the API impossible to extend.
 - Don't return plain text error messages. Always return structured error responses with a descriptive message field.
-- Don't implement PUT without also implementing PATCH. Clients that only need to update one field shouldn't have to send the entire resource.
 - Don't store passwords in plain text, even in demo projects. Use bcrypt/argon2/scrypt for hashing. This is a non-negotiable security baseline.
+- In a new service with the features above, don't return bare arrays from list endpoints (they cannot carry pagination metadata), and don't implement PUT without PATCH.
 
 ### Document and Analysis Deliverables
 
@@ -268,9 +304,9 @@ When creating a standalone library, package, or module:
 
 - **Standard importability**: The module must be loadable via the language's standard mechanism without requiring the consumer to run a separate build step. If using a compiled language or transpiler, configure the build so installation triggers compilation automatically.
 - **Exact requested API first**: If the prompt names specific functions, commands, classes, modules, file paths, or package layout, implement those exact public entry points before adding broader abstractions. Extra helpers are fine only after the requested surface exists and is tested.
-- **README.md**: Always include a README documenting what the library does, usage with code examples, and the rationale behind non-obvious design decisions. Treat it as a required deliverable, not a final polish task. Draft it once the public API is stable enough to describe, then refine it after verification so a time-bounded run does not ship an undocumented library.
+- **README.md for a new library**: When the task creates a new library or package for others to use and nothing documents it yet, include a short README: what it does, how to use it, and any design decision a user would otherwise trip over. Draft it once the public API is stable. For bug fixes, refactors, small tools and existing projects, do not add new documents; update any existing documentation the change makes wrong.
 - **Conventional naming**: Export the primary API using the most natural name for the domain. Avoid abbreviations in public exports.
-- **Doc comments on all exports**: Every exported function, type, and constant must have a documentation comment following the language's convention, saying only what the declaration cannot.
+- **Doc comments where the signature is not enough**: Document an export's units, error behavior, side effects or any contract the declaration does not show. Skip comments that only restate the name.
 
 ### String and Character Handling
 
@@ -381,11 +417,11 @@ Do not expand scope to files outside the plan. Stewardship improvements in your 
 - After writing a test, verify it can fail: temporarily break the code under test and confirm the test catches it.
 - If a test passes with the implementation removed or broken, the test is not testing anything — rewrite it.
 - Test behavior, not implementation details. Tests should survive refactoring.
-- Error-case tests are mandatory, not optional. For every happy-path test, write at least one error-case test.
-- Name tests to describe the SPECIFIC behavior they verify. For bug fixes, include the symptom and fix in the name (e.g., "should reject negative prices", "removeItem should filter items not reassign array"). Test names must be grep-searchable for the behavior they guard.
+- Error-case tests are mandatory wherever the code can fail: invalid input, missing resources, dependency failures. Write the error cases the behavior actually has, not one per success test.
+- Name tests to describe the SPECIFIC behavior they verify. For bug fixes, include the symptom and fix in the name (e.g., "should reject negative prices", "removeItem should filter items not reassign array").
 - **Test isolation**: Each test must create its own fresh state. Use setup/teardown hooks (or the language equivalent) to reset state between tests. Never rely on execution order.
-- **Minimum test count**: Aim for **>15 focused test cases** for any non-trivial project. For APIs, test every endpoint for both success and error cases, plus edge cases. For libraries, test every public function with at least 3 inputs each (valid, invalid, boundary).
-- **Test file organization**: Distribute tests across **at least three files** by concern — unit tests for individual functions or modules, integration tests for cross-module and end-to-end flows, and edge case or error recovery tests. Don't put all tests in one or two files; dedicated edge-case and error-recovery test files ensure those areas get proper attention rather than being an afterthought in happy-path test files.
+- **Coverage, not counts**: For APIs, test every endpoint for its success case and the errors it can return. For libraries, test every public function on valid input and on the invalid and boundary inputs it can actually receive. The number of tests follows from that; a target number only produces filler.
+- **Test file organization**: Group tests by concern (unit, integration, end to end) once the suite is large enough that one file hides what is covered. A small module's tests can live in one file.
 - **Use the idiomatic test HTTP client** for the framework (the one that manages server lifecycle and provides assertion helpers) rather than making raw HTTP calls in tests.
 - **Structured tests**: Organize tests using named subtests or describe/it blocks. Each test case should have a clear name so failures are immediately identifiable. Table-driven or parameterized tests are preferred when testing the same function with many inputs.
 
@@ -400,13 +436,13 @@ Do not expand scope to files outside the plan. Stewardship improvements in your 
 
 For any non-trivial feature, systematically test these categories (where applicable):
 
-- **Concurrency / parallel access**: Multiple simultaneous callers sharing state. Use concurrent execution primitives to test parallel requests. Use keywords like `concurrent`, `parallel`, `simultaneous` in test names so intent is searchable.
+- **Concurrency / parallel access**: Multiple simultaneous callers sharing state. Use concurrent execution primitives to test parallel requests.
 - **State expiry / reset**: Time-based state (windows, TTLs, caches) must have tests that verify cleanup, expiry, and window boundaries. Use fake/mock timers to test time-dependent behavior without real waits.
 - **Multi-tenant / client isolation**: If state is keyed per client, user, or tenant, test that one key's state does not affect another.
 - **Burst / stress**: Rapid successive calls beyond normal limits — verify the system degrades correctly, not silently.
 - **Boundary values**: Zero, one, max, max+1, empty, null, undefined for every input.
 
-Aim for **>15 focused test cases** per feature. Prefer many small tests over few large ones.
+Prefer small, focused tests over a few large ones, and add a case only when it covers a failure the others do not.
 
 ### Refactoring Quality
 

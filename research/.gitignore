@@ -4,6 +4,7 @@ workspaces/
 # Per-run results (only scores.tsv is tracked)
 results/run-*/
 results/latest
+results/compare/
 
 # Improvement proposals and applied-patch copies (generated, not final)
 improvements/proposals/

@@ -114,8 +114,13 @@ bounded require `complex` review.
 
 A documentation-only or test-only change, a rename with no behavior change, or
 a dependency bump whose full gate is green is `trivial`: one clean wave, at
-most two waves of budget, with the coherence lens still required. The tier is
-also derived from the measured diff at wave time and can only be raised by it.
+most two waves of budget, with the coherence lens still required. Dex also
+measures a floor from the diff and journals it beside the selection. The floor
+is advice: the agent may select below it when the lower tier's reason codes
+hold, and a clean wave may later lower the tier with `DEESCALATE:<tier>:codes`
+while keeping the clean credit it has earned. The one hard floor is a surface
+the project declared under `review_sensitive_paths`, which is `complex` and
+refuses both a lower selection and a de-escalation.
 
 The 1/1/2/3 policy is fixed across repositories. Dex stores its binding in the
 selection, resumable state, pass evidence, clean ledger, and final receipt.
@@ -234,7 +239,13 @@ clean credit. Standalone review has no criteria artifact and uses a
 Only a wave with zero verified findings and zero fixes writes `CLEAN`. A wave
 that fixes anything writes `FINDINGS_FIXED:N`, resets the counter, and forces a
 fresh review of the updated scope. A valid upward escalation also resets the
-counter. `FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid
+counter. A de-escalation does not: `DEESCALATE:<tier>:codes` is a clean wave
+that lowers the gate to the lower tier's requirement and keeps the credit
+already earned, so a loop can complete on the wave that lowered it. The wave
+budget stays the deepest tier's, so going down late in a loop does not pause
+it on the lower tier's smaller allowance; the review state record carries that
+tier, so a paused loop resumes with the same budget.
+`FINDINGS:N`, `BLOCKED:reason-code`, `CHURN:reason-code`, invalid
 results, provider failures, and deterministic findings-fingerprint churn pause
 the loop. A `NOTES:N` wave counts as clean and carries N items below the
 finding bar into the ledger and the PR body. A `MECHANICAL:N` wave applied N
@@ -243,8 +254,8 @@ changed path inside that check's declared `inputs`, and found nothing else.
 Because a wave declares that itself, the attestation does not take its word for
 anything: clean credit resets with the fingerprint, the findings history is
 appended so the repeated- and alternating-fingerprint churn detector sees a
-formatter that keeps rewriting the tree, and the deterministic floor is
-re-derived so an autofix on a sensitive path can still raise the tier. The
+formatter that keeps rewriting the tree, and the hard floor is re-derived so an
+autofix on a declared sensitive surface still raises the tier. The
 relief is operational and bounded: one mechanical wave per loop does not spend
 the wave budget, and the wave after it reviews that delta rather than the whole
 scope — but the pass that would be declared clean reviews the whole diff under
@@ -532,11 +543,12 @@ where earning it is easier than faking it, and it makes every counted pass
 auditable after the fact. Treat it as protection against a confused agent, not
 a hostile one, and keep the human review gate on the resulting PR.
 
-One lower-cost gap is worth knowing about specifically. A selection file that
-records `source=environment` is trusted without re-applying the deterministic
-tier floor, so a resumed loop can adopt a cheaper tier than the assessor would
-have chosen. The clean-wave counts themselves remain bound to Dex's global
-policy.
+One lower-cost path is worth knowing about specifically. A selection file that
+records `source=environment` is trusted without measuring it against the
+advisory floor, so an operator can set a cheaper tier than the assessor would
+have chosen. The hard floor still applies: the loop raises an environment tier
+to `complex` when a surface declared under `review_sensitive_paths` changed.
+The clean-wave counts themselves remain bound to Dex's global policy.
 
 ## Activation
 
@@ -706,9 +718,9 @@ files such as run summaries. The existing TSV phase log still lives in
 [events.md](events.md) for the schema and storage layout.
 
 Phase 3 records structured `review.*` events for tier selection, pass starts and
-finishes, escalation, completion, and pause. A read-only risk assessor also
-emits `review.tier.assessed` before its choice is resolved against the
-deterministic floor and trusted policy. Payloads contain normalized tiers,
+finishes, escalation, de-escalation, completion, and pause. A read-only risk
+assessor also emits `review.tier.assessed` before its choice is compared with
+the measured floor and bound to the trusted policy. Payloads contain normalized tiers,
 policy counts, reason codes, counts, durations, exit reasons, and churn
 categories. They do not contain findings, fingerprints, source paths, prompts,
 diffs, context packs, per-criterion evidence, or free-form rationale.
@@ -1023,7 +1035,9 @@ Check that `DEX_LOOP_ACTIVE=1` is set in the environment. The `dx` command sets 
 ### High API costs
 
 Choose the review tier that matches the actual risk. The global clean-wave
-requirements are 1 for `small`, 2 for `normal`, and 3 for `complex`. Do not
-lower the tier for security, contract, migration, concurrency, shell/hook, or
-broad dependency changes. `DEX_LOOP_MAX_ITERATIONS` controls phase-audit
-retries, not the review clean gate.
+requirements are 1 for `trivial` and `small`, 2 for `normal`, and 3 for
+`complex`. The measured floor is advice and a clean wave can lower the tier,
+but do not go below the floor for security, contract, migration, concurrency,
+shell/hook, or broad dependency changes: the codes for a lower tier are not
+true of those. `DEX_LOOP_MAX_ITERATIONS` controls phase-audit retries, not the
+review clean gate.

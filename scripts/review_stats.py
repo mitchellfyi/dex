@@ -23,7 +23,10 @@ from pathlib import Path
 
 TIER_ORDER = ["trivial", "small", "normal", "complex"]
 FOUND_KINDS = {"findings", "findings_fixed"}
-CLEAN_KINDS = {"clean", "notes"}
+CLEAN_KINDS = {"clean", "notes", "deescalate"}
+TIER_EVENTS = {
+    "review.tier.selected", "review.tier.escalated", "review.tier.deescalated",
+}
 
 
 class Loop:
@@ -48,13 +51,14 @@ class Loop:
         self.after_clean_found = 0
         self.reversed_clean = False
         self.completed = False
+        self.deescalated = False
         self.first_clean_seconds = None
 
-    def raise_tier(self, tier):
-        """A loop keeps the deepest tier it ran at; review never downgrades."""
-        if tier not in TIER_ORDER:
-            return
-        if self.tier not in TIER_ORDER or TIER_ORDER.index(tier) > TIER_ORDER.index(self.tier):
+    def set_tier(self, tier):
+        """A loop is reported under the tier it finished at. The tier can move
+        in either direction while the loop runs — a wave may escalate it, and a
+        clean wave may de-escalate it — so the last tier event wins."""
+        if tier in TIER_ORDER:
             self.tier = tier
 
 
@@ -88,21 +92,20 @@ def collect(root):
                     data = event.get("data")
                     data = data if isinstance(data, dict) else {}
                     name = event_name(event)
-                    if name not in {
-                        "review.tier.selected", "review.tier.escalated",
-                        "review.pass.finished", "review.completed",
-                    }:
+                    if name not in TIER_EVENTS | {"review.pass.finished", "review.completed"}:
                         continue
                     if current is None or (
                         current.closed and name == "review.tier.selected"
                     ):
                         current = Loop("unknown")
                         loops.append(current)
-                    if name in {"review.tier.selected", "review.tier.escalated"}:
-                        current.raise_tier(data.get("tier"))
+                    if name in TIER_EVENTS:
+                        current.set_tier(data.get("tier"))
+                        if name == "review.tier.deescalated":
+                            current.deescalated = True
                         continue
                     if name == "review.completed":
-                        current.raise_tier(data.get("tier"))
+                        current.set_tier(data.get("tier"))
                         current.closed = True
                         if data.get("reason") == "clean_gate_reached":
                             current.completed = True
@@ -164,6 +167,7 @@ def report(loops):
             "found_after_clean": after_clean_found,
             "found_after_clean_share": round(100 * after_clean_found / after_clean) if after_clean else 0,
             "loops_reversing_clean": sum(1 for loop in scoped if loop.reversed_clean),
+            "loops_deescalated": sum(1 for loop in scoped if loop.deescalated),
         })
     return rows
 
@@ -172,7 +176,7 @@ def render(rows):
     header = (
         f"{'tier':<9}{'loops':>6}{'passes':>8}{'minutes':>9}{'1st clean':>11}"
         f"{'of':>4}{'gate':>6}{'stalled':>9}{'conf':>6}{'found':>7}{'share':>7}"
-        f"{'reversed':>10}"
+        f"{'reversed':>10}{'down':>6}"
     )
     lines = [header, "-" * len(header)]
     for row in rows:
@@ -183,15 +187,16 @@ def render(rows):
             f"{row['never_reached']:>9}"
             f"{row['passes_after_clean']:>6}{row['found_after_clean']:>7}"
             f"{str(row['found_after_clean_share']) + '%':>7}"
-            f"{row['loops_reversing_clean']:>10}"
+            f"{row['loops_reversing_clean']:>10}{row['loops_deescalated']:>6}"
         )
     lines.append("")
-    lines.append("One loop per run, ended by its completion event. passes/minutes and 1st")
-    lines.append("clean are medians; 1st clean is minutes to the first clean or notes pass,")
-    lines.append("over the `of` loops that got one. gate: loops that reached the clean gate;")
-    lines.append("stalled: loops that never did. conf: passes that ran with clean credit")
-    lines.append("already banked; found: how many of those found something; reversed: loops")
-    lines.append("where one of them reversed an earlier clean pass.")
+    lines.append("One loop per run, ended by its completion event, under the tier it finished")
+    lines.append("at. passes/minutes and 1st clean are medians; 1st clean is minutes to the")
+    lines.append("first clean or notes pass, over the `of` loops that got one. gate: loops that")
+    lines.append("reached the clean gate; stalled: loops that never did. conf: passes that ran")
+    lines.append("with clean credit already banked; found: how many of those found something;")
+    lines.append("reversed: loops where one of them reversed an earlier clean pass. down: loops")
+    lines.append("a clean wave moved to a lower tier.")
     return "\n".join(lines)
 
 

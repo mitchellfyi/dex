@@ -1,0 +1,4 @@
+{
+  "mutation": { "include": ["*.js", "*.mjs", "*.cjs"], "max_mutants": 40 },
+  "diff_exclude": ["todos.json"]
+}

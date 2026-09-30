@@ -149,6 +149,8 @@ SCENARIO_REGRESSION_THRESHOLD="${SCENARIO_REGRESSION_THRESHOLD:-20}"
 
 # Smoke test scenario (cheapest/fastest, used for quick validation)
 SMOKE_SCENARIO="${SMOKE_SCENARIO:-edge-no-tests}"
+# The same, for loop.sh --objective outcomes: a scenario with a compare/ suite.
+COMPARE_SMOKE_SCENARIO="${COMPARE_SMOKE_SCENARIO:-buggy-code-fix}"
 
 # ── Allowed modification paths (for improvement loop scope validation) ────
 ALLOWED_MODIFY_PATTERNS=(

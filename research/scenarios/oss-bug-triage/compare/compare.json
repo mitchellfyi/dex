@@ -1,0 +1,4 @@
+{
+  "mutation": { "include": ["src/url-builder.js"], "max_mutants": 40 },
+  "scope": { "allowed": ["src/url-builder.js", "tests/*", "ISSUE.md"] }
+}

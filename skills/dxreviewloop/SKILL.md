@@ -115,10 +115,11 @@ is still invalid.
 The wrapper reserves the reason codes `operator-override` for an explicit
 environment override and `wave-escalation` for a verified upward promotion.
 Selection sources are `environment`, `lifecycle-agent`, `lifecycle-assessor`,
-`standalone-assessor`, `deterministic-floor` (wrapper-recorded when the
-deterministic floor raises an assessed tier), or `wave-escalation`. These are
-structured orchestration values, not alternatives the risk assessor may
-invent.
+`standalone-assessor`, `deterministic-floor` (wrapper-recorded when a declared
+sensitive surface raises an assessed tier), `wave-escalation`, or
+`wave-deescalation` (a clean wave lowered the tier; its reason codes are the
+lower tier's own). These are structured orchestration values, not alternatives
+the risk assessor may invent.
 
 In the normal lifecycle flow, the implementation agent must record this
 selection before Phase 2 hands off to Phase 3. When a legacy or resumed
@@ -134,12 +135,20 @@ not edit the checkout.
 
 `DEX_REVIEW_TIER=trivial|small|normal|complex` is the canonical launch override and
 takes precedence. `DEX_REVIEW_PROFILE=light|standard|thorough` remains a legacy
-alias. `DEX_REVIEW_CLEAN_PASSES` may raise the launch gate but cannot lower the
+alias. An environment tier stands as written, in either direction; lowering a
+resumed loop's recorded tier starts it fresh at the lower tier.
+`DEX_REVIEW_CLEAN_PASSES` may raise the launch gate but cannot lower the
 selected tier's global policy requirement. The wrapper binds the fixed 1/1/2/3
 policy to selection, progress, pass evidence, and the final receipt. Review may
-escalate to a higher tier, but it never downgrades.
+escalate to a higher tier, and a clean wave may de-escalate to a lower one with
+`DEESCALATE:<tier>:codes`: the clean credit already earned stays, the gate
+becomes the lower tier's requirement, and the loop completes as `completed`
+when that credit meets it. The measured floor is journaled beside every
+selection; only a surface the project declared under `review_sensitive_paths`
+is a hard floor, and it holds the tier against both a low selection and a
+de-escalation.
 
-For an outlier, ask the human or set
+To lower the clean-pass count without changing the tier, ask the human or set
 `dx control override review.clean-passes <1-30> --source agent --reason "<why>"`.
 The loop re-reads this target between waves and preserves existing valid clean
 credit. Lowering it still requires the chosen number of independent `CLEAN`
@@ -238,6 +247,10 @@ detection before deleting the remaining pass-scoped state.
   clean count and start another fresh wave.
 - `ESCALATE:normal:reason-code` or `ESCALATE:complex:reason-code`: raise the
   tier, reset the clean count, and continue with a fresh wave.
+- `DEESCALATE:trivial:codes`, `DEESCALATE:small:codes`, or
+  `DEESCALATE:normal:codes`: a clean wave that lowers the tier. It counts as a
+  clean wave, keeps the credit already earned, and lowers the gate to the new
+  tier's requirement; the loop completes if that credit already meets it.
 - `FINDINGS:N`: verified findings remain after a concrete safe fix attempt;
   reset the count and pause for intervention.
 - `BLOCKED:reason-code`: required tooling, context, authority, or user judgment
@@ -252,9 +265,10 @@ The loop writes `CHURN:no-convergence` when findings have not fallen across
 three consecutive passes; a human decides whether fixes seed findings, the bar
 admits noise, or scope grew. `dx review stats` reports the history per tier.
 
-Only `CLEAN` and `NOTES:N` increment the gate. Any in-scope change invalidates prior clean
-credit. After a wave applies fixes, retain or raise the selected tier, bind it
-to the updated scope fingerprint, reset progress to zero, and start another
+Only `CLEAN`, `NOTES:N`, and `DEESCALATE:<tier>:codes` increment the gate. Any
+in-scope change invalidates prior clean credit. After a wave applies fixes,
+keep the selected tier (a declared sensitive surface can still raise it), bind
+it to the updated scope fingerprint, reset progress to zero, and start another
 fresh wave. The outer wrapper also pauses on missing or malformed results,
 provider failures, three repeated findings fingerprints, or an alternating
 two-fingerprint cycle across four non-clean waves. Findings fingerprints stay
@@ -298,6 +312,9 @@ Record review state changes in the run journal with these event types:
 - `review.pass.started`
 - `review.pass.finished`
 - `review.tier.escalated`
+- `review.tier.deescalated`
+- `review.tier.deescalation_refused`
+- `review.tier.refreshed`
 - `review.completed`
 - `review.paused`
 

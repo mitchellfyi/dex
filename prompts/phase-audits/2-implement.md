@@ -191,15 +191,22 @@ dx_review_write_selection "$SESSION_ID" "$REVIEW_TIER" "lifecycle-agent" "$REVIE
 
 The tier selects Dex's fixed global clean-wave policy: 1 for `trivial` and
 `small`, 2 for `normal`, 3 for `complex`, with a soft wave budget of 2, 3, 6, or
-9. Dex may raise the tier from the measured diff at wave time, never lower it.
+9. Dex measures a floor from the diff and prints it beside your choice. You may
+select below it when the lower tier's reason codes are true of the change; the
+selection is accepted with a warning and the floor is journaled next to it.
+The one exception is a surface the project declared under
+`review_sensitive_paths`: that is a hard floor of `complex` and a selection
+below it is refused. A clean review wave may later lower the tier the same way
+with `DEESCALATE:<tier>:codes`, keeping the clean credit it has earned.
 The persisted selection is bound to the clean-wave policy. Candidate-branch
 edits cannot lower the active gate, and `DEX_REVIEW_CLEAN_PASSES` can only
-raise it. For an outlier, ask the human or record an attributed session decision
-with `dx control override review.clean-passes <1-30> --source agent --reason
-"<why>"`. A lower target still requires that many independent clean waves and
-produces a waiver-bound receipt; it does not claim the trusted policy passed.
-Use `dx control waive review.clean-passes` only when the decision is to skip
-the remaining review gate entirely.
+raise it. To lower the clean-pass count without changing the tier, ask the human
+or record an attributed session decision with `dx control override
+review.clean-passes <1-30> --source agent --reason "<why>"`. A lower target
+still requires that many independent clean waves and produces a waiver-bound
+receipt; it does not claim the trusted policy passed. Use `dx control waive
+review.clean-passes` only when the decision is to skip the remaining review
+gate entirely.
 
 The selection is not a review pass and does not count toward the clean gate.
 Because it is tied to the current scope fingerprint, rewrite it after any later

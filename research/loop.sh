@@ -11,6 +11,13 @@
 #   ./research/loop.sh --runner codex           # Execute scenarios with Codex CLI
 #   ./research/loop.sh --commit                 # Commit accepted changes
 #   ./research/loop.sh --allow-main             # Intentionally run on main/master
+#   ./research/loop.sh --objective legacy       # Judge changes by the old rubric
+#
+# By default (--objective outcomes) every suite is a research/compare run of
+# the dex arm, and research/compare/objective.py decides keep or revert from
+# hidden tests, fuzzing, the follow-up task, cost and code size. The old
+# rubric rewarded test counts, file counts and edit counts, and tuning Dex's
+# prompts against it made Dex write more without catching more bugs.
 
 set -euo pipefail
 
@@ -30,6 +37,10 @@ SKIP_LLM_FLAG=""
 RUN_FLAGS=()
 ALLOW_MAIN=0
 COMMIT_ACCEPTED=0
+OBJECTIVE="outcomes"
+COMPARE_REPLICAS=2
+COMPARE_JOBS=3
+COMPARE_FLAGS=()
 
 require_value() {
   if [[ $# -lt 2 || -z "${2:-}" ]]; then
@@ -54,6 +65,22 @@ while [[ $# -gt 0 ]]; do
       require_value "$1" "${2:-}"
       SCENARIO_FLAG="$2"
       RUN_FLAGS+=(--scenario "$2")
+      COMPARE_FLAGS+=(--scenario "$2")
+      shift 2
+      ;;
+    --objective)
+      require_value "$1" "${2:-}"
+      OBJECTIVE="$2"
+      shift 2
+      ;;
+    --replicas)
+      require_value "$1" "${2:-}"
+      COMPARE_REPLICAS="$2"
+      shift 2
+      ;;
+    --jobs)
+      require_value "$1" "${2:-}"
+      COMPARE_JOBS="$2"
       shift 2
       ;;
     --skip-llm-judge)
@@ -75,8 +102,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      echo "Usage: $0 [--max-iterations N] [--cost-limit USD] [--scenario name] [--skip-llm-judge] [--runner claude|codex] [--commit] [--allow-main]"
+      echo "Usage: $0 [--max-iterations N] [--cost-limit USD] [--scenario name] [--skip-llm-judge] [--runner claude|codex] [--objective outcomes|legacy] [--replicas N] [--jobs N] [--commit] [--allow-main]"
       echo ""
+      echo "  --objective NAME     outcomes (default): research/compare runs judged by objective.py"
+      echo "                       legacy: research/run.sh judged by the rubric aggregate"
+      echo "  --replicas N         Replicas per scenario in outcomes mode (default 2)"
+      echo "  --jobs N             Trials at once in outcomes mode (default 3)"
       echo "  --max-iterations N   Stop after N experiments (0 = run until stopped, default 0)"
       echo "  --cost-limit USD     Stop when estimated cost exceeds USD (0 = disabled, default 0)"
       echo "  --commit             Commit accepted improvements. By default, accepted changes remain unstaged."
@@ -88,6 +119,26 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$OBJECTIVE" in
+  outcomes|legacy) ;;
+  *) log_error "--objective must be outcomes or legacy"; exit 1 ;;
+esac
+
+# compare_suite <label> <with_scenario_flags:0|1> [extra run.sh args...] —
+# run the dex arm through research/compare and print the run directory.
+compare_suite() {
+  local label="$1" with_flags="$2" out
+  shift 2
+  local -a flags=()
+  if [[ "$with_flags" == 1 ]]; then
+    flags=(${COMPARE_FLAGS[@]+"${COMPARE_FLAGS[@]}"})
+  fi
+  out=$(bash "$SCRIPT_DIR/compare/run.sh" --arms dex --no-judge \
+    ${flags[@]+"${flags[@]}"} "$@" 2>&1 | tee -a "$RESULTS_DIR/loop-${label}.log" | tail -1)
+  [[ "$out" == RUN_DIR=* ]] || return 1
+  printf '%s\n' "${out#RUN_DIR=}"
+}
 
 if [[ $ALLOW_MAIN -eq 1 ]]; then
   export RESEARCH_ALLOW_MAIN=1
@@ -106,6 +157,7 @@ echo "  DX commit:      $(dx_commit_hash)"
 echo "  Max iterations: ${MAX_ITER:-0} (0 = until stopped)"
 echo "  Cost limit:     ${COST_LIMIT:-0} (0 = disabled)"
 echo "  Scenario:       ${SCENARIO_FLAG:-all}"
+echo "  Objective:      $OBJECTIVE"
 echo "  Commit changes: $([[ $COMMIT_ACCEPTED -eq 1 ]] && echo yes || echo no)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -131,15 +183,24 @@ fi
 # ── Baseline run ───────────────────────────────────────────────────────────
 log_step "Running baseline suite..."
 
-BASELINE_RUN_ID=$("$SCRIPT_DIR/run.sh" ${RUN_FLAGS[@]+"${RUN_FLAGS[@]}"} --iteration 0 2>&1 | tail -1) || true
-BASELINE_DIR="$RESULTS_DIR/$BASELINE_RUN_ID"
+if [[ "$OBJECTIVE" == outcomes ]]; then
+  if ! BASELINE_DIR=$(compare_suite baseline 1 --replicas "$COMPARE_REPLICAS" --jobs "$COMPARE_JOBS"); then
+    log_error "Baseline comparison run failed. See $RESULTS_DIR/loop-baseline.log"
+    exit 1
+  fi
+  BASELINE_RUN_ID="$BASELINE_DIR"
+  BASELINE_SCORE="(outcomes; see $BASELINE_DIR/report.md)"
+else
+  BASELINE_RUN_ID=$("$SCRIPT_DIR/run.sh" ${RUN_FLAGS[@]+"${RUN_FLAGS[@]}"} --iteration 0 2>&1 | tail -1) || true
+  BASELINE_DIR="$RESULTS_DIR/$BASELINE_RUN_ID"
 
-if [[ -z "$BASELINE_RUN_ID" || ! -f "$BASELINE_DIR/summary.json" ]]; then
-  log_error "Baseline run failed. Check results in $RESULTS_DIR"
-  exit 1
+  if [[ -z "$BASELINE_RUN_ID" || ! -f "$BASELINE_DIR/summary.json" ]]; then
+    log_error "Baseline run failed. Check results in $RESULTS_DIR"
+    exit 1
+  fi
+
+  BASELINE_SCORE=$(json_field "$BASELINE_DIR/summary.json" "aggregate_score")
 fi
-
-BASELINE_SCORE=$(json_field "$BASELINE_DIR/summary.json" "aggregate_score")
 log_success "Baseline score: $BASELINE_SCORE"
 _changelog "### Baseline: $BASELINE_SCORE (${BASELINE_RUN_ID})"
 
@@ -188,6 +249,61 @@ while [[ "$MAX_ITER" -eq 0 || "$iter" -lt "$MAX_ITER" ]]; do
   # Copy patch to applied/
   cp "$PATCH_FILE" "$IMPROVEMENTS_DIR/applied/$(basename "$PATCH_FILE")"
   log_info "Applied experimental changes; validating before accept/reject"
+
+  if [[ "$OBJECTIVE" == outcomes ]]; then
+    # ── Smoke test: one trial, no quality phase ──────────────────────────
+    log_step "Running smoke test ($COMPARE_SMOKE_SCENARIO)..."
+    SMOKE_DIR=$(compare_suite "smoke-$iter" 0 --scenario "$COMPARE_SMOKE_SCENARIO" --replicas 1 --no-quality) || SMOKE_DIR=""
+    smoke_ok=0
+    if [[ -n "$SMOKE_DIR" ]] && python3 "$SCRIPT_DIR/compare/objective.py" --smoke "$SMOKE_DIR"; then
+      smoke_ok=1
+    fi
+    if [[ "$smoke_ok" != 1 ]]; then
+      log_warn "Smoke test failed: no valid trial with a passing test suite. Reverting."
+      safety_reverse_patch "$PATCH_FILE" || exit 1
+      _changelog "### Iteration $iter: REVERT (smoke test failed: ${SMOKE_DIR:-no run})"
+      continue
+    fi
+
+    # ── Full suite, judged on outcomes ───────────────────────────────────
+    log_step "Running full comparison suite..."
+    if ! CURR_DIR=$(compare_suite "iter-$iter" 1 --replicas "$COMPARE_REPLICAS" --jobs "$COMPARE_JOBS"); then
+      log_warn "Suite run failed. Reverting."
+      safety_reverse_patch "$PATCH_FILE" || exit 1
+      _changelog "### Iteration $iter: REVERT (suite run failed)"
+      continue
+    fi
+    verdict_status=0
+    verdict=$(python3 "$SCRIPT_DIR/compare/objective.py" "$PREV_RUN_ID" "$CURR_DIR" 2>&1) || verdict_status=$?
+    printf '%s\n' "$verdict"
+    if [[ "$verdict_status" -ne 0 ]]; then
+      log_warn "Outcome objective says revert. Reverting."
+      safety_reverse_patch "$PATCH_FILE" || exit 1
+      _changelog "### Iteration $iter: REVERT ($(printf '%s' "$verdict" | tail -1))"
+      _changelog '```'
+      _changelog "$verdict"
+      _changelog '```'
+      continue
+    fi
+    log_success "Improvement accepted: $(printf '%s' "$verdict" | tail -1)"
+    _changelog "### Iteration $iter: KEEP ($(printf '%s' "$verdict" | tail -1))"
+    _changelog '```'
+    _changelog "$verdict"
+    _changelog '```'
+    if [[ $COMMIT_ACCEPTED -eq 1 ]]; then
+      (cd "$DEX_DIR" && \
+        git add -A && \
+        git commit \
+          -m "research: iteration $iter - improve DX based on outcome benchmark" \
+          -m "Accepted generated research changes after smoke and outcome validation." \
+          -m "Co-Authored-By: DX Autoresearch <noreply@dexcode.ai>" 2>/dev/null) || true
+      log_info "Committed accepted changes"
+    else
+      log_info "Accepted changes remain unstaged for review"
+    fi
+    PREV_RUN_ID="$CURR_DIR"
+    continue
+  fi
 
   # ── Smoke test ─────────────────────────────────────────────────────────
   log_step "Running smoke test ($SMOKE_SCENARIO)..."

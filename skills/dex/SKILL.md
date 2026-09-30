@@ -83,9 +83,12 @@ line, including when all fields are unchanged or N/A.
    PR description.
 8. After the final in-scope change, select and persist the Phase 3 risk
    tier for the current scope: `trivial`, `small`, `normal`, or `complex`,
-   with a deterministic set of reason codes; Dex may raise it from the measured
-   diff, never lower it. The tier selects Dex's fixed global clean-wave policy:
-   1 for `trivial` and `small`, 2 for `normal`, and 3 for `complex`.
+   with a deterministic set of reason codes. Dex prints the floor it measured
+   from the diff beside your choice; you may go below it when the lower tier's
+   codes hold, except for a surface the project declared under
+   `review_sensitive_paths`, which refuses a lower selection. The tier selects
+   Dex's fixed global clean-wave policy: 1 for `trivial` and `small`, 2 for
+   `normal`, and 3 for `complex`.
 9. Output `PHASE_2_COMPLETE` when all tasks are implemented, the evidence table
    shows all criteria MET, implementation commits are pushed, and the
    review-risk selection matches the final scope fingerprint and trusted
@@ -112,9 +115,11 @@ line, including when all fields are unchanged or N/A.
 4. The loop uses the selected tier's global clean-wave requirement: 1 for
    `trivial` and `small`, 2 for `normal`, and 3 for `complex`; a `NOTES:N`
    wave counts as clean, and any fix — `MECHANICAL:N` included — resets the
-   streak. A candidate branch cannot lower the active gate. The soft outer-wave
-   budgets are 2, 3, 6, and 9. For an
-   outlier, `dx control override review.clean-passes <1-30>` keeps independent
+   streak. A clean wave may lower the tier with `DEESCALATE:<tier>:codes` and
+   keep the credit already earned. A candidate branch cannot lower the active
+   gate. The soft outer-wave budgets are 2, 3, 6, and 9. To lower the
+   clean-pass count without changing the tier,
+   `dx control override review.clean-passes <1-30>` keeps independent
    review while changing the target. A lower target is bound to the attributed
    decision and records Phase 3 as waived. Agents and humans may change the
    operational budget with `dx control override review.max-waves <1-30>`;

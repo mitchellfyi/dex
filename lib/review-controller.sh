@@ -46,7 +46,7 @@ dx_review_transition() {
     dx_review_is_positive_integer "$candidate_required" || return 1
     candidate_required=$((10#$candidate_required))
     case "$candidate_source" in
-      deterministic-floor|wave-escalation) ;;
+      deterministic-floor|wave-escalation|wave-deescalation) ;;
       *) return 1 ;;
     esac
     dx_review_selection_reason_codes_valid \
@@ -190,6 +190,37 @@ dx_review_transition() {
         [[ $candidate_required -gt $next_required ]] && next_required="$candidate_required"
         printf '1\tescalate_continue\t%s\t%s\t0\tnone\t-\treset\tkeep\trefresh\twrite\tinvalidate\n' \
           "$candidate_tier" "$next_required"
+      fi
+      ;;
+    deescalate)
+      # A clean wave reporting that the scope carries less risk than the
+      # selected tier. It is clean on CLEAN's terms, so it earns credit, and
+      # the credit earned at the deeper tier stays: a clean wave at a deeper
+      # profile is at least the evidence a shallower one would be. The gate
+      # becomes the lower tier's requirement, which the caller has already
+      # resolved against the operator gate and any live override, and the
+      # selection is refreshed under the lower tier's own codes. The caller
+      # clamps the request to the hard floor before it gets here; a request
+      # that does not go down at all is a malformed intent, like an upward
+      # `escalate` that does not go up.
+      [[ $event_count -eq 0 && "$event_reason" == "none" && "$churn_kind" == "none" ]] || return 1
+      [[ $candidate_present -eq 1 && "$candidate_source" == "wave-deescalation" && "$invalidate_authorization" == "false" ]] || return 1
+      if [[ "$scope_changed" == "true" ]]; then
+        printf '1\tpause\t%s\t%s\t0\tdeescalation_mutated_scope\t%s\treset\tkeep\tinvalidate\tinvalidate\tinvalidate\n' \
+          "$current_tier" "$current_required" "$candidate_tier"
+      elif [[ $candidate_rank -ge $current_rank ]]; then
+        printf '1\tpause\t%s\t%s\t0\tinvalid_deescalation\t%s\treset\tkeep\tkeep\twrite\tinvalidate\n' \
+          "$current_tier" "$current_required" "$candidate_tier"
+      else
+        next_clean=$((current_clean + 1))
+        next_required="$candidate_required"
+        if [[ $next_clean -ge $next_required ]]; then
+          printf '1\tcomplete\t%s\t%s\t%s\tnone\t-\tappend\tkeep\trefresh\tinvalidate\tfinalize\n' \
+            "$candidate_tier" "$next_required" "$next_clean"
+        else
+          printf '1\tdeescalate_continue\t%s\t%s\t%s\tnone\t-\tappend\tkeep\trefresh\twrite\tinvalidate\n' \
+            "$candidate_tier" "$next_required" "$next_clean"
+        fi
       fi
       ;;
     failure)

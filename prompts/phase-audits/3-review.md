@@ -67,6 +67,7 @@ Write exactly one of these values to `$(dx_review_result_file "$SESSION_ID")`:
 - `CHURN:reason-code`
 - `ESCALATE:normal:reason-code`
 - `ESCALATE:complex:reason-code`
+- `DEESCALATE:trivial:codes`, `DEESCALATE:small:codes`, or `DEESCALATE:normal:codes`
 
 `CLEAN` is allowed only when this wave found zero verified findings and applied
 zero fixes. `NOTES:N` is the same wave with N items recorded below the finding
@@ -87,8 +88,16 @@ tooling/context is missing and cannot be resolved locally, write
 `BLOCKED:reason-code`.
 
 If the current risk tier is too low, write `ESCALATE:normal:reason-code` or
-`ESCALATE:complex:reason-code`. Request only a higher tier. The outer loop
-resets clean credit and starts a fresh wave at the higher tier.
+`ESCALATE:complex:reason-code`. The outer loop resets clean credit and starts a
+fresh wave at the higher tier.
+
+If this wave found nothing, fixed nothing, and the whole change satisfies a
+lower tier's reason codes from `prompts/review-risk-assessment.md`, write
+`DEESCALATE:<tier>:codes` with those codes instead of `CLEAN`. The outer loop
+keeps the clean credit already earned, lowers the gate to the lower tier's
+requirement, and completes if that credit already meets it. A surface the
+project declared under `review_sensitive_paths` keeps the tier; the wave then
+counts as `CLEAN`.
 
 If the current session cannot review a required domain with enough confidence,
 request a higher tier for a depth gap or write `BLOCKED:missing-tooling` for
