@@ -3816,9 +3816,12 @@ __dx_show_header() {
 
   # Phase progress line (Phase 0 setup + 6 autonomous phases)
   local progress="  "
-  local i label outcome symbol
+  local i label outcome symbol first_phase final_phase
   local has_skipped=0 has_waived=0 has_unknown=0
+  first_phase=$(dx_lifecycle_first_phase)
+  final_phase=$(dx_lifecycle_final_phase)
   for i in 0 1 2 3 4 5 6; do
+    [[ $i -lt $first_phase || $i -gt $final_phase ]] && continue
     label=$(__dx_phase_name "$i")
     if [[ $i -lt $step ]]; then
       outcome=$(dx_phase_outcome_latest "$session_id" "$i")
@@ -3834,7 +3837,7 @@ __dx_show_header() {
     else
       progress+="○ ${label}"
     fi
-    [[ $i -lt 6 ]] && progress+="  "
+    [[ $i -lt $final_phase ]] && progress+="  "
   done
   # Show completion suffix when all autonomous phases are done (step=7 sentinel)
   if [[ $step -ge 7 ]]; then

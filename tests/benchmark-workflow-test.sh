@@ -226,4 +226,20 @@ if command -v zsh >/dev/null 2>&1; then
   grep -Fq "benchmark change" "$REPO/README.md" || assert_at $LINENO
 fi
 
+# --- init: a benchmark checkout gets the .dex skeleton and nothing else ---
+INIT_REPO="$TMP_DIR/init-repo"
+git init -q "$INIT_REPO"
+git -C "$INIT_REPO" config user.email dex@example.test
+git -C "$INIT_REPO" config user.name "Dex Test"
+printf '%s\n' "init fixture" > "$INIT_REPO/README.md"
+git -C "$INIT_REPO" add README.md
+git -C "$INIT_REPO" commit -q -m "test: initialize init fixture"
+(cd "$INIT_REPO" && DEX_WORKFLOW=benchmark DEXCODE_SYNC=0 \
+  bash "$ROOT/bin/init.sh" --skip-analysis --skip-config) > "$TMP_DIR/init.out" 2>&1
+[[ -f "$INIT_REPO/.dex/dex.md" ]] || assert_at $LINENO
+[[ ! -e "$INIT_REPO/.github/pull_request_template.md" ]] || assert_at $LINENO
+[[ -z "$(git -C "$INIT_REPO" config --get core.hooksPath || true)" ]] || assert_at $LINENO
+grep -Fq "Benchmark run: skipping Claude/Codex tooling bootstrap" "$TMP_DIR/init.out" \
+  || assert_at $LINENO
+
 printf '%s\n' "benchmark-workflow-test: ok"

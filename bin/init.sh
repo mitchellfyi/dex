@@ -316,7 +316,16 @@ echo "Skeleton created."
 
 # ── 2. Install repo-local attribution defaults ───────────────────────
 
-dx_install_repo_attribution "$repo_root"
+# A benchmark checkout (DEX_WORKFLOW=benchmark) is scored and thrown away. A PR
+# template or commit hook there is a file the task never asked for, and the
+# tooling bootstrap would spend the run's time budget installing plugins.
+ATTRIBUTION_INSTALLED=0
+if dx_lifecycle_benchmark; then
+  dx_skip "Benchmark run: skipping attribution defaults"
+else
+  dx_install_repo_attribution "$repo_root"
+  ATTRIBUTION_INSTALLED=1
+fi
 
 # ── 3. Ensure global Dex tooling is available ─────────────────────
 
@@ -324,6 +333,8 @@ CODEX_SKILL_COUNT=0
 TOOL_BOOTSTRAP_RAN=0
 if [[ "${DEX_SKIP_TOOL_BOOTSTRAP:-0}" == "1" ]]; then
   dx_skip "Skipping Claude/Codex tooling bootstrap (already handled by caller)"
+elif dx_lifecycle_benchmark; then
+  dx_skip "Benchmark run: skipping Claude/Codex tooling bootstrap"
 else
   TOOL_BOOTSTRAP_RAN=1
   if ! dx_bootstrap_agent_tooling "$repo_root" "install"; then
@@ -451,7 +462,9 @@ echo "  - .dex/ created (worktrees, config, gitignored artifacts)"
 echo "  - .dex/AGENTS.md imports .dex/dex.md"
 echo "  - .dex/CLAUDE.md points to .dex/AGENTS.md"
 echo "  - .dex/memory/index.md is ready for durable repo memory"
-echo "  - Dex commit and PR attribution defaults installed"
+if [[ "$ATTRIBUTION_INSTALLED" -eq 1 ]]; then
+  echo "  - Dex commit and PR attribution defaults installed"
+fi
 if [[ "$CODEX_SKILL_COUNT" -gt 0 ]]; then
   echo "  - ${CODEX_SKILL_COUNT} Dex skill link(s) available in $(dx_codex_skills_dir) for Codex CLI"
 fi
