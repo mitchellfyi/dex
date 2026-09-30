@@ -45,6 +45,42 @@ dx_lifecycle_phase_promise() {
   esac
 }
 
+# The workflow decides which phases a lifecycle runs. ticket_to_pr, the
+# default, runs Setup through Complete. benchmark runs Plan, Implement and
+# Review only: an evaluation harness scores the working tree Dex leaves
+# behind, so there is no ticket to set up and no branch to push or PR to open.
+# `dx run` sets DEX_WORKFLOW from the run spec's workflow.name.
+
+# dx_lifecycle_workflow — ticket_to_pr or benchmark
+dx_lifecycle_workflow() {
+  case "${DEX_WORKFLOW:-}" in
+    benchmark) printf '%s\n' "benchmark" ;;
+    *) printf '%s\n' "ticket_to_pr" ;;
+  esac
+}
+
+dx_lifecycle_benchmark() {
+  [[ "$(dx_lifecycle_workflow)" == "benchmark" ]]
+}
+
+# dx_lifecycle_first_phase — the phase a new lifecycle starts in
+dx_lifecycle_first_phase() {
+  if dx_lifecycle_benchmark; then
+    printf '%s\n' "1"
+  else
+    printf '%s\n' "0"
+  fi
+}
+
+# dx_lifecycle_final_phase — the phase whose completion ends the lifecycle
+dx_lifecycle_final_phase() {
+  if dx_lifecycle_benchmark; then
+    printf '%s\n' "3"
+  else
+    printf '%s\n' "6"
+  fi
+}
+
 # dx_lifecycle_phase_audit_basename <phase> — prompts/phase-audits/<name>.md
 dx_lifecycle_phase_audit_basename() {
   case "${1:-}" in
@@ -345,13 +381,14 @@ __dx_lifecycle_cleanup_barrier_unlocked() {
   [[ "$journal_rc" -eq 1 ]]
 }
 
-# Turn a failed terminal transaction back into a resumable, inert Phase 6.
-# The retained config identifies the exact lifecycle context, but its
-# expectation is abandoned; an explicit resume always creates a fresh one.
+# Turn a failed terminal transaction back into a resumable, inert final phase:
+# Phase 6, or Phase 3 for a benchmark lifecycle. The retained config identifies
+# the exact lifecycle context, but its expectation is abandoned; an explicit
+# resume always creates a fresh one.
 dx_lifecycle_terminal_failure_rollback_unlocked() {
   [[ $# -eq 3 ]] || return 1
   local session_id="$1" reason="$2" rollback_source="$3"
-  local generation="" config_line="" rollback_rc=0
+  local generation="" config_line="" rollback_rc=0 final_phase
   dx_lifecycle_session_id_valid "$session_id" || return 1
   [[ "$reason" =~ ^[A-Za-z0-9._-]+$ \
     && "$rollback_source" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
@@ -359,15 +396,16 @@ dx_lifecycle_terminal_failure_rollback_unlocked() {
   __dx_lifecycle_cleanup_barrier_unlocked "$session_id" || return 1
   [[ "$(dx_lifecycle_phase_state "$session_id" 2>/dev/null || true)" == "7" ]] \
     || return 1
+  final_phase=$(dx_lifecycle_final_phase)
 
   dx_lifecycle_terminal_proofs_invalidate_unlocked "$session_id" \
     || rollback_rc=1
-  dx_lifecycle_atomic_write "$(dx_state_file "$session_id")" 6 \
+  dx_lifecycle_atomic_write "$(dx_state_file "$session_id")" "$final_phase" \
     || rollback_rc=1
   generation=$(dx_lifecycle_completion_issue_unlocked \
-    "$session_id" lifecycle phase 6 2>/dev/null || true)
+    "$session_id" lifecycle phase "$final_phase" 2>/dev/null || true)
   if [[ "$generation" =~ ^[0-9a-f]{32}$ ]]; then
-    config_line=$(dx_completion_context_config lifecycle phase 6 "$generation" \
+    config_line=$(dx_completion_context_config lifecycle phase "$final_phase" "$generation" \
       2>/dev/null || true)
   fi
   if [[ -z "$config_line" ]] \
@@ -381,7 +419,7 @@ dx_lifecycle_terminal_failure_rollback_unlocked() {
   dx_clear_lifecycle_control_unlocked "$session_id"
   rm -f "$(dx_active_file "$session_id")" "$(dx_owner_file "$session_id")" \
     "$(dx_handoff_mode_file "$session_id")" 2>/dev/null || rollback_rc=1
-  dx_phase_outcome_record "$session_id" 6 invalidated "$rollback_source" \
+  dx_phase_outcome_record "$session_id" "$final_phase" invalidated "$rollback_source" \
     "rollback-$(date +%s)-$$-${RANDOM}" "$reason" 2>/dev/null \
     || rollback_rc=1
   dx_write_pause_state "$session_id" "$reason" "$rollback_source" \
@@ -480,11 +518,11 @@ EOF
     [[ ! -e "$cleanup_file" && ! -L "$cleanup_file" ]] || return 1
   done
   if [[ "$phase" == "7" ]]; then
-    dx_lifecycle_atomic_write "$(dx_state_file "$session_id")" 6 || return 1
+    phase=$(dx_lifecycle_final_phase)
+    dx_lifecycle_atomic_write "$(dx_state_file "$session_id")" "$phase" || return 1
     rollback_generation="relaunch-$(date +%s)-$$-${RANDOM}"
-    dx_phase_outcome_record "$session_id" 6 invalidated lifecycle-control \
+    dx_phase_outcome_record "$session_id" "$phase" invalidated lifecycle-control \
       "$rollback_generation" terminal-proof-invalid 2>/dev/null || return 1
-    phase=6
   fi
   dx_lifecycle_pause_clear_unlocked "$session_id" || return 1
   printf '%s\n' "$phase"

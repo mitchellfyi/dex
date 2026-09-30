@@ -453,9 +453,18 @@ workflow_name = string_at(workflow, "name", "workflow", required=False) or "tick
 workflow_version = string_at(workflow, "version", "workflow", required=False) or "v1"
 validate_text(workflow_name, "workflow.name", 100)
 validate_text(workflow_version, "workflow.version", 100)
-requires_plan_approval = bool_at(workflow, "requires_plan_approval", "workflow", True)
+# A benchmark lifecycle (lib/lifecycle-control.sh) has no human to approve a
+# plan and no browser to capture UI proof, so both default off and approval
+# cannot be switched back on. It launches Claude in print mode, which the
+# Codex engine has no equivalent for yet.
+benchmark = workflow_name == "benchmark"
+requires_plan_approval = bool_at(workflow, "requires_plan_approval", "workflow", not benchmark)
+if benchmark and requires_plan_approval:
+    fail("workflow.requires_plan_approval must be false for the benchmark workflow")
+if benchmark and harness_name == "codex":
+    fail("the benchmark workflow supports the claude-code harness only")
 auto_merge = bool_at(workflow, "auto_merge", "workflow", False)
-requires_ui_evidence = workflow.get("requires_ui_evidence", "auto")
+requires_ui_evidence = workflow.get("requires_ui_evidence", "never" if benchmark else "auto")
 if isinstance(requires_ui_evidence, bool):
     requires_ui_evidence = "always" if requires_ui_evidence else "never"
 elif isinstance(requires_ui_evidence, str):

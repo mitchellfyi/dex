@@ -362,13 +362,17 @@ __dx_phase_message() {
   local raw_input="${2:-}"
   local workspace_mode="${3:-worktree}"
   local wt_dir="${4:-}"
-  if [[ "$step" -eq 0 ]]; then
+  if dx_lifecycle_benchmark; then
+    dx_benchmark_phase_message "$step"
+  elif [[ "$step" -eq 0 ]]; then
     printf '%s\n' "$DX_PHASE_0_MESSAGE"
   else
     printf '%s\n' "${DX_PHASE_MESSAGES[$step]}"
   fi
-  printf '%s\n' ""
-  printf '%s\n' "Read prompts/issue-hygiene.md. Apply it to material issue or PR context in this phase, and end every phase handoff or completed-phase summary with its exact Issue/PR work: line."
+  if ! dx_lifecycle_benchmark; then
+    printf '%s\n' ""
+    printf '%s\n' "Read prompts/issue-hygiene.md. Apply it to material issue or PR context in this phase, and end every phase handoff or completed-phase summary with its exact Issue/PR work: line."
+  fi
   __dx_provider_prompt
   if [[ -n "$raw_input" ]] || [[ "$workspace_mode" == "in-place" ]]; then
     printf '%s\n' ""
@@ -1148,6 +1152,9 @@ __dx_build_system_context() {
 - DO verify the PR is ready and repair any remaining draft state, request reviewers (request type), post @mention comment (mention type),
 - DO launch /loop 5m /dxwatchpr, address CI/review failures, close ticket only when checks and approvals are green" ;;
   esac
+  if dx_lifecycle_benchmark; then
+    scope_lines=$(dx_benchmark_scope_lines "$step")
+  fi
 
   local phase_label
   phase_label=$(__dx_phase_name "$step")
@@ -1209,6 +1216,10 @@ EOF
     cat >> "$_ctx_tmp" <<'EOF'
 ```
 EOF
+  fi
+
+  if dx_lifecycle_benchmark; then
+    dx_benchmark_context >> "$_ctx_tmp"
   fi
 
   cat >> "$_ctx_tmp" <<'EOF'
@@ -1624,6 +1635,13 @@ __dx_cleanup_completed_workspace() {
 
   if [[ -n "$session_id" ]] && ! dx_ui_capture_mark_completed "$session_id"; then
     dx_warn "The lifecycle completed, but Dex could not start the UI proof retention window."
+  fi
+
+  # The evaluation harness scores the checkout after Dex exits. Switching back
+  # to the default branch here would take the change away before it is read.
+  if dx_lifecycle_benchmark; then
+    dx_info "Benchmark run: leaving the lifecycle branch and working tree in place for evaluation."
+    return 0
   fi
 
   if [[ "$workspace_mode" == "worktree" ]]; then
@@ -3122,6 +3140,14 @@ __dx_run_phases_inline() {
   fi
 
   local claude_args=("${DX_CLAUDE_FLAGS[@]}")
+  if dx_lifecycle_benchmark; then
+    # A benchmark runs in a task container with no terminal and no browser.
+    # Print mode still honors the Stop hook, so phases hand off inline as usual,
+    # and the session exits once Review completes. The event stream on stdout is
+    # the harness's trajectory log.
+    claude_args=("${(@)claude_args:#--chrome}")
+    claude_args+=(--print --verbose --output-format stream-json)
+  fi
   claude_args+=(--append-system-prompt-file "$ctx_file")
   # Status line plus, when the user opted in, unattended delivery of messages
   # from their other sessions. A build failure skips both rather than passing
@@ -3545,6 +3571,13 @@ __dx_run_spec_apply_env() {
   export DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="$plan_approval"
   default_branch=$(dx_run_spec_field "$spec_file" "repository.default_branch")
   export DEX_HEADLESS_DEFAULT_BRANCH="$default_branch"
+
+  # lib/lifecycle-control.sh reads this to decide which phases run.
+  if [[ "$(dx_run_spec_field "$spec_file" "workflow.name")" == "benchmark" ]]; then
+    export DEX_WORKFLOW=benchmark
+  else
+    export DEX_WORKFLOW=""
+  fi
 }
 
 { unalias __dx_run_spec_cli; unfunction __dx_run_spec_cli; } 2>/dev/null || true
@@ -3562,6 +3595,7 @@ __dx_run_spec_cli() {
   local -x DX_MODEL_OVERRIDE="${DX_MODEL_OVERRIDE:-}"
   local -x DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="${DEX_HEADLESS_REQUIRES_PLAN_APPROVAL:-}"
   local -x DEX_HEADLESS_DEFAULT_BRANCH="${DEX_HEADLESS_DEFAULT_BRANCH:-}"
+  local -x DEX_WORKFLOW=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --spec)
@@ -3741,11 +3775,13 @@ __dx_run_spec_cli() {
   }
   local -x DEX_HEADLESS_RUN_SPEC_FILE="$final_spec"
   local -x DEX_RUN_ID="$run_id"
-  dx_meta_write "$session_id" "headless=1" "run_id=${run_id}" "run_spec=${final_spec}"
+  dx_meta_write "$session_id" "headless=1" "run_id=${run_id}" "run_spec=${final_spec}" \
+    "workflow=$(dx_lifecycle_workflow)"
   __dx_write_last_session "$_dx_wt_name" "$_dx_wt_dir" "$_dx_workspace_mode" \
     || dx_warn "Could not record this session for dx --resume."
 
-  local state_file times_file step=0
+  local state_file times_file step
+  step=$(dx_lifecycle_first_phase)
   state_file=$(dx_state_file "$session_id")
   times_file=$(dx_times_file "$session_id")
   if [[ -e "$state_file" || -L "$state_file" ]]; then
