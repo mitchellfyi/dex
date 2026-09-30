@@ -20,6 +20,9 @@ Usage, from the Dex checkout::
 Agent kwargs (``--ak key=value``):
   dex_dir           Dex checkout to upload (default: this file's checkout)
   reasoning_effort  low|medium|high|xhigh|max, passed as the run's effort
+  phase_timeout     Seconds one lifecycle phase may run before Dex stops it
+                    (default 1200). A stalled session then fails fast instead
+                    of spending the whole task budget.
 
 Harbor imports this module inside its own tool environment, so it may only
 use the standard library and Harbor's own packages.
@@ -157,8 +160,10 @@ class DexAgent(ClaudeCode):
         logs_dir: Path,
         *args: Any,
         dex_dir: str | None = None,
+        phase_timeout: int = 1200,
         **kwargs: Any,
     ):
+        self._phase_timeout = int(phase_timeout)
         default_dir = Path(__file__).resolve().parents[2]
         self._dex_dir = Path(dex_dir).expanduser().resolve() if dex_dir else default_dir
         if not (self._dex_dir / "dx.sh").is_file():
@@ -258,6 +263,10 @@ class DexAgent(ClaudeCode):
                 "DEX_BENCH_BASE": BASE_BRANCH,
                 "DEXCODE_SYNC": "0",
                 "DX_RTK_ENABLED": "0",
+                # Hook start and finish times, API retries: what a stalled
+                # session needs to explain itself afterwards.
+                "DX_CLAUDE_DEBUG_FILE": "/logs/agent/claude-debug.log",
+                "DEX_PHASE_TIMEOUT": str(self._phase_timeout),
             }
         )
         env.update(self._resolved_env_vars)

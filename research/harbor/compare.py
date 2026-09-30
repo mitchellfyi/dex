@@ -2,8 +2,10 @@
 """Compare a Dex job with a Claude Code baseline job from Harbor.
 
 Usage:
-  compare.py JOBS_DIR                 # latest claude-code and dex job per dataset
+  compare.py JOBS_DIR                 # latest paired run per dataset
   compare.py BASELINE_JOB DEX_JOB     # two explicit job directories
+  compare.py --tasks failed|passed JOB [--sample N]
+                                      # task names from one job, for run.sh
 
 Reads each trial's result.json (reward, cost, tokens, timings) and, for Dex
 trials, how far the lifecycle got. Prints the paired per-task outcome and a
@@ -14,6 +16,7 @@ solved), not the headline rate: a 10-task difference of one task is noise.
 from __future__ import annotations
 
 import json
+import random
 import re
 import sys
 from datetime import datetime
@@ -74,19 +77,36 @@ def fmt(value, spec: str = "", missing: str = "-") -> str:
 
 
 def pick_jobs(jobs_dir: Path) -> list[tuple[str, Path, Path]]:
-    latest: dict[tuple[str, str], tuple[str, Path]] = {}
+    """Pair the two arms of one run.sh invocation: same dataset, same stamp.
+
+    Pairing the latest job of each arm independently would put a screening
+    run's baseline next to a later hard-set run's Dex job.
+    """
+    runs: dict[tuple[str, str], dict[str, Path]] = {}
     for job_dir in jobs_dir.iterdir():
         match = JOB_NAME.match(job_dir.name)
-        if not match or not job_dir.is_dir():
-            continue
-        key = (match["dataset"], match["arm"])
-        if key not in latest or match["stamp"] > latest[key][0]:
-            latest[key] = (match["stamp"], job_dir)
-    pairs = []
-    for dataset in sorted({dataset for dataset, _ in latest}):
-        if (dataset, "claude-code") in latest and (dataset, "dex") in latest:
-            pairs.append((dataset, latest[(dataset, "claude-code")][1], latest[(dataset, "dex")][1]))
-    return pairs
+        if match and job_dir.is_dir():
+            runs.setdefault((match["dataset"], match["stamp"]), {})[match["arm"]] = job_dir
+    latest: dict[str, tuple[str, Path, Path]] = {}
+    for (dataset, stamp), arms in runs.items():
+        if "claude-code" in arms and "dex" in arms:
+            if dataset not in latest or stamp > latest[dataset][0]:
+                latest[dataset] = (stamp, arms["claude-code"], arms["dex"])
+    return [(dataset, base, dex) for dataset, (_, base, dex) in sorted(latest.items())]
+
+
+def select_tasks(kind: str, job_dir: Path, sample: int | None) -> list[str]:
+    """Tasks a job failed (reward below 1, or no reward) or passed."""
+    chosen = []
+    for task, runs in sorted(load_trials(job_dir).items()):
+        reward = mean([t["reward"] for t in runs])
+        passed = reward is not None and reward >= 1.0
+        if passed == (kind == "passed"):
+            chosen.append(task)
+    if sample is not None and sample < len(chosen):
+        # A fixed seed keeps a sample reproducible across reruns.
+        chosen = sorted(random.Random(0).sample(chosen, sample))
+    return chosen
 
 
 def summarize(label: str, trials: dict[str, list[dict]]) -> str:
@@ -133,6 +153,16 @@ def compare(dataset: str, baseline_dir: Path, dex_dir: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) >= 4 and argv[1] == "--tasks" and argv[2] in ("failed", "passed"):
+        sample = None
+        if len(argv) == 6 and argv[4] == "--sample":
+            sample = int(argv[5])
+        elif len(argv) != 4:
+            print(__doc__, file=sys.stderr)
+            return 2
+        for task in select_tasks(argv[2], Path(argv[3]).expanduser(), sample):
+            print(task)
+        return 0
     if len(argv) == 2:
         pairs = pick_jobs(Path(argv[1]).expanduser())
         if not pairs:

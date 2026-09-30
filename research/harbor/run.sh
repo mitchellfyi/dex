@@ -13,6 +13,9 @@
 #   --attempts K                   Attempts per task (default: 1)
 #   --timeout-multiplier X         Agent timeout multiplier for both arms (default: 1)
 #   --effort LEVEL                 low|medium|high|xhigh|max for both arms
+#   --failed-in JOB                Add the tasks JOB failed (a screening run)
+#   --passed-in JOB                Add the tasks JOB passed
+#   --sample N                     Take N of the --passed-in tasks (fixed seed)
 #   --oracle                       Run the reference solutions instead (checks the setup)
 #
 # Needs Docker and Harbor (`uv tool install harbor`), plus ANTHROPIC_API_KEY or
@@ -34,12 +37,15 @@ CONCURRENCY=1
 ATTEMPTS=1
 TIMEOUT_MULTIPLIER=1
 EFFORT=""
+FAILED_IN=""
+PASSED_IN=""
+SAMPLE=""
 ORACLE=0
 EXTRA_ARGS=()
 JOBS_DIR="${DEX_BENCH_JOBS_DIR:-$HOME/.dex/bench/jobs}"
 
 usage() {
-  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 require_value() {
@@ -60,6 +66,9 @@ while [[ $# -gt 0 ]]; do
     --attempts) require_value "$@"; ATTEMPTS="$2"; shift 2 ;;
     --timeout-multiplier) require_value "$@"; TIMEOUT_MULTIPLIER="$2"; shift 2 ;;
     --effort) require_value "$@"; EFFORT="$2"; shift 2 ;;
+    --failed-in) require_value "$@"; FAILED_IN="$2"; shift 2 ;;
+    --passed-in) require_value "$@"; PASSED_IN="$2"; shift 2 ;;
+    --sample) require_value "$@"; SAMPLE="$2"; shift 2 ;;
     --oracle) ORACLE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; EXTRA_ARGS=("$@"); break ;;
@@ -98,6 +107,29 @@ fi
 unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
 if [[ -n "${DEX_BENCH_BASE_URL:-}" ]]; then
   export ANTHROPIC_BASE_URL="$DEX_BENCH_BASE_URL"
+fi
+
+# A screening job's results become this run's task list.
+add_tasks_from() { # <failed|passed> <job> [sample]
+  local kind="$1" job="$2" sample="${3:-}" task found=0
+  [[ -d "$job" ]] || job="$JOBS_DIR/$job"
+  [[ -d "$job" ]] || { printf 'run.sh: no such job: %s\n' "$2" >&2; exit 1; }
+  while IFS= read -r task; do
+    [[ -n "$task" ]] || continue
+    TASK_GLOBS+=("$task")
+    found=$((found + 1))
+  done < <(python3 "$SCRIPT_DIR/compare.py" --tasks "$kind" "$job" ${sample:+--sample "$sample"})
+  printf 'run.sh: %d %s task(s) from %s\n' "$found" "$kind" "$(basename "$job")"
+}
+if [[ -n "$FAILED_IN" ]]; then
+  add_tasks_from failed "$FAILED_IN"
+fi
+if [[ -n "$PASSED_IN" ]]; then
+  add_tasks_from passed "$PASSED_IN" "$SAMPLE"
+fi
+if [[ ( -n "$FAILED_IN" || -n "$PASSED_IN" ) && ${#TASK_GLOBS[@]} -eq 0 ]]; then
+  printf 'run.sh: the selected jobs contribute no tasks; nothing to run\n' >&2
+  exit 1
 fi
 
 mkdir -p "$JOBS_DIR"
