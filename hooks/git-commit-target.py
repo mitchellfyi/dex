@@ -341,8 +341,14 @@ def has_git_commit(text, cwd, depth=0):
         target = has_git_commit(body, cwd, depth + 1)
         if target:
             return target
+    # A heredoc body is a script, not a -c one-liner: only a literal passed to
+    # a launch call is a command. Read as a one-liner, any mention of a launch
+    # word (`# no subprocess here`) made every string literal in the body a
+    # candidate, and a script that only printed "git commit" was reported as
+    # having committed. The guard keeps the wider reading; a missed warning
+    # costs more there than a false one.
     for _kind, body in interpreter_heredoc_bodies(text):
-        target = code_git_commit_target(body, cwd, depth + 1)
+        target = code_git_commit_target(body, cwd, depth + 1, whole_file=True)
         if target:
             return target
     for fragment in extract_executable_backticks(shell_text):

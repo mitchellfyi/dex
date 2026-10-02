@@ -19,6 +19,7 @@ taught once reaches both questions.
 
 No external dependencies — stdlib only.
 """
+import functools
 import os
 import re
 import shlex
@@ -30,6 +31,7 @@ import shutil
 __all__ = [
     'ASSIGNMENT_BUILTINS', 'CODE_EXECUTION_RE', 'CODE_FRAGMENT_SUFFIX_JOINS',
     'DIRECT_SHELL_RUNNERS', 'ENV_OPTION_ARGS', 'EVAL_COMMANDS', 'HEREDOC_RE',
+    'HEREDOC_SCAN_STOPS',
     'INLINE_BACKTICK_SUB_RE', 'INLINE_DOLLAR_SUB_RE', 'NICE_VALUE_OPTIONS',
     'NODE_VALUE_OPTIONS', 'PACKAGE_MANAGER_RUNNERS',
     'PARAMETER_EXPANSION_ROUNDS',
@@ -57,7 +59,8 @@ __all__ = [
     'extract_dollar_substitutions', 'extract_executable_backticks',
     'find_exec_commands', 'fragment_region_candidates',
     'function_definition_end', 'generated_script_for_path',
-    'heredoc_generated_scripts', 'heredoc_receiver_interpreter_kind',
+    'heredoc_generated_scripts', 'heredoc_operators',
+    'heredoc_receiver_interpreter_kind',
     'heredoc_receiver_is_shell', 'heredoc_write_target',
     'interpreter_code_payloads', 'interpreter_heredoc_bodies',
     'interpreter_inline_payload', 'interpreter_kind',
@@ -80,7 +83,8 @@ __all__ = [
     'shell_script_file_arg', 'shell_stdin_literal', 'shell_tokens',
     'shell_word_tokens', 'shell_wrapper_variables',
     'short_option_has_attached_value', 'skip_runner_options',
-    'skip_wrapper_prefix', 'source_script_file_arg', 'strip_heredoc_bodies',
+    'skip_wrapper_prefix', 'source_script_file_arg', 'split_heredocs',
+    'statement_end', 'strip_heredoc_bodies',
     'substitution_end', 'tee_generated_script', 'token_basename',
     'token_takes_value', 'variable_name_at', 'word_array_fragments',
     'xargs_command_start', 'xargs_splits_items_on_blanks',
@@ -230,6 +234,173 @@ def extract_dollar_substitutions(text):
 
 
 HEREDOC_RE = re.compile(r"<<-?\s*('([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][A-Za-z0-9_]*))")
+# The characters heredoc_operators acts on, by the context it is in. Keyed by
+# the innermost open quote or substitution; '' is command context.
+HEREDOC_SCAN_STOPS = {
+    "'": re.compile(r"'"),
+    "$'": re.compile(r"[\\']"),
+    '"': re.compile(r'[\\"`$]'),
+    '((': re.compile(r'[\\"$()]'),
+    '': re.compile(r'''[\\'"`$()#<]'''),
+}
+
+
+def heredoc_operators(line, stack):
+    """Return the HEREDOC_RE matches on `line` that open a real heredoc.
+
+    `<<` opens one only where the shell would read it as an operator: not in
+    quotes, not in arithmetic, not escaped, not in a comment, and not as the
+    `<<<` of a here-string. Read without that, `echo "a << b"` opened a heredoc
+    that never closed, and every command after it went unread by both hooks.
+
+    `stack` holds the quotes and substitutions still open at the end of the
+    previous line, and is updated in place, so a string that spans lines keeps
+    its `<<` quoted. A `$(` resets quoting, which is what keeps the heredoc in
+    `git commit -m "$(cat <<'EOF'` visible.
+    """
+    operators = []
+    index = 0
+    length = len(line)
+    while index < length:
+        top = stack[-1] if stack else ''
+        # Jump to the next character that can change anything in this context;
+        # the rest of the line is plain text to this scan.
+        found = HEREDOC_SCAN_STOPS.get(top, HEREDOC_SCAN_STOPS['']).search(line, index)
+        if not found:
+            break
+        index = found.start()
+        char = line[index]
+        if top == "'":
+            stack.pop()
+            index += 1
+            continue
+        if char == '\\':
+            index += 2
+            continue
+        if top == "$'":
+            if char == "'":
+                stack.pop()
+            index += 1
+            continue
+        if top == '"':
+            if char == '"':
+                stack.pop()
+            elif char == '`':
+                stack.append('`')
+            elif line.startswith('$((', index):
+                stack.append('((')
+                index += 3
+                continue
+            elif line.startswith('$(', index):
+                stack.append('$(')
+                index += 2
+                continue
+            index += 1
+            continue
+        if top == '((':
+            if line.startswith('))', index):
+                stack.pop()
+                index += 2
+                continue
+            if line.startswith('$(', index) and not line.startswith('$((', index):
+                stack.append('$(')
+                index += 2
+                continue
+            if char == '(':
+                stack.append('(')
+            elif char == '"':
+                stack.append('"')
+            index += 1
+            continue
+        # Command context: top level, or inside $( ), ( ) or backticks.
+        if char == "'":
+            stack.append("'")
+        elif line.startswith("$'", index):
+            stack.append("$'")
+            index += 2
+            continue
+        elif char == '"':
+            stack.append('"')
+        elif char == '`':
+            if top == '`':
+                stack.pop()
+            else:
+                stack.append('`')
+        elif line.startswith('$((', index):
+            stack.append('((')
+            index += 3
+            continue
+        elif line.startswith('((', index):
+            stack.append('((')
+            index += 2
+            continue
+        elif line.startswith('$(', index):
+            stack.append('$(')
+            index += 2
+            continue
+        elif char == '(':
+            stack.append('(')
+        elif char == ')':
+            if top in {'$(', '('}:
+                stack.pop()
+        elif char == '#' and (index == 0 or line[index - 1] in ' \t;&|()'):
+            break
+        elif line.startswith('<<<', index):
+            index += 3
+            continue
+        elif line.startswith('<<', index):
+            match = HEREDOC_RE.match(line, index)
+            if match and (match.group(2) or match.group(3) or match.group(4)):
+                operators.append(match)
+                index = match.end()
+                continue
+            index += 2
+            continue
+        index += 1
+    return operators
+
+
+@functools.lru_cache(maxsize=256)
+def split_heredocs(text):
+    """Separate heredoc bodies from the command lines that open them.
+
+    Returns (command_lines, heredocs). Each heredoc records the line that
+    opened it, its delimiter, whether that was quoted, its body lines, and
+    whether a delimiter line closed it. Every heredoc is tracked, not only the
+    ones a caller cares about: a heredoc nested in another's body is text, and
+    only skipping the outer body keeps it that way.
+
+    Cached, because each level of a parse asks three questions of the same
+    text. The result is shared between callers, so treat it as read-only.
+    """
+    command_lines = []
+    heredocs = []
+    pending = []
+    stack = []
+    for raw_line in text.splitlines(keepends=True):
+        line = raw_line.rstrip('\r\n')
+        if pending:
+            current = pending[0]
+            comparable = line.lstrip('\t') if current['strip_tabs'] else line
+            if comparable == current['delimiter']:
+                current['closed'] = True
+                pending.pop(0)
+                continue
+            current['body'].append(raw_line)
+            continue
+        command_lines.append(raw_line)
+        for match in heredoc_operators(line, stack):
+            heredoc = {
+                'line': raw_line,
+                'delimiter': match.group(2) or match.group(3) or match.group(4),
+                'strip_tabs': match.group(0).startswith('<<-'),
+                'quoted': bool(match.group(2) or match.group(3)),
+                'body': [],
+                'closed': False,
+            }
+            heredocs.append(heredoc)
+            pending.append(heredoc)
+    return command_lines, heredocs
 
 
 def strip_heredoc_bodies(text):
@@ -239,50 +410,21 @@ def strip_heredoc_bodies(text):
     command substitutions in the body still execute. If the heredoc receiver is
     a shell/eval command, the whole body is executable shell input too.
     """
-    output = []
+    command_lines, heredocs = split_heredocs(text)
     substitutions = []
     executable_bodies = []
-    pending = []
-
-    for raw_line in text.splitlines(keepends=True):
-        line_no_newline = raw_line.rstrip('\r\n')
-        if pending:
-            current = pending[0]
-            delimiter, strip_tabs, quoted = current['delimiter'], current['strip_tabs'], current['quoted']
-            comparable = line_no_newline.lstrip('\t') if strip_tabs else line_no_newline
-            if comparable == delimiter:
-                if current['receiver_shell']:
-                    executable_bodies.append(''.join(current['body']))
-                pending.pop(0)
-                continue
-            current['body'].append(raw_line)
-            if not quoted:
-                substitutions.extend(extract_executable_backticks(raw_line))
-                substitutions.extend(extract_dollar_substitutions(raw_line))
-            continue
-
-        output.append(raw_line)
-        receiver_shell = heredoc_receiver_is_shell(raw_line)
-        for match in HEREDOC_RE.finditer(raw_line):
-            operator = match.group(0)
-            delimiter = match.group(2) or match.group(3) or match.group(4) or ''
-            if not delimiter:
-                continue
-            strip_tabs = operator.startswith('<<-')
-            quoted = bool(match.group(2) or match.group(3))
-            pending.append({
-                'delimiter': delimiter,
-                'strip_tabs': strip_tabs,
-                'quoted': quoted,
-                'receiver_shell': receiver_shell,
-                'body': [],
-            })
-
-    for current in pending:
-        if current['receiver_shell']:
-            executable_bodies.append(''.join(current['body']))
-
-    return ''.join(output), substitutions, executable_bodies
+    receiver_shell = {}
+    for heredoc in heredocs:
+        if not heredoc['quoted']:
+            for body_line in heredoc['body']:
+                substitutions.extend(extract_executable_backticks(body_line))
+                substitutions.extend(extract_dollar_substitutions(body_line))
+        line = heredoc['line']
+        if line not in receiver_shell:
+            receiver_shell[line] = heredoc_receiver_is_shell(line)
+        if receiver_shell[line]:
+            executable_bodies.append(''.join(heredoc['body']))
+    return ''.join(command_lines), substitutions, executable_bodies
 
 
 def token_basename(token):
@@ -942,10 +1084,39 @@ def ruby_perl_exec_fragments(text):
     return fragments
 
 
+def statement_end(code, start, limit):
+    """Index of the first `;` or newline outside quotes at or after `start`."""
+    index = start
+    quote = ''
+    while index < limit:
+        char = code[index]
+        if quote:
+            if char == '\\' and quote == '"':
+                index += 2
+                continue
+            if char == quote:
+                quote = ''
+        elif char in {'"', "'"}:
+            quote = char
+        elif char in {';', '\n'}:
+            return index
+        index += 1
+    return limit
+
+
 def execution_call_regions(code):
-    """Return the argument text of each process-launch call in `code`."""
+    """Return the argument text of each process-launch call in `code`.
+
+    Perl and Ruby launch without parentheses (`system "git commit"`,
+    `exec 'git', 'commit'`); their arguments run to the end of the statement.
+    """
     regions = []
     for match in CODE_EXECUTION_RE.finditer(code):
+        launch = match.group(0)
+        if launch[-1:] in {'"', "'"} or launch.endswith(('%w', 'qw')):
+            start = match.end() - (1 if launch[-1:] in {'"', "'"} else 2)
+            regions.append(code[start:statement_end(code, start, min(len(code), start + 20000))])
+            continue
         opening = code.find('(', max(match.end() - 1, 0), match.end() + 200)
         if opening == -1:
             continue
@@ -2030,33 +2201,10 @@ def heredoc_write_target(line, variables=None, cwd=None):
 
 def heredoc_generated_scripts(text, variables=None, cwd=None):
     generated = {}
-    pending = []
-    for raw_line in text.splitlines(keepends=True):
-        line = raw_line.rstrip('\r\n')
-        if pending:
-            current = pending[0]
-            comparable = line.lstrip('\t') if current['strip_tabs'] else line
-            if comparable == current['delimiter']:
-                if current['target']:
-                    generated[normalize_generated_path(current['target'])] = ''.join(current['body'])
-                pending.pop(0)
-                continue
-            current['body'].append(raw_line)
-            continue
-        for match in HEREDOC_RE.finditer(raw_line):
-            operator = match.group(0)
-            delimiter = match.group(2) or match.group(3) or match.group(4) or ''
-            if not delimiter:
-                continue
-            pending.append({
-                'delimiter': delimiter,
-                'strip_tabs': operator.startswith('<<-'),
-                'target': heredoc_write_target(raw_line, variables, cwd),
-                'body': [],
-            })
-    for current in pending:
-        if current['target']:
-            generated[normalize_generated_path(current['target'])] = ''.join(current['body'])
+    for heredoc in split_heredocs(text)[1]:
+        target = heredoc_write_target(heredoc['line'], variables, cwd)
+        if target:
+            generated[normalize_generated_path(target)] = ''.join(heredoc['body'])
     return generated
 
 
@@ -2325,31 +2473,13 @@ def heredoc_receiver_interpreter_kind(line):
 
 def interpreter_heredoc_bodies(text):
     bodies = []
-    pending = []
-    for raw_line in text.splitlines(keepends=True):
-        line = raw_line.rstrip('\r\n')
-        if pending:
-            current = pending[0]
-            comparable = line.lstrip('\t') if current['strip_tabs'] else line
-            if comparable == current['delimiter']:
-                bodies.append((current['kind'], ''.join(current['body'])))
-                pending.pop(0)
-                continue
-            current['body'].append(raw_line)
-            continue
-        kind = heredoc_receiver_interpreter_kind(raw_line)
-        for match in HEREDOC_RE.finditer(raw_line):
-            operator = match.group(0)
-            delimiter = match.group(2) or match.group(3) or match.group(4) or ''
-            if delimiter and kind:
-                pending.append({
-                    'delimiter': delimiter,
-                    'strip_tabs': operator.startswith('<<-'),
-                    'kind': kind,
-                    'body': [],
-                })
-    for current in pending:
-        bodies.append((current['kind'], ''.join(current['body'])))
+    kinds = {}
+    for heredoc in split_heredocs(text)[1]:
+        line = heredoc['line']
+        if line not in kinds:
+            kinds[line] = heredoc_receiver_interpreter_kind(line)
+        if kinds[line]:
+            bodies.append((kinds[line], ''.join(heredoc['body'])))
     return bodies
 
 

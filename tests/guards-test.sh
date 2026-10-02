@@ -561,6 +561,24 @@ assert_destructive_clean "dd to a regular file" \
   'dd if=/dev/zero of=./disk-image.bin bs=1024 count=1'
 assert_destructive_clean "dd to null" \
   'dd if=/dev/zero of=/dev/null bs=1024 count=1'
+# A `<<` the shell does not read as an operator opens no heredoc. Each of these
+# once opened one that never closed, and the command after it went unread.
+assert_destructive_blocks "a quoted << before a destructive command" \
+  $'echo "shift with a << b"\nrm -rf /'
+assert_destructive_blocks "a single-quoted << before a destructive command" \
+  $'echo \'a << b\'\nrm -rf /'
+assert_destructive_blocks "a here-string before a destructive command" \
+  $'grep -q x <<< "y"\nrm -rf /'
+assert_destructive_blocks "an arithmetic shift before a destructive command" \
+  $'echo $(( a << b ))\nrm -rf /'
+assert_destructive_blocks "a commented << before a destructive command" \
+  $'ls # a << b\nrm -rf /'
+assert_destructive_blocks "a << inside a multi-line string" \
+  $'git commit -m "feat: x\n\nexplain a << b"\nrm -rf /'
+# The commit-message heredoc sits inside double quotes, and is still a heredoc:
+# its body is text.
+assert_destructive_clean "a commit message heredoc that mentions rm -rf /" \
+  $'git commit -m "$(cat <<\'EOF\'\nfeat: x\n\nrm -rf / and git commit text\nEOF\n)"'
 # A substitution in command position is ordinary tooling; resolving its output
 # must not make these look destructive.
 # `xargs` without a pipe reads the terminal, so "no values on the line" is not

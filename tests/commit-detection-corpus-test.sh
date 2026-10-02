@@ -145,6 +145,21 @@ check none   'echo "total: $(( $(git log --oneline | wc -l) + 1 ))"'
 check commit 'printf "a\nb\n" | xargs -I{} git commit -m {}'
 check none   'printf "a\nb\n" | xargs -I{} echo git commit -m {}'
 
+# Heredocs. A `<<` the shell does not read as an operator opens no heredoc, so
+# the commit after it is still read.
+check commit $'echo "shift with a << b"\ngit commit -m "feat: x"'
+check commit $'grep -q x <<< "y"\ngit commit -m "feat: x"'
+check commit $'git commit -m "$(cat <<\'EOF\'\nfeat: x\n\nrm -rf / and git commit text\nEOF\n)"'
+# An interpreter heredoc is a script: a literal counts only when it is passed
+# to a launch call.
+check none   $'python3 - <<\'PY\'\n# no subprocess here\nmsg = "git commit -m x"\nprint(msg)\nPY'
+check none   $'python3 - <<\'PY\'\nimport subprocess\nHELP = "git commit --amend"\nsubprocess.run(["git", "status"])\nPY'
+check commit $'python3 - <<\'PY\'\nimport subprocess\nsubprocess.run(["git", "commit", "-m", "x"])\nPY'
+check commit $'perl - <<\'PL\'\nsystem "git commit -m x";\nPL'
+check commit $'ruby - <<\'RB\'\nsystem \'git\', \'commit\', \'-m\', \'x\'\nRB'
+# A heredoc inside another heredoc's body is text.
+check none   $'cat > notes.md <<\'EOF\'\npython3 - <<\'PY\'\nimport subprocess\nsubprocess.run(["git", "commit", "-m", "x"])\nPY\nEOF'
+
 # Not a commit even though the word appears.
 check none   'grep -r "git commit" .'
 check none   'git config alias.ci commit'
