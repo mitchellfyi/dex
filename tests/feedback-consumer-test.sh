@@ -299,7 +299,7 @@ DX_STUB_CALL_LOG="$TMP_DIR/stub-call.log" DX_STUB_ANSWER="$TMP_DIR/answer-fails.
 [[ "$(jget "$CAPTURED_MANIFEST" 'd["has_reproduction"]')" == "True" ]] || assert_at $LINENO
 [[ "$(jget "$CAPTURED_MANIFEST" 'd["reproduction_source"]["kind"]')" == "model" ]] || assert_at $LINENO
 [[ -x "$DX_FEEDBACK_DIR/$CAPTURED_ID/reproduction/check.sh" ]] || assert_at $LINENO
-[[ "$(stat -f '%Lp' "$DX_FEEDBACK_DIR/$CAPTURED_ID/reproduction/check.sh" 2>/dev/null || stat -c '%a' "$DX_FEEDBACK_DIR/$CAPTURED_ID/reproduction/check.sh")" == "700" ]] || assert_at $LINENO
+[[ "$(stat -c '%a' "$DX_FEEDBACK_DIR/$CAPTURED_ID/reproduction/check.sh" 2>/dev/null || stat -f '%Lp' "$DX_FEEDBACK_DIR/$CAPTURED_ID/reproduction/check.sh")" == "700" ]] || assert_at $LINENO
 assert_contains "Treat heredoc bodies as data" "$DX_FEEDBACK_DIR/$CAPTURED_ID/reproduction/check.sh"
 CAPTURED_EVAL="$DX_FEEDBACK_DIR/$CAPTURED_ID/evaluation.json"
 assert_contains "reproduced, no change proposed" "$CAPTURED_EVAL"

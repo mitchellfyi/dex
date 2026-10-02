@@ -43,7 +43,7 @@ $MISSION init --mission-id m-1 --brief-file "$TMP_DIR/brief.md" \
   --source-tickets GH-1,GH-2 > /dev/null
 [[ -f "$LEDGER/records.jsonl" ]] || assert_at $LINENO
 [[ -f "$LEDGER/current.json" ]] || assert_at $LINENO
-[[ "$(stat -f '%Lp' "$LEDGER/current.json" 2>/dev/null || stat -c '%a' "$LEDGER/current.json")" == "600" ]] || assert_at $LINENO
+[[ "$(stat -c '%a' "$LEDGER/current.json" 2>/dev/null || stat -f '%Lp' "$LEDGER/current.json")" == "600" ]] || assert_at $LINENO
 [[ "$(wc -l < "$LEDGER/records.jsonl" | tr -d ' ')" == "1" ]] || assert_at $LINENO
 [[ "$(jget "$LEDGER/current.json" 'd["schema_version"]')" == "1" ]] || assert_at $LINENO
 [[ "$(jget "$LEDGER/current.json" 'd["mission"]["mission_id"]')" == "m-1" ]] || assert_at $LINENO

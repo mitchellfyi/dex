@@ -67,7 +67,7 @@ python3 "$STORE_PY" "$STORE_A" ingest --repo "$REPO_A" --source "mission:test" "
 [[ "$(jget "$TMP_DIR/ingest.json" 'len(d["rejected"])')" == "1" ]] || assert_at $LINENO
 [[ "$(jget "$TMP_DIR/ingest.json" 'd["rejected"][0]["reason"]')" == "missing evidence" ]] || assert_at $LINENO
 [[ -f "$STORE_A/entries.json" ]] || assert_at $LINENO
-[[ "$(stat -f '%Lp' "$STORE_A/entries.json" 2>/dev/null || stat -c '%a' "$STORE_A/entries.json")" == "600" ]] || assert_at $LINENO
+[[ "$(stat -c '%a' "$STORE_A/entries.json" 2>/dev/null || stat -f '%Lp' "$STORE_A/entries.json")" == "600" ]] || assert_at $LINENO
 FACT_ID="$(python3 -c 'import json,sys; e=json.load(open(sys.argv[1]))["entries"]; print(next(k for k,v in e.items() if v["type"]=="fact"))' "$STORE_A/entries.json")"
 [[ "$(jget "$STORE_A/entries.json" "d['entries']['$FACT_ID']['seen']")" == "2" ]] || assert_at $LINENO
 [[ "$(jget "$STORE_A/entries.json" "d['entries']['$FACT_ID']['source_checked']")" == "True" ]] || assert_at $LINENO
