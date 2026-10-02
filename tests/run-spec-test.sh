@@ -11,7 +11,7 @@ SERVER_COUNT=0
 
 cleanup() {
   local server_pid
-  for server_pid in "${SERVER_PIDS[@]}"; do
+  for server_pid in ${SERVER_PIDS[@]+"${SERVER_PIDS[@]}"}; do
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   done
@@ -435,7 +435,9 @@ printf 'dirty\n' > "$DIRTY_REPO/dirty.txt"
 DIRTY_SPEC="$TMP_DIR/dirty-run-spec.json"
 write_spec "$DIRTY_SPEC" "run_test_setup_failure" "$DIRTY_REPO"
 export DIRTY_SPEC
-if zsh -fc 'source "$DEX_DIR/dx.sh"; dx run --spec "$DIRTY_SPEC"' > "$TMP_DIR/setup-failure.out" 2>&1; then
+# The provider is ready by fiat: this case is about the dirty checkout, and a
+# CI runner has no claude for the readiness check that runs first.
+if zsh -fc 'source "$DEX_DIR/dx.sh"; dx_provider_agent_ready_check() { return 0; }; dx run --spec "$DIRTY_SPEC"' > "$TMP_DIR/setup-failure.out" 2>&1; then
   printf 'dirty checkout setup unexpectedly passed\n' >&2
   exit 1
 fi
