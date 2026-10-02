@@ -990,4 +990,15 @@ if module.legacy('claude', 'playwright', '@playwright/mcp@latest'):
     raise AssertionError('custom browser configuration must survive')
 PYTEST
 
+# Saved browser state lets a capture start signed in; it holds session secrets, so only a private file is accepted.
+STATE_FILE="$TMP_DIR/storage-state.json"
+printf '{"cookies":[],"origins":[]}\n' > "$STATE_FILE"
+chmod 600 "$STATE_FILE"
+STATE_CHECK="console.log(require('$ROOT/scripts/ui-capture.cjs').storageStateFile() || 'none')"
+assert_eq "$STATE_FILE" "$(DX_UI_CAPTURE_STORAGE_STATE="$STATE_FILE" node -e "$STATE_CHECK")" "storage state is used when private"
+assert_eq "none" "$(env -u DX_UI_CAPTURE_STORAGE_STATE node -e "$STATE_CHECK")" "no storage state by default"
+assert_rejected "relative storage state" env DX_UI_CAPTURE_STORAGE_STATE=storage-state.json node -e "$STATE_CHECK" 2>/dev/null
+chmod 644 "$STATE_FILE"
+assert_rejected "readable storage state" env DX_UI_CAPTURE_STORAGE_STATE="$STATE_FILE" node -e "$STATE_CHECK" 2>/dev/null
+
 printf 'ui capture tests passed\n'

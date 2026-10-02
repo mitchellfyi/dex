@@ -220,6 +220,8 @@ Validation rejects unknown actions, unsafe locator keys, fixed-wait-only capture
 
 ## Capture workflow
 
+To capture an app behind a login the walkthrough should not show, save a signed-in browser state first (Playwright's `storageState`) and point `DX_UI_CAPTURE_STORAGE_STATE` at it. The file holds session cookies, so it must be an absolute path to a regular file you own with mode 600; the capture refuses anything else. Delete it when the capture finishes. Values a storyboard types in, such as a password, belong in `fill` actions with `env` rather than `text`, so they never appear in the storyboard or transcript.
+
 Start the baseline app using the repository's normal development command. Capture before implementation when it adds useful comparison:
 
 ```bash

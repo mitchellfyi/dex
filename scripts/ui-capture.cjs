@@ -838,12 +838,34 @@ async function overlayFreeScreenshotHash(page) {
   }
 }
 
+// Saved browser state (cookies and local storage) lets a capture start signed in to an app
+// whose login the walkthrough should not show. It carries session secrets, so it must be a
+// regular file owned by this user that nobody else can read, like other private input.
+function storageStateFile(env = process.env) {
+  const file = env.DX_UI_CAPTURE_STORAGE_STATE;
+  if (!file) return undefined;
+  if (!path.isAbsolute(file)) fail('DX_UI_CAPTURE_STORAGE_STATE must be an absolute path');
+  let info;
+  try {
+    info = fs.lstatSync(file);
+  } catch (_) {
+    fail(`Storage state not found: ${file}`);
+  }
+  const owner = typeof process.getuid === 'function' ? process.getuid() : info.uid;
+  if (!info.isFile() || info.uid !== owner || (info.mode & 0o077)) {
+    fail('Storage state must be a regular file owned by this user with mode 600');
+  }
+  return file;
+}
+
 async function runViewport({ browser, playwright, options, storyboard, viewportName, viewport }) {
   const outDir = options.out;
   const videoDir = path.join(outDir, 'video', viewportName);
   const contextOptions = viewportName === 'mobile'
     ? { ...playwright.devices['iPhone 15'], viewport, deviceScaleFactor: 1, ignoreHTTPSErrors: true }
     : { viewport, deviceScaleFactor: 1, ignoreHTTPSErrors: true };
+  const storageState = storageStateFile();
+  if (storageState) contextOptions.storageState = storageState;
   if (options.video || storyboard) {
     fs.mkdirSync(videoDir, { recursive: true });
     contextOptions.recordVideo = { dir: videoDir, size: viewport };
@@ -1724,6 +1746,7 @@ module.exports = {
   produceBundle,
   runAction,
   stageHash,
+  storageStateFile,
   webUrl,
   writeVtt,
 };
