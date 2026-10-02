@@ -157,6 +157,10 @@ check none   $'python3 - <<\'PY\'\nimport subprocess\nHELP = "git commit --amend
 check commit $'python3 - <<\'PY\'\nimport subprocess\nsubprocess.run(["git", "commit", "-m", "x"])\nPY'
 check commit $'perl - <<\'PL\'\nsystem "git commit -m x";\nPL'
 check commit $'ruby - <<\'RB\'\nsystem \'git\', \'commit\', \'-m\', \'x\'\nRB'
+# Quoting: \' inside $'…' is escaped, a backslash inside '…' is literal.
+check commit $'echo $\'it\\\'s\'; git commit -m x; echo \'y\''
+check commit $'echo \'a\\\' $(git commit -m x)'
+check none   $'echo $\'it\\\'s git commit -m x\''
 # A heredoc inside another heredoc's body is text.
 check none   $'cat > notes.md <<\'EOF\'\npython3 - <<\'PY\'\nimport subprocess\nsubprocess.run(["git", "commit", "-m", "x"])\nPY\nEOF'
 

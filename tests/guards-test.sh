@@ -575,6 +575,21 @@ assert_destructive_blocks "a commented << before a destructive command" \
   $'ls # a << b\nrm -rf /'
 assert_destructive_blocks "a << inside a multi-line string" \
   $'git commit -m "feat: x\n\nexplain a << b"\nrm -rf /'
+# In $'…' a backslash escapes, so \' does not end the string; in plain '…' it
+# is literal, so 'a\' does. Read the other way round, each of these hid the
+# command after the string.
+assert_destructive_blocks "a command after an ANSI-C string with an escaped quote" \
+  $'echo $\'it\\\'s fine\'\nrm -rf /'
+assert_destructive_blocks "a command between an ANSI-C string and a later quote" \
+  $'echo $\'it\\\'s\'; rm -rf /; echo \'x\''
+assert_destructive_blocks "a substitution after a single-quoted backslash" \
+  $'echo \'a\\\' $(rm -rf /)'
+assert_destructive_blocks "a backtick after a single-quoted backslash" \
+  $'echo \'a\\\' `rm -rf /`'
+assert_destructive_blocks "an ANSI-C quoted command word" \
+  $'$\'rm\' -rf /'
+assert_destructive_clean "an ANSI-C string that only mentions rm -rf /" \
+  $'echo $\'it\\\'s rm -rf /\''
 # The commit-message heredoc sits inside double quotes, and is still a heredoc:
 # its body is text.
 assert_destructive_clean "a commit message heredoc that mentions rm -rf /" \

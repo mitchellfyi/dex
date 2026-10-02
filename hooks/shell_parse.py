@@ -51,6 +51,7 @@ __all__ = [
     'command_substitution_body_tokens', 'command_substitution_end',
     'command_substitution_literal_command_token',
     'command_substitution_resolved_invocation',
+    'ansi_c_quote_span', 'ansi_c_word',
     'command_token_has_embedded_substitution', 'decode_ansi_c_token',
     'decode_shell_backslash_escapes', 'dex_root',
     'downstream_pipeline_has_shell', 'downstream_pipeline_interpreter_kind',
@@ -78,6 +79,7 @@ __all__ = [
     'ruby_perl_exec_fragments', 'runner_command_end', 'runner_shell_payloads',
     'scan_backtick_word', 'scan_dollar_substitution_word',
     'shebang_interpreter_kind', 'shell_assignment_literal_pair',
+    'shlex_ansi_c_quotes', 'single_quote_end',
     'shell_c_scripts', 'shell_file_body_status', 'shell_functions',
     'shell_invocation_is_noexec', 'shell_quote_tokens', 'shell_script_arg',
     'shell_script_file_arg', 'shell_stdin_literal', 'shell_tokens',
@@ -92,9 +94,48 @@ __all__ = [
 ]
 
 
+def shlex_ansi_c_quotes(text):
+    """Rewrite each $'…' string as a double-quoted word shlex reads the same way.
+
+    shlex has no ANSI-C quoting. It ended `$'it\\'s'` at the escaped quote and
+    read the rest of the command as one long string, commands and all.
+    """
+    if "$'" not in text:
+        return text
+    output = []
+    in_double = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == '\\':
+            output.append(text[index:index + 2])
+            index += 2
+            continue
+        if not in_double and char in "$'":
+            quote_end = single_quote_end(text, index)
+            if quote_end is not None and char == '$':
+                # Same word ansi_c_word gives: `$`-prefixed only when there
+                # is an escape left to decode.
+                content = text[index + 2:ansi_c_quote_span(text, index)[0]]
+                prefix = '$' if '\\' in content else ''
+                output.append(prefix + '"' + content.replace('\\', '\\\\').replace('"', '\\"') + '"')
+                index = quote_end
+                continue
+            if quote_end is not None:
+                output.append(text[index:quote_end])
+                index = quote_end
+                continue
+        if char == '"':
+            in_double = not in_double
+        output.append(char)
+        index += 1
+    return ''.join(output)
+
+
 def shell_tokens(text):
     """Tokenize a shell fragment enough for command-position guard checks."""
     text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
+    text = shlex_ansi_c_quotes(text)
     text = text.replace('\n', ' ; ')
     lexer = shlex.shlex(text, posix=True, punctuation_chars=';&|()<>')
     lexer.whitespace_split = True
@@ -125,10 +166,53 @@ def normalize_shell_tokens(tokens):
     return normalized
 
 
+def single_quote_end(text, index):
+    """Index just past a single-quoted string starting at `index`, else None.
+
+    A plain '…' string ends at the next quote: a backslash inside it is a
+    literal character, so 'a\\' is closed and what follows it runs. A $'…'
+    string (ANSI-C quoting) is the opposite: a backslash escapes, and \\'
+    does not close it. Reading either the other way hid every command after
+    the string from the guards.
+    """
+    if text.startswith("$'", index):
+        return ansi_c_quote_span(text, index)[1]
+    if index < len(text) and text[index] == "'":
+        closing = text.find("'", index + 1)
+        return len(text) if closing == -1 else closing + 1
+    return None
+
+
+def ansi_c_quote_span(text, index):
+    """(content end, string end) for the $'…' string at `index`.
+
+    An unterminated string runs to the end of the text, as the shell would
+    keep reading it.
+    """
+    cursor = index + 2
+    while cursor < len(text):
+        if text[cursor] == '\\':
+            cursor += 2
+            continue
+        if text[cursor] == "'":
+            return cursor, cursor + 1
+        cursor += 1
+    return len(text), len(text)
+
+
+def ansi_c_word(content):
+    """The word a $'…' string stands for, in the form the decoders expect.
+
+    Without an escape it is just its content, so `$'rm' -rf /` reads as rm.
+    With one it keeps the `$` prefix decode_ansi_c_token looks for, so the
+    escapes are decoded once, where every other caller decodes them.
+    """
+    return '$' + content if '\\' in content else content
+
+
 def extract_executable_backticks(text):
     """Return backtick command-substitution bodies outside single quotes."""
     fragments = []
-    in_single = False
     in_double = False
     escaped = False
     index = 0
@@ -142,15 +226,16 @@ def extract_executable_backticks(text):
             escaped = True
             index += 1
             continue
-        if char == "'" and not in_double:
-            in_single = not in_single
-            index += 1
-            continue
-        if char == '"' and not in_single:
+        if not in_double and char in "$'":
+            quote_end = single_quote_end(text, index)
+            if quote_end is not None:
+                index = quote_end
+                continue
+        if char == '"':
             in_double = not in_double
             index += 1
             continue
-        if char == '`' and not in_single:
+        if char == '`':
             start = index + 1
             index = start
             escaped_inner = False
@@ -179,7 +264,6 @@ def extract_dollar_substitutions(text):
     run is still returned on its own.
     """
     fragments = []
-    in_single = False
     in_double = False
     escaped = False
     index = 0
@@ -193,22 +277,22 @@ def extract_dollar_substitutions(text):
             escaped = True
             index += 1
             continue
-        if char == "'" and not in_double:
-            in_single = not in_single
-            index += 1
-            continue
-        if char == '"' and not in_single:
+        if not in_double and char in "$'":
+            quote_end = single_quote_end(text, index)
+            if quote_end is not None:
+                index = quote_end
+                continue
+        if char == '"':
             in_double = not in_double
             index += 1
             continue
-        if char == '$' and not in_single and index + 1 < len(text) and text[index + 1] == '(':
+        if char == '$' and index + 1 < len(text) and text[index + 1] == '(':
             if index + 2 < len(text) and text[index + 2] == '(':
                 index += 2
                 continue
             start = index + 2
             index = start
             depth = 1
-            inner_single = False
             inner_double = False
             inner_escaped = False
             while index < len(text):
@@ -217,13 +301,15 @@ def extract_dollar_substitutions(text):
                     inner_escaped = False
                 elif inner == '\\':
                     inner_escaped = True
-                elif inner == "'" and not inner_double:
-                    inner_single = not inner_single
-                elif inner == '"' and not inner_single:
+                elif not inner_double and inner in "$'" \
+                        and single_quote_end(text, index) is not None:
+                    index = single_quote_end(text, index)
+                    continue
+                elif inner == '"':
                     inner_double = not inner_double
-                elif inner == '(' and not inner_single and not inner_double:
+                elif inner == '(' and not inner_double:
                     depth += 1
-                elif inner == ')' and not inner_single and not inner_double:
+                elif inner == ')' and not inner_double:
                     depth -= 1
                     if depth == 0:
                         fragments.append(text[start:index])
@@ -1216,7 +1302,6 @@ def scan_dollar_substitution_word(text, start):
     output = ['$(']
     index = start + 2
     depth = 1
-    in_single = False
     in_double = False
     escaped = False
     while index < len(text):
@@ -1231,24 +1316,25 @@ def scan_dollar_substitution_word(text, start):
             escaped = True
             index += 1
             continue
-        if char == "'" and not in_double:
-            output.append(char)
-            in_single = not in_single
-            index += 1
-            continue
-        if char == '"' and not in_single:
+        if not in_double and char in "$'":
+            quote_end = single_quote_end(text, index)
+            if quote_end is not None:
+                output.append(text[index:quote_end])
+                index = quote_end
+                continue
+        if char == '"':
             output.append(char)
             in_double = not in_double
             index += 1
             continue
-        if char == '$' and not in_single and index + 1 < len(text) and text[index + 1] == '(':
+        if char == '$' and index + 1 < len(text) and text[index + 1] == '(':
             output.append('$(')
             depth += 1
             index += 2
             continue
-        if char == '(' and not in_single and not in_double:
+        if char == '(' and not in_double:
             depth += 1
-        elif char == ')' and not in_single and not in_double:
+        elif char == ')' and not in_double:
             depth -= 1
             if depth == 0:
                 output.append(char)
@@ -1300,6 +1386,11 @@ def shell_word_tokens(text):
                 continue
             escaped = True
             index += 1
+            continue
+        if not in_single and not in_double and text.startswith("$'", index):
+            content_end, quote_end = ansi_c_quote_span(text, index)
+            word.append(ansi_c_word(text[index + 2:content_end]))
+            index = quote_end
             continue
         if char == "'" and not in_double:
             in_single = not in_single
