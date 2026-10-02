@@ -2,10 +2,10 @@
 # Every tests/*-test.sh file appears once. run-all.sh rejects drift before it
 # starts a test. `service` and `serial` run exclusively; `fast` and `slow` may
 # run in parallel. Use `shared` isolation only when a test must inherit state.
+ab-launch-test.sh	fast	all	600	hermetic
 attribution-test.sh	slow	all	1200	hermetic
 attribution-worktree-test.sh	fast	all	600	hermetic
-benchmark-workflow-test.sh	fast	all	600	hermetic
-ccr-routing-test.sh	fast	all	600	hermetic
+ccr-routing-test.sh	service	all	600	hermetic
 checkpoint-test.sh	fast	all	600	hermetic
 cli-help-test.sh	fast	all	600	hermetic
 cli-numeric-validation-test.sh	fast	all	600	hermetic
@@ -22,11 +22,14 @@ dexcode-curlrc-test.sh	service	all	900	hermetic
 dexcode-revoked-test.sh	service	all	900	hermetic
 dexcode-worker-test.sh	service	all	900	hermetic
 docs-consistency-test.sh	fast	all	600	hermetic
+dx-input-routing-test.sh	fast	all	600	hermetic
 dx-script-test.sh	fast	all	600	hermetic
 events-test.sh	fast	all	600	hermetic
 factory-redirect-test.sh	service	all	900	hermetic
 factory-sync-test.sh	service	all	900	hermetic
-foreign-checkout-bootstrap-test.sh	fast	all	300	hermetic
+feedback-consumer-test.sh	slow	all	1200	hermetic
+feedback-outbox-test.sh	fast	all	600	hermetic
+gate-env-fingerprint-test.sh	fast	all	600	hermetic
 gate-receipt-test.sh	fast	all	300	hermetic
 guards-test.sh	serial	all	1200	hermetic
 headless-provider-test.sh	fast	all	600	hermetic
@@ -37,14 +40,17 @@ host-efficiency-journey-test.sh	fast	all	300	hermetic
 host-etiquette-test.sh	fast	all	300	hermetic
 init-reliability-test.sh	fast	all	600	hermetic
 init-uninit-ownership-test.sh	slow	all	1200	hermetic
+input-classify-test.sh	fast	all	600	hermetic
 install-health-test.sh	slow	all	1200	hermetic
 install-uninstall-test.sh	slow	all	1200	hermetic
+intake-consolidation-test.sh	fast	all	600	hermetic
 issue-hygiene-contract-test.sh	fast	all	600	hermetic
 legacy-resume-test.sh	fast	all	600	hermetic
 lifecycle-control-cli-test.sh	fast	all	600	hermetic
 lifecycle-control-hook-test.sh	fast	all	600	hermetic
 lifecycle-control-loop-test.sh	fast	all	600	hermetic
 lifecycle-control-parser-test.sh	fast	all	600	hermetic
+lifecycle-harvest-test.sh	fast	all	600	hermetic
 lifecycle-progress-test.sh	fast	all	600	hermetic
 lifecycle-relaunch-control-test.sh	fast	all	600	hermetic
 lifecycle-terminal-event-test.sh	service	all	900	hermetic
@@ -53,6 +59,15 @@ log-command-test.sh	fast	all	600	hermetic
 maintenance-intake-test.sh	fast	all	600	hermetic
 maintenance-state-test.sh	fast	all	600	hermetic
 maintenance-test.sh	slow	all	1200	hermetic
+memory-curate-test.sh	fast	all	600	hermetic
+memory-hooks-test.sh	fast	all	600	hermetic
+memory-land-test.sh	fast	all	600	hermetic
+memory-maintain-test.sh	fast	all	600	hermetic
+memory-store-test.sh	fast	all	600	hermetic
+mission-context-test.sh	fast	all	600	hermetic
+mission-guards-test.sh	fast	all	600	hermetic
+mission-launch-test.sh	fast	all	600	hermetic
+mission-ledger-test.sh	fast	all	600	hermetic
 output-format-test.sh	fast	all	600	hermetic
 override-policy-test.sh	fast	all	600	hermetic
 parser-drift-test.sh	fast	all	600	hermetic
@@ -65,9 +80,12 @@ private-file-test.sh	fast	all	600	hermetic
 prompt-session-test.sh	fast	all	600	hermetic
 provider-codex-launch-test.sh	fast	all	600	hermetic
 provider-command-test.sh	fast	all	600	hermetic
+provider-explicit-profile-test.sh	fast	all	600	hermetic
 provider-session-recovery-test.sh	fast	all	600	hermetic
 public-command-args-test.sh	fast	all	600	hermetic
 push-guards-test.sh	fast	all	600	hermetic
+qa-lifecycle-contract-test.sh	fast	all	300	hermetic
+qa-report-test.sh	fast	all	600	hermetic
 research-compare-test.sh	fast	all	600	hermetic
 research-orchestrate-args-test.sh	fast	all	600	hermetic
 research-score-test.sh	fast	all	600	hermetic
@@ -86,10 +104,7 @@ review-evaluation-harness-test.sh	serial	all	1200	hermetic
 review-evidence-v3-test.sh	slow	all	1200	hermetic
 review-ladder-contract-test.sh	fast	all	300	hermetic
 review-loop-contract-test.sh	slow	all	1200	hermetic
-# review-loop-test takes ~1000s on Linux CI and on an Apple-silicon Mac, and
-# ran past 1800s on the slower macOS runner. 3600 still catches a hang inside
-# the resource job's 90 minutes.
-review-loop-test.sh	serial	all	3600	hermetic
+review-loop-test.sh	serial	all	1800	hermetic
 review-policy-config-test.sh	fast	all	600	hermetic
 review-policy-test.sh	slow	all	1200	hermetic
 review-report-test.sh	fast	all	600	hermetic
@@ -116,9 +131,12 @@ session-runtime-portability-test.sh	fast	all	600	hermetic
 session-runtime-wiring-test.sh	fast	all	600	hermetic
 session-startup-claim-test.sh	fast	all	900	hermetic
 session-telemetry-test.sh	fast	all	300	hermetic
+session-usage-event-test.sh	fast	all	600	hermetic
 standalone-provider-test.sh	slow	all	1200	hermetic
 status-line-test.sh	fast	all	600	hermetic
 sub-issue-scope-contract-test.sh	fast	all	600	hermetic
+subagent-hooks-test.sh	fast	all	600	hermetic
+sync-dry-run-test.sh	fast	all	900	hermetic
 test-command-cli-test.sh	fast	all	600	hermetic
 test-command-dex-test.sh	fast	all	600	hermetic
 test-command-project-test.sh	fast	all	600	hermetic
@@ -128,12 +146,12 @@ test-timeout-test.sh	fast	all	600	hermetic
 ticket-branch-adoption-errors-test.sh	fast	all	600	hermetic
 ticket-branch-adoption-test.sh	fast	all	600	hermetic
 ticket-branch-instructions-test.sh	fast	all	600	hermetic
-timeout-interactive-zsh-test.sh	serial	all	600	hermetic
+timeout-interactive-zsh-test.sh	serial	all	1200	hermetic
 triage-command-test.sh	fast	all	600	hermetic
 triage-hooks-test.sh	fast	all	600	hermetic
 ui-capture-test.sh	fast	all	600	hermetic
 untrusted-input-contract-test.sh	fast	all	600	hermetic
-waiver-gate-names-test.sh	fast	all	300	hermetic
+usage-collect-test.sh	fast	all	600	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-hooks-test.sh	fast	all	300	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic

@@ -54,7 +54,10 @@ if tabled != on_disk:
 # off. Compare against the tree instead: every module is sourced except
 # common.sh itself and the ones deliberately sourced lazily. Adding a name here
 # is a deliberate act, not a formality.
-LAZY = {"common.sh", "router.sh"}
+# mission.sh, memory.sh and feedback.sh load on demand too: lib/provider.sh sources
+# mission.sh for a mission launch, and the hooks and bin/mission.sh name them through
+# DX_COMMON_MODULES, so a session that never enters mission mode never pays for them.
+LAZY = {"common.sh", "router.sh", "mission.sh", "memory.sh", "feedback.sh"}
 sourced = set(re.findall(r"__dx_require_lib ([a-z-]+\.sh)", (root / "lib/common.sh").read_text()))
 if sourced != on_disk - LAZY:
     problems.append(

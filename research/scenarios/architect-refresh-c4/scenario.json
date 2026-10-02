@@ -1,0 +1,15 @@
+{
+  "name": "architect-refresh-c4",
+  "type": "architecture",
+  "description": "Bootstrap a C4 architecture map for a small seeded monorepo (API + worker + shared package). Tests dxarchitect.",
+  "timeout": 3600,
+  "language": "node",
+  "weights": {
+    "correctness": 30,
+    "test_quality": 5,
+    "robustness": 10,
+    "verification": 10,
+    "issue_detection": 5,
+    "code_quality": 40
+  }
+}

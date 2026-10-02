@@ -1,0 +1,15 @@
+{
+  "name": "contradictory-spec",
+  "type": "edge-case",
+  "description": "Design task with mutually exclusive requirements. Tests whether DX surfaces the conflicts and proposes tradeoffs, instead of silently picking one side.",
+  "timeout": 3600,
+  "language": "any",
+  "weights": {
+    "correctness": 15,
+    "test_quality": 5,
+    "robustness": 10,
+    "verification": 5,
+    "issue_detection": 35,
+    "code_quality": 30
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "buggy-code-fix",
+  "type": "bugfix",
+  "description": "Find and fix 5 bugs in provided JavaScript code, write regression tests.",
+  "timeout": 3600,
+  "language": "node"
+}

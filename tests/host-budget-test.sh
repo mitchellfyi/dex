@@ -509,4 +509,88 @@ else
   printf 'skip: no zsh on this host, so the zsh priority probe is unexercised\n'
 fi
 
+# --- ungated heavy commands are counted for the session summary -------------
+# The `warn-detached-processes` guard advises when a declared heavy command is
+# run outside `dx run-gate`. It also appends one line per such call under the
+# session's receipt directory, and the session summary reports the count, so
+# a lifecycle that never queued its gates is visible next to its gate totals.
+UNGATED_REPO="$TMP_DIR/ungated-repo"
+mkdir -p "$UNGATED_REPO/.dex"
+git -C "$UNGATED_REPO" init -q
+cat > "$UNGATED_REPO/.dex/dex.md" <<'CONTRACT'
+# Fixture
+
+## Resources
+
+```yaml
+heavy_commands:
+  - make build
+```
+CONTRACT
+UNGATED_SESSION="worktree-ticket-5151"
+UNGATED_FILE="$(dx_gate_receipt_dir "$UNGATED_SESSION")/ungated.jsonl"
+
+# guard_bash <session-id> <command> → the real hook, in the fixture repo
+guard_bash() {
+  local guard_session="$1" command_text="$2" payload
+  payload=$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' \
+    "$command_text")
+  (cd "$UNGATED_REPO" && printf '%s' "$payload" \
+    | env DEX_GUARD_EVENT=bash DEX_SESSION_ID="$guard_session" \
+      python3 "$ROOT/hooks/guard-handler.py" > "$TMP_DIR/guard.out" 2>&1)
+}
+
+guard_bash "$UNGATED_SESSION" 'make build' \
+  || fail "the advisory guard denied the tool call"
+assert_contains "warn-detached-processes" "$TMP_DIR/guard.out"
+assert_file "$UNGATED_FILE"
+assert_eq "600" "$(dx_path_mode "$UNGATED_FILE")" "the counter is private"
+guard_bash "$UNGATED_SESSION" 'cd sub && make build --jobs 2' \
+  || fail "the advisory guard denied the second call"
+# Gated, and not heavy at all: neither is an ungated heavy command.
+guard_bash "$UNGATED_SESSION" 'dx run-gate make build' \
+  || fail "the gated form was denied"
+guard_bash "$UNGATED_SESSION" 'git status' || fail "an ordinary command was denied"
+# Without a session there is nothing to attribute the call to, so nothing is
+# written; the advice itself is unchanged.
+guard_bash "" 'make build' || fail "the sessionless call was denied"
+assert_contains "warn-detached-processes" "$TMP_DIR/guard.out"
+assert_eq "2" "$(wc -l < "$UNGATED_FILE" | tr -d ' ')" \
+  "one line per ungated heavy command; gated, ordinary and sessionless calls add none"
+python3 - "$UNGATED_FILE" "$UNGATED_SESSION" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    rows = [json.loads(line) for line in handle if line.strip()]
+assert len(rows) == 2, rows
+for row in rows:
+    assert set(row) == {"recorded_at", "session", "command"}, row
+    assert row["session"] == sys.argv[2], row
+    assert row["recorded_at"].endswith("Z"), row
+assert rows[0]["command"] == "make build", rows[0]
+assert rows[1]["command"] == "cd sub && make build --jobs 2", rows[1]
+print("each ungated heavy command is one attributed line")
+PY
+
+# The summary carries the count, in the journal and on the line a human reads.
+mkdir -p "$(dx_session_process_dir "$UNGATED_SESSION")"
+UNGATED_RUN_ID=$(dx_run_prepare "$UNGATED_SESSION" "$UNGATED_REPO" "test" \
+  "ungated" "issue-1" "dx test")
+[[ -n "$UNGATED_RUN_ID" ]] || assert_at $LINENO
+__dx_session_summary "$UNGATED_SESSION" session-end session 0 0 \
+  > "$TMP_DIR/ungated-summary.out" 2>&1
+assert_contains "2 ungated" "$TMP_DIR/ungated-summary.out"
+assert_contains '"ungated_heavy_commands":2' "$(dx_run_events_file "$UNGATED_RUN_ID")"
+
+# A session that gated everything reports zero rather than nothing.
+GATED_SESSION="worktree-ticket-5252"
+mkdir -p "$(dx_session_process_dir "$GATED_SESSION")"
+GATED_RUN_ID=$(dx_run_prepare "$GATED_SESSION" "$UNGATED_REPO" "test" \
+  "gated" "issue-2" "dx test")
+__dx_session_summary "$GATED_SESSION" session-end session 0 0 \
+  > "$TMP_DIR/gated-summary.out" 2>&1
+assert_contains "0 ungated" "$TMP_DIR/gated-summary.out"
+assert_contains '"ungated_heavy_commands":0' "$(dx_run_events_file "$GATED_RUN_ID")"
+
 echo "host-budget tests passed"

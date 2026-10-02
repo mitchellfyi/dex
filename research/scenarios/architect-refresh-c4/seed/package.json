@@ -1,0 +1,10 @@
+{
+  "name": "orderly",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "services/*",
+    "packages/*"
+  ],
+  "description": "A small ordering platform: API + background worker + shared queue/types."
+}

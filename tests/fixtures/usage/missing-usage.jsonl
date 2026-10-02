@@ -1,0 +1,2 @@
+{"type":"assistant","uuid":"u-9","sessionId":"sess-1","requestId":"req_D","message":{"model":"model-x","role":"assistant","content":[]}}
+{"type":"assistant","uuid":"u-2","sessionId":"sess-1","timestamp":"2026-10-01T00:00:02Z","requestId":"req_E","message":{"model":"model-x","role":"assistant","usage":{"input_tokens":2,"cache_creation_input_tokens":1000,"cache_read_input_tokens":500,"output_tokens":10,"output_tokens_details":{"thinking_tokens":3}},"content":[]}}

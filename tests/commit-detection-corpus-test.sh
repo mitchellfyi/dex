@@ -61,6 +61,13 @@ check() {
   fi
 }
 
+# The command comes from stdin, so a case can carry heredocs of its own.
+check_stdin() {
+  local command_text
+  command_text=$(cat)
+  check "$1" "$command_text"
+}
+
 # Plain forms.
 check commit 'git commit -m "feat: x"'
 check commit 'git commit --message="feat: x"'
@@ -105,6 +112,176 @@ check commit 'python3 -c "import subprocess; subprocess.run([\"git\",\"commit\",
 check commit 'node -e "require(\"child_process\").execSync(\"git commit -m x\")"'
 check none   'python3 -c "print(\"git commit\")"'
 
+# Interpreter heredocs. A heredoc is a whole program: a literal in it is a
+# command only when a launch call receives it. Read like a -c one-liner, any
+# mention of subprocess, even in a comment, made every string a command, and
+# the guard then reported the previous commit's message as a format failure.
+check_stdin none <<'CMD'
+python3 - <<'PY'
+import pathlib
+# no subprocess here, just a text edit
+p = pathlib.Path('hooks/guards/commit-format.md')
+doc = '''## Example
+
+git commit -m "Merge branch main"
+'''
+p.write_text(doc)
+PY
+CMD
+check_stdin none <<'CMD'
+python3 - <<'PY'
+import pathlib, subprocess
+text = """Steps:
+git commit -m 'feat: add guard'
+"""
+pathlib.Path('hooks/guards/steps.md').write_text(text)
+subprocess.run(['true'])
+PY
+CMD
+check_stdin none <<'CMD'
+cat > hooks/guards/commit-msg.md <<'EOF'
+Run:
+
+    git commit -m "fix: something"
+EOF
+python3 - <<'PY'
+import pathlib
+# edit helper; does not use subprocess or os.system
+path = pathlib.Path('hooks/guards/commit-msg.md')
+path.write_text(path.read_text() + """
+git commit -m "Merge branch main"
+""")
+PY
+CMD
+check_stdin none <<'CMD'
+node - <<'JS'
+const { execSync } = require('child_process');
+const doc = "git commit -m 'Merge branch main'";
+execSync('true');
+JS
+CMD
+# Unquoted delimiter: tests/inline-python.py compiles quoted heredoc bodies
+# without stripping the tabs <<- removes.
+check_stdin none <<'CMD'
+python3 - <<-PY
+	import subprocess
+	doc = "git commit -m x"
+	subprocess.run(['true'])
+	PY
+CMD
+# Backticks run a command only in Ruby and Perl. In Python they are text, such
+# as a Markdown code span in a document the script writes.
+check_stdin none <<'CMD'
+python3 - <<'PY'
+import pathlib
+pathlib.Path('notes.md').write_text("Run `git commit -m 'feat: x'` after the edit.\n")
+PY
+CMD
+check none   'python3 -c "print(\"Run \`git commit\` after the edit.\")"'
+check commit 'perl -e "\`git commit -m x\`"'
+check_stdin commit <<'CMD'
+python3 - <<'PY'
+import subprocess
+subprocess.run(['git', 'commit', '-m', 'feat: x'])
+PY
+CMD
+check_stdin commit <<'CMD'
+python3 <<'PY'
+import subprocess
+subprocess.run(['git', 'commit', '-m', 'feat: x'])
+PY
+CMD
+check_stdin commit <<'CMD'
+python3 - <<'PY'
+import subprocess
+subprocess.run("git commit -m 'feat: x'", shell=True)
+PY
+CMD
+check_stdin commit <<'CMD'
+node <<'JS'
+require('child_process').execSync('git commit -m "feat: x"');
+JS
+CMD
+# Perl and Ruby launch without parentheses too.
+check_stdin commit <<'CMD'
+perl - <<'PL'
+system "git commit -m 'feat: x'";
+PL
+CMD
+# Its arguments end with the statement, so a literal later on the same line
+# is not one of them.
+check_stdin none <<'CMD'
+perl - <<'PL'
+system "make"; print "git commit -m x\n";
+PL
+CMD
+check_stdin none <<'CMD'
+ruby <<'RB'
+system 'make'; note = 'git commit -m x'
+RB
+CMD
+check_stdin commit <<'CMD'
+ruby <<'RB'
+`git commit -m "feat: x"`
+RB
+CMD
+check_stdin commit <<'CMD'
+cat > run-commit.sh <<'EOF'
+git commit -m "feat: x"
+EOF
+bash run-commit.sh
+CMD
+
+# A heredoc's lines are input for its receiver. An interpreter heredoc written
+# into a file is text; one handed to a shell still runs.
+check_stdin none <<'CMD'
+cat > docs-example.md <<'EOF'
+python3 - <<'PY'
+import subprocess
+subprocess.run(['git', 'commit', '-m', 'feat: x'])
+PY
+EOF
+CMD
+check_stdin commit <<'CMD'
+bash <<'EOF'
+python3 - <<'PY'
+import subprocess
+subprocess.run(['git', 'commit', '-m', 'feat: x'])
+PY
+EOF
+CMD
+# Without its delimiter a heredoc runs to the end of the input, so nothing
+# after it executes.
+check_stdin none <<'CMD'
+cat > notes.md <<'EOF'
+python3 - <<'PY'
+import subprocess
+subprocess.run(['git', 'commit', '-m', 'x'])
+PY
+CMD
+
+# A here-string is one word, not a heredoc waiting for a delimiter line, so
+# the commands after it are still read.
+check_stdin commit <<'CMD'
+grep -q foo <<< "x"
+git commit -m "feat: y"
+CMD
+check_stdin commit <<'CMD'
+grep -q foo <<< "x"
+python3 - <<'PY'
+import subprocess
+subprocess.run(['git', 'commit', '-m', 'feat: x'])
+PY
+CMD
+# A quoted << is text, so it must not hide the interpreter heredoc after it.
+check_stdin commit <<'CMD'
+echo "shift with a << b"
+python3 - <<'PY'
+import subprocess
+subprocess.run(['git', 'commit', '-m', 'feat: x'])
+PY
+CMD
+
 # xargs and find.
 check commit 'echo . | xargs -I{} git commit -m x'
 check commit 'find . -name "*.txt" -exec git commit -m x \;'
@@ -144,25 +321,6 @@ check none   'echo "total: $(( $(git log --oneline | wc -l) + 1 ))"'
 # An xargs item is one argument, not a fresh command line to re-split.
 check commit 'printf "a\nb\n" | xargs -I{} git commit -m {}'
 check none   'printf "a\nb\n" | xargs -I{} echo git commit -m {}'
-
-# Heredocs. A `<<` the shell does not read as an operator opens no heredoc, so
-# the commit after it is still read.
-check commit $'echo "shift with a << b"\ngit commit -m "feat: x"'
-check commit $'grep -q x <<< "y"\ngit commit -m "feat: x"'
-check commit $'git commit -m "$(cat <<\'EOF\'\nfeat: x\n\nrm -rf / and git commit text\nEOF\n)"'
-# An interpreter heredoc is a script: a literal counts only when it is passed
-# to a launch call.
-check none   $'python3 - <<\'PY\'\n# no subprocess here\nmsg = "git commit -m x"\nprint(msg)\nPY'
-check none   $'python3 - <<\'PY\'\nimport subprocess\nHELP = "git commit --amend"\nsubprocess.run(["git", "status"])\nPY'
-check commit $'python3 - <<\'PY\'\nimport subprocess\nsubprocess.run(["git", "commit", "-m", "x"])\nPY'
-check commit $'perl - <<\'PL\'\nsystem "git commit -m x";\nPL'
-check commit $'ruby - <<\'RB\'\nsystem \'git\', \'commit\', \'-m\', \'x\'\nRB'
-# Quoting: \' inside $'…' is escaped, a backslash inside '…' is literal.
-check commit $'echo $\'it\\\'s\'; git commit -m x; echo \'y\''
-check commit $'echo \'a\\\' $(git commit -m x)'
-check none   $'echo $\'it\\\'s git commit -m x\''
-# A heredoc inside another heredoc's body is text.
-check none   $'cat > notes.md <<\'EOF\'\npython3 - <<\'PY\'\nimport subprocess\nsubprocess.run(["git", "commit", "-m", "x"])\nPY\nEOF'
 
 # Not a commit even though the word appears.
 check none   'grep -r "git commit" .'

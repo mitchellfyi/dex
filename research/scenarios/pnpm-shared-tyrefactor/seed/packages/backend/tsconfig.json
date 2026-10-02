@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "module": "ESNext",
+    "target": "ES2022"
+  },
+  "references": [{ "path": "../types" }],
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

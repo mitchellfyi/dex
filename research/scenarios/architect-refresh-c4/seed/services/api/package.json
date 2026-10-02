@@ -1,0 +1,13 @@
+{
+  "name": "@orderly/api",
+  "version": "0.1.0",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.0",
+    "pg": "^8.11.0",
+    "@orderly/shared": "*"
+  }
+}

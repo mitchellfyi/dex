@@ -38,12 +38,22 @@ SECRET_PATTERNS = [
 SECRET_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
 SECRET_KEY_RE = re.compile(r"(?i)(token|secret|password|passwd|api[_-]?key|credential)")
 
-# Usage counters are named like secrets but carry no credential.
+# Usage counters are named like secrets but carry no credential. The first
+# four are the router's names; the rest are the provider's own usage fields
+# as the transcript collector (scripts/usage_collect.py) reports them.
 TOKEN_COUNT_KEYS = {
     "total_input_tokens",
     "total_output_tokens",
     "total_cache_read_tokens",
     "total_cache_write_tokens",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "thinking_tokens",
+    "prompt_tokens_total",
+    "ephemeral_5m_input_tokens",
+    "ephemeral_1h_input_tokens",
 }
 
 # Patterns for credentials that are recognizable on their own, with no

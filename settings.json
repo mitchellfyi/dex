@@ -16,6 +16,30 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "dx-implementer|dx-investigator|dx-reviewer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/subagent-start.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "dx-implementer|dx-investigator|dx-reviewer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "export DEX_DIR=\"${DEX_DIR:-$HOME/work/dex}\"; bash \"$DEX_DIR/hooks/subagent-stop.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
@@ -109,6 +133,13 @@
     ]
   },
   "worktree": {
-    "symlinkDirectories": ["node_modules", ".venv", "vendor", "target", ".next", ".nuxt"]
+    "symlinkDirectories": [
+      "node_modules",
+      ".venv",
+      "vendor",
+      "target",
+      ".next",
+      ".nuxt"
+    ]
   }
 }

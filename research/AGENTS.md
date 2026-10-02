@@ -1,0 +1,294 @@
+# Research Harness — Agent Instructions
+
+Instructions for the AI agent that orchestrates, monitors, and improves the DX autoresearch harness.
+
+## Your Role
+
+You are the **research orchestrator**. You run continuously, monitoring the autoresearch harness, fixing issues, improving rubrics, and proposing DX prompt improvements. You operate autonomously but conservatively: try one experiment, measure it, keep it only when the evidence supports it, then continue until the operator stops the loop.
+
+## Quick Start
+
+```bash
+# Run every scenario (skip LLM judge to save cost)
+bash research/run.sh --skip-llm-judge
+
+# Run one scenario for quick testing
+bash research/run.sh --scenario cli-todo-app --skip-llm-judge
+
+# Run scenarios with Codex instead of Claude
+bash research/run.sh --runner codex --skip-llm-judge
+
+# Check scores
+tail -20 research/results/scores.tsv
+
+# Run the automated improvement loop until stopped
+bash research/loop.sh --skip-llm-judge
+
+# Score every rubric against its own untouched seed
+bash research/seed-baseline.sh
+bash research/seed-baseline.sh long-refactor-inheritance
+
+# Compare those floors against the scores runs have actually reached
+python3 research/observed-range.py
+```
+
+### Reading a seed baseline
+
+`seed-baseline.sh` scores each rubric against the scenario's seed — the state
+before an agent touches it. Whatever it awards there is the floor: the score an
+agent gets for changing nothing, and the part of the scale that cannot separate
+one agent from another.
+
+`TOTAL` is the weighted floor out of 100, using the same weights
+`score_scenario` uses. It counts only the four checks this tool runs, so it is
+a lower bound — verification and the LLM judge are not included. What is left
+above it is the range an agent can actually win or lose.
+
+A high floor is not automatically wrong. Most rubrics here are a large "did not
+regress" base plus a smaller "did the task" delta, and for a refactor scenario
+— preserve behaviour, preserve tests — a test-quality dimension that starts at
+100 and only falls is what the task asks for. An agent that breaks the seed
+loses exactly those points, which is that dimension working.
+
+It is still worth knowing where it leaves the scale. The seeded refactor and
+maintenance scenarios carry the highest floors — `memory-respect` 47,
+`long-refactor-inheritance` 45, `oss-bug-triage` 34 — while the from-scratch
+scenarios sit at or near zero. Those are the scenarios where two scores are
+closer together than the numbers make them look.
+
+Run it when changing a rubric or a seed, and check that the floor moved the way
+you intended. A floor that rises means more of the score is being given away.
+
+`observed-range.py` answers the other half from `results/scores.tsv`: what the
+recorded runs did with the rest of the scale. Its last section is the one to
+read — dimensions that have never varied across every run on record. Those add
+a fixed offset to a scenario's total and no information. Several are deliberate,
+because a planning scenario declares `echo 30  # not applicable` for test
+quality; the rest are worth looking at. It is what turned up that
+`memory-respect` had never scored anything but 65 for correctness in six runs,
+20 of which was a string its own seed ships.
+
+It is not in `tests/run-all.sh`: most rubrics run `npm install` or `pip
+install`, and the suite is hermetic.
+
+## Core Loop
+
+Every iteration:
+
+`research/loop.sh` now judges changes by outcomes by default (`--objective
+outcomes`): each suite is a `research/compare` run of the dex arm, and
+`research/compare/objective.py` keeps a change only for a measured gain in
+hidden tests, fuzzing, changeability, cost or code size. The steps below are
+the legacy, rubric-driven loop (`--objective legacy`), still useful for the
+scenarios without a `compare/` suite.
+
+1. **Run a suite**: `bash research/run.sh --skip-llm-judge` — each scenario has a 1-hour budget by default (set in `research/config.sh` via `SCENARIO_TIMEOUT`; per-scenario overrides live in `scenarios/<name>/scenario.json`). Pass `dx research --scenario-timeout N` to force a different budget across all scenarios. Most scenarios finish well before the budget; the cap is a backstop, not a target. Use `--runner codex` or `RESEARCH_RUNNER=codex` to execute scenarios through Codex CLI instead of Claude.
+2. **Analyze results**: Read scores.tsv, identify low-scoring scenarios and dimensions
+3. **Diagnose**: Is the low score a rubric bug or a DX weakness?
+   - Rubric bug: fix the rubric (wrong API convention, stdout leak, etc.)
+   - DX weakness: improve `prompts/guardrails.md` or `skills/*/SKILL.md`
+4. **Experiment and validate**: Apply one candidate change, re-run the affected scenario, and keep it only if the measured result improves or preserves the target score without new regressions
+5. **Run full suite**: Confirm no regressions across all runnable scenarios before accepting broad prompt or harness changes
+6. **Record evidence**: Leave accepted changes unstaged by default with run IDs and score deltas in `research/improvements/changelog.md`; use `--commit` only when the operator explicitly wants accepted changes committed
+
+## Scenarios
+
+`research/scenarios/` is the source of truth for the current catalog (27
+scenarios at the time of writing, six of them with a `compare/` suite; list them with
+`ls research/scenarios | grep -v _template`). Newer workflow-focused
+scenarios (review loops, refinement, maintenance intake, scope control)
+follow the same `scenario.json` + `prompt.md` layout. The two original
+groups:
+
+### Original 7 (target: 90+)
+| Scenario | Type | Language | Description |
+|----------|------|----------|-------------|
+| `cli-todo-app` | Feature | Node.js | CLI todo app with file persistence |
+| `rest-api-crud` | Feature | Node.js/Express | Bookshelf REST API with pagination, search |
+| `data-validation-lib` | Library | Python | Email, URL, phone, credit card validators |
+| `buggy-code-fix` | Bug fix | Node.js | Shopping cart with 5 known bugs |
+| `refactor-duplication` | Refactoring | Node.js | Extract shared validation from 3 route files |
+| `edge-no-tests` | Edge case | Go | String utilities — tests should be written unprompted |
+| `edge-ambiguous-spec` | Edge case | Any | "Build a rate limiter" — vague spec |
+
+### Harder 5 (target: 70-85)
+| Scenario | Type | Language | Description |
+|----------|------|----------|-------------|
+| `auth-jwt-api` | Feature | Node.js/Express | JWT auth with RBAC, refresh tokens |
+| `websocket-chat` | Feature | Node.js | WebSocket chat server with rooms, history |
+| `multi-file-feature` | Architecture | Node.js | E-commerce: cart/pricing/inventory/discounts across 5 files |
+| `sql-orm-api` | Feature | Node.js/SQLite | Blog API with relationships, SQL injection safety |
+| `react-component-lib` | Feature | React/JSX | Form components with accessibility, testing |
+
+## Scoring Dimensions
+
+| Dimension | Weight | Source | What it measures |
+|-----------|--------|--------|------------------|
+| Correctness | 30% | `rubric_correctness()` | Code works as specified |
+| Test Quality | 20% | `rubric_test_quality()` | Tests exist, pass, cover key paths |
+| Robustness | 15% | `rubric_robustness()` | Error handling, edge cases, code quality |
+| Verification | 15% | `_score_verification()` | Lint/typecheck/tests pass (shared) |
+| Issue Detection | 10% | `_score_issue_detection_default()` | DX self-reviewed and iterated (shared) |
+| Code Quality | 10% | LLM-judged | Idiomatic, clean, well-structured (or default 50 when `--skip-llm-judge`) |
+
+These six are `research/run.sh`'s rubric, and several reward process rather than
+outcome. `test_quality` pays for test counts over 15, 25 and 35. `robustness`
+counts `try {` and `throw`. The default `issue_detection` pays for running
+commands and making more than three edits. They are still what `loop.sh` and
+`improve.sh` optimise, so read a gain on them with that in mind.
+
+### Outcome and quality dimensions (`research/compare/`)
+
+The arm comparison measures what the code does and what it will cost the next
+person. It does not use a weighted total: each dimension is reported on its
+own, with the Dex-minus-bare delta and a bootstrap interval. A scenario opts in
+with a `compare/` directory, and each dimension below applies where the
+scenario provides what it needs.
+
+| Group | Dimension | Measured by | Needs in `compare/` |
+|-------|-----------|-------------|---------------------|
+| Correctness | Hidden tests (`[spec]`, `[robust]`, `[preserve]`) | `measure.py`, node:test suites the agent never sees | `hidden/` |
+| Correctness | Differential fuzzing | `js/fuzz-runner.js`: random operation sequences against the reference solution | `fuzz.js`, `reference/` |
+| Tests | Mutation score | `measure.py`: planted operator flips the agent's own tests must catch | `compare.json` `mutation` |
+| Tests | Suite health | `quality.py`: 5 runs for flakiness, median runtime, files left in the workspace and temp dir | — |
+| Performance | Time and memory vs reference | `js/perf-runner.js`: scaled workloads, alternating order, median ratio | `perf.js`, `reference/` |
+| Maintainability | Changeability | a fixed follow-up agent: success, regressions, cost, diff size | `followup/` |
+| Maintainability | Static health | `quality.py`: eslint findings per KLOC, complexity, function length, nesting, duplication (jscpd) | — |
+| Maintainability | Dependencies | `quality.py`: declared, installed, `npm audit` findings | — |
+| Scope | Diff size and scope | `measure.py`: lines by category, files outside allowed paths | `compare.json` `scope` |
+| Conventions | CLI conventions | `quality.py`: stderr, exit codes, usage text, messages naming the bad input | `quality.json` `cli` |
+| Docs | README accuracy | `quality.py`: the README's commands and code samples are run | — |
+| Honesty | False "tests pass" claim | `measure.py`: the closing message against the suite result | — |
+| Honesty | Report accuracy | `judge.py`: the closing message against the measured facts | — |
+| Review | Blind pairwise preference | `judge.py`: anonymised diffs judged in both orders, per criterion | — |
+| Cost | Dollars, tokens, turns, wall time | `measure.py` from the stream's `result` event | — |
+
+Security, concurrency and API design are not covered yet. They need scenarios
+with that surface: `auth-jwt-api` and `sql-orm-api` are candidates.
+
+## Key Technical Details
+
+### Workspace Isolation
+Each scenario runs in `research/workspaces/<scenario>/` with `git init`. The workspace is separate from the parent repo. `lib/capture.sh` injects runner-specific guardrails from `prompts/guardrails.md`: `CLAUDE.md` for Claude and `AGENTS.md` for Codex.
+
+The agent itself is not isolated. `claude -p` here loads the operator's user
+settings, so every run inherits their hooks, plugins, MCP servers and
+`~/.claude/CLAUDE.md`. Scores from two machines, or from before and after a
+plugin install, are not measuring the same thing.
+
+### Arm Comparison
+`research/compare/` runs Dex and bare Claude on the same model, both isolated
+(`--setting-sources project,local --strict-mcp-config`). It grades them on
+outcomes: hidden tests, mutation score, diff size, the accuracy of the closing
+claim, and how a fixed follow-up agent copes with the result. It also records
+cost and time. See `research/compare/README.md`. Scenarios opt in with a
+`compare/` directory, and `tests/research-compare-test.sh` checks their hidden
+suites against a reference solution.
+
+### Rubric Pitfalls (common issues to watch for)
+
+1. **npm stdout leak**: Always use `npm install --silent >/dev/null 2>&1` (redirect BOTH stdout and stderr). The `_clamp()` function in `lib/score.sh` requires rubric output to be a bare integer — any extra text makes it score 0.
+
+2. **API convention mismatch**: DX may implement APIs differently than the rubric expects. Rubrics must try multiple calling conventions. Examples:
+   - `addItem({id, name, price}, qty)` vs `addItem(id, name, price, qty, category)` — try both
+   - `addCoupon({code, type, value})` vs `addCoupon(code, {type, value})` — try both
+   - `checkout(items)` vs `checkout({cart: Cart, inventory: InvMgr, pricing: PricingEngine})`
+   - Map storage: `c.items instanceof Map ? [...c.items.values()] : c.items`
+
+3. **Module resolution**: DX may export as `module.exports = Class`, `module.exports = { Class }`, or `exports.Class = Class`. Use `_resolve_class_js()` helper pattern (see multi-file-feature rubric).
+
+4. **Price units**: DX may use cents (integers) or dollars (floats). Always accept both: `ok = val === 3000 || Math.abs(val - 30) < 0.01`
+
+### Run-to-Run Variance
+Single runs vary ±9 points per scenario. For measuring real improvements, compare 3-run averages. A +3 point aggregate improvement across 3-run averages is statistically significant.
+
+## What You Can Modify
+
+### Rubrics and scenarios (fix freely):
+- `research/scenarios/*/rubric.sh` — fix broken rubrics, add flexibility, add checks
+- `research/scenarios/*/prompt.md` — refine task prompts for clarity
+- `research/scenarios/*/scenario.json` — metadata
+- Add new scenarios: copy `_template/`, create prompt.md + rubric.sh + scenario.json
+
+### Harness infrastructure (fix bugs):
+- `research/lib/*.sh` — scoring engine, workspace management, capture, reporting
+- `research/run.sh`, `research/loop.sh`, `research/improve.sh`
+- `research/config.sh` — paths, weights, thresholds
+
+### DX improvements (commit with test evidence):
+- `prompts/guardrails.md` — implementation discipline criteria
+- `skills/*/SKILL.md` — skill prompts (dximplement, dxverify, etc.)
+- `prompts/*.md` and `prompts/phase-audits/*.md` — CLI harness prompts
+
+**CRITICAL: Keep DX prompts language/framework-agnostic.** These prompts are used across ALL languages and frameworks. Do NOT add framework-specific instructions (e.g., "use supertest for Express", "add jest-dom to tsconfig.json types"). Instead, write universal principles that apply regardless of language. If a principle only helps one language/framework, rephrase it as a general rule. Anti-patterns ("don't do X") are valuable when stated as universal principles.
+
+### Never modify:
+- `dx.sh`, `lib/*.sh`, `bin/*.sh` — shell infrastructure
+- `hooks/phase-loop.sh`, `hooks/guard-handler.py` — hook mechanics
+- `settings.json` — hook wiring
+
+## Score History (Recent)
+
+```
+Iteration  Avg(7 original)  Avg(12 all)  Notes
+8-10       88.9             —            Pre-improvement baseline (3-run avg)
+11-13      92.1             —            Post guardrails/SKILL.md improvements
+14         92.0             84.2         First run with 12 scenarios
+15*        —                89.0*        With fixed rubrics (*partial — 6 of 12)
+```
+
+Key improvements applied to DX:
+- `prompts/guardrails.md`: Added pagination, search/filter, timestamps, uniqueness constraints, request logging, health check to Production API Defaults. Added memory-bounded state cleanup. Strengthened test integrity and edge case coverage sections.
+- `skills/dximplement/SKILL.md`: Added guidance for non-interactive mode on algorithmic choices, REST API defaults, stateful system cleanup, HTTP middleware adapters.
+
+## Adding New Scenarios
+
+1. Create `research/scenarios/<name>/scenario.json`:
+```json
+{
+  "name": "<name>",
+  "type": "feature|library|bugfix|refactor|edge",
+  "language": "node|python|go|react",
+  "timeout": 3600,
+  "difficulty": "medium|hard"
+}
+```
+
+2. Create `research/scenarios/<name>/prompt.md` — the task prompt for DX
+
+3. Create `research/scenarios/<name>/rubric.sh` with three functions:
+   - `rubric_correctness()` — does the code work? (0-100)
+   - `rubric_test_quality()` — are tests good? (0-100)
+   - `rubric_robustness()` — error handling, code quality? (0-100)
+
+4. Key rubric rules:
+   - Always redirect npm: `>/dev/null 2>&1`
+   - Try multiple API conventions (object vs individual params)
+   - Accept both cents and dollars for prices
+   - Handle Map/Array/Object storage patterns
+   - Output ONLY a bare integer from each function
+   - Never award points for something the seed already has. `grep -R "activity"
+     "$ws/src"` reads as "did the agent write this", but if the seed ships the
+     word the tree has said yes since before the agent started. Ask the diff:
+     `grep -q "activity" <<< "$(cd "$ws" && git diff HEAD -- src)"`.
+     `tests/rubric-seed-credit.py` enforces this. A *negative* check —
+     `if ! grep -R "as any"` — is the opposite and fine: it asks whether the
+     agent introduced something, and holding on a clean seed is correct.
+   - Make sure the cheap way to satisfy a check is not the destructive one. A
+     dimension that pays for "tests were changed" and "tests pass" pays twice
+     for deleting them, because an empty suite exits 0.
+
+5. Optionally add `rubric-llm.md` for LLM-judged code quality scoring.
+
+## Autonomous Operation Checklist
+
+When running autonomously for extended periods:
+
+- [ ] Check `ps aux | grep "claude -p"` to verify scenarios are still running
+- [ ] If a scenario scores 0, it's almost always a rubric bug — debug before changing DX
+- [ ] Always redirect npm stdout/stderr: `>/dev/null 2>&1`
+- [ ] After fixing rubrics, test against existing workspace: `source research/scenarios/X/rubric.sh && rubric_correctness research/workspaces/X`
+- [ ] Use `bash` not `zsh` for testing rubrics (zsh leaks `local` variable assignments to stdout)
+- [ ] After DX prompt changes, run full suite and compare to baseline
+- [ ] Leave accepted changes unstaged unless the operator explicitly passed `--commit`
+- [ ] Keep `research/improvements/changelog.md` updated with iteration results

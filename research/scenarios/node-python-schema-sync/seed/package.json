@@ -1,0 +1,11 @@
+{
+  "name": "node-python-schema-sync-seed",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "services/api"
+  ],
+  "scripts": {
+    "test": "npm --workspace services/api test && python3 -m unittest discover services/processor/tests"
+  }
+}

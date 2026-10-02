@@ -108,6 +108,7 @@ for consumer in \
   prompts/phase-audits/6-complete.md \
   prompts/workflows/dximplement.md \
   prompts/workflows/dxplan.md \
+  prompts/workflows/dxqa.md \
   prompts/ui-proof.md \
   skills/dxverify/SKILL.md; do
   grep -Fq -e 'Resource Discipline' -e 'prompts/guardrails.md' "$ROOT/$consumer" \

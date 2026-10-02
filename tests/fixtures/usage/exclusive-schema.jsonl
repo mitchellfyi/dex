@@ -1,0 +1,1 @@
+{"type":"assistant","uuid":"u-1","sessionId":"sess-1","timestamp":"2026-10-01T00:00:01Z","requestId":"req_C","message":{"model":"model-x","role":"assistant","usage":{"input_tokens":2000,"cache_creation_input_tokens":0,"cache_read_input_tokens":8000,"output_tokens":50,"output_tokens_details":{"thinking_tokens":0}},"content":[]}}

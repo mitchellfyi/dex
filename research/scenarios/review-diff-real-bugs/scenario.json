@@ -1,0 +1,15 @@
+{
+  "name": "review-diff-real-bugs",
+  "type": "review",
+  "description": "Review a proposed PR with 5 planted real bugs, 3 nits, and 2 style preferences (false-positive bait). Tests precision and recall of dxreview.",
+  "timeout": 3600,
+  "language": "node",
+  "weights": {
+    "correctness": 15,
+    "test_quality": 5,
+    "robustness": 5,
+    "verification": 5,
+    "issue_detection": 50,
+    "code_quality": 20
+  }
+}

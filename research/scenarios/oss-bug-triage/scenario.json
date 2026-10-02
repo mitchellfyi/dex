@@ -1,0 +1,15 @@
+{
+  "name": "oss-bug-triage",
+  "type": "bugfix",
+  "description": "Triage a realistic GitHub issue, reproduce a subtle URL builder bug, apply a minimal fix, add a regression test, and document the resolution.",
+  "timeout": 7200,
+  "language": "node",
+  "weights": {
+    "correctness": 30,
+    "test_quality": 25,
+    "robustness": 20,
+    "verification": 15,
+    "issue_detection": 5,
+    "code_quality": 5
+  }
+}

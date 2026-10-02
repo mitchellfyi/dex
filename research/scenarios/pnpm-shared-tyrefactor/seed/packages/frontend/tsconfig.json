@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "module": "ESNext",
+    "target": "ES2022",
+    "jsx": "react-jsx"
+  },
+  "references": [{ "path": "../types" }],
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

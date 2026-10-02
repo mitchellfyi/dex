@@ -1,0 +1,15 @@
+{
+  "name": "memory-respect",
+  "type": "discipline",
+  "description": "Add a DB-backed endpoint while respecting seeded .dex/memory conventions for snake_case columns and safe external calls.",
+  "timeout": 5400,
+  "language": "node",
+  "weights": {
+    "correctness": 25,
+    "test_quality": 15,
+    "robustness": 10,
+    "verification": 20,
+    "issue_detection": 25,
+    "code_quality": 5
+  }
+}

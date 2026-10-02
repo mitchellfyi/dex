@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "normal-contract-mismatch",
+  "tier": "normal",
+  "expected_tier": "normal",
+  "expected_floor": "small",
+  "control": false,
+  "description": "A producer renames a total field without updating its consumer.",
+  "visible_test_command": ["node", "--test", "tests/visible.test.js"],
+  "hidden_oracle_command": ["python3", "{scenario_dir}/hidden/oracle.py", "{workspace}"],
+  "candidate_overlay": "candidate",
+  "canonical_fix_overlay": "canonical_fix",
+  "expected_candidate_oracle": "fail"
+}

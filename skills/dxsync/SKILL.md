@@ -57,6 +57,11 @@ Forward any user-provided arguments to the prompt contract:
 - `--budget-minutes <n>`
 - `--include-working-tree`
 
+`--state-dir` defaults to `$DX_MEMORY_STORE_DIR`, or
+`~/.claude/.dex-memory/<repo-key>` when that is unset; `dx sync` creates it on
+a write run. A `--dry-run` or `--trace-retrieval` run that changes any
+repository file fails and names the paths. Nothing is reverted.
+
 ## Output
 
 End with the DXSync report described in `prompts/sync-memory.md`. If files were

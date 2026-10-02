@@ -1,0 +1,7 @@
+{
+  "name": "data-validation-lib",
+  "type": "feature",
+  "description": "Build a Python data validation library with multiple validators and tests.",
+  "timeout": 3600,
+  "language": "python"
+}

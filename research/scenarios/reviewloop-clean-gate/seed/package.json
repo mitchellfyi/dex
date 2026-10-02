@@ -1,0 +1,8 @@
+{
+  "name": "paginator",
+  "version": "0.1.0",
+  "main": "src/pagination.js",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

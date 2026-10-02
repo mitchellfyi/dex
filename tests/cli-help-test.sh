@@ -79,12 +79,14 @@ run_entrypoint_checks install "$ROOT/bin/install.sh" "Usage: dx install"
 run_entrypoint_checks uninstall "$ROOT/bin/uninstall.sh" "Usage: dx uninstall"
 run_entrypoint_checks status "$ROOT/bin/status.sh" "Usage: dx status"
 run_entrypoint_checks ui-capture "$ROOT/bin/ui-capture.sh" "Usage: dx ui-capture"
+run_entrypoint_checks qa "$ROOT/bin/qa.sh" "Usage: dx qa"
 run_entrypoint_checks config "$ROOT/bin/config.sh" "Usage: dx config"
 run_entrypoint_checks uninit "$ROOT/bin/uninit.sh" "Usage: dx uninit"
 run_entrypoint_checks init "$ROOT/bin/init.sh" "Usage: dx init"
 # sync said only "Unknown option", which does not say which of the scripts in
 # an init chain is complaining.
 run_entrypoint_checks sync "$ROOT/bin/sync.sh" "Usage: dx sync"
+run_entrypoint_checks memory "$ROOT/bin/memory.sh" "Usage: dx memory"
 
 tools_home="$TMP_DIR/tools/home"
 tools_repo="$TMP_DIR/tools/repo"

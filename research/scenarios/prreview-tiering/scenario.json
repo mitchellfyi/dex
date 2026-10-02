@@ -1,0 +1,15 @@
+{
+  "name": "prreview-tiering",
+  "type": "review",
+  "description": "Classify and draft replies to 8 mock PR review comments spanning bug / security / nit / style / question / architecture / scope / approval. Tests dxprreview tiering.",
+  "timeout": 3600,
+  "language": "node",
+  "weights": {
+    "correctness": 20,
+    "test_quality": 5,
+    "robustness": 5,
+    "verification": 5,
+    "issue_detection": 35,
+    "code_quality": 30
+  }
+}

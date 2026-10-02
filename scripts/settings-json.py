@@ -294,39 +294,6 @@ def command_has_hooks(settings_path, dex_dir, home):
     return 0 if has_dex_hooks(settings, dex_dir, home) else 1
 
 
-INSTALLED_DEX_DIR_PATTERN = re.compile(r'export DEX_DIR="\$\{DEX_DIR:-([^}"]+)\}"')
-
-
-def command_installed_dex_dirs(settings_path, home):
-    """Print the checkout each Dex hook falls back to, once each.
-
-    That fallback is the installation: an operator's shell rarely exports
-    DEX_DIR, so it is the checkout every hook actually runs.
-    """
-    if not os.path.exists(settings_path):
-        return 0
-    hooks = load_object(settings_path).get("hooks")
-    seen = []
-    for groups in (hooks.values() if isinstance(hooks, dict) else []):
-        for group in groups if isinstance(groups, list) else []:
-            commands = group.get("hooks") if isinstance(group, dict) else None
-            for hook in commands if isinstance(commands, list) else []:
-                command = hook.get("command") if isinstance(hook, dict) else None
-                match = INSTALLED_DEX_DIR_PATTERN.search(command) if isinstance(command, str) else None
-                if not match:
-                    continue
-                directory = match.group(1)
-                for prefix in ("$HOME", "${HOME}", "~"):
-                    if directory == prefix or directory.startswith(prefix + "/"):
-                        directory = home + directory[len(prefix):]
-                        break
-                if directory not in seen:
-                    seen.append(directory)
-    for directory in seen:
-        print(directory)
-    return 0
-
-
 def command_settings_complete(settings_path, template_path, dex_dir, home):
     settings = load_object(settings_path)
     template = customized_template(template_path, dex_dir)
@@ -397,7 +364,6 @@ COMMANDS = {
     "merge-settings": (4, command_merge_settings),
     "merge-install-state": (2, command_merge_state),
     "has-dex-hooks": (3, command_has_hooks),
-    "installed-dex-dirs": (2, command_installed_dex_dirs),
     "settings-complete": (4, command_settings_complete),
     "remove-dex-hooks": (3, command_remove_hooks),
     "state-dirs": (1, command_state_dirs),

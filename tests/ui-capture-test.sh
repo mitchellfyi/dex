@@ -194,12 +194,63 @@ assert_rejected "arbitrary script action" node "$ROOT/scripts/ui-capture.cjs" va
 assert_rejected "fixed wait is not a readiness gate" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/fixed-wait-only.json"
 assert_rejected "missing script" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/missing.json"
 
+# Assertions carry deterministic predicates and point at acceptance criteria.
+python3 - "$VALID_SCRIPT" "$TMP_DIR/predicates.json" "$TMP_DIR/text-without-expected.json" "$TMP_DIR/criterion-zero.json" "$TMP_DIR/unknown-predicate.json" "$TMP_DIR/identical-without-reason.json" "$TMP_DIR/bad-pattern.json" <<'PY'
+import json
+import sys
+
+source, predicates, text_without_expected, criterion_zero, unknown_predicate, identical_without_reason, bad_pattern = sys.argv[1:]
+data = json.load(open(source, encoding="utf-8"))
+
+
+def variant():
+    return json.loads(json.dumps(data))
+
+
+value = variant()
+value["chapters"][1]["actions"][-1].update({"predicate": "text_equals", "expected": "Settings saved", "criterion": 1})
+value["chapters"][1]["actions"].append({"action": "assert", "predicate": "url_matches", "pattern": "/settings(\\?saved=1)?$", "criterion": 2})
+value["chapters"][1]["actions"].append({"action": "assert", "locator": {"by": "role", "role": "listitem", "name": "Preference"}, "predicate": "count", "count": 3})
+value["chapters"][1]["actions"].append({"action": "assert", "locator": {"by": "label", "name": "Email notifications"}, "predicate": "attribute", "attribute": "aria-checked", "expected": "true", "timeout_ms": 2000})
+json.dump(value, open(predicates, "w", encoding="utf-8"))
+
+value = variant()
+value["chapters"][1]["actions"][-1]["predicate"] = "text_equals"
+json.dump(value, open(text_without_expected, "w", encoding="utf-8"))
+
+value = variant()
+value["chapters"][1]["actions"][-1]["criterion"] = 0
+json.dump(value, open(criterion_zero, "w", encoding="utf-8"))
+
+value = variant()
+value["chapters"][1]["actions"][-1]["predicate"] = "glows"
+json.dump(value, open(unknown_predicate, "w", encoding="utf-8"))
+
+value = variant()
+value["expect_identical"] = True
+json.dump(value, open(identical_without_reason, "w", encoding="utf-8"))
+
+value = variant()
+value["chapters"][1]["actions"].append({"action": "assert", "predicate": "url_matches", "pattern": "("})
+json.dump(value, open(bad_pattern, "w", encoding="utf-8"))
+PY
+
+node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/predicates.json" > "$TMP_DIR/predicates.out"
+assert_contains 'storyboard: valid' "$TMP_DIR/predicates.out"
+assert_rejected "text predicate without expected" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/text-without-expected.json"
+assert_rejected "criterion below 1" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/criterion-zero.json"
+assert_rejected "unknown predicate" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/unknown-predicate.json"
+assert_rejected "expect_identical without a reason" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/identical-without-reason.json"
+assert_rejected "url pattern that does not compile" node "$ROOT/scripts/ui-capture.cjs" validate --script "$TMP_DIR/bad-pattern.json"
+
 node - "$ROOT/scripts/ui-capture.cjs" "$VALID_SCRIPT" "$TMP_DIR/producer" <<'JS'
 const fs = require('fs');
 const path = require('path');
 
 const [modulePath, storyboardPath, producerRoot] = process.argv.slice(2);
 const {
+  buildContactSheet,
+  evaluateAssertion,
   generateNarration,
   loadStoryboard,
   narrationDurationMatches,
@@ -222,13 +273,13 @@ for (const unsafeUrl of ['file:///tmp/page.html', 'https://user:secret@example.t
   if (!rejected) throw new Error(`unsafe URL accepted: ${unsafeUrl}`);
 }
 
-function addRecord(sessionDir, stage, hash) {
+function addRecord(sessionDir, stage, hash, extra = {}) {
   const directory = path.join(sessionDir, `${stage}-capture`);
   fs.mkdirSync(directory, { recursive: true });
   const video = path.join(directory, `${stage}.webm`);
   const screenshot = path.join(directory, 'desktop.png');
   fs.writeFileSync(video, 'not real media');
-  fs.writeFileSync(screenshot, 'not real image');
+  fs.writeFileSync(screenshot, extra.screenshotBytes || `${stage} image`);
   fs.writeFileSync(path.join(directory, 'metadata.json'), `${JSON.stringify({
     stage,
     stageHash: hash,
@@ -238,17 +289,20 @@ function addRecord(sessionDir, stage, hash) {
       viewportSize: { width: 1440, height: 900 },
       videos: [video],
       screenshot,
+      cleanScreenshotHash: extra.cleanScreenshotHash,
       storyboardExecution: {
         actionCount: storyboard.chapters
           .filter((chapter) => chapter.stage === stage)
           .reduce((total, chapter) => total + chapter.actions.length, 0),
-        readiness: [{
+        readiness: extra.readiness || [{
           chapterIndex: storyboard.chapters.findIndex((chapter) => chapter.stage === stage),
           action: 'waitFor',
           locator: { by: 'text', name: 'Loaded' },
           state: 'visible',
+          satisfied: true,
         }],
-        readinessSatisfied: true,
+        readinessSatisfied: extra.readinessSatisfied === undefined ? true : extra.readinessSatisfied,
+        assertions: extra.assertions || [],
         timeline: storyboard.chapters
           .map((chapter, chapterIndex) => ({ chapter, chapterIndex }))
           .filter(({ chapter }) => chapter.stage === stage)
@@ -283,6 +337,127 @@ function addRecord(sessionDir, stage, hash) {
   if (Date.now() - waitStartedAt < 20 || waitedForOptions.state !== 'hidden' || waitedForOptions.timeout !== 1234) {
     throw new Error('waitFor did not await the requested readiness predicate');
   }
+
+  // An assertion is satisfied only once two consecutive samples agree, so a
+  // page still settling cannot pass on its first lucky frame.
+  const settlingTexts = ['Saving\u2026', 'Saved', 'Saved'];
+  const settling = await evaluateAssertion({
+    page: { getByText: () => ({ count: async () => 1, innerText: async () => settlingTexts.shift() || 'Saved' }) },
+    action: { action: 'assert', predicate: 'text_equals', expected: 'Saved', locator: { by: 'text', name: 'Saved' }, criterion: 3, timeout_ms: 2000 },
+    sampleIntervalMs: 5,
+  });
+  if (settling.outcome !== 'satisfied' || settling.samples < 3 || settling.criterion !== 3 || settling.observed !== 'Saved') {
+    throw new Error(`settling text was not accepted after it stabilized: ${JSON.stringify(settling)}`);
+  }
+  const mismatch = await evaluateAssertion({
+    page: { getByText: () => ({ count: async () => 1, innerText: async () => '  x  ' }) },
+    action: { action: 'assert', predicate: 'text_equals', expected: 'Saved', locator: { by: 'text', name: 'Saved' }, timeout_ms: 60 },
+    sampleIntervalMs: 10,
+  });
+  if (mismatch.outcome !== 'unsatisfied' || mismatch.observed !== 'x' || mismatch.expected !== 'Saved' || mismatch.predicate !== 'text_equals') {
+    throw new Error(`mismatched text was not recorded as unsatisfied: ${JSON.stringify(mismatch)}`);
+  }
+  const thrown = await evaluateAssertion({
+    page: { getByText: () => ({ count: async () => 2, innerText: async () => { throw new Error('strict mode violation: 2 elements'); } }) },
+    action: { action: 'assert', predicate: 'text_contains', expected: 'Saved', locator: { by: 'text', name: 'Saved' }, timeout_ms: 60 },
+    sampleIntervalMs: 10,
+  });
+  if (thrown.outcome !== 'unknown' || !String(thrown.observed).includes('strict mode')) {
+    throw new Error(`a throwing observation was not recorded as unknown: ${JSON.stringify(thrown)}`);
+  }
+  const counted = await evaluateAssertion({
+    page: { getByRole: () => ({ count: async () => 3 }) },
+    action: { action: 'assert', predicate: 'count', count: 3, locator: { by: 'role', role: 'listitem', name: 'Preference' }, timeout_ms: 500 },
+    sampleIntervalMs: 5,
+  });
+  if (counted.outcome !== 'satisfied' || counted.observed !== 3) throw new Error(`count predicate failed: ${JSON.stringify(counted)}`);
+  const located = await evaluateAssertion({
+    page: { url: () => 'http://127.0.0.1:3000/settings?saved=1' },
+    action: { action: 'assert', predicate: 'url_matches', pattern: '/settings(\\?saved=1)?$', timeout_ms: 500 },
+    sampleIntervalMs: 5,
+  });
+  if (located.outcome !== 'satisfied' || located.observed !== 'http://127.0.0.1:3000/settings?saved=1') {
+    throw new Error(`url_matches predicate failed: ${JSON.stringify(located)}`);
+  }
+  const hiddenState = await evaluateAssertion({
+    page: { getByText: () => ({ isVisible: async () => false }) },
+    action: { action: 'assert', predicate: 'hidden', locator: { by: 'text', name: 'Spinner' }, timeout_ms: 500 },
+    sampleIntervalMs: 5,
+  });
+  if (hiddenState.outcome !== 'satisfied' || hiddenState.observed !== false) throw new Error(`hidden predicate failed: ${JSON.stringify(hiddenState)}`);
+
+  // An element that is not on the page is a claim that did not hold, found
+  // within the author's timeout, not a 30 s tooling failure.
+  const absentStartedAt = Date.now();
+  const absent = await evaluateAssertion({
+    page: { getByText: () => ({ count: async () => 0, innerText: async () => { throw new Error('innerText must not run on an absent element'); } }) },
+    action: { action: 'assert', predicate: 'text_equals', expected: 'Saved', locator: { by: 'text', name: 'Saved' }, timeout_ms: 300 },
+    sampleIntervalMs: 20,
+  });
+  if (absent.outcome !== 'unsatisfied' || absent.observed !== null || Date.now() - absentStartedAt > 2000) {
+    throw new Error(`an absent element was not recorded as unsatisfied in time: ${JSON.stringify(absent)}`);
+  }
+  const getterTimeouts = [];
+  const bounded = await evaluateAssertion({
+    page: { getByText: () => ({ count: async () => 1, innerText: async (options) => { getterTimeouts.push(options && options.timeout); return 'Saved'; } }) },
+    action: { action: 'assert', predicate: 'text_equals', expected: 'Saved', locator: { by: 'text', name: 'Saved' }, timeout_ms: 500 },
+    sampleIntervalMs: 5,
+  });
+  if (bounded.outcome !== 'satisfied' || getterTimeouts.length < 2 || !getterTimeouts.every((value) => Number.isInteger(value) && value > 0 && value <= 500)) {
+    throw new Error(`getter waits are not bounded by timeout_ms: ${JSON.stringify(getterTimeouts)}`);
+  }
+
+  // A failed claim is evidence, not a crash: the stage keeps recording and the
+  // bundle reports the predicate that did not hold. Nothing is pointed at when
+  // the claim did not hold, so a missing element cannot freeze the footage.
+  const scrolled = [];
+  const pointable = {
+    count: async () => 1,
+    innerText: async () => 'x',
+    isVisible: async () => true,
+    scrollIntoViewIfNeeded: async (options) => { scrolled.push(options); },
+    boundingBox: async () => ({ x: 10, y: 10, width: 100, height: 20 }),
+    evaluate: async () => ({}),
+  };
+  const unsatisfiedRun = await runAction({
+    page: {
+      evaluate: async () => false,
+      waitForTimeout: async () => {},
+      mouse: { move: async () => {} },
+      getByText: () => pointable,
+    },
+    action: { action: 'assert', predicate: 'text_equals', expected: 'Saved', locator: { by: 'text', name: 'Saved' }, timeout_ms: 30 },
+    baseUrl: 'http://127.0.0.1/',
+    screenshot: async () => {},
+    stage: 'after',
+  });
+  if (!unsatisfiedRun || unsatisfiedRun.outcome !== 'unsatisfied' || unsatisfiedRun.observed !== 'x') {
+    throw new Error(`an unsatisfied assert threw or returned nothing: ${JSON.stringify(unsatisfiedRun)}`);
+  }
+  if (scrolled.length !== 0) throw new Error('an unsatisfied assert still tried to point at its element');
+  const satisfiedRun = await runAction({
+    page: {
+      evaluate: async () => false,
+      waitForTimeout: async () => {},
+      mouse: { move: async () => {} },
+      getByText: () => pointable,
+    },
+    action: { action: 'assert', predicate: 'visible', locator: { by: 'text', name: 'Saved' }, timeout_ms: 500 },
+    baseUrl: 'http://127.0.0.1/',
+    screenshot: async () => {},
+    stage: 'after',
+  });
+  if (satisfiedRun.outcome !== 'satisfied' || scrolled.length !== 1 || !scrolled[0] || scrolled[0].timeout !== 750) {
+    throw new Error(`a satisfied assert did not point at its element with a bounded wait: ${JSON.stringify(scrolled)}`);
+  }
+  const urlRun = await runAction({
+    page: { evaluate: async () => false, url: () => 'http://127.0.0.1/settings' },
+    action: { action: 'assert', predicate: 'url_matches', pattern: '/settings$', timeout_ms: 500 },
+    baseUrl: 'http://127.0.0.1/',
+    screenshot: async () => {},
+    stage: 'after',
+  });
+  if (!urlRun || urlRun.outcome !== 'satisfied') throw new Error(`a locator-free url_matches assert failed: ${JSON.stringify(urlRun)}`);
 
   if (narrationDurationMatches(24.15, 42)) throw new Error('truncated narration duration was accepted');
   const unsuppressed = JSON.parse(JSON.stringify(storyboard));
@@ -358,6 +533,10 @@ function addRecord(sessionDir, stage, hash) {
   fs.writeFileSync(fakeFfmpeg, [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
+    'case "$*" in *showinfo*)',
+    '  for n in $(seq 1 12); do printf "[Parsed_showinfo_1 @ 0x1] n: %d pts: %d pts_time:0\\n" "$n" "$n" >&2; done',
+    '  exit 0 ;;',
+    'esac',
     'if [[ "$1" == "-i" && "$#" -eq 2 ]]; then',
     '  case "$2" in',
     '    *before.webm) duration="8.00" ;;',
@@ -372,9 +551,20 @@ function addRecord(sessionDir, stage, hash) {
     '',
   ].join('\n'));
   fs.chmodSync(fakeFfmpeg, 0o700);
+  const claim = (outcome, observed) => ({
+    chapterIndex: 1, actionIndex: 4, predicate: 'text_equals', expected: 'Settings saved', observed, outcome, samples: 2, elapsedMs: 300, criterion: 1,
+  });
+  const criteriaFile = path.join(producerRoot, 'review-criteria.json');
+  fs.writeFileSync(criteriaFile, `${JSON.stringify({
+    version: 1,
+    source: 'approved-plan',
+    objectives: ['Confirm saves'],
+    acceptance_criteria: ['Saving confirms the change'],
+    verification_requirements: ['The settings tests pass'],
+  })}\n`);
   const readyDir = path.join(producerRoot, 'ready');
-  addRecord(readyDir, 'before', stageHash(storyboard, 'before'));
-  addRecord(readyDir, 'after', stageHash(storyboard, 'after'));
+  addRecord(readyDir, 'before', stageHash(storyboard, 'before'), { assertions: [claim('unsatisfied', 'Settings')] });
+  addRecord(readyDir, 'after', stageHash(storyboard, 'after'), { assertions: [claim('satisfied', 'Settings saved')] });
   const nestedBefore = path.join(readyDir, 'before-capture', 'steps');
   fs.mkdirSync(nestedBefore, { recursive: true });
   fs.writeFileSync(path.join(nestedBefore, 'confirmation.jpg'), 'nested image');
@@ -393,9 +583,50 @@ function addRecord(sessionDir, stage, hash) {
   fs.mkdirSync(staleMediaDir, { recursive: true });
   fs.writeFileSync(path.join(staleMediaDir, 'stale.png'), 'stale image');
   process.env.DX_UI_CAPTURE_FFMPEG = fakeFfmpeg;
-  let result = await produceBundle(readyDir, storyboard, false);
+  let result = await produceBundle(readyDir, storyboard, false, { criteriaFile });
   if (result.status !== 'READY' || !result.readiness_verified || result.narration !== 'captions-only') {
-    throw new Error('verified captions-only bundle was not ready');
+    throw new Error(`verified captions-only bundle was not ready: ${result.message}`);
+  }
+  // The claims the stages recorded become a criteria table a reviewer can read.
+  if (!result.assertions || result.assertions.after.length !== 1 || result.assertions.after[0].outcome !== 'satisfied'
+    || result.assertions.before[0].outcome !== 'unsatisfied') {
+    throw new Error(`stage assertions were not carried into the bundle: ${JSON.stringify(result.assertions)}`);
+  }
+  const expectedCriteria = [{ index: 1, text: 'Saving confirms the change', before: 'unsatisfied', after: 'satisfied' }];
+  if (JSON.stringify(result.criteria) !== JSON.stringify(expectedCriteria)) {
+    throw new Error(`criteria table is wrong: ${JSON.stringify(result.criteria)}`);
+  }
+  const readyManifest = fs.readFileSync(path.join(readyDir, 'visual-evidence.md'), 'utf8');
+  if (!readyManifest.includes('## Acceptance criteria') || !readyManifest.includes('| 1 | Saving confirms the change | unsatisfied | satisfied |')) {
+    throw new Error('manifest lacks the acceptance criteria table');
+  }
+  // The keyframe contact sheet is the record a reader can actually look at.
+  const contactSheet = path.join(readyDir, 'contact.png');
+  if (result.contact_sheet !== contactSheet || !fs.existsSync(contactSheet) || !['scene', 'uniform'].includes(result.contact_sheet_mode)) {
+    throw new Error(`contact sheet was not produced: ${JSON.stringify([result.contact_sheet, result.contact_sheet_mode])}`);
+  }
+  if (!readyManifest.includes(`- Contact sheet: ${contactSheet}`)) throw new Error('manifest does not list the contact sheet');
+  const contactAttachment = result.attachments.find((attachment) => attachment.stage === 'contact');
+  if (!contactAttachment || contactAttachment.alt !== 'Save notification settings keyframe contact sheet') {
+    throw new Error(`contact sheet attachment is missing or mislabelled: ${JSON.stringify(contactAttachment)}`);
+  }
+  const noSceneFfmpeg = path.join(producerRoot, 'fake-ffmpeg-no-scene');
+  fs.writeFileSync(noSceneFfmpeg, [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'case "$*" in *showinfo*) printf "[Parsed_showinfo_1 @ 0x1] n: 0 pts: 0 pts_time:0\\n" >&2; exit 0 ;; esac',
+    'output="${!#}"',
+    'printf "media\\n" > "$output"',
+    '',
+  ].join('\n'));
+  fs.chmodSync(noSceneFfmpeg, 0o700);
+  const fallbackSheet = path.join(producerRoot, 'fallback-contact.png');
+  const fallback = buildContactSheet(noSceneFfmpeg, path.join(readyDir, 'walkthrough.mp4'), fallbackSheet, { durationSeconds: 17 });
+  if (fallback.mode !== 'uniform' || fallback.path !== fallbackSheet || !fs.existsSync(fallbackSheet) || fallback.frames !== 1) {
+    throw new Error(`contact sheet did not fall back to uniform sampling: ${JSON.stringify(fallback)}`);
+  }
+  if (result.contact_sheet_mode !== 'scene' || result.contact_sheet_frames !== 12) {
+    throw new Error(`twelve scene frames should select scene mode: ${JSON.stringify([result.contact_sheet_mode, result.contact_sheet_frames])}`);
   }
   const measuredCaptions = fs.readFileSync(path.join(readyDir, 'captions.vtt'), 'utf8');
   if (!measuredCaptions.includes('00:00:08.000 --> 00:00:12.000')) {
@@ -408,6 +639,7 @@ function addRecord(sessionDir, stage, hash) {
   const expectedAttachments = [
     path.join(readyDir, 'walkthrough.mp4'),
     path.join(readyDir, 'poster.png'),
+    path.join(readyDir, 'contact.png'),
     path.join(readyDir, 'before-capture', 'desktop.png'),
     path.join(readyDir, 'before-capture', 'before.webm'),
     path.join(nestedBefore, 'confirmation.jpg'),
@@ -477,6 +709,57 @@ function addRecord(sessionDir, stage, hash) {
 
   const failedDir = path.join(producerRoot, 'failed');
   addRecord(failedDir, 'before', stageHash(storyboard, 'before'));
+  // A claim that did not hold in the after stage is a finding, not a pass.
+  const unsatisfiedDir = path.join(producerRoot, 'unsatisfied');
+  addRecord(unsatisfiedDir, 'before', stageHash(storyboard, 'before'));
+  addRecord(unsatisfiedDir, 'after', stageHash(storyboard, 'after'), { assertions: [claim('unsatisfied', 'Saving\u2026')] });
+  process.env.DX_UI_CAPTURE_FFMPEG = fakeFfmpeg;
+  result = await produceBundle(unsatisfiedDir, storyboard, false, { criteriaFile });
+  if (result.status !== 'NEEDS_REVIEW' || !result.message.includes('text_equals') || !result.message.includes('expected')) {
+    throw new Error(`an unsatisfied after-stage claim was accepted: ${result.status} ${result.message}`);
+  }
+  if (!result.criteria || result.criteria[0].after !== 'unsatisfied') throw new Error('criteria table hid the failed claim');
+
+  // A stage whose final gate is an assert that did not hold is reported as
+  // that, not as a missing readiness gate.
+  const unsettledDir = path.join(producerRoot, 'unsettled');
+  addRecord(unsettledDir, 'before', stageHash(storyboard, 'before'));
+  addRecord(unsettledDir, 'after', stageHash(storyboard, 'after'), {
+    assertions: [claim('unsatisfied', 'Saving\u2026')],
+    readiness: [{ chapterIndex: 1, action: 'assert', locator: { by: 'text', name: 'Settings saved' }, state: 'text_equals', satisfied: false }],
+    readinessSatisfied: false,
+  });
+  result = await produceBundle(unsettledDir, storyboard, false);
+  if (result.status !== 'NEEDS_REVIEW' || !result.message.includes('final claim did not hold') || result.message.includes('Re-run both stages')) {
+    throw new Error(`an unsettled final assert was misreported: ${result.message}`);
+  }
+
+  // Proof must prove: an after state identical to before shows no change.
+  const identicalDir = path.join(producerRoot, 'identical');
+  addRecord(identicalDir, 'before', stageHash(storyboard, 'before'), { screenshotBytes: 'same image' });
+  addRecord(identicalDir, 'after', stageHash(storyboard, 'after'), { screenshotBytes: 'same image' });
+  result = await produceBundle(identicalDir, storyboard, false);
+  if (result.status !== 'NEEDS_REVIEW' || !result.message.includes('identical')) {
+    throw new Error(`identical before and after was accepted: ${result.status} ${result.message}`);
+  }
+  // The stage badge and caption live inside the page, so the visible
+  // screenshots always differ between stages; the parity check hashes a shot
+  // taken with the overlay hidden, which the record carries as a hash.
+  const badgedDir = path.join(producerRoot, 'badged-identical');
+  addRecord(badgedDir, 'before', stageHash(storyboard, 'before'), { screenshotBytes: 'BEFORE badge over the same page', cleanScreenshotHash: 'a'.repeat(64) });
+  addRecord(badgedDir, 'after', stageHash(storyboard, 'after'), { screenshotBytes: 'AFTER badge over the same page', cleanScreenshotHash: 'a'.repeat(64) });
+  result = await produceBundle(badgedDir, storyboard, false);
+  if (result.status !== 'NEEDS_REVIEW' || !result.message.includes('identical') || result.screenshot_parity !== 'identical') {
+    throw new Error(`identical pages under different badges were accepted: ${result.status} ${result.message}`);
+  }
+  const declaredIdentical = JSON.parse(JSON.stringify(storyboard));
+  declaredIdentical.expect_identical = true;
+  declaredIdentical.identical_reason = 'The change only alters the request payload; the rendered page is unchanged.';
+  result = await produceBundle(identicalDir, declaredIdentical, false);
+  if (result.status !== 'READY' || result.expect_identical !== true) {
+    throw new Error(`a declared identical proof was rejected: ${result.status} ${result.message}`);
+  }
+
   addRecord(failedDir, 'after', stageHash(storyboard, 'after'));
   process.env.DX_UI_CAPTURE_FFMPEG = '/usr/bin/false';
   result = await produceBundle(failedDir, storyboard, false);
@@ -500,12 +783,36 @@ if [[ "${2:-}" == "validate" && "${1:-}" == */scripts/ui-capture.cjs ]]; then
   exit 0
 fi
 if [[ "${2:-}" == "capture" && "${1:-}" == */scripts/ui-capture.cjs ]]; then
+  stage=""; session_dir=""; criteria=""
+  args=("$@")
+  for ((i=0; i<${#args[@]}; i++)); do
+    case "${args[$i]}" in
+      --stage) stage="${args[$((i+1))]}" ;;
+      --session-dir) session_dir="${args[$((i+1))]}" ;;
+      --criteria) criteria="${args[$((i+1))]}" ;;
+    esac
+  done
+  if [[ "$stage" == "after" && -n "$session_dir" ]]; then
+    mkdir -p "$session_dir"
+    printf 'bundle\n' > "$session_dir/walkthrough.mp4"
+    printf '%s\n' "{\"version\":3,\"status\":\"READY\",\"message\":\"fixture bundle ready\",\"manifest\":\"$session_dir/visual-evidence.md\",\"video\":\"$session_dir/walkthrough.mp4\",\"poster\":\"\",\"criteria\":[{\"index\":1,\"text\":\"Saving confirms the change\",\"before\":\"unsatisfied\",\"after\":\"satisfied\"}],\"criteria_file\":\"$criteria\"}" > "$session_dir/bundle.json"
+    printf 'bundle: %s\n' "$session_dir/bundle.json"
+    exit 0
+  fi
   printf '%s\n' 'fixture capture failed' >&2
+  [[ -n "$criteria" ]] && printf 'criteria passed: %s\n' "$criteria" >&2
   exit 17
 fi
 exec "$REAL_NODE" "$@"
 SH
 chmod +x "$FAKE_BIN/node"
+
+# A valid approved-criteria file for the session reaches the producer so the
+# criteria table can print the text; the wrapper passes it as --criteria.
+CRITERIA_FILE="$(dx_review_criteria_file "ui-capture-failure")"
+mkdir -p "$(dirname "$CRITERIA_FILE")"
+printf '%s\n' '{"version":1,"source":"approved-plan","objectives":["Confirm saves"],"acceptance_criteria":["Saving confirms the change"],"verification_requirements":["The settings tests pass"]}' > "$CRITERIA_FILE"
+dx_review_criteria_valid "$CRITERIA_FILE" || assert_at $LINENO
 
 FAILURE_SID="ui-capture-failure"
 set +e
@@ -518,7 +825,17 @@ assert_eq "17" "$failure_exit" "capture failure exit"
 assert_eq "NEEDS_REVIEW" "$(dx_ui_capture_status "$FAILURE_SID")" "capture failure status"
 assert_contains 'before capture failed' "$(dx_ui_capture_evidence_file "$FAILURE_SID")"
 assert_contains 'fixture capture failed' "$(dx_ui_capture_session_dir "$FAILURE_SID")/before-capture-error.log"
+assert_contains "criteria passed: $CRITERIA_FILE" "$(dx_ui_capture_session_dir "$FAILURE_SID")/before-capture-error.log"
 assert_contains 'UI proof: NEEDS_REVIEW' "$TMP_DIR/capture-failure.out"
+
+# The producer's criteria table is recorded in evidence.json for the lifecycle.
+BUNDLE_SID="ui-capture-bundle"
+PATH="$FAKE_BIN:$PATH" REAL_NODE="$REAL_NODE" bash "$ROOT/bin/ui-capture.sh" capture \
+  --session "$BUNDLE_SID" --stage after --script "$VALID_SCRIPT" \
+  --url "http://127.0.0.1:49999" > "$TMP_DIR/capture-bundle.out" 2>&1
+assert_eq "READY" "$(dx_ui_capture_status "$BUNDLE_SID")" "fixture bundle status"
+assert_contains '"criteria"' "$(dx_ui_capture_evidence_file "$BUNDLE_SID")"
+assert_contains 'Saving confirms the change' "$(dx_ui_capture_evidence_file "$BUNDLE_SID")"
 
 MANIFEST="$SESSION_DIR/visual-evidence.md"
 VIDEO="$SESSION_DIR/walkthrough.mp4"
@@ -536,8 +853,11 @@ assert_contains "$VIDEO" "$TMP_DIR/summary.out"
 assert_contains "$EVIDENCE" "$TMP_DIR/summary.out"
 
 RUN_ID=$(dx_run_prepare "$SID" "$ROOT" "worktree" "ui-capture-contract" "UI proof test" "test")
+printf 'contact\n' > "$SESSION_DIR/contact.png"
 dx_ui_capture_register_bundle "$SID"
 assert_file "$(dx_run_artifact_file "$RUN_ID" "ui-proof/walkthrough.mp4")"
+assert_file "$(dx_run_artifact_file "$RUN_ID" "ui-proof/contact.png")"
+assert_contains '"type": "ui_contact_sheet"' "$(dx_run_artifact_manifest_file "$RUN_ID")"
 assert_file "$(dx_run_artifact_file "$RUN_ID" "ui-proof/walkthrough.json")"
 assert_file "$(dx_run_artifact_file "$RUN_ID" "ui-proof/evidence.json")"
 assert_contains '"type": "ui_walkthrough"' "$(dx_run_artifact_manifest_file "$RUN_ID")"
@@ -570,6 +890,11 @@ assert_contains 'UI proof: READY' "$TMP_DIR/show.out"
 dx_ui_capture_write_status "$SID" "NEEDS_REVIEW" "Narration unavailable; captions retained" "$MANIFEST" "$VIDEO"
 assert_eq "NEEDS_REVIEW" "$(dx_ui_capture_status "$SID")" "degraded evidence status"
 assert_rejected "invalid status" dx_ui_capture_write_status "$SID" "COMPLETE" "bad" "$MANIFEST" "$VIDEO"
+dx_ui_capture_write_status "$SID" "READY" "Walkthrough ready" "$MANIFEST" "$VIDEO" active 0 \
+  '[{"index":2,"text":"Email toggles persist","before":null,"after":"satisfied"}]'
+assert_contains '"criteria"' "$EVIDENCE"
+assert_contains 'Email toggles persist' "$EVIDENCE"
+assert_rejected "criteria that is not a JSON list" dx_ui_capture_write_status "$SID" "READY" "bad criteria" "$MANIFEST" "$VIDEO" active 0 '{"index":1}'
 
 CUSTOM_SID="ui-capture-custom"
 printf '# Custom visual proof\n' > "$TMP_DIR/custom-manifest.md"

@@ -33,8 +33,7 @@ line, including when all fields are unchanged or N/A.
 1. Runs in NORMAL mode (no plan mode) so the agent can write to git and the tracker before any planning starts.
 2. Follow `prompts/ticket-instructions.md` end to end:
    - Read the ticket from the configured tracker (including all comments).
-   - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, pause and ask by default.
-   - If the user says to continue past someone else's assignment, or the tracker refuses the assignee or status write for lack of permission, finish the rest of setup and end Phase 0 with a `setup.ticket-ownership` or `setup.ticket-status` waiver, as `prompts/ticket-instructions.md` step 6 describes. The phase is recorded as waived, not passed.
+   - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, pause and ask by default. A justified `setup.ticket-ownership` waiver may continue without claiming ownership changed.
    - Run `dx_ticket_branch_prepare` with the tracker's git branch name. It
      adopts an existing origin branch only when its PR is open or it has no PR,
      and otherwise prepares a new local branch. Do not push a new branch with
@@ -75,8 +74,8 @@ line, including when all fields are unchanged or N/A.
    that commit.
 3. Ask by default if ambiguous requirements, scope changes, or blocked dependencies arise. The active agent may use the attributed override/waiver contract when proceeding is justified.
 4. Invoke `/dxuicapture` early to decide whether visual proof would help. The agent may capture a concise walkthrough, record `SKIPPED` with a reason for a visible but disproportionate case, or record `N/A` when there is no browser impact. When capture is chosen, prefer a matched before/after flow, keep it under 90 seconds, and surface the temporary bundle after baseline and production.
-5. End Phase 2 with a manual local smoke test: run the change end-to-end locally and confirm it works, driving browser-facing flows with the Claude-in-Chrome browser tools (Playwright fallback), seeding and then cleaning up local data as needed.
-6. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, implementation commits pushed, the manual smoke test passed or explicitly N/A, and an honest UI proof decision recorded. A reasoned `SKIPPED` decision is valid; it is not reported as a successful capture.
+5. End Phase 2 with the `dxqa` manual QA pass: start the change, exercise every approved acceptance criterion and verification requirement by hand with the available browser, API, or CLI hands, record `dx qa report`, fix `NOT_MET` criteria, and route other findings to fixes or linked follow-ups.
+6. The audit loop verifies all tasks are complete with tests passing, the evidence table filled, implementation commits pushed, the QA report `PASSED` or `BLOCKED`/`N_A` with a reason, and an honest UI proof decision recorded. A reasoned `SKIPPED` decision is valid; it is not reported as a successful capture.
 7. **SCOPE**: focus on implementation, testing, incremental commits and pushes,
    and the UI proof decision. Ticket setup belongs to Phase 0, so only re-run it
    here if Phase 0 left it incomplete. Phase 3 records accepted review fixes,

@@ -1,0 +1,19 @@
+{
+  "fuzz": { "sequences": 10, "steps": 15 },
+  "perf": { "reps": 4 },
+  "cli": {
+    "entry": "index.js",
+    "commands": ["add", "list", "complete", "delete"],
+    "errors": [
+      { "args": ["complete", "99"], "setup": [["add", "existing"]], "mentions": "99" },
+      { "args": ["delete", "99"], "setup": [["add", "existing"]], "mentions": "99" },
+      { "args": ["complete", "abc"], "setup": [["add", "existing"]], "mentions": "abc" },
+      { "args": ["add"] },
+      { "args": ["frobnicate"], "mentions": "frobnicate" }
+    ],
+    "ok": [
+      { "args": ["add", "Buy milk"] },
+      { "args": ["list"], "setup": [["add", "existing"]] }
+    ]
+  }
+}

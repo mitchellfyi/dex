@@ -1,0 +1,15 @@
+{
+  "name": "scope-creep-prompt",
+  "type": "discipline",
+  "description": "Fix a small date-formatting bug while explicitly deferring a casual out-of-scope admin-dashboard request.",
+  "timeout": 3600,
+  "language": "node",
+  "weights": {
+    "correctness": 25,
+    "test_quality": 10,
+    "robustness": 10,
+    "verification": 15,
+    "issue_detection": 30,
+    "code_quality": 10
+  }
+}

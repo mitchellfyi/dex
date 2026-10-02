@@ -1,0 +1,15 @@
+{
+  "name": "reviewloop-clean-gate",
+  "type": "review",
+  "description": "Two subtle bugs in a paginator library plus one false-positive bait. Tests dxreview / dxreviewloop precision: convergence is rewarded only if the bugs are actually found.",
+  "timeout": 3600,
+  "language": "node",
+  "weights": {
+    "correctness": 15,
+    "test_quality": 10,
+    "robustness": 5,
+    "verification": 5,
+    "issue_detection": 50,
+    "code_quality": 15
+  }
+}

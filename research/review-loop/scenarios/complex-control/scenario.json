@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "complex-control",
+  "tier": "complex",
+  "expected_tier": "complex",
+  "expected_floor": "complex",
+  "control": true,
+  "description": "A correct public CLI argument-parser extension with strict validation.",
+  "visible_test_command": ["node", "--test", "tests/visible.test.js"],
+  "hidden_oracle_command": ["python3", "{scenario_dir}/hidden/oracle.py", "{workspace}"],
+  "candidate_overlay": "candidate",
+  "expected_candidate_oracle": "pass"
+}

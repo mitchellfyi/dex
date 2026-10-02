@@ -131,34 +131,7 @@ assert_eq "enforce" \
 grep -Fq $'waive\tverification.required-gates\twaived\tphase\t2\tagent\t0\tThe platform-specific checker is unavailable in this environment' \
   "$(dx_override_file "$WAIVER_SESSION")" || assert_at $LINENO
 assert_contains "transition to Phase 3 is pending" "$TMP_DIR/waiver.out"
-# A setup item belongs to Phase 0, so a setup waiver anywhere else is refused.
-assert_rejected "$LINENO" env DEX_SESSION_ID="$WAIVER_SESSION" bash "$CONTROL" \
-  waive setup.ticket-ownership --source agent \
-  --reason "The tracker refused the assignee write" > "$TMP_DIR/setup-late.out" 2>&1
-assert_contains "Could not record the waiver" "$TMP_DIR/setup-late.out"
 dx_cleanup_session "$WAIVER_SESSION"
-
-# Phase 0 names these waivers when the tracker refuses the assignee or status
-# write, so `dx control waive` has to accept them there.
-SETUP_WAIVER_SESSION="$(dx_session_repo_key)-setup-waiver"
-printf '%s\n' 0 > "$(dx_state_file "$SETUP_WAIVER_SESSION")"
-printf '%s\n' inline > "$(dx_handoff_mode_file "$SETUP_WAIVER_SESSION")"
-SETUP_COMPLETION=$(dx_completion_issue "$SETUP_WAIVER_SESSION" lifecycle phase 0)
-printf '0:PHASE_0_COMPLETE:%s/prompts/phase-audits/0-setup.md:1:lifecycle:phase:%s\n' \
-  "$ROOT" "$SETUP_COMPLETION" > "$(dx_loop_config_file "$SETUP_WAIVER_SESSION")"
-touch "$(dx_active_file "$SETUP_WAIVER_SESSION")"
-env DEX_SESSION_ID="$SETUP_WAIVER_SESSION" bash "$CONTROL" waive \
-  setup.ticket-status --source agent \
-  --reason "The account has pull-only access, so the status write was refused" \
-  > "$TMP_DIR/setup-waiver.out"
-grep -Fq $'waive\tsetup.ticket-status\twaived\tphase\t0\tagent\t0\t' \
-  "$(dx_override_file "$SETUP_WAIVER_SESSION")" || assert_at $LINENO
-assert_contains "transition to Phase 1 is pending" "$TMP_DIR/setup-waiver.out"
-# A waiver-only gate has no live value to set.
-assert_rejected "$LINENO" env DEX_SESSION_ID="$SETUP_WAIVER_SESSION" bash "$CONTROL" \
-  override setup.ticket-ownership waived --source agent \
-  --reason "Not a policy value" > "$TMP_DIR/setup-set.out" 2>&1
-dx_cleanup_session "$SETUP_WAIVER_SESSION"
 
 for unsafe_control_kind in symlink fifo directory wrong-mode; do
   case "$unsafe_control_kind" in

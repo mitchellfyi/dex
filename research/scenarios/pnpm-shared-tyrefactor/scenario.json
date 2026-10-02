@@ -1,0 +1,15 @@
+{
+  "name": "pnpm-shared-tyrefactor",
+  "type": "refactor",
+  "description": "Refactor a shared TypeScript User type across pnpm-style frontend and backend packages without any casts or stale consumers.",
+  "timeout": 7200,
+  "language": "typescript",
+  "weights": {
+    "correctness": 30,
+    "test_quality": 15,
+    "robustness": 15,
+    "verification": 25,
+    "issue_detection": 5,
+    "code_quality": 10
+  }
+}

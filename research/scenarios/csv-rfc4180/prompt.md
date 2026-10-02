@@ -1,0 +1,45 @@
+Build a CSV parser and serializer for Node.js with no dependencies. Create `src/csv.js` (CommonJS) exporting `parse`, `createParser`, `stringify` and `CsvError`, a `package.json` with a test script, and tests.
+
+## `parse(text, options = {})`
+
+- `text` must be a string; anything else throws `TypeError`. An empty string returns `[]`.
+- Returns an array of records. Each record is an array of strings, or an object when `options.header` is `true` (see below).
+- Fields are separated by `options.delimiter`, default `,`. The delimiter must be a single character that is not `"`, CR or LF; anything else throws `TypeError`.
+- Records are separated by CRLF, LF or CR; one input may mix them.
+- A leading byte order mark (`﻿`) is ignored.
+- A field that starts with `"` is quoted. Inside it, delimiters, CR and LF are literal, and `""` is one literal `"`. The field ends at the closing `"`, which must be followed by a delimiter, a line break or the end of input. Anything else is an error.
+- In a field that does not start with `"`, a `"` is an ordinary character.
+- Whitespace is kept exactly: fields are never trimmed.
+- One line break at the very end of the input does not start another record. Every other empty line is a record with one empty field, `['']`, unless `options.skipEmptyLines` is `true`, in which case empty lines are skipped.
+- With `options.header: true`, the first record gives the column names and every later record becomes an object keyed by them. Duplicate column names are an error. A later record with more or fewer fields than the header is an error. An input with only a header returns `[]`.
+
+Errors in the input throw a `CsvError` (a subclass of `Error`) with `line` and `column` properties, both 1-based, counting lines by the line breaks above and columns in UTF-16 code units:
+
+- a quoted field that is never closed: the position of its opening `"`;
+- a character other than a delimiter or line break after a closing `"`: the position of that character;
+- a duplicate header name: the line and column where the second occurrence's field starts;
+- a record with the wrong number of fields in header mode: that record's line, column 1.
+
+When the input has more than one error, the one a single left-to-right read finds first is thrown; a record's field count is checked when the record ends.
+
+## `createParser(options = {})`
+
+A streaming parser for input that arrives in pieces. It takes the same options as `parse` and returns an object with two methods:
+
+- `write(chunk)` takes a string (anything else throws `TypeError`) and returns an array of the records completed so far that it has not returned before. A record is returned by the `write` call whose chunk contains the line break that ends it.
+- `end()` returns the remaining records and finishes the parser.
+
+After `end()`, or after either method throws, both methods throw an `Error`.
+
+Wherever the chunks split the input, including between a CR and an LF, inside a quoted field, or between the two quotes of an escaped quote, the records returned in total, and any `CsvError` with its `line` and `column`, must be exactly what `parse` returns for the whole input. Its memory and time must stay proportional to the input: do not re-read earlier input on every `write`.
+
+## `stringify(rows, options = {})`
+
+- `rows` is an array of records, each an array of values. With `options.header` set to an array of column names, each record may instead be an object: the header row is written first, then each object's values in header order, with a missing key written as an empty field.
+- Values: a string is written as is, a number or boolean via `String()`, `null` and `undefined` as an empty field. Any other type throws `TypeError`.
+- A field is quoted when it contains the delimiter, `"`, CR or LF, or begins or ends with a space; every `"` inside is doubled.
+- A record with exactly one field that is the empty string is written as `""`, so it survives a round trip.
+- Records are joined by `options.eol` (`'\r\n'` by default, or `'\n'`; anything else throws `TypeError`), and the output ends with one `eol`. No rows gives `''`.
+- `options.delimiter` works and is validated as in `parse`.
+
+For any rows that are non-empty arrays of strings, `parse(stringify(rows, opts), opts)` must return the same rows, with or without `skipEmptyLines`.

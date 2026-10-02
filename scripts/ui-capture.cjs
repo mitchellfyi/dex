@@ -11,7 +11,15 @@ const ALLOWED_ACTIONS = new Set([
 ]);
 const ALLOWED_ACTION_KEYS = new Set([
   'action', 'path', 'locator', 'text', 'env', 'key', 'ms', 'state', 'timeout_ms', 'y', 'name',
+  'predicate', 'expected', 'attribute', 'count', 'pattern', 'criterion',
 ]);
+// What an `assert` can claim about the page. `visible` is the historical
+// default; the rest turn a readiness gate into a recorded, checkable claim.
+const ALLOWED_PREDICATES = new Set([
+  'visible', 'hidden', 'text_equals', 'text_contains', 'value_equals', 'attribute', 'count', 'url_matches',
+]);
+const EXPECTED_VALUE_PREDICATES = new Set(['text_equals', 'text_contains', 'value_equals', 'attribute']);
+const ATTRIBUTE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/u;
 const ALLOWED_LOCATORS = new Set(['role', 'label', 'text', 'testid']);
 const ALLOWED_WAIT_STATES = new Set(['attached', 'detached', 'visible', 'hidden']);
 const VALID_STAGES = new Set(['before', 'after']);
@@ -56,6 +64,7 @@ function parseArgs(argv) {
       case '--video': options.video = true; break;
       case '--trace': options.trace = true; break;
       case '--no-narration': options.narration = false; break;
+      case '--criteria': options.criteria = argv[++index]; break;
       default: fail(`Unknown argument: ${arg}`);
     }
   }
@@ -115,9 +124,12 @@ function validateAction(action, label) {
   for (const key of Object.keys(action)) {
     if (!ALLOWED_ACTION_KEYS.has(key)) fail(`${label} contains unsupported key: ${key}`);
   }
+  if (action.action === 'assert') validateAssertion(action, label);
+  const locatorFree = action.action === 'assert' && action.predicate === 'url_matches';
   if (['click', 'fill', 'hover', 'scroll', 'waitFor', 'assert'].includes(action.action) && action.locator) {
+    if (locatorFree) fail(`${label} url_matches does not take a locator`);
     validateLocator(action.locator, label);
-  } else if (['click', 'fill', 'hover', 'waitFor', 'assert'].includes(action.action)) {
+  } else if (['click', 'fill', 'hover', 'waitFor', 'assert'].includes(action.action) && !locatorFree) {
     fail(`${label}.locator is required for ${action.action}`);
   }
   if (action.action === 'goto') requiredString(action.path, `${label}.path`, 2048);
@@ -133,14 +145,12 @@ function validateAction(action, label) {
       fail(`${label}.ms must be an integer between 0 and 5000`);
     }
   }
-  if (action.action === 'waitFor') {
-    if (action.state !== undefined && !ALLOWED_WAIT_STATES.has(action.state)) {
-      fail(`${label}.state must be attached, detached, visible, or hidden`);
-    }
-    if (action.timeout_ms !== undefined
-      && (!Number.isInteger(action.timeout_ms) || action.timeout_ms < 1 || action.timeout_ms > 60000)) {
-      fail(`${label}.timeout_ms must be an integer between 1 and 60000`);
-    }
+  if (action.action === 'waitFor' && action.state !== undefined && !ALLOWED_WAIT_STATES.has(action.state)) {
+    fail(`${label}.state must be attached, detached, visible, or hidden`);
+  }
+  if (['waitFor', 'assert'].includes(action.action) && action.timeout_ms !== undefined
+    && (!Number.isInteger(action.timeout_ms) || action.timeout_ms < 1 || action.timeout_ms > 60000)) {
+    fail(`${label}.timeout_ms must be an integer between 1 and 60000`);
   }
   if (action.action === 'scroll' && !action.locator) {
     if (!Number.isInteger(action.y) || Math.abs(action.y) > 5000) {
@@ -148,6 +158,52 @@ function validateAction(action, label) {
     }
   }
   if (action.action === 'screenshot') requiredString(action.name, `${label}.name`, 120);
+}
+
+// An assert is a claim with a predicate. Keys that belong to one predicate are
+// rejected on another so a storyboard cannot look stricter than it is.
+function validateAssertion(action, label) {
+  const predicate = action.predicate === undefined ? 'visible' : action.predicate;
+  if (!ALLOWED_PREDICATES.has(predicate)) {
+    fail(`${label}.predicate must be one of ${[...ALLOWED_PREDICATES].join(', ')}`);
+  }
+  action.predicate = predicate;
+  if (EXPECTED_VALUE_PREDICATES.has(predicate)) {
+    if (typeof action.expected !== 'string' || action.expected.length > 2000
+      || (predicate !== 'value_equals' && !action.expected.trim())) {
+      fail(`${label}.expected is required for ${predicate} and must be a string of at most 2000 characters`);
+    }
+  } else if (action.expected !== undefined) {
+    fail(`${label}.expected does not apply to ${predicate}`);
+  }
+  if (predicate === 'attribute') {
+    if (typeof action.attribute !== 'string' || !ATTRIBUTE_NAME.test(action.attribute)) {
+      fail(`${label}.attribute must be a valid attribute name`);
+    }
+  } else if (action.attribute !== undefined) {
+    fail(`${label}.attribute applies only to the attribute predicate`);
+  }
+  if (predicate === 'count') {
+    if (!Number.isInteger(action.count) || action.count < 0 || action.count > 1000) {
+      fail(`${label}.count must be an integer between 0 and 1000`);
+    }
+  } else if (action.count !== undefined) {
+    fail(`${label}.count applies only to the count predicate`);
+  }
+  if (predicate === 'url_matches') {
+    requiredString(action.pattern, `${label}.pattern`, 500);
+    try {
+      RegExp(action.pattern, 'u');
+    } catch (error) {
+      fail(`${label}.pattern is not a valid regular expression (${error.message})`);
+    }
+  } else if (action.pattern !== undefined) {
+    fail(`${label}.pattern applies only to the url_matches predicate`);
+  }
+  if (action.criterion !== undefined
+    && (!Number.isInteger(action.criterion) || action.criterion < 1 || action.criterion > 64)) {
+    fail(`${label}.criterion must be an integer between 1 and 64`);
+  }
 }
 
 function actionInvalidatesReadiness(action) {
@@ -199,6 +255,15 @@ function loadStoryboard(filePath) {
   }
   if (value.comparison === 'after_only') {
     requiredString(value.baseline_reason, 'storyboard.baseline_reason');
+  }
+  // A proof whose after state matches its before state shows nothing, so the
+  // author has to say in advance when that is the point.
+  if (value.expect_identical !== undefined && typeof value.expect_identical !== 'boolean') {
+    fail('storyboard.expect_identical must be true or false');
+  }
+  value.expect_identical = value.expect_identical === true;
+  if (value.expect_identical) {
+    requiredString(value.identical_reason, 'storyboard.identical_reason');
   }
   if (value.suppress !== undefined) {
     if (!Array.isArray(value.suppress) || value.suppress.length > 20) {
@@ -316,9 +381,8 @@ function mediaFilesUnder(root) {
 function prAttachment(sessionDir, filePath, stage, title) {
   const kind = prMediaKind(filePath);
   const baseName = path.basename(filePath, path.extname(filePath)).replace(/[-_]+/gu, ' ').trim();
-  const imageAlt = stage === 'poster'
-    ? `${title} walkthrough poster`
-    : `${title} ${stage} ${baseName}`;
+  const fixedAlts = { poster: `${title} walkthrough poster`, contact: `${title} keyframe contact sheet` };
+  const imageAlt = fixedAlts[stage] || `${title} ${stage} ${baseName}`;
   return {
     path: path.resolve(filePath),
     kind,
@@ -328,7 +392,7 @@ function prAttachment(sessionDir, filePath, stage, title) {
   };
 }
 
-function prAttachmentInventory(sessionDir, storyboard, before, after, finalVideo, poster) {
+function prAttachmentInventory(sessionDir, storyboard, before, after, finalVideo, poster, contactSheet) {
   const attachments = [];
   const seen = new Set();
   function add(filePath, stage, allowedRoot = sessionDir) {
@@ -340,6 +404,7 @@ function prAttachmentInventory(sessionDir, storyboard, before, after, finalVideo
   }
   add(finalVideo, 'walkthrough');
   add(poster, 'poster');
+  if (contactSheet) add(contactSheet, 'contact');
   for (const [stage, record] of [['before', before], ['after', after]]) {
     if (!record || !pathWithin(sessionDir, record.directory)) continue;
     const recordRoot = path.resolve(record.directory);
@@ -469,9 +534,13 @@ async function showChapter(page, chapter) {
   await page.waitForTimeout(900);
 }
 
-async function pointAt(page, locator) {
-  await locator.scrollIntoViewIfNeeded();
-  const box = await locator.boundingBox();
+async function pointAt(page, locator, options = {}) {
+  // Interactions keep Playwright's own wait so a control that is still
+  // appearing is clicked, not missed; a claim that already holds passes a
+  // short bound so a vanished element cannot freeze the footage.
+  const wait = options.timeout ? { timeout: options.timeout } : undefined;
+  await locator.scrollIntoViewIfNeeded(wait);
+  const box = await locator.boundingBox(wait);
   if (!box) fail('Target element is not visible');
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
@@ -507,6 +576,102 @@ async function pointAt(page, locator) {
       }
     },
   };
+}
+
+function normalizeText(value) {
+  return String(value == null ? '' : value).replace(/\s+/gu, ' ').trim();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function expectedFor(action) {
+  switch (action.predicate) {
+    case 'visible': return true;
+    case 'hidden': return false;
+    case 'count': return action.count;
+    case 'url_matches': return action.pattern;
+    default: return action.expected;
+  }
+}
+
+// Playwright's getters auto-wait up to 30 s for an element; an element that
+// is not on the page is a claim that did not hold, found now and within the
+// author's timeout, so presence is checked first and every wait is bounded.
+async function observeAssertion(page, action, locator, remainingMs) {
+  const wait = { timeout: Math.max(1, Math.min(Math.round(remainingMs), 30000)) };
+  switch (action.predicate) {
+    case 'visible':
+    case 'hidden': return locator.isVisible();
+    case 'count': return locator.count();
+    case 'url_matches': return page.url();
+    default: break;
+  }
+  if ((await locator.count()) === 0) return null;
+  switch (action.predicate) {
+    case 'text_equals':
+    case 'text_contains': return normalizeText(await locator.innerText(wait));
+    case 'value_equals': return locator.inputValue(wait);
+    case 'attribute': return locator.getAttribute(action.attribute, wait);
+    default: return fail(`Unsupported predicate: ${action.predicate}`);
+  }
+}
+
+function assertionHolds(action, observed) {
+  switch (action.predicate) {
+    case 'visible': return observed === true;
+    case 'hidden': return observed === false;
+    case 'text_equals': return observed !== null && observed === normalizeText(action.expected);
+    case 'text_contains': return observed !== null && String(observed).includes(normalizeText(action.expected));
+    case 'value_equals': return observed !== null && observed !== undefined && String(observed) === action.expected;
+    case 'attribute': return observed !== null && observed !== undefined && String(observed) === action.expected;
+    case 'count': return observed === action.count;
+    case 'url_matches': return new RegExp(action.pattern, 'u').test(String(observed));
+    default: return false;
+  }
+}
+
+// Polls the predicate until it has held for two consecutive samples
+// (satisfied), the timeout passes (unsatisfied, with the last observation), or
+// an observation throws (unknown, with the error). A strict-mode violation or
+// a detached element is a fact about the page worth recording, not a crash,
+// and a page still settling cannot pass on one lucky frame.
+async function evaluateAssertion({ page, action, sampleIntervalMs = 250 }) {
+  const claim = { ...action, predicate: action.predicate || 'visible' };
+  const timeoutMs = claim.timeout_ms || 10000;
+  const startedAt = Date.now();
+  const locator = claim.predicate === 'url_matches' ? null : locatorFor(page, claim.locator);
+  const result = {
+    outcome: 'unsatisfied',
+    predicate: claim.predicate,
+    expected: expectedFor(claim),
+    observed: null,
+    samples: 0,
+    elapsedMs: 0,
+    criterion: Number.isInteger(claim.criterion) ? claim.criterion : null,
+  };
+  let consecutive = 0;
+  for (;;) {
+    result.samples += 1;
+    try {
+      result.observed = await observeAssertion(page, claim, locator, timeoutMs - (Date.now() - startedAt));
+    } catch (error) {
+      result.outcome = 'unknown';
+      result.observed = String(error && error.message ? error.message : error).slice(0, 500);
+      break;
+    }
+    consecutive = assertionHolds(claim, result.observed) ? consecutive + 1 : 0;
+    if (consecutive >= 2) {
+      result.outcome = 'satisfied';
+      break;
+    }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= timeoutMs) break;
+    await sleep(Math.max(1, Math.min(sampleIntervalMs, timeoutMs - elapsed)));
+  }
+  result.elapsedMs = Date.now() - startedAt;
+  return result;
 }
 
 async function runAction({ page, action, baseUrl, screenshot, stage, chapter }) {
@@ -545,13 +710,21 @@ async function runAction({ page, action, baseUrl, screenshot, stage, chapter }) 
   // took the overlay with the old document; rebuild it and restore the caption.
   if (await ensureOverlay(page, stage) && chapter) await setCaption(page, chapter);
 
-  const locator = locatorFor(page, action.locator);
   if (action.action === 'assert') {
-    await locator.waitFor({ state: 'visible', timeout: 10000 });
-    const highlight = await pointAt(page, locator);
-    await highlight.dispose();
-    return;
+    const evaluation = await evaluateAssertion({ page, action });
+    const pointable = evaluation.outcome === 'satisfied' && !['hidden', 'url_matches', 'count'].includes(evaluation.predicate);
+    if (pointable) {
+      try {
+        const highlight = await pointAt(page, locatorFor(page, action.locator), { timeout: 750 });
+        await highlight.dispose();
+      } catch (_) {
+        // The claim is already recorded; an element that cannot be pointed at
+        // is not a second finding.
+      }
+    }
+    return evaluation;
   }
+  const locator = locatorFor(page, action.locator);
   if (action.action === 'scroll') {
     await locator.scrollIntoViewIfNeeded();
     const highlight = await pointAt(page, locator);
@@ -581,16 +754,17 @@ async function runStoryboardStage({ page, options, storyboard, viewportName, out
   const timelineStartedAt = startedAt || Date.now();
   const timeline = [];
   const readiness = [];
+  const assertions = [];
   for (const { chapter, chapterIndex } of chapters) {
     let chapterShown = false;
     let chapterStartedAt = null;
-    for (const action of chapter.actions) {
+    for (const [actionIndex, action] of chapter.actions.entries()) {
       if (action.action !== 'goto' && !chapterShown) {
         chapterStartedAt = Date.now();
         await showChapter(page, chapter);
         chapterShown = true;
       }
-      await runAction({
+      const outcome = await runAction({
         page,
         action,
         chapter,
@@ -607,12 +781,18 @@ async function runStoryboardStage({ page, options, storyboard, viewportName, out
         await showChapter(page, chapter);
         chapterShown = true;
       }
+      if (action.action === 'assert') {
+        assertions.push({ ...outcome, chapterIndex, actionIndex });
+      }
       if (action.action === 'waitFor' || action.action === 'assert') {
+        // A waitFor that returned held by definition; an assert held only when
+        // its evaluation says so, so a failed claim cannot pass as readiness.
         readiness.push({
           chapterIndex,
           action: action.action,
-          locator: action.locator,
-          state: action.action === 'waitFor' ? (action.state || 'visible') : 'visible',
+          locator: action.locator || null,
+          state: action.action === 'waitFor' ? (action.state || 'visible') : (outcome && outcome.predicate) || 'visible',
+          satisfied: action.action === 'waitFor' || Boolean(outcome && outcome.outcome === 'satisfied'),
         });
       }
     }
@@ -625,9 +805,37 @@ async function runStoryboardStage({ page, options, storyboard, viewportName, out
   return {
     actionCount: chapters.reduce((total, { chapter }) => total + chapter.actions.length, 0),
     readiness,
-    readinessSatisfied: readiness.length > 0,
+    readinessSatisfied: readiness.length > 0 && readiness[readiness.length - 1].satisfied === true,
+    assertions,
     timeline,
   };
+}
+
+// The stage badge and caption are part of the page, so two stages never
+// render byte-identical screenshots. The parity check hashes a shot with the
+// overlay hidden; nothing is written, so it cannot leak into attachments.
+async function overlayFreeScreenshotHash(page) {
+  const toggle = (hidden) => page.evaluate((isHidden) => {
+    const root = document.getElementById('__dex_ui_proof');
+    if (root) root.style.visibility = isHidden ? 'hidden' : '';
+  }, hidden);
+  try {
+    await toggle(true);
+    // The pointer ends wherever the last action left it, and a hovered control
+    // renders differently; park it in the corner so both stages agree.
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(150);
+    const shot = await page.screenshot({ fullPage: false });
+    return crypto.createHash('sha256').update(shot).digest('hex');
+  } catch (_) {
+    return null;
+  } finally {
+    try {
+      await toggle(false);
+    } catch (_) {
+      // The page may already be gone; the visible screenshot was taken first.
+    }
+  }
 }
 
 async function runViewport({ browser, playwright, options, storyboard, viewportName, viewport }) {
@@ -648,6 +856,7 @@ async function runViewport({ browser, playwright, options, storyboard, viewportN
   let captureError = null;
   let storyboardExecution = null;
   let screenshotPath = null;
+  let cleanScreenshotHash = null;
   const consoleErrors = [];
   const pageErrors = [];
   const networkErrors = [];
@@ -692,6 +901,7 @@ async function runViewport({ browser, playwright, options, storyboard, viewportN
     if (options.waitMs > 0) await page.waitForTimeout(options.waitMs);
     screenshotPath = path.join(outDir, `${viewportName}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: !storyboard });
+    if (storyboard) cleanScreenshotHash = await overlayFreeScreenshotHash(page);
   } catch (error) {
     captureError = error;
   }
@@ -727,6 +937,7 @@ async function runViewport({ browser, playwright, options, storyboard, viewportN
     viewport: viewportName,
     viewportSize: viewport,
     screenshot: screenshotPath,
+    cleanScreenshotHash,
     trace: options.trace ? tracePath : null,
     videos: videoFiles,
     storyboardExecution,
@@ -948,6 +1159,48 @@ function mediaDuration(binary, filePath) {
   return (Number(match[1]) * 3600) + (Number(match[2]) * 60) + Number(match[3]);
 }
 
+// How many frames the scene filter would keep. `tile` pads a short selection
+// with black tiles rather than failing, so the choice between scene changes
+// and evenly spaced frames has to be made before rendering.
+function sceneFrameCount(binary, video, sceneThreshold) {
+  const result = spawnSync(binary, [
+    '-hide_banner', '-i', video, '-vf', `select='eq(n,0)+gt(scene,${sceneThreshold})',showinfo`, '-an', '-f', 'null', '-',
+  ], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (result.status !== 0) return null;
+  const frames = String(result.stderr || '').match(/Parsed_showinfo_\d+ @ [^\]]+\] n:\s*\d+/gu);
+  return frames ? frames.length : 0;
+}
+
+// Twelve keyframes a reader can look at: nobody can watch the MP4 from inside
+// a transcript. Scene changes are used when there are enough of them to fill
+// the sheet; a calmer walkthrough gets evenly spaced frames instead. UI
+// deltas are small, so the threshold is well below a film cut.
+function buildContactSheet(binary, video, outPath, options = {}) {
+  const columns = options.columns || 4;
+  const rows = options.rows || 3;
+  const tileWidth = options.tileWidth || 480;
+  const sceneThreshold = options.sceneThreshold || 0.1;
+  const tiles = columns * rows;
+  const tile = `scale=${tileWidth}:-2,tile=${columns}x${rows}`;
+  const attempt = (filter) => {
+    fs.rmSync(outPath, { force: true });
+    const result = spawnSync(binary, ['-y', '-i', video, '-vf', filter, '-frames:v', '1', '-fps_mode', 'vfr', '-update', '1', outPath], {
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return result.status === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
+  };
+  const frames = sceneFrameCount(binary, video, sceneThreshold);
+  if (frames !== null && frames >= tiles && attempt(`select='eq(n,0)+gt(scene,${sceneThreshold})',${tile}`)) {
+    return { path: outPath, mode: 'scene', frames };
+  }
+  const duration = Number.isFinite(options.durationSeconds) && options.durationSeconds > 0 ? options.durationSeconds : null;
+  const fps = duration ? Math.max(0.05, tiles / duration) : 1;
+  if (attempt(`fps=${fps.toFixed(4)},${tile}`)) return { path: outPath, mode: 'uniform', frames };
+  fs.rmSync(outPath, { force: true });
+  return { path: null, mode: null, frames };
+}
+
 function narrationDurationMatches(actualSeconds, estimatedDuration) {
   if (!Number.isFinite(actualSeconds) || actualSeconds <= 0) return false;
   const tolerance = Math.max(2, estimatedDuration * 0.35);
@@ -1033,7 +1286,78 @@ async function generateNarration(sessionDir, storyboard, binary, services = {}) 
   }
 }
 
-async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
+function sha256File(filePath) {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  } catch (_) {
+    return null;
+  }
+}
+
+function recordAssertions(record) {
+  if (!record || !Array.isArray(record.results)) return [];
+  return record.results.flatMap((result) => {
+    const assertions = result && result.storyboardExecution && result.storyboardExecution.assertions;
+    return Array.isArray(assertions)
+      ? assertions.map((assertion) => ({ viewport: result.viewport, ...assertion }))
+      : [];
+  });
+}
+
+const OUTCOME_RANK = { unsatisfied: 0, unknown: 1, satisfied: 2 };
+
+function worstOutcome(assertions) {
+  let worst = null;
+  for (const assertion of assertions) {
+    const outcome = OUTCOME_RANK[assertion.outcome] === undefined ? 'unknown' : assertion.outcome;
+    if (worst === null || OUTCOME_RANK[outcome] < OUTCOME_RANK[worst]) worst = outcome;
+  }
+  return worst;
+}
+
+// The approved criteria file is read for its text only; a missing or odd file
+// leaves the table showing indices rather than failing the proof.
+function readCriteriaTexts(criteriaFile) {
+  if (!criteriaFile) return { texts: [], note: null };
+  try {
+    const value = JSON.parse(fs.readFileSync(criteriaFile, 'utf8'));
+    const texts = value && Array.isArray(value.acceptance_criteria) ? value.acceptance_criteria : null;
+    if (texts && texts.every((item) => typeof item === 'string')) return { texts, note: null };
+    return { texts: [], note: `Criteria file ${criteriaFile} has no acceptance_criteria list; the table shows indices only.` };
+  } catch (error) {
+    return { texts: [], note: `Criteria file ${criteriaFile} could not be read (${error.message}); the table shows indices only.` };
+  }
+}
+
+function criteriaTable(beforeAssertions, afterAssertions, texts) {
+  const indices = new Set();
+  for (const assertion of [...beforeAssertions, ...afterAssertions]) {
+    if (Number.isInteger(assertion.criterion) && assertion.criterion >= 1) indices.add(assertion.criterion);
+  }
+  return [...indices].sort((left, right) => left - right).map((index) => ({
+    index,
+    text: typeof texts[index - 1] === 'string' ? texts[index - 1] : null,
+    before: worstOutcome(beforeAssertions.filter((assertion) => assertion.criterion === index)),
+    after: worstOutcome(afterAssertions.filter((assertion) => assertion.criterion === index)),
+  }));
+}
+
+function describeAssertion(assertion) {
+  const suffix = assertion.outcome === 'unknown' ? ' (could not be evaluated)' : '';
+  return `chapters[${assertion.chapterIndex}] ${assertion.predicate} expected ${JSON.stringify(assertion.expected)}, observed ${JSON.stringify(assertion.observed)}${suffix}`;
+}
+
+function summarizeAssertions(assertions) {
+  if (assertions.length === 0) return 'none recorded';
+  const satisfied = assertions.filter((assertion) => assertion.outcome === 'satisfied').length;
+  return `${satisfied}/${assertions.length} satisfied`;
+}
+
+function tableCell(value) {
+  return String(value).replace(/\|/gu, '\\|').replace(/\s+/gu, ' ').trim();
+}
+
+async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled, options = {}) {
   fs.mkdirSync(sessionDir, { recursive: true });
   writeTranscript(sessionDir, storyboard);
   const records = captureRecords(sessionDir);
@@ -1046,11 +1370,14 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
   const poster = path.join(sessionDir, 'poster.png');
   const manifest = path.join(sessionDir, 'visual-evidence.md');
   const captions = path.join(sessionDir, 'captions.vtt');
+  const contactPath = path.join(sessionDir, 'contact.png');
   fs.rmSync(finalVideo, { force: true });
   fs.rmSync(poster, { force: true });
   fs.rmSync(captions, { force: true });
+  fs.rmSync(contactPath, { force: true });
   const notes = [];
   let status = 'READY';
+  let contactSheet = { path: null, mode: null, frames: null };
   let narration = { ok: false, reason: 'disabled' };
   let finalDurationSeconds = null;
   let captionCues = null;
@@ -1065,11 +1392,61 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     || (beforeViewports.length > 0 && stableHash(beforeViewports) === stableHash(afterViewports));
   if ((before || after) && !readinessSatisfied) {
     status = 'NEEDS_REVIEW';
-    notes.push('Capture readiness could not be verified for every recorded viewport. Re-run both stages with waitFor or assert gates.');
+    // A stage that ended on an assert that did not hold is not a missing gate:
+    // the application may simply not have reached the state the author claimed.
+    const unsettledStages = [['before', before], ['after', after]]
+      .filter(([stage, record]) => record && (stage === 'after' || requiresBefore))
+      .filter(([, record]) => {
+        const gate = finalReadinessGate(record);
+        return gate && gate.action === 'assert' && gate.satisfied === false;
+      })
+      .map(([stage]) => stage);
+    if (unsettledStages.length > 0) {
+      for (const stage of unsettledStages) {
+        notes.push(`The ${stage} stage's final claim did not hold, so its capture may predate the intended state; see the claims below.`);
+      }
+    } else {
+      notes.push('Capture readiness could not be verified for every recorded viewport. Re-run both stages with waitFor or assert gates.');
+    }
   }
   if ((before || after) && !viewportParity) {
     status = 'NEEDS_REVIEW';
     notes.push('Before and after viewport sets differ. Re-run the stages with the same viewport names and dimensions.');
+  }
+
+  // The claims each stage recorded. Only the after stage has to hold: the
+  // baseline is expected to differ, and that difference is the proof.
+  const beforeAssertions = recordAssertions(before);
+  const afterAssertions = recordAssertions(after);
+  for (const assertion of afterAssertions.filter((candidate) => candidate.outcome !== 'satisfied')) {
+    status = 'NEEDS_REVIEW';
+    notes.push(`After-stage claim did not hold: ${describeAssertion(assertion)}.`);
+  }
+  const criteriaTexts = readCriteriaTexts(options.criteriaFile);
+  if (criteriaTexts.note) notes.push(criteriaTexts.note);
+  const criteriaRows = criteriaTable(beforeAssertions, afterAssertions, criteriaTexts.texts);
+
+  // Proof must prove: an after state that renders exactly like before shows
+  // no change, unless the storyboard said in advance that none is visible.
+  const parityHash = (record) => {
+    const result = primaryResult(record);
+    if (!result) return null;
+    if (typeof result.cleanScreenshotHash === 'string' && result.cleanScreenshotHash) return result.cleanScreenshotHash;
+    return result.screenshot ? sha256File(result.screenshot) : null;
+  };
+  let screenshotParity = 'not compared';
+  if (requiresBefore && before && after) {
+    const beforeHash = parityHash(before);
+    const afterHash = parityHash(after);
+    if (beforeHash && afterHash) {
+      screenshotParity = beforeHash === afterHash ? 'identical' : 'differs';
+      if (screenshotParity === 'identical' && storyboard.expect_identical) {
+        notes.push(`Before and after render identically by design: ${storyboard.identical_reason}`);
+      } else if (screenshotParity === 'identical') {
+        status = 'NEEDS_REVIEW';
+        notes.push('After is identical to before (desktop screenshot); the proof shows no change. Declare expect_identical with a reason if that is the point.');
+      }
+    }
   }
 
   if ((requiresBefore && !beforeVideo) || !afterVideo) {
@@ -1143,18 +1520,21 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
         status = 'NEEDS_REVIEW';
         notes.push('Caption timing could not be measured from narration or the captured chapter timeline.');
       }
+      contactSheet = buildContactSheet(binary, finalVideo, contactPath, { durationSeconds: duration });
+      if (!contactSheet.path) notes.push('The keyframe contact sheet could not be rendered; review the stage screenshots instead.');
     }
   }
 
   const afterResult = after && (after.results.find((item) => item.viewport === 'desktop') || after.results[0]);
   if (afterResult && afterResult.screenshot && fs.existsSync(afterResult.screenshot)) fs.copyFileSync(afterResult.screenshot, poster);
-  const prInventory = prAttachmentInventory(sessionDir, storyboard, before, after, finalVideo, poster);
+  const prInventory = prAttachmentInventory(sessionDir, storyboard, before, after, finalVideo, poster, contactSheet.path);
 
   const manifestLines = [
     '# Visual Proof', '', `Status: ${status}`, `Title: ${storyboard.title}`, '', storyboard.summary, '',
     '## Walkthrough', '',
     `- Video: ${fs.existsSync(finalVideo) ? finalVideo : 'not rendered'}`,
     `- Poster: ${fs.existsSync(poster) ? poster : 'not rendered'}`,
+    `- Contact sheet: ${contactSheet.path || 'not rendered'}`,
     `- Transcript: ${path.join(sessionDir, 'transcript.md')}`,
     `- Captions: ${fs.existsSync(captions) ? captions : 'not generated'}`,
     `- Storyboard: ${path.join(sessionDir, 'walkthrough.json')}`,
@@ -1166,6 +1546,18 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     `- Before final gate: ${requiresBefore ? (beforeReadinessGate ? JSON.stringify(beforeReadinessGate) : 'missing') : 'not requested'}`,
     `- After final gate: ${afterReadinessGate ? JSON.stringify(afterReadinessGate) : 'missing'}`,
     `- Suppressed selectors: ${storyboard.suppress.length > 0 ? storyboard.suppress.map((selector) => JSON.stringify(selector)).join(', ') : 'none'}`,
+    `- Screenshot parity: ${screenshotParity}`,
+    '', '## Acceptance criteria', '',
+    ...(criteriaRows.length > 0
+      ? [
+        '| # | Criterion | Before | After |',
+        '|---|---|---|---|',
+        ...criteriaRows.map((row) => `| ${row.index} | ${tableCell(row.text || '(index only)')} | ${row.before || 'not asserted'} | ${row.after || 'not asserted'} |`),
+      ]
+      : ['- No assert names a criterion.']),
+    '', '## Claims', '',
+    `- Before: ${summarizeAssertions(beforeAssertions)}`,
+    `- After: ${summarizeAssertions(afterAssertions)}`,
     '', '## How to test', '', storyboard.how_to_test, '',
     '## PR handoff', '',
     `- Phase 5 can attach ${prInventory.attachments.length} image/video file(s) to the pull request with GitHub CLI.`,
@@ -1183,6 +1575,9 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     manifest,
     video: fs.existsSync(finalVideo) ? finalVideo : '',
     poster: fs.existsSync(poster) ? poster : '',
+    contact_sheet: contactSheet.path,
+    contact_sheet_mode: contactSheet.mode,
+    contact_sheet_frames: contactSheet.frames,
     transcript: path.join(sessionDir, 'transcript.md'),
     captions: fs.existsSync(captions) ? captions : '',
     narration: narration.ok ? 'kokoro' : (narration.incomplete ? 'failed' : 'captions-only'),
@@ -1194,6 +1589,11 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
     viewport_parity: viewportParity,
     viewports: { before: beforeViewports, after: afterViewports },
     suppressed_selectors: storyboard.suppress,
+    assertions: { before: beforeAssertions, after: afterAssertions },
+    criteria: criteriaRows,
+    screenshot_parity: screenshotParity,
+    expect_identical: storyboard.expect_identical === true,
+    identical_reason: storyboard.identical_reason || '',
     before: before ? before.directory : '',
     after: after ? after.directory : '',
     duration_seconds: finalDurationSeconds,
@@ -1206,9 +1606,9 @@ async function produceBundleUnsafe(sessionDir, storyboard, narrationEnabled) {
   return result;
 }
 
-async function produceBundle(sessionDir, storyboard, narrationEnabled) {
+async function produceBundle(sessionDir, storyboard, narrationEnabled, options = {}) {
   try {
-    return await produceBundleUnsafe(sessionDir, storyboard, narrationEnabled);
+    return await produceBundleUnsafe(sessionDir, storyboard, narrationEnabled, options);
   } catch (error) {
     fs.mkdirSync(sessionDir, { recursive: true });
     const finalVideo = path.join(sessionDir, 'walkthrough.mp4');
@@ -1219,6 +1619,7 @@ async function produceBundle(sessionDir, storyboard, narrationEnabled) {
     fs.rmSync(finalVideo, { force: true });
     fs.rmSync(poster, { force: true });
     fs.rmSync(captions, { force: true });
+    fs.rmSync(path.join(sessionDir, 'contact.png'), { force: true });
     fs.rmSync(path.join(sessionDir, '.narration-chapters'), { recursive: true, force: true });
     for (const temporaryName of ['.walkthrough-concat.txt', '.walkthrough-silent.mp4', '.walkthrough-compressed.mp4']) {
       fs.rmSync(path.join(sessionDir, temporaryName), { force: true });
@@ -1281,7 +1682,7 @@ async function main() {
     const metadata = await captureStage(options, storyboard);
     printCapture(metadata);
     if (storyboard && options.sessionDir && options.stage === 'after') {
-      const bundle = await produceBundle(options.sessionDir, storyboard, options.narration);
+      const bundle = await produceBundle(options.sessionDir, storyboard, options.narration, bundleOptions(options));
       console.log(`bundle: ${path.join(options.sessionDir, 'bundle.json')}`);
       console.log(`status: ${bundle.status}`);
     }
@@ -1304,12 +1705,18 @@ async function main() {
     const out = path.join(options.sessionDir, `${new Date().toISOString().replace(/[:.]/g, '')}-${stage}-revision`);
     await captureStage({ ...options, mode: 'capture', stage, url, out, desktop: true, video: true }, storyboard);
   }
-  const bundle = await produceBundle(options.sessionDir, storyboard, options.narration);
+  const bundle = await produceBundle(options.sessionDir, storyboard, options.narration, bundleOptions(options));
   console.log(`bundle: ${path.join(options.sessionDir, 'bundle.json')}`);
   console.log(`status: ${bundle.status}`);
 }
 
+function bundleOptions(options) {
+  return { criteriaFile: options.criteria ? path.resolve(options.criteria) : null };
+}
+
 module.exports = {
+  buildContactSheet,
+  evaluateAssertion,
   generateNarration,
   loadStoryboard,
   matchingStageRecord,

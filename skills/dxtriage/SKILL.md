@@ -142,8 +142,11 @@ Keep investigation history in the session unless it changes how to do the work.
 
 ## Split, organise, and sequence
 
-Create sub-issues when smaller changes can be reviewed and tested separately,
-given their prerequisites. Do not force a split or mirror the parent in one child.
+Create sub-issues for separate ownership, prioritisation or an external
+dependency, or to organise the work packages of a parent that one lifecycle
+will deliver. A smaller diff is not a reason: one coherent outcome in one
+repository stays one lifecycle and one PR, and its sub-issues are its work
+packages. Do not force a split or mirror the parent in one child.
 Each child needs an outcome, bounded scope, acceptance criteria, estimate, and
 dependencies. Preserve coverage of all parent requirements. Reuse matching
 existing tickets instead of filing parallel work.
@@ -156,8 +159,13 @@ ask again only if it materially changes. Preserve unique requirements and
 discussion links when consolidating. Do not delete tickets or comments.
 
 Creating new children and the parent/dependency links needed for them is allowed
-within established scope. Editing an existing issue outside selected scope needs
-approval. A known duplicate outside scope is a candidate to reuse, not permission
+within established scope. A child that will run as its own lifecycle, rather
+than as a work package of the parent's, needs a concrete boundary: a different
+repository, a different release or deploy unit, a different owner or authority,
+an incompatible environment, or a measured cost that consolidation would exceed.
+Name it in the parent's plan comment; the lifecycle that splits records the
+same boundary as a `decision` in its mission ledger. Editing an existing issue
+outside selected scope needs approval. A known duplicate outside scope is a candidate to reuse, not permission
 to overwrite it. Keep proposed existing-ticket relationships in the session until
 approved; do not publish them as settled through a prose workaround.
 

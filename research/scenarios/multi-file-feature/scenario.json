@@ -1,0 +1,7 @@
+{
+  "name": "multi-file-feature",
+  "type": "feature",
+  "description": "Build a multi-file e-commerce cart with pricing engine, inventory, and discount system.",
+  "timeout": 7200,
+  "language": "node"
+}

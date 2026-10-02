@@ -191,6 +191,7 @@ runtime_contract_files=(
   lib/common.sh
   lib/completion.sh
   lib/override.sh
+  lib/qa.sh
   lib/review-capacity.sh
   lib/review.sh
   lib/review-controller.sh
@@ -203,6 +204,7 @@ runtime_contract_files=(
   lib/session-process.sh
   lib/session-runtime.sh
   lib/session.sh
+  scripts/qa-report.py
   scripts/review_checks.py
   scripts/review_input.py
   scripts/review_acceptance.py

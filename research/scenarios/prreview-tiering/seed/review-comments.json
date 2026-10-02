@@ -1,0 +1,65 @@
+{
+  "pr": {
+    "number": 142,
+    "title": "Add OrderService for checkout flow",
+    "author": "you"
+  },
+  "comments": [
+    {
+      "id": "C1",
+      "author": "@maintainer",
+      "file": "src/orderService.js",
+      "line": 12,
+      "body": "This will throw a TypeError if `user` is null — we've seen this hit prod twice in the last quarter. Add a guard before reading user.id."
+    },
+    {
+      "id": "C2",
+      "author": "@security-bot",
+      "file": "src/orderService.js",
+      "line": 34,
+      "body": "Caching the plaintext password in `this._cache` is a security finding (CWE-312, cleartext storage of sensitive information). Don't store the password at all — and the comparison on line 36 should use a constant-time hashing check anyway. This is blocking."
+    },
+    {
+      "id": "C3",
+      "author": "@nitpicker",
+      "file": "src/orderService.js",
+      "line": 49,
+      "body": "Could use template literals here instead of string concatenation — cleaner."
+    },
+    {
+      "id": "C4",
+      "author": "@codestyle-guru",
+      "file": "src/orderService.js",
+      "line": 48,
+      "body": "`let line` should be `const line` — it's never reassigned. Same with `let order` on line 39."
+    },
+    {
+      "id": "C5",
+      "author": "@principal-engineer",
+      "file": "src/orderService.js",
+      "line": 1,
+      "body": "I think `OrderService` should be a separate microservice with its own data store. The monolith is starting to creak. This PR feels like a step in the wrong direction architecturally."
+    },
+    {
+      "id": "C6",
+      "author": "@curious-reviewer",
+      "file": "src/orderService.js",
+      "line": 13,
+      "body": "Why are you computing `total` here instead of using the existing `PricingEngine.computeOrderTotal()` from `lib/pricing.js`? Wasn't sure if that was intentional."
+    },
+    {
+      "id": "C7",
+      "author": "@product-manager",
+      "file": null,
+      "line": null,
+      "body": "While you're in here, can you also add the admin order-cancellation dashboard? It's been on the backlog for months and would be great to get done."
+    },
+    {
+      "id": "C8",
+      "author": "@busy-coworker",
+      "file": null,
+      "line": null,
+      "body": "lgtm 👍"
+    }
+  ]
+}

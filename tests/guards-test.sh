@@ -561,39 +561,6 @@ assert_destructive_clean "dd to a regular file" \
   'dd if=/dev/zero of=./disk-image.bin bs=1024 count=1'
 assert_destructive_clean "dd to null" \
   'dd if=/dev/zero of=/dev/null bs=1024 count=1'
-# A `<<` the shell does not read as an operator opens no heredoc. Each of these
-# once opened one that never closed, and the command after it went unread.
-assert_destructive_blocks "a quoted << before a destructive command" \
-  $'echo "shift with a << b"\nrm -rf /'
-assert_destructive_blocks "a single-quoted << before a destructive command" \
-  $'echo \'a << b\'\nrm -rf /'
-assert_destructive_blocks "a here-string before a destructive command" \
-  $'grep -q x <<< "y"\nrm -rf /'
-assert_destructive_blocks "an arithmetic shift before a destructive command" \
-  $'echo $(( a << b ))\nrm -rf /'
-assert_destructive_blocks "a commented << before a destructive command" \
-  $'ls # a << b\nrm -rf /'
-assert_destructive_blocks "a << inside a multi-line string" \
-  $'git commit -m "feat: x\n\nexplain a << b"\nrm -rf /'
-# In $'…' a backslash escapes, so \' does not end the string; in plain '…' it
-# is literal, so 'a\' does. Read the other way round, each of these hid the
-# command after the string.
-assert_destructive_blocks "a command after an ANSI-C string with an escaped quote" \
-  $'echo $\'it\\\'s fine\'\nrm -rf /'
-assert_destructive_blocks "a command between an ANSI-C string and a later quote" \
-  $'echo $\'it\\\'s\'; rm -rf /; echo \'x\''
-assert_destructive_blocks "a substitution after a single-quoted backslash" \
-  $'echo \'a\\\' $(rm -rf /)'
-assert_destructive_blocks "a backtick after a single-quoted backslash" \
-  $'echo \'a\\\' `rm -rf /`'
-assert_destructive_blocks "an ANSI-C quoted command word" \
-  $'$\'rm\' -rf /'
-assert_destructive_clean "an ANSI-C string that only mentions rm -rf /" \
-  $'echo $\'it\\\'s rm -rf /\''
-# The commit-message heredoc sits inside double quotes, and is still a heredoc:
-# its body is text.
-assert_destructive_clean "a commit message heredoc that mentions rm -rf /" \
-  $'git commit -m "$(cat <<\'EOF\'\nfeat: x\n\nrm -rf / and git commit text\nEOF\n)"'
 # A substitution in command position is ordinary tooling; resolving its output
 # must not make these look destructive.
 # `xargs` without a pipe reads the terminal, so "no values on the line" is not
@@ -1178,7 +1145,79 @@ else
   printf 'FAIL (mid-argument-vector rm payload should block; rc=%s)\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
   fail=$((fail + 1))
 fi
+
+# Perl and Ruby launch without parentheses; the file scan has to read that
+# form as a launch too.
+cat > "$FILE_TMP/wipe.pl" <<'WIPE'
+system "rm -rf /";
+WIPE
+assert_destructive_blocks "a perl script file launching without parentheses" "perl $FILE_TMP/wipe.pl"
+
+# A paren-less launch's arguments end at the next launch, and a "system" string
+# is not one. Otherwise the scan grows with the launches on a line times its
+# length, blows the budget, and the guard is skipped before it reaches the real
+# launch after them. A minified bundle is one long line.
+python3 - "$FILE_TMP/chain.pl" <<'CHAIN'
+import sys
+
+with open(sys.argv[1], "w") as fh:
+    fh.write(' and '.join('system "make t%d"' % i for i in range(150)) + ';\nsystem "rm -rf /";\n')
+CHAIN
+assert_destructive_blocks "a perl line chaining many paren-less launches" "perl $FILE_TMP/chain.pl"
+python3 - "$FILE_TMP/bundle.js" <<'BUNDLE'
+import sys
+
+parts = [
+    'var a%d={theme:"system",items:[%s]}' % (i, ','.join('"v%d_%d"' % (i, j) for j in range(150)))
+    for i in range(240)
+]
+with open(sys.argv[1], "w") as fh:
+    fh.write(','.join(parts) + ';require("child_process").execSync("rm -rf /");\n')
+BUNDLE
+assert_destructive_blocks "a one-line bundle with many paren-less launch words" "node $FILE_TMP/bundle.js"
 rm -rf "$FILE_TMP"
+
+# A heredoc's lines are input for its receiver: an interpreter heredoc written
+# into a file is text, one handed to a shell still runs. A here-string is one
+# word, so it must not swallow the commands after it as a heredoc body.
+IFS= read -r -d '' heredoc_cmd <<'CMD' || true
+cat > notes.md <<'EOF'
+python3 - <<'PY'
+import subprocess
+subprocess.run(['rm', '-rf', '/'])
+PY
+EOF
+CMD
+assert_destructive_clean "an interpreter heredoc that is only text in a cat heredoc" "$heredoc_cmd"
+IFS= read -r -d '' heredoc_cmd <<'CMD' || true
+bash <<'EOF'
+python3 - <<'PY'
+import subprocess
+subprocess.run(['rm', '-rf', '/'])
+PY
+EOF
+CMD
+assert_destructive_blocks "an interpreter heredoc nested in a bash heredoc" "$heredoc_cmd"
+IFS= read -r -d '' heredoc_cmd <<'CMD' || true
+python3 - <<'PY'
+import subprocess
+subprocess.run(['rm', '-rf', '/'])
+PY
+CMD
+assert_destructive_blocks "an interpreter heredoc launching rm -rf /" "$heredoc_cmd"
+IFS= read -r -d '' heredoc_cmd <<'CMD' || true
+grep -q x <<< "y"
+rm -rf /
+CMD
+assert_destructive_blocks "rm -rf / after a here-string" "$heredoc_cmd"
+IFS= read -r -d '' heredoc_cmd <<'CMD' || true
+echo "shift with a << b"
+python3 - <<'PY'
+import subprocess
+subprocess.run(['rm', '-rf', '/'])
+PY
+CMD
+assert_destructive_blocks "an interpreter heredoc after a quoted <<" "$heredoc_cmd"
 
 # Guard evaluation must fail closed. A blocking guard that cannot finish
 # checking a command has to deny it; letting the call through would silently

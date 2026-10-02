@@ -1,0 +1,15 @@
+{
+  "name": "long-refactor-inheritance",
+  "type": "refactor",
+  "description": "Refactor a multi-file notification inheritance hierarchy to composition while preserving the public factory API and existing tests.",
+  "timeout": 7200,
+  "language": "node",
+  "weights": {
+    "correctness": 25,
+    "test_quality": 15,
+    "robustness": 15,
+    "verification": 20,
+    "issue_detection": 5,
+    "code_quality": 20
+  }
+}

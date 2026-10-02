@@ -1,0 +1,11 @@
+{
+  "name": "dex-compare-quality-tools",
+  "private": true,
+  "description": "Pinned tools for research/compare/quality.py. Installed into research/.tools/compare, never into a workspace.",
+  "dependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  }
+}

@@ -23,6 +23,11 @@ assert_contains "Read every sub-issue of the ticket" "$PLAN"
 assert_contains "each one is a work package of this plan" "$PLAN"
 assert_contains "of the ticket and of each of its sub-issues" "$PLAN"
 assert_contains "Sub-issues are required scope, not future work" "$PLAN"
+# Ticket write-back used to size each sub-issue for its own lifecycle and ask
+# which one to implement first; both contradict sub-issues being this
+# lifecycle's scope. tests/mission/intake-consolidation-test.sh owns the rest.
+assert_not_contains "which created issue should be implemented first" "$PLAN"
+assert_not_contains 'small enough for a single `dx <ticket>` lifecycle' "$PLAN"
 
 PR="$ROOT/prompts/workflows/dxpr.md"
 assert_file "$PR"

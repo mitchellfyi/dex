@@ -1,0 +1,15 @@
+{
+  "name": "node-python-schema-sync",
+  "type": "feature",
+  "description": "Add one shared schema field end-to-end across a Node API service and a Python processor service.",
+  "timeout": 7200,
+  "language": "polyglot",
+  "weights": {
+    "correctness": 30,
+    "test_quality": 20,
+    "robustness": 15,
+    "verification": 20,
+    "issue_detection": 5,
+    "code_quality": 10
+  }
+}
