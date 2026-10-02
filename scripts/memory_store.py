@@ -1044,19 +1044,38 @@ def dex_fingerprint(repo):
     return digest.hexdigest()
 
 
+SYNC_STAMP_KEYS = ("first_seen", "last_seen", "restored_at", "reopened_at",
+                   "promoted_at", "rewritten_at", "retired_at")
+
+
+def entry_sync_stamps(entry):
+    stamps = [entry.get(key, "") for key in SYNC_STAMP_KEYS]
+    stamps.append((entry.get("landed") or {}).get("at", ""))
+    return stamps
+
+
 def cmd_sync_check(store_dir, args):
-    """Is there anything for `dx sync` to promote since its last write run?"""
+    """Is there anything for `dx sync` to promote since its last write run?
+
+    Entries are compared with the stamps sync-mark recorded, by value. Stamps
+    have one-second resolution, so an observation made in the same second as
+    the last sync is newer without being later, and a time comparison left it
+    unsynced until something else changed. A store marked before the stamps
+    were recorded still compares by time.
+    """
     repo = os.path.abspath(args.repo)
     data = load_entries(store_dir) if os.path.isdir(store_dir) else {"entries": {}}
     last = data.get("last_synced_at") or ""
+    marked = data.get("last_synced_entries")
     changed = 0
-    for entry in data["entries"].values():
+    for entry_id, entry in data["entries"].items():
+        if isinstance(marked, dict):
+            if marked.get(entry_id) != "|".join(entry_sync_stamps(entry)):
+                changed += 1
+            continue
         if entry.get("status") == "retired" and not entry_changed_after(entry, last):
             continue
-        stamps = [entry.get(key, "") for key in ("first_seen", "last_seen", "restored_at", "reopened_at",
-                                                 "promoted_at", "rewritten_at", "retired_at")]
-        stamps.append((entry.get("landed") or {}).get("at", ""))
-        if any(stamp and stamp > last for stamp in stamps):
+        if any(stamp and stamp > last for stamp in entry_sync_stamps(entry)):
             changed += 1
     fingerprint = dex_fingerprint(repo)
     dex_changed = fingerprint != data.get("last_synced_dex_fingerprint")
@@ -1078,6 +1097,8 @@ def cmd_sync_mark(store_dir, args):
     data = load_entries(store_dir)
     data["last_synced_at"] = args.now or utc_now()
     data["last_synced_dex_fingerprint"] = dex_fingerprint(repo)
+    data["last_synced_entries"] = {
+        entry_id: "|".join(entry_sync_stamps(entry)) for entry_id, entry in data["entries"].items()}
     save_json(entries_path(store_dir), data)
     print(json.dumps({"last_synced_at": data["last_synced_at"]}))
 
