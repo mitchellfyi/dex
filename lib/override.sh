@@ -42,7 +42,8 @@ dx_override_gate_supported() {
     maintain.max-prs|sync.budget-minutes|maintain.budget-minutes|\
     maintain.respond-budget-minutes|maintain.command-timeout-seconds|\
     maintain.max-surfaces|control.pause|control.cancel|control.resume|\
-    phase.completion|phase.jump|verification.required-gates|guard.*)
+    phase.completion|phase.jump|verification.required-gates|guard.*|\
+    setup.ticket-ownership|setup.ticket-status|plan.approval)
       return 0
       ;;
     *) return 1 ;;
@@ -87,6 +88,11 @@ dx_override_gate_value_valid() {
       ;;
     phase.jump)
       [[ "$value" =~ ^[0-6]$ ]]
+      ;;
+    # Waiver-only: nothing reads a live value for these, so only
+    # dx_override_waive may record them.
+    setup.*|plan.approval)
+      return 1
       ;;
   esac
 }
@@ -221,6 +227,12 @@ dx_override_waive() {
   [[ "$gate" != "review.max-waves" ]] || return 2
   dx_override_phase_valid "$phase" || return 2
   [[ "$phase" != "-" ]] || return 2
+  # A waiver-only gate names one item of one phase, and only that phase can
+  # waive it.
+  case "$gate" in
+    setup.*) [[ "$phase" == "0" ]] || return 2 ;;
+    plan.approval) [[ "$phase" == "1" ]] || return 2 ;;
+  esac
   [[ "$override_source" == "agent" || "$override_source" == "human" ]] \
     || return 2
   dx_override_reason_valid "$reason" || return 2

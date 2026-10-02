@@ -23,6 +23,11 @@ trap cleanup EXIT
 hook_log="$TMP_DIR/hook.log"
 transcript="$TMP_DIR/transcript.txt"
 
+# An interactive zsh with no startup files opens zsh-newuser-install and waits
+# for a key, which hangs this test in a fresh HOME (the hermetic runner's).
+export ZDOTDIR="$TMP_DIR"
+: > "$ZDOTDIR/.zshrc"
+
 # `zsh -i` on a pty: monitor is on, exactly as in the operator's terminal.
 # DEX_DIR points at this checkout so the shell's own rc file cannot swap in
 # another copy of the library. The supervised command's stdio is redirected

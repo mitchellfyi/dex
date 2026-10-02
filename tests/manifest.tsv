@@ -5,6 +5,7 @@
 ab-launch-test.sh	fast	all	600	hermetic
 attribution-test.sh	slow	all	1200	hermetic
 attribution-worktree-test.sh	fast	all	600	hermetic
+benchmark-workflow-test.sh	fast	all	600	hermetic
 ccr-routing-test.sh	service	all	600	hermetic
 checkpoint-test.sh	fast	all	600	hermetic
 cli-help-test.sh	fast	all	600	hermetic
@@ -29,6 +30,7 @@ factory-redirect-test.sh	service	all	900	hermetic
 factory-sync-test.sh	service	all	900	hermetic
 feedback-consumer-test.sh	slow	all	1200	hermetic
 feedback-outbox-test.sh	fast	all	600	hermetic
+foreign-checkout-bootstrap-test.sh	fast	all	300	hermetic
 gate-env-fingerprint-test.sh	fast	all	600	hermetic
 gate-receipt-test.sh	fast	all	300	hermetic
 guards-test.sh	serial	all	1200	hermetic
@@ -104,7 +106,10 @@ review-evaluation-harness-test.sh	serial	all	1200	hermetic
 review-evidence-v3-test.sh	slow	all	1200	hermetic
 review-ladder-contract-test.sh	fast	all	300	hermetic
 review-loop-contract-test.sh	slow	all	1200	hermetic
-review-loop-test.sh	serial	all	1800	hermetic
+# review-loop-test takes ~1000s on Linux CI and on an Apple-silicon Mac, and
+# ran past 1800s on the slower macOS runner. 3600 still catches a hang inside
+# the resource job's 90 minutes.
+review-loop-test.sh	serial	all	3600	hermetic
 review-policy-config-test.sh	fast	all	600	hermetic
 review-policy-test.sh	slow	all	1200	hermetic
 review-report-test.sh	fast	all	600	hermetic
@@ -152,6 +157,7 @@ triage-hooks-test.sh	fast	all	600	hermetic
 ui-capture-test.sh	fast	all	600	hermetic
 untrusted-input-contract-test.sh	fast	all	600	hermetic
 usage-collect-test.sh	fast	all	600	hermetic
+waiver-gate-names-test.sh	fast	all	300	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-hooks-test.sh	fast	all	300	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic

@@ -42,7 +42,8 @@ Evidence: tracker tool invocation succeeded, or N/A.
 ## 2. Assignee
 
 - If the tracker supports assignees: the ticket is assigned to the authenticated user.
-- If the ticket was already assigned to someone else: you paused and warned the user by default. Do not silently reassign. A reasoned `setup.ticket-ownership` waiver may continue without claiming the assignee changed.
+- If the ticket was already assigned to someone else: you paused and warned the user by default. Do not silently reassign.
+- If the user said to continue past someone else's assignment, or the tracker refused the assignment for lack of permission: this item is not done. See "Waiving the assignee or status" below.
 - If no tracker is configured: this step is N/A.
 
 Evidence: tracker output shows the assignee, or N/A.
@@ -92,6 +93,7 @@ and the applicable remote metadata.
 ## 4. Ticket Status → In Progress
 
 - If the tracker supports status: the ticket is now In Progress (or the equivalent active state).
+- If the tracker refused the change for lack of permission: this item is not done. See "Waiving the assignee or status" below.
 - If no tracker is configured: this step is N/A.
 
 Evidence: tracker output shows the new status, or N/A.
@@ -127,3 +129,20 @@ ALL of these must be true before you stop:
 - No Phase 0 background process is still running, per `dx ps`.
 
 When all criteria are met, stop. The Stop hook will audit this phase and advance to Phase 1 (Plan) automatically.
+
+## Waiving the assignee or status
+
+§2 and §4 are the only items a waiver can close. When one of them cannot be
+done, finish everything else above, then end the phase with a standalone
+command instead of stopping:
+
+```bash
+bash "$DEX_DIR/bin/control.sh" waive setup.ticket-ownership --source agent --reason "<what the tracker said>"
+```
+
+Use `setup.ticket-status` for §4. Use `--source human` when the user approved
+continuing past someone else's assignment. The waiver records Phase 0 as
+waived, not passed, and moves to Phase 1. One waiver ends the phase, so if both
+items failed, waive `setup.ticket-ownership` and give both failures in the
+reason. The setup summary names the waiver and does not call the ticket
+assigned or In Progress.
