@@ -167,29 +167,41 @@ json.dump(spec, open(sys.argv[1], "w"), indent=2)
 PY
 
 MANIFEST_SHA=$(shasum -a 256 "$MANIFEST" | cut -d' ' -f1)
-declare -A ENVS=(
-  [DEX_DIR]="$ARM_DEX_DIR" [DX_STATE_DIR]="$ARM_DIR/state" [DX_LOOP_DIR]="$ARM_DIR/loops"
-  [DX_RUN_ROOT]="$ARM_DIR/runs" [DX_MEMORY_STORE_DIR]="$ARM_DIR/memory" [DX_FEEDBACK_DIR]="$ARM_DIR/feedback"
-  [DX_ARTIFACT_DIR]="$ARM_DIR/artifacts" [DEX_MAX_ACTIVE_HEAVY]="1" [DEX_MISSION_MAX_HELPERS]="2"
-  [DEX_HEADLESS_DEFAULT_BRANCH]="main" [DEX_FACTORY_SYNC]="0" [DX_AB_ARM]="$ARM" [DX_AB_TASK]="$TASK"
-  # The memory curator is a learning-loop cost, reported separately; an arm
-  # must not spend a model session on it at completion.
-  [DEX_MEMORY_CURATE]="0"
-)
+# The arm's environment as KEY=VALUE words, ready for `env`. macOS bash 3.2
+# has no associative arrays, so a later setting replaces an earlier one here.
+ENV_ARGS=()
+arm_env() { # <key> <value>
+  local entry kept=()
+  for entry in ${ENV_ARGS[@]+"${ENV_ARGS[@]}"}; do
+    [[ "${entry%%=*}" == "$1" ]] || kept+=("$entry")
+  done
+  ENV_ARGS=(${kept[@]+"${kept[@]}"} "$1=$2")
+}
+arm_env DEX_DIR "$ARM_DEX_DIR"
+arm_env DX_STATE_DIR "$ARM_DIR/state"
+arm_env DX_LOOP_DIR "$ARM_DIR/loops"
+arm_env DX_RUN_ROOT "$ARM_DIR/runs"
+arm_env DX_MEMORY_STORE_DIR "$ARM_DIR/memory"
+arm_env DX_FEEDBACK_DIR "$ARM_DIR/feedback"
+arm_env DX_ARTIFACT_DIR "$ARM_DIR/artifacts"
+arm_env DEX_MAX_ACTIVE_HEAVY 1
+arm_env DEX_MISSION_MAX_HELPERS 2
+arm_env DEX_HEADLESS_DEFAULT_BRANCH main
+arm_env DEX_FACTORY_SYNC 0
+arm_env DX_AB_ARM "$ARM"
+arm_env DX_AB_TASK "$TASK"
+# The memory curator is a learning-loop cost, reported separately; an arm
+# must not spend a model session on it at completion.
+arm_env DEX_MEMORY_CURATE 0
 # Mission is the default; a legacy arm has to say so.
-ENVS[DEX_ORCHESTRATION_MODE]="$MODE"
+arm_env DEX_ORCHESTRATION_MODE "$MODE"
 # The memory on/off comparison shares one store between runs and switches
 # retrieval; a plain arm keeps its own empty store.
-[[ -n "$MEMORY_STORE" ]] && ENVS[DX_MEMORY_STORE_DIR]="$MEMORY_STORE"
-[[ "$RETRIEVAL" == off ]] && ENVS[DEX_MEMORY_RETRIEVAL]="0"
-[[ "$RETRIEVAL" == on ]] && ENVS[DEX_MEMORY_RETRIEVAL]="1"
-ENV_JSON=$(python3 - "${!ENVS[@]}" <<PY
-import json, sys
-keys = sys.argv[1:]
-values = {k: v for k, v in zip(keys, """$(for k in "${!ENVS[@]}"; do printf '%s\n' "${ENVS[$k]}"; done)""".split("\n"))}
-print(json.dumps(values, sort_keys=True))
-PY
-)
+[[ -z "$MEMORY_STORE" ]] || arm_env DX_MEMORY_STORE_DIR "$MEMORY_STORE"
+[[ "$RETRIEVAL" != off ]] || arm_env DEX_MEMORY_RETRIEVAL 0
+[[ "$RETRIEVAL" != on ]] || arm_env DEX_MEMORY_RETRIEVAL 1
+ENV_JSON=$(python3 -c 'import json, sys
+print(json.dumps(dict(arg.split("=", 1) for arg in sys.argv[1:]), sort_keys=True))' "${ENV_ARGS[@]}")
 PLAN=$(python3 -c 'import json,sys; print(json.dumps({"arm": sys.argv[1], "task": sys.argv[2], "mode": sys.argv[3], "dex_dir": sys.argv[4], "arm_dir": sys.argv[5], "repo": sys.argv[6], "spec": sys.argv[7], "shim": sys.argv[8], "arm_settings": sys.argv[9], "max_minutes": int(sys.argv[10]), "manifest_sha256": sys.argv[11], "dry_run": sys.argv[12] == "1", "env": json.loads(sys.argv[13]), "run_id": sys.argv[14]}, sort_keys=True))' \
   "$ARM" "$TASK" "$MODE" "$ARM_DEX_DIR" "$ARM_DIR" "$REPO" "$SPEC" "$SHIM" "$ARM_SETTINGS" "$MAX_MINUTES" "$MANIFEST_SHA" "$DRY_RUN" "$ENV_JSON" "$RUN_ID")
 printf '%s\n' "$PLAN" > "$ARM_DIR/plan.json"
@@ -203,8 +215,6 @@ START_EPOCH=$(date +%s)
 {
   printf '%s\n' "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" "start_epoch=$START_EPOCH" "load1=$(uptime | sed 's/.*load averages*: //' | cut -d' ' -f1 | tr -d ',')" "arm=$ARM" "task=$TASK" "mode=$MODE" "dex_dir=$ARM_DEX_DIR" "manifest_sha256=$MANIFEST_SHA"
 } > "$ARM_DIR/logs/run-meta.txt"
-ENV_ARGS=()
-for k in "${!ENVS[@]}"; do ENV_ARGS+=("$k=${ENVS[$k]}"); done
 
 (
   # The watcher: once the lifecycle's phase passes the endpoint, ask Dex to
