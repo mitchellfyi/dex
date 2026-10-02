@@ -36,8 +36,10 @@ dx_memory_retrieve() {
   local repo_root="$1" paths_csv="$2" session_id="$3" role="${4:-lead}" phase="${5:-}"
   local -a extra=()
   [[ -n "$phase" ]] && extra+=(--phase "$phase")
+  # The guarded form: bash 3.2 reads "${extra[@]}" of an empty array as an
+  # unbound variable under set -u, which failed every retrieval with no phase.
   dx_memory_store "$repo_root" retrieve --repo "$repo_root" --paths "$paths_csv" \
-    --session "$session_id" --role "$role" "${extra[@]}"
+    --session "$session_id" --role "$role" ${extra[@]+"${extra[@]}"}
 }
 
 # dx_memory_ingest_mission <session_id> <repo_root>
