@@ -39,7 +39,9 @@ MAX_TURNS="${DX_CONSUME_REPRODUCE_MAX_TURNS:-12}"
   || { echo "consume-reproduce: DX_CONSUME_MODEL_TIMEOUT must be a positive integer" >&2; exit 2; }
 command -v "$CLAUDE_BIN" >/dev/null 2>&1 || { echo "consume-reproduce: $CLAUDE_BIN is not on PATH" >&2; exit 2; }
 
-PROMPT=$(python3 - "$PACKAGE" <<'PY'
+# Read into a variable first: macOS bash 3.2 scans a heredoc inside $( … ) for
+# backticks, and the ``` in this prompt left one unmatched.
+read -r -d '' PROMPT_SCRIPT <<'PY' || true
 import json
 import os
 import sys
@@ -78,7 +80,7 @@ lines += [
 ]
 print("\n".join(lines))
 PY
-)
+PROMPT=$(python3 -c "$PROMPT_SCRIPT" "$PACKAGE")
 
 ANSWER="$OUT.answer"
 rm -f "$ANSWER" "$OUT"
