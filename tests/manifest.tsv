@@ -129,6 +129,7 @@ triage-command-test.sh	fast	all	600	hermetic
 triage-hooks-test.sh	fast	all	600	hermetic
 ui-capture-test.sh	fast	all	600	hermetic
 untrusted-input-contract-test.sh	fast	all	600	hermetic
+waiver-gate-names-test.sh	fast	all	300	hermetic
 watch-lease-test.sh	fast	all	600	hermetic
 worktree-hooks-test.sh	fast	all	300	hermetic
 worktree-integrity-test.sh	slow	all	1200	hermetic

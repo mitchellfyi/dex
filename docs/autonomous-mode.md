@@ -435,6 +435,13 @@ remaining gate and advances without a review receipt. Other assurance gates,
 such as `verification.required-gates`, use the named waiver path. Neither form
 labels an unverified check as passed.
 
+Three gates exist only to be waived, each in one phase: `setup.ticket-ownership`
+and `setup.ticket-status` in Phase 0, for an assignee or status change the user
+declined or the tracker refused, and `plan.approval` in Phase 1. They have no
+value to override, and waiving one ends its phase with a `waived` outcome.
+`tests/waiver-gate-names-test.sh` fails when a prompt, skill or doc names a
+gate `dx control` would reject.
+
 Provider deadlines for review, `dx sync`, and maintenance are live. Their
 supervisors re-read policy once per second, so increasing, shortening,
 disabling, clearing, or expiring an override affects the process already

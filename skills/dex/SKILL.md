@@ -33,7 +33,8 @@ line, including when all fields are unchanged or N/A.
 1. Runs in NORMAL mode (no plan mode) so the agent can write to git and the tracker before any planning starts.
 2. Follow `prompts/ticket-instructions.md` end to end:
    - Read the ticket from the configured tracker (including all comments).
-   - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, pause and ask by default. A justified `setup.ticket-ownership` waiver may continue without claiming ownership changed.
+   - If unassigned, assign the ticket to the authenticated user. If assigned to someone else, pause and ask by default.
+   - If the user says to continue past someone else's assignment, or the tracker refuses the assignee or status write for lack of permission, finish the rest of setup and end Phase 0 with a `setup.ticket-ownership` or `setup.ticket-status` waiver, as `prompts/ticket-instructions.md` step 6 describes. The phase is recorded as waived, not passed.
    - Run `dx_ticket_branch_prepare` with the tracker's git branch name. It
      adopts an existing origin branch only when its PR is open or it has no PR,
      and otherwise prepares a new local branch. Do not push a new branch with
