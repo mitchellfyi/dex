@@ -86,7 +86,10 @@ review-evaluation-harness-test.sh	serial	all	1200	hermetic
 review-evidence-v3-test.sh	slow	all	1200	hermetic
 review-ladder-contract-test.sh	fast	all	300	hermetic
 review-loop-contract-test.sh	slow	all	1200	hermetic
-review-loop-test.sh	serial	all	1800	hermetic
+# review-loop-test takes ~1000s on Linux CI and on an Apple-silicon Mac, and
+# ran past 1800s on the slower macOS runner. 3600 still catches a hang inside
+# the resource job's 90 minutes.
+review-loop-test.sh	serial	all	3600	hermetic
 review-policy-config-test.sh	fast	all	600	hermetic
 review-policy-test.sh	slow	all	1200	hermetic
 review-report-test.sh	fast	all	600	hermetic
