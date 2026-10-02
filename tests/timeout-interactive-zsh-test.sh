@@ -23,6 +23,11 @@ trap cleanup EXIT
 hook_log="$TMP_DIR/hook.log"
 transcript="$TMP_DIR/transcript.txt"
 
+# An interactive zsh with no startup files opens zsh-newuser-install and waits
+# for a key, which hangs this test in a fresh HOME (the hermetic runner's).
+export ZDOTDIR="$TMP_DIR"
+: > "$ZDOTDIR/.zshrc"
+
 # `zsh -i` on a pty: monitor is on, exactly as in the operator's terminal.
 # -f skips rc files: the runner's hermetic HOME has no ~/.zshrc, and zsh would
 # stop at its new-user menu instead of running the command. DEX_DIR points at
