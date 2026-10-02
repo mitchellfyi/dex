@@ -29,14 +29,13 @@ export ZDOTDIR="$TMP_DIR"
 : > "$ZDOTDIR/.zshrc"
 
 # `zsh -i` on a pty: monitor is on, exactly as in the operator's terminal.
-# -f skips rc files: the runner's hermetic HOME has no ~/.zshrc, and zsh would
-# stop at its new-user menu instead of running the command. DEX_DIR points at
-# this checkout so nothing can swap in another copy of the library. The supervised command's stdio is redirected
+# DEX_DIR points at this checkout so the shell's own rc file cannot swap in
+# another copy of the library. The supervised command's stdio is redirected
 # away from the tty, as the worktree hook runner does, so any stop can only
 # come from job control itself.
 expect -c "
 set timeout 30
-spawn zsh -f -ic {export DEX_DIR=\"$ROOT\"; source \"$ROOT/dx.sh\" >/dev/null 2>&1; dx_run_with_timeout 10 env bash -c \"echo hook-ran\" </dev/null >\"$hook_log\" 2>&1; echo \"rc=\$?\"; echo DX_TEST_END; exit}
+spawn zsh -ic {export DEX_DIR=\"$ROOT\"; source \"$ROOT/dx.sh\" >/dev/null 2>&1; dx_run_with_timeout 10 env bash -c \"echo hook-ran\" </dev/null >\"$hook_log\" 2>&1; echo \"rc=\$?\"; echo DX_TEST_END; exit}
 expect {
   \"DX_TEST_END\" { }
   timeout { puts \"DX_TEST_HUNG\"; exec kill -9 [exp_pid] }
