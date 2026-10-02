@@ -43,6 +43,8 @@ run_legacy_resume() { # <marker> <output> [dx arguments...]
       source "$1"
       shift
       __dx_refresh_provider() { return 0; }
+      # The provider is stubbed out, so it is ready; a CI runner has no claude.
+      dx_provider_agent_ready_check() { return 0; }
       __dx_record_session_branch() { return 0; }
       __dx_restore_in_place_session_branch() { return 0; }
       __dx_run_with_runtime() { return 91; }
@@ -120,6 +122,7 @@ run_selected_helper() { # <requested-agent> <marker-prefix> <output>
     DX_TEST_MARKER_PREFIX="$marker_prefix" \
     zsh -fc '
       source "$1"
+      dx_provider_agent_ready_check() { return 0; }
       dx_repo_root() { print -r -- "$PWD"; }
       dx_session_catalog_select() { command cat "$DX_TEST_SELECTED_FILE"; }
       dx_session_runtime_read() { command cat "$DX_TEST_RUNTIME_FILE"; }
@@ -189,6 +192,7 @@ run_public_fixture_resume() { # <pointer> <marker-prefix> <output> [recovery-mod
     DX_TEST_RECOVERY_MODE="$recovery_mode" \
     zsh -fc '
       source "$1"
+      dx_provider_agent_ready_check() { return 0; }
       __dx_refresh_provider() {
         DX_PROVIDER_ENGINE=claude
         return 0
@@ -324,6 +328,7 @@ run_completed_legacy_resume() { # <name> <workspace> <mode> <output> <marker>
     cd "$REPO"
     DX_TEST_PROVIDER_MARKER="$marker_file" zsh -fc '
       source "$1"
+      dx_provider_agent_ready_check() { return 0; }
       __dx_refresh_provider() { return 0; }
       __dx_run_with_recovered_runtime() {
         print -r -- called > "$DX_TEST_PROVIDER_MARKER"
