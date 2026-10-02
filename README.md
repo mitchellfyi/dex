@@ -287,6 +287,12 @@ RTK support is installed by `dx install`, `dx init`, `dx sync`, and
 Codex gets global instructions to prefix shell commands with RTK when compact
 output is enough. Set `DX_RTK_ENABLED=0` to skip this bootstrap.
 
+`dx init`, `dx sync` and `dx tools bootstrap` change user-level files only
+when they run from the checkout your Claude hooks already use. Run from
+another Dex checkout, such as a worktree or an experiment copy, they say so
+and leave the installation alone. `dx install` from that checkout is how to
+switch.
+
 ## Project Context
 
 `dx init` creates:

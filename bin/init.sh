@@ -335,6 +335,8 @@ if [[ "${DEX_SKIP_TOOL_BOOTSTRAP:-0}" == "1" ]]; then
   dx_skip "Skipping Claude/Codex tooling bootstrap (already handled by caller)"
 elif dx_lifecycle_benchmark; then
   dx_skip "Benchmark run: skipping Claude/Codex tooling bootstrap"
+elif FOREIGN_CHECKOUT=$(dx_tooling_bootstrap_foreign_checkout); then
+  dx_skip "$FOREIGN_CHECKOUT"
 else
   TOOL_BOOTSTRAP_RAN=1
   if ! dx_bootstrap_agent_tooling "$repo_root" "install"; then

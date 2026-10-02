@@ -26,6 +26,7 @@ dx-script-test.sh	fast	all	600	hermetic
 events-test.sh	fast	all	600	hermetic
 factory-redirect-test.sh	service	all	900	hermetic
 factory-sync-test.sh	service	all	900	hermetic
+foreign-checkout-bootstrap-test.sh	fast	all	300	hermetic
 gate-receipt-test.sh	fast	all	300	hermetic
 guards-test.sh	serial	all	1200	hermetic
 headless-provider-test.sh	fast	all	600	hermetic
