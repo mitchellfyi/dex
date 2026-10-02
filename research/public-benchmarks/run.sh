@@ -2,7 +2,7 @@
 # Run a public benchmark through Harbor with Dex, the Claude Code baseline, or both.
 #
 # Usage:
-#   research/harbor/run.sh [options] [-- extra harbor run args]
+#   research/public-benchmarks/run.sh [options] [-- extra harbor run args]
 #
 #   --agent ARMS                   Comma-separated arms (default: both):
 #                                    claude-code   Harbor's plain Claude Code

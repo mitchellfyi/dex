@@ -32,7 +32,7 @@ hooks/               Claude Code hooks, guard handler, shared shell parser
 lib/                 Shared shell libraries sourced by common.sh; see the module table below
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (0-6 + prompt-loop)
-research/            Benchmarks: scenario suite, Dex-vs-bare comparison (compare/), review-loop evaluation — not shipped functionality
+research/            Benchmarks: scenario suite, Dex-vs-bare comparison (compare/), review-loop evaluation, public benchmarks via Harbor (public-benchmarks/) — not shipped functionality
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
 templates/           Files Dex installs into other repos (the dx-maintain GitHub workflow)
@@ -599,6 +599,7 @@ measure the outcome, before and after.
 | Prompts, guardrails, skills, audits: anything that changes what an agent writes | `bash research/compare/run.sh --arms bare,dex@HEAD,dex` runs the working tree against HEAD and against the same model without Dex. See `research/compare/README.md` for the metrics and how to read the report. |
 | The review loop | `research/review-loop/` (seeded defects, tier accuracy, false-clean waves) |
 | Operational behaviour: hooks, host budget, session ownership, cost | run journals under `~/.dex/runs`, `dx review stats`, and session transcripts. First check that the failure you are fixing happens, and how often. |
+| Whether Dex beats plain Claude Code on tasks nobody here wrote | `research/public-benchmarks/` runs SWE-bench Pro and Terminal-Bench through Harbor. Its README has the plan, the status and the results so far. |
 | A problem no scenario covers | turn it into one (below) |
 
 ### Turning a problem into a scenario

@@ -12,10 +12,10 @@ working tree Dex leaves behind.
 
 Usage, from the Dex checkout::
 
-    PYTHONPATH=research/harbor harbor run -d terminal-bench-sample@2.0 \
+    PYTHONPATH=research/public-benchmarks harbor run -d terminal-bench-sample@2.0 \
         -a dex_agent:DexAgent -m anthropic/claude-sonnet-5-5 -n 1 -l 1
 
-``research/harbor/run.sh`` wraps this and the matching baseline run.
+``research/public-benchmarks/run.sh`` wraps this and the matching baseline run.
 
 Agent kwargs (``--ak key=value``):
   dex_dir           Dex checkout to upload (default: this file's checkout)
