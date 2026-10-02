@@ -98,7 +98,12 @@ settings = json.load(open(sys.argv[1]))
 settings["autoMemoryDirectory"] = sys.argv[3]
 json.dump(settings, open(sys.argv[2], "w"), indent=2)
 PY
-REAL_CLAUDE=$(command -v claude)
+# A dry run only prints the plan, so it does not need claude installed.
+REAL_CLAUDE=$(command -v claude 2>/dev/null || true)
+if [[ -z "$REAL_CLAUDE" ]]; then
+  [[ "$DRY_RUN" -eq 1 ]] || { echo "launch-arm: claude is not on PATH" >&2; exit 2; }
+  REAL_CLAUDE=claude
+fi
 SHIM="$ARM_DIR/shim/claude"
 cat > "$SHIM" <<SHIM
 #!/usr/bin/env bash
