@@ -858,6 +858,33 @@ function storageStateFile(env = process.env) {
   return file;
 }
 
+// The stage badge and caption are part of the page, so two stages never
+// render byte-identical screenshots. The parity check hashes a shot with the
+// overlay hidden; nothing is written, so it cannot leak into attachments.
+async function overlayFreeScreenshotHash(page) {
+  const toggle = (hidden) => page.evaluate((isHidden) => {
+    const root = document.getElementById('__dex_ui_proof');
+    if (root) root.style.visibility = isHidden ? 'hidden' : '';
+  }, hidden);
+  try {
+    await toggle(true);
+    // The pointer ends wherever the last action left it, and a hovered control
+    // renders differently; park it in the corner so both stages agree.
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(150);
+    const shot = await page.screenshot({ fullPage: false });
+    return crypto.createHash('sha256').update(shot).digest('hex');
+  } catch (_) {
+    return null;
+  } finally {
+    try {
+      await toggle(false);
+    } catch (_) {
+      // The page may already be gone; the visible screenshot was taken first.
+    }
+  }
+}
+
 async function runViewport({ browser, playwright, options, storyboard, viewportName, viewport }) {
   const outDir = options.out;
   const videoDir = path.join(outDir, 'video', viewportName);

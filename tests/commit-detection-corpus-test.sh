@@ -178,6 +178,20 @@ pathlib.Path('notes.md').write_text("Run `git commit -m 'feat: x'` after the edi
 PY
 CMD
 check none   'python3 -c "print(\"Run \`git commit\` after the edit.\")"'
+# The same holds for a paren-less system "cmd" or exec 'cmd', such as a string
+# a Python script writes into a Ruby file.
+check_stdin none <<'CMD'
+python3 - <<'PY'
+import pathlib
+p = pathlib.Path('release.rb')
+p.write_text(p.read_text().replace('system "git commit -m old"', 'system "git commit -m new"'))
+PY
+CMD
+check_stdin none <<'CMD'
+node - <<'JS'
+require('fs').writeFileSync('notes.md', "Ruby: exec 'git commit -m x'\n");
+JS
+CMD
 check commit 'perl -e "\`git commit -m x\`"'
 check_stdin commit <<'CMD'
 python3 - <<'PY'
@@ -202,6 +216,33 @@ node <<'JS'
 require('child_process').execSync('git commit -m "feat: x"');
 JS
 CMD
+# A Node template literal is a string. Bash removes the backslash from \` in
+# double quotes and in an unquoted heredoc, so node gets a template literal here.
+check commit 'node -e "require(\"child_process\").execSync(\`git commit -m x\`)"'
+check_stdin commit <<'CMD'
+node <<JS
+require('child_process').execSync(\`git commit -m x\`);
+JS
+CMD
+check none   'node -e "console.log(\`git commit -m x\`)"'
+# A file, a quoted heredoc or a single-quoted word reaches node as written, so
+# its \` is an escape inside a template literal, not the literal's end.
+check_stdin commit <<'CMD'
+node <<'JS'
+const fence = `\`\`\``;
+require('child_process').execSync('git commit -m x');
+JS
+CMD
+check_stdin commit <<'CMD'
+node -e 'const tick = `\``; require("child_process").execSync("git commit -m x")'
+CMD
+check_stdin commit <<'CMD'
+cat > gen.js <<'EOF'
+const fence = `\`\`\``;
+require('child_process').execSync('git commit -m x');
+EOF
+node gen.js
+CMD
 # Perl and Ruby launch without parentheses too.
 check_stdin commit <<'CMD'
 perl - <<'PL'
@@ -218,6 +259,20 @@ CMD
 check_stdin none <<'CMD'
 ruby <<'RB'
 system 'make'; note = 'git commit -m x'
+RB
+CMD
+# A line that ends in a comma carries the argument list on to the next one.
+check_stdin commit <<'CMD'
+perl <<'PL'
+system "git",
+  "commit", "-m", "x";
+PL
+CMD
+check_stdin none <<'CMD'
+ruby <<'RB'
+system 'make',
+  'all'
+note = 'git commit -m x'
 RB
 CMD
 check_stdin commit <<'CMD'

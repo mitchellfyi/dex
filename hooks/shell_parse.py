@@ -29,7 +29,8 @@ import shutil
 # module's surface is stated in one place, and so tests/parser-drift-test.sh
 # can tell a primitive that belongs here from one a hook legitimately owns.
 __all__ = [
-    'ASSIGNMENT_BUILTINS', 'CODE_EXECUTION_RE', 'CODE_FRAGMENT_SUFFIX_JOINS',
+    'ASSIGNMENT_BUILTINS', 'CALL_ONLY_LAUNCH_KINDS', 'CODE_EXECUTION_RE',
+    'CODE_FRAGMENT_SUFFIX_JOINS',
     'DIRECT_SHELL_RUNNERS', 'ENV_OPTION_ARGS', 'EVAL_COMMANDS', 'HEREDOC_RE',
     'HEREDOC_SCAN_STOPS',
     'INLINE_BACKTICK_SUB_RE', 'INLINE_DOLLAR_SUB_RE', 'NICE_VALUE_OPTIONS',
@@ -907,6 +908,10 @@ CODE_EXECUTION_RE = re.compile(
     r'|child_process|ProcessBuilder|Deno\.Command|Bun\.spawn'
     r')'
 )
+# Interpreters that launch a process only through a call. Backticks, %x, qx
+# and a paren-less `system "cmd"` launch nothing in them; a Node backtick
+# opens a template literal, which is a string.
+CALL_ONLY_LAUNCH_KINDS = {'python', 'node'}
 PRINTF_SPECIFIERS = set('bcdiouxXfeEgGs')
 
 
@@ -1172,20 +1177,26 @@ def ruby_perl_exec_fragments(text):
     return fragments
 
 
+def execution_call_regions(code, kind=''):
+    """Return the argument text of each process-launch call in `code`.
 
-def execution_call_regions(code):
-    """Return the argument text of each process-launch call in `code`."""
+    `kind` is the interpreter when the caller knows it; see
+    code_execution_fragments.
+    """
     regions = []
     matches = list(CODE_EXECUTION_RE.finditer(code))
     launch_starts = {match.start() for match in matches}
     for match in matches:
         launch = match.group(0)
         if launch.endswith(('"', "'", '%w', 'qw')):
+            if kind in CALL_ONLY_LAUNCH_KINDS:
+                continue
             # Perl and Ruby launch without parentheses (system "cmd", exec qw(...)).
             # The arguments run to the end of the statement: the first `;` outside
             # a quote, the next launch, or the line end, and at most 20000
-            # characters, the limit a parenthesised call gets. Reading on past
-            # that takes the literals of later statements and launches as
+            # characters, the limit a parenthesised call gets. A line that ends
+            # in a comma continues the list (system "git",\n "commit"). Reading
+            # on past that takes the literals of later statements and launches as
             # arguments, and makes the scan quadratic in the launches on one
             # line. A quoted one starts at its opening quote; a word list keeps
             # its qw/%w so word_array_fragments can read it.
@@ -1193,12 +1204,15 @@ def execution_call_regions(code):
                 # "system" is a string, such as a theme or chat role, not a launch.
                 # A minified bundle holds many on its one line.
                 continue
-            line_end = code.find('\n', match.end())
-            end = min(line_end if line_end != -1 else len(code), match.end() + 20000)
+            end = min(len(code), match.end() + 20000)
             quote = ''
+            last = ''
             index = match.end() - 1
             while index < end:
                 char = code[index]
+                if char == '\n' and (quote or last != ','):
+                    end = index
+                    break
                 if quote and char == '\\':
                     index += 2
                     continue
@@ -1210,6 +1224,8 @@ def execution_call_regions(code):
                 elif char == ';' or index in launch_starts:
                     end = index
                     break
+                if not char.isspace():
+                    last = char
                 index += 1
             start = match.end() - 1 if launch[-1] in '"\'' else match.start()
             regions.append(code[start:end])
@@ -1273,12 +1289,22 @@ def fragment_region_candidates(fragments):
 def code_execution_fragments(code, whole_file=False, kind=''):
     """Candidate commands launched by interpreter code.
 
-    `kind` is the interpreter when the caller knows it. Backticks, %x and qx
-    run a command only in Ruby and Perl; in Python and Node they are text,
-    such as a Markdown code span in a string.
+    `kind` is the interpreter when the caller knows it. Backticks, %x, qx and
+    a paren-less `system "cmd"` run a command only in Ruby and Perl. In Python
+    and Node they are text, such as a Markdown code span in a string or a
+    string being written into a Perl script.
     """
+    if kind == 'node' and '`' not in code.replace('\\`', ''):
+        # Bash drops the backslash of \` in a double-quoted word or an unquoted
+        # heredoc, so node -e "execSync(\`git commit\`)" runs a template
+        # literal. shell_tokens keeps the backslash, so the literal never closes.
+        # Every backtick is escaped there, because a bare one is a command
+        # substitution. A file, a quoted heredoc or a single-quoted word reaches
+        # node as written: its \` sits inside a template literal and stays an
+        # escape.
+        code = code.replace('\\`', '`')
     code_without_strings = code_without_string_literals(code)
-    exec_operator_fragments = [] if kind in {'python', 'node'} else [
+    exec_operator_fragments = [] if kind in CALL_ONLY_LAUNCH_KINDS else [
         fragment for fragment in ruby_perl_exec_fragments(code) if fragment.strip()
     ]
     if (
@@ -1292,7 +1318,7 @@ def code_execution_fragments(code, whole_file=False, kind=''):
         # call are candidate commands. Treating every literal in the file as
         # one blocks any script that merely stores command-like strings — a
         # guard's own pattern table, a test fixture, a help message.
-        literal_sources = execution_call_regions(code)
+        literal_sources = execution_call_regions(code, kind)
     else:
         # Inline code (-c/-e) is itself the payload, so scan all of it.
         literal_sources = [code]
