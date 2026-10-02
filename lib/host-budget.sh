@@ -573,6 +573,43 @@ dx_host_budget_env() {
 # keys its own reuse on. A gate whose tree changed while it ran records
 # `stable: false` and is never returned by a lookup: the result is real, but it
 # is not a statement about any tree that still exists.
+#
+# Schema 2 adds `env_fingerprint`: the environment the gate ran in, from
+# scripts/gate_env_fingerprint.py — the toolchain binaries on PATH, the
+# parallelism budget, framework mode switches, the platform and the dependency
+# manifests at the repository root. The tree fingerprints say what was tested;
+# this says what did the testing. A lookup that names an environment matches
+# only a receipt bound to that same environment, and a schema 1 receipt, which
+# has no binding, never matches one.
+
+# dx_gate_env_fingerprint <repo_dir> [test-jobs]
+# The environment fingerprint for a gate about to run in <repo_dir>, as the
+# writer and the reader both have to compute it: the project's declared
+# parallelism variables (`parallelism_env` under `## Resources`) and
+# DX_TEST_JOBS bound to the effective job budget — what `dx run-gate` exports
+# to the command — rather than to whatever this process inherited. Prints the
+# sha256; returns 2 for arguments it will not act on and 1 when the script
+# could not run.
+dx_gate_env_fingerprint() {
+  local repo_dir="${1:-}" jobs="${2:-}" declared="" declared_rc=0 env_name
+  local -a fingerprint_args
+  [[ -n "$repo_dir" && -d "$repo_dir" ]] || return 2
+  [[ -n "$jobs" ]] || jobs=$(dx_host_test_jobs_effective)
+  [[ "$jobs" =~ ^[1-9][0-9]*$ && "$jobs" -le 32 ]] || return 2
+  fingerprint_args=(--repo "$repo_dir" --set "DX_TEST_JOBS=${jobs}" --hash-only)
+  declared=$(dx_project_contract_values "$repo_dir" Resources parallelism_env \
+    2>/dev/null) || declared_rc=$?
+  if [[ "$declared_rc" -eq 0 ]]; then
+    while IFS= read -r env_name; do
+      [[ "$env_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+      fingerprint_args+=(--set "${env_name}=${jobs}")
+    done <<EOF
+$declared
+EOF
+  fi
+  python3 "$DEX_DIR/scripts/gate_env_fingerprint.py" "${fingerprint_args[@]}" \
+    || return 1
+}
 
 # dx_gate_receipt_dir <session_id>
 dx_gate_receipt_dir() {
@@ -591,12 +628,23 @@ dx_gate_receipt_slot() {
   printf '%s\n' "$gate_name"
 }
 
-# dx_gate_receipt_write <session_id> <gate> <checkout-fp> <working-fp>
-#   <stable:0|1> <exit-code> <duration-seconds> <queue-seconds> <wrapper>
-#   <test-jobs> <parallelism-env> <log-path> <command> [args...]
+# dx_gate_receipt_write [--env-fingerprint <sha256>] <session_id> <gate>
+#   <checkout-fp> <working-fp> <stable:0|1> <exit-code> <duration-seconds>
+#   <queue-seconds> <wrapper> <test-jobs> <parallelism-env> <log-path>
+#   <command> [args...]
 # <parallelism-env> is a space-separated list of the variable names that were
-# set, or empty. Written atomically, 0600, under a 0700 directory.
+# set, or empty. `--env-fingerprint` is the environment binding from
+# dx_gate_env_fingerprint; it is an option rather than a positional because
+# the command is variadic and sits last. Without it the receipt is still
+# schema 2, with an empty binding that no environment-bound lookup matches.
+# Written atomically, 0600, under a 0700 directory.
 dx_gate_receipt_write() {
+  local env_fp=""
+  if [[ "${1:-}" == "--env-fingerprint" ]]; then
+    [[ $# -ge 2 ]] || return 2
+    env_fp="$2"
+    shift 2
+  fi
   [[ $# -ge 13 ]] || return 2
   local session_id="$1" gate_name="$2" checkout_fp="$3" working_fp="$4"
   local stable="$5" exit_code="$6" duration="$7" queued="$8" wrapper="$9"
@@ -610,6 +658,7 @@ dx_gate_receipt_write() {
   [[ "$stable" =~ ^[01]$ ]] || return 2
   [[ "$exit_code" =~ ^[0-9]{1,3}$ ]] || return 2
   [[ "$duration" =~ ^[0-9]{1,9}$ && "$queued" =~ ^[0-9]{1,9}$ ]] || return 2
+  [[ -z "$env_fp" || "$env_fp" =~ ^[a-f0-9]{64}$ ]] || return 2
   mkdir -p "$receipt_dir" || return 1
   chmod 700 "$receipt_dir" 2>/dev/null || true
   receipt_file="$receipt_dir/$receipt_slot.json"
@@ -618,6 +667,7 @@ dx_gate_receipt_write() {
     DX_GATE_RECEIPT_GATE="$gate_name" \
     DX_GATE_RECEIPT_CHECKOUT="$checkout_fp" \
     DX_GATE_RECEIPT_WORKING="$working_fp" \
+    DX_GATE_RECEIPT_ENV="$env_fp" \
     DX_GATE_RECEIPT_STABLE="$stable" \
     DX_GATE_RECEIPT_EXIT="$exit_code" \
     DX_GATE_RECEIPT_DURATION="$duration" \
@@ -634,9 +684,11 @@ import sys
 from datetime import datetime, timezone
 
 receipt = {
+    "schema_version": 2,
     "session": os.environ["DX_GATE_RECEIPT_SESSION"],
     "gate": os.environ["DX_GATE_RECEIPT_GATE"],
     "command": sys.argv[1:],
+    "env_fingerprint": os.environ["DX_GATE_RECEIPT_ENV"],
     "exit_code": int(os.environ["DX_GATE_RECEIPT_EXIT"]),
     "duration_seconds": int(os.environ["DX_GATE_RECEIPT_DURATION"]),
     "queue_seconds": int(os.environ["DX_GATE_RECEIPT_QUEUED"]),
@@ -674,6 +726,7 @@ PY
 DX_GATE_FULL_GATE_NAME="full-gate"
 
 # dx_gate_receipt_lookup <session_id|-> <checkout-fp> <working-fp> [gate]
+#   [env-fp]
 # Every gate this session already ran against exactly this tree, newest first,
 # one per line:
 #
@@ -681,17 +734,21 @@ DX_GATE_FULL_GATE_NAME="full-gate"
 #   recorded_at <TAB> command
 #
 # `-` as the session scans every session's receipts on the host. It is an
-# explicit opt-in, not a default: the fingerprints hash the tree, not the
-# environment, so two worktrees on one HEAD could share a pass their toolchains
-# would not, and cross-session sharing is deferred until the single-session
-# ladder has shown its numbers. Returns 0 when at least one receipt matched, 1
-# when none did, and 2 for arguments it will not act on. A receipt whose tree
-# moved while the gate ran (`stable: false`) never matches.
+# explicit opt-in, not a default: without <env-fp> the fingerprints hash the
+# tree, not the environment, so two worktrees on one HEAD could share a pass
+# their toolchains would not, and cross-session sharing is deferred until the
+# single-session ladder has shown its numbers. With <env-fp> — the sha256 from
+# dx_gate_env_fingerprint — only a receipt bound to that same environment
+# matches, and a schema 1 receipt never does. An empty [gate] with an <env-fp>
+# is allowed. Returns 0 when at least one receipt matched, 1 when none did,
+# and 2 for arguments it will not act on. A receipt whose tree moved while the
+# gate ran (`stable: false`) never matches.
 dx_gate_receipt_lookup() {
-  [[ $# -ge 3 && $# -le 4 ]] || return 2
+  [[ $# -ge 3 && $# -le 5 ]] || return 2
   local session_id="$1" checkout_fp="$2" working_fp="$3" gate_name="${4:-}"
-  local receipt_root
+  local env_fp="${5:-}" receipt_root
   [[ -n "$checkout_fp" && -n "$working_fp" ]] || return 2
+  [[ -z "$env_fp" || "$env_fp" =~ ^[a-f0-9]{64}$ ]] || return 2
   if [[ "$session_id" == "-" ]]; then
     receipt_root="$DX_LOOP_DIR"
   else
@@ -705,6 +762,7 @@ dx_gate_receipt_lookup() {
   DX_GATE_LOOKUP_CHECKOUT="$checkout_fp" \
   DX_GATE_LOOKUP_WORKING="$working_fp" \
   DX_GATE_LOOKUP_GATE="$gate_name" \
+  DX_GATE_LOOKUP_ENV="$env_fp" \
     python3 - <<'PY'
 import json
 import os
@@ -716,6 +774,11 @@ scope = os.environ["DX_GATE_LOOKUP_SCOPE"]
 checkout = os.environ["DX_GATE_LOOKUP_CHECKOUT"]
 working = os.environ["DX_GATE_LOOKUP_WORKING"]
 wanted = os.environ["DX_GATE_LOOKUP_GATE"]
+# An empty binding means "any environment", the schema 1 reading. A requested
+# one has to be present and equal: a receipt without the field is from before
+# the binding existed, and an empty recorded binding is a gate whose
+# environment could not be fingerprinted when it ran.
+wanted_env = os.environ["DX_GATE_LOOKUP_ENV"]
 
 paths = (
     sorted(root.glob("*.gate-receipts/*.json"))
@@ -736,6 +799,8 @@ for path in paths:
     if receipt.get("working_fingerprint") != working:
         continue
     if wanted and receipt.get("gate") != wanted:
+        continue
+    if wanted_env and receipt.get("env_fingerprint") != wanted_env:
         continue
     command = receipt.get("command")
     command = " ".join(command) if isinstance(command, list) else ""

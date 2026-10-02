@@ -1,0 +1,252 @@
+{
+  "load_average_start": [
+    34.73291015625,
+    32.6357421875,
+    28.9072265625
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.32,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.35,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.32,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.35,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.32,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.31,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 1,
+    "test_files": 4,
+    "source_lines": 426,
+    "findings": {
+      "source": 0,
+      "test": 2
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 3.45
+    },
+    "rules": {
+      "source": {},
+      "test": {
+        "no-sparse-arrays": 2
+      }
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 26,
+      "mean": 4.92,
+      "max": 25,
+      "p90": 9
+    },
+    "function_lines": {
+      "n": 26,
+      "mean": 14.19,
+      "max": 74,
+      "p90": 32
+    },
+    "max_depth": 4,
+    "max_params": 4
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 458
+  },
+  "cli": null,
+  "docs": {
+    "readme": true,
+    "files": [
+      "README.md"
+    ],
+    "samples": 1,
+    "passed": 1,
+    "rate": 1.0,
+    "failures": []
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "parse 50k rows",
+        "kind": "module",
+        "agent_ms": 22.4699795,
+        "reference_ms": 60.463354,
+        "ratio": 0.3716297230219812,
+        "cv": 0.09106925723916894,
+        "agent_ms_samples": [
+          25.384708,
+          21.54775,
+          22.189334,
+          19.79625,
+          22.750625,
+          24.753166
+        ],
+        "reference_ms_samples": [
+          66.590875,
+          60.170208,
+          60.039208,
+          61.9535,
+          60.128459,
+          60.7565
+        ],
+        "agent_rss_kb": 114520,
+        "reference_rss_kb": 160960,
+        "rss_ratio": 0.7114811133200796
+      },
+      {
+        "name": "stringify 50k rows",
+        "kind": "module",
+        "agent_ms": 21.3245415,
+        "reference_ms": 27.704937,
+        "ratio": 0.7697018585532246,
+        "cv": 0.1401015174773994,
+        "agent_ms_samples": [
+          22.147875,
+          20.501208,
+          18.144417,
+          23.78175,
+          25.29375,
+          17.964458
+        ],
+        "reference_ms_samples": [
+          27.354292,
+          27.860333,
+          30.36625,
+          27.549541,
+          30.363041,
+          25.542625
+        ],
+        "agent_rss_kb": 94816,
+        "reference_rss_kb": 100992,
+        "rss_ratio": 0.9388466413181242
+      },
+      {
+        "name": "stream 50k rows in 1 KB chunks",
+        "kind": "module",
+        "agent_ms": 15.5613335,
+        "reference_ms": 38.495917,
+        "ratio": 0.4042333502537425,
+        "cv": 0.04848287481035329,
+        "agent_ms_samples": [
+          16.060667,
+          15.400792,
+          15.890292,
+          14.139625,
+          15.721875,
+          14.748917
+        ],
+        "reference_ms_samples": [
+          38.226667,
+          40.822791,
+          37.008459,
+          38.765167,
+          35.5895,
+          39.506291
+        ],
+        "agent_rss_kb": 107560,
+        "reference_rss_kb": 109336,
+        "rss_ratio": 0.983756493744055
+      },
+      {
+        "name": "parse one 4 MB quoted field",
+        "kind": "module",
+        "agent_ms": 41.029458500000004,
+        "reference_ms": 99.04097949999999,
+        "ratio": 0.41426749520384143,
+        "cv": 0.05787069356221158,
+        "agent_ms_samples": [
+          44.88975,
+          40.902375,
+          40.074416,
+          40.417833,
+          45.678625,
+          41.156542
+        ],
+        "reference_ms_samples": [
+          103.588375,
+          99.345542,
+          98.736417,
+          89.162292,
+          103.659791,
+          96.739583
+        ],
+        "agent_rss_kb": 123168,
+        "reference_rss_kb": 192464,
+        "rss_ratio": 0.6399534458392219
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      32.3232421875,
+      32.17333984375,
+      28.78564453125
+    ],
+    "cpus": 12,
+    "geomean_ratio": 0.4678283047021712,
+    "load_average_before": [
+      32.3232421875,
+      32.17333984375,
+      28.78564453125
+    ]
+  },
+  "fuzz": {
+    "sequences": 40,
+    "steps": 40,
+    "seed": 1,
+    "passed": 40,
+    "divergences": [],
+    "harness_errors": [],
+    "pass_rate": 1
+  },
+  "load_average_end": [
+    32.3232421875,
+    32.17333984375,
+    28.78564453125
+  ]
+}

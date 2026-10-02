@@ -1,0 +1,126 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.09839120000000001,
+    "num_turns": 8,
+    "duration_ms": 52033,
+    "duration_api_ms": 35800,
+    "tokens": {
+      "input": 12,
+      "output": 3467,
+      "cache_read": 116296,
+      "cache_creation": 12745,
+      "total": 132520
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 12,
+        "outputTokens": 3467,
+        "cacheReadInputTokens": 116296,
+        "cacheCreationInputTokens": 12745,
+        "webSearchRequests": 0,
+        "costUSD": 0.09839120000000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 505,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Read": 1,
+      "Bash": 5,
+      "Edit": 1
+    },
+    "final_text": "`parse` in `src/csv.js` now accepts `trim: true` and `comment`, and both are off by default. All 8 tests pass, including the new ones for each option.\n\n**`trim`**\n- Spaces and tabs are removed from both ends of unquoted fields.\n- They are also skipped before an opening `\"` and after a closing `\"`, and the quoted content is kept exactly.\n- A field with spaces before its opening quote is still a quoted field.\n- Anything other than a delimiter or line break after a closing quote is still an error.\n\n**`comment`**\n- A line that starts with the comment character is skipped, including its line break, and never becomes a record.\n- The character is ordinary anywhere else, including after leading whitespace.\n- It throws `TypeError` unless it is one character and not the delimiter, `\"`, CR or LF.\n- Error line numbers still count comment lines.\n\n**Assumptions**\n- **Tab delimiter:** if the delimiter is a tab, tabs are not treated as trimmable whitespace, so `trim` can't swallow delimiters.\n- **Whitespace-only lines:** with `trim`, a line of only spaces or tabs becomes one empty field. It is not treated as an empty line, so `skipEmptyLines` won't drop it.\n- **Error columns for trimmed fields:** for a duplicate header name, the error column points at the start of the field, before any skipped whitespace.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 2,
+    "by_category": {
+      "source": {
+        "files": 1,
+        "added": 33,
+        "deleted": 2
+      },
+      "test": {
+        "files": 1,
+        "added": 22,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 35,
+    "test_lines": 22,
+    "total_lines": 57
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 8,
+      "failed": 0
+    },
+    "seconds": 0.3,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 1,
+    "seconds": 0.1,
+    "groups": {
+      "spec": {
+        "passed": 23,
+        "total": 23,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 9,
+        "total": 10,
+        "rate": 0.9
+      },
+      "followup": {
+        "passed": 10,
+        "total": 10,
+        "rate": 1.0
+      }
+    },
+    "failed": [
+      "[robust] error positions ignore the BOM"
+    ],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "ts `trim: true` and `comment`, and both are off by default. All 8 tests pass, including the new ones for each option.  **`trim`** - Spac",
+    "false_claim": false
+  }
+}

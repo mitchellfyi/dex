@@ -14,7 +14,7 @@ it.
 |--------|---------|---------------|
 | `common.sh` | Bootstrap, constants, sources all others | `dx_repo_root()` |
 | `lock.sh` | Advisory directory locks with owner records and serialized stale recovery | `dx_lock_acquire()`, `dx_lock_release()`, `dx_lock_with()` |
-| `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap; skipped for a repository-scoped caller when the user's hooks run another checkout | `dx_bootstrap_agent_tooling()`, `dx_tooling_bootstrap_foreign_checkout()`, `dx_install_safe_official_claude_plugins()`, `dx_install_openai_docs_mcp_servers()` |
+| `agent-tools.sh` | Conservative Claude/Codex tooling bootstrap | `dx_bootstrap_agent_tooling()`, `dx_install_safe_official_claude_plugins()`, `dx_install_openai_docs_mcp_servers()` |
 | `attribution.sh` | Commit/PR attribution installation, hook chaining, and restoration | `dx_install_repo_attribution()`, `dx_uninstall_repo_attribution()`, `dx_commit_attribution_message()` |
 | `codex.sh` | Codex CLI skill installation helpers | `dx_install_codex_skills()`, `dx_count_dex_skills()`, `dx_codex_dex_skills_complete()`, `dx_uninstall_codex_skills()` |
 | `completion.sh` | Generation-bound completion expectations, receipts, validation, and cleanup | `dx_completion_issue()`, `dx_completion_write_receipt()`, `dx_completion_consume()` |
@@ -22,8 +22,8 @@ it.
 | `events.sh` | Run IDs, local run directories, JSONL event journals, redacted logs, artifact manifests, summaries | `dx_run_prepare()`, `dx_event_emit()`, `dx_run_log_append()`, `dx_run_register_artifact()`, `dx_run_write_summary()` |
 | `factory.sh` | Optional Dex Factory event sync over HTTP | `dx_factory_sync_pending_events()`, `dx_factory_events_endpoint()`, `dx_factory_sync_requested()` |
 | `git.sh` | Git helpers, including safe tracker-branch adoption | `dx_default_branch()`, `dx_ticket_branch_prepare()`, `dx_slugify()` |
-| `lifecycle-control.sh` | Human/agent lifecycle pause, stop, phase transition, ownership, audit receipts, and the per-workflow phase range | `dx_write_lifecycle_control()`, `dx_lifecycle_control_read()`, `dx_lifecycle_control_lock_acquire()`, `dx_lifecycle_final_phase()` |
-| `benchmark.sh` | Prompt text for the benchmark workflow: phase messages, scope lines, system context, and the audit addendum | `dx_benchmark_phase_message()`, `dx_benchmark_context()`, `dx_benchmark_audit_addendum()` |
+| `input.sh` | What `dx` was handed: ticket, GitHub or Linear issue URL (the ticket), Linear or GitHub project URL, other URL, document, or prompt; the ticket it names and a short workspace slug | `dx_input_kind()`, `dx_input_ticket()`, `dx_input_slug()` |
+| `lifecycle-control.sh` | Human/agent lifecycle pause, stop, phase transition, ownership, and audit receipts | `dx_write_lifecycle_control()`, `dx_lifecycle_control_read()`, `dx_lifecycle_control_lock_acquire()` |
 | `maintenance.sh` | Background maintenance config, workflow install, run IDs, locks, and reviewer normalization | `dx_maintenance_event_mode()`, `dx_maintenance_install_workflow()`, `dx_maintenance_run_id()`, `dx_maintenance_request_reviewer()`, `dx_maintenance_pr_review_state()` |
 | `override.sh` | Session policy journal, validation, expiry, and effective-value resolution | `dx_override_set()`, `dx_override_clear()`, `dx_override_list()`, `dx_override_effective()` |
 | `provider.sh` | Provider/model profile resolution, launch wrapping, and diagnostics | `dx_provider_apply()`, `dx_provider_claude()`, `dx_provider_command()`, `dx_provider_doctor()` |
@@ -46,9 +46,13 @@ it.
 | `output.sh` | Formatted user-facing output | `dx_done()`, `dx_ok()`, `dx_warn()`, `dx_error()`, etc. |
 | `host-budget.sh` | Measured host facts (cores, memory, load, cgroup limits, free memory) with recorded fallbacks; the per-session test-job budget and runner environment (`DX_TEST_JOBS`, vitest, pytest-xdist, cargo, go, make); the `heavy` admission limit, the per-phase host snapshot, the reduced-priority wrappers, and heavy-gate receipts | `dx_host_cpu_count()`, `dx_host_memory_total_gb()`, `dx_host_load1()`, `dx_host_test_jobs()`, `dx_host_budget_env()`, `dx_host_heavy_limit()`, `dx_host_snapshot()`, `dx_host_handoff_line()`, `dx_host_priority_wrapper()`, `dx_gate_receipt_write()`, `dx_gate_receipt_lookup()` |
 | `ui-capture.sh` | Playwright/UI capture tooling, artifact paths, MCP bootstrap | `dx_install_ui_capture_tooling()`, `dx_ui_capture_run_dir()`, `dx_ui_capture_playwright_ready()` |
+| `qa.sh` | Manual QA report paths, status, staleness against the working tree, run-journal registration, and retention | `dx_qa_report_write()`, `dx_qa_status()`, `dx_qa_summary()`, `dx_qa_stale()`, `dx_qa_cleanup()` |
 | `triage.sh` | Standalone ticket triage arguments, provider launch, and isolated cleanup | `dx_triage_run()`, `dx_triage_cleanup()` |
 | `worker.sh` | DexCode worker registration and the poll/claim/lease/settle daemon | `dx_worker_command()`, `dx_worker_register()`, `dx_worker_daemon()` |
 | `worktree.sh` | Worktree management utilities, shared build-cache links, and the project's `## Worktree Hooks` lifecycle commands | `dx_wt_branch()`, `dx_wt_remove()`, `dx_worktree_hook_run()`, `dx_worktree_orphan_resources()`, `dx_cleanup_last_session()`, `dx_cleanup_stale_files()` |
+| `mission.sh` | Mission ledger (`scripts/mission_ledger.py`), write lease, helper roles for `claude --agents`, launch bootstrap, SessionStart/PreCompact summary; loaded on demand | `dx_mission_dir()`, `dx_mission_ledger()`, `dx_mission_write()`, `dx_mission_agents_json()`, `dx_mission_prepare_launch()`, `dx_mission_context_summary()` |
+| `memory.sh` | External memory store (`scripts/memory_store.py`): store path per repository identity, ingest of a mission's observations, scoped retrieval, the lifecycle harvest, deterministic maintenance, the model-run curation trigger and landing into `.dex/memory`; loaded on demand | `dx_memory_store_dir()`, `dx_memory_store()`, `dx_memory_retrieve()`, `dx_memory_ingest_mission()`, `dx_memory_harvest_session()`, `dx_memory_maintain()`, `dx_memory_curate_if_due()`, `dx_memory_land()` |
+| `feedback.sh` | Feedback outbox (`scripts/feedback_outbox.py`) read by `research/consume.sh`; loaded on demand | `dx_feedback_dir()`, `dx_feedback_outbox()` |
 
 ## Environment variables
 
@@ -71,7 +75,6 @@ the gate map.
 | `DEX_HEADLESS_RUN` | Internal marker for lifecycle sessions started by `dx run` | unset |
 | `DEX_HEADLESS_RUN_SPEC_FILE` | Normalized run spec path passed into the launched lifecycle | unset |
 | `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | Whether Phase 1 must wait for interactive plan approval | spec value |
-| `DEX_WORKFLOW` | Set by `dx run` from `workflow.name`; `benchmark` runs Phases 1-3 only | unset |
 | `DX_RTK_ENABLED` | Enable RTK token-reduction bootstrap (`0` disables) | `1` |
 | `DX_RTK_BIN` | Override RTK binary path used by Dex hooks/checks | unset |
 | `DX_RTK_INSTALL_DIR` | RTK binary install directory | `$DX_TOOL_DIR/rtk/bin` |
@@ -115,6 +118,35 @@ the gate map.
 | `DEX_PROMPT_CACHE_TTL` | Set by Dex at launch, not by you: `1h` for lifecycle sessions (also exported as `CLAUDE_CODE_PROMPT_CACHE_TTL`, which you may set yourself to override), `5m` for review waves and assessments. The Stop hook reads it to size its Phase 3 hold | set per launch |
 | `DEX_TEST_JOBS` | Test-runner workers each Dex-launched session may use (1 to 32); exported to every launch as `DX_TEST_JOBS` and the runner variables listed in [docs/host-budget.md](host-budget.md) | half the cores shared across `DEX_REVIEW_MAX_ACTIVE_WAVES` sessions, capped at 4 |
 | `DEX_MAX_ACTIVE_HEAVY` | Heavy commands (project gates, test suites, builds — never a dev server, which starts directly and is session-owned) admitted at once across every Dex session on this host (1 to 8) | `max(1, min(cpus/4, mem_gb/8))`, capped at 8 |
+| `DEX_ORCHESTRATION_MODE` | `legacy` runs the lifecycle without the mission ledger, lease and helper roles (for comparisons); anything else is mission mode (docs/mission-mode.md) | `mission` |
+| `DX_MISSION_ACTIVE` | Set to `1` by the provider launch in mission mode; hooks and the two mission guards act only when it is set | unset |
+| `DEX_MISSION_MAX_HELPERS` | Concurrent native subagents a mission lead may run (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`) | `2` |
+| `DEX_MISSION_BRIEF_FILE` | Brief recorded on the mission ledger at launch; else the session's system context | unset |
+| `DEX_MISSION_SOURCE_TICKETS` | Comma-separated ticket ids recorded on the mission record | unset |
+| `DX_MISSION_HELPER_SCOPE` | Comma-separated paths the next implementer's lease and scoped memory cover | unset |
+| `DX_MEMORY_STORE_DIR` | External memory store directory (observations, entries, retrieval trace) | `~/.claude/.dex-memory/<repo-key>` |
+| `DEX_MEMORY_CURATE` | Run the memory store's critical review at lifecycle completion when it is due (`0` turns it off; maintenance still runs) | `1` |
+| `DX_MEMORY_CURATOR_BIN` | CLI the curator review runs in print mode (tests substitute a stub) | `claude` |
+| `DEX_MEMORY_CURATOR_MODEL` | Model passed to the curator CLI with `--model` | provider default |
+| `DEX_MEMORY_CURATE_MIN_CHANGES` | Changed store entries that make a review due | `5` |
+| `DEX_MEMORY_CURATE_MAX_AGE_DAYS` | Days after which a single changed entry makes a review due | `7` |
+| `DEX_MEMORY_CURATE_MAX_TURNS` | Model turns the curator review may take | `12` |
+| `DEX_MEMORY_CURATE_BUDGET_SECONDS` | Wall-clock cap for one curator review | `600` |
+| `DEX_MEMORY_LAND` | Land curator-promoted entries into `.dex/memory` at lifecycle completion and in sync write runs (`0` turns it off) | `1` |
+| `DX_MEMORY_GH_BIN` | GitHub CLI used to open and auto-merge the memory PR (tests substitute a stub) | `gh` |
+| `DEX_MEMORY_RETRIEVAL` | Inject scoped memory at SessionStart and SubagentStart (`0` turns it off, for the memory on/off comparison) | `1` |
+| `DEX_MAINTAIN_CONSUME` | Run the research consumer over the feedback outbox during `dx maintain` runs (`0` turns it off) | `1` |
+| `DEX_MAINTAIN_CONSUME_MAX_CANDIDATES` | Candidates one maintenance run may decide | `5` |
+| `DEX_MAINTAIN_CONSUME_MAX_MINUTES` | Wall-clock cap for the consumer inside a maintenance run | `20` |
+| `DX_FEEDBACK_CONSUMER` | The consumer script maintenance runs (tests substitute a stub) | `research/consume.sh` |
+| `DX_RESEARCH_AUTO_ACTIVATE` | Risk tier the research consumer may activate on its own after a `validated` decision (`low` = prompts and skills, applied unstaged to the live Dex checkout with a recorded rollback; `off` leaves them evaluated) | `low` |
+| `DX_CONSUME_CLAUDE_BIN` | CLI the consumer uses to write a missing reproduction check in print mode (tests substitute a stub) | `claude` |
+| `DX_CONSUME_MODEL_TIMEOUT` | Seconds one reproduction-writing model call may take | see `research/consume-reproduce.sh` |
+| `DX_CONSUME_REPRODUCE_MAX_TURNS` | Model turns a reproduction-writing call may take (it reads the baseline with `Read`, `Grep`, `Glob`) | `12` |
+| `DX_RESEARCH_REVIEW` | Run the model critical review of a `validated` feedback candidate before any activation (`off` restores activation on validation alone) | `on` |
+| `DX_FEEDBACK_DIR` | Feedback outbox read by `research/consume.sh` | `~/.dex/feedback` |
+| `DX_RESEARCH_ROOT` | Where `research/consume.sh` builds its pinned baseline and candidate runtimes | `~/.dex/research-consume` |
+| `DX_CONSUME_REPRO_TIMEOUT` | Seconds the default consumer evaluator gives a candidate's reproduction | `120` |
 | `DEX_GATE_TIMEOUT` | Seconds one `dx run-gate` command may run before its process tree is stopped; `0` means no deadline, which is the point — a completed result is never discarded | `0` |
 | `DEX_GATE_HEARTBEAT_SECONDS` | How often `dx run-gate` prints its queue position while it waits (1 to 9999) | 30 |
 | `DEX_GATE_PRIORITY` | Pin the reduced-priority wrapper heavy commands run under: `none`, `nice`, `nice+taskpolicy`, `nice+ionice`, `systemd-run`, `systemd-run+ionice`, or `auto` to probe this host | `auto` |
@@ -137,7 +169,7 @@ the gate map.
 | `CODEX_HOME` | Codex config root used for Dex skill links | `~/.codex` |
 | `DX_AGENT` / `DX_AGENT_OVERRIDE` | Agent override (`claude` or `codex`) | profile/default |
 | `DX_MODEL` / `DX_MODEL_OVERRIDE` | Model override for the selected agent | profile/default |
-| `DX_PROVIDER_PROFILE` | Provider profile override (`claude-subscription`, `codex-subscription`, or custom) | config/default |
+| `DX_PROVIDER_PROFILE` | Provider profile override (`claude-subscription`, `codex-subscription`, or custom); when set for the selected agent it outranks the repository's default profile | config/default |
 | `DX_CLAUDE_MODEL` | Override Claude Code model passed to `--model` | profile model, else session default |
 | `DX_PLAN_MODEL` | Override Phase 1/plan model | `DX_CLAUDE_MODEL`, profile plan model, else session default |
 | `DX_CODEX_MODEL` | Resolved Codex model passed through `bin/dxcodex.sh` | profile codex model, else Codex default |

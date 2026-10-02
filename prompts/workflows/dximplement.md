@@ -96,7 +96,7 @@ For each task in the approved plan:
 
 The same commit-and-push cadence applies to every later Phase 2 change,
 including implementation-inventory fixes, final-check repairs, and tests added
-after the manual smoke test.
+after the manual QA pass.
 
 ### 3. Keep `.dex/` in Sync
 
@@ -218,18 +218,17 @@ Invoke `dxuicapture` before Phase 2 completes and record one outcome:
 - `SKIPPED`: explain why a produced visual artifact would not improve this review. This is a valid agent judgment, not a failed gate.
 - `N/A`: explain why no browser UI is affected.
 
-Use `NEEDS_REVIEW` while a selected capture is incomplete or needs another production pass. Do not leave the decision `MISSING`. Artifacts stay in Dex's temporary artifact directory and must not be committed. Run `dx ui-capture show` after the baseline and after production so the user sees the handoff path early.
+Use `NEEDS_REVIEW` while a selected capture is incomplete or needs another production pass. Do not leave the decision `MISSING`. Artifacts stay in Dex's temporary artifact directory and must not be committed. Run `dx ui-capture show` after the baseline and after production so the user sees the handoff path early, and `dx qa show` after the QA pass for the same reason.
 
-### 8. Manual Local Smoke Test
+### 8. Manual QA Pass (`dxqa`)
 
-A green test suite is not the same as a working feature. Before marking Phase 2 ready, exercise the change end-to-end the way a human reviewer would — run it locally and watch it actually work.
+A green test suite is not the same as a working feature. Before marking Phase 2 ready, invoke the Skill tool with `skill: "dxqa"` and follow `prompts/workflows/dxqa.md`:
 
-- **Run the change end-to-end locally**, not just the test suite. Start the app/server/CLI the way the project runs it (reuse the dev-server startup documented in `dxuicapture` for web apps) — directly, not under `dx run-gate`, so it is session-owned and stopped before the phase ends rather than holding a heavy lease for as long as it runs — then drive the real user-facing path this ticket changed.
-- **Prefer a real browser, fall back to Playwright.** For browser-facing changes, drive the flow with the Claude-in-Chrome browser tools (`mcp__claude-in-chrome__*`) when a live browser is available; otherwise fall back to Playwright (the Playwright MCP, or the pinned install `dxuicapture` provisions with `dx ui-capture install`). For non-UI changes, exercise it the matching way: hit the endpoint, run the command, trigger the job, or call the public API against a running instance.
-- **Seed local data when the flow needs it.** Use the project's seeding path if one exists (factories, seed scripts, fixtures); otherwise insert the minimal rows the flow requires directly into the local dev/test database. Seed only what the flow needs.
-- **Judge it like a reviewer**: confirm it works *effectively* (the happy path does the right thing), is *robust* (a representative bad/edge input is handled gracefully, not a crash or 500), and is backed by *good test coverage* (the path you just exercised by hand has corresponding automated tests). If the smoke test exposes a coverage gap, add the test before finishing.
-- **Clean up after yourself.** Stop every process/server you started, remove any rows, temp data, or fixture files you created, and leave no Phase 2 background process in flight. Smoke-test artifacts follow the same rule as UI capture — do not commit them.
-- **Record the result** in the implementation evidence: what you ran, how you drove it (browser vs Playwright vs API/CLI), what you observed, and the cleanup you performed. If the change genuinely cannot be exercised locally, record `Manual smoke test: N/A — <reason>` instead of silently skipping it; the reason must clear the same bar as any other `N/A` (see the blocker rule above).
+- **Start the change** the way the project runs it (the dev-server startup `dxuicapture` documents works for web apps), directly, not under `dx run-gate`, so it is session-owned and stopped before the phase ends rather than holding a heavy lease for as long as it runs.
+- **Drive every approved criterion by hand.** Each `acceptance_criteria` and `verification_requirements` entry in `dx_review_criteria_file` gets a row with one evidence file. Use the best available hands: the Claude-in-Chrome browser tools or a browser MCP, a `dx ui-capture` storyboard, `curl` against the running instance, or the CLI itself. Then explore around the change: a bad or edge input, refresh and back, the empty state.
+- **Record the report** with `dx qa report`, and read it back with `dx qa show`. The tool derives the status from the rows.
+- **A `NOT_MET` criterion is a Phase 2 defect.** Fix it, re-drive it, update the row. Out-of-scope findings become linked follow-ups per `prompts/issue-hygiene.md`. `BLOCKED` and `N_A` need a reason that clears the blocker rule in §5. If the pass exposes a coverage gap, add the test before finishing.
+- **Clean up.** Stop every process the pass started, remove seeded data, and leave no Phase 2 background process in flight. The report and its evidence stay under Dex's artifact directory and are not committed.
 
 ### 8.5 Review Your Own Diff
 
@@ -308,7 +307,7 @@ When running inside a terminal `dx` lifecycle (`DEX_SESSION_ID` is present), wri
   future CI without a user-approved plan change or recorded agent waiver.
 - Final deterministic checks passed locally, and the review lenses ran over
   this diff with the findings ledger seeded for Phase 3.
-- The change was exercised end-to-end locally and passed the manual smoke test, or manual verification is explicitly N/A with a reason that clears the blocker rule.
+- The QA report (`dx qa show`) is `PASSED`, or `BLOCKED`/`N_A` with a reason that clears the blocker rule; no criterion row is `NOT_MET`.
 - The UI proof decision is recorded as `READY`, `SKIPPED` with a reason, or `N/A` with a reason. Choosing `SKIPPED` is allowed when a walkthrough would not improve the review.
 - Every implementation change is committed, every implementation commit has
   been pushed, local HEAD matches its upstream, and no empty bootstrap commit
@@ -351,8 +350,9 @@ You SHOULD:
 - Commit coherent checkpoints early and often, push immediately after every
   commit, and do not wait for full verification
 - Run the self-review loop (Step 5) and final implementation checks (Step 6)
+- In mission mode (`DX_MISSION_ACTIVE=1`), follow `prompts/mission-delegation.md`: take the write lease before editing, keep helper results in the ledger, and record the bounded self-check before Phase 3 with `bin/mission.sh "$DEX_SESSION_ID" record selfcheck`
 - Run `/dxuicapture` early, then capture a concise walkthrough or record a reasoned `SKIPPED`/`N/A` decision
-- Run the manual local smoke test (Step 8) before marking Phase 2 ready, cleaning up anything it starts or seeds
+- Run the manual QA pass (Step 8) before marking Phase 2 ready, cleaning up anything it starts or seeds
 - Select and persist the Phase 3 review risk after the final in-scope change
 - Update `.dex/` project docs if your changes require it
 

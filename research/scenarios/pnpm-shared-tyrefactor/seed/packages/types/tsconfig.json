@@ -1,9 +1,0 @@
-{
-  "compilerOptions": {
-    "composite": true,
-    "strict": true,
-    "declaration": true,
-    "rootDir": "src"
-  },
-  "include": ["src/**/*.ts"]
-}

@@ -1,0 +1,216 @@
+{
+  "load_average_start": [
+    6.10498046875,
+    7.53857421875,
+    8.38623046875
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.19,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.19,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.19,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.19,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.19,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.19,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 1,
+    "test_files": 1,
+    "source_lines": 72,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 9,
+      "mean": 2.33,
+      "max": 8,
+      "p90": 8
+    },
+    "function_lines": {
+      "n": 9,
+      "mean": 6.11,
+      "max": 23,
+      "p90": 23
+    },
+    "max_depth": 1,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 80
+  },
+  "cli": null,
+  "docs": {
+    "readme": false
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "add 5k distinct items",
+        "kind": "module",
+        "agent_ms": 29.929417,
+        "reference_ms": 29.8661665,
+        "ratio": 1.002117797742807,
+        "cv": 0.014764349116945595,
+        "agent_ms_samples": [
+          29.535542,
+          29.695834,
+          30.702708,
+          30.163,
+          30.172792,
+          29.64975
+        ],
+        "reference_ms_samples": [
+          29.657417,
+          29.531667,
+          29.952667,
+          29.804917,
+          29.992208,
+          29.927416
+        ],
+        "agent_rss_kb": 52680,
+        "reference_rss_kb": 52736,
+        "rss_ratio": 0.9989381067961165
+      },
+      {
+        "name": "total of 1k items, 10k times",
+        "kind": "module",
+        "agent_ms": 8.0873545,
+        "reference_ms": 8.315542,
+        "ratio": 0.9725589143798443,
+        "cv": 0.0779036841511505,
+        "agent_ms_samples": [
+          8.664667,
+          7.3715,
+          8.519125,
+          8.002584,
+          8.172125,
+          7.914833
+        ],
+        "reference_ms_samples": [
+          8.681083,
+          7.694083,
+          7.540625,
+          9.158667,
+          7.956917,
+          8.674167
+        ],
+        "agent_rss_kb": 51464,
+        "reference_rss_kb": 51120,
+        "rss_ratio": 1.0067292644757433
+      },
+      {
+        "name": "add then remove 3k items",
+        "kind": "module",
+        "agent_ms": 51.9711255,
+        "reference_ms": 15.831770500000001,
+        "ratio": 3.2827108945269257,
+        "cv": 0.0265651137102256,
+        "agent_ms_samples": [
+          51.859917,
+          51.6245,
+          52.082334,
+          52.688458,
+          53.657083,
+          51.14325
+        ],
+        "reference_ms_samples": [
+          15.731583,
+          16.226667,
+          15.521,
+          15.471709,
+          16.555625,
+          15.931958
+        ],
+        "agent_rss_kb": 55856,
+        "reference_rss_kb": 53120,
+        "rss_ratio": 1.0515060240963856
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      6.17626953125,
+      7.529296875,
+      8.3779296875
+    ],
+    "cpus": 12,
+    "geomean_ratio": 1.4735191247156907,
+    "load_average_before": [
+      6.17626953125,
+      7.529296875,
+      8.3779296875
+    ]
+  },
+  "fuzz": {
+    "sequences": 30,
+    "steps": 40,
+    "seed": 1,
+    "passed": 30,
+    "divergences": [],
+    "harness_errors": [],
+    "pass_rate": 1
+  },
+  "load_average_end": [
+    6.17626953125,
+    7.529296875,
+    8.3779296875
+  ]
+}

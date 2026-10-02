@@ -1,7 +1,0 @@
-{
-  "name": "auth-jwt-api",
-  "type": "feature",
-  "description": "Build a JWT auth API with registration, login, protected routes, and RBAC.",
-  "timeout": 5400,
-  "language": "node"
-}

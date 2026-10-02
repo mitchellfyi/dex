@@ -41,8 +41,16 @@ root cause, affected behavior, acceptance criteria, and intended outcome.
   still needs the normal plan-change approval and criteria-seal rotation.
 - **Related but distinct:** Create a linked follow-up issue automatically when
   the evidence is concrete and the work has a different root cause, outcome,
-  release boundary, or risk profile. Search again with the final proposed title
-  before creating it. Put the new issue in Backlog/Todo and leave it unassigned
+  release boundary, or risk profile. A part of the same coherent outcome is not
+  a follow-up: a layer the accepted behaviour needs (schema, service, API, UI,
+  tests) belongs in this lifecycle's plan as a work package, even when it would
+  once have been its own ticket. Splitting one outcome needs a concrete
+  boundary: a different repository, a different release or deploy unit, a
+  different owner or authority, an incompatible environment, or a measured cost
+  that consolidation would exceed. Name it in the new issue and, inside a
+  lifecycle, record it first as a `decision` in the mission ledger
+  (`bin/mission.sh <session-id> record decision --actor lead --json '{"summary":"…","boundary":"…"}'`).
+  Search again with the final proposed title before creating it. Put the new issue in Backlog/Todo and leave it unassigned
   unless work is starting now. Include evidence, impact, a bounded scope,
   acceptance criteria, verification notes, and a `discovered while <issue/PR>`
   link. Add the tracker relationship when supported and mention it in the

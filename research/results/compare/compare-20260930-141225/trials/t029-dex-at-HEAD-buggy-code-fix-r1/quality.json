@@ -1,0 +1,231 @@
+{
+  "load_average_start": [
+    6.5751953125,
+    7.67626953125,
+    8.4443359375
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.64,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.64,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.64,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.64,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.66,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.65,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 1,
+    "test_files": 3,
+    "source_lines": 114,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 11,
+      "mean": 2.55,
+      "max": 8,
+      "p90": 4
+    },
+    "function_lines": {
+      "n": 11,
+      "mean": 6.64,
+      "max": 23,
+      "p90": 9
+    },
+    "max_depth": 2,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 125
+  },
+  "cli": null,
+  "docs": {
+    "readme": true,
+    "files": [
+      "README.md"
+    ],
+    "samples": 2,
+    "passed": 1,
+    "rate": 0.5,
+    "failures": [
+      {
+        "kind": "js",
+        "run": "const ShoppingCart = require('./src/cart');",
+        "ok": false,
+        "exit": 1,
+        "output": "    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)\n    at node:internal/main/run_main_module:33:47\n\nNode.js v24.17.0"
+      }
+    ]
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "add 5k distinct items",
+        "kind": "module",
+        "agent_ms": 36.504791499999996,
+        "reference_ms": 29.560646,
+        "ratio": 1.2349118317644343,
+        "cv": 0.016171885608177877,
+        "agent_ms_samples": [
+          36.589292,
+          36.370292,
+          35.770833,
+          36.453375,
+          36.556208,
+          36.660958
+        ],
+        "reference_ms_samples": [
+          29.909417,
+          29.330167,
+          29.624667,
+          29.496625,
+          30.441875,
+          29.076792
+        ],
+        "agent_rss_kb": 53656,
+        "reference_rss_kb": 52632,
+        "rss_ratio": 1.019455844353245
+      },
+      {
+        "name": "total of 1k items, 10k times",
+        "kind": "module",
+        "agent_ms": 8.207624500000001,
+        "reference_ms": 7.290875,
+        "ratio": 1.1257392974094333,
+        "cv": 0.06703768553205082,
+        "agent_ms_samples": [
+          7.878,
+          7.988542,
+          8.901292,
+          8.370791,
+          9.27725,
+          8.044458
+        ],
+        "reference_ms_samples": [
+          7.110292,
+          7.117542,
+          8.226042,
+          7.760292,
+          7.248166,
+          7.333584
+        ],
+        "agent_rss_kb": 53168,
+        "reference_rss_kb": 51128,
+        "rss_ratio": 1.0398998591769677
+      },
+      {
+        "name": "add then remove 3k items",
+        "kind": "module",
+        "agent_ms": 52.049313,
+        "reference_ms": 15.641874999999999,
+        "ratio": 3.3275622647540657,
+        "cv": 0.02743681391566648,
+        "agent_ms_samples": [
+          52.091584,
+          51.077667,
+          52.248375,
+          52.007042,
+          51.529083,
+          53.579
+        ],
+        "reference_ms_samples": [
+          15.629125,
+          15.409791,
+          16.544375,
+          15.751209,
+          15.654625,
+          15.344375
+        ],
+        "agent_rss_kb": 55888,
+        "reference_rss_kb": 53168,
+        "rss_ratio": 1.0511585916340656
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      6.28857421875,
+      7.5986328125,
+      8.412109375
+    ],
+    "cpus": 12,
+    "geomean_ratio": 1.666223759589752,
+    "load_average_before": [
+      6.28857421875,
+      7.5986328125,
+      8.412109375
+    ]
+  },
+  "fuzz": {
+    "sequences": 30,
+    "steps": 40,
+    "seed": 1,
+    "passed": 30,
+    "divergences": [],
+    "harness_errors": [],
+    "pass_rate": 1
+  },
+  "load_average_end": [
+    6.28857421875,
+    7.5986328125,
+    8.412109375
+  ]
+}

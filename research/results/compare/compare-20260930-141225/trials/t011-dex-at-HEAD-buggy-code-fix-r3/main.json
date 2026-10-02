@@ -1,0 +1,315 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 1.4165336000000002,
+    "num_turns": 28,
+    "duration_ms": 437095,
+    "duration_api_ms": 375725,
+    "tokens": {
+      "input": 48,
+      "output": 38223,
+      "cache_read": 1334538,
+      "cache_creation": 64090,
+      "total": 1436899
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 48,
+        "outputTokens": 38223,
+        "cacheReadInputTokens": 1334538,
+        "cacheCreationInputTokens": 64090,
+        "webSearchRequests": 0,
+        "costUSD": 1.4165336000000002,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 15060,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 18,
+      "Write": 6,
+      "Edit": 3
+    },
+    "final_text": "All five bugs in `src/cart.js` are fixed, and each has regression tests that fail when that bug is put back. Lint and all 101 tests pass (full gate run through `run-gate`).\n\n**The bugs and fixes**\n\n| # | Bug | Fix |\n|---|---|---|\n| 1 | `addItem` accepted negative prices and quantities; a negative quantity on an existing item quietly reduced it | Name, price and quantity are checked before the cart changes. Wrong types throw `TypeError`, out-of-range values throw `RangeError` |\n| 2 | `removeItem` used `i.name = name`, which kept every item and renamed all of them to the removed name; a missing item was silently ignored | Compares with `!==` and throws if the item isn't in the cart |\n| 3 | `getTotal` looped with `<=`, so it threw on every call, even on an empty cart | Loops with `for...of`, so there's no index to get wrong |\n| 4 | The discount was added: 10% off 100 gave 110 | Subtracts it |\n| 5 | `applyDiscount` stored anything (150, -10, `'10'`, `NaN`) | Only accepts a finite number from 0 to 100 |\n\nAny call that throws leaves the cart exactly as it was.\n\n**Tests** (Node's built-in `node:test`, no test dependencies):\n- **`tests/cart.test.js`:** covers what you asked for (adding, removing, totals, discounts, item count), plus tests tagged `bug 1:` through `bug 5:`.\n- **`tests/cart.edge-cases.test.js`:** unicode names, numeric limits, odd input types, and 10,000-item runs.\n- **`tests/cart.integration.test.js`:** multi-step checkout flows and recovery after errors.\n\n**Proof the tests catch the bugs:** I also ran the suite against 10 broken versions of the file. Nine were the fixed file with one bug put back (some bugs in more than one form), and one was the original code. Every version failed at least one test tagged with its bug number.\n\n**Other files:** `package.json` has `npm test`, `npm run lint` (ESLint, added as a dev dependency) and `npm run check`. `README.md` explains the fixes and the choices below.\n\n**Choices you may want to change** (the spec didn't cover these):\n- Removing an item that isn't in the cart **throws** rather than returning `false`. This matches how the other methods handle bad input.\n- A price of 0 is allowed (free items). A quantity of 0 or a fractional quantity is rejected.\n- Adding an item name that's already in the cart keeps the first price and only adds to the quantity, as the original code did.\n- `getTotal()` isn't rounded, so `0.1 + 0.2` gives `0.30000000000000004`. Rounding to two decimals would assume a currency with cents, so formatting is left to the caller.\n- Item names must match exactly: they're case-sensitive and differently encoded versions of the same accented letter count as different items.\n\n**Git:** three commits on a new branch, `fix/shopping-cart-bugs`. The first is the original buggy file, so the fix shows as a clean diff. Nothing was pushed because the repo has no remote. The project hooks required conventional commit messages and a `Co-Authored-By: Dex` trailer, so I used those instead of the Claude attribution. `CLAUDE.md` was already untracked when I started, and I left it that way.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 7,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 98,
+        "deleted": 0
+      },
+      "config": {
+        "files": 2,
+        "added": 47,
+        "deleted": 0
+      },
+      "source": {
+        "files": 1,
+        "added": 131,
+        "deleted": 0
+      },
+      "test": {
+        "files": 3,
+        "added": 639,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 131,
+    "test_lines": 639,
+    "total_lines": 915
+  },
+  "install": {
+    "needed": true,
+    "ok": true,
+    "seconds": 1.4,
+    "output_tail": ""
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 101,
+      "failed": 0
+    },
+    "seconds": 0.8,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "spec": {
+        "passed": 12,
+        "total": 12,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 5,
+        "total": 5,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "ression tests that fail when that bug is put back. Lint and all 101 tests pass (full gate run through `run-gate`).  **The bugs and fixes**",
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 25,
+    "survived": 0,
+    "invalid": 0,
+    "score": 1.0,
+    "mutants": [
+      {
+        "file": "src/cart.js",
+        "line": 9,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 10,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 11,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 15,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 15,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 15,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 21,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 21,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 21,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 28,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 28,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 28,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 57,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 62,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 64,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 65,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 83,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 84,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 100,
+        "from": "*",
+        "to": "/",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 102,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 102,
+        "from": "*",
+        "to": "/",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 102,
+        "from": "/",
+        "to": "*",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 115,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 115,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 115,
+        "from": ">",
+        "to": ">=",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/cart.js"
+    ],
+    "sites": 25,
+    "seconds": 13.1
+  }
+}

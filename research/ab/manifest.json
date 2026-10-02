@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "name": "dex-orchestration-ab",
+  "frozen_at": "2026-10-01",
+  "question": "Does a mission-mode lifecycle (one lead, native helpers, ledger, lease, shared receipts) reach the same independently evaluated outcome as the legacy lifecycle at lower cost on the same host?",
+  "arms": {
+    "A": {"label": "current Dex (legacy lifecycle)", "orchestration_mode": "legacy", "dex_dir": ".dex/worktrees/exp-a-baseline", "identity": "HEAD 33fc68c + baseline/installed.patch (sha256 recorded in baseline.json)"},
+    "B0": {"label": "candidate Dex, frozen policy (mission mode)", "orchestration_mode": "mission", "dex_dir": ".dex/worktrees/exp-b0", "identity": "HEAD 33fc68c + baseline/installed.patch + candidate.patch (sha256 recorded at seal time)"}
+  },
+  "tasks": [
+    {"name": "smoke", "scenario": "buggy-code-fix", "class": "small bug fix", "endpoint": "phase-4-verified", "max_minutes_per_arm": 60, "a_decomposition": ["whole prompt as one task"], "pairs": 1},
+    {"name": "multi-domain", "scenario": "auth-jwt-api", "class": "cohesive multi-domain feature", "endpoint": "phase-4-verified", "max_minutes_per_arm": 150, "a_decomposition": ["storage, user model and registration (requirements 1, 6, 7, 8)", "login, refresh tokens and the auth middleware (requirements 2, 3, 4)", "RBAC routes and the test suite (requirements 5, 9)"], "pairs": 1, "status": "declared, not run under the Small budget"}
+  ],
+  "fixtures": {"source": "research/scenarios/<scenario>/prompt.md and rubric.sh", "repo": "fresh git repository per arm with a bare origin so origin/main exists; no remote service", "realism_check": "rubric.sh on an empty repository must score low (negative control recorded in metrics)"},
+  "evaluator": {"protected": "research/scenarios/<scenario>/rubric.sh as in the research harness (functions rubric_* weighted by scenario.json)", "arm_writable": false, "version": "repo HEAD 33fc68c"},
+  "endpoint_rule": "The arm stops when its lifecycle phase reaches 5 (PR) or pauses; Phases 5 and 6 are outside the measurement because fixtures have no remote service. The launcher issues dx control stop at that point and records it.",
+  "budget": {"max_concurrent_sessions_total": 3, "max_concurrent_arms": 1, "routes": "subscription only; no API-key fallback", "heavy_slots_per_arm": 1, "mission_max_helpers": 2},
+  "isolation": {"settings": "arm --settings file via a claude PATH shim with --setting-sources project,local (user settings and global hooks excluded)", "state": "per-arm DX_STATE_DIR, DX_LOOP_DIR, DX_RUN_ROOT, DX_MEMORY_STORE_DIR, DX_FEEDBACK_DIR, DX_ARTIFACT_DIR, autoMemoryDirectory", "shared_not_isolated": ["host CPU and memory", "the provider subscription quota", "~/.claude/projects transcripts (read for telemetry only)", "the Claude Code binary and version"]},
+  "ordering": "sequential pairs; alternate which arm runs first per task; record warm/cold and host load at start",
+  "metrics": ["acceptance: rubric score and per-check pass/fail", "time: wall seconds to endpoint, phase intervals from events", "tokens: per-request usage from transcripts deduplicated by requestId, by agent", "receipts: gate requested/executed/reused; ungated heavy commands", "review: waves, no-verdict, churn", "fragmentation: worktrees, branches, helper contexts, PRs attempted", "coordination (B0): assignments, lease acquisitions, violations", "unknown fields stay unknown"],
+  "exclusions": ["runs that fail to launch (recorded, not scored)", "provider outages (recorded as such)"],
+  "stopping_rule": "one pair per task under the Small budget; stop early only on launch failure or budget exhaustion; never on a favourable-looking partial result",
+  "promotion_criteria": "no acceptance regression on any task; B0 not worse on time and tokens by more than the paired noise seen in the smoke pair; any residual-finding or blocker in either arm reported, not scored away",
+  "notes": ["Three pairs would still be pilot evidence; one pair is a smoke test.", "A and B0 differ in the owner's uncommitted QA edits only if the candidate patch is built from my files alone, which it is."]
+}

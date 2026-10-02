@@ -587,6 +587,13 @@ dx_provider_apply() {
   effort_override="${DX_EFFORT_OVERRIDE:-${DX_EFFORT:-}}"
   dx_provider_validate_effort_field "DX_EFFORT override" "$effort_override" || return 1
 
+  # An explicit DX_PROVIDER_PROFILE for the same agent is the most specific
+  # instruction there is; a repository default must not outrank it. Three live
+  # launches resolved a disabled router profile over an explicit direct one.
+  if [[ -n "$agent_override" && -n "${DX_PROVIDER_PROFILE:-}" ]] \
+    && dx_provider_profile_matches_agent "$DX_PROVIDER_PROFILE" "auto" "$agent_override"; then
+    agent_override=""
+  fi
   if [[ -n "$agent_override" ]]; then
     default_profile=$(dx_provider_repo_default_profile 2>/dev/null || true)
     if [[ -n "$default_profile" ]] && dx_provider_profile_matches_agent "$default_profile" "repo" "$agent_override"; then
@@ -795,6 +802,41 @@ __dx_provider_minimal_mcp_phase() {
 
 # __dx_provider_args_set_mcp <args…> — did the caller already state its own MCP
 # configuration? Review waves and `dx context scope` both do, and theirs wins.
+# __dx_provider_mission_launch — this launch is a mission-mode lifecycle:
+# the lead's own session (not a review child, an assessment, triage or a
+# session-only chat), and the operator did not opt out with
+# DEX_ORCHESTRATION_MODE=legacy. Whether the lead then delegates at all is its
+# own call under prompts/mission-delegation.md; the roles are available either way.
+__dx_provider_mission_launch() {
+  [[ "${DEX_ORCHESTRATION_MODE:-mission}" != "legacy" ]] || return 1
+  [[ "${DEX_LOOP_ACTIVE:-0}" == 1 ]] || return 1
+  [[ "${DEX_SESSION_ONLY:-0}" != 1 ]] || return 1
+  [[ "${DEX_REVIEW_PASS_ACTIVE:-0}" != 1 && "${DEX_REVIEW_ASSESSMENT_ACTIVE:-0}" != 1 ]] || return 1
+  [[ "${DEX_TRIAGE_ACTIVE:-0}" != 1 ]] || return 1
+  [[ -n "${DEX_SESSION_ID:-}" ]]
+}
+
+# __dx_provider_mission_roles_supported — the helper roles ride on
+# `claude --agents` and the SubagentStart/Stop hooks are Claude Code's, so a
+# Codex-engine lead gets the ledger, the lease and memory capture but no
+# roles; it delegates through bin/dxcodex.sh as before.
+__dx_provider_mission_roles_supported() {
+  case "${DX_PROVIDER_ENGINE:-claude}" in
+    codex*) return 1 ;;
+  esac
+  return 0
+}
+
+__dx_provider_args_set_agents() {
+  local agents_arg
+  for agents_arg in "$@"; do
+    case "$agents_arg" in
+      --agents|--agents=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 __dx_provider_args_set_mcp() {
   local mcp_arg
   for mcp_arg in "$@"; do
@@ -900,6 +942,33 @@ dx_provider_claude() {
       set -- --strict-mcp-config --mcp-config "$minimal_mcp_config" "$@"
     else
       dx_warn "Dex could not write the phase MCP configuration; this phase keeps the inherited MCP servers."
+    fi
+  fi
+
+  # Mission mode. The lead's lifecycle session gets the helper roles as
+  # --agents, the flag the hooks and guards key on, the helper caps, and a
+  # mission ledger initialised once for the session. Legacy launches, review
+  # children and session-only chats take none of this path. lib/mission.sh is
+  # loaded here on demand, like lib/router.sh below, rather than from
+  # lib/common.sh.
+  if __dx_provider_mission_launch; then
+    if [[ -f "$DEX_DIR/lib/mission.sh" ]]; then
+      # shellcheck disable=SC1091
+      source "$DEX_DIR/lib/mission.sh"
+    fi
+    if command -v dx_mission_prepare_launch >/dev/null 2>&1; then
+      dx_mission_prepare_launch "$DEX_SESSION_ID" \
+        || dx_warn "Dex could not initialise the mission ledger; this launch continues without it."
+      declare -x DX_MISSION_ACTIVE=1 DEX_ORCHESTRATION_MODE=mission
+      if __dx_provider_mission_roles_supported; then
+        declare -x CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1
+        declare -x CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="${DEX_MISSION_MAX_HELPERS:-2}"
+        if ! __dx_provider_args_set_agents "$@"; then
+          set -- --agents "$(dx_mission_agents_json)" "$@"
+        fi
+      fi
+    else
+      dx_warn "Mission mode requested but lib/mission.sh is missing; launching in legacy mode."
     fi
   fi
 

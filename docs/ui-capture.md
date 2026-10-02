@@ -2,7 +2,7 @@
 
 Dex can turn a browser-facing change into a short, editable PR walkthrough. It also lets the implementation agent decide that a recording would not help. The important contract is an explicit, visible decision—not a video made for its own sake.
 
-Run `/dxproof` whenever you want the full visual artifact on demand. `/dxcapture` is an alias. Both commands inspect committed and working-tree changes against the branch's comparison base, reconstruct the old revision in a temporary Git worktree, and capture matched before and after flows. The final bundle includes the combined MP4, captions, poster, editable storyboard, screenshots, browser logs, and any failure or explicitly requested traces. The older `/dxuicapture` entrypoint remains available for lifecycle capture decisions and uses the same shared workflow.
+Run `/dxproof` whenever you want the full visual artifact on demand. `/dxcapture` is an alias. Both commands inspect committed and working-tree changes against the branch's comparison base, reconstruct the old revision in a temporary Git worktree, and capture matched before and after flows. The final bundle includes the combined MP4, captions, poster, a keyframe contact sheet, the acceptance-criteria table, editable storyboard, screenshots, browser logs, and any failure or explicitly requested traces. The older `/dxuicapture` entrypoint remains available for lifecycle capture decisions and uses the same shared workflow.
 
 Manual proof is different from the lifecycle decision below: an explicit `/dxproof` or `/dxcapture` request captures the artifact unless the diff has no browser-visible effect or the flow cannot be reproduced safely. A blocked manual capture stays `NEEDS_REVIEW` with the reason; it is not converted into a discretionary skip.
 
@@ -18,7 +18,7 @@ Every lifecycle can carry one UI proof state:
 | `N/A` | The change has no browser-rendered impact. |
 | `MISSING` | No decision has been recorded. |
 
-These states are advisory. A reasoned `SKIPPED` decision is valid and does not fail a phase. UI proof also does not replace automated tests or the manual smoke test.
+These states are advisory. A reasoned `SKIPPED` decision is valid and does not fail a phase. UI proof also does not replace automated tests or the manual QA report (`dxqa`, see [qa.md](qa.md)).
 
 Use capture for interactions, navigation, scrolling, state changes, responsive behavior, visual regressions, or anything a reviewer understands faster by seeing. Skip it for a trivial visual adjustment, an unsafe or irreproducible environment, or a case where a different focused artifact is clearer. Use N/A only when nothing changes in the browser.
 
@@ -43,6 +43,7 @@ The structured producer writes a compact bundle:
   walkthrough.json
   walkthrough.mp4
   poster.png
+  contact.png
   transcript.md
   captions.vtt
   visual-evidence.md
@@ -56,8 +57,8 @@ Each raw run contains its screenshot, WebM source video, metadata, and console, 
 Generated files are temporary evidence and must not be committed. During an active lifecycle, the compact bundle is also registered in the run journal. Each artifact carries its capture session and role, so DexCode can pair the walkthrough with its poster and captions. If DexCode sync is connected, normal run-artifact sync uploads the bundle and DexCode shows supported images and videos on the session page.
 
 For structured captures, bundle version 3 also records an ordered PR attachment
-inventory. It contains the final walkthrough and poster plus every image/video
-from the current matching before and after runs. Stale runs, traces, logs,
+inventory. It contains the final walkthrough, poster, and keyframe contact
+sheet plus every image/video from the current matching before and after runs. Stale runs, traces, logs,
 captions, and editable sources stay local. Phase 5 uses `gh pr edit --attach` to
 rewrite those local references in the PR body's `## Visual Evidence` section.
 It uploads at most 50 files per command and preserves the rewritten body between
@@ -158,7 +159,7 @@ The speech model is loaded locally and does not need a cloud API key. When narra
 - before and after chapters
 - narration and deterministic browser actions
 
-The structured action vocabulary is deliberately small: `goto`, `click`, `fill`, `press`, `hover`, `scroll`, `wait`, `waitFor`, `assert`, and `screenshot`. Locators use accessible roles, labels, visible text, or test IDs. `waitFor` accepts `visible`, `hidden`, `attached`, and `detached` states plus an optional `timeout_ms` up to 60 seconds. This covers normal user flows without allowing arbitrary JavaScript in a generated storyboard. Existing explicit `--flow` modules remain available for unstructured and unusual flows.
+The structured action vocabulary is deliberately small: `goto`, `click`, `fill`, `press`, `hover`, `scroll`, `wait`, `waitFor`, `assert`, and `screenshot`. Locators use accessible roles, labels, visible text, or test IDs. `waitFor` accepts `visible`, `hidden`, `attached`, and `detached` states plus an optional `timeout_ms` up to 60 seconds. `assert` takes an optional `predicate`: `visible` (the default), `hidden`, `text_equals`, `text_contains`, `value_equals`, `attribute`, `count`, or `url_matches`, with `expected`, `attribute`, `count`, or `pattern` as the predicate needs, an optional `criterion` index into the approved acceptance criteria, and a `timeout_ms` up to 60 seconds. This covers normal user flows without allowing arbitrary JavaScript in a generated storyboard. Existing explicit `--flow` modules remain available for unstructured and unusual flows.
 
 A minimal storyboard looks like this:
 
@@ -194,7 +195,7 @@ A minimal storyboard looks like this:
         {"action": "goto", "path": "/settings"},
         {"action": "scroll", "locator": {"by": "label", "name": "Email notifications"}},
         {"action": "click", "locator": {"by": "role", "role": "button", "name": "Save"}},
-        {"action": "assert", "locator": {"by": "text", "name": "Settings saved"}}
+        {"action": "assert", "locator": {"by": "text", "name": "Settings saved"}, "predicate": "text_equals", "expected": "Settings saved", "criterion": 1}
       ]
     }
   ]
@@ -205,6 +206,8 @@ Use `"comparison": "after_only"` with a non-empty `baseline_reason` when a befor
 
 Every stage must finish with a predicate-based readiness gate after its last state-changing action. Use `waitFor` when an element appears or disappears, or `assert` when the visible element is part of the proof. Fixed waits can still make a recording easier to watch, but they do not qualify as readiness gates. This prevents a before/after bundle from reaching `READY` when either side was captured while the application was still settling.
 
+An `assert` is also a recorded claim. The producer samples it until it holds for two consecutive samples (`satisfied`), the timeout passes (`unsatisfied`, with the last observed value), or the observation throws, for example on a strict-mode locator (`unknown`). `waitFor` keeps its meaning of "cannot proceed"; a failed `assert` does not stop the stage. Every outcome lands in `bundle.json` under `assertions`, and the claims that name a `criterion` become the `## Acceptance criteria` table in `visual-evidence.md`, with the criterion text when the session's approved criteria file still validates. An after-stage claim that did not hold leaves the bundle `NEEDS_REVIEW` and names the predicate; before-stage claims are listed, because the baseline is expected to differ. Whatever gate ends a stage has to hold in that stage, so put a criterion claim that is expected to fail in the before stage ahead of a closing `waitFor`. A before/after proof whose final viewport renders identically with the stage badge hidden is `NEEDS_REVIEW` as well, unless the storyboard sets `expect_identical: true` with an `identical_reason`; the comparison hashes an overlay-free shot, since the badge makes the saved stage screenshots differ by design.
+
 `suppress` is optional and accepts up to 20 CSS selectors. Dex installs those rules before page scripts run, records them in capture metadata and the final manifest, and uses them for both stages. Use suppression only for unrelated transient chrome such as background-job toasts; do not hide the interface under review.
 
 Validate the script before capture:
@@ -213,7 +216,7 @@ Validate the script before capture:
 dx ui-capture validate --script /absolute/path/to/walkthrough.json
 ```
 
-Validation rejects unknown actions, unsafe locator keys, fixed-wait-only capture boundaries, a transcript whose estimated reading time exceeds the maximum, or a maximum above 90 seconds. Locator kinds are case-insensitive, so both `testid` and the common `testId` spelling are accepted.
+Validation rejects unknown actions, unsafe locator keys, fixed-wait-only capture boundaries, a transcript whose estimated reading time exceeds the maximum, a maximum above 90 seconds, a predicate without the value it compares against, a `criterion` outside 1 to 64, a `url_matches` pattern that does not compile, or `expect_identical` without a reason. Locator kinds are case-insensitive, so both `testid` and the common `testId` spelling are accepted.
 
 ## Capture workflow
 
@@ -268,9 +271,9 @@ A PR walkthrough should be understandable on its first viewing:
 - keep unrelated screens, terminals, delays, secrets, and personal data out
 - explain product impact, the technical change, and how to test it in the transcript and manifest
 - inspect the console, page, request, and HTTP logs
-- play the final MP4 from beginning to end
+- open the contact sheet and both stage screenshots, read the criteria table, then spot-check the MP4
 
-The video is proof that a flow was exercised and observed. It is not proof that every acceptance criterion passed.
+The video is proof that a flow was exercised; the criteria table in `visual-evidence.md` records which claims held in the after stage. Neither replaces automated tests or the manual QA report.
 
 ## Raw capture compatibility
 
@@ -308,6 +311,8 @@ Set `DX_UI_CAPTURE_RETENTION_DAYS` to an integer from 1 through 3650. Active bun
 | The MP4 is too long | Remove setup steps or split the storyboard into a more focused proof. |
 | The MP4 is too large | Shorten the flow; Dex already attempts a higher-compression pass. |
 | A locator is ambiguous | Prefer an accessible role and exact name, then a label or stable test ID. |
+| An after-stage claim did not hold | The bundle is `NEEDS_REVIEW` and names the predicate with the observed value. Fix the application or correct the storyboard's `expected`, then run `dx ui-capture revise`. |
+| After is identical to before | The proof shows no change. Add the visible step the diff introduces, or declare `expect_identical: true` with an `identical_reason` when the change is deliberately invisible. |
 | The final state changed after capture | Edit the storyboard and run `dx ui-capture revise` with the affected URL. |
 | PR media attachments are unavailable | Upgrade GitHub CLI until `dx status` reports `PR Media: automatic attachments ready`; Phase 5 keeps a warned local handoff in the meantime. |
 | A PR media upload is incomplete | Keep the files GitHub accepted, inspect the warning for unresolved local paths, and retry only those files. |

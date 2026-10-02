@@ -1,0 +1,116 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 3.073298,
+    "num_turns": 50,
+    "duration_ms": 786320,
+    "duration_api_ms": 736683,
+    "tokens": {
+      "input": 94,
+      "output": 67306,
+      "cache_read": 4738845,
+      "cache_creation": 142636,
+      "total": 4948881
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 94,
+        "outputTokens": 67306,
+        "cacheReadInputTokens": 4738845,
+        "cacheCreationInputTokens": 142636,
+        "webSearchRequests": 0,
+        "costUSD": 3.073298,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 35817,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 39,
+      "Write": 3,
+      "Edit": 3,
+      "Read": 3
+    },
+    "final_text": "The audit is done and the completion receipt is written. The review turned up one real break, now fixed: `new registry.email(options)` threw \"is not a constructor\", and it works again.\n\n- **Changes since the last summary:** two more commits on `refactor/notifications-composition`, which now has three.\n  - `8c667d0` makes `registry` entries plain factory functions, so both `registry.email(options)` and `new registry.email(options)` return a notifier.\n  - `9527e6f` gives the preview lengths (120, and 90 for email) named constants.\n- **Verification:**\n  - The existing suite passes 8/8 on the final tree through `dx run-gate --name full-gate`.\n  - The side-by-side comparison with the original code found no differences across 32,929 scenarios. It covered both `createNotifier` and `new registry[channel](options)`, and it caught the deliberate breakages I planted to test it.\n  - `tests/` and `package.json` are unchanged.\n- **Review:** the last review pass found nothing new; what remains are the known differences and follow-ups listed below. I ran the review myself because the tool that normally publishes review results wasn't set up in this session, so no review receipt was written.\n\nDifferences you might notice:\n- Notifier objects expose only `channel` and `send`.\n- `createNotifier('constructor')` and other inherited names now throw \"unknown notification channel\". Before, `'constructor'` returned the options object.\n- Options given as getters or inherited from a prototype now work for every setting.\n- The unused `templates` and `defaultSender` options are gone.\n\nI added no permanent tests, since `tests/` was off-limits. Two existing issues are left as follow-ups: the throttle store never removes old timestamps, and SMS truncation can cut an emoji in half.\n\nThe scratch files are deleted and nothing is left running.\n\nPROMPT_COMPLETE",
+    "stop_hook_blocks": 1,
+    "loop_completed": true,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 12,
+    "by_category": {
+      "source": {
+        "files": 12,
+        "added": 424,
+        "deleted": 406
+      },
+      "test": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 830,
+    "test_lines": 0,
+    "total_lines": 830
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 8,
+      "failed": 0
+    },
+    "seconds": 0.2,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "preserve": {
+        "passed": 28,
+        "total": 28,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  },
+  "mutation": null
+}

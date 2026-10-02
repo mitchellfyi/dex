@@ -1,7 +1,0 @@
-{
-  "name": "refactor-duplication",
-  "type": "refactor",
-  "description": "Refactor duplicated validation logic into a shared utility.",
-  "timeout": 3600,
-  "language": "node"
-}

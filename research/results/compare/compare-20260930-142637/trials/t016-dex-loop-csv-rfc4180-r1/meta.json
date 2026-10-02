@@ -1,0 +1,19 @@
+{
+  "trial_id": "t016-dex-loop-csv-rfc4180-r1",
+  "arm": "dex-loop",
+  "arm_family": "dex-loop",
+  "prompts_source": "working tree",
+  "scenario": "csv-rfc4180",
+  "replica": 1,
+  "seeded": 0,
+  "model": "opus",
+  "effort": "xhigh",
+  "timeout_s": 3600,
+  "exit_code": 0,
+  "wall_seconds": 1054,
+  "legacy_total": 94,
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 178
+}

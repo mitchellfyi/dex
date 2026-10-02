@@ -1,0 +1,128 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.0934991,
+    "num_turns": 5,
+    "duration_ms": 26741,
+    "duration_api_ms": 20176,
+    "tokens": {
+      "input": 8,
+      "output": 3155,
+      "cache_read": 68748,
+      "cache_creation": 15872,
+      "total": 87783
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 8,
+        "outputTokens": 3155,
+        "cacheReadInputTokens": 68748,
+        "cacheCreationInputTokens": 15872,
+        "webSearchRequests": 0,
+        "costUSD": 0.0934991,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 274,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Read": 1,
+      "Bash": 3
+    },
+    "final_text": "`buildUrl` now takes an optional `queryOrder`, and `buildSignedUrl` gets it too. The full suite passes: 17 tests, including the new ones.\n\n- **`'sorted'`** is the default and gives the same output as before. Passing `undefined` also means sorted.\n- **`'insertion'`** keeps the keys in the order they appear in the `query` object.\n- **Anything else throws a `TypeError`**, including `null`, `''`, `0`, `false` and wrong-case strings like `'SORTED'`. The check runs even when `query` is a `URLSearchParams`, so a typo can't slip through there.\n- **Arrays** still give one `key=value` pair per item, in array order, whichever ordering you use.\n- **A `URLSearchParams` query** is passed through unchanged.\n\nThe change is in `src/url-builder.js`. `serializeQuery` also takes the option as an optional second argument, so the internal helper can be called with it directly. The new tests are in `tests/url-builder.test.js` and cover each of the cases above, plus `buildSignedUrl` passing the option through.\n\nWith `'insertion'`, JavaScript itself puts integer-like keys such as `'1'` or `'42'` first, in numeric order. I did not work around that.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 2,
+    "by_category": {
+      "source": {
+        "files": 1,
+        "added": 19,
+        "deleted": 3
+      },
+      "test": {
+        "files": 1,
+        "added": 69,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 22,
+    "test_lines": 69,
+    "total_lines": 91
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 17,
+      "failed": 0
+    },
+    "seconds": 0.2,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "followup": {
+        "passed": 7,
+        "total": 7,
+        "rate": 1.0
+      },
+      "spec": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 21,
+        "total": 21,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  }
+}

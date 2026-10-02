@@ -1,0 +1,124 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.4672475000000001,
+    "num_turns": 17,
+    "duration_ms": 177291,
+    "duration_api_ms": 167068,
+    "tokens": {
+      "input": 24,
+      "output": 24525,
+      "cache_read": 480295,
+      "cache_creation": 46851,
+      "total": 551695
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 24,
+        "outputTokens": 24525,
+        "cacheReadInputTokens": 480295,
+        "cacheCreationInputTokens": 46851,
+        "webSearchRequests": 0,
+        "costUSD": 0.4672475000000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 8020,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 10,
+      "Write": 2,
+      "Edit": 4
+    },
+    "final_text": "`parse` and `createParser` now accept `trim` and `comment`, and all 144 tests pass (105 existing, 39 new). I haven't committed anything.\n\n- **Defaults:** Both options are off by default, and with neither set the old behaviour is unchanged.\n- **`trim`:** It has to be a boolean. Leading and trailing spaces and tabs are removed from unquoted fields. Blanks before an opening `\"` and after a closing `\"` are allowed and dropped, and the quoted content is kept as is. Anything else after a closing quote still throws the usual `CsvError`.\n- **`comment`:** It must be one character other than the delimiter, `\"`, CR and LF, otherwise it throws `TypeError`. It is checked only at the very start of a line. A comment line is skipped with its line break, including CRLF, and line numbers in errors still count it.\n- **Streaming:** `createParser` runs on the same tokenizer as `parse`, so splitting the input into chunks doesn't change the result.\n- **Tests:**\n  - New targeted tests cover `trim` and `comment` in `test/parse.test.js`.\n  - Three new cases for `createParser` with these options sit in `test/create-parser.test.js`.\n  - The reference-parser comparison and the split-anywhere tests now include the new options, so `trim` and `comment` are checked against random inputs and random chunk splits.\n\nI made these choices where your spec was silent, and documented them in the README:\n- **Blank lines:** With `trim`, a line of only spaces and tabs becomes a record with one empty field. It is not an empty line, so `skipEmptyLines` keeps it.\n- **Delimiter:** A space or tab that is the delimiter is never trimmed.\n- **Comment after blanks:** With `trim`, a comment character after leading blanks is ordinary, because the comment check comes first.\n- **Comment after a BOM:** A comment character right after a leading BOM does start a comment line.\n- **Error positions:** Columns count the untrimmed text. A field's position in duplicate-header and unclosed-quote errors is its first character after any leading blanks.\n\n`stringify` ignores both options, like its other unused ones.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 4,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 7,
+        "deleted": 2
+      },
+      "source": {
+        "files": 1,
+        "added": 115,
+        "deleted": 7
+      },
+      "test": {
+        "files": 2,
+        "added": 199,
+        "deleted": 4
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 122,
+    "test_lines": 203,
+    "total_lines": 334
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 144,
+      "failed": 0
+    },
+    "seconds": 0.5,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "spec": {
+        "passed": 32,
+        "total": 32,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 13,
+        "total": 13,
+        "rate": 1.0
+      },
+      "followup": {
+        "passed": 12,
+        "total": 12,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "se` and `createParser` now accept `trim` and `comment`, and all 144 tests pass (105 existing, 39 new). I haven't committed anything.  - **",
+    "false_claim": false
+  }
+}

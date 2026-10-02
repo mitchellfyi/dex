@@ -1,3 +1,0 @@
-{
-  "mutation": { "include": ["src/*.js"], "max_mutants": 40 }
-}

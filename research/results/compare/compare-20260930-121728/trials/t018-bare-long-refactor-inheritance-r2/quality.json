@@ -1,0 +1,189 @@
+{
+  "load_average_start": [
+    43.64013671875,
+    45.7119140625,
+    39.91064453125
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.32,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.34,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.31,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.36,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.28,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.32,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 7,
+    "test_files": 2,
+    "source_lines": 403,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 45,
+      "mean": 2.69,
+      "max": 7,
+      "p90": 6
+    },
+    "function_lines": {
+      "n": 45,
+      "mean": 13.53,
+      "max": 79,
+      "p90": 38
+    },
+    "max_depth": 1,
+    "max_params": 4
+  },
+  "duplication": {
+    "percentage": 2.35,
+    "clones": 1,
+    "duplicated_lines": 11,
+    "lines": 469
+  },
+  "cli": null,
+  "docs": {
+    "readme": false
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "send 20k mixed notifications",
+        "kind": "module",
+        "agent_ms": 61.29112549999999,
+        "reference_ms": 52.166729000000004,
+        "ratio": 1.1749083501095112,
+        "cv": 0.258956878956994,
+        "agent_ms_samples": [
+          55.141625,
+          64.384667,
+          97.236708,
+          50.918166,
+          78.071458,
+          58.197584
+        ],
+        "reference_ms_samples": [
+          52.832,
+          51.501458,
+          54.457125,
+          51.189166,
+          53.742834,
+          49.082584
+        ],
+        "agent_rss_kb": 61344,
+        "reference_rss_kb": 61096,
+        "rss_ratio": 1.0040591855440617
+      },
+      {
+        "name": "createAllNotifiers x200k",
+        "kind": "module",
+        "agent_ms": 101.5248335,
+        "reference_ms": 56.617208000000005,
+        "ratio": 1.7931797961496085,
+        "cv": 0.22114670816646567,
+        "agent_ms_samples": [
+          77.530542,
+          102.934834,
+          103.682833,
+          100.114833,
+          87.126875,
+          116.896875
+        ],
+        "reference_ms_samples": [
+          60.611708,
+          52.622708,
+          50.7155,
+          77.452208,
+          65.776792,
+          40.825833
+        ],
+        "agent_rss_kb": 57968,
+        "reference_rss_kb": 55408,
+        "rss_ratio": 1.0462027144094717
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      43.5888671875,
+      45.66650390625,
+      39.9287109375
+    ],
+    "cpus": 12,
+    "geomean_ratio": 1.4514895506836576,
+    "load_average_before": [
+      43.5888671875,
+      45.66650390625,
+      39.9287109375
+    ]
+  },
+  "fuzz": {
+    "sequences": 30,
+    "steps": 60,
+    "seed": 1,
+    "passed": 30,
+    "divergences": [],
+    "harness_errors": [],
+    "pass_rate": 1
+  },
+  "load_average_end": [
+    43.5888671875,
+    45.66650390625,
+    39.9287109375
+  ]
+}

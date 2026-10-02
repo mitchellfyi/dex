@@ -1,0 +1,191 @@
+{
+  "load_average_start": [
+    46.1748046875,
+    44.47998046875,
+    37.74365234375
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.42,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 1.52,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.72,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.4,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.39,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.42,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 1,
+    "test_files": 1,
+    "source_lines": 177,
+    "findings": {
+      "source": 2,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 11.3,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {
+        "no-unused-vars": 2
+      },
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 17,
+      "mean": 3.53,
+      "max": 7,
+      "p90": 7
+    },
+    "function_lines": {
+      "n": 17,
+      "mean": 9.71,
+      "max": 17,
+      "p90": 15
+    },
+    "max_depth": 3,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 205
+  },
+  "cli": null,
+  "docs": {
+    "readme": false
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "buildUrl x20k",
+        "kind": "module",
+        "agent_ms": 119.402208,
+        "reference_ms": 93.5342085,
+        "ratio": 1.276561911570567,
+        "cv": 0.545786054287231,
+        "agent_ms_samples": [
+          118.596833,
+          91.552125,
+          89.363875,
+          291.216167,
+          124.378458,
+          120.207583
+        ],
+        "reference_ms_samples": [
+          89.273417,
+          86.081625,
+          97.795,
+          88.515333,
+          255.378,
+          149.830292
+        ],
+        "agent_rss_kb": 62600,
+        "reference_rss_kb": 62808,
+        "rss_ratio": 0.9966883199592409
+      },
+      {
+        "name": "buildSignedUrl x5k",
+        "kind": "module",
+        "agent_ms": 39.678062499999996,
+        "reference_ms": 39.8629375,
+        "ratio": 0.9953622334028944,
+        "cv": 0.5869784775191118,
+        "agent_ms_samples": [
+          37.005708,
+          42.027,
+          113.643875,
+          45.279916,
+          36.059209,
+          37.329125
+        ],
+        "reference_ms_samples": [
+          37.900458,
+          34.341292,
+          38.779,
+          40.946875,
+          76.191709,
+          44.716125
+        ],
+        "agent_rss_kb": 60088,
+        "reference_rss_kb": 60024,
+        "rss_ratio": 1.0010662401705985
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      49.20361328125,
+      45.1357421875,
+      38.0146484375
+    ],
+    "cpus": 12,
+    "geomean_ratio": 1.127227357447444,
+    "load_average_before": [
+      49.20361328125,
+      45.1357421875,
+      38.0146484375
+    ]
+  },
+  "fuzz": {
+    "sequences": 30,
+    "steps": 40,
+    "seed": 1,
+    "passed": 30,
+    "divergences": [],
+    "harness_errors": [],
+    "pass_rate": 1
+  },
+  "load_average_end": [
+    50.22802734375,
+    45.41552734375,
+    38.15478515625
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "scenario": "long-refactor-inheritance",
+  "correctness": 100,
+  "test_quality": 100,
+  "robustness": 70,
+  "verification": 100,
+  "issue_detection": 60,
+  "code_quality": 50,
+  "total": 83,
+  "weights": {
+    "correctness": 25,
+    "test_quality": 15,
+    "robustness": 15,
+    "verification": 20,
+    "issue_detection": 5,
+    "code_quality": 20
+  }
+}

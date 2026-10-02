@@ -76,6 +76,11 @@ Automatic attachment is advisory, like the proof decision itself. A truthful
 warning and local handoff do not block Phase 5, but silent missing evidence or
 a false upload claim does.
 
+The `Manual verification` line under `## Testing Performed` reflects
+`dx qa status`: the QA status, how many criteria were `MET`, how exploratory
+findings were handled, and the stale warning when the tree changed after the
+report. A `MISSING` report is named as missing, not implied.
+
 ## Step 5: Reviewer attachment
 
 Read the `## Reviewers` section of `.dex/dex.md`. For every row whose Type is `request`, confirm the reviewer is attached to the PR:
@@ -130,6 +135,7 @@ All of these must be true before you stop:
 - PR scope matches the plan — no unrelated changes, nothing missing
 - The PR is ready for review (`gh pr view "$PR_NUM" --json isDraft -q .isDraft` returns `false`) — or, when `.dex/dex.md` § Resources declares `full_gate: ci`, it is deliberately still a draft and the handoff says so
 - UI proof is attached for READY, has a warned local handoff when automatic attachment is unavailable/incomplete, or records SKIPPED/N/A with a reason
+- The `Manual verification` line reflects `dx qa status`, including the stale warning when the tree changed after the report
 - All `request`-type reviewers from `dex.md § Reviewers` are attached to the PR,
   or GitHub rejected them as non-requestable and Dex recorded the warning (or
   the section is empty/`_none_`)

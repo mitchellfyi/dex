@@ -26,7 +26,7 @@ without an issue, treat ticket-specific steps as N/A and keep the task branch.
      exists. Reconcile accepted comment decisions into the issue and stale PR
      body. Do not create a new PR, mark one ready, request reviewers, or post
      review notifications during this setup step.
-   - If the tracker supports assignees: check the assignee. If unassigned, assign to the current user (for Linear: use `save_issue` with `assignee: "me"`). If assigned to someone else, pause and warn by default; do not silently reassign. If the user says to continue anyway, or the tracker refuses the assignment because this account lacks permission, the step is not done: finish the rest of setup and close it with a `setup.ticket-ownership` waiver (step 6).
+   - If the tracker supports assignees: check the assignee. If assigned to someone else, pause and warn by default; do not silently reassign. A reasoned `setup.ticket-ownership` waiver may continue without claiming ownership changed. If unassigned, assign to the current user (for Linear: use `save_issue` with `assignee: "me"`).
    - If no tracker is configured: use the branch name `{{BRANCH}}` and the local filesystem for context. Ask the user what they want to work on.
 
 2. Prepare the tracker's branch locally, but do not publish a new branch during
@@ -70,7 +70,7 @@ without an issue, treat ticket-specific steps as N/A and keep the task branch.
      ```
      Use the tracker's key (e.g. `ENG-999`). If no tracker is configured, only the `current_branch` field is required.
 
-3. Set the ticket status to "In Progress" via the configured tracker. If no tracker, skip. Leave sub-issues as they are: Phase 6 marks each Done once its acceptance criteria pass. If the tracker refuses the change because this account lacks permission, do not look for other credentials: finish the rest of setup and close it with a `setup.ticket-status` waiver (step 6).
+3. Set the ticket status to "In Progress" via the configured tracker. If no tracker, skip. Leave sub-issues as they are: Phase 6 marks each Done once its acceptance criteria pass.
 
 4. Check the ticket description (if a ticket was found):
    - If the description is empty, unclear, or missing acceptance criteria:
@@ -89,22 +89,6 @@ without an issue, treat ticket-specific steps as N/A and keep the task branch.
    source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
    touch "$(dx_phase_ready_file "${DEX_SESSION_ID:-$(dx_session_id)}" 0)"
    ```
-
-   If the assignee or status step could not be done, setup cannot pass its
-   audit. Once everything else is done, end Phase 0 with a named waiver
-   instead, as a standalone command:
-
-   ```bash
-   bash "$DEX_DIR/bin/control.sh" waive setup.ticket-ownership --source agent --reason "<what the tracker said>"
-   ```
-
-   Use `setup.ticket-status` when the status change is the step that failed.
-   Use `--source human` when the user told you to continue past someone
-   else's assignment. The waiver records Phase 0 as waived and moves to
-   Phase 1, so it is the last thing setup does; if both steps failed, waive
-   `setup.ticket-ownership` and give both failures in the reason. Report the
-   waiver in the setup summary. Never describe the ticket as assigned or In
-   Progress when it is not.
 
    Then print a brief setup summary covering the branch, ticket status,
    assignee, duplicate and related searches, any issue or existing-PR updates,

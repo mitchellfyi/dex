@@ -1,0 +1,1748 @@
+{
+  "run": {
+    "run_id": "compare-20260930-121153",
+    "started_at": "2026-09-30T11:11:53Z",
+    "arms": "bare dex",
+    "scenarios": "cli-todo-app oss-bug-triage long-refactor-inheritance",
+    "replicas": 1,
+    "jobs": 3,
+    "seed": "compare-20260930-121153",
+    "followup": 1,
+    "model": "sonnet",
+    "effort": "low",
+    "followup_model": "sonnet",
+    "followup_effort": "low",
+    "dex_commit": "0a54338",
+    "dex_dirty_files": 23,
+    "claude_version": "2.1.285 (Claude Code)",
+    "node_version": "v24.17.0",
+    "host": "Darwin arm64"
+  },
+  "rows": [
+    {
+      "trial": "t001-dex-cli-todo-app-r1",
+      "arm": "dex",
+      "scenario": "cli-todo-app",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": null,
+      "hidden_robust": 0.8333333333333334,
+      "hidden_all": 0.9411764705882353,
+      "own_tests_pass": true,
+      "mutation_score": 1.0,
+      "source_lines": 155,
+      "test_lines": 215,
+      "total_lines": 405,
+      "files_changed": 9,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.19358430000000004,
+      "tokens_total": 149348,
+      "tokens_output": 7484,
+      "turns": 4,
+      "wall_minutes": 1.0166666666666666,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 90,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 90,
+      "legacy_robustness": 95,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 0.9411764705882353,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.0728902,
+      "fu_tokens_total": 77964,
+      "fu_wall_minutes": 0.5,
+      "fu_source_lines": 32,
+      "fu_turns": 4,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t002-dex-long-refactor-inheritance-r1",
+      "arm": "dex",
+      "scenario": "long-refactor-inheritance",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": null,
+      "hidden_preserve": 1.0,
+      "hidden_robust": null,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": null,
+      "source_lines": 775,
+      "test_lines": 0,
+      "total_lines": 775,
+      "files_changed": 11,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.2244954,
+      "tokens_total": 245698,
+      "tokens_output": 6766,
+      "turns": 6,
+      "wall_minutes": 0.9333333333333333,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 90,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 100,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 100,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.08474170000000002,
+      "fu_tokens_total": 103936,
+      "fu_wall_minutes": 0.5166666666666667,
+      "fu_source_lines": 36,
+      "fu_turns": 5,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t003-dex-oss-bug-triage-r1",
+      "arm": "dex",
+      "scenario": "oss-bug-triage",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": 1.0,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.8,
+      "source_lines": 9,
+      "test_lines": 20,
+      "total_lines": 35,
+      "files_changed": 3,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.1343196,
+      "tokens_total": 167777,
+      "tokens_output": 1709,
+      "turns": 5,
+      "wall_minutes": 0.5333333333333333,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 97,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 100,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 100,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.0708995,
+      "fu_tokens_total": 79602,
+      "fu_wall_minutes": 0.45,
+      "fu_source_lines": 13,
+      "fu_turns": 5,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t004-bare-long-refactor-inheritance-r1",
+      "arm": "bare",
+      "scenario": "long-refactor-inheritance",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": null,
+      "hidden_preserve": 1.0,
+      "hidden_robust": null,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": null,
+      "source_lines": 806,
+      "test_lines": 0,
+      "total_lines": 806,
+      "files_changed": 11,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.2272959,
+      "tokens_total": 197840,
+      "tokens_output": 11494,
+      "turns": 7,
+      "wall_minutes": 3.3,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 90,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 100,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 100,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.0947738,
+      "fu_tokens_total": 153872,
+      "fu_wall_minutes": 0.5,
+      "fu_source_lines": 34,
+      "fu_turns": 7,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t005-bare-oss-bug-triage-r1",
+      "arm": "bare",
+      "scenario": "oss-bug-triage",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": 1.0,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.775,
+      "source_lines": 9,
+      "test_lines": 12,
+      "total_lines": 27,
+      "files_changed": 3,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.0772438,
+      "tokens_total": 121308,
+      "tokens_output": 1978,
+      "turns": 7,
+      "wall_minutes": 0.55,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 97,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 100,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 100,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.07159499999999999,
+      "fu_tokens_total": 80071,
+      "fu_wall_minutes": 0.4166666666666667,
+      "fu_source_lines": 18,
+      "fu_turns": 5,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t006-bare-cli-todo-app-r1",
+      "arm": "bare",
+      "scenario": "cli-todo-app",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": null,
+      "hidden_robust": 0.8333333333333334,
+      "hidden_all": 0.9411764705882353,
+      "own_tests_pass": true,
+      "mutation_score": 0.9474,
+      "source_lines": 179,
+      "test_lines": 0,
+      "total_lines": 189,
+      "files_changed": 3,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.0896464,
+      "tokens_total": 83125,
+      "tokens_output": 4142,
+      "turns": 8,
+      "wall_minutes": 0.65,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 89,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 75,
+      "legacy_robustness": 97,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 100,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 0.9411764705882353,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.07138309999999999,
+      "fu_tokens_total": 98621,
+      "fu_wall_minutes": 0.5166666666666667,
+      "fu_source_lines": 52,
+      "fu_turns": 5,
+      "report_accuracy": null
+    }
+  ],
+  "deltas": {
+    "hidden_spec": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "hidden_robust": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "hidden_preserve": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "own_tests_pass": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "mutation_score": {
+      "dex": {
+        "point": 0.0388,
+        "low": 0.0388,
+        "high": 0.0388
+      }
+    },
+    "false_claim": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "source_lines": {
+      "dex": {
+        "point": -18.333333333333332,
+        "low": -18.333333333333332,
+        "high": -18.333333333333332
+      }
+    },
+    "test_lines": {
+      "dex": {
+        "point": 74.33333333333333,
+        "low": 74.33333333333333,
+        "high": 74.33333333333333
+      }
+    },
+    "files_changed": {
+      "dex": {
+        "point": 2.0,
+        "low": 2.0,
+        "high": 2.0
+      }
+    },
+    "outside_scope": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "forbidden_touched": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "fu_success": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "fu_regression_free": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "fu_own_tests_pass": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "fu_cost_usd": {
+      "dex": {
+        "point": -0.003073499999999988,
+        "low": -0.003073499999999988,
+        "high": -0.003073499999999988
+      }
+    },
+    "fu_wall_minutes": {
+      "dex": {
+        "point": 0.011111111111111108,
+        "low": 0.011111111111111108,
+        "high": 0.011111111111111108
+      }
+    },
+    "fu_tokens_total": {
+      "dex": {
+        "point": -23687.333333333332,
+        "low": -23687.333333333332,
+        "high": -23687.333333333332
+      }
+    },
+    "fu_source_lines": {
+      "dex": {
+        "point": -7.666666666666667,
+        "low": -7.666666666666667,
+        "high": -7.666666666666667
+      }
+    },
+    "cost_usd": {
+      "dex": {
+        "point": 0.052737733333333356,
+        "low": 0.052737733333333356,
+        "high": 0.052737733333333356
+      }
+    },
+    "tokens_total": {
+      "dex": {
+        "point": 53516.666666666664,
+        "low": 53516.666666666664,
+        "high": 53516.666666666664
+      }
+    },
+    "tokens_output": {
+      "dex": {
+        "point": -551.6666666666666,
+        "low": -551.6666666666666,
+        "high": -551.6666666666666
+      }
+    },
+    "turns": {
+      "dex": {
+        "point": -2.3333333333333335,
+        "low": -2.3333333333333335,
+        "high": -2.3333333333333335
+      }
+    },
+    "wall_minutes": {
+      "dex": {
+        "point": -0.6722222222222222,
+        "low": -0.6722222222222222,
+        "high": -0.6722222222222222
+      }
+    },
+    "legacy_total": {
+      "dex": {
+        "point": 0.3333333333333333,
+        "low": 0.3333333333333333,
+        "high": 0.3333333333333333
+      }
+    },
+    "legacy_correctness": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "legacy_test_quality": {
+      "dex": {
+        "point": 5.0,
+        "low": 5.0,
+        "high": 5.0
+      }
+    },
+    "legacy_robustness": {
+      "dex": {
+        "point": -0.6666666666666666,
+        "low": -0.6666666666666666,
+        "high": -0.6666666666666666
+      }
+    },
+    "legacy_verification": {
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "legacy_issue_detection": {
+      "dex": {
+        "point": -5.0,
+        "low": -5.0,
+        "high": -5.0
+      }
+    }
+  },
+  "cells": {
+    "hidden_spec": {
+      "cli-todo-app/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "hidden_robust": {
+      "cli-todo-app/bare": {
+        "mean": 0.8333333333333334,
+        "n": 1,
+        "values": [
+          0.8333333333333334
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.8333333333333334,
+        "n": 1,
+        "values": [
+          0.8333333333333334
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "hidden_preserve": {
+      "cli-todo-app/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "own_tests_pass": {
+      "cli-todo-app/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "mutation_score": {
+      "cli-todo-app/bare": {
+        "mean": 0.9474,
+        "n": 1,
+        "values": [
+          0.9474
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.775,
+        "n": 1,
+        "values": [
+          0.775
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.8,
+        "n": 1,
+        "values": [
+          0.8
+        ]
+      }
+    },
+    "false_claim": {
+      "cli-todo-app/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "source_lines": {
+      "cli-todo-app/bare": {
+        "mean": 179.0,
+        "n": 1,
+        "values": [
+          179.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 806.0,
+        "n": 1,
+        "values": [
+          806.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 9.0,
+        "n": 1,
+        "values": [
+          9.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 155.0,
+        "n": 1,
+        "values": [
+          155.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 775.0,
+        "n": 1,
+        "values": [
+          775.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 9.0,
+        "n": 1,
+        "values": [
+          9.0
+        ]
+      }
+    },
+    "test_lines": {
+      "cli-todo-app/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 12.0,
+        "n": 1,
+        "values": [
+          12.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 215.0,
+        "n": 1,
+        "values": [
+          215.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 20.0,
+        "n": 1,
+        "values": [
+          20.0
+        ]
+      }
+    },
+    "files_changed": {
+      "cli-todo-app/bare": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 11.0,
+        "n": 1,
+        "values": [
+          11.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 9.0,
+        "n": 1,
+        "values": [
+          9.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 11.0,
+        "n": 1,
+        "values": [
+          11.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      }
+    },
+    "outside_scope": {
+      "cli-todo-app/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "forbidden_touched": {
+      "cli-todo-app/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "fu_success": {
+      "cli-todo-app/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "fu_regression_free": {
+      "cli-todo-app/bare": {
+        "mean": 0.9411764705882353,
+        "n": 1,
+        "values": [
+          0.9411764705882353
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.9411764705882353,
+        "n": 1,
+        "values": [
+          0.9411764705882353
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "fu_own_tests_pass": {
+      "cli-todo-app/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "fu_cost_usd": {
+      "cli-todo-app/bare": {
+        "mean": 0.07138309999999999,
+        "n": 1,
+        "values": [
+          0.07138309999999999
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 0.0947738,
+        "n": 1,
+        "values": [
+          0.0947738
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.07159499999999999,
+        "n": 1,
+        "values": [
+          0.07159499999999999
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.0728902,
+        "n": 1,
+        "values": [
+          0.0728902
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.08474170000000002,
+        "n": 1,
+        "values": [
+          0.08474170000000002
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.0708995,
+        "n": 1,
+        "values": [
+          0.0708995
+        ]
+      }
+    },
+    "fu_wall_minutes": {
+      "cli-todo-app/bare": {
+        "mean": 0.5166666666666667,
+        "n": 1,
+        "values": [
+          0.5166666666666667
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 0.5,
+        "n": 1,
+        "values": [
+          0.5
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.4166666666666667,
+        "n": 1,
+        "values": [
+          0.4166666666666667
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.5,
+        "n": 1,
+        "values": [
+          0.5
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.5166666666666667,
+        "n": 1,
+        "values": [
+          0.5166666666666667
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.45,
+        "n": 1,
+        "values": [
+          0.45
+        ]
+      }
+    },
+    "fu_tokens_total": {
+      "cli-todo-app/bare": {
+        "mean": 98621.0,
+        "n": 1,
+        "values": [
+          98621.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 153872.0,
+        "n": 1,
+        "values": [
+          153872.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 80071.0,
+        "n": 1,
+        "values": [
+          80071.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 77964.0,
+        "n": 1,
+        "values": [
+          77964.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 103936.0,
+        "n": 1,
+        "values": [
+          103936.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 79602.0,
+        "n": 1,
+        "values": [
+          79602.0
+        ]
+      }
+    },
+    "fu_source_lines": {
+      "cli-todo-app/bare": {
+        "mean": 52.0,
+        "n": 1,
+        "values": [
+          52.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 34.0,
+        "n": 1,
+        "values": [
+          34.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 18.0,
+        "n": 1,
+        "values": [
+          18.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 32.0,
+        "n": 1,
+        "values": [
+          32.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 36.0,
+        "n": 1,
+        "values": [
+          36.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 13.0,
+        "n": 1,
+        "values": [
+          13.0
+        ]
+      }
+    },
+    "cost_usd": {
+      "cli-todo-app/bare": {
+        "mean": 0.0896464,
+        "n": 1,
+        "values": [
+          0.0896464
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 0.2272959,
+        "n": 1,
+        "values": [
+          0.2272959
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.0772438,
+        "n": 1,
+        "values": [
+          0.0772438
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 0.19358430000000004,
+        "n": 1,
+        "values": [
+          0.19358430000000004
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.2244954,
+        "n": 1,
+        "values": [
+          0.2244954
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.1343196,
+        "n": 1,
+        "values": [
+          0.1343196
+        ]
+      }
+    },
+    "tokens_total": {
+      "cli-todo-app/bare": {
+        "mean": 83125.0,
+        "n": 1,
+        "values": [
+          83125.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 197840.0,
+        "n": 1,
+        "values": [
+          197840.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 121308.0,
+        "n": 1,
+        "values": [
+          121308.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 149348.0,
+        "n": 1,
+        "values": [
+          149348.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 245698.0,
+        "n": 1,
+        "values": [
+          245698.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 167777.0,
+        "n": 1,
+        "values": [
+          167777.0
+        ]
+      }
+    },
+    "tokens_output": {
+      "cli-todo-app/bare": {
+        "mean": 4142.0,
+        "n": 1,
+        "values": [
+          4142.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 11494.0,
+        "n": 1,
+        "values": [
+          11494.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 1978.0,
+        "n": 1,
+        "values": [
+          1978.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 7484.0,
+        "n": 1,
+        "values": [
+          7484.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 6766.0,
+        "n": 1,
+        "values": [
+          6766.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 1709.0,
+        "n": 1,
+        "values": [
+          1709.0
+        ]
+      }
+    },
+    "turns": {
+      "cli-todo-app/bare": {
+        "mean": 8.0,
+        "n": 1,
+        "values": [
+          8.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 7.0,
+        "n": 1,
+        "values": [
+          7.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 7.0,
+        "n": 1,
+        "values": [
+          7.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 4.0,
+        "n": 1,
+        "values": [
+          4.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 6.0,
+        "n": 1,
+        "values": [
+          6.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 5.0,
+        "n": 1,
+        "values": [
+          5.0
+        ]
+      }
+    },
+    "wall_minutes": {
+      "cli-todo-app/bare": {
+        "mean": 0.65,
+        "n": 1,
+        "values": [
+          0.65
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 3.3,
+        "n": 1,
+        "values": [
+          3.3
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 0.55,
+        "n": 1,
+        "values": [
+          0.55
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 1.0166666666666666,
+        "n": 1,
+        "values": [
+          1.0166666666666666
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 0.9333333333333333,
+        "n": 1,
+        "values": [
+          0.9333333333333333
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 0.5333333333333333,
+        "n": 1,
+        "values": [
+          0.5333333333333333
+        ]
+      }
+    },
+    "legacy_total": {
+      "cli-todo-app/bare": {
+        "mean": 89.0,
+        "n": 1,
+        "values": [
+          89.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 97.0,
+        "n": 1,
+        "values": [
+          97.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 97.0,
+        "n": 1,
+        "values": [
+          97.0
+        ]
+      }
+    },
+    "legacy_correctness": {
+      "cli-todo-app/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    },
+    "legacy_test_quality": {
+      "cli-todo-app/bare": {
+        "mean": 75.0,
+        "n": 1,
+        "values": [
+          75.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    },
+    "legacy_robustness": {
+      "cli-todo-app/bare": {
+        "mean": 97.0,
+        "n": 1,
+        "values": [
+          97.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 95.0,
+        "n": 1,
+        "values": [
+          95.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    },
+    "legacy_verification": {
+      "cli-todo-app/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    },
+    "legacy_issue_detection": {
+      "cli-todo-app/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "long-refactor-inheritance/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "cli-todo-app/dex": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "long-refactor-inheritance/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "oss-bug-triage/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    }
+  }
+}

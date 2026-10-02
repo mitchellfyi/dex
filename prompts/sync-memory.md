@@ -14,7 +14,9 @@ after evidence, scope, current-code verification, and a reviewable diff.
 
 The caller may provide:
 
-- `--dry-run`: explain proposed changes without writing files.
+- `--dry-run`: explain proposed changes without writing files. `dx sync`
+  compares the repository before and after the run; a dry run that changed
+  any file fails and lists the paths.
 - `--state-dir <path>`: read raw observations and episodes from this directory.
 - `--since <ref|date>`: limit git, CI, and review-history scanning.
 - `--no-pr`: do not create or update a PR.
@@ -25,8 +27,23 @@ The caller may provide:
 - `--include-working-tree`: allow uncommitted working-tree changes to be used as
   promotion evidence. Default is false.
 
-If no state directory is supplied, use a Dex-managed external state directory
-outside the repo. Do not store raw episodes inside the git checkout.
+When `--state-dir` is not given, `dx sync` passes `$DX_MEMORY_STORE_DIR`, or
+`~/.claude/.dex-memory/<repo-key>` when that is unset, and creates it on a
+write run. The invocation block names the directory in use. Do not store raw
+episodes inside the git checkout.
+
+The store maintains itself between syncs (`dx memory maintain`, and the
+curator review `dx memory curate`; see docs/mission-mode.md). Read its
+statuses as decisions already taken: an entry marked `curated` passed a
+critical review and is pre-approved for promotion when its domain and
+evidence fit; an entry with status `retired` was retired for the reason it
+carries and must not be re-promoted from older observations. Entries the
+curator promoted have already been written into `.dex/memory` by `dx memory
+land` before this run (their blocks carry a `Source: dex memory store` line and
+the store records them as `landed`); do not create a second entry for the same
+lesson, and edit those blocks only to correct them. Overlay decisions
+(`retired`, `needs-recheck`) about existing entries are applied by the same
+step as a status change; do not re-derive them.
 
 ## Trusted Files
 
@@ -45,8 +62,8 @@ external run state until `dx sync` promotes them.
 
 ## Trace-Retrieval Mode
 
-If `--trace-retrieval` is present, do not modify files. Produce a memory load
-report:
+If `--trace-retrieval` is present, do not modify files; the same before-and-after
+check as `--dry-run` applies. Produce a memory load report:
 
 ```markdown
 # Dex Memory Load Report
@@ -112,7 +129,7 @@ Read current Dex context:
 
 Gather raw observations from:
 
-- the explicit `--state-dir`
+- the state directory (`--state-dir`, or its default)
 - recent commits, especially `fix:` commits
 - recent changed hot spots
 - recent PR review comments when GitHub is available

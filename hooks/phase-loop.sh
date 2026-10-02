@@ -498,10 +498,6 @@ dx_sync_inline_phase_from_state() {
 }
 
 dx_inline_phase_message() {
-  if dx_lifecycle_benchmark; then
-    dx_benchmark_phase_message "$1"
-    return 0
-  fi
   case "$1" in
     0)
       cat <<'EOF'
@@ -517,7 +513,8 @@ EOF
       ;;
     2)
       cat <<'EOF'
-The plan is approved. Invoke the Skill tool with skill: "dximplement" to begin implementation. Phase focus: implementation, testing, and UI capture evidence. For UI-affecting changes, invoke dxuicapture before UI edits for baseline evidence, then capture after evidence and link the visual manifest/screenshots/videos/traces before stopping. Follow prompts/commit-format.md. Commit small coherent checkpoints early and often, and push immediately after every commit. Do not wait for full verification, task completion, or phase completion; keep failed and pending checks explicit and continue toward a verified branch. Use natural history boundaries rather than arbitrary splits. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 is the final PR gate. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance the lifecycle.
+The plan is approved. Invoke the Skill tool with skill: "dximplement" to begin implementation. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact; a reasoned SKIPPED is valid. Before writing the Phase 2 ready marker, invoke skill: "dxqa": exercise every acceptance criterion against the running change, record the report with dx qa report, and fix any NOT_MET criterion here rather than in review. Phase focus: implementation, testing, and trustworthy proof. Follow prompts/commit-format.md. Commit small coherent checkpoints early and often, and push immediately after every commit. Do not wait for full verification, task completion, or phase completion; keep failed and pending checks explicit and continue toward a verified branch. Use natural history boundaries rather than arbitrary splits. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 is the final PR gate. When implementation is complete and the audit criteria are met, stop so the Stop hook can advance the lifecycle.
+Mission mode (DX_MISSION_ACTIVE=1 in your environment): read prompts/mission-delegation.md before delegating anything; take the write lease before editing and release it when done; run the bounded self-check before Phase 3 and record it, with decisions, in the mission ledger (bin/mission.sh "$DEX_SESSION_ID" …). Helpers are native subagents in this tree; never give one a worktree, branch or PR.
 EOF
       ;;
     3)
@@ -563,6 +560,7 @@ dx_compact_repeat_audit_prompt() {
       printf '%s\n' "- No Phase 2 background processes or long-running verification commands are still in flight."
       printf '%s\n' "- Any needed .dex/ updates are made."
       printf '%s\n' "- UI capture evidence is linked for UI-affecting changes, including before/after evidence or a before-unavailable reason, or UI capture is explicitly marked N/A."
+      printf '%s\n' "- The manual QA report (dx qa show) is PASSED, or BLOCKED/N_A with a reason that clears the blocker rule; no acceptance criterion row is NOT_MET."
       printf '%s\n' "- The Phase 2 ready marker has been written."
       printf '%s\n' ""
       printf '%s\n' "If any item is not true, continue implementing or verifying instead of signalling completion."
@@ -1438,13 +1436,8 @@ if [[ "$HANDOFF_MODE" == "inline" && "${DEX_LOOP_PHASE:-}" == "1" ]]; then
       printf '%s\n' "Do not manually fetch the ticket, rename branches, update tracker status, explore code, or draft the plan outside that skill unless the skill explicitly instructs you to." >&2
     else
       printf '\n%s\n\n' "--- Dex Phase 1 Gate: dxplan still in progress ---" >&2
-      if [[ "${DEX_HEADLESS_RUN:-0}" == "1" && "${DEX_HEADLESS_REQUIRES_PLAN_APPROVAL:-true}" == "false" ]]; then
-        printf '%s\n' "No audit iteration was counted. Continue dxplan until the plan passes its quality checks; the run spec authorizes it, so do not wait for approval." >&2
-        printf '%s\n' "Write the review criteria and the ready marker from dxplan Step 9, then stop once for the audit handoff." >&2
-      else
-        printf '%s\n' "No audit iteration was counted. Continue dxplan until ExitPlanMode has presented the plan and the user has approved it." >&2
-        printf '%s\n' "After approval only, complete the freeform tracker intake gate when it applies, write the ready marker from dxplan Step 9, then stop once for the audit handoff." >&2
-      fi
+      printf '%s\n' "No audit iteration was counted. Continue dxplan until ExitPlanMode has presented the plan and the user has approved it." >&2
+      printf '%s\n' "After approval only, complete the freeform tracker intake gate when it applies, write the ready marker from dxplan Step 9, then stop once for the audit handoff." >&2
     fi
     printf '%s\n' "" >&2
     dx_print_rejected_receipt_command
@@ -1756,50 +1749,46 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
       dx_print_rejected_receipt_command
       exit 2
     fi
-    # The sealed criteria and the risk tier exist to feed Review. A benchmark
-    # configured without Review ends here, so neither gate applies.
-    if [[ "$(dx_lifecycle_final_phase)" -ge 3 ]]; then
-      REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
-      REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
-      if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]]; then
-        if ! dx_rotate_rejected_receipt; then
-          printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
-          exit 2
-        fi
-        printf '\n%s\n\n' "--- Dex Phase 2 Gate: approved review criteria missing, invalid, or changed after approval ---" >&2
-        printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
-        printf '%s\n' "" >&2
-        printf '%s\n' "Restore the approved Phase 1 requirements at:" >&2
-        printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
-        printf '%s\n' "Use the version 1 schema from dxplan Step 9. If the user approved a plan change during implementation, replace the artifact and explicitly rotate its approval with dx_review_approve_criteria before continuing." >&2
-        printf '%s\n' "" >&2
-        dx_print_rejected_receipt_command
+    REVIEW_CRITERIA_FILE=$(dx_review_criteria_file "$SESSION_ID")
+    REVIEW_CRITERIA_BINDING=$(dx_review_read_criteria_approval "$SESSION_ID" 2>/dev/null || true)
+    if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]]; then
+      if ! dx_rotate_rejected_receipt; then
+        printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
         exit 2
       fi
-      REVIEW_POLICY_RECORD=$(dx_review_policy_resolve "$(pwd)" 2>/dev/null || true)
-      IFS=$'\t' read -r _ _ _ REVIEW_POLICY_BINDING _ <<< "$REVIEW_POLICY_RECORD"
-      if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
-         ! dx_review_policy_binding_valid "$REVIEW_POLICY_BINDING" ||
-         ! dx_review_selection_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING"; then
-        if ! dx_rotate_rejected_receipt; then
-          printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
-          exit 2
-        fi
-        printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
-        printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
-        printf '%s\n' "" >&2
-        printf '%s\n' "Choose the review risk tier for the implementation you just completed: trivial, small, normal, or complex. Use the ordered rubric in prompts/review-risk-assessment.md and persist comma-separated reason codes." >&2
-        printf '%s\n' "" >&2
-        printf '%s\n' "Record the current-scope choice, then stop again:" >&2
-        printf '%s\n' '```bash' >&2
-        printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
-        printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
-        printf '%s\n' "dx_review_write_selection \"\$SESSION_ID\" \"<trivial|small|normal|complex>\" \"lifecycle-agent\" \"<comma-separated-reason-codes>\" \"\$PWD\"" >&2
-        printf '%s\n' '```' >&2
-        printf '%s\n' "" >&2
-        dx_print_rejected_receipt_command
+      printf '\n%s\n\n' "--- Dex Phase 2 Gate: approved review criteria missing, invalid, or changed after approval ---" >&2
+      printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Restore the approved Phase 1 requirements at:" >&2
+      printf '  %s\n' "$REVIEW_CRITERIA_FILE" >&2
+      printf '%s\n' "Use the version 1 schema from dxplan Step 9. If the user approved a plan change during implementation, replace the artifact and explicitly rotate its approval with dx_review_approve_criteria before continuing." >&2
+      printf '%s\n' "" >&2
+      dx_print_rejected_receipt_command
+      exit 2
+    fi
+    REVIEW_POLICY_RECORD=$(dx_review_policy_resolve "$(pwd)" 2>/dev/null || true)
+    IFS=$'\t' read -r _ _ _ REVIEW_POLICY_BINDING _ <<< "$REVIEW_POLICY_RECORD"
+    if [[ ! "$REVIEW_CRITERIA_BINDING" =~ ^[a-f0-9]{64}$ ]] ||
+       ! dx_review_policy_binding_valid "$REVIEW_POLICY_BINDING" ||
+       ! dx_review_selection_valid "$SESSION_ID" "$(pwd)" "$REVIEW_CRITERIA_BINDING" "$REVIEW_POLICY_BINDING"; then
+      if ! dx_rotate_rejected_receipt; then
+        printf '\n%s\n' "Dex could not revoke the rejected Phase 2 receipt. Stop again after correcting the state-file error." >&2
         exit 2
       fi
+      printf '\n%s\n\n' "--- Dex Phase 2 Gate: review risk selection missing or stale ---" >&2
+      printf '%s\n' "Completion receipt rejected; Phase 2 did not advance." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Choose the review risk tier for the implementation you just completed: trivial, small, normal, or complex. Use the ordered rubric in prompts/review-risk-assessment.md and persist comma-separated reason codes." >&2
+      printf '%s\n' "" >&2
+      printf '%s\n' "Record the current-scope choice, then stop again:" >&2
+      printf '%s\n' '```bash' >&2
+      printf '%s\n' "source \"\${DEX_DIR:-\$HOME/work/dex}/lib/common.sh\" || exit 1" >&2
+      printf '%s\n' "SESSION_ID=\"\${DEX_SESSION_ID:-\$(dx_session_id)}\"" >&2
+      printf '%s\n' "dx_review_write_selection \"\$SESSION_ID\" \"<trivial|small|normal|complex>\" \"lifecycle-agent\" \"<comma-separated-reason-codes>\" \"\$PWD\"" >&2
+      printf '%s\n' '```' >&2
+      printf '%s\n' "" >&2
+      dx_print_rejected_receipt_command
+      exit 2
     fi
   fi
 
@@ -1869,9 +1858,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
     exit 2
   fi
 
-  # Phase 6 ends a ticket lifecycle; the benchmark workflow ends at Phase 3.
-  FINAL_PHASE=$(dx_lifecycle_final_phase)
-  if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" =~ ^[0-9]+$ && "$CURRENT_PHASE" -lt "$FINAL_PHASE" ]]; then
+  if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" =~ ^[0-9]+$ && "$CURRENT_PHASE" -lt 6 ]]; then
     NEXT_PHASE=$((CURRENT_PHASE + 1))
     if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" "$NEXT_PHASE"; then
       if ! dx_detach_or_report "review-child-active" "phase-loop"; then
@@ -1992,48 +1979,28 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
     exit 0
   fi
 
-  if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "$FINAL_PHASE" ]]; then
-    # Only the benchmark workflow ends at Phase 3, so only it can reach this
-    # point with a review child still fenced. Same quiescence rule as a normal
-    # handoff out of Phase 3.
-    if dx_phase_busy_transition_blocked "$SESSION_ID" 3 "$CURRENT_PHASE" 7; then
-      if ! dx_detach_or_report "review-child-active" "phase-loop"; then
-        dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
-          2>/dev/null || true
-        exit 2
-      fi
-      if ! dx_lifecycle_control_lock_release "$SESSION_ID"; then
-        dx_lifecycle_completion_brake "$SESSION_ID" review-child-lock-release \
-          phase-loop 2>/dev/null || true
-        dx_lifecycle_control_lock_release_retained "$SESSION_ID" \
-          2>/dev/null || true
-        printf '\n%s\n' "Dex paused at the Phase 3 child fence but could not release its transition lock. The lifecycle remains inert; repair the lock before resuming." >&2
-        exit 2
-      fi
-      printf '\n%s\n' "Dex paused before completing Phase 3 because its review child has not acknowledged quiescence." >&2
-      exit 0
-    fi
+  if [[ "$HANDOFF_MODE" == "inline" && "$CURRENT_PHASE" == "6" ]]; then
     if [[ "$MIGRATED_COMPLETION" -ne 1 \
-      || "$COMPLETION_PHASE" != "$CURRENT_PHASE" ]] \
+      || "$COMPLETION_PHASE" != "6" ]] \
       || ! dx_consume_completion_receipt "$SESSION_ID" "$COMPLETION_MODE" \
         "$COMPLETION_PURPOSE" "$COMPLETION_PHASE" "$COMPLETION_GENERATION"; then
       dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
         2>/dev/null || true
-      printf '\n%s\n' "Dex could not consume the Phase ${CURRENT_PHASE} completion receipt. Stop again after correcting the state-file error." >&2
+      printf '\n%s\n' "Dex could not consume the Phase 6 completion receipt. Stop again after correcting the state-file error." >&2
       exit 2
     fi
     if ! dx_lifecycle_atomic_write "$PHASE_STATE_FILE" "7"; then
-      RETRY_GENERATION=$(dx_lifecycle_completion_issue_unlocked "$SESSION_ID" lifecycle phase "$CURRENT_PHASE" \
+      RETRY_GENERATION=$(dx_lifecycle_completion_issue_unlocked "$SESSION_ID" lifecycle phase 6 \
         2>/dev/null || true)
       if [[ "$RETRY_GENERATION" =~ ^[0-9a-f]{32}$ ]]; then
-        RETRY_CONFIG=$(dx_inline_completion_config "$CURRENT_PHASE" "$RETRY_GENERATION")
+        RETRY_CONFIG=$(dx_inline_completion_config 6 "$RETRY_GENERATION")
         dx_lifecycle_atomic_write "$CONFIG_FILE" "$RETRY_CONFIG" 2>/dev/null || true
       fi
       if ! dx_release_transition_or_brake terminal-state-lock-release; then
-        printf '\n%s\n' "Dex restored Phase ${CURRENT_PHASE} authorization but could not release its transition lock. The lifecycle remains inert." >&2
+        printf '\n%s\n' "Dex restored Phase 6 authorization but could not release its transition lock. The lifecycle remains inert." >&2
         exit 2
       fi
-      printf '\n%s\n' "Dex could not commit lifecycle completion. Phase ${CURRENT_PHASE} remains authoritative; stop again to retry its audit." >&2
+      printf '\n%s\n' "Dex could not commit lifecycle completion. Phase 6 remains authoritative; stop again to retry its audit." >&2
       if [[ "$RETRY_GENERATION" =~ ^[0-9a-f]{32}$ ]]; then
         printf '%s\n' "Use this fresh command after the phase gate passes:" >&2
         dx_print_completion_command "$SESSION_ID" "$RETRY_GENERATION"
@@ -2043,16 +2010,6 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
     TERMINAL_COMMIT_RC=0
     dx_record_phase_result "$CURRENT_PHASE" "advance" "0" \
       || TERMINAL_COMMIT_RC=1
-    if [[ "$CURRENT_PHASE" == "3" ]]; then
-      rm -f "$(dx_review_selection_file "$SESSION_ID")" "$(dx_review_receipt_file "$SESSION_ID")" \
-        "$(dx_review_state_file "$SESSION_ID")" 2>/dev/null || TERMINAL_COMMIT_RC=1
-      dx_review_ledger_reset "$SESSION_ID" 2>/dev/null || true
-      if dx_phase_busy_quiesced "$SESSION_ID" 3; then
-        PHASE_3_BUSY_TOKEN=$(dx_phase_busy_token "$SESSION_ID" 3)
-        dx_phase_busy_finish "$SESSION_ID" 3 "$PHASE_3_BUSY_TOKEN" 2>/dev/null \
-          || TERMINAL_COMMIT_RC=1
-      fi
-    fi
     rm -f "$STATE_FILE" "$COMPLETE_FILE" "$CONFIG_FILE" \
       "$(dx_findings_file "$SESSION_ID")" "$PAUSED_FILE" \
       "$(dx_pause_state_file "$SESSION_ID")" "$(dx_prompt_file "$SESSION_ID")" \
@@ -2070,7 +2027,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
           completion-commit-failed phase-loop 2>/dev/null || true
       dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
         2>/dev/null || true
-      printf '\n%s\n' "Dex could not finish the terminal transaction. It returned the lifecycle to a paused Phase ${CURRENT_PHASE} with completion authorization revoked; use dx control resume after repairing the reported state error." >&2
+      printf '\n%s\n' "Dex could not finish the terminal transaction. It returned the lifecycle to a paused Phase 6 with completion authorization revoked; use dx control resume after repairing the reported state error." >&2
       exit 2
     fi
     if ! dx_lifecycle_terminal_commit_publish_unlocked "$SESSION_ID" \
@@ -2081,7 +2038,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
           terminal-proof-failed phase-loop 2>/dev/null || true
       dx_lifecycle_control_lock_release_checked "$SESSION_ID" \
         2>/dev/null || true
-      printf '\n%s\n' "Dex could not publish its terminal proof. It returned the lifecycle to a paused Phase ${CURRENT_PHASE}; use dx control resume after repairing the state error." >&2
+      printf '\n%s\n' "Dex could not publish its terminal proof. It returned the lifecycle to a paused Phase 6; use dx control resume after repairing the state error." >&2
       exit 2
     fi
     if ! dx_lifecycle_control_lock_release "$SESSION_ID"; then
@@ -2091,7 +2048,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
           completion-lock-release phase-loop 2>/dev/null || true
       dx_lifecycle_control_lock_release_retained "$SESSION_ID" \
         2>/dev/null || true
-      printf '\n%s\n' "Dex could not release its terminal transition lock. Completion was not reported; repair the lock, then use dx control resume to retry Phase ${CURRENT_PHASE}." >&2
+      printf '\n%s\n' "Dex could not release its terminal transition lock. Completion was not reported; repair the lock, then use dx control resume to retry Phase 6." >&2
       exit 2
     fi
     if ! dx_lifecycle_terminal_commit_valid "$SESSION_ID"; then
@@ -2099,11 +2056,11 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
         terminal-proof-invalid phase-loop 2>/dev/null \
         || dx_lifecycle_completion_brake "$SESSION_ID" \
           terminal-proof-invalid phase-loop 2>/dev/null || true
-      printf '\n%s\n' "Dex could not validate its terminal commit. Completion was not reported; the lifecycle is paused for a fresh Phase ${CURRENT_PHASE} resume." >&2
+      printf '\n%s\n' "Dex could not validate its terminal commit. Completion was not reported; the lifecycle is paused for a fresh Phase 6 resume." >&2
       exit 2
     fi
     dx_event_emit_for_session "$SESSION_ID" "run.completed" "info" \
-      "Dex lifecycle completed" "$CURRENT_PHASE" "{\"final_phase\":${CURRENT_PHASE}}" \
+      "Dex lifecycle completed" "6" "{\"final_phase\":6}" \
       || TERMINAL_COMMIT_RC=1
     dx_run_log_append_for_session "$SESSION_ID" "info" "phase-loop" \
       "Dex lifecycle completed" || TERMINAL_COMMIT_RC=1
@@ -2114,11 +2071,7 @@ if [[ "$COMPLETION_SIGNAL_READY" -eq 1 ]]; then
     fi
     {
       printf '\n%s\n\n' "--- Dex lifecycle complete ---"
-      if dx_lifecycle_benchmark; then
-        printf '%s\n' "The benchmark lifecycle is complete. Leave the working tree exactly as it is — the evaluation reads it — and give a short summary of the change."
-      else
-        printf '%s\n' "All phases are complete. Present the final summary to the user, including PR status and any cleanup command."
-      fi
+      printf '%s\n' "All phases are complete. Present the final summary to the user, including PR status and any cleanup command."
     } >&2
     exit 2
   fi
@@ -2396,10 +2349,6 @@ else
   printf '%s\n' "$AUDIT_PROMPT" >&2
 fi
 echo "" >&2
-if dx_lifecycle_benchmark && [[ "${DEX_LOOP_PHASE:-}" =~ ^[0-6]$ ]]; then
-  dx_benchmark_audit_addendum >&2
-  echo "" >&2
-fi
 
 if [[ "$MIGRATED_COMPLETION" -eq 1 \
   && ( "$COMPLETION_MODE" == "lifecycle" \

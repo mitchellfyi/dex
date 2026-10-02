@@ -1,0 +1,414 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 3.9366696,
+    "num_turns": 60,
+    "duration_ms": 1111819,
+    "duration_api_ms": 997958,
+    "tokens": {
+      "input": 112,
+      "output": 92501,
+      "cache_read": 6036593,
+      "cache_creation": 161991,
+      "total": 6291197
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 112,
+        "outputTokens": 92501,
+        "cacheReadInputTokens": 6036593,
+        "cacheCreationInputTokens": 161991,
+        "webSearchRequests": 0,
+        "costUSD": 3.9366696,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 47721,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 44,
+      "Write": 5,
+      "Read": 5,
+      "Edit": 4
+    },
+    "final_text": "The audit found three problems. All are fixed, and the suite now has 152 tests, all passing in the final full run.\n\n**Fixes:**\n- **Option errors (the real bug):** a `delimiter` or `eol` value whose `toJSON` throws came out as that error (a `RangeError` in my probe) instead of the `TypeError` the spec requires. BigInt and circular values gave misleading messages. Error messages now only JSON-encode strings. Four new tests fail on the old code and pass now.\n- **Test script:** it used a shell glob that Node 18 and 20 don't expand on Windows, even though `package.json` claims Node 18+. It's now plain `node --test`, which finds the same tests.\n- **README:** \"Behaviour\" is now \"Behavior\" to match the rest of the repo.\n\n**Extra check on `parse`:** I wrote a naive second parser straight from the spec and compared the two on 900,000 random inputs, 385,363 of them malformed. They agreed on every record and every error line and column. That was a one-off check and isn't part of the committed tests.\n\n**Correction to my first summary:** I said the humanizer skill wasn't installed. It exists in the Dex folder but isn't registered in this session, so I applied its checklist to the README by hand during the audit. `/dxreview` isn't registered either, so I ran its single-pass steps myself and used the Dex check runner for the syntax check and tests.\n\n**State of the repo:** there's no linter, formatter or type checker configured, so the checks were `node --check` on every file, an `npm pack --dry-run`, and the full test run. The fixes are committed as `b4f1edc` on `feat/csv-parser`; there's no remote, so nothing was pushed. The completion receipt is written.\n\nPROMPT_COMPLETE",
+    "stop_hook_blocks": 1,
+    "loop_completed": true,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 6,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 76,
+        "deleted": 0
+      },
+      "config": {
+        "files": 1,
+        "added": 16,
+        "deleted": 0
+      },
+      "source": {
+        "files": 1,
+        "added": 446,
+        "deleted": 0
+      },
+      "test": {
+        "files": 3,
+        "added": 792,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 446,
+    "test_lines": 792,
+    "total_lines": 1330
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 152,
+      "failed": 0
+    },
+    "seconds": 1.9,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.4,
+    "groups": {
+      "spec": {
+        "passed": 32,
+        "total": 32,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 13,
+        "total": 13,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "e problems. All are fixed, and the suite now has 152 tests, all passing in the final full run.  **Fixes:** - **Option errors (the r",
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 38,
+    "survived": 2,
+    "invalid": 0,
+    "score": 0.95,
+    "mutants": [
+      {
+        "file": "src/csv.js",
+        "line": 46,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 46,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 55,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 55,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 56,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 69,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 109,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 118,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 118,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 124,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 145,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 145,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 146,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 159,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 161,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 174,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 183,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 186,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 190,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 190,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 190,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 226,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 237,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 289,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 312,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 365,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 380,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 382,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 393,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 393,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 393,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 394,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 421,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 428,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 434,
+        "from": "&&",
+        "to": "||",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 434,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 434,
+        "from": "&&",
+        "to": "||",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 437,
+        "from": "===",
+        "to": "!==",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 442,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 443,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/csv.js"
+    ],
+    "sites": 94,
+    "seconds": 19.2
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "trial_id": "t005-bare-oss-bug-triage-r1",
+  "arm": "bare",
+  "scenario": "oss-bug-triage",
+  "replica": 1,
+  "seeded": 1,
+  "model": "sonnet",
+  "effort": "low",
+  "timeout_s": 1200,
+  "exit_code": 0,
+  "wall_seconds": 33,
+  "legacy_total": 97,
+  "followup_model": "sonnet",
+  "followup_effort": "low",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 25
+}

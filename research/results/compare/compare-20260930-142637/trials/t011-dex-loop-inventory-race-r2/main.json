@@ -1,0 +1,394 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 3.317488200000001,
+    "num_turns": 54,
+    "duration_ms": 1078182,
+    "duration_api_ms": 793804,
+    "tokens": {
+      "input": 100,
+      "output": 71805,
+      "cache_read": 5322261,
+      "cache_creation": 150199,
+      "total": 5544365
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 100,
+        "outputTokens": 71805,
+        "cacheReadInputTokens": 5322261,
+        "cacheCreationInputTokens": 150199,
+        "webSearchRequests": 0,
+        "costUSD": 3.317488200000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 40866,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 43,
+      "Write": 3,
+      "Edit": 1,
+      "ToolSearch": 1,
+      "TaskStop": 1,
+      "Read": 2,
+      "Skill": 1
+    },
+    "final_text": "The audit found and fixed two regressions in my original fix. Every requirement is now met, and the full suite passes: 38/38 through the full gate, on the final tree.\n\nThe review step (`/dxreview --single-pass`) isn't registered as a skill in this session, so I ran its single-pass procedure by hand. No review generation was supplied, so the review itself published no receipt of its own.\n\n## What the review found\n1. **The class had grown public members** (`src/inventory.js`). My helpers `closeOrder`, `withOrder`, `withSkus` and a `locks` property were visible on `InventoryService`, which breaks \"the same methods\". They are private (`#`) members now.\n2. **`expire()` could release every open reservation** (`src/inventory.js:172`). I had written the skip test as `createdAt >= cutoff`. A TTL that isn't a number (for example, one parsed from a missing setting) makes that test false for every order, so all open reservations were released, fresh ones included. The original code released none. The check is back to the original form: release only if `createdAt < cutoff`.\n\nI confirmed both with a probe before fixing. The new tests for them fail on the previous version and pass now. A second full review after the fixes came back clean.\n\n## Requirements checked\n\n| # | Requirement | Where it's met | Test |\n|---|---|---|---|\n| 1 | Oversold stock | `inventory.js:54`, `:87` (SKU locks) | `inc-5521.test.js:108`, `:123`, `:138` |\n| 2 | `reserved` going negative | `inventory.js:150`, `:172` | `inc-5521.test.js:164`, `:172`, `:189`, `:204`, `:221` |\n| 3 | Retry held stock twice | `inventory.js:92` (checked under the order lock) | `inc-5521.test.js:231` |\n| 4 | Rejected bundle left an item held | `inventory.js:106` (every line checked before any write) | `inc-5521.test.js:246`, `:258`, `:264`, `:280` |\n| 5 | `sold` higher than shipped orders | `inventory.js:122`, `:188` | `inc-5521.test.js:297` |\n| 6 | Holds up under concurrent calls | `lock.js:22`; `inventory.js:17` | `inc-5521.test.js:149` (two services sharing a store), `:371` (40-worker mixed load) |\n| 7 | Public API and error classes unchanged | private members; `errors.js` and `index.js` untouched | `inventory.test.js:129` |\n| 8 | Behaviour matches the doc comments | `inventory.js:122`, `:142`, `:161` | `inventory.test.js:72`, `:83`, `:109`, `:121` |\n| 9 | `store.js` unchanged; only `get`/`set`/`keys` used | 5 `get`, 5 `set`, 1 `keys` call | `inc-5521.test.js:264` (a different store) |\n| 10 | Unrelated calls don't wait on each other | `lock.js:9` (one lock per key) | `inc-5521.test.js:329`, `lock.test.js:27` |\n| 11 | No deadlocks; locks freed on error; no memory growth | `lock.js:22`, `:30`, `:51` | `lock.test.js:36`, `:51`, `:59`; `inc-5521.test.js:354` |\n| 12 | Tests reproduce each problem and pass | the fifteen INC-5521 tests fail on the original code | full suite: 38/38 |\n\nThere's no formatter, linter or type checker configured here, so beyond the tests I could only run a syntax check.\n\nStill open, as before: the incident's already-negative `reserved` values aren't repaired; a store failure partway through a multi-key write can leave counters out of step; and the locks only work inside one process.\n\nThe work is three commits on `fix/inc-5521-inventory-races`, not pushed because there is no remote. I've written the completion receipt.\n\nPROMPT_COMPLETE",
+    "stop_hook_blocks": 1,
+    "loop_completed": true,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 5,
+    "by_category": {
+      "source": {
+        "files": 2,
+        "added": 174,
+        "deleted": 58
+      },
+      "test": {
+        "files": 3,
+        "added": 565,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 232,
+    "test_lines": 565,
+    "total_lines": 797
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 38,
+      "failed": 0
+    },
+    "seconds": 1.7,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.2,
+    "groups": {
+      "spec": {
+        "passed": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 6,
+        "total": 6,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 32,
+    "survived": 4,
+    "invalid": 0,
+    "score": 0.8889,
+    "mutants": [
+      {
+        "file": "src/inventory.js",
+        "line": 13,
+        "from": "*",
+        "to": "/",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 13,
+        "from": "*",
+        "to": "/",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 21,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 58,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 68,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 102,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 103,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 106,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 126,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 129,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 146,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 149,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 162,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 172,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 172,
+        "from": "&&",
+        "to": "||",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 172,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 174,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 176,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 193,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 215,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 224,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 244,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 244,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 244,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 250,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 250,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 250,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 256,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 256,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 256,
+        "from": "<=",
+        "to": "<",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 262,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 262,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 262,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 267,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 267,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 267,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/inventory.js"
+    ],
+    "sites": 36,
+    "seconds": 23.6
+  }
+}

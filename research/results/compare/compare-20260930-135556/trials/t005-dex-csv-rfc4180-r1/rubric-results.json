@@ -1,0 +1,18 @@
+{
+  "scenario": "csv-rfc4180",
+  "correctness": 100,
+  "test_quality": 94,
+  "robustness": 100,
+  "verification": 100,
+  "issue_detection": 85,
+  "code_quality": 50,
+  "total": 92,
+  "weights": {
+    "correctness": 30,
+    "test_quality": 20,
+    "robustness": 15,
+    "verification": 15,
+    "issue_detection": 10,
+    "code_quality": 10
+  }
+}

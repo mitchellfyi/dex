@@ -79,11 +79,13 @@ PY
 }
 
 # dx_ui_capture_write_status <session> <status> <message> <manifest> <video>
-#                            [active|completed] [completed_epoch]
+#                            [active|completed] [completed_epoch] [criteria_json]
+# criteria_json is the producer's acceptance-criteria table (a JSON list), so
+# the lifecycle can read which claims held without opening the bundle.
 dx_ui_capture_write_status() {
   local session_id="$1" evidence_status="$2" message="$3"
   local manifest_path="${4:-}" video_path="${5:-}" phase_state="${6:-active}"
-  local completed_epoch="${7:-0}" session_dir evidence_file tmp_file
+  local completed_epoch="${7:-0}" criteria_json="${8:-}" session_dir evidence_file tmp_file
   dx_session_id_valid "$session_id" || return 2
   case "$evidence_status" in
     READY|NEEDS_REVIEW|MISSING|SKIPPED|N/A) ;;
@@ -105,11 +107,21 @@ dx_ui_capture_write_status() {
     DX_UI_EVIDENCE_VIDEO="$video_path" \
     DX_UI_EVIDENCE_PHASE_STATE="$phase_state" \
     DX_UI_EVIDENCE_COMPLETED_EPOCH="$completed_epoch" \
+    DX_UI_EVIDENCE_CRITERIA="$criteria_json" \
     python3 - "$tmp_file" <<'PY' || { command rm -f "$tmp_file"; return 1; }
 import json
 import os
 import sys
 from datetime import datetime, timezone
+
+raw_criteria = os.environ.get("DX_UI_EVIDENCE_CRITERIA", "")
+criteria = []
+if raw_criteria:
+    if len(raw_criteria.encode("utf-8")) > 65536:
+        raise SystemExit(2)
+    criteria = json.loads(raw_criteria)
+    if not isinstance(criteria, list):
+        raise SystemExit(2)
 
 value = {
     "version": 1,
@@ -119,6 +131,7 @@ value = {
     "video": os.environ["DX_UI_EVIDENCE_VIDEO"],
     "phase_state": os.environ["DX_UI_EVIDENCE_PHASE_STATE"],
     "completed_epoch": int(os.environ["DX_UI_EVIDENCE_COMPLETED_EPOCH"]),
+    "criteria": criteria,
     "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
 with open(sys.argv[1], "w", encoding="utf-8") as fh:
@@ -155,6 +168,10 @@ if value.get("video"):
     print(f"  Video: {value['video']}")
 if value.get("manifest"):
     print(f"  Manifest: {value['manifest']}")
+criteria = value.get("criteria")
+if isinstance(criteria, list) and criteria:
+    held = sum(1 for row in criteria if isinstance(row, dict) and row.get("after") == "satisfied")
+    print(f"  Criteria: {held}/{len(criteria)} asserted criteria held in the after stage")
 print(f"  Evidence: {sys.argv[1]}")
 PY
 }
@@ -218,6 +235,8 @@ dx_ui_capture_register_bundle() {
     "ui-proof/walkthrough.mp4" "ui_walkthrough" "UI walkthrough" "walkthrough" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/poster.png" \
     "ui-proof/poster.png" "ui_poster" "UI walkthrough poster" "poster" || failed=1
+  __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/contact.png" \
+    "ui-proof/contact.png" "ui_contact_sheet" "UI walkthrough keyframe contact sheet" "contact_sheet" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/transcript.md" \
     "ui-proof/transcript.md" "ui_transcript" "UI walkthrough transcript" "transcript" || failed=1
   __dx_ui_capture_register_file "$run_id" "$session_id" "$session_dir/captions.vtt" \

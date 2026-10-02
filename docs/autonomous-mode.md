@@ -65,7 +65,7 @@ Each phase has its own audit prompt in `prompts/phase-audits/`:
 |-------|-----------|-----------------|
 | 0. Setup | `0-setup.md` | Ticket read + assigned, duplicate/related search complete, existing PR reconciled, eligible remote branch adopted or new branch prepared, ticket status In Progress, meta sidecar updated |
 | 1. Plan | `1-plan.md` | Completeness, edge cases, dependencies, scope, user approval |
-| 2. Implement | `2-implement.md` | Task completion, TDD verification, coherent checkpoint history pushed as work develops, UI proof decision, evidence table, Phase 3 risk selection |
+| 2. Implement | `2-implement.md` | Task completion, TDD verification, coherent checkpoint history pushed as work develops, UI proof decision, manual QA report, evidence table, Phase 3 risk selection |
 | 3. Review | `3-review-loop.md` | Independent `/dxreviewloop` waves, accepted-fix checkpoints pushed, selected tier's global clean gate reached |
 | 4. Verify | `4-verify.md` | Final PR checks passing, verification repair checkpoints pushed, branch current on origin |
 | 5. PR | `5-pr.md` | Description quality, scope match, current visual media attached or handed off with a warning, PR ready with `request` reviewers attached |
@@ -435,13 +435,6 @@ remaining gate and advances without a review receipt. Other assurance gates,
 such as `verification.required-gates`, use the named waiver path. Neither form
 labels an unverified check as passed.
 
-Three gates exist only to be waived, each in one phase: `setup.ticket-ownership`
-and `setup.ticket-status` in Phase 0, for an assignee or status change the user
-declined or the tracker refused, and `plan.approval` in Phase 1. They have no
-value to override, and waiving one ends its phase with a `waived` outcome.
-`tests/waiver-gate-names-test.sh` fails when a prompt, skill or doc names a
-gate `dx control` would reject.
-
 Provider deadlines for review, `dx sync`, and maintenance are live. Their
 supervisors re-read policy once per second, so increasing, shortening,
 disabling, clearing, or expiring an override affects the process already
@@ -745,10 +738,6 @@ launches the in-place lifecycle in `repository.working_directory`. Manual CLI
 usage is unchanged. See [run-specs.md](run-specs.md) for the spec schema and
 startup commands.
 
-A spec with `workflow.name: "benchmark"` starts at Phase 1, runs Claude in
-print mode, and ends when Phase 3 succeeds, leaving the change in the checkout
-for an evaluation harness to score. See [benchmarks.md](benchmarks.md).
-
 ## Safety Controls
 
 ### Phase Audit Iterations
@@ -963,7 +952,6 @@ use an override-bound lower target; other assurance gates use
 | `DEX_HEADLESS_RUN` | unset | Internal marker for lifecycle sessions started by `dx run` |
 | `DEX_HEADLESS_RUN_SPEC_FILE` | unset | Normalized run spec path passed into the launched lifecycle |
 | `DEX_HEADLESS_REQUIRES_PLAN_APPROVAL` | spec value | Whether Phase 1 must wait for interactive plan approval |
-| `DEX_WORKFLOW` | unset | Set by `dx run` from `workflow.name`; `benchmark` runs Phases 1-3 only |
 | `DEX_PHASE_N_MIN_AUDITS` | (per-phase) | Per-phase override for min audit iterations (e.g., `DEX_PHASE_2_MIN_AUDITS=5`) |
 | `DEX_REVIEW_TIER` | agent-selected | Canonical explicit risk-tier override: `trivial`, `small`, `normal`, or `complex`; takes precedence over the legacy profile alias |
 | `DEX_REVIEW_PROFILE` | unset | Legacy alias: `light`, `standard`, or `thorough` map to `small`, `normal`, or `complex` |

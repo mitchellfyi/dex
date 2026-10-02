@@ -12,11 +12,6 @@ if [[ "${DEX_SESSION_ONLY:-0}" == 1 ]]; then
   exit 0
 fi
 
-if dx_lifecycle_benchmark; then
-  printf '%s\n' "Dex benchmark run: follow the phase instructions. There is no ticket to load."
-  exit 0
-fi
-
 if [[ "${DEX_TRIAGE_ACTIVE:-0}" == 1 ]]; then
   printf '%s\n' "Dex triage session: invoke /dxtriage. Do not start implementation or infer a target from the branch."
   exit 0
@@ -102,8 +97,33 @@ if [[ -n "$FOCUS_AREAS" ]]; then
   echo "Prioritise reading the relevant rules from .dex/rules/ for these areas."
 fi
 
-if [[ -f "$REPO_TOP/.dex/memory/index.md" ]]; then
-  echo ""
-  echo "Repo memory index detected: .dex/memory/index.md"
-  echo "Load only active memory entries whose scope matches the task, changed files, or current phase."
+# Repo memory, scoped to the files this branch changed: the active curated
+# entries whose paths match plus verified observations from the external
+# store, after a recheck so an entry whose source moved is named as stale
+# rather than shown as current. Every retrieval leaves a trace in the store.
+__dx_require_lib memory.sh 2>/dev/null || true
+if [[ "${DEX_MEMORY_RETRIEVAL:-1}" != 0 ]] && command -v dx_memory_retrieve >/dev/null 2>&1 \
+  && { [[ -f "$REPO_TOP/.dex/memory/index.md" ]] || [[ -d "$(dx_memory_store_dir "$REPO_TOP" 2>/dev/null || true)" ]]; }; then
+  # What the session is working on: the branch's commits plus whatever is
+  # modified or new in the working tree right now (an in-place session may
+  # have committed nothing yet). Bounded so a huge tree does not flood the
+  # query.
+  MEMORY_PATHS=$( { printf '%s\n' "$CHANGED_FILES"; git diff --name-only 2>/dev/null; \
+    git ls-files --others --exclude-standard 2>/dev/null; } | sed '/^$/d' | sort -u | head -200 | paste -sd, -)
+  dx_memory_store "$REPO_TOP" recheck --repo "$REPO_TOP" >/dev/null 2>&1 || true
+  if MEMORY_BLOCK=$(dx_memory_retrieve "$REPO_TOP" "$MEMORY_PATHS" "$SESSION_ID" lead "${DEX_LOOP_PHASE:-}" 2>/dev/null); then
+    echo ""
+    echo "Repo memory (scoped to this branch's changed files; index: .dex/memory/index.md):"
+    printf '%s\n' "$MEMORY_BLOCK"
+  fi
+fi
+
+# Mission mode: what the ledger knows, so the lead starts from recorded state
+# rather than from the transcript it may no longer have.
+if [[ "${DX_MISSION_ACTIVE:-0}" == 1 ]]; then
+  __dx_require_lib mission.sh 2>/dev/null || true
+  if command -v dx_mission_context_summary >/dev/null 2>&1; then
+    echo ""
+    dx_mission_context_summary "$SESSION_ID" start || true
+  fi
 fi

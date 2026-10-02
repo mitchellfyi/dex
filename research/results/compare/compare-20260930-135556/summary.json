@@ -1,0 +1,4016 @@
+{
+  "run": {
+    "run_id": "compare-20260930-135556",
+    "started_at": "2026-09-30T12:55:56Z",
+    "arms": "bare dex@HEAD dex dex-loop",
+    "scenarios": "inventory-race csv-rfc4180",
+    "replicas": 1,
+    "jobs": 4,
+    "seed": "compare-20260930-135556",
+    "followup": 1,
+    "model": "sonnet",
+    "effort": "low",
+    "followup_model": "sonnet",
+    "followup_effort": "low",
+    "dex_commit": "0a54338",
+    "dex_dirty_files": 26,
+    "claude_version": "2.1.285 (Claude Code)",
+    "node_version": "v24.17.0",
+    "host": "Darwin arm64"
+  },
+  "rows": [
+    {
+      "trial": "t001-dex-at-HEAD-csv-rfc4180-r1",
+      "arm": "dex@HEAD",
+      "scenario": "csv-rfc4180",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": null,
+      "hidden_robust": 0.9,
+      "hidden_all": 0.9696969696969697,
+      "own_tests_pass": true,
+      "mutation_score": 0.875,
+      "source_lines": 161,
+      "test_lines": 85,
+      "total_lines": 254,
+      "files_changed": 5,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.2065485,
+      "tokens_total": 197121,
+      "tokens_output": 6859,
+      "turns": 5,
+      "wall_minutes": 1.1333333333333333,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 90,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 94,
+      "legacy_robustness": 90,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 0.9696969696969697,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.1264422,
+      "fu_tokens_total": 196406,
+      "fu_wall_minutes": 0.9833333333333333,
+      "fu_source_lines": 27,
+      "fu_turns": 9,
+      "perf_ratio": 0.8024593858122786,
+      "perf_noise": 0.1976965975457095,
+      "fuzz_pass": 0.925,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 7.5,
+      "complexity_max": 34,
+      "fn_lines_max": 87,
+      "max_depth": 6,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.31,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t002-dex-loop-inventory-race-r1",
+      "arm": "dex-loop",
+      "scenario": "inventory-race",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": 1.0,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.7812,
+      "source_lines": 52,
+      "test_lines": 70,
+      "total_lines": 122,
+      "files_changed": 2,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.2378792,
+      "tokens_total": 367528,
+      "tokens_output": 5035,
+      "turns": 9,
+      "wall_minutes": 1.2,
+      "loop_audits": 1,
+      "loop_completed": true,
+      "legacy_total": 91,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 89,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.09534990000000002,
+      "fu_tokens_total": 153149,
+      "fu_wall_minutes": 0.8333333333333334,
+      "fu_source_lines": 27,
+      "fu_turns": 7,
+      "perf_ratio": 1.0258423213073136,
+      "perf_noise": 0.5014839164660491,
+      "fuzz_pass": 1,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 1.77,
+      "complexity_max": 7,
+      "fn_lines_max": 29,
+      "max_depth": 2,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.34,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t003-dex-inventory-race-r1",
+      "arm": "dex",
+      "scenario": "inventory-race",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": 1.0,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.675,
+      "source_lines": 184,
+      "test_lines": 87,
+      "total_lines": 271,
+      "files_changed": 2,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.21642720000000001,
+      "tokens_total": 201030,
+      "tokens_output": 7031,
+      "turns": 5,
+      "wall_minutes": 1.1,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 90,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 84,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.0727321,
+      "fu_tokens_total": 83533,
+      "fu_wall_minutes": 0.48333333333333334,
+      "fu_source_lines": 24,
+      "fu_turns": 4,
+      "perf_ratio": 0.48585215354070754,
+      "perf_noise": 0.7514768799611042,
+      "fuzz_pass": 1,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 1.81,
+      "complexity_max": 8,
+      "fn_lines_max": 32,
+      "max_depth": 3,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.41,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t004-dex-loop-csv-rfc4180-r1",
+      "arm": "dex-loop",
+      "scenario": "csv-rfc4180",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": null,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.85,
+      "source_lines": 176,
+      "test_lines": 82,
+      "total_lines": 266,
+      "files_changed": 3,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.41228909999999996,
+      "tokens_total": 596443,
+      "tokens_output": 9042,
+      "turns": 11,
+      "wall_minutes": 1.8666666666666667,
+      "loop_audits": 2,
+      "loop_completed": true,
+      "legacy_total": 91,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 92,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.0777694,
+      "fu_tokens_total": 62484,
+      "fu_wall_minutes": 0.6166666666666667,
+      "fu_source_lines": 31,
+      "fu_turns": 4,
+      "perf_ratio": 0.7849104752391801,
+      "perf_noise": 0.534431081644272,
+      "fuzz_pass": 0.925,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 5.12,
+      "complexity_max": 28,
+      "fn_lines_max": 92,
+      "max_depth": 6,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.44,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t005-dex-csv-rfc4180-r1",
+      "arm": "dex",
+      "scenario": "csv-rfc4180",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": null,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.875,
+      "source_lines": 191,
+      "test_lines": 88,
+      "total_lines": 289,
+      "files_changed": 3,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.21091300000000002,
+      "tokens_total": 164469,
+      "tokens_output": 7340,
+      "turns": 7,
+      "wall_minutes": 1.15,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 92,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 94,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.09328220000000001,
+      "fu_tokens_total": 109864,
+      "fu_wall_minutes": 0.7666666666666667,
+      "fu_source_lines": 23,
+      "fu_turns": 7,
+      "perf_ratio": 0.7150264460022412,
+      "perf_noise": 0.3382939551389892,
+      "fuzz_pass": 0.925,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 5.4,
+      "complexity_max": 28,
+      "fn_lines_max": 113,
+      "max_depth": 6,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.32,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t006-bare-csv-rfc4180-r1",
+      "arm": "bare",
+      "scenario": "csv-rfc4180",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": null,
+      "hidden_robust": 0.9,
+      "hidden_all": 0.9696969696969697,
+      "own_tests_pass": true,
+      "mutation_score": 0.825,
+      "source_lines": 169,
+      "test_lines": 59,
+      "total_lines": 235,
+      "files_changed": 3,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.10640759999999999,
+      "tokens_total": 68428,
+      "tokens_output": 5645,
+      "turns": 3,
+      "wall_minutes": 0.8666666666666667,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 90,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 91,
+      "legacy_robustness": 90,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 0.9696969696969697,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.09839120000000001,
+      "fu_tokens_total": 132520,
+      "fu_wall_minutes": 0.9,
+      "fu_source_lines": 35,
+      "fu_turns": 8,
+      "perf_ratio": 0.528347823284506,
+      "perf_noise": 0.20671019774806218,
+      "fuzz_pass": 0.8,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 7.25,
+      "complexity_max": 33,
+      "fn_lines_max": 92,
+      "max_depth": 5,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.38,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t007-dex-at-HEAD-inventory-race-r1",
+      "arm": "dex@HEAD",
+      "scenario": "inventory-race",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": 1.0,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.7742,
+      "source_lines": 115,
+      "test_lines": 71,
+      "total_lines": 186,
+      "files_changed": 2,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.1924811,
+      "tokens_total": 228732,
+      "tokens_output": 4783,
+      "turns": 6,
+      "wall_minutes": 0.85,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 91,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 89,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.07184059999999999,
+      "fu_tokens_total": 82476,
+      "fu_wall_minutes": 0.5166666666666667,
+      "fu_source_lines": 24,
+      "fu_turns": 4,
+      "perf_ratio": 0.835242699051562,
+      "perf_noise": 0.3372915424910308,
+      "fuzz_pass": 1,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 1.73,
+      "complexity_max": 7,
+      "fn_lines_max": 31,
+      "max_depth": 2,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.35,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    },
+    {
+      "trial": "t008-bare-inventory-race-r1",
+      "arm": "bare",
+      "scenario": "inventory-race",
+      "status": "valid",
+      "model": "claude-sonnet-5-5",
+      "hidden_spec": 1.0,
+      "hidden_preserve": 1.0,
+      "hidden_robust": 1.0,
+      "hidden_all": 1.0,
+      "own_tests_pass": true,
+      "mutation_score": 0.7812,
+      "source_lines": 108,
+      "test_lines": 77,
+      "total_lines": 185,
+      "files_changed": 2,
+      "outside_scope": 0,
+      "forbidden_touched": 0,
+      "false_claim": false,
+      "cost_usd": 0.1043204,
+      "tokens_total": 113233,
+      "tokens_output": 4129,
+      "turns": 5,
+      "wall_minutes": 0.7833333333333333,
+      "loop_audits": null,
+      "loop_completed": null,
+      "legacy_total": 91,
+      "legacy_correctness": 100,
+      "legacy_test_quality": 89,
+      "legacy_robustness": 100,
+      "legacy_verification": 100,
+      "legacy_issue_detection": 85,
+      "legacy_code_quality": 50,
+      "fu_success": 1.0,
+      "fu_regression_free": 1.0,
+      "fu_own_tests_pass": true,
+      "fu_cost_usd": 0.09416640000000001,
+      "fu_tokens_total": 130025,
+      "fu_wall_minutes": 0.6333333333333333,
+      "fu_source_lines": 27,
+      "fu_turns": 6,
+      "perf_ratio": 0.8213097584827777,
+      "perf_noise": 0.4859256248239574,
+      "fuzz_pass": 1,
+      "lint_per_kloc": 0.0,
+      "complexity_mean": 1.79,
+      "complexity_max": 7,
+      "fn_lines_max": 31,
+      "max_depth": 2,
+      "duplication_pct": 0.0,
+      "deps_declared": 0,
+      "packages_installed": 0,
+      "vulns_total": null,
+      "cli_rate": null,
+      "has_readme": false,
+      "docs_rate": null,
+      "suite_pass_rate": 1.0,
+      "suite_flaky": false,
+      "suite_seconds": 0.32,
+      "suite_leftovers": 1,
+      "report_accuracy": null
+    }
+  ],
+  "deltas": {
+    "hidden_spec": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "hidden_robust": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.04999999999999999,
+        "low": 0.04999999999999999,
+        "high": 0.04999999999999999
+      },
+      "dex-loop": {
+        "point": 0.04999999999999999,
+        "low": 0.04999999999999999,
+        "high": 0.04999999999999999
+      }
+    },
+    "hidden_preserve": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "own_tests_pass": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "mutation_score": {
+      "dex@HEAD": {
+        "point": 0.02150000000000002,
+        "low": 0.02150000000000002,
+        "high": 0.02150000000000002
+      },
+      "dex": {
+        "point": -0.02809999999999996,
+        "low": -0.02809999999999996,
+        "high": -0.02809999999999996
+      },
+      "dex-loop": {
+        "point": 0.012500000000000011,
+        "low": 0.012500000000000011,
+        "high": 0.012500000000000011
+      }
+    },
+    "false_claim": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "source_lines": {
+      "dex@HEAD": {
+        "point": -0.5,
+        "low": -0.5,
+        "high": -0.5
+      },
+      "dex": {
+        "point": 49.0,
+        "low": 49.0,
+        "high": 49.0
+      },
+      "dex-loop": {
+        "point": -24.5,
+        "low": -24.5,
+        "high": -24.5
+      }
+    },
+    "test_lines": {
+      "dex@HEAD": {
+        "point": 10.0,
+        "low": 10.0,
+        "high": 10.0
+      },
+      "dex": {
+        "point": 19.5,
+        "low": 19.5,
+        "high": 19.5
+      },
+      "dex-loop": {
+        "point": 8.0,
+        "low": 8.0,
+        "high": 8.0
+      }
+    },
+    "files_changed": {
+      "dex@HEAD": {
+        "point": 1.0,
+        "low": 1.0,
+        "high": 1.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "outside_scope": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "forbidden_touched": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "fu_success": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "fu_regression_free": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.015151515151515138,
+        "low": 0.015151515151515138,
+        "high": 0.015151515151515138
+      },
+      "dex-loop": {
+        "point": 0.015151515151515138,
+        "low": 0.015151515151515138,
+        "high": 0.015151515151515138
+      }
+    },
+    "fu_own_tests_pass": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "fu_cost_usd": {
+      "dex@HEAD": {
+        "point": 0.002862599999999986,
+        "low": 0.002862599999999986,
+        "high": 0.002862599999999986
+      },
+      "dex": {
+        "point": -0.01327165000000001,
+        "low": -0.01327165000000001,
+        "high": -0.01327165000000001
+      },
+      "dex-loop": {
+        "point": -0.009719150000000003,
+        "low": -0.009719150000000003,
+        "high": -0.009719150000000003
+      }
+    },
+    "fu_wall_minutes": {
+      "dex@HEAD": {
+        "point": -0.016666666666666663,
+        "low": -0.016666666666666663,
+        "high": -0.016666666666666663
+      },
+      "dex": {
+        "point": -0.14166666666666664,
+        "low": -0.14166666666666664,
+        "high": -0.14166666666666664
+      },
+      "dex-loop": {
+        "point": -0.04166666666666663,
+        "low": -0.04166666666666663,
+        "high": -0.04166666666666663
+      }
+    },
+    "fu_tokens_total": {
+      "dex@HEAD": {
+        "point": 8168.5,
+        "low": 8168.5,
+        "high": 8168.5
+      },
+      "dex": {
+        "point": -34574.0,
+        "low": -34574.0,
+        "high": -34574.0
+      },
+      "dex-loop": {
+        "point": -23456.0,
+        "low": -23456.0,
+        "high": -23456.0
+      }
+    },
+    "fu_source_lines": {
+      "dex@HEAD": {
+        "point": -5.5,
+        "low": -5.5,
+        "high": -5.5
+      },
+      "dex": {
+        "point": -7.5,
+        "low": -7.5,
+        "high": -7.5
+      },
+      "dex-loop": {
+        "point": -2.0,
+        "low": -2.0,
+        "high": -2.0
+      }
+    },
+    "cost_usd": {
+      "dex@HEAD": {
+        "point": 0.0941508,
+        "low": 0.0941508,
+        "high": 0.0941508
+      },
+      "dex": {
+        "point": 0.10830610000000002,
+        "low": 0.10830610000000002,
+        "high": 0.10830610000000002
+      },
+      "dex-loop": {
+        "point": 0.21972015,
+        "low": 0.21972015,
+        "high": 0.21972015
+      }
+    },
+    "tokens_total": {
+      "dex@HEAD": {
+        "point": 122096.0,
+        "low": 122096.0,
+        "high": 122096.0
+      },
+      "dex": {
+        "point": 91919.0,
+        "low": 91919.0,
+        "high": 91919.0
+      },
+      "dex-loop": {
+        "point": 391155.0,
+        "low": 391155.0,
+        "high": 391155.0
+      }
+    },
+    "tokens_output": {
+      "dex@HEAD": {
+        "point": 934.0,
+        "low": 934.0,
+        "high": 934.0
+      },
+      "dex": {
+        "point": 2298.5,
+        "low": 2298.5,
+        "high": 2298.5
+      },
+      "dex-loop": {
+        "point": 2151.5,
+        "low": 2151.5,
+        "high": 2151.5
+      }
+    },
+    "turns": {
+      "dex@HEAD": {
+        "point": 1.5,
+        "low": 1.5,
+        "high": 1.5
+      },
+      "dex": {
+        "point": 2.0,
+        "low": 2.0,
+        "high": 2.0
+      },
+      "dex-loop": {
+        "point": 6.0,
+        "low": 6.0,
+        "high": 6.0
+      }
+    },
+    "wall_minutes": {
+      "dex@HEAD": {
+        "point": 0.16666666666666663,
+        "low": 0.16666666666666663,
+        "high": 0.16666666666666663
+      },
+      "dex": {
+        "point": 0.3,
+        "low": 0.3,
+        "high": 0.3
+      },
+      "dex-loop": {
+        "point": 0.7083333333333333,
+        "low": 0.7083333333333333,
+        "high": 0.7083333333333333
+      }
+    },
+    "loop_audits": {
+      "dex@HEAD": {
+        "point": null,
+        "low": null,
+        "high": null
+      },
+      "dex": {
+        "point": null,
+        "low": null,
+        "high": null
+      },
+      "dex-loop": {
+        "point": null,
+        "low": null,
+        "high": null
+      }
+    },
+    "loop_completed": {
+      "dex@HEAD": {
+        "point": null,
+        "low": null,
+        "high": null
+      },
+      "dex": {
+        "point": null,
+        "low": null,
+        "high": null
+      },
+      "dex-loop": {
+        "point": null,
+        "low": null,
+        "high": null
+      }
+    },
+    "perf_ratio": {
+      "dex@HEAD": {
+        "point": 0.14402225154827847,
+        "low": 0.14402225154827847,
+        "high": 0.14402225154827847
+      },
+      "dex": {
+        "point": -0.07438949111216747,
+        "low": -0.07438949111216747,
+        "high": -0.07438949111216747
+      },
+      "dex-loop": {
+        "point": 0.230547607389605,
+        "low": 0.230547607389605,
+        "high": 0.230547607389605
+      }
+    },
+    "perf_noise": {
+      "dex@HEAD": {
+        "point": -0.07882384126763962,
+        "low": -0.07882384126763962,
+        "high": -0.07882384126763962
+      },
+      "dex": {
+        "point": 0.1985675062640369,
+        "low": 0.1985675062640369,
+        "high": 0.1985675062640369
+      },
+      "dex-loop": {
+        "point": 0.17163958776915073,
+        "low": 0.17163958776915073,
+        "high": 0.17163958776915073
+      }
+    },
+    "fuzz_pass": {
+      "dex@HEAD": {
+        "point": 0.0625,
+        "low": 0.0625,
+        "high": 0.0625
+      },
+      "dex": {
+        "point": 0.0625,
+        "low": 0.0625,
+        "high": 0.0625
+      },
+      "dex-loop": {
+        "point": 0.0625,
+        "low": 0.0625,
+        "high": 0.0625
+      }
+    },
+    "lint_per_kloc": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "complexity_mean": {
+      "dex@HEAD": {
+        "point": 0.09499999999999997,
+        "low": 0.09499999999999997,
+        "high": 0.09499999999999997
+      },
+      "dex": {
+        "point": -0.9149999999999998,
+        "low": -0.9149999999999998,
+        "high": -0.9149999999999998
+      },
+      "dex-loop": {
+        "point": -1.075,
+        "low": -1.075,
+        "high": -1.075
+      }
+    },
+    "complexity_max": {
+      "dex@HEAD": {
+        "point": 0.5,
+        "low": 0.5,
+        "high": 0.5
+      },
+      "dex": {
+        "point": -2.0,
+        "low": -2.0,
+        "high": -2.0
+      },
+      "dex-loop": {
+        "point": -2.5,
+        "low": -2.5,
+        "high": -2.5
+      }
+    },
+    "fn_lines_max": {
+      "dex@HEAD": {
+        "point": -2.5,
+        "low": -2.5,
+        "high": -2.5
+      },
+      "dex": {
+        "point": 11.0,
+        "low": 11.0,
+        "high": 11.0
+      },
+      "dex-loop": {
+        "point": -1.0,
+        "low": -1.0,
+        "high": -1.0
+      }
+    },
+    "max_depth": {
+      "dex@HEAD": {
+        "point": 0.5,
+        "low": 0.5,
+        "high": 0.5
+      },
+      "dex": {
+        "point": 1.0,
+        "low": 1.0,
+        "high": 1.0
+      },
+      "dex-loop": {
+        "point": 0.5,
+        "low": 0.5,
+        "high": 0.5
+      }
+    },
+    "duplication_pct": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "deps_declared": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "packages_installed": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "suite_pass_rate": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "suite_flaky": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "suite_seconds": {
+      "dex@HEAD": {
+        "point": -0.020000000000000018,
+        "low": -0.020000000000000018,
+        "high": -0.020000000000000018
+      },
+      "dex": {
+        "point": 0.014999999999999986,
+        "low": 0.014999999999999986,
+        "high": 0.014999999999999986
+      },
+      "dex-loop": {
+        "point": 0.04000000000000001,
+        "low": 0.04000000000000001,
+        "high": 0.04000000000000001
+      }
+    },
+    "suite_leftovers": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "has_readme": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "legacy_total": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.5,
+        "low": 0.5,
+        "high": 0.5
+      },
+      "dex-loop": {
+        "point": 0.5,
+        "low": 0.5,
+        "high": 0.5
+      }
+    },
+    "legacy_correctness": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "legacy_test_quality": {
+      "dex@HEAD": {
+        "point": 1.5,
+        "low": 1.5,
+        "high": 1.5
+      },
+      "dex": {
+        "point": -1.0,
+        "low": -1.0,
+        "high": -1.0
+      },
+      "dex-loop": {
+        "point": 0.5,
+        "low": 0.5,
+        "high": 0.5
+      }
+    },
+    "legacy_robustness": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 5.0,
+        "low": 5.0,
+        "high": 5.0
+      },
+      "dex-loop": {
+        "point": 5.0,
+        "low": 5.0,
+        "high": 5.0
+      }
+    },
+    "legacy_verification": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    },
+    "legacy_issue_detection": {
+      "dex@HEAD": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      },
+      "dex-loop": {
+        "point": 0.0,
+        "low": 0.0,
+        "high": 0.0
+      }
+    }
+  },
+  "cells": {
+    "hidden_spec": {
+      "csv-rfc4180/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "hidden_robust": {
+      "csv-rfc4180/bare": {
+        "mean": 0.9,
+        "n": 1,
+        "values": [
+          0.9
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.9,
+        "n": 1,
+        "values": [
+          0.9
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "hidden_preserve": {
+      "csv-rfc4180/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "own_tests_pass": {
+      "csv-rfc4180/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "mutation_score": {
+      "csv-rfc4180/bare": {
+        "mean": 0.825,
+        "n": 1,
+        "values": [
+          0.825
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.7812,
+        "n": 1,
+        "values": [
+          0.7812
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.875,
+        "n": 1,
+        "values": [
+          0.875
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.7742,
+        "n": 1,
+        "values": [
+          0.7742
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.875,
+        "n": 1,
+        "values": [
+          0.875
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.675,
+        "n": 1,
+        "values": [
+          0.675
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.85,
+        "n": 1,
+        "values": [
+          0.85
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.7812,
+        "n": 1,
+        "values": [
+          0.7812
+        ]
+      }
+    },
+    "false_claim": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "source_lines": {
+      "csv-rfc4180/bare": {
+        "mean": 169.0,
+        "n": 1,
+        "values": [
+          169.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 108.0,
+        "n": 1,
+        "values": [
+          108.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 161.0,
+        "n": 1,
+        "values": [
+          161.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 115.0,
+        "n": 1,
+        "values": [
+          115.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 191.0,
+        "n": 1,
+        "values": [
+          191.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 184.0,
+        "n": 1,
+        "values": [
+          184.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 176.0,
+        "n": 1,
+        "values": [
+          176.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 52.0,
+        "n": 1,
+        "values": [
+          52.0
+        ]
+      }
+    },
+    "test_lines": {
+      "csv-rfc4180/bare": {
+        "mean": 59.0,
+        "n": 1,
+        "values": [
+          59.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 77.0,
+        "n": 1,
+        "values": [
+          77.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 71.0,
+        "n": 1,
+        "values": [
+          71.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 88.0,
+        "n": 1,
+        "values": [
+          88.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 87.0,
+        "n": 1,
+        "values": [
+          87.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 82.0,
+        "n": 1,
+        "values": [
+          82.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 70.0,
+        "n": 1,
+        "values": [
+          70.0
+        ]
+      }
+    },
+    "files_changed": {
+      "csv-rfc4180/bare": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 5.0,
+        "n": 1,
+        "values": [
+          5.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      }
+    },
+    "outside_scope": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "forbidden_touched": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "fu_success": {
+      "csv-rfc4180/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "fu_regression_free": {
+      "csv-rfc4180/bare": {
+        "mean": 0.9696969696969697,
+        "n": 1,
+        "values": [
+          0.9696969696969697
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.9696969696969697,
+        "n": 1,
+        "values": [
+          0.9696969696969697
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "fu_own_tests_pass": {
+      "csv-rfc4180/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "fu_cost_usd": {
+      "csv-rfc4180/bare": {
+        "mean": 0.09839120000000001,
+        "n": 1,
+        "values": [
+          0.09839120000000001
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.09416640000000001,
+        "n": 1,
+        "values": [
+          0.09416640000000001
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.1264422,
+        "n": 1,
+        "values": [
+          0.1264422
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.07184059999999999,
+        "n": 1,
+        "values": [
+          0.07184059999999999
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.09328220000000001,
+        "n": 1,
+        "values": [
+          0.09328220000000001
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0727321,
+        "n": 1,
+        "values": [
+          0.0727321
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0777694,
+        "n": 1,
+        "values": [
+          0.0777694
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.09534990000000002,
+        "n": 1,
+        "values": [
+          0.09534990000000002
+        ]
+      }
+    },
+    "fu_wall_minutes": {
+      "csv-rfc4180/bare": {
+        "mean": 0.9,
+        "n": 1,
+        "values": [
+          0.9
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.6333333333333333,
+        "n": 1,
+        "values": [
+          0.6333333333333333
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.9833333333333333,
+        "n": 1,
+        "values": [
+          0.9833333333333333
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.5166666666666667,
+        "n": 1,
+        "values": [
+          0.5166666666666667
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.7666666666666667,
+        "n": 1,
+        "values": [
+          0.7666666666666667
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.48333333333333334,
+        "n": 1,
+        "values": [
+          0.48333333333333334
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.6166666666666667,
+        "n": 1,
+        "values": [
+          0.6166666666666667
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.8333333333333334,
+        "n": 1,
+        "values": [
+          0.8333333333333334
+        ]
+      }
+    },
+    "fu_tokens_total": {
+      "csv-rfc4180/bare": {
+        "mean": 132520.0,
+        "n": 1,
+        "values": [
+          132520.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 130025.0,
+        "n": 1,
+        "values": [
+          130025.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 196406.0,
+        "n": 1,
+        "values": [
+          196406.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 82476.0,
+        "n": 1,
+        "values": [
+          82476.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 109864.0,
+        "n": 1,
+        "values": [
+          109864.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 83533.0,
+        "n": 1,
+        "values": [
+          83533.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 62484.0,
+        "n": 1,
+        "values": [
+          62484.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 153149.0,
+        "n": 1,
+        "values": [
+          153149.0
+        ]
+      }
+    },
+    "fu_source_lines": {
+      "csv-rfc4180/bare": {
+        "mean": 35.0,
+        "n": 1,
+        "values": [
+          35.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 27.0,
+        "n": 1,
+        "values": [
+          27.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 27.0,
+        "n": 1,
+        "values": [
+          27.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 24.0,
+        "n": 1,
+        "values": [
+          24.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 23.0,
+        "n": 1,
+        "values": [
+          23.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 24.0,
+        "n": 1,
+        "values": [
+          24.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 31.0,
+        "n": 1,
+        "values": [
+          31.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 27.0,
+        "n": 1,
+        "values": [
+          27.0
+        ]
+      }
+    },
+    "cost_usd": {
+      "csv-rfc4180/bare": {
+        "mean": 0.10640759999999999,
+        "n": 1,
+        "values": [
+          0.10640759999999999
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.1043204,
+        "n": 1,
+        "values": [
+          0.1043204
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.2065485,
+        "n": 1,
+        "values": [
+          0.2065485
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.1924811,
+        "n": 1,
+        "values": [
+          0.1924811
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.21091300000000002,
+        "n": 1,
+        "values": [
+          0.21091300000000002
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.21642720000000001,
+        "n": 1,
+        "values": [
+          0.21642720000000001
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.41228909999999996,
+        "n": 1,
+        "values": [
+          0.41228909999999996
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.2378792,
+        "n": 1,
+        "values": [
+          0.2378792
+        ]
+      }
+    },
+    "tokens_total": {
+      "csv-rfc4180/bare": {
+        "mean": 68428.0,
+        "n": 1,
+        "values": [
+          68428.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 113233.0,
+        "n": 1,
+        "values": [
+          113233.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 197121.0,
+        "n": 1,
+        "values": [
+          197121.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 228732.0,
+        "n": 1,
+        "values": [
+          228732.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 164469.0,
+        "n": 1,
+        "values": [
+          164469.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 201030.0,
+        "n": 1,
+        "values": [
+          201030.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 596443.0,
+        "n": 1,
+        "values": [
+          596443.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 367528.0,
+        "n": 1,
+        "values": [
+          367528.0
+        ]
+      }
+    },
+    "tokens_output": {
+      "csv-rfc4180/bare": {
+        "mean": 5645.0,
+        "n": 1,
+        "values": [
+          5645.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 4129.0,
+        "n": 1,
+        "values": [
+          4129.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 6859.0,
+        "n": 1,
+        "values": [
+          6859.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 4783.0,
+        "n": 1,
+        "values": [
+          4783.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 7340.0,
+        "n": 1,
+        "values": [
+          7340.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 7031.0,
+        "n": 1,
+        "values": [
+          7031.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 9042.0,
+        "n": 1,
+        "values": [
+          9042.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 5035.0,
+        "n": 1,
+        "values": [
+          5035.0
+        ]
+      }
+    },
+    "turns": {
+      "csv-rfc4180/bare": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 5.0,
+        "n": 1,
+        "values": [
+          5.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 5.0,
+        "n": 1,
+        "values": [
+          5.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 6.0,
+        "n": 1,
+        "values": [
+          6.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 7.0,
+        "n": 1,
+        "values": [
+          7.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 5.0,
+        "n": 1,
+        "values": [
+          5.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 11.0,
+        "n": 1,
+        "values": [
+          11.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 9.0,
+        "n": 1,
+        "values": [
+          9.0
+        ]
+      }
+    },
+    "wall_minutes": {
+      "csv-rfc4180/bare": {
+        "mean": 0.8666666666666667,
+        "n": 1,
+        "values": [
+          0.8666666666666667
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.7833333333333333,
+        "n": 1,
+        "values": [
+          0.7833333333333333
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 1.1333333333333333,
+        "n": 1,
+        "values": [
+          1.1333333333333333
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.85,
+        "n": 1,
+        "values": [
+          0.85
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.15,
+        "n": 1,
+        "values": [
+          1.15
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.1,
+        "n": 1,
+        "values": [
+          1.1
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.8666666666666667,
+        "n": 1,
+        "values": [
+          1.8666666666666667
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.2,
+        "n": 1,
+        "values": [
+          1.2
+        ]
+      }
+    },
+    "loop_audits": {
+      "csv-rfc4180/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "csv-rfc4180/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "loop_completed": {
+      "csv-rfc4180/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/bare": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "csv-rfc4180/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "inventory-race/dex": {
+        "mean": null,
+        "n": 0,
+        "values": []
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "perf_ratio": {
+      "csv-rfc4180/bare": {
+        "mean": 0.528347823284506,
+        "n": 1,
+        "values": [
+          0.528347823284506
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.8213097584827777,
+        "n": 1,
+        "values": [
+          0.8213097584827777
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.8024593858122786,
+        "n": 1,
+        "values": [
+          0.8024593858122786
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.835242699051562,
+        "n": 1,
+        "values": [
+          0.835242699051562
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.7150264460022412,
+        "n": 1,
+        "values": [
+          0.7150264460022412
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.48585215354070754,
+        "n": 1,
+        "values": [
+          0.48585215354070754
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.7849104752391801,
+        "n": 1,
+        "values": [
+          0.7849104752391801
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0258423213073136,
+        "n": 1,
+        "values": [
+          1.0258423213073136
+        ]
+      }
+    },
+    "perf_noise": {
+      "csv-rfc4180/bare": {
+        "mean": 0.20671019774806218,
+        "n": 1,
+        "values": [
+          0.20671019774806218
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.4859256248239574,
+        "n": 1,
+        "values": [
+          0.4859256248239574
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.1976965975457095,
+        "n": 1,
+        "values": [
+          0.1976965975457095
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.3372915424910308,
+        "n": 1,
+        "values": [
+          0.3372915424910308
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.3382939551389892,
+        "n": 1,
+        "values": [
+          0.3382939551389892
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.7514768799611042,
+        "n": 1,
+        "values": [
+          0.7514768799611042
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.534431081644272,
+        "n": 1,
+        "values": [
+          0.534431081644272
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.5014839164660491,
+        "n": 1,
+        "values": [
+          0.5014839164660491
+        ]
+      }
+    },
+    "fuzz_pass": {
+      "csv-rfc4180/bare": {
+        "mean": 0.8,
+        "n": 1,
+        "values": [
+          0.8
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.925,
+        "n": 1,
+        "values": [
+          0.925
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.925,
+        "n": 1,
+        "values": [
+          0.925
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.925,
+        "n": 1,
+        "values": [
+          0.925
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "lint_per_kloc": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "complexity_mean": {
+      "csv-rfc4180/bare": {
+        "mean": 7.25,
+        "n": 1,
+        "values": [
+          7.25
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.79,
+        "n": 1,
+        "values": [
+          1.79
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 7.5,
+        "n": 1,
+        "values": [
+          7.5
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.73,
+        "n": 1,
+        "values": [
+          1.73
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 5.4,
+        "n": 1,
+        "values": [
+          5.4
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.81,
+        "n": 1,
+        "values": [
+          1.81
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 5.12,
+        "n": 1,
+        "values": [
+          5.12
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.77,
+        "n": 1,
+        "values": [
+          1.77
+        ]
+      }
+    },
+    "complexity_max": {
+      "csv-rfc4180/bare": {
+        "mean": 33.0,
+        "n": 1,
+        "values": [
+          33.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 7.0,
+        "n": 1,
+        "values": [
+          7.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 34.0,
+        "n": 1,
+        "values": [
+          34.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 7.0,
+        "n": 1,
+        "values": [
+          7.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 28.0,
+        "n": 1,
+        "values": [
+          28.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 8.0,
+        "n": 1,
+        "values": [
+          8.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 28.0,
+        "n": 1,
+        "values": [
+          28.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 7.0,
+        "n": 1,
+        "values": [
+          7.0
+        ]
+      }
+    },
+    "fn_lines_max": {
+      "csv-rfc4180/bare": {
+        "mean": 92.0,
+        "n": 1,
+        "values": [
+          92.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 31.0,
+        "n": 1,
+        "values": [
+          31.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 87.0,
+        "n": 1,
+        "values": [
+          87.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 31.0,
+        "n": 1,
+        "values": [
+          31.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 113.0,
+        "n": 1,
+        "values": [
+          113.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 32.0,
+        "n": 1,
+        "values": [
+          32.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 92.0,
+        "n": 1,
+        "values": [
+          92.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 29.0,
+        "n": 1,
+        "values": [
+          29.0
+        ]
+      }
+    },
+    "max_depth": {
+      "csv-rfc4180/bare": {
+        "mean": 5.0,
+        "n": 1,
+        "values": [
+          5.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 6.0,
+        "n": 1,
+        "values": [
+          6.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 6.0,
+        "n": 1,
+        "values": [
+          6.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 3.0,
+        "n": 1,
+        "values": [
+          3.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 6.0,
+        "n": 1,
+        "values": [
+          6.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 2.0,
+        "n": 1,
+        "values": [
+          2.0
+        ]
+      }
+    },
+    "duplication_pct": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "deps_declared": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "packages_installed": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "suite_pass_rate": {
+      "csv-rfc4180/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "suite_flaky": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "suite_seconds": {
+      "csv-rfc4180/bare": {
+        "mean": 0.38,
+        "n": 1,
+        "values": [
+          0.38
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.32,
+        "n": 1,
+        "values": [
+          0.32
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.31,
+        "n": 1,
+        "values": [
+          0.31
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.35,
+        "n": 1,
+        "values": [
+          0.35
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.32,
+        "n": 1,
+        "values": [
+          0.32
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.41,
+        "n": 1,
+        "values": [
+          0.41
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.44,
+        "n": 1,
+        "values": [
+          0.44
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.34,
+        "n": 1,
+        "values": [
+          0.34
+        ]
+      }
+    },
+    "suite_leftovers": {
+      "csv-rfc4180/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 1.0,
+        "n": 1,
+        "values": [
+          1.0
+        ]
+      }
+    },
+    "has_readme": {
+      "csv-rfc4180/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 0.0,
+        "n": 1,
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "legacy_total": {
+      "csv-rfc4180/bare": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 91.0,
+        "n": 1,
+        "values": [
+          91.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 91.0,
+        "n": 1,
+        "values": [
+          91.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 92.0,
+        "n": 1,
+        "values": [
+          92.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 91.0,
+        "n": 1,
+        "values": [
+          91.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 91.0,
+        "n": 1,
+        "values": [
+          91.0
+        ]
+      }
+    },
+    "legacy_correctness": {
+      "csv-rfc4180/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    },
+    "legacy_test_quality": {
+      "csv-rfc4180/bare": {
+        "mean": 91.0,
+        "n": 1,
+        "values": [
+          91.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 89.0,
+        "n": 1,
+        "values": [
+          89.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 94.0,
+        "n": 1,
+        "values": [
+          94.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 89.0,
+        "n": 1,
+        "values": [
+          89.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 94.0,
+        "n": 1,
+        "values": [
+          94.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 84.0,
+        "n": 1,
+        "values": [
+          84.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 92.0,
+        "n": 1,
+        "values": [
+          92.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 89.0,
+        "n": 1,
+        "values": [
+          89.0
+        ]
+      }
+    },
+    "legacy_robustness": {
+      "csv-rfc4180/bare": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 90.0,
+        "n": 1,
+        "values": [
+          90.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    },
+    "legacy_verification": {
+      "csv-rfc4180/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 100.0,
+        "n": 1,
+        "values": [
+          100.0
+        ]
+      }
+    },
+    "legacy_issue_detection": {
+      "csv-rfc4180/bare": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "inventory-race/bare": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "csv-rfc4180/dex@HEAD": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "inventory-race/dex@HEAD": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "csv-rfc4180/dex": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "inventory-race/dex": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "csv-rfc4180/dex-loop": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      },
+      "inventory-race/dex-loop": {
+        "mean": 85.0,
+        "n": 1,
+        "values": [
+          85.0
+        ]
+      }
+    }
+  }
+}

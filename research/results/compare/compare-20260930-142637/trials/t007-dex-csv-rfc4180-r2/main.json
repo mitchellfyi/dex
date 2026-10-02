@@ -1,0 +1,414 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 2.7864637999999995,
+    "num_turns": 33,
+    "duration_ms": 872037,
+    "duration_api_ms": 758100,
+    "tokens": {
+      "input": 58,
+      "output": 79973,
+      "cache_read": 2703009,
+      "cache_creation": 115617,
+      "total": 2898657
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 58,
+        "outputTokens": 79973,
+        "cacheReadInputTokens": 2703009,
+        "cacheCreationInputTokens": 115617,
+        "webSearchRequests": 0,
+        "costUSD": 2.7864637999999995,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 47506,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 19,
+      "Write": 5,
+      "Edit": 5,
+      "Read": 3
+    },
+    "final_text": "I've built the CSV library with the full spec implemented. All 82 tests pass in the full gate.\n\n**What's there**\n- **`src/csv.js`** (CommonJS) exports `parse`, `createParser`, `stringify` and `CsvError`. `parse` runs the whole string through the same streaming parser that `createParser` returns, so their records and errors can't differ. The parser reads each character once and keeps only the record in progress, so time and memory grow linearly with the input.\n- **`package.json`**: `npm test` runs Node's built-in test runner. There are no dependencies.\n- **`test/`** has three files:\n  - `parse.test.js`: every rule in the spec, and each error with its exact line and column.\n  - `stream.test.js`: compares `createParser` against `parse` at every split point of a set of tricky inputs, one character at a time, and over 3,000 random chunkings. It also has two stress tests that would time out if the parser re-read earlier input.\n  - `stringify.test.js`: the stringify rules, plus the round-trip guarantee checked on hand-picked cases and 2,000 random row sets.\n- **`README.md`**: API, error positions, and the choices below.\n\n**Checks I ran**\n- To confirm the tests can fail, I broke the code in 17 targeted ways (removed the BOM strip, counted CRLF as two lines, dropped escaped quotes, and so on). Every change made at least one test fail.\n- On a 10M-character file, parse takes about 140ms and stringify about 100ms.\n- There's no linter, since that would mean a dependency; I syntax-checked every file with `node --check` instead.\n\n**Choices where the spec was open**\n- **BOM and columns:** a leading BOM isn't counted, so the next character is column 1.\n- **Line numbers:** they count line breaks inside quoted fields too, with CRLF counting as one.\n- **Wrong field count in header mode:** it's reported at the line where the record *starts*, which matters for records that span several lines.\n- **Duplicate header names:** found as soon as the second field ends, so `a,a,\"b` reports the duplicate, not the unclosed quote.\n- **Streaming and CR:** a record ended by CR is returned by that `write`. If the next chunk starts with LF, it's treated as the rest of the CRLF, not an empty line.\n- **`stringify([], { header })`:** writes the header row alone. I read \"no rows gives `''`\" as meaning the no-header case.\n- **Leading BOM in stringify output:** if the output would start with a BOM, the first field gets quoted. The spec's quoting rules don't mention this, but without it `parse` would drop the BOM and break the round-trip guarantee.\n- **Empty values:** `[null]` and `[undefined]` are written as `\"\"`, the same as `['']`.\n- **Option types:** `header` and `skipEmptyLines` must be booleans, \"single character\" means one UTF-16 code unit (so an emoji delimiter is rejected), and unknown options are ignored, so one options object works for both functions.\n- **`__proto__` column:** in header mode it becomes an ordinary property rather than being silently lost.\n\n**Git and process**\n- I committed three checkpoints on a new branch, `feat/csv-parser`. There's no remote, so nothing was pushed.\n- A project hook required conventional commit messages and a Dex co-author trailer, so I used those instead of the Claude trailer.\n- `CLAUDE.md` is still untracked, as it was at the start.\n- The guidelines ask me to run a `humanizer` skill on prose. That skill isn't installed, so I wrote the README in plain language myself.\n\n**Possible follow-ups (not built):** TypeScript type definitions, a wrapper for Node's stream API around `createParser`, and extra parse options such as comment lines.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 6,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 114,
+        "deleted": 0
+      },
+      "config": {
+        "files": 1,
+        "added": 16,
+        "deleted": 0
+      },
+      "source": {
+        "files": 1,
+        "added": 459,
+        "deleted": 0
+      },
+      "test": {
+        "files": 3,
+        "added": 710,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 459,
+    "test_lines": 710,
+    "total_lines": 1299
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 82,
+      "failed": 0
+    },
+    "seconds": 0.5,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "spec": {
+        "passed": 32,
+        "total": 32,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 13,
+        "total": 13,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "I've built the CSV library with the full spec implemented. All 82 tests pass in the full gate.  **What's there** - **`src/csv.js`** (Com",
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 38,
+    "survived": 2,
+    "invalid": 0,
+    "score": 0.95,
+    "mutants": [
+      {
+        "file": "src/csv.js",
+        "line": 39,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 49,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 50,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 63,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 80,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 85,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 86,
+        "from": "true",
+        "to": "false",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 112,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 116,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 129,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 148,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 149,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 156,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 157,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 160,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 172,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 172,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 188,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 192,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 192,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 195,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 305,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 324,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 333,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 362,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 367,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 380,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 381,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 382,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 391,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 392,
+        "from": "<=",
+        "to": "<",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 394,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 394,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 396,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 407,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 407,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 428,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 434,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 442,
+        "from": "&&",
+        "to": "||",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/csv.js",
+        "line": 456,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/csv.js"
+    ],
+    "sites": 150,
+    "seconds": 21.5
+  }
+}

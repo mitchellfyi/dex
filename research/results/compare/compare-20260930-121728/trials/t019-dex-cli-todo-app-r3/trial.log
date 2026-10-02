@@ -1,0 +1,10 @@
+[0;36m[INFO][0m Created workspace: /var/folders/9q/0w3_bh5d6gg1by1p9zv96krr0000gn/T//bench.7S2TSv/w/cli-todo-app
+[0;36m[INFO][0m Injected CLAUDE.md into workspace
+[0;35m[STEP][0m Scoring scenario: cli-todo-app
+[0;36m[INFO][0m   Correctness: 88/100
+[0;36m[INFO][0m   Test quality: 90/100
+[0;36m[INFO][0m   Robustness: 95/100
+[0;36m[INFO][0m   Verification: 100/100
+[0;36m[INFO][0m   Issue detection: 100/100
+[0;36m[INFO][0m   Code quality (LLM): skipped, using default 50
+[0;32m[OK][0m   Total: 88/100

@@ -1,0 +1,122 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.3195666,
+    "num_turns": 8,
+    "duration_ms": 137910,
+    "duration_api_ms": 123263,
+    "tokens": {
+      "input": 16,
+      "output": 16250,
+      "cache_read": 252798,
+      "cache_creation": 39077,
+      "total": 308141
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 16,
+        "outputTokens": 16250,
+        "cacheReadInputTokens": 252798,
+        "cacheCreationInputTokens": 39077,
+        "webSearchRequests": 0,
+        "costUSD": 0.3195666,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 6059,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 7
+    },
+    "final_text": "`parse` and `createParser` now take `trim` and `comment`, both off by default. The full suite passes (326 tests), including the original 272 unchanged.\n\n**`trim`**\n- Spaces and tabs are removed from both ends of unquoted fields.\n- They are also allowed before a field's opening `\"` and after its closing `\"`, and are removed. The text between the quotes is kept exactly.\n- Any other character after the closing quote and its blanks is still an `INVALID_CLOSING_QUOTE` error.\n- A delimiter that is a space or tab is never trimmed.\n\n**`comment`**\n- A line whose first character is the comment character is skipped with its line break, including a last line with no break. It never becomes a record and isn't an empty line.\n- The character is ordinary anywhere else, including after leading blanks.\n- Line numbers in errors still count comment lines.\n- It throws `TypeError` unless it is a single UTF-16 code unit other than the delimiter, `\"`, CR and LF. That includes `''`, `null` and non-strings; only `undefined` means no comment character.\n\nYour spec left a few cases open, so I chose:\n- **Whitespace-only lines:** a line of only spaces and tabs is the record `['']` under `trim`, even with `skipEmptyLines`, because that option means \"nothing at all\".\n- **Reported position:** a field's position is where its trimmed text starts, or the opening `\"` for a quoted field. An empty field is placed where it ends. `UNCLOSED_QUOTE` and `DUPLICATE_HEADER` report it.\n- **Header names:** they are trimmed before the duplicate check.\n- **Comment character as space or tab:** it is allowed, and it is checked before `trim` at the start of a line.\n\nI added `test/trim-comment.test.js`. It covers both options and their errors, and it checks that `createParser` matches `parse` for every two-point split, one-character chunks and random chunkings. The `README.md` documents the options and these decisions.\n\nNothing is committed.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 5,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 12,
+        "deleted": 2
+      },
+      "source": {
+        "files": 3,
+        "added": 88,
+        "deleted": 16
+      },
+      "test": {
+        "files": 1,
+        "added": 216,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 104,
+    "test_lines": 216,
+    "total_lines": 334
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 326,
+      "failed": 0
+    },
+    "seconds": 1.9,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "spec": {
+        "passed": 32,
+        "total": 32,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 13,
+        "total": 13,
+        "rate": 1.0
+      },
+      "followup": {
+        "passed": 12,
+        "total": 12,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  }
+}

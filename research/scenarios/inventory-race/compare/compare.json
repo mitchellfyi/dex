@@ -1,4 +1,0 @@
-{
-  "mutation": { "include": ["src/inventory.js"], "max_mutants": 40 },
-  "scope": { "allowed": ["src/*", "tests/*", "ISSUE.md"], "forbidden": ["src/store.js"] }
-}

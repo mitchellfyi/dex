@@ -1,0 +1,292 @@
+{
+  "load_average_start": [
+    27.51318359375,
+    28.20556640625,
+    31.5068359375
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.38,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.39,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.38,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.34,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.3,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.55,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 1,
+    "test_files": 1,
+    "source_lines": 156,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 12,
+      "mean": 7.25,
+      "max": 33,
+      "p90": 17
+    },
+    "function_lines": {
+      "n": 12,
+      "mean": 16.42,
+      "max": 92,
+      "p90": 44
+    },
+    "max_depth": 5,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 169
+  },
+  "cli": null,
+  "docs": {
+    "readme": false
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "parse 50k rows",
+        "kind": "module",
+        "agent_ms": 21.846271,
+        "reference_ms": 77.671604,
+        "ratio": 0.28126457900882285,
+        "cv": 0.1927689394794437,
+        "agent_ms_samples": [
+          21.032125,
+          21.145709,
+          31.472625,
+          24.747125,
+          19.195125,
+          22.546833
+        ],
+        "reference_ms_samples": [
+          88.215833,
+          70.457416,
+          48.890958,
+          72.930958,
+          84.99725,
+          82.41225
+        ],
+        "agent_rss_kb": 113664,
+        "reference_rss_kb": 152144,
+        "rss_ratio": 0.7470817120622568
+      },
+      {
+        "name": "stringify 50k rows",
+        "kind": "module",
+        "agent_ms": 28.4482085,
+        "reference_ms": 32.320375,
+        "ratio": 0.8801942582658772,
+        "cv": 0.20671019774806218,
+        "agent_ms_samples": [
+          39.771125,
+          26.742708,
+          26.181125,
+          28.46075,
+          28.435667,
+          40.214917
+        ],
+        "reference_ms_samples": [
+          30.543125,
+          35.004458,
+          34.097625,
+          29.323042,
+          24.806708,
+          40.496916
+        ],
+        "agent_rss_kb": 93848,
+        "reference_rss_kb": 100896,
+        "rss_ratio": 0.9301458928005074
+      },
+      {
+        "name": "parse one 4 MB quoted field",
+        "kind": "module",
+        "agent_ms": 51.8377295,
+        "reference_ms": 87.0121255,
+        "ratio": 0.595752939054454,
+        "cv": 0.14367272664505953,
+        "agent_ms_samples": [
+          53.332375,
+          46.404958,
+          51.464792,
+          49.560166,
+          57.867542,
+          52.210667
+        ],
+        "reference_ms_samples": [
+          98.101458,
+          71.058917,
+          81.941417,
+          92.082834,
+          79.962125,
+          105.118542
+        ],
+        "agent_rss_kb": 122200,
+        "reference_rss_kb": 192296,
+        "rss_ratio": 0.6354786371011357
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      26.05615234375,
+      27.86962890625,
+      31.34814453125
+    ],
+    "cpus": 12,
+    "geomean_ratio": 0.528347823284506,
+    "load_average_before": [
+      26.05615234375,
+      27.86962890625,
+      31.34814453125
+    ]
+  },
+  "fuzz": {
+    "sequences": 40,
+    "steps": 40,
+    "seed": 1,
+    "passed": 32,
+    "divergences": [
+      {
+        "sequence_seed": 1001,
+        "step": 9,
+        "op": "parse(\"\ufeff ,\\\"#\ud83d\ude00\\\"\\\"\ud83d\ude00\", {})",
+        "expected": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 3
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 4
+        }
+      },
+      {
+        "sequence_seed": 1006,
+        "step": 0,
+        "op": "parse(\"1,, \\t\u65e5b\\n#\\\"b\\\"Z#|\\n\\\"\\nZ\\nab#\\\"aa\ud83d\ude00Z\", {\"delimiter\":\",\",\"header\":true})",
+        "expected": {
+          "error": "CsvError",
+          "line": 5,
+          "column": 5
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "sequence_seed": 1011,
+        "step": 22,
+        "op": "parse(\"\ufeffa\\t,Z1b,\\\"|\\n\", {\"skipEmptyLines\":true})",
+        "expected": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 8
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 9
+        }
+      },
+      {
+        "sequence_seed": 1021,
+        "step": 36,
+        "op": "parse(\"\ufeff\\\"\\r;a\\\"\\\"\\t1Z a\u00fc|\\t\\r\\t\ud83d\ude00\u65e5|\", {\"skipEmptyLines\":true})",
+        "expected": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 1
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 2
+        }
+      },
+      {
+        "sequence_seed": 1025,
+        "step": 3,
+        "op": "parse(\"\ufeff\\\",\\r\", {\"eol\":\"\\n\"})",
+        "expected": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 1
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 2
+        }
+      }
+    ],
+    "harness_errors": [],
+    "pass_rate": 0.8
+  },
+  "load_average_end": [
+    26.05615234375,
+    27.86962890625,
+    31.34814453125
+  ]
+}

@@ -453,31 +453,9 @@ workflow_name = string_at(workflow, "name", "workflow", required=False) or "tick
 workflow_version = string_at(workflow, "version", "workflow", required=False) or "v1"
 validate_text(workflow_name, "workflow.name", 100)
 validate_text(workflow_version, "workflow.version", 100)
-# A benchmark lifecycle (lib/lifecycle-control.sh) has no human to approve a
-# plan and no browser to capture UI proof, so both default off and approval
-# cannot be switched back on. It launches Claude in print mode, which the
-# Codex engine has no equivalent for yet.
-benchmark = workflow_name == "benchmark"
-requires_plan_approval = bool_at(workflow, "requires_plan_approval", "workflow", not benchmark)
-if benchmark and requires_plan_approval:
-    fail("workflow.requires_plan_approval must be false for the benchmark workflow")
-if benchmark and harness_name == "codex":
-    fail("the benchmark workflow supports the claude-code harness only")
-BENCHMARK_PHASE_ORDER = ("plan", "implement", "review")
-phases = workflow.get("phases")
-if phases is None:
-    phases = list(BENCHMARK_PHASE_ORDER) if benchmark else None
-elif not benchmark:
-    fail("workflow.phases applies only to the benchmark workflow")
-elif not isinstance(phases, list) or any(p not in BENCHMARK_PHASE_ORDER for p in phases):
-    fail("workflow.phases must list phases from: plan, implement, review")
-else:
-    # Implement always runs; Plan and Review can each be left out.
-    phases = [p for p in BENCHMARK_PHASE_ORDER if p in phases]
-    if "implement" not in phases:
-        fail("workflow.phases must include implement")
+requires_plan_approval = bool_at(workflow, "requires_plan_approval", "workflow", True)
 auto_merge = bool_at(workflow, "auto_merge", "workflow", False)
-requires_ui_evidence = workflow.get("requires_ui_evidence", "never" if benchmark else "auto")
+requires_ui_evidence = workflow.get("requires_ui_evidence", "auto")
 if isinstance(requires_ui_evidence, bool):
     requires_ui_evidence = "always" if requires_ui_evidence else "never"
 elif isinstance(requires_ui_evidence, str):
@@ -554,7 +532,6 @@ normalized["harness"] = {
 }
 normalized["workflow"] = {
     **workflow,
-    **({"phases": phases} if phases is not None else {}),
     "name": workflow_name,
     "version": workflow_version,
     "requires_plan_approval": requires_plan_approval,

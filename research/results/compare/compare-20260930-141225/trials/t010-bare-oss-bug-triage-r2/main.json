@@ -1,0 +1,417 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.2365294,
+    "num_turns": 9,
+    "duration_ms": 79300,
+    "duration_api_ms": 60220,
+    "tokens": {
+      "input": 16,
+      "output": 4775,
+      "cache_read": 170932,
+      "cache_creation": 17850,
+      "total": 193573
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 16,
+        "outputTokens": 4775,
+        "cacheReadInputTokens": 170932,
+        "cacheCreationInputTokens": 17850,
+        "webSearchRequests": 0,
+        "costUSD": 0.2365294,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 1275,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 7,
+      "Edit": 1
+    },
+    "final_text": "I fixed the bug: `buildUrl` now keeps `retry=0` and `include_archived=false`. The full test suite passes (9 of 9), and the two new tests fail on the old code.\n\n**Root cause:** the query serializer in `src/url-builder.js` skipped any value that counts as \"false-like\" in JavaScript. That check was meant to drop missing values, but it also dropped `0` and `false`:\n- in `serializeQuery()`, top-level query values were skipped with `if (!value)`\n- in `appendQueryValue()`, array items were skipped with `if (!item)`\n\nArrays were affected too, which the issue doesn't mention: `attempt: [0, 1]` came out as just `attempt=1`.\n\n**Fix:** both checks now use a small helper, `isOmittedQueryValue()`, which skips only `undefined`, `null` and `''`. Numbers and booleans are now always kept. The issue's example now builds `https://api.example.test/webhooks/deliveries?dry_run=true&include_archived=false&retry=0`. I didn't change the API or any other code.\n\n**Regression tests** (in `tests/url-builder.test.js`):\n- `buildUrl keeps numeric zero and boolean false query values (ISSUE-214)` runs the exact call from the issue.\n- `serializeQuery keeps zero and false array items but omits missing values` covers `0` and `false` inside arrays, and checks that `null`, `undefined` and `''` are still left out.\n\nBefore the fix, both failed with the exact output the issue reports (`...?dry_run=true`).\n\n`ISSUE.md` now has a `Resolution` section naming the fixed functions and the two tests.\n\n**Decision for you:** I chose to keep dropping empty strings (`''`) as before, since the issue only covers `0` and `false`. If you want `key=` sent for empty strings, remove `value === ''` from the helper, but that changes behavior for anyone who relies on empty values being left out. One minor side effect: `NaN` used to be dropped and would now be sent as `NaN`.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 3,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 13,
+        "deleted": 0
+      },
+      "source": {
+        "files": 1,
+        "added": 7,
+        "deleted": 2
+      },
+      "test": {
+        "files": 1,
+        "added": 25,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 9,
+    "test_lines": 25,
+    "total_lines": 47
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 9,
+      "failed": 0
+    },
+    "seconds": 0.8,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "spec": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 21,
+        "total": 21,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 31,
+    "survived": 9,
+    "invalid": 0,
+    "score": 0.775,
+    "mutants": [
+      {
+        "file": "src/url-builder.js",
+        "line": 22,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 22,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 22,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 47,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 47,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 47,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 50,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 56,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 57,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 58,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 64,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 74,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 74,
+        "from": "&&",
+        "to": "||",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 74,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 82,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 82,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 82,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 103,
+        "from": "!",
+        "to": "",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 103,
+        "from": "&&",
+        "to": "||",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 103,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 106,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 109,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 110,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 119,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 119,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 119,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 150,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 150,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 150,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 150,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 150,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 157,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 164,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 170,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 174,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 182,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 183,
+        "from": "false",
+        "to": "true",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 190,
+        "from": "false",
+        "to": "true",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 193,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 194,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/url-builder.js"
+    ],
+    "sites": 41,
+    "seconds": 14.6
+  }
+}

@@ -284,8 +284,9 @@ Ask the user which path they want:
    tickets.
 2. Create a parent ticket for the approved plan, then continue implementation
    on that parent ticket.
-3. Create a parent ticket plus proposed sub-issues, then ask which created
-   issue should be implemented first.
+3. Create a parent ticket plus sub-issues for its work packages, then continue
+   implementation on the parent. The sub-issues are the scope of this one
+   lifecycle and its one PR, not separate lifecycles.
 
 When creating tracker items:
 - Use the tracker configured in `.dex/dex.md § Integrations`.
@@ -296,24 +297,32 @@ When creating tracker items:
   Preserve file paths, commands, acceptance criteria, task numbering, risk
   labels, and verification commands exactly.
 - Parent and sub-issue descriptions should contain the outcome, bounded scope,
-  acceptance criteria, and essential constraints. Keep each sub-issue small
-  enough for a single `dx <ticket>` lifecycle. Publish the approved approach,
+  acceptance criteria, and essential constraints. Publish the approved approach,
   decisions, dependencies, risks, and verification in plan comments under Step 8.
+- A coherent outcome in this repository is one lifecycle, one worktree and
+  branch, and normally one PR, even when it spans several layers or would once
+  have been several tickets. Sub-issues, when created, are its work packages.
+  Propose an issue that will run as its own lifecycle only for a concrete
+  boundary: a different repository, a different release or deploy unit, a
+  different owner or authority, an incompatible environment, or a measured cost
+  that consolidation would exceed. Name the boundary and record it as a
+  `decision` in the mission ledger before creating that issue:
+  `bash "$DEX_DIR/bin/mission.sh" "$DEX_SESSION_ID" record decision --actor lead --json '{"summary":"…","boundary":"…"}'`.
 - Linear: use the configured MCP or authenticated API. Use parent/child
   relations when the integration supports them.
 - GitHub Issues: create issues with `gh issue create`. Reference the parent
   issue in each child body. Use existing labels only; do not create labels.
 
 After write-back:
-- Present the created ticket URLs and ask which ticket to implement first if
-  more than one was created.
-- For the chosen ticket, update session metadata:
+- Present the created ticket URLs. The parent is the ticket this lifecycle
+  implements; its sub-issues are its work packages, not a queue to pick from.
+- For the parent ticket, update session metadata:
   ```bash
   source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
   SID="${DEX_SESSION_ID:-$(dx_session_id)}"
   dx_meta_write "$SID" "tracker_key=<KEY-OR-URL>" "ticket_number=<NUMBER-IF-GITHUB>"
   ```
-- If the tracker provides a branch name for the chosen ticket, prepare it with
+- If the tracker provides a branch name for the parent ticket, prepare it with
   the shared branch helper. This resumes an eligible branch already on origin
   and otherwise keeps a new branch local until Phase 2 creates its first
   implementation commit:
@@ -321,8 +330,8 @@ After write-back:
   BRANCH_SOURCE=$(dx_ticket_branch_prepare "<tracker-branch-name>" "$(pwd)") || exit 1
   dx_meta_write "$SID" "current_branch=$(git branch --show-current)"
   ```
-- Move only the chosen implementation ticket to In Progress. Leave backlog
-  sub-issues untouched unless the user explicitly says otherwise.
+- Move only the parent ticket to In Progress. Leave the sub-issues' status
+  untouched unless the user explicitly says otherwise.
 
 Do not write the Phase 1 ready marker until this gate is complete or explicitly
 skipped by the user.

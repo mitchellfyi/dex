@@ -123,6 +123,22 @@ local media reference, preserve that section and skip the upload. This makes an
 unchanged Phase 5 retry idempotent. A different fingerprint replaces only the
 visual-evidence section; preserve every other part of the current PR body.
 
+### 3.5 Summarize the QA Report
+
+Read the Phase 2 manual QA report and carry it into `## Testing Performed`:
+
+```bash
+source "${DEX_DIR:-$HOME/work/dex}/lib/common.sh" || exit 1
+session_id="${DEX_SESSION_ID:-$(dx_session_id)}"
+dx qa status --session "$session_id"
+dx qa show --session "$session_id" --json
+```
+
+Render one line for the template's `Manual verification` entry:
+`QA <status> — <n>/<total> criteria MET, <k> NOT_MET, <b> BLOCKED; exploratory: <fixed>/<follow-up keys>; report: <qa-report.md path>`.
+When `dx qa status` exits 3, append `(stale: the tree changed after the report — <what changed, per the Phase 2 summary>)`, or `(unverified: the report could not be checked against a tree)` when its output says the fingerprint is unavailable.
+When the report is `MISSING`, say so, and run `dxqa` only when the change is runnable. The report is text; never attach `qa-report.md` as media.
+
 ### 4. Create or Update the PR
 
 Read the commit format prompt (`prompts/commit-format.md`) for title format guidance.
@@ -245,6 +261,7 @@ Print a summary of the PR for the user:
 - List of `request` reviewers attached
 - Implementation summary
 - UI proof status and reason, plus MP4/poster/manifest paths when READY
+- QA report status, the stale flag, and the `qa-report.md` path
 
 Then output:
 

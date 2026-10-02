@@ -2340,6 +2340,16 @@ as additional instructions.
 EOF
 )
 
+  # The feedback loop closes here when nothing else runs it: candidates the
+  # missions left are reproduced, reviewed and activated or retired before the
+  # maintenance agent starts. Dry runs decide nothing.
+  if [[ "$dry_run" -ne 1 ]]; then
+    __dx_require_lib feedback.sh 2>/dev/null || true
+    if command -v dx_feedback_consume_due >/dev/null 2>&1; then
+      dx_feedback_consume_due "$report_file" || true
+    fi
+  fi
+
   if [[ "$dry_run" -eq 1 ]]; then
     __dx_maintain_run_provider "run" "$provider_repo_root" "$run_id" \
       "$report_file" "$invocation" "${budget_minutes:-0}" "1" \

@@ -1,0 +1,204 @@
+{
+  "load_average_start": [
+    35.876953125,
+    30.59765625,
+    27.4541015625
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.5,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.52,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.51,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.5,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.46,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.49,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 5,
+    "test_files": 6,
+    "source_lines": 429,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 66,
+      "mean": 1.59,
+      "max": 7,
+      "p90": 3
+    },
+    "function_lines": {
+      "n": 66,
+      "mean": 5.71,
+      "max": 19,
+      "p90": 14
+    },
+    "max_depth": 2,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 471
+  },
+  "cli": null,
+  "docs": {
+    "readme": true,
+    "files": [
+      "README.md"
+    ],
+    "samples": 2,
+    "passed": 1,
+    "rate": 0.5,
+    "failures": [
+      {
+        "kind": "js",
+        "run": "const { InventoryService, InsufficientStockError } = require('./src');",
+        "ok": false,
+        "exit": 1,
+        "output": "    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)\n    at node:internal/main/run_main_module:33:47\n\nNode.js v24.17.0"
+      }
+    ]
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "2k sequential reserve+commit",
+        "kind": "module",
+        "agent_ms": 270.949792,
+        "reference_ms": 312.7142295,
+        "ratio": 0.8664453563025344,
+        "cv": 0.03476443506626272,
+        "agent_ms_samples": [
+          287.784,
+          276.043083,
+          275.280625,
+          266.461167,
+          266.618959,
+          261.394375
+        ],
+        "reference_ms_samples": [
+          315.452917,
+          300.054708,
+          316.417166,
+          309.975542,
+          322.340042,
+          297.31575
+        ],
+        "agent_rss_kb": 56808,
+        "reference_rss_kb": 56888,
+        "rss_ratio": 0.9985937280270004
+      },
+      {
+        "name": "2k concurrent reserves over 50 SKUs",
+        "kind": "module",
+        "agent_ms": 28.060187,
+        "reference_ms": 26.1081255,
+        "ratio": 1.0747683513318487,
+        "cv": 0.18256805183308855,
+        "agent_ms_samples": [
+          26.345084,
+          29.027291,
+          37.279708,
+          25.497959,
+          27.093083,
+          30.114541
+        ],
+        "reference_ms_samples": [
+          27.825458,
+          24.432792,
+          20.70675,
+          22.352041,
+          27.783459,
+          34.011333
+        ],
+        "agent_rss_kb": 79848,
+        "reference_rss_kb": 73128,
+        "rss_ratio": 1.0918936659008862
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      35.43408203125,
+      30.67626953125,
+      27.5185546875
+    ],
+    "cpus": 12,
+    "geomean_ratio": 0.9650015788134293,
+    "load_average_before": [
+      35.43408203125,
+      30.67626953125,
+      27.5185546875
+    ]
+  },
+  "fuzz": {
+    "sequences": 30,
+    "steps": 40,
+    "seed": 1,
+    "passed": 30,
+    "divergences": [],
+    "harness_errors": [],
+    "pass_rate": 1
+  },
+  "load_average_end": [
+    34.91845703125,
+    30.6484375,
+    27.52685546875
+  ]
+}

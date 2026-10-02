@@ -163,10 +163,22 @@ $GATE_CONTRACT_VALUES
 EOF
 fi
 
+# The environment this result will be about: the toolchain on PATH, the job
+# budget the command is given, the platform and the dependency manifests.
+# Computed before the run so the receipt describes what the gate started
+# with. Without it the receipt is still written, but no environment-bound
+# lookup will ever reuse it, which is the safe failure.
+GATE_ENV_FINGERPRINT=""
+if ! GATE_ENV_FINGERPRINT=$(dx_gate_env_fingerprint "$GATE_REPO" "$GATE_TEST_JOBS" 2>/dev/null); then
+  GATE_ENV_FINGERPRINT=""
+  dx_warn "${GATE_NAME}: could not fingerprint the environment; the receipt will not be reused."
+fi
+
 # Advisory, and pointed the only direction this process can see: whether the
 # command it was handed is one the project declared heavy. The other half —
-# advising when a declared heavy command is run *outside* a gate — needs a hook
-# on the tool call, not this process.
+# advising when a declared heavy command is run *outside* a gate — is the
+# `warn-detached-processes` guard on the tool call, which also counts the
+# ungated runs for the session summary.
 GATE_DECLARED_RC=0
 GATE_DECLARED=$(dx_project_contract_values "$GATE_REPO" Resources \
   heavy_commands) || GATE_DECLARED_RC=$?
@@ -323,7 +335,8 @@ fi
 [[ -n "$GATE_WORKING_BEFORE" ]] || GATE_WORKING_BEFORE="unavailable"
 
 GATE_RECEIPT=""
-if ! GATE_RECEIPT=$(dx_gate_receipt_write "$GATE_SESSION" "$GATE_NAME" \
+if ! GATE_RECEIPT=$(dx_gate_receipt_write --env-fingerprint "$GATE_ENV_FINGERPRINT" \
+  "$GATE_SESSION" "$GATE_NAME" \
   "$GATE_CHECKOUT" "$GATE_WORKING_BEFORE" "$GATE_STABLE" "$GATE_EXIT" \
   "$GATE_DURATION" "$GATE_QUEUE_SECONDS" "$GATE_WRAPPER" "$GATE_TEST_JOBS" \
   "$GATE_PARALLELISM_NAMES" "$GATE_LOG" "$@"); then
@@ -342,10 +355,10 @@ GATE_RECEIPT_JSON=$(dx_event_json_string "$GATE_RECEIPT" 400) \
 gate_cleanup
 dx_event_emit_for_session "$GATE_SESSION" "gate.finished" "info" \
   "Heavy gate ${GATE_NAME} finished with exit ${GATE_EXIT}" "" \
-  "$(printf '{"gate":"%s","pool":"heavy","exit_code":%s,"duration_seconds":%s,"queue_seconds":%s,"priority_wrapper":"%s","test_jobs":"%s","checkout_fingerprint":"%s","working_fingerprint":"%s","stable":%s,"timeout_seconds":%s,"over_budget":%s,"command":%s,"receipt":%s}' \
+  "$(printf '{"gate":"%s","pool":"heavy","exit_code":%s,"duration_seconds":%s,"queue_seconds":%s,"priority_wrapper":"%s","test_jobs":"%s","checkout_fingerprint":"%s","working_fingerprint":"%s","env_fingerprint":"%s","stable":%s,"timeout_seconds":%s,"over_budget":%s,"command":%s,"receipt":%s}' \
     "$GATE_NAME" "$GATE_EXIT" "$GATE_DURATION" "$GATE_QUEUE_SECONDS" \
     "$GATE_WRAPPER" "$GATE_TEST_JOBS" "$GATE_CHECKOUT" \
-    "$GATE_WORKING_BEFORE" \
+    "$GATE_WORKING_BEFORE" "$GATE_ENV_FINGERPRINT" \
     "$([[ "$GATE_STABLE" -eq 1 ]] && printf 'true' || printf 'false')" \
     "$GATE_TIMEOUT" \
     "$([[ "$GATE_OVER_BUDGET" -eq 1 ]] && printf 'true' || printf 'false')" \

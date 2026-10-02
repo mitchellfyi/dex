@@ -27,3 +27,12 @@ if [[ -f "$CTX_FILE" ]]; then
   echo "If repo memory is relevant, re-read .dex/memory/index.md and load only scoped active entries."
   echo "If you have in-progress tasks, summarise your current position before compaction proceeds."
 fi
+
+# A mission's lease and assignments live in the ledger; say where, so the
+# compacted lead re-reads them instead of trusting a summary of itself.
+if [[ "${DX_MISSION_ACTIVE:-0}" == 1 ]]; then
+  __dx_require_lib mission.sh 2>/dev/null || true
+  if command -v dx_mission_context_summary >/dev/null 2>&1; then
+    dx_mission_context_summary "$SESSION_ID" compact || true
+  fi
+fi

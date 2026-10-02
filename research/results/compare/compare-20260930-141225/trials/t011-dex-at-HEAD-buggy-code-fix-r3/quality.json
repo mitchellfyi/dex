@@ -1,0 +1,234 @@
+{
+  "load_average_start": [
+    11.0517578125,
+    8.9501953125,
+    9.01025390625
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [
+      "@eslint/js",
+      "eslint",
+      "globals"
+    ],
+    "declared": 3,
+    "installed_packages": 79,
+    "audit": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.31,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.31,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.32,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.31,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.31,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.31,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 1,
+    "test_files": 3,
+    "source_lines": 118,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 12,
+      "mean": 2.33,
+      "max": 4,
+      "p90": 4
+    },
+    "function_lines": {
+      "n": 12,
+      "mean": 6,
+      "max": 18,
+      "p90": 9
+    },
+    "max_depth": 2,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 131
+  },
+  "cli": null,
+  "docs": {
+    "readme": true,
+    "files": [
+      "README.md"
+    ],
+    "samples": 5,
+    "passed": 5,
+    "rate": 1.0,
+    "failures": []
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "add 5k distinct items",
+        "kind": "module",
+        "agent_ms": 30.2415415,
+        "reference_ms": 29.702646,
+        "ratio": 1.0181430132520852,
+        "cv": 0.029660087913930582,
+        "agent_ms_samples": [
+          28.948125,
+          30.619791,
+          30.4635,
+          30.373583,
+          30.1095,
+          29.20525
+        ],
+        "reference_ms_samples": [
+          30.04275,
+          29.873625,
+          30.392417,
+          29.531667,
+          28.394292,
+          28.322167
+        ],
+        "agent_rss_kb": 53360,
+        "reference_rss_kb": 52704,
+        "rss_ratio": 1.0124468731026108
+      },
+      {
+        "name": "total of 1k items, 10k times",
+        "kind": "module",
+        "agent_ms": 8.235312,
+        "reference_ms": 7.486458,
+        "ratio": 1.1000278102141228,
+        "cv": 0.10394838752446857,
+        "agent_ms_samples": [
+          8.716125,
+          8.536542,
+          8.137125,
+          8.309291,
+          8.161333,
+          8.034417
+        ],
+        "reference_ms_samples": [
+          7.315792,
+          9.365208,
+          8.198959,
+          7.252334,
+          7.434291,
+          7.538625
+        ],
+        "agent_rss_kb": 53296,
+        "reference_rss_kb": 51200,
+        "rss_ratio": 1.0409375
+      },
+      {
+        "name": "add then remove 3k items",
+        "kind": "module",
+        "agent_ms": 50.7370215,
+        "reference_ms": 15.489646,
+        "ratio": 3.2755442893917652,
+        "cv": 0.017689507838880025,
+        "agent_ms_samples": [
+          50.749709,
+          50.594333,
+          50.75375,
+          49.684625,
+          50.724334,
+          50.79025
+        ],
+        "reference_ms_samples": [
+          15.088125,
+          15.679958,
+          15.155583,
+          15.590875,
+          15.388417,
+          15.731958
+        ],
+        "agent_rss_kb": 55872,
+        "reference_rss_kb": 53160,
+        "rss_ratio": 1.0510158013544018
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      10.40673828125,
+      8.85107421875,
+      8.974609375
+    ],
+    "cpus": 12,
+    "geomean_ratio": 1.542287393578995,
+    "load_average_before": [
+      10.40673828125,
+      8.85107421875,
+      8.974609375
+    ]
+  },
+  "fuzz": {
+    "sequences": 30,
+    "steps": 40,
+    "seed": 1,
+    "passed": 30,
+    "divergences": [],
+    "harness_errors": [],
+    "pass_rate": 1
+  },
+  "load_average_end": [
+    10.40673828125,
+    8.85107421875,
+    8.974609375
+  ]
+}

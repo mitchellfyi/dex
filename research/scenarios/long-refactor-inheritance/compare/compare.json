@@ -1,4 +1,0 @@
-{
-  "mutation": null,
-  "scope": { "allowed": ["src/notifications/*"], "forbidden": ["tests/*"] }
-}

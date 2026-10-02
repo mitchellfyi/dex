@@ -648,42 +648,8 @@ dx_check_codex_skill_links() {
   return 1
 }
 
-# The checkout the user's Claude hooks run Dex from, one per line: the DEX_DIR
-# fallback in each Dex hook command. Nothing when no Dex hook is installed.
-dx_installed_dex_dirs() {
-  python3 "$DEX_DIR/scripts/settings-json.py" installed-dex-dirs \
-    "$(dx_claude_dir)/settings.json" "$HOME" 2>/dev/null
-}
-
-# When the user's hooks run Dex from a different checkout than this one, print
-# why a repository-scoped bootstrap must leave the installation alone, and
-# succeed. A machine with no Dex hooks yet has no other checkout.
-dx_tooling_bootstrap_foreign_checkout() {
-  local installed="" current="" entry="" resolved=""
-  installed=$(dx_installed_dex_dirs) || return 1
-  [[ -n "$installed" ]] || return 1
-  current=$(cd "$DEX_DIR" 2>/dev/null && pwd -P) || current="$DEX_DIR"
-  while IFS= read -r entry; do
-    [[ -n "$entry" ]] || continue
-    resolved=$(cd "$entry" 2>/dev/null && pwd -P) || resolved="$entry"
-    [[ "$resolved" != "$current" ]] || return 1
-  done <<< "$installed"
-  printf '%s\n' "Claude hooks run Dex from ${installed%%$'\n'*}, not this checkout ($DEX_DIR); leaving the user-level tooling alone. Run 'dx install' from this checkout to switch."
-}
-
 dx_bootstrap_agent_tooling() {
-  local root="${1:-}" mode="${2:-install}" failed=0 foreign=""
-
-  # init, sync and tools name a repository and run from whichever checkout
-  # launched them, but what this installs is user-level: hook commands, skill
-  # links, client settings. Run from a worktree, an experiment arm or a
-  # vendored runtime, it took the whole installation over. `dx install` and
-  # `dx reload` are the ways to switch on purpose.
-  if [[ "$mode" != "check" && -n "$root" ]] \
-    && foreign=$(dx_tooling_bootstrap_foreign_checkout); then
-    dx_skip "$foreign"
-    return 0
-  fi
+  local root="${1:-}" mode="${2:-install}" failed=0
 
   if [[ "$mode" == "check" ]]; then
     dx_info "Checking Claude/Codex tooling bootstrap"

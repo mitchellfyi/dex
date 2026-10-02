@@ -1,7 +1,0 @@
-{
-  "name": "inventory-race",
-  "type": "bugfix",
-  "description": "Fix concurrency bugs in an async inventory reservation service (overselling, duplicate reservations, partial holds) without changing its API.",
-  "timeout": 3600,
-  "language": "node"
-}

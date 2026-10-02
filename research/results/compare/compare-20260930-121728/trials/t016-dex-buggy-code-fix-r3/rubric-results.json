@@ -1,0 +1,18 @@
+{
+  "scenario": "buggy-code-fix",
+  "correctness": 100,
+  "test_quality": 100,
+  "robustness": 90,
+  "verification": 100,
+  "issue_detection": 100,
+  "code_quality": 50,
+  "total": 93,
+  "weights": {
+    "correctness": 30,
+    "test_quality": 20,
+    "robustness": 15,
+    "verification": 15,
+    "issue_detection": 10,
+    "code_quality": 10
+  }
+}

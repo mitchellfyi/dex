@@ -23,7 +23,9 @@
 #   dxcd [number|name]      Navigate to a worktree, or the repo root with no argument
 #   dxclean                Clean stale worktrees + gone branches
 #   dxloop <prompt>         Run a prompt until fully implemented
+#   dx <url> | dx <file>    A project, issue or page URL, or a document, run through the workflow
 #   dx sync                 Refresh repo memory/rules from verified observations
+#   dx memory               Show, trim or critically review the repo's Dex memory store
 #   dx login                Connect this CLI to DexCode sync
 #   dx maintain             Run background maintenance or install workflow
 #   dx tools                Check or install Claude/Codex tooling bootstrap
@@ -37,6 +39,7 @@
 #   dx worktree audit       Compare Dex, git and the project's own worktree resources
 #   dx review stats         Report review-loop history per risk tier
 #   dx ui-capture           Capture or inspect temporary UI proof
+#   dx qa                   Record or inspect the manual QA report
 #   dex                   Alias for dx
 #   dexter                Alias for dx
 
@@ -82,6 +85,7 @@ __dx_cli() {
     uninstall) bash "$DEX_DIR/bin/uninstall.sh" "$@" ;;
     init)      bash "$DEX_DIR/bin/init.sh" "$@" ;;
     sync)      bash "$DEX_DIR/bin/sync.sh" "$@" ;;
+    memory)    bash "$DEX_DIR/bin/memory.sh" "$@" ;;
     login)     dx_dexcode_login "$@" ;;
     logout)    dx_dexcode_logout "$@" ;;
     whoami)    dx_dexcode_whoami "$@" ;;
@@ -103,6 +107,7 @@ __dx_cli() {
     worktree)  bash "$DEX_DIR/bin/worktree.sh" "$@" ;;
     review)    bash "$DEX_DIR/bin/review.sh" "$@" ;;
     ui-capture) bash "$DEX_DIR/bin/ui-capture.sh" "$@" ;;
+    qa) bash "$DEX_DIR/bin/qa.sh" "$@" ;;
     research)
       local _dx_has_max_cycles=0 _dx_has_runner=0 _dx_research_help=0 _dx_arg
       local _dx_research_args=("$@")
@@ -167,6 +172,7 @@ __dx_cli() {
       echo "  dx uninstall        Global uninstall"
       echo "  dx init             Bootstrap current repo for Dex"
       echo "  dx sync             Refresh repo memory/rules from verified observations"
+      echo "  dx memory           Show, trim or critically review the repo's Dex memory store"
       echo "  dx login            Connect this machine to DexCode sync"
       echo "  dx whoami           Show the active DexCode account and project"
       echo "  dx logout           Disconnect DexCode sync on this machine"
@@ -195,6 +201,7 @@ __dx_cli() {
       echo "  dx worktree audit   Compare Dex, git and the project's own worktree resources"
       echo "  dx review stats     Review-loop history per risk tier, from telemetry"
       echo "  dx ui-capture       Capture, revise, inspect, or skip temporary UI proof"
+      echo "  dx qa               Record, inspect, or mark the manual QA report N/A"
       echo "  dx research         Run autonomous research orchestrator"
       echo "                        Defaults: --max-cycles 20; SCENARIO_TIMEOUT 3600s (1h) per scenario"
       echo "                        Override timeout: dx research --scenario-timeout 7200"
@@ -237,7 +244,7 @@ __dx_cli() {
       echo ""
       echo "Autonomous lifecycle phases (run automatically by dx):"
       echo "  1. Plan            Gather context, draft plan, get approval"
-      echo "  2. Implement       Work through tasks with TDD; commit and push coherent checkpoints; decide UI proof"
+      echo "  2. Implement       Work through tasks with TDD; commit and push coherent checkpoints; decide UI proof; run manual QA"
       echo "  3. Review          Adaptive adversarial code review"
       echo "  4. Verify          Run the final PR gate; commit and push coherent repair checkpoints"
       echo "  5. PR              Create PR, attach reviewers, mark ready, prepare visual handoff"
@@ -362,17 +369,13 @@ __dx_phase_message() {
   local raw_input="${2:-}"
   local workspace_mode="${3:-worktree}"
   local wt_dir="${4:-}"
-  if dx_lifecycle_benchmark; then
-    dx_benchmark_phase_message "$step"
-  elif [[ "$step" -eq 0 ]]; then
+  if [[ "$step" -eq 0 ]]; then
     printf '%s\n' "$DX_PHASE_0_MESSAGE"
   else
     printf '%s\n' "${DX_PHASE_MESSAGES[$step]}"
   fi
-  if ! dx_lifecycle_benchmark; then
-    printf '%s\n' ""
-    printf '%s\n' "Read prompts/issue-hygiene.md. Apply it to material issue or PR context in this phase, and end every phase handoff or completed-phase summary with its exact Issue/PR work: line."
-  fi
+  printf '%s\n' ""
+  printf '%s\n' "Read prompts/issue-hygiene.md. Apply it to material issue or PR context in this phase, and end every phase handoff or completed-phase summary with its exact Issue/PR work: line."
   __dx_provider_prompt
   if [[ -n "$raw_input" ]] || [[ "$workspace_mode" == "in-place" ]]; then
     printf '%s\n' ""
@@ -398,10 +401,10 @@ DX_PHASE_MESSAGES=(\
 
 Call EnterPlanMode now. Then immediately invoke the dxplan skill using the Skill tool with skill: \"dxplan\" (or /dxplan if slash skills are the available interface). Do not fetch the ticket again, rename branches, update tracker status, explore the codebase, or draft the plan by hand outside the dxplan skill unless the skill explicitly instructs you to.
 
-The dxplan skill writes the required Phase 1 lifecycle markers. Honor the Phase 0 intake_decision and selected issue; do not repeat issue creation or ask for the same approval. For freeform \`dx \"<task>\"\` requests with a configured tracker and no recorded intake decision, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues and select the first implementation ticket. After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
+The dxplan skill writes the required Phase 1 lifecycle markers. Honor the Phase 0 intake_decision and selected issue; do not repeat issue creation or ask for the same approval. For freeform \`dx \"<task>\"\` requests with a configured tracker and no recorded intake decision, after the user approves the plan, offer the dxplan tracker intake choices before writing the Phase 1 ready marker: continue without tracker write-back, create a parent ticket, or create a parent plus sub-issues as work packages of this one lifecycle (sub-issues are scope, not a queue to pick from). After that gate is complete or explicitly skipped, follow the dxplan completion instructions, then stop once so the Dex Stop hook can audit the approved plan and advance to Phase 2 automatically. Do NOT tell the user to run /dximplement and do NOT wait for another prompt.
 
 For headless dx run sessions with workflow.requires_plan_approval=false, the run spec authorizes Phase 1 after the normal plan quality checks pass; follow the dxplan headless instructions instead of waiting for interactive approval." \
-  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact. Phase focus: implementation, testing, and trustworthy proof. Follow prompts/commit-format.md. Commit small coherent checkpoints early and often, and push immediately after every commit. Do not wait for full verification, task completion, or phase completion; keep failed and pending checks explicit and continue toward a verified branch. Use natural history boundaries rather than arbitrary splits. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If the approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 is the final PR gate. When done, stop — the audit loop will verify your work." \
+  "The plan is approved. You MUST invoke the Skill tool with skill: \"dximplement\" to begin implementation. Do NOT implement ad-hoc — the skill enforces TDD and quality gates. Invoke dxuicapture early to make the UI proof decision: capture and surface a concise walkthrough when it helps, record SKIPPED with a reason when it would not, or record N/A when there is no browser impact; a reasoned SKIPPED is valid. Before writing the Phase 2 ready marker, invoke skill: \"dxqa\": exercise every acceptance criterion against the running change, record the report with dx qa report, and fix any NOT_MET criterion here rather than in review. Phase focus: implementation, testing, and trustworthy proof. Follow prompts/commit-format.md. Commit small coherent checkpoints early and often, and push immediately after every commit. Do not wait for full verification, task completion, or phase completion; keep failed and pending checks explicit and continue toward a verified branch. Use natural history boundaries rather than arbitrary splits. For a new local branch, establish upstream tracking only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit. If the approved work produces no branch-specific commit, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action. Phase 4 is the final PR gate. When done, stop — the audit loop will verify your work." \
   "Begin Phase 3: Review. Invoke the Skill tool with skill: \"dxreviewloop\". Use the current Phase 2 risk selection: trivial and small require 1, normal 2, and complex 3 consecutive independent clean waves (CLEAN or NOTES:N). Each fresh wave builds its own context pack, runs deterministic checks and its domain lenses in sequence with the coherence lens — scouts only when the wrapper offers them — verifies findings, batch-fixes safe issues, and rechecks. Any fix, MECHANICAL:N included, resets the clean streak; residual findings, blockers, churn, invalid results, and provider failures pause the loop. Phase focus: review and fixes. Commit and push accepted review fixes as small coherent checkpoints from the active wave; do not wait for Phase 4 or final verification, and keep failed or pending checks explicit. Do not switch branches or create or update a PR. When the loop writes a valid success receipt, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxverify\" to run the quality pipeline (format, lint, typecheck, test). This is the final PR gate. Fix failures and rerun until green; as repairs form natural coherent checkpoints, invoke skill: \"dxcommit\" to commit and push each coherent repair checkpoint immediately without waiting for the rest of the pipeline. Keep failing checks explicit. When the complete pipeline passes, confirm the working tree is clean and local HEAD matches origin. A newly created local branch with no branch-specific commits cannot enter the ordinary PR flow; return to Phase 2's user-direction path instead of publishing it. PR creation and broader implementation fixes remain available when useful. When the branch is verified and current, stop — the audit loop will verify." \
   "Invoke the Skill tool with skill: \"dxpr\" to generate the PR description, create or update the PR, attach current UI proof media when GitHub CLI supports it, attach the configured 'request' reviewers from dex.md § Reviewers, and mark the PR ready for review. Phase focus: PR creation, description, automatic visual attachment with a warned local fallback, reviewer attachment, and readiness. Do not stop while the PR is still a draft. Posting @mentions, implementation changes, commits, and pushes remain available when useful; Phase 6 still performs the normal completion workflow. When done, stop — the audit loop will verify." \
@@ -409,7 +412,7 @@ For headless dx run sessions with workflow.requires_plan_approval=false, the run
 )
 
 DX_PHASE_0_TIMEOUT="0"
-DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md end to end. For a free-form workflow, first read prompts/freeform-intake.md: clarify scope, search related issues, ask before creating an issue, and record intake_decision before continuing ticket setup: (a) read the ticket from the configured tracker, including comments; (b) apply prompts/issue-hygiene.md to search for duplicates and related work, reconcile accepted decisions into the ticket, and reconcile any existing open PR; (c) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (d) run dx_ticket_branch_prepare with the tracker's git branch name so an eligible branch already on origin is fetched and tracked while a genuinely new branch remains local until Phase 2's first real implementation commit; never create an empty bootstrap commit; new PR creation is normally deferred until Phase 5; (e) set ticket status to In Progress; (f) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, keep the current lifecycle branch local until its first implementation commit. Phase focus: ticket setup. Planning, implementation commits, and pushes begin in later phases. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
+DX_PHASE_0_MESSAGE="Begin Phase 0: Setup. This phase runs in NORMAL mode (no plan mode) so you can write to git and the tracker. Follow prompts/ticket-instructions.md end to end. For a free-form workflow, first read prompts/freeform-intake.md: clarify scope, search related issues, ask before creating an issue, and record intake_decision before continuing ticket setup. If the request is a URL (a Linear or GitHub project, an issue elsewhere, a page) or a document path, start with that file's 'Resolving a source' section and resolve it into this repository's tickets and scope before anything else: (a) read the ticket from the configured tracker, including comments; (b) apply prompts/issue-hygiene.md to search for duplicates and related work, reconcile accepted decisions into the ticket, and reconcile any existing open PR; (c) check the assignee — if unassigned, assign to the authenticated user; if assigned to someone else, STOP and warn; (d) run dx_ticket_branch_prepare with the tracker's git branch name so an eligible branch already on origin is fetched and tracked while a genuinely new branch remains local until Phase 2's first real implementation commit; never create an empty bootstrap commit; new PR creation is normally deferred until Phase 5; (e) set ticket status to In Progress; (f) if the description is empty/unclear, draft acceptance criteria, present to the user, and update the ticket. If no tracker is configured, keep the current lifecycle branch local until its first implementation commit. Phase focus: ticket setup. Planning, implementation commits, and pushes begin in later phases. When setup is complete, write the Phase 0 ready marker (\`dx_phase_ready_file\` for step 0) and stop once so the Stop hook can audit and advance to Phase 1 automatically. Do NOT tell the user to run /dxplan and do NOT wait for another prompt."
 
 # Thin wrappers over the shared phase tables in lib/lifecycle-control.sh; the
 # __dx_ names stay because dx.sh uses them throughout.
@@ -528,22 +531,29 @@ __dx_is_ticket() {
 # __dx_resolve_workspace_name <raw_input>
 # Sets: _dx_wt_name, _dx_is_task.
 __dx_resolve_workspace_name() {
-  local raw_input="$1"
+  local raw_input="$1" input_kind ticket_key
 
   _dx_is_task=0
-  if __dx_is_ticket "$raw_input"; then
-    local num="${raw_input//[^0-9]/}"  # strip everything except digits
-    _dx_wt_name="ticket-${num}"
-  else
-    local slug
-    slug=$(dx_slugify "$raw_input")
-    if [[ -z "$slug" ]]; then
-      dx_error "Could not create a valid name from '$raw_input'"
-      return 1
-    fi
-    _dx_wt_name="task-${slug}"
-    _dx_is_task=1
-  fi
+  input_kind=$(dx_input_kind "$raw_input" "$PWD" 2>/dev/null) || input_kind=prompt
+  case "$input_kind" in
+    ticket|github-issue|linear-issue)
+      ticket_key=$(dx_input_ticket "$raw_input" "$PWD") || ticket_key="$raw_input"
+      local num="${ticket_key//[^0-9]/}"  # strip everything except digits
+      _dx_wt_name="ticket-${num}"
+      ;;
+    *)
+      # A source (project URL, page, document) is named after what identifies
+      # it; a prompt after its words.
+      local slug
+      slug=$(dx_input_slug "$raw_input" "$input_kind")
+      if [[ -z "$slug" ]]; then
+        dx_error "Could not create a valid name from '$raw_input'"
+        return 1
+      fi
+      _dx_wt_name="task-${slug}"
+      _dx_is_task=1
+      ;;
+  esac
 }
 
 # __dx_session_id_for_workspace <workspace_mode> <workspace_name>
@@ -670,6 +680,15 @@ __dx_cleanup_lifecycle_state_for_branch() {
   worktree_session_id=$(dx_session_id "$wt_name")
   in_place_session_id=$(__dx_session_id_for_workspace "in-place" "$wt_name")
 
+  # Harvest what the lifecycle left before its state goes: an abandoned run
+  # taught something too.
+  __dx_require_lib memory.sh 2>/dev/null || true
+  if command -v dx_memory_harvest_session >/dev/null 2>&1; then
+    local harvest_repo
+    harvest_repo=$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")
+    dx_memory_harvest_session "$worktree_session_id" "$harvest_repo" >/dev/null 2>&1 || true
+    dx_memory_harvest_session "$in_place_session_id" "$harvest_repo" >/dev/null 2>&1 || true
+  fi
   dx_cleanup_session "$worktree_session_id"
   dx_cleanup_session "$in_place_session_id"
   dx_cleanup_last_session "$wt_name"
@@ -1135,6 +1154,7 @@ __dx_build_system_context() {
 - Do not wait for full verification, task completion, or phase completion; keep failed and pending checks explicit and avoid arbitrary history splits
 - Establish upstream only after the first real branch-specific commit; never push an empty branch or create an empty bootstrap commit
 - If approved work produces no branch-specific commit on a new local branch, pause for user direction instead of advancing toward a PR; the user may stop the lifecycle as no-change or choose an explicit lifecycle control action
+- DO run dxqa before the ready marker: exercise each acceptance criterion against the running change, record the report with dx qa report, and fix NOT_MET criteria here, not in Phase 3
 - Phase 4 is the final PR gate; Phase 5 owns the PR handoff" ;;
     3) scope_lines="- DO run /dxreviewloop, fix all findings, and reach a SUCCESS result
 - Commit and push accepted review fixes as small coherent checkpoints from the active wave; do not wait for Phase 4 or final verification
@@ -1152,9 +1172,6 @@ __dx_build_system_context() {
 - DO verify the PR is ready and repair any remaining draft state, request reviewers (request type), post @mention comment (mention type),
 - DO launch /loop 5m /dxwatchpr, address CI/review failures, close ticket only when checks and approvals are green" ;;
   esac
-  if dx_lifecycle_benchmark; then
-    scope_lines=$(dx_benchmark_scope_lines "$step")
-  fi
 
   local phase_label
   phase_label=$(__dx_phase_name "$step")
@@ -1216,10 +1233,6 @@ EOF
     cat >> "$_ctx_tmp" <<'EOF'
 ```
 EOF
-  fi
-
-  if dx_lifecycle_benchmark; then
-    dx_benchmark_context >> "$_ctx_tmp"
   fi
 
   cat >> "$_ctx_tmp" <<'EOF'
@@ -1636,12 +1649,36 @@ __dx_cleanup_completed_workspace() {
   if [[ -n "$session_id" ]] && ! dx_ui_capture_mark_completed "$session_id"; then
     dx_warn "The lifecycle completed, but Dex could not start the UI proof retention window."
   fi
+  if [[ -n "$session_id" ]] && ! dx_qa_mark_completed "$session_id"; then
+    dx_warn "The lifecycle completed, but Dex could not start the QA report retention window."
+  fi
 
-  # The evaluation harness scores the checkout after Dex exits. Switching back
-  # to the default branch here would take the change away before it is read.
-  if dx_lifecycle_benchmark; then
-    dx_info "Benchmark run: leaving the lifecycle branch and working tree in place for evaluation."
-    return 0
+  # The memory store earns a critical review when enough changed since the
+  # last one. It runs here, after the lifecycle's own session has ended, as a
+  # fresh bounded read-only model session; DEX_MEMORY_CURATE=0 turns it off.
+  # What this lifecycle left behind (review findings, override reasons,
+  # waived phases, failed gates, guard warnings) becomes store observations
+  # before any of it is cleaned up. No model call.
+  __dx_require_lib memory.sh 2>/dev/null || true
+  # Helpers' and the lead's observations: the SessionEnd hook ingests them for
+  # Claude sessions; a Codex lead has no such hook, so completion ingests too
+  # (a byte cursor keeps it to once).
+  if [[ -n "$session_id" ]] && command -v dx_memory_ingest_mission >/dev/null 2>&1; then
+    dx_memory_ingest_mission "$session_id" "$wt_dir" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$session_id" ]] && command -v dx_memory_harvest_session >/dev/null 2>&1; then
+    dx_memory_harvest_session "$session_id" "$wt_dir" >/dev/null 2>&1 \
+      || dx_warn "Memory harvest did not complete; the lifecycle's signals were not recorded."
+  fi
+  if [[ "${DEX_MEMORY_CURATE:-1}" != 0 ]]; then
+    if command -v dx_memory_curate_if_due >/dev/null 2>&1; then
+      DEX_SESSION_ID="$session_id" dx_memory_curate_if_due "$wt_dir" \
+        || dx_warn "Memory curation did not complete; the store kept its deterministic maintenance only."
+    fi
+    if command -v dx_memory_land >/dev/null 2>&1; then
+      DEX_SESSION_ID="$session_id" dx_memory_land "$wt_dir" \
+        || dx_warn "Memory landing did not complete; curated entries stay in the store and land after the next lifecycle."
+    fi
   fi
 
   if [[ "$workspace_mode" == "worktree" ]]; then
@@ -3140,19 +3177,6 @@ __dx_run_phases_inline() {
   fi
 
   local claude_args=("${DX_CLAUDE_FLAGS[@]}")
-  if dx_lifecycle_benchmark; then
-    # A benchmark runs in a task container with no terminal and no browser.
-    # Print mode still honors the Stop hook, so phases hand off inline as usual,
-    # and the session exits once Review completes. The event stream on stdout is
-    # the harness's trajectory log.
-    claude_args=("${(@)claude_args:#--chrome}")
-    claude_args+=(--print --verbose --output-format stream-json)
-  fi
-  # Claude's own debug log (hook start/finish, API retries) for diagnosing a
-  # session that stalls without saying why.
-  if [[ -n "${DX_CLAUDE_DEBUG_FILE:-}" ]]; then
-    claude_args+=(--debug-file "$DX_CLAUDE_DEBUG_FILE")
-  fi
   claude_args+=(--append-system-prompt-file "$ctx_file")
   # Status line plus, when the user opted in, unattended delivery of messages
   # from their other sessions. A build failure skips both rather than passing
@@ -3576,17 +3600,6 @@ __dx_run_spec_apply_env() {
   export DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="$plan_approval"
   default_branch=$(dx_run_spec_field "$spec_file" "repository.default_branch")
   export DEX_HEADLESS_DEFAULT_BRANCH="$default_branch"
-
-  # lib/lifecycle-control.sh reads these to decide which phases run.
-  if [[ "$(dx_run_spec_field "$spec_file" "workflow.name")" == "benchmark" ]]; then
-    export DEX_WORKFLOW=benchmark
-    local benchmark_phases
-    benchmark_phases=$(dx_run_spec_field "$spec_file" "workflow.phases")
-    export DEX_BENCHMARK_PHASES="${benchmark_phases//[\[\]\" ]/}"
-  else
-    export DEX_WORKFLOW=""
-    export DEX_BENCHMARK_PHASES=""
-  fi
 }
 
 { unalias __dx_run_spec_cli; unfunction __dx_run_spec_cli; } 2>/dev/null || true
@@ -3604,7 +3617,6 @@ __dx_run_spec_cli() {
   local -x DX_MODEL_OVERRIDE="${DX_MODEL_OVERRIDE:-}"
   local -x DEX_HEADLESS_REQUIRES_PLAN_APPROVAL="${DEX_HEADLESS_REQUIRES_PLAN_APPROVAL:-}"
   local -x DEX_HEADLESS_DEFAULT_BRANCH="${DEX_HEADLESS_DEFAULT_BRANCH:-}"
-  local -x DEX_WORKFLOW="" DEX_BENCHMARK_PHASES=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --spec)
@@ -3768,6 +3780,12 @@ __dx_run_spec_cli() {
     return 1
   }
 
+  # Same check the interactive path makes: a provider that cannot launch
+  # stops here, before a branch or a run record exists.
+  if command -v dx_provider_agent_ready_check >/dev/null 2>&1 && ! dx_provider_agent_ready_check; then
+    dx_error "The selected provider cannot launch work; nothing was created. Fix the provider (dx provider, dx setup --direct, or dx account add) and run the same spec again."
+    return 1
+  fi
   __dx_setup_in_place "$workspace_input"
   local setup_status=$?
   if [[ $setup_status -ne 0 ]]; then
@@ -3784,13 +3802,11 @@ __dx_run_spec_cli() {
   }
   local -x DEX_HEADLESS_RUN_SPEC_FILE="$final_spec"
   local -x DEX_RUN_ID="$run_id"
-  dx_meta_write "$session_id" "headless=1" "run_id=${run_id}" "run_spec=${final_spec}" \
-    "workflow=$(dx_lifecycle_workflow)"
+  dx_meta_write "$session_id" "headless=1" "run_id=${run_id}" "run_spec=${final_spec}"
   __dx_write_last_session "$_dx_wt_name" "$_dx_wt_dir" "$_dx_workspace_mode" \
     || dx_warn "Could not record this session for dx --resume."
 
-  local state_file times_file step
-  step=$(dx_lifecycle_first_phase)
+  local state_file times_file step=0
   state_file=$(dx_state_file "$session_id")
   times_file=$(dx_times_file "$session_id")
   if [[ -e "$state_file" || -L "$state_file" ]]; then
@@ -3799,13 +3815,6 @@ __dx_run_spec_cli() {
       __dx_startup_claim_release || true
       return 1
     }
-  fi
-
-  if dx_lifecycle_benchmark && ! dx_lifecycle_benchmark_runs plan \
-    && ! dx_benchmark_seed_criteria "$session_id" "$final_spec"; then
-    dx_error "Could not seal acceptance criteria from the task text for a benchmark run without Plan."
-    __dx_startup_claim_release || true
-    return 1
   fi
 
   dx_info "Starting headless Dex run ${run_id}"
@@ -3832,12 +3841,9 @@ __dx_show_header() {
 
   # Phase progress line (Phase 0 setup + 6 autonomous phases)
   local progress="  "
-  local i label outcome symbol first_phase final_phase
+  local i label outcome symbol
   local has_skipped=0 has_waived=0 has_unknown=0
-  first_phase=$(dx_lifecycle_first_phase)
-  final_phase=$(dx_lifecycle_final_phase)
   for i in 0 1 2 3 4 5 6; do
-    [[ $i -lt $first_phase || $i -gt $final_phase ]] && continue
     label=$(__dx_phase_name "$i")
     if [[ $i -lt $step ]]; then
       outcome=$(dx_phase_outcome_latest "$session_id" "$i")
@@ -3853,7 +3859,7 @@ __dx_show_header() {
     else
       progress+="○ ${label}"
     fi
-    [[ $i -lt $final_phase ]] && progress+="  "
+    [[ $i -lt 6 ]] && progress+="  "
   done
   # Show completion suffix when all autonomous phases are done (step=7 sentinel)
   if [[ $step -ge 7 ]]; then
@@ -3897,6 +3903,7 @@ __dx_show_header() {
 
   if [[ "$step" -ge 2 ]]; then
     dx_ui_capture_summary "$session_id"
+    dx_qa_summary "$session_id"
   fi
 
   # Timing info
@@ -3947,8 +3954,8 @@ __dx_show_header() {
 # are held together by tests/docs-consistency-test.sh.
 { unalias __dx_task_commands; unfunction __dx_task_commands; } 2>/dev/null || true
 __dx_task_commands() {
-  printf '%s\n' init sync login logout whoami dexcode worker maintain tools \
-    test config provider run control sessions ps doctor run-gate worktree review ui-capture research install uninstall uninit status \
+  printf '%s\n' init sync memory login logout whoami dexcode worker maintain tools \
+    test config provider run control sessions ps doctor run-gate worktree review ui-capture qa research install uninstall uninit status \
     reload help revert log triage refine setup account accounts model route profile router context
 }
 
@@ -4046,6 +4053,8 @@ __dx_choose_prompt_mode() {
 dx() {
   if [[ $# -eq 0 ]]; then
     echo "Usage: dx <NUMBER>        (e.g. dx 999, dx ENG-999)"
+    echo "       dx <URL>           A tracker issue, a Linear or GitHub project, or any page"
+    echo "       dx <FILE>          A document (spec, brief, notes) to turn into tickets and work"
     echo "       dx \"<description>\" (e.g. dx \"fix login bug\")"
     echo "       dx --session \"<prompt>\"   Open a session in the current checkout"
     echo "       dx --workflow \"<task>\"    Run the full ticket-to-PR workflow"
@@ -4055,7 +4064,7 @@ dx() {
     echo "       dx --from-pr <N>   Resume session linked to a PR"
     echo "       dx triage [ticket] Clarify, estimate, and organise tickets"
     echo ""
-    echo "       dx init|sync|maintain|tools|test|config|provider|run|ui-capture|research|install|uninstall|uninit|status|reload|help"
+    echo "       dx init|sync|maintain|tools|test|config|provider|run|ui-capture|qa|research|install|uninstall|uninit|status|reload|help"
     return 1
   fi
 
@@ -4175,7 +4184,7 @@ dx() {
 
   # Route management subcommands to the internal Dex dispatcher.
   case "$dx_command_input" in
-    init|sync|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|profile|context|run|run-gate|worktree|review|control|sessions|ps|doctor|ui-capture|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
+    init|sync|memory|login|logout|whoami|dexcode|worker|maintain|tools|test|config|provider|setup|router|account|accounts|model|route|profile|context|run|run-gate|worktree|review|control|sessions|ps|doctor|ui-capture|qa|research|install|uninstall|uninit|status|reload|help|--help|-h|revert|log)
       __dx_cli "$@"
       return $?
       ;;
@@ -4195,6 +4204,67 @@ dx() {
   if [[ -z "$raw_input" ]]; then
     dx_error "Supply a prompt or ticket."
     return 2
+  fi
+  # Anything can be handed to dx. A tracker URL on this repository is its
+  # ticket; a project URL, another URL or a document is a source the workflow
+  # resolves in Phase 0; the rest is a prompt. A source never asks which mode.
+  local dx_in_kind=prompt dx_in_ticket="" dx_in_doc="" dx_in_rest=""
+  if [[ "$dx_literal_prompt" -eq 0 && "$dx_prompt_mode" != session \
+    && "$1" != --resume && "$1" != --from-pr ]]; then
+    dx_in_kind=$(dx_input_kind "$raw_input" "$PWD" 2>/dev/null) || dx_in_kind=prompt
+    case "$dx_in_kind" in
+      github-issue|linear-issue)
+        dx_in_ticket=$(dx_input_ticket "$raw_input" "$PWD") || dx_in_ticket=""
+        if [[ -n "$dx_in_ticket" ]]; then
+          dx_info "That URL is ticket ${dx_in_ticket}; running the full workflow for it."
+          raw_input="$dx_in_ticket"
+          set -- "$dx_in_ticket"
+          dx_prompt_mode=workflow
+        fi
+        ;;
+      github-pr)
+        dx_in_ticket=$(dx_input_ticket "$raw_input" "$PWD") || dx_in_ticket=""
+        if [[ -n "$dx_in_ticket" ]]; then
+          dx_info "That URL is pull request #${dx_in_ticket}; resuming the session linked to it."
+          raw_input="--from-pr $dx_in_ticket"
+          set -- --from-pr "$dx_in_ticket"
+          dx_prompt_mode=workflow
+        fi
+        ;;
+      document)
+        # The lifecycle runs in a worktree, so the document needs its full path.
+        dx_in_doc=$(__dx_input_document_path "$raw_input")
+        dx_in_rest=$(__dx_input_trim "${raw_input#*"$dx_in_doc"}")
+        dx_in_doc="$(cd "$(dirname "$dx_in_doc")" && pwd)/$(basename "$dx_in_doc")"
+        raw_input="$dx_in_doc${dx_in_rest:+ $dx_in_rest}"
+        set -- "$raw_input"
+        dx_info "Document input: running the full workflow; Phase 0 reads ${dx_in_doc##*/} and resolves it into a ticket and scope."
+        dx_prompt_mode=workflow
+        ;;
+      linear-project|github-project|url)
+        dx_info "Source input (${dx_in_kind}): running the full workflow; Phase 0 resolves it into this repository's tickets and scope."
+        if [[ "$dx_in_kind" == github-project ]]; then
+          # Listing a project needs a token scope most gh logins do not have;
+          # say so now rather than after Phase 0 has started.
+          if ! command -v gh >/dev/null 2>&1; then
+            dx_warn "The GitHub CLI (gh) is not installed, so Phase 0 cannot list the project's items."
+          elif ! gh auth status 2>&1 | grep -Eq "read:project|'project'|, project[,']"; then
+            dx_warn "The gh token lacks the read:project scope, so Phase 0 cannot list the project's items. Run: gh auth refresh -s read:project"
+          fi
+        fi
+        dx_prompt_mode=workflow
+        ;;
+      prompt)
+        # Say why something that looks like a source is being read as words.
+        dx_in_doc=$(__dx_input_first_token "$raw_input")
+        case "$(printf '%s' "$dx_in_doc" | tr '[:upper:]' '[:lower:]')" in
+          ftp://*|file://*|mailto:*|ssh://*|git@*)
+            dx_warn "Only http(s) links are resolved as sources; reading '${dx_in_doc}' as part of a prompt." ;;
+          */*|*.md|*.txt|*.rst|*.pdf|*.json|*.yaml|*.yml|*.docx)
+            [[ -e "$dx_in_doc" ]] || dx_warn "No file named '${dx_in_doc}' here; reading it as part of a prompt." ;;
+        esac
+        ;;
+    esac
   fi
   if [[ -z "$dx_prompt_mode" && "$dx_literal_prompt" -eq 0 ]]; then
     __dx_confirm_task_word "$1" "$#" || return 1
@@ -4224,6 +4294,13 @@ dx() {
 
   local -x DEX_SESSION_ONLY=0
   __dx_refresh_provider || return 1
+  # Prove the selected provider can launch before a worktree, a branch and a
+  # run record exist for a lifecycle that would stop at Phase 0. Three live
+  # launches did exactly that against a disabled router profile.
+  if command -v dx_provider_agent_ready_check >/dev/null 2>&1 && ! dx_provider_agent_ready_check; then
+    dx_error "The selected provider cannot launch work; nothing was created. Fix the provider (dx provider, dx setup --direct, or dx account add) and run the same command again."
+    return 1
+  fi
 
   # Resume mode — find most recent session and continue from tracked phase
   if [[ "$dx_literal_prompt" -eq 0 && "$1" == "--resume" ]]; then
@@ -5175,7 +5252,11 @@ dxrm() {
     fi
 
     # Clean up state files for THIS repo's worktrees only (not cross-repo globs)
+    __dx_require_lib memory.sh 2>/dev/null || true
     for sid in "${session_ids[@]}"; do
+      if command -v dx_memory_harvest_session >/dev/null 2>&1; then
+        dx_memory_harvest_session "$sid" "$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")" >/dev/null 2>&1 || true
+      fi
       dx_cleanup_session "$sid"
     done
 
@@ -5569,7 +5650,11 @@ dxclean() {
       # Delete the branch (wt_branch captured above; handles renamed branches too)
       [[ -n "$wt_branch" ]] && git branch -D "$wt_branch" 2>/dev/null || true
 
-      # Clean up state files and last-session pointer
+      # Clean up state files and last-session pointer, after harvesting them
+      __dx_require_lib memory.sh 2>/dev/null || true
+      if command -v dx_memory_harvest_session >/dev/null 2>&1; then
+        dx_memory_harvest_session "$session_id" "$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")" >/dev/null 2>&1 || true
+      fi
       dx_cleanup_session "$session_id"
       dx_cleanup_last_session "$wt_name"
 
@@ -5683,9 +5768,10 @@ dxclean() {
     cleaned=$((cleaned + old_phase_files))
   fi
 
-  # UI proof is intentionally longer-lived than lifecycle state so reviewers
-  # can still retrieve it after a PR completes.
+  # UI proof and the QA report are intentionally longer-lived than lifecycle
+  # state so reviewers can still retrieve them after a PR completes.
   dx_ui_capture_cleanup "$(dx_ui_capture_retention_days)" || cleanup_failed=1
+  dx_qa_cleanup "$(dx_ui_capture_retention_days)" || cleanup_failed=1
 
   # 6. Host-wide leftovers.
   #

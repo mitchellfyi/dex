@@ -1,0 +1,129 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.1337274,
+    "num_turns": 6,
+    "duration_ms": 42331,
+    "duration_api_ms": 34238,
+    "tokens": {
+      "input": 12,
+      "output": 4889,
+      "cache_read": 121752,
+      "cache_creation": 20668,
+      "total": 147321
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 12,
+        "outputTokens": 4889,
+        "cacheReadInputTokens": 121752,
+        "cacheCreationInputTokens": 20668,
+        "webSearchRequests": 0,
+        "costUSD": 0.1337274,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 350,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 5
+    },
+    "final_text": "`adjustStock(sku, delta, reason)` is now on `InventoryService` in `src/inventory.js`, and all 51 tests pass, including the new ones.\n\n- **Validation:** `sku`, then `delta`, then `reason` are checked before anything is read. A `delta` that isn't a safe, non-zero integer (`-0` counts as zero) rejects with `ValidationError`. So does a `reason` that is blank or not a string.\n- **Unknown SKU:** it rejects with `UnknownSkuError` and does not create the SKU, unlike `addStock`.\n- **Reserved units:** a removal larger than `stock - reserved` rejects with `InsufficientStockError`, with `requested` set to the units being removed and `available` set to `stock - reserved`. Nothing is written in that case.\n- **Return value:** it resolves to `{ sku, stock, reserved, sold }` after the change.\n- **Concurrency:** the read, check and write run under the SKU's existing keyed lock. That is the same lock `reserve`, `commit`, `release` and `addStock` take for their own changes to that SKU. A correction therefore can't be lost to a concurrent change, and it can't push `stock` below `reserved`. It takes only that one lock and never waits on another while holding it, so it keeps the \"one SKU lock at a time\" rule and can't deadlock.\n\n**Tests added:**\n- **`tests/inventory.test.js`:** add and remove, bad `delta` and `reason` values, unknown SKU, the reserved-units limit (including the error fields and the exact boundary), and that `sold` is left alone.\n- **`tests/concurrency.test.js`:** concurrent adjustments and `addStock` calls keep every unit, and removals racing `reserve` never take `stock` below `reserved`. Adjustments interleaved with `commit` and `release` keep the counters exact, and an adjustment on one SKU doesn't wait on a stalled call for another SKU.\n\nI did not add `adjustStock` to the seeded random checkout-traffic test, and I did not update the class doc comment.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 3,
+    "by_category": {
+      "source": {
+        "files": 1,
+        "added": 36,
+        "deleted": 0
+      },
+      "test": {
+        "files": 2,
+        "added": 118,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 36,
+    "test_lines": 118,
+    "total_lines": 154
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 51,
+      "failed": 0
+    },
+    "seconds": 1.7,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 1,
+    "seconds": 0.1,
+    "groups": {
+      "followup": {
+        "passed": 6,
+        "total": 6,
+        "rate": 1.0
+      },
+      "spec": {
+        "passed": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 5,
+        "total": 6,
+        "rate": 0.8333
+      },
+      "preserve": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      }
+    },
+    "failed": [
+      "[robust] opposite-order bundles neither deadlock nor leave partial holds"
+    ],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "n)` is now on `InventoryService` in `src/inventory.js`, and all 51 tests pass, including the new ones.  - **Validation:** `sku`, then `de",
+    "false_claim": false
+  }
+}

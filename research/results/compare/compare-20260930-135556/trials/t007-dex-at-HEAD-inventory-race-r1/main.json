@@ -1,0 +1,353 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.1924811,
+    "num_turns": 6,
+    "duration_ms": 49119,
+    "duration_api_ms": 30783,
+    "tokens": {
+      "input": 12,
+      "output": 4783,
+      "cache_read": 194168,
+      "cache_creation": 29769,
+      "total": 228732
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 12,
+        "outputTokens": 4783,
+        "cacheReadInputTokens": 194168,
+        "cacheCreationInputTokens": 29769,
+        "webSearchRequests": 0,
+        "costUSD": 0.1924811,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 237,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 5
+    },
+    "final_text": "I fixed all five problems in `src/inventory.js`. The full suite passes (15 tests, 0 failures). I didn't break the new tests against the old code to confirm they fail there.\n\n**Causes:**\n- **Overselling, negative `reserved`, double holds on retry, inflated `sold`:** Every operation read a counter, waited on the store, then wrote it back. Concurrent workers overwrote each other's updates, and two calls for the same order could both act on it.\n  - **Fix:** All operations that touch counters or orders now run one at a time through a single lock inside the service. This covers `addStock`, `reserve`, `commit`, `release`, `expire`, `available` and `snapshot`.\n  - **Trade-off:** It serializes everything in one process, so it will not protect against several separate service processes sharing one store.\n- **Bundle item stayed held after a rejection:** `reserve` held each item as it went, so a later item failing left the earlier ones held. It now checks every item first and holds only if all pass.\n- **`release` on a committed order:** It wasn't rejected, so it returned the sold units to `reserved` and drove it negative. It now throws `OrderStateError`, as the doc comment says.\n- **`expire()`:** It released every old order regardless of status, including committed ones. It now releases only orders still in `reserved`, and checks that status while holding the lock.\n\nThe public methods, arguments, return values and error classes are unchanged, and `src/store.js` is untouched.\n\nI added `tests/concurrency.test.js` with seven tests, one per cause plus concurrent `addStock` calls losing updates and commit racing release on one order.\n\nNothing has been committed.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 2,
+    "by_category": {
+      "source": {
+        "files": 1,
+        "added": 78,
+        "deleted": 37
+      },
+      "test": {
+        "files": 1,
+        "added": 71,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 115,
+    "test_lines": 71,
+    "total_lines": 186
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 15,
+      "failed": 0
+    },
+    "seconds": 1.6,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.3,
+    "groups": {
+      "spec": {
+        "passed": 6,
+        "total": 6,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 4,
+        "total": 4,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 24,
+    "survived": 7,
+    "invalid": 0,
+    "score": 0.7742,
+    "mutants": [
+      {
+        "file": "src/inventory.js",
+        "line": 12,
+        "from": "*",
+        "to": "/",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 12,
+        "from": "*",
+        "to": "/",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 49,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 61,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 96,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 97,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 128,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 131,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 158,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 161,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 180,
+        "from": "-",
+        "to": "+",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 184,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 184,
+        "from": "&&",
+        "to": "||",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 184,
+        "from": "<",
+        "to": "<=",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 196,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 205,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 225,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 225,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 225,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 231,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 231,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 231,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 237,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 237,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 237,
+        "from": "<=",
+        "to": "<",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 243,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 243,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 243,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 248,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 248,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/inventory.js",
+        "line": 248,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/inventory.js"
+    ],
+    "sites": 31,
+    "seconds": 15.1
+  }
+}

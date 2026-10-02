@@ -1,0 +1,466 @@
+{
+  "load_average_start": [
+    7.72412109375,
+    8.390625,
+    8.79638671875
+  ],
+  "cpus": 12,
+  "skipped": {},
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [
+      "@eslint/js",
+      "eslint",
+      "globals"
+    ],
+    "declared": 3,
+    "installed_packages": 79,
+    "audit": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.61,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.6,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.61,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.64,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.62,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.61,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 3,
+    "test_files": 4,
+    "source_lines": 275,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 30,
+      "mean": 2.3,
+      "max": 9,
+      "p90": 4
+    },
+    "function_lines": {
+      "n": 30,
+      "mean": 6.77,
+      "max": 21,
+      "p90": 19
+    },
+    "max_depth": 2,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 303
+  },
+  "cli": {
+    "passed": 24,
+    "total": 24,
+    "rate": 1.0,
+    "checks": [
+      {
+        "check": "usage text lists the commands (no args, --help or help)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete 99: exits non-zero",
+        "ok": true,
+        "detail": "exit 1"
+      },
+      {
+        "check": "complete 99: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete 99: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete 99: message names '99'",
+        "ok": true,
+        "detail": "Error: No todo with id 99. Run \"node index.js list\" to see existing ids."
+      },
+      {
+        "check": "delete 99: exits non-zero",
+        "ok": true,
+        "detail": "exit 1"
+      },
+      {
+        "check": "delete 99: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "delete 99: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "delete 99: message names '99'",
+        "ok": true,
+        "detail": "Error: No todo with id 99. Run \"node index.js list\" to see existing ids."
+      },
+      {
+        "check": "complete abc: exits non-zero",
+        "ok": true,
+        "detail": "exit 1"
+      },
+      {
+        "check": "complete abc: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete abc: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete abc: message names 'abc'",
+        "ok": true,
+        "detail": "Error: Invalid todo id \"abc\". Expected a positive integer such as 1."
+      },
+      {
+        "check": "add: exits non-zero",
+        "ok": true,
+        "detail": "exit 1"
+      },
+      {
+        "check": "add: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "add: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "frobnicate: exits non-zero",
+        "ok": true,
+        "detail": "exit 1"
+      },
+      {
+        "check": "frobnicate: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "frobnicate: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "frobnicate: message names 'frobnicate'",
+        "ok": true,
+        "detail": "Error: Unknown command \"frobnicate\".\n\nUsage: node index.js <command> [arguments]\n\nCommands:\n  add <text>       Add a new"
+      },
+      {
+        "check": "add Buy milk: exits 0 with output on stdout",
+        "ok": true,
+        "detail": "exit 0"
+      },
+      {
+        "check": "add Buy milk: nothing on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "list: exits 0 with output on stdout",
+        "ok": true,
+        "detail": "exit 0"
+      },
+      {
+        "check": "list: nothing on stderr",
+        "ok": true,
+        "detail": ""
+      }
+    ]
+  },
+  "docs": {
+    "readme": true,
+    "files": [
+      "README.md"
+    ],
+    "samples": 8,
+    "passed": 8,
+    "rate": 1.0,
+    "failures": []
+  },
+  "perf": {
+    "reps": 4,
+    "workloads": [
+      {
+        "name": "list with 1000 todos",
+        "kind": "cli",
+        "agent_ms": 74.45845800000001,
+        "reference_ms": 73.7515,
+        "ratio": 1.0095856762235347,
+        "cv": 0.027697766670638658,
+        "agent_ms_samples": [
+          75.091666,
+          73.937541,
+          74.979375,
+          73.458541
+        ],
+        "reference_ms_samples": [
+          74.715542,
+          70.927459,
+          72.787458,
+          75.455416
+        ]
+      },
+      {
+        "name": "20 sequential adds",
+        "kind": "cli",
+        "agent_ms": 516.79975,
+        "reference_ms": 496.92774999999995,
+        "ratio": 1.0399897168149697,
+        "cv": 0.016629414484357705,
+        "agent_ms_samples": [
+          506.350208,
+          524.905667,
+          521.675542,
+          511.923958
+        ],
+        "reference_ms_samples": [
+          490.199458,
+          499.541333,
+          498.334958,
+          495.520542
+        ]
+      },
+      {
+        "name": "complete in a 1000-todo store",
+        "kind": "cli",
+        "agent_ms": 76.7545415,
+        "reference_ms": 75.390625,
+        "ratio": 1.0180913276683938,
+        "cv": 0.02364255228785169,
+        "agent_ms_samples": [
+          75.0525,
+          77.471541,
+          78.1695,
+          76.037542
+        ],
+        "reference_ms_samples": [
+          74.851459,
+          78.146917,
+          75.929791,
+          74.008083
+        ]
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      7.87646484375,
+      8.38818359375,
+      8.78759765625
+    ],
+    "cpus": 12,
+    "geomean_ratio": 1.0224756820667538,
+    "load_average_before": [
+      7.87646484375,
+      8.38818359375,
+      8.78759765625
+    ]
+  },
+  "fuzz": {
+    "sequences": 10,
+    "steps": 15,
+    "seed": 1,
+    "passed": 6,
+    "divergences": [
+      {
+        "sequence_seed": 1000,
+        "step": 2,
+        "op": "add a  b",
+        "expected": [
+          [
+            "$HOME",
+            true
+          ],
+          [
+            "a  b",
+            false
+          ]
+        ],
+        "actual": [
+          [
+            "$HOME",
+            true
+          ],
+          [
+            "a b",
+            false
+          ]
+        ],
+        "history": [
+          "add $HOME",
+          "complete 1",
+          "add a  b"
+        ]
+      },
+      {
+        "sequence_seed": 1001,
+        "step": 13,
+        "op": "add a  b",
+        "expected": [
+          [
+            "say \"hi\"",
+            true
+          ],
+          [
+            "say \"hi\"",
+            true
+          ],
+          [
+            "a  b",
+            false
+          ]
+        ],
+        "actual": [
+          [
+            "say \"hi\"",
+            true
+          ],
+          [
+            "say \"hi\"",
+            true
+          ],
+          [
+            "a b",
+            false
+          ]
+        ],
+        "history": [
+          "add say \"hi\"",
+          "add say \"hi\"",
+          "complete 2",
+          "complete 2",
+          "complete 1",
+          "add Buy eggs",
+          "complete 2",
+          "delete 53",
+          "complete 2",
+          "delete 3",
+          "list",
+          "complete 1",
+          "complete 2",
+          "add a  b"
+        ]
+      },
+      {
+        "sequence_seed": 1007,
+        "step": 1,
+        "op": "add a  b",
+        "expected": [
+          [
+            "Caf\u00e9 \u2713",
+            false
+          ],
+          [
+            "a  b",
+            false
+          ]
+        ],
+        "actual": [
+          [
+            "Caf\u00e9 \u2713",
+            false
+          ],
+          [
+            "a b",
+            false
+          ]
+        ],
+        "history": [
+          "add Caf\u00e9 \u2713",
+          "add a  b"
+        ]
+      },
+      {
+        "sequence_seed": 1009,
+        "step": 0,
+        "op": "add tab\there",
+        "expected": [
+          [
+            "tab\there",
+            false
+          ]
+        ],
+        "actual": [
+          [
+            "tab here",
+            false
+          ]
+        ],
+        "history": [
+          "add tab\there"
+        ]
+      }
+    ],
+    "harness_errors": [],
+    "pass_rate": 0.6
+  },
+  "load_average_end": [
+    7.72607421875,
+    8.34814453125,
+    8.77099609375
+  ]
+}

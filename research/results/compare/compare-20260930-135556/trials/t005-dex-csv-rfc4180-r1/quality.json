@@ -1,0 +1,262 @@
+{
+  "load_average_start": [
+    25.9716796875,
+    27.9677734375,
+    31.46533203125
+  ],
+  "cpus": 12,
+  "skipped": {
+    "cli": "scenario has no CLI"
+  },
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [],
+    "declared": 0,
+    "installed_packages": 0,
+    "audit": null
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 0.32,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 0.31,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.29,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.51,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.32,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 0.48,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 1,
+    "test_files": 1,
+    "source_lines": 176,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 15,
+      "mean": 5.4,
+      "max": 28,
+      "p90": 14
+    },
+    "function_lines": {
+      "n": 15,
+      "mean": 13.73,
+      "max": 113,
+      "p90": 39
+    },
+    "max_depth": 6,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 191
+  },
+  "cli": null,
+  "docs": {
+    "readme": false
+  },
+  "perf": {
+    "reps": 6,
+    "workloads": [
+      {
+        "name": "parse 50k rows",
+        "kind": "module",
+        "agent_ms": 29.3287915,
+        "reference_ms": 67.2542705,
+        "ratio": 0.43608816632692493,
+        "cv": 0.3382939551389892,
+        "agent_ms_samples": [
+          28.5255,
+          34.216542,
+          57.785666,
+          30.132083,
+          27.687708,
+          28.467917
+        ],
+        "reference_ms_samples": [
+          62.581208,
+          60.331083,
+          54.618958,
+          76.181709,
+          81.203709,
+          71.927333
+        ],
+        "agent_rss_kb": 127120,
+        "reference_rss_kb": 152344,
+        "rss_ratio": 0.8344273486320433
+      },
+      {
+        "name": "stringify 50k rows",
+        "kind": "module",
+        "agent_ms": 25.815061999999998,
+        "reference_ms": 34.241896,
+        "ratio": 0.7539028212690092,
+        "cv": 0.2070830813092355,
+        "agent_ms_samples": [
+          21.546833,
+          25.272208,
+          26.357916,
+          33.385167,
+          33.483625,
+          22.688417
+        ],
+        "reference_ms_samples": [
+          37.403291,
+          45.199125,
+          26.5805,
+          26.943083,
+          32.31275,
+          36.171042
+        ],
+        "agent_rss_kb": 97264,
+        "reference_rss_kb": 100592,
+        "rss_ratio": 0.96691585811993
+      },
+      {
+        "name": "parse one 4 MB quoted field",
+        "kind": "module",
+        "agent_ms": 124.502062,
+        "reference_ms": 111.9695415,
+        "ratio": 1.1119279433684204,
+        "cv": 0.26933518607786716,
+        "agent_ms_samples": [
+          101.397166,
+          91.638834,
+          131.212583,
+          181.4925,
+          117.791541,
+          164.210417
+        ],
+        "reference_ms_samples": [
+          108.902792,
+          83.206958,
+          101.612667,
+          133.153042,
+          115.036291,
+          140.474083
+        ],
+        "agent_rss_kb": 192720,
+        "reference_rss_kb": 192200,
+        "rss_ratio": 1.0027055150884496
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      27.51318359375,
+      28.20556640625,
+      31.5068359375
+    ],
+    "cpus": 12,
+    "geomean_ratio": 0.7150264460022412,
+    "load_average_before": [
+      27.51318359375,
+      28.20556640625,
+      31.5068359375
+    ]
+  },
+  "fuzz": {
+    "sequences": 40,
+    "steps": 40,
+    "seed": 1,
+    "passed": 37,
+    "divergences": [
+      {
+        "sequence_seed": 1006,
+        "step": 0,
+        "op": "parse(\"1,, \\t\u65e5b\\n#\\\"b\\\"Z#|\\n\\\"\\nZ\\nab#\\\"aa\ud83d\ude00Z\", {\"delimiter\":\",\",\"header\":true})",
+        "expected": {
+          "error": "CsvError",
+          "line": 5,
+          "column": 5
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "sequence_seed": 1033,
+        "step": 29,
+        "op": "parse(\",\\r\\r\\\"#\", {\"delimiter\":\",\",\"eol\":\"\\n\",\"skipEmptyLines\":true,\"header\":true})",
+        "expected": {
+          "error": "CsvError",
+          "line": 3,
+          "column": 1
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 1,
+          "column": 2
+        }
+      },
+      {
+        "sequence_seed": 1036,
+        "step": 8,
+        "op": "parse(\"1\u65e5#\u65e5\\t\ud83d\ude00 #\ud83d\ude00,b\\n\\n\\\";1#\u65e5;\\\",;\\r\\\"\", {\"delimiter\":\"\\t\",\"eol\":\"\\n\",\"header\":true})",
+        "expected": {
+          "error": "CsvError",
+          "line": 3,
+          "column": 8
+        },
+        "actual": {
+          "error": "CsvError",
+          "line": 2,
+          "column": 1
+        }
+      }
+    ],
+    "harness_errors": [],
+    "pass_rate": 0.925
+  },
+  "load_average_end": [
+    27.51318359375,
+    28.20556640625,
+    31.5068359375
+  ]
+}

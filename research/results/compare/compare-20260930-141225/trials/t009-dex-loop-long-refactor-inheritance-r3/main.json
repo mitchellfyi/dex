@@ -1,0 +1,118 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 3.889984800000001,
+    "num_turns": 59,
+    "duration_ms": 1142919,
+    "duration_api_ms": 967080,
+    "tokens": {
+      "input": 100,
+      "output": 89606,
+      "cache_read": 5811349,
+      "cache_creation": 173866,
+      "total": 6074921
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 100,
+        "outputTokens": 89606,
+        "cacheReadInputTokens": 5811349,
+        "cacheCreationInputTokens": 173866,
+        "webSearchRequests": 0,
+        "costUSD": 3.889984800000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 47230,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 37,
+      "Write": 3,
+      "Edit": 9,
+      "Read": 8
+    },
+    "final_text": "The audit passed and the completion receipt is written. The code refactor didn't change during the audit, but the review found and fixed nine gaps. Eight were in the tests and one was an inconsistent option name.\n\n## Acceptance criteria\n1. **Contextual:** the refactor lives in `src/notifications/` and uses composition (strategy objects, plain functions, or small services).\n2. **Functional:** the inheritance hierarchy is removed.\n3. **Functional:** there is no `extends Notifier`, no `super`, and no abstract base class.\n4. **Functional:** email, SMS, Slack and in-app behave exactly as before.\n5. **Contextual:** `createNotifier`, `createAllNotifiers` and `registry` keep working with the same API.\n6. **Non-functional:** the existing tests are run and pass.\n7. **Contextual:** no files in `tests/` are modified.\n8. **Contextual:** no unrelated features and no layout changes outside the refactor.\n9. **Implied:** validation errors, missing transports and failed transports behave as before.\n\n## Evidence\n\n| # | Criterion | Implementation | Test | Status |\n|---|-----------|----------------|------|--------|\n| 1 | Composition | `src/notifications/channelNotifier.js:44`, `throttle.js:5`, `email.js:20`, `sms.js:13`, `slack.js:31`, `inapp.js:7` | `notifications.test.js:33` onward (describe blocks) | MET |\n| 2 | Hierarchy removed | `Notifier.js` and the 4 subclass files deleted (`git ls-files src/notifications`) | grep for `extends\\|super\\|class\\|prototype` in `src/` finds nothing | MET |\n| 3 | No `extends`, `super` or base class | `channelNotifier.js:130` returns `{ channel, send }` | same grep | MET |\n| 4 | Behavior kept | `email.js:41`, `sms.js:33`, `slack.js:53`, `inapp.js:29`, `throttle.js:11` | `tests/channel-behavior.test.js:14,37,61,83`; `notifications.test.js:129\u2013364`; 38,040 old-vs-new sends with 0 mismatches | MET |\n| 5 | Factory API | `index.js:8,15,23,30` | `tests/factory.test.js:14,21,25`; `notifications.test.js:34,41,57` | MET |\n| 6 | Existing tests pass | \u2014 | full gate: 54/54, including the 8 originals | MET |\n| 7 | `tests/` untouched | \u2014 | `git diff --quiet 0587d14 -- tests/` exits 0 | MET |\n| 8 | No scope creep | only `src/notifications/` plus the `package.json` test-script line | \u2014 | MET |\n| 9 | Error paths | `channelNotifier.js:89` (deliver), `:97` (send order) | `notifications.test.js:89,104,110,229,243,250` | MET |\n\n## What the audit changed\n- **Wave 1:** fixed 3 low-severity findings. The send-time options passed to `format()` are now called `sendOptions`, so `options` always means notifier options. I also removed repeated validation tests and renamed one test whose name was wrong.\n- **Wave 2:** fixed 6 test-coverage gaps, confirmed by mutation probes. I broke 47 things on purpose to see what the tests would miss. Before these fixes, 19 of them passed every test, including dropped HTML escaping of `&` and `\"`, the per-channel default hourly limits, and most settings overrides. Now only one does: the SMS `segments` count is always 1, so no test can catch a change to it.\n- **Parity check:** the new tests also pass against the original classes, except the three that cover my intended changes (detached `send`, own-key registry lookup, callable registry entries).\n- **Wave 3:** no findings. It recorded 7 notes below the bar, all listed in the wave 3 result above. The ones worth knowing are that the throttle store never deletes old timestamps and concurrent sends can exceed the limit. Both behaved that way before the refactor.\n\n## Verification\n- **Tests:** 54/54 pass through `dx run-gate --name full-gate` on the final tree.\n- **Other checks:** no formatter, linter or type checker is configured, so there was nothing else to run.\n\nThe work is in three commits on `refactor/notifications-composition`, ending at `6d509c3`, with no remote to push to.\n\nPROMPT_COMPLETE",
+    "stop_hook_blocks": 1,
+    "loop_completed": true,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 14,
+    "by_category": {
+      "config": {
+        "files": 1,
+        "added": 1,
+        "deleted": 1
+      },
+      "source": {
+        "files": 12,
+        "added": 445,
+        "deleted": 406
+      },
+      "test": {
+        "files": 1,
+        "added": 379,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [
+      "package.json"
+    ],
+    "forbidden_touched": [],
+    "source_lines": 851,
+    "test_lines": 379,
+    "total_lines": 1232
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 54,
+      "failed": 0
+    },
+    "seconds": 0.7,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.4,
+    "groups": {
+      "preserve": {
+        "passed": 28,
+        "total": 28,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "5`; `notifications.test.js:34,41,57` | MET | | 6 | Existing tests pass | \u2014 | full gate: 54/54, including the 8 originals | MET | |",
+    "false_claim": false
+  },
+  "mutation": null
+}

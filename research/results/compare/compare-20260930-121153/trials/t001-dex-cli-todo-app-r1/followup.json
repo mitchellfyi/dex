@@ -1,0 +1,122 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.0728902,
+    "num_turns": 4,
+    "duration_ms": 28787,
+    "duration_api_ms": 15378,
+    "tokens": {
+      "input": 8,
+      "output": 2267,
+      "cache_read": 64106,
+      "cache_creation": 11583,
+      "total": 77964
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 8,
+        "outputTokens": 2267,
+        "cacheReadInputTokens": 64106,
+        "cacheCreationInputTokens": 11583,
+        "webSearchRequests": 0,
+        "costUSD": 0.0728902,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 72,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 3
+    },
+    "final_text": "Both features are added, and `npm test` passes (59 tests, including the new ones).\n\n- **`edit <id> <text>`**:\n  - It replaces the text and keeps the id, completed status and `createdAt`. The text is trimmed, as `add` does.\n  - A missing id, a missing or blank text, or an unknown id prints `Error: \u2026` to stderr, exits with 1 and leaves `todos.json` unchanged.\n  - Multi-word text has to be quoted, the same as `add`.\n- **`list --pending`**: shows only incomplete todos in the same format as `list`. Plain `list` still shows everything.\n\n**Choices I made:**\n- When nothing is pending, `list --pending` prints `No pending todos.`.\n- `list` with any flag other than `--pending` is an error.\n- I updated the usage text and the README examples.\n\nThe logic is in `src/todos.js` and `src/cli.js`, and the new tests are in `test/edit-pending.test.js`. I haven't committed anything.",
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 4,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 2,
+        "deleted": 0
+      },
+      "source": {
+        "files": 2,
+        "added": 28,
+        "deleted": 4
+      },
+      "test": {
+        "files": 1,
+        "added": 57,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 32,
+    "test_lines": 57,
+    "total_lines": 91
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 59,
+      "failed": 0
+    },
+    "seconds": 1.0,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 1,
+    "seconds": 2.1,
+    "groups": {
+      "spec": {
+        "passed": 11,
+        "total": 11,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 5,
+        "total": 6,
+        "rate": 0.8333
+      },
+      "followup": {
+        "passed": 6,
+        "total": 6,
+        "rate": 1.0
+      }
+    },
+    "failed": [
+      "[robust] ids are not reused after deleting the newest todo"
+    ],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  }
+}

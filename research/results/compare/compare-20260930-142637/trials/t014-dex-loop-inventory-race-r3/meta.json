@@ -1,0 +1,19 @@
+{
+  "trial_id": "t014-dex-loop-inventory-race-r3",
+  "arm": "dex-loop",
+  "arm_family": "dex-loop",
+  "prompts_source": "working tree",
+  "scenario": "inventory-race",
+  "replica": 3,
+  "seeded": 1,
+  "model": "opus",
+  "effort": "xhigh",
+  "timeout_s": 3600,
+  "exit_code": 0,
+  "wall_seconds": 1032,
+  "legacy_total": 93,
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 46
+}

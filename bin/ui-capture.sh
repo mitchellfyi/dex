@@ -87,6 +87,21 @@ print(field)
 PY
 }
 
+# bundle_json_field <bundle> <field> — the field as compact JSON, or nothing
+# when the bundle has no such field. bundle_field above handles strings only.
+bundle_json_field() {
+  local bundle_file="$1" field_name="$2"
+  python3 - "$bundle_file" "$field_name" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    value = json.load(fh)
+if sys.argv[2] in value:
+    print(json.dumps(value[sys.argv[2]], separators=(",", ":")))
+PY
+}
+
 copy_proof_file() {
   local source_file="$1" target_file="$2" tmp_file
   [[ -f "$source_file" && ! -L "$source_file" && -s "$source_file" ]] || {
@@ -150,7 +165,7 @@ record_capture_failure() {
 }
 
 record_bundle_status() {
-  local session_id="$1" session_dir bundle_file evidence_status message manifest_file video_file
+  local session_id="$1" session_dir bundle_file evidence_status message manifest_file video_file criteria_json
   session_dir=$(dx_ui_capture_session_dir "$session_id")
   bundle_file="$session_dir/bundle.json"
   [[ -f "$bundle_file" && ! -L "$bundle_file" ]] || {
@@ -161,7 +176,9 @@ record_bundle_status() {
   message=$(bundle_field "$bundle_file" message) || return 1
   manifest_file=$(bundle_field "$bundle_file" manifest) || return 1
   video_file=$(bundle_field "$bundle_file" video) || return 1
-  dx_ui_capture_write_status "$session_id" "$evidence_status" "$message" "$manifest_file" "$video_file"
+  criteria_json=$(bundle_json_field "$bundle_file" criteria) || criteria_json=""
+  dx_ui_capture_write_status "$session_id" "$evidence_status" "$message" "$manifest_file" "$video_file" \
+    active 0 "$criteria_json"
   if command -v dx_ui_capture_register_bundle >/dev/null 2>&1; then
     dx_ui_capture_register_bundle "$session_id" || dx_warn "The UI proof is local, but it could not be attached to the active Dex run."
   fi
@@ -294,6 +311,16 @@ if ! dx_session_id_valid "$session_id"; then
 fi
 session_dir=$(dx_ui_capture_session_dir "$session_id")
 
+# The approved Phase 1 criteria, when the session has them, so the producer can
+# print criterion text beside each assert that names one. Only a file that
+# still validates is handed over; the storyboard never depends on it.
+criteria_file=""
+if criteria_candidate=$(dx_review_criteria_file "$session_id" 2>/dev/null) \
+  && [[ -n "$criteria_candidate" && -f "$criteria_candidate" && ! -L "$criteria_candidate" ]] \
+  && dx_review_criteria_valid "$criteria_candidate"; then
+  criteria_file="$criteria_candidate"
+fi
+
 case "$mode" in
   show)
     evidence_file=$(dx_ui_capture_evidence_file "$session_id")
@@ -418,6 +445,7 @@ if [[ "$mode" == "revise" ]]; then
   [[ -n "$after_url" ]] && runner_args+=(--after-url "$after_url")
   [[ "$trace" -eq 1 ]] && runner_args+=(--trace)
   [[ "$narration" -eq 0 ]] && runner_args+=(--no-narration)
+  [[ -n "$criteria_file" ]] && runner_args+=(--criteria "$criteria_file")
   set +e
   revision_output=$(DX_UI_CAPTURE_TOOLS_DIR="$(dx_ui_capture_tools_dir)" node "$DEX_DIR/scripts/ui-capture.cjs" "${runner_args[@]}" 2>&1)
   revision_exit=$?
@@ -456,6 +484,7 @@ runner_args=(capture --url "$url" --name "$run_name" --out "$abs_out_dir" --wait
 if [[ -n "$canonical_storyboard" ]]; then
   runner_args+=(--stage "$stage" --script "$canonical_storyboard" --session-dir "$session_dir")
   [[ "$narration" -eq 0 ]] && runner_args+=(--no-narration)
+  [[ -n "$criteria_file" ]] && runner_args+=(--criteria "$criteria_file")
 fi
 
 dx_info "Capturing ${stage:+${stage} }UI proof for ${url}"

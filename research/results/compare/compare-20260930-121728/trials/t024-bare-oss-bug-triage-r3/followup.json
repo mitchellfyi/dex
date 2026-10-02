@@ -1,0 +1,126 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.08857480000000001,
+    "num_turns": 6,
+    "duration_ms": 32673,
+    "duration_api_ms": 20004,
+    "tokens": {
+      "input": 8,
+      "output": 3051,
+      "cache_read": 69249,
+      "cache_creation": 14280,
+      "total": 86588
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 8,
+        "outputTokens": 3051,
+        "cacheReadInputTokens": 69249,
+        "cacheCreationInputTokens": 14280,
+        "webSearchRequests": 0,
+        "costUSD": 0.08857480000000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 199,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Read": 3,
+      "Bash": 2
+    },
+    "final_text": "`buildUrl` now takes an optional `queryOrder`, and `buildSignedUrl` picks it up because it passes its options through. The full suite passes (14 tests, 6 of them new). I didn't commit.\n\n- **Values:** `'sorted'` is the default and keeps today's sorted keys. `'insertion'` keeps the key order of the `query` object.\n- **Validation:** `undefined` means the default. Any other value (`'reverse'`, `'SORTED'`, `''`, `null`, `1`, `true`) throws a `TypeError`, including when `query` is a `URLSearchParams`.\n- **Arrays and `URLSearchParams`:** arrays still give one pair per item in array order, with `null` items skipped as before. A `URLSearchParams` query is returned unchanged under either ordering.\n- **`serializeQuery`:** it has a second parameter that defaults to `'sorted'`, so the existing test that calls it with one argument still works.\n- **Tests:** the new tests in `tests/url-builder.test.js` cover default and explicit `'sorted'`, `'insertion'`, array order, the `TypeError` cases, `URLSearchParams` passthrough, and `buildSignedUrl` forwarding and rejecting the option.\n\n`'insertion'` follows JavaScript's own object key order. Keys that look like integers, such as `'1'` or `'42'`, always come before other keys, in ascending numeric order, whatever order you wrote them in. That is how JS objects behave. Passing a `URLSearchParams` or an array of pairs is the way to get a fully arbitrary order.",
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 2,
+    "by_category": {
+      "source": {
+        "files": 1,
+        "added": 15,
+        "deleted": 4
+      },
+      "test": {
+        "files": 1,
+        "added": 61,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 19,
+    "test_lines": 61,
+    "total_lines": 80
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 14,
+      "failed": 0
+    },
+    "seconds": 0.6,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.2,
+    "groups": {
+      "followup": {
+        "passed": 7,
+        "total": 7,
+        "rate": 1.0
+      },
+      "spec": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 21,
+        "total": 21,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  }
+}

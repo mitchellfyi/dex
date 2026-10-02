@@ -892,7 +892,7 @@ __dx_session_summary() {
   local session_id="${1:-}" reason="${2:-}" scope="${3:-session}"
   local reaped="${4:-0}" survived="${5:-0}"
   local process_dir marker phase_value="" phase_json="null" peak_json="null"
-  local peak_text summary_json summary_line
+  local peak_text summary_json summary_line ungated_count=0 ungated_dir=""
   case "$reason" in
     session-end|phase-exit|watchdog-kill|launcher-stopped) ;;
     *) return 0 ;;
@@ -925,17 +925,30 @@ __dx_session_summary() {
     # size. Saying so beats reporting a zero nobody measured.
     peak_text="peak RSS unavailable"
   fi
+  # Declared heavy commands the `warn-detached-processes` guard saw run
+  # outside `dx run-gate`: one line each in `ungated.jsonl`, written by
+  # hooks/guard-handler.py beside the receipts the gated runs produced. Zero
+  # when there is no counter, and zero when it cannot be read — a line nobody
+  # could count is not a number to report.
+  if command -v dx_gate_receipt_dir >/dev/null 2>&1 \
+    && ungated_dir=$(dx_gate_receipt_dir "$session_id" 2>/dev/null) \
+    && [[ -f "$ungated_dir/ungated.jsonl" ]]; then
+    ungated_count=$(wc -l < "$ungated_dir/ungated.jsonl" 2>/dev/null \
+      | tr -d '[:space:]') || ungated_count=0
+    [[ "$ungated_count" =~ ^[0-9]{1,9}$ ]] || ungated_count=0
+  fi
 
-  summary_json=$(printf '{"reason":"%s","phase":%s,"heavy_commands":%s,"heavy_seconds":%s,"queue_seconds":%s,"over_budget_commands":%s,"peak_rss_mb":%s,"peak_rss_samples":%s,"reaped":%s,"survived":%s}' \
+  summary_json=$(printf '{"reason":"%s","phase":%s,"heavy_commands":%s,"heavy_seconds":%s,"queue_seconds":%s,"over_budget_commands":%s,"ungated_heavy_commands":%s,"peak_rss_mb":%s,"peak_rss_samples":%s,"reaped":%s,"survived":%s}' \
     "$reason" "$phase_json" "$DX_SESSION_TELEMETRY_GATES" \
     "$DX_SESSION_TELEMETRY_GATE_SECONDS" \
     "$DX_SESSION_TELEMETRY_QUEUE_SECONDS" \
-    "$DX_SESSION_TELEMETRY_OVER_BUDGET" "$peak_json" \
+    "$DX_SESSION_TELEMETRY_OVER_BUDGET" "$ungated_count" "$peak_json" \
     "$DX_SESSION_TELEMETRY_PEAK_RSS_SAMPLES" "$reaped" "$survived")
-  summary_line=$(printf 'session summary: phase %s, %s heavy command(s) (%ss running, %ss queued), %s, %s reaped, %s survived' \
+  summary_line=$(printf 'session summary: phase %s, %s heavy command(s) (%ss running, %ss queued), %s ungated, %s, %s reaped, %s survived' \
     "${phase_value:--}" "$DX_SESSION_TELEMETRY_GATES" \
     "$DX_SESSION_TELEMETRY_GATE_SECONDS" \
-    "$DX_SESSION_TELEMETRY_QUEUE_SECONDS" "$peak_text" "$reaped" "$survived")
+    "$DX_SESSION_TELEMETRY_QUEUE_SECONDS" "$ungated_count" "$peak_text" \
+    "$reaped" "$survived")
   __dx_session_report info "${session_id}: ${summary_line}"
   __dx_session_reap_event "$session_id" session.summary info \
     "$summary_line" "$summary_json"

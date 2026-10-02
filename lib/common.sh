@@ -14,8 +14,8 @@
 # lib/review-controller.sh, lib/review-acceptance.sh, lib/review-diagnostics.sh,
 # lib/review-loop.sh, lib/factory.sh,
 # lib/run-spec.sh, lib/agent-tools.sh, lib/maintenance.sh, lib/project-state.sh,
-# lib/lifecycle-control.sh, lib/benchmark.sh, lib/session-management.sh,
-# lib/attribution.sh, and lib/worker.sh
+# lib/lifecycle-control.sh, lib/session-management.sh, lib/attribution.sh, and
+# lib/worker.sh
 
 if [[ -z "${DEX_DIR:-}" ]]; then
   # Auto-detect from this file's location (lib/common.sh → repo root).
@@ -168,6 +168,7 @@ fi
 
 __dx_require_lib lock.sh
 __dx_require_lib git.sh
+__dx_require_lib input.sh
 __dx_require_lib session.sh
 __dx_require_lib session-process.sh
 __dx_require_lib override.sh
@@ -181,6 +182,7 @@ __dx_require_lib provider.sh
 __dx_require_lib codex.sh
 __dx_require_lib dexcode.sh
 __dx_require_lib ui-capture.sh
+__dx_require_lib qa.sh
 __dx_require_lib rtk.sh
 __dx_require_lib events.sh
 __dx_require_lib review.sh
@@ -196,7 +198,6 @@ __dx_require_lib agent-tools.sh
 __dx_require_lib maintenance.sh
 __dx_require_lib project-state.sh
 __dx_require_lib lifecycle-control.sh
-__dx_require_lib benchmark.sh
 __dx_require_lib session-management.sh
 __dx_require_lib attribution.sh
 __dx_require_lib worker.sh

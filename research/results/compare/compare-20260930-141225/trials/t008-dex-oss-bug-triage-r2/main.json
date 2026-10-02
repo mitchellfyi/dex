@@ -1,0 +1,417 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.44754819999999995,
+    "num_turns": 11,
+    "duration_ms": 105719,
+    "duration_api_ms": 83517,
+    "tokens": {
+      "input": 16,
+      "output": 7443,
+      "cache_read": 288126,
+      "cache_creation": 35292,
+      "total": 330877
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 16,
+        "outputTokens": 7443,
+        "cacheReadInputTokens": 288126,
+        "cacheCreationInputTokens": 35292,
+        "webSearchRequests": 0,
+        "costUSD": 0.44754819999999995,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 3428,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 7,
+      "Edit": 3
+    },
+    "final_text": "I fixed the bug where `buildUrl` dropped `retry=0` and `include_archived=false`. The full suite (`npm test`) passes, 9 of 9, including the two new regression tests.\n\n**Root cause:** In `src/url-builder.js`, `serializeQuery` skipped any value that counts as false in JavaScript (`if (!value) continue;`). So `0`, `false` and `''` were treated as missing. `appendQueryValue` did the same for array items, so `attempt: [0, 1]` came out as `attempt=1`. I reproduced both before changing anything.\n\n**Fix (2 lines):** Both checks now skip only `undefined` and `null`, which is the same check `normalizePath` already uses. The issue's example now produces `\u2026/webhooks/deliveries?dry_run=true&include_archived=false&retry=0`. The builder's API is unchanged.\n\n**Regression tests** in `tests/url-builder.test.js`:\n- `buildUrl keeps zero and false query values (ISSUE-214)`: the reported case, run through `buildUrl`.\n- `serializeQuery keeps falsy array items and empty strings but skips null and undefined`: the array case, and a check that `null`/`undefined` are still left out.\n\nBoth tests fail on the old code. In a scratch copy I also deleted the check entirely, and the second test caught `null` being written out as `attempt=null`.\n\n`ISSUE.md` now ends with a `Resolution` section naming the code path, the fix and both tests.\n\n**Decision for you:** an empty string now produces `key=` instead of being dropped. This follows from making only `null`/`undefined` mean \"leave this key out\", and it matches how `URLSearchParams` behaves. Any caller that relied on `''` disappearing will see the key appear; passing `undefined` instead keeps it out. If you'd rather keep dropping `''`, it's one extra condition in each check. I noted this in `ISSUE.md`.\n\n**What I didn't do:**\n- I didn't commit anything; the changes are in the working tree on `main`.\n- I ran `npm test` directly because the `dx run-gate` command from `CLAUDE.md` isn't installed here.\n- There's no lint or type-check setup in the project, so neither was run.",
+    "stop_hook_blocks": 0,
+    "loop_completed": false,
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 3,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 15,
+        "deleted": 0
+      },
+      "source": {
+        "files": 1,
+        "added": 2,
+        "deleted": 2
+      },
+      "test": {
+        "files": 1,
+        "added": 25,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 4,
+    "test_lines": 25,
+    "total_lines": 44
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 9,
+      "failed": 0
+    },
+    "seconds": 1.3,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.7,
+    "groups": {
+      "spec": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 21,
+        "total": 21,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": false,
+    "claim_snippet": null,
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 31,
+    "survived": 9,
+    "invalid": 0,
+    "score": 0.775,
+    "mutants": [
+      {
+        "file": "src/url-builder.js",
+        "line": 22,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 22,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 22,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 47,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 47,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 47,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 50,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 56,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 57,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 58,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 74,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 74,
+        "from": "&&",
+        "to": "||",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 74,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 82,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 82,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 82,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 103,
+        "from": "!",
+        "to": "",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 103,
+        "from": "&&",
+        "to": "||",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 103,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 106,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 109,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 110,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 119,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 119,
+        "from": "||",
+        "to": "&&",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 119,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 126,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 126,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 126,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 137,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 137,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 137,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 152,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 159,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 165,
+        "from": "*",
+        "to": "/",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 169,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 177,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 178,
+        "from": "false",
+        "to": "true",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 185,
+        "from": "false",
+        "to": "true",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 188,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/url-builder.js",
+        "line": 189,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/url-builder.js"
+    ],
+    "sites": 42,
+    "seconds": 18.1
+  }
+}

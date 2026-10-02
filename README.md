@@ -54,8 +54,16 @@ It does not create a worktree, switch branches, or start Dex phase audits.
 The agent can still read and edit files as your prompt requires.
 
 Ticket IDs (`dx 1234`, `dx ENG-123`), resume commands, and explicit workspace
-flags such as `--no-worktree` select the workflow directly. Without a terminal,
-free-form prompts require `--session` or `--workflow`; Dex will not guess.
+flags such as `--no-worktree` select the workflow directly. So does anything
+Dex can resolve into work: a GitHub issue URL on the repository or a Linear
+issue URL is that ticket; a Linear or GitHub project URL, any other URL (a
+spec page, a design doc) or a document path runs the workflow, and Phase 0
+resolves it into this repository's tickets and scope, creating a ticket under
+the intake rules when none exists. Without a terminal, free-form prompts
+require `--session` or `--workflow`; Dex will not guess. Before a worktree, a
+branch or a run record exists, `dx` checks that the selected provider can
+launch; a disabled router or a missing CLI stops it there with the fix named,
+not at Phase 0 with a paused session to clean up.
 
 To prepare tickets before starting implementation, run `dx triage 1234` or
 `dx triage --project "Project name"`. It clarifies requirements, estimates effort,
@@ -78,6 +86,9 @@ alias. See [ticket triage](docs/triage.md) for write permissions and re-triage.
   and records a captioned before/after walkthrough for the current UI diff.
   Phase 5 attaches the current images and videos to the PR when GitHub CLI
   supports `--attach`.
+- **Manual QA:** Phase 2 ends with `dxqa`, which drives the running change
+  against the approved acceptance criteria and leaves a report that Phase 5
+  summarizes in the PR.
 - **Local run data:** Each provider-backed run gets a stable run ID,
   append-only JSONL events, redacted logs, summaries, and artifact metadata
   under `~/.dex/runs/`.
@@ -171,6 +182,8 @@ dx status                  # Show global and project setup
 dx init                    # Analyze the current repo and create .dex/
 dx sync                    # Refresh durable repo memory and rules
 dx 1234                    # Run the full lifecycle for a ticket
+dx https://linear.app/acme/project/payments-1a2b   # A project, issue or page URL: resolved in Phase 0
+dx docs/specs/payments.md  # A document: read, turned into a ticket and scope, then run
 dx "task description"      # Choose session only (default) or the full workflow
 dx --session "prompt"      # Open the selected agent in this checkout
 dx --workflow "task"       # Run intake and the full lifecycle for a free-form task
@@ -206,6 +219,7 @@ dx config                  # Configure integrations (ticket tracker, reviewers, 
 dx config --session-messaging on  # Deliver messages between your Dex sessions without approval
 dx maintain                # Run background maintenance or install its GitHub workflow
 dx ui-capture              # Capture, revise, inspect, or skip UI proof artifacts
+dx qa                      # Record, inspect, or mark the manual QA report N/A
 dx revert 1234 2           # Revert a worktree to a phase checkpoint
 dx uninit                  # Remove Dex from the current repo
 ```
@@ -286,12 +300,6 @@ RTK support is installed by `dx install`, `dx init`, `dx sync`, and
 `dx tools bootstrap`. Claude Code sessions get a fail-open Bash rewrite hook;
 Codex gets global instructions to prefix shell commands with RTK when compact
 output is enough. Set `DX_RTK_ENABLED=0` to skip this bootstrap.
-
-`dx init`, `dx sync` and `dx tools bootstrap` change user-level files only
-when they run from the checkout your Claude hooks already use. Run from
-another Dex checkout, such as a worktree or an experiment copy, they say so
-and leave the installation alone. `dx install` from that checkout is how to
-switch.
 
 ## Project Context
 
@@ -512,6 +520,8 @@ independent repository maintenance remains available. See
 - [UI proof](docs/ui-capture.md) covers manual `/dxproof` captures, lifecycle
   decisions, captioned before/after walkthroughs, temporary artifacts, and PR
   handoff.
+- [Manual QA](docs/qa.md) covers the `dxqa` pass, the `dx qa` report contract,
+  and how the PR summarizes it.
 - [Events](docs/events.md) documents run IDs, local run directories, event
   journals, and the optional DexCode sync.
 - [RTK token reduction](docs/rtk-token-reduction.md) covers the optional

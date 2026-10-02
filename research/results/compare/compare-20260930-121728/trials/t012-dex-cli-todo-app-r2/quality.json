@@ -1,0 +1,411 @@
+{
+  "load_average_start": [
+    50.15625,
+    46.62109375,
+    39.1220703125
+  ],
+  "cpus": 12,
+  "skipped": {},
+  "deps": {
+    "package_json": true,
+    "runtime": [],
+    "dev": [
+      "@eslint/js",
+      "eslint",
+      "globals"
+    ],
+    "declared": 3,
+    "installed_packages": 79,
+    "audit": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "suite": {
+    "has_test_script": true,
+    "runs": 5,
+    "passes": 5,
+    "flaky": false,
+    "median_seconds": 3.03,
+    "tmp_leftovers": 1,
+    "workspace_leftovers": [],
+    "detail": [
+      {
+        "exit": 0,
+        "seconds": 2.46,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 3.03,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 3.25,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 2.96,
+        "tmp_leftovers": 1
+      },
+      {
+        "exit": 0,
+        "seconds": 3.14,
+        "tmp_leftovers": 1
+      }
+    ]
+  },
+  "tools": {
+    "eslint": "10.11.0",
+    "@eslint/js": "10.0.1",
+    "globals": "17.12.0",
+    "jscpd": "5.3.3"
+  },
+  "static": {
+    "source_files": 9,
+    "test_files": 11,
+    "source_lines": 913,
+    "findings": {
+      "source": 0,
+      "test": 0
+    },
+    "findings_per_kloc": {
+      "source": 0.0,
+      "test": 0.0
+    },
+    "rules": {
+      "source": {},
+      "test": {}
+    },
+    "parse_errors": [],
+    "complexity": {
+      "n": 91,
+      "mean": 2.3,
+      "max": 8,
+      "p90": 5
+    },
+    "function_lines": {
+      "n": 91,
+      "mean": 6.32,
+      "max": 25,
+      "p90": 15
+    },
+    "max_depth": 3,
+    "max_params": 3
+  },
+  "duplication": {
+    "percentage": 0.0,
+    "clones": 0,
+    "duplicated_lines": 0,
+    "lines": 994
+  },
+  "cli": {
+    "passed": 24,
+    "total": 24,
+    "rate": 1.0,
+    "checks": [
+      {
+        "check": "usage text lists the commands (no args, --help or help)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete 99: exits non-zero",
+        "ok": true,
+        "detail": "exit 1"
+      },
+      {
+        "check": "complete 99: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete 99: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete 99: message names '99'",
+        "ok": true,
+        "detail": "Error: No todo with id #99\nRun \"node index.js list\" to see the ids in use."
+      },
+      {
+        "check": "delete 99: exits non-zero",
+        "ok": true,
+        "detail": "exit 1"
+      },
+      {
+        "check": "delete 99: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "delete 99: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "delete 99: message names '99'",
+        "ok": true,
+        "detail": "Error: No todo with id #99\nRun \"node index.js list\" to see the ids in use."
+      },
+      {
+        "check": "complete abc: exits non-zero",
+        "ok": true,
+        "detail": "exit 2"
+      },
+      {
+        "check": "complete abc: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete abc: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "complete abc: message names 'abc'",
+        "ok": true,
+        "detail": "Error: Invalid todo id \"abc\": expected a positive whole number such as 1\nRun \"node index.js help\" to see all commands."
+      },
+      {
+        "check": "add: exits non-zero",
+        "ok": true,
+        "detail": "exit 2"
+      },
+      {
+        "check": "add: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "add: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "frobnicate: exits non-zero",
+        "ok": true,
+        "detail": "exit 2"
+      },
+      {
+        "check": "frobnicate: reports on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "frobnicate: no stack trace",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "frobnicate: message names 'frobnicate'",
+        "ok": true,
+        "detail": "Error: Unknown command \"frobnicate\"\nRun \"node index.js help\" to see all commands."
+      },
+      {
+        "check": "add Buy milk: exits 0 with output on stdout",
+        "ok": true,
+        "detail": "exit 0"
+      },
+      {
+        "check": "add Buy milk: nothing on stderr",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "check": "list: exits 0 with output on stdout",
+        "ok": true,
+        "detail": "exit 0"
+      },
+      {
+        "check": "list: nothing on stderr",
+        "ok": true,
+        "detail": ""
+      }
+    ]
+  },
+  "docs": {
+    "readme": true,
+    "files": [
+      "README.md"
+    ],
+    "samples": 10,
+    "passed": 8,
+    "rate": 0.8,
+    "failures": [
+      {
+        "kind": "command",
+        "run": "node index.js complete abc",
+        "ok": false,
+        "exit": 2,
+        "output": "Error: Invalid todo id \"abc\": expected a positive whole number such as 1\nRun \"node index.js help\" to see all commands."
+      },
+      {
+        "kind": "command",
+        "run": "node index.js delete 7",
+        "ok": false,
+        "exit": 1,
+        "output": "Error: No todo with id #7\nRun \"node index.js list\" to see the ids in use."
+      }
+    ]
+  },
+  "perf": {
+    "reps": 4,
+    "workloads": [
+      {
+        "name": "list with 1000 todos",
+        "kind": "cli",
+        "agent_ms": 241.92841700000002,
+        "reference_ms": 134.8700835,
+        "ratio": 1.7937885906328517,
+        "cv": 0.16106610513160474,
+        "agent_ms_samples": [
+          232.703042,
+          264.330416,
+          251.153792,
+          179.348334
+        ],
+        "reference_ms_samples": [
+          114.860625,
+          127.754667,
+          159.241334,
+          141.9855
+        ]
+      },
+      {
+        "name": "20 sequential adds",
+        "kind": "cli",
+        "agent_ms": 2104.5474999999997,
+        "reference_ms": 1035.709625,
+        "ratio": 2.0319860404889063,
+        "cv": 0.14883129043789775,
+        "agent_ms_samples": [
+          2120.246292,
+          2325.35925,
+          1609.565459,
+          2088.848708
+        ],
+        "reference_ms_samples": [
+          1055.495542,
+          1105.9585,
+          976.750667,
+          1015.923708
+        ]
+      },
+      {
+        "name": "complete in a 1000-todo store",
+        "kind": "cli",
+        "agent_ms": 281.074271,
+        "reference_ms": 136.4897915,
+        "ratio": 2.059306178953318,
+        "cv": 0.35974841052254414,
+        "agent_ms_samples": [
+          217.670583,
+          297.250125,
+          264.898417,
+          476.207625
+        ],
+        "reference_ms_samples": [
+          149.873709,
+          125.758291,
+          124.093458,
+          147.221292
+        ]
+      }
+    ],
+    "errors": 0,
+    "load_average": [
+      48.71337890625,
+      46.7373046875,
+      39.62744140625
+    ],
+    "cpus": 12,
+    "geomean_ratio": 1.957962185838616,
+    "load_average_before": [
+      48.71337890625,
+      46.7373046875,
+      39.62744140625
+    ]
+  },
+  "fuzz": {
+    "sequences": 10,
+    "steps": 15,
+    "seed": 1,
+    "passed": 8,
+    "divergences": [
+      {
+        "sequence_seed": 1007,
+        "step": 3,
+        "op": "add tab\there",
+        "expected": [
+          [
+            "Caf\u00e9 \u2713",
+            false
+          ],
+          [
+            "a  b",
+            false
+          ],
+          [
+            "milk",
+            false
+          ],
+          [
+            "tab\there",
+            false
+          ]
+        ],
+        "actual": [
+          [
+            "Caf\u00e9 \u2713",
+            false
+          ],
+          [
+            "a  b",
+            false
+          ],
+          [
+            "milk",
+            false
+          ]
+        ],
+        "history": [
+          "add Caf\u00e9 \u2713",
+          "add a  b",
+          "add milk",
+          "add tab\there"
+        ]
+      },
+      {
+        "sequence_seed": 1009,
+        "step": 0,
+        "op": "add tab\there",
+        "expected": [
+          [
+            "tab\there",
+            false
+          ]
+        ],
+        "actual": [],
+        "history": [
+          "add tab\there"
+        ]
+      }
+    ],
+    "harness_errors": [],
+    "pass_rate": 0.8
+  },
+  "load_average_end": [
+    45.041015625,
+    46.015625,
+    39.49365234375
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "trial_id": "t009-dex-oss-bug-triage-r1",
+  "arm": "dex",
+  "scenario": "oss-bug-triage",
+  "replica": 1,
+  "seeded": 1,
+  "model": "opus",
+  "effort": "xhigh",
+  "timeout_s": 7200,
+  "exit_code": 0,
+  "wall_seconds": 124,
+  "legacy_total": 97,
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 35
+}

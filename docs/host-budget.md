@@ -133,6 +133,26 @@ A gate whose working tree moved while it ran is recorded as `stable: false` and
 never matched again, because it describes neither the tree before nor the tree
 now.
 
+The tree fingerprints say what was tested. Receipt schema 2 adds
+`env_fingerprint`, which says what did the testing: a sha256 over the identity
+(path, size, mtime) of the toolchain binaries on `PATH` from a fixed list, the
+effective `DX_TEST_JOBS` and the project's declared parallelism variables, the
+runner variables from the host budget, `NODE_ENV`/`RAILS_ENV`/`PYTHONPATH`
+when set, a hash of `PATH`, `uname -sm`, and the content of the dependency
+manifests at the repository root (`package.json`, lockfiles, `Gemfile.lock`,
+`poetry.lock`, `requirements*.txt`, `Cargo.lock`, `go.sum`). `dx run-gate`
+computes it before the command starts; `bin/gate-receipt.sh` computes it again
+when a later phase asks whether the gate may be skipped, and reuses a receipt
+only when the tree *and* the environment match. A receipt from before the
+binding existed, or one whose environment could not be fingerprinted, is never
+reused that way — it still answers the tree-only lookup the review tier floor
+uses. `python3 scripts/gate_env_fingerprint.py --repo <dir>` prints the hash
+with every input it was computed from, so two receipts that disagree can be
+compared. The job budget is part of the binding on purpose: a suite that
+passed with four workers has not been shown to pass with one, and the cost of
+being wrong there is a rerun, not a false pass. A reuse is journaled as
+`gate.reused` (docs/events.md § Heavy Gates).
+
 **Every session is told what else is on the machine.** Each provider launch
 exports `DX_HOST_CPUS`, `DX_HOST_MEM_GB`, `DX_HOST_LOAD1`,
 `DX_HOST_ACTIVE_SESSIONS`, `DX_HOST_ACTIVE_HEAVY`, `DX_TEST_JOBS` and

@@ -1,0 +1,17 @@
+{
+  "trial_id": "t010-dex-long-refactor-inheritance-r2",
+  "arm": "dex",
+  "scenario": "long-refactor-inheritance",
+  "replica": 2,
+  "seeded": 1,
+  "model": "opus",
+  "effort": "xhigh",
+  "timeout_s": 7200,
+  "exit_code": 0,
+  "wall_seconds": 724,
+  "legacy_total": 79,
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 42
+}

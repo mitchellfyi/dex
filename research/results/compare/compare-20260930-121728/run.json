@@ -1,0 +1,19 @@
+{
+  "run_id": "compare-20260930-121728",
+  "started_at": "2026-09-30T11:17:28Z",
+  "arms": "bare dex",
+  "scenarios": "buggy-code-fix cli-todo-app long-refactor-inheritance oss-bug-triage",
+  "replicas": 3,
+  "jobs": 3,
+  "seed": "compare-20260930-121728",
+  "followup": 1,
+  "model": "opus",
+  "effort": "xhigh",
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "dex_commit": "0a54338",
+  "dex_dirty_files": 23,
+  "claude_version": "2.1.285 (Claude Code)",
+  "node_version": "v24.17.0",
+  "host": "Darwin arm64"
+}

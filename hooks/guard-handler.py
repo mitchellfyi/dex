@@ -2458,6 +2458,70 @@ def _undot(token):
     return token[2:] if token.startswith('./') and len(token) > 2 else token
 
 
+def record_ungated_heavy_command(text):
+    """Count a declared heavy command run outside `dx run-gate`.
+
+    One JSON line per call in `$DX_LOOP_DIR/<session>.gate-receipts/ungated.jsonl`,
+    beside the receipts the gated runs would have written, so the session
+    summary (lib/session-process.sh) can report how much heavy work bypassed
+    the queue next to how much went through it.
+
+    Best effort in every direction. No `DEX_SESSION_ID` means nothing to
+    attribute the line to, so nothing is written. A directory or file that
+    cannot be written is not a reason to fail the guard, whose job is the
+    advice. The line is appended through one `write` of well under PIPE_BUF,
+    so two hooks landing at once cannot interleave.
+    """
+    session_id = os.environ.get('DEX_SESSION_ID', '')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,179}', session_id):
+        return
+    loop_dir = os.environ.get('DX_LOOP_DIR') or os.path.expanduser('~/.claude/.dex-loops')
+    target_dir = os.path.join(loop_dir, f'{session_id}.gate-receipts')
+    line = json.dumps({
+        'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'session': session_id,
+        'command': text[:400],
+    }, sort_keys=True, separators=(',', ':'))
+    try:
+        os.makedirs(target_dir, mode=0o700, exist_ok=True)
+        descriptor = os.open(os.path.join(target_dir, 'ungated.jsonl'),
+                             os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            handle.write(line + '\n')
+    except Exception:  # noqa: BLE001 - a counter that cannot be written is not an error
+        pass
+
+
+def record_guard_warnings(warnings, event_type, text):
+    """Keep what the agent was warned about, for the lifecycle harvest.
+
+    One JSON line per warning in `$DX_LOOP_DIR/<session>.guard-warnings.jsonl`:
+    the guard, the event and the head of the command or path. The memory
+    harvest aggregates them per guard at completion, which is how a guard that
+    fires on every other command in a repository becomes a fact that
+    repository remembers. Same best-effort discipline as the ungated counter.
+    """
+    session_id = os.environ.get('DEX_SESSION_ID', '')
+    if not warnings or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,179}', session_id):
+        return
+    loop_dir = os.environ.get('DX_LOOP_DIR') or os.path.expanduser('~/.claude/.dex-loops')
+    recorded_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    head = ' '.join(str(text).split())[:160]
+    try:
+        os.makedirs(loop_dir, mode=0o700, exist_ok=True)
+        descriptor = os.open(os.path.join(loop_dir, f'{session_id}.guard-warnings.jsonl'),
+                             os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            for warning in warnings:
+                name = warning.get('name', '') if isinstance(warning, dict) else str(warning)
+                handle.write(json.dumps({
+                    'recorded_at': recorded_at, 'session': session_id, 'guard': name,
+                    'event': event_type, 'head': head,
+                }, sort_keys=True, separators=(',', ':')) + '\n')
+    except Exception:  # noqa: BLE001 - a log that cannot be written is not an error
+        pass
+
+
 def _segment_runs_declared_heavy(segment, declared):
     while segment and is_shell_assignment(segment[0]):
         segment = segment[1:]
@@ -2498,6 +2562,145 @@ def has_declared_heavy_command(text):
     return _segment_runs_declared_heavy(segment, declared)
 
 
+# Mission mode. The hook payload names the agent a tool call came from
+# (`agent_id`, `agent_type`; absent for the lead's own calls). The lease and
+# ledger live under $DX_STATE_DIR/<session>.mission/, written by
+# scripts/mission_ledger.py, which keeps them private (0600); a snapshot that
+# is not private is not trusted here either. Both detectors are advisory and
+# each warning is appended to the ledger's violations.jsonl so the lead can
+# see how often the fence was leaned on.
+HOOK_AGENT = {'agent_id': '', 'agent_type': '', 'tool_name': ''}
+DETECTOR_DETAILS = {}
+
+MISSION_GIT_MUTATIONS = frozenset((
+    'commit', 'checkout', 'switch', 'reset', 'stash', 'clean', 'rebase',
+    'merge', 'push', 'worktree', 'cherry-pick', 'am',
+))
+# `git -C <dir> commit`, `git -c k=v commit`: options that take a value sit
+# between `git` and the subcommand.
+_GIT_VALUE_OPTIONS = frozenset(('-C', '-c', '--git-dir', '--work-tree', '--namespace'))
+
+
+def set_hook_agent(payload):
+    """Remember who made this tool call, from the hook's stdin JSON."""
+    if not isinstance(payload, dict):
+        return
+    for key in ('agent_id', 'agent_type', 'tool_name'):
+        value = payload.get(key, '')
+        HOOK_AGENT[key] = value if isinstance(value, str) and len(value) <= 200 else ''
+
+
+def mission_ledger_dir():
+    session_id = os.environ.get('DEX_SESSION_ID', '')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,179}', session_id):
+        return ''
+    state_dir = os.environ.get('DX_STATE_DIR') or os.path.expanduser('~/.claude/.dex-phases')
+    return os.path.join(state_dir, f'{session_id}.mission')
+
+
+def mission_lease():
+    """The current write lease, or None. Unreadable or unsafe state reads as none."""
+    ledger_dir = mission_ledger_dir()
+    if not ledger_dir:
+        return None
+    path = os.path.join(ledger_dir, 'current.json')
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            return None
+        with open(path, 'r', encoding='utf-8') as handle:
+            state = json.load(handle)
+    except Exception:  # noqa: BLE001 - an unreadable ledger is "no lease", never a crash
+        return None
+    lease = state.get('lease') if isinstance(state, dict) else None
+    return lease if isinstance(lease, dict) and lease.get('holder') else None
+
+
+def record_mission_violation(guard_name, detail, holder=''):
+    """Append one line to the ledger's violations.jsonl. Best effort."""
+    ledger_dir = mission_ledger_dir()
+    if not ledger_dir or not os.path.isdir(ledger_dir):
+        return
+    line = json.dumps({
+        'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'guard': guard_name,
+        'actor': HOOK_AGENT['agent_id'] or 'lead',
+        'agent_type': HOOK_AGENT['agent_type'] or 'lead',
+        'tool': HOOK_AGENT['tool_name'],
+        'holder': holder,
+        'detail': str(detail)[:400],
+    }, sort_keys=True, separators=(',', ':'))
+    try:
+        descriptor = os.open(os.path.join(ledger_dir, 'violations.jsonl'),
+                             os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            handle.write(line + '\n')
+    except Exception:  # noqa: BLE001 - the advice matters more than the count
+        pass
+
+
+def has_mission_write_lease_conflict(path_text):
+    """True when a file edit comes from anyone but the current lease holder."""
+    lease = mission_lease()
+    if lease is None:
+        return False
+    actor = HOOK_AGENT['agent_id'] or 'lead'
+    holder = str(lease.get('holder', ''))
+    if actor == holder:
+        return False
+    DETECTOR_DETAILS['mission-write-lease'] = (
+        f"The write lease is held by {holder}; this edit is from {actor}."
+    )
+    record_mission_violation('mission-write-lease', (path_text.strip().splitlines() or [''])[-1], holder)
+    return True
+
+
+def _segment_is_git_mutation(segment):
+    while segment and is_shell_assignment(segment[0]):
+        segment = segment[1:]
+    if not segment or token_basename(segment[0]) != 'git':
+        return False
+    index = 1
+    while index < len(segment):
+        token = segment[index]
+        if token in _GIT_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token.startswith('-'):
+            index += 1
+            continue
+        return token in MISSION_GIT_MUTATIONS
+    return False
+
+
+def has_mission_git_mutation(text):
+    """True when a subagent's command has a top-level git segment that mutates.
+
+    The lead's own calls carry no agent id and are not judged. Top-level
+    segments only, like the declared-heavy detector: a mutation inside a
+    heredoc or a `bash -c` payload is the documented gap.
+    """
+    if not HOOK_AGENT['agent_id']:
+        return False
+    segment = []
+    matched = False
+    for token in shell_tokens(text):
+        if token in SHELL_SEPARATORS:
+            if _segment_is_git_mutation(segment):
+                matched = True
+            segment = []
+            continue
+        segment.append(token)
+    if _segment_is_git_mutation(segment):
+        matched = True
+    if matched:
+        DETECTOR_DETAILS['mission-git-mutation'] = (
+            f"This command is from helper {HOOK_AGENT['agent_id']} ({HOOK_AGENT['agent_type'] or 'unknown role'})."
+        )
+        record_mission_violation('mission-git-mutation', text)
+    return matched
+
+
 def guard_detector_matches(guard, text):
     detector = guard.get('detector', '')
     if not detector:
@@ -2508,11 +2711,22 @@ def guard_detector_matches(guard, text):
         return has_raw_codex_delegation(text)
     if detector == 'await-in-loop':
         return has_await_in_loop(text)
+    if detector == 'mission-write-lease':
+        return has_mission_write_lease_conflict(text)
+    if detector == 'mission-git-mutation':
+        return has_mission_git_mutation(text)
     if detector == 'detached-process':
         # One guard, one piece of advice: work the session should own and
         # account for. A detached launch escapes the accounting; a declared
-        # heavy command run outside `dx run-gate` escapes the queue.
-        return has_detached_process(text) or has_declared_heavy_command(text)
+        # heavy command run outside `dx run-gate` escapes the queue. Both
+        # halves are evaluated: an ungated heavy command is counted whether
+        # or not it was also detached, and the count is what the session
+        # summary reports.
+        detached = has_detached_process(text)
+        ungated = has_declared_heavy_command(text)
+        if ungated:
+            record_ungated_heavy_command(text)
+        return detached or ungated
     print(f"[guard:{guard.get('name', 'unnamed')}] skipped — unknown detector: {detector}", file=sys.stderr)
     return False
 
@@ -2605,9 +2819,13 @@ def check_guards(guards, full_text, path_text=''):
         if detector_match is not None:
             if not detector_match:
                 continue
+            message = guard.get('message', 'Guard triggered.')
+            detail = DETECTOR_DETAILS.pop(guard.get('detector', ''), '')
+            if detail:
+                message = f"{detail}\n\n{message}"
             entry = {
                 'name': name,
-                'message': guard.get('message', 'Guard triggered.'),
+                'message': message,
                 'action': action,
             }
             if entry['action'] == 'block':
@@ -2942,6 +3160,13 @@ def main():
     stdin_input = '' if sys.stdin.isatty() else sys.stdin.read()
     tool_input = stdin_input if stdin_input.strip() else os.environ.get('CLAUDE_TOOL_USE_INPUT', '')
 
+    # Who is calling: the lead, or a subagent the payload names. The mission
+    # guards key on this; a payload that is not JSON reads as the lead.
+    try:
+        set_hook_agent(json.loads(tool_input) if tool_input.strip() else {})
+    except ValueError:
+        pass
+
     # Determine event type from environment
     event_type = os.environ.get('DEX_GUARD_EVENT', 'bash')
 
@@ -3007,6 +3232,7 @@ def main():
         sys.exit(2)
 
     if warnings:
+        record_guard_warnings(warnings, event_type, text)
         context = warning_context(warnings)
         print(json.dumps({
             "continue": True,

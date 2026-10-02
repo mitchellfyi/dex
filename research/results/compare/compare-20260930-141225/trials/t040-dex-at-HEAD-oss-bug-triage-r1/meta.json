@@ -1,0 +1,19 @@
+{
+  "trial_id": "t040-dex-at-HEAD-oss-bug-triage-r1",
+  "arm": "dex@HEAD",
+  "arm_family": "dex",
+  "prompts_source": "0a54338d03604f0d884a20b1dc968bbafefdd6d8",
+  "scenario": "oss-bug-triage",
+  "replica": 1,
+  "seeded": 1,
+  "model": "opus",
+  "effort": "xhigh",
+  "timeout_s": 7200,
+  "exit_code": 0,
+  "wall_seconds": 101,
+  "legacy_total": 97,
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 28
+}

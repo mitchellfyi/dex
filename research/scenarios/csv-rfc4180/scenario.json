@@ -1,7 +1,0 @@
-{
-  "name": "csv-rfc4180",
-  "type": "feature",
-  "description": "Build an RFC 4180 CSV parser and serializer to an exact specification, with no dependencies.",
-  "timeout": 3600,
-  "language": "node"
-}

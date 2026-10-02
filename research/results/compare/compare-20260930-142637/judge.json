@@ -1,0 +1,1800 @@
+{
+  "provider": "claude",
+  "model": "opus",
+  "same_family_as_arms": true,
+  "pairs": {
+    "csv-rfc4180:t008-bare-csv-rfc4180-r3:t010-dex-at-HEAD-csv-rfc4180-r3": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex@HEAD"
+      ],
+      "trials": [
+        "t008-bare-csv-rfc4180-r3",
+        "t010-dex-at-HEAD-csv-rfc4180-r3"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "bare",
+            "maintainability": "tie",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "On reading, both look correct. Each has a single-pass state machine that carries CR/LF, BOM and escaped-quote state across chunks. Each reports errors at the required positions, handles `__proto__` safely and quotes a leading BOM so round trips hold. Both test suites are strong: they compare every split point against `parse`, fuzz the round trip and check linear time. A does everything in one compact, readable file of about 420 lines. B splits the code into six modules and adds a README, a `code` property on errors, strict boolean checks on options, and rejection of empty or duplicate stringify headers. None of that was asked for. B is polished, but it is more surface to review for no gain in correctness, so A is the leaner one to merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex@HEAD",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex@HEAD",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex@HEAD",
+            "maintainability": "dex@HEAD",
+            "tests": "dex@HEAD",
+            "scope": "bare"
+          },
+          "reasoning": "I traced the tricky paths in both and found no spec violations in either. Both handle CRLF split across chunks, escaped quotes split across chunks, BOM columns, header duplicate and field-count errors, and a BOM at the start of stringify output. A splits into focused modules (scanner, header mapper, options, stringify) with clear comments, making it easier to follow and change. A also validates more strictly, rejecting duplicate stringify headers and non-boolean flags. B is a compact single file with fall-through switch cases that take longer to read. A's tests are more systematic: per-error-code position tables, every one- and two-point split over option sets, fuzzing, and linear-time checks. B adds less, with no README, error codes or module split, so it wins on scope.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "bare"
+        },
+        "position_consistent": false
+      }
+    },
+    "csv-rfc4180:t015-bare-csv-rfc4180-r1:t020-dex-at-HEAD-csv-rfc4180-r1": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex@HEAD"
+      ],
+      "trials": [
+        "t015-bare-csv-rfc4180-r1",
+        "t020-dex-at-HEAD-csv-rfc4180-r1"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "dex@HEAD",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "Both implement a single-pass state machine that tracks CR/LF across chunks, positions errors correctly and keeps the BOM out of column counts. Neither has an obvious spec violation. B adds a README, a lint script, `CsvError.code`, strict boolean option checks and rejection of an empty header in stringify. None of that was requested, so it adds scope and surface. B's split into modules with a class is somewhat easier to extend. A stays compact and readable in one file. A's tests are stronger: they fuzz `parse` against an independent reference parser, including exact error line and column, and also fuzz random chunking and round trips. B's tests are thorough but mostly hand-picked examples and split-at-every-position runs. With correctness equal, A is the leaner merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex@HEAD",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "dex@HEAD",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "Both implement the same single-pass state machine, and I found no spec violations in either. Both handle CRLF split across chunks, escaped quotes split across chunks, BOM, error positions and `__proto__` keys correctly. A splits the code into modules with error codes and JSDoc, which makes it somewhat easier to extend. But it also adds a README, a lint script, `code` properties and stricter option validation that nobody asked for. B puts everything in one clear, compact file. B's tests include a fuzz suite that checks `parse` against an independent reference parser, covering values, error lines and error columns. That is a stronger regression oracle than A's hand-written cases, though A's exhaustive split tests are also good. Since correctness is equal, B is the tighter PR to merge.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "dex@HEAD",
+          "tests": "bare",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t015-bare-csv-rfc4180-r1:t018-dex-csv-rfc4180-r1": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex"
+      ],
+      "trials": [
+        "t015-bare-csv-rfc4180-r1",
+        "t018-dex-csv-rfc4180-r1"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "bare",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "Both use a single incremental state machine that serves both parse and createParser. Both handle CRLF split across chunks, BOM, escaped quotes, error positions and the closed-after-throw rule correctly. B adds strict boolean checks on options, so parse throws TypeError for header: ['a'] or other non-boolean values. The spec never asks for that, and it can reject a reasonable options object shared with stringify. B also adds an unrequested README and heavy JSDoc. A's tests are stronger: a fuzz suite checks parse against an independent reference parser, including error line, column and kind, plus random-chunk streaming and round trips. B covers similar ground with hand-written cases and round-trip fuzzing, but has no reference oracle. Readability is comparable.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "dex",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "Both implementations look correct from reading the diffs; I did not run their tests. Each shares one state machine between parse and streaming, handles CR/LF split across chunks, and gets BOM columns, error order and __proto__ keys right. A's Parser class is easier to follow: JSDoc, clear endField/endRecord/lineBreak helpers, a fast path for unquoted runs and precise error messages. B's closure tracks positions with absolute offsets, which works but is harder to follow. B's tests are stronger: it fuzzes against a separate reference parser for positions and messages, while A tests every 2- and 3-way chunk split. A adds an unrequested README and strict boolean option checks, both minor. On balance A is the better merge.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "bare",
+          "scope": "bare"
+        },
+        "position_consistent": false
+      }
+    },
+    "csv-rfc4180:t003-bare-csv-rfc4180-r2:t006-dex-at-HEAD-csv-rfc4180-r2": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex@HEAD"
+      ],
+      "trials": [
+        "t003-bare-csv-rfc4180-r2",
+        "t006-dex-at-HEAD-csv-rfc4180-r2"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "bare",
+            "maintainability": "tie",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "I found no spec violations in either submission. Both use a single-pass state machine, handle CRLF across chunk boundaries, skip the BOM, protect `__proto__` keys, and quote a leading U+FEFF so it survives a round trip. A puts everything in one compact `src/csv.js`, which is exactly what the task asked for, and the code is easy to follow. Its tests compare the parser against an independent reference parser on random input, which is stronger evidence of correctness than B's hand-written cases. B adds things nobody asked for: a README, five source modules, error `code`s, `cause` chaining and strict boolean checks on options. These are well made, but they widen the scope and give a reviewer more to read without adding required behaviour.",
+          "parsed": true
+        },
+        {
+          "a": "dex@HEAD",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "bare",
+            "maintainability": "tie",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "I found no spec violations in either submission. Both handle BOM columns, CRLF split across chunks, the position of a duplicate after a trailing delimiter, error ordering, and the lifecycle after a throw. A spreads the code over five modules and adds things nobody asked for: a README of decisions, error `code` fields, `cause` chaining and a lint script. Its state machine also tracks lines and CRs in several places, which is harder to follow. B is one compact file with a single place that tracks position, so it is easier to verify. B's tests include an independent reference parser, checked against 20k random inputs, plus exhaustive chunk-split and linear-time tests. That is stronger evidence than A's hand-picked corpus. B does the same job with less code.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "bare",
+          "maintainability": "tie",
+          "tests": "bare",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t020-dex-at-HEAD-csv-rfc4180-r1:t018-dex-csv-rfc4180-r1": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "dex@HEAD",
+        "dex"
+      ],
+      "trials": [
+        "t020-dex-at-HEAD-csv-rfc4180-r1",
+        "t018-dex-csv-rfc4180-r1"
+      ],
+      "runs": [
+        {
+          "a": "dex@HEAD",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "Both submissions implement the same incremental state machine and share one code path between parse and createParser. I found no spec violations in either. Line and column tracking, CRLF split across chunks, BOM handling, error ordering and the round-trip quoting rules (lone empty field, leading BOM) are handled correctly in both. A spreads the code over five modules and adds things nobody asked for: error codes, a lint script and a long README. That is more surface area for no requirement. B keeps everything in the requested src/csv.js, and it is compact and easy to follow. A's tests are somewhat broader, with a larger error corpus, stress tests and explicit per-case tests. B's tests are still solid, covering two- and three-way splits, empty chunks and seeded round trips. On balance B is the better merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "tie",
+            "scope": "dex"
+          },
+          "reasoning": "Both use the same incremental state machine for parse and createParser, so both give identical chunked results, handle CRLF split across chunks, strip only a leading BOM, report correct error positions and order, and round-trip empty single fields and a leading BOM. I found no real correctness gap. B adds things nobody asked for: CsvError.code, a lint script, a five-file layout, a rule that rejects header: [], and an Assumptions section. None of it is harmful, but it is scope creep. A fits the spec in one compact, readable file. Both test suites are strong, with exhaustive split tests, seeded random round trips and linear-time stress tests. A also covers three-way splits; B has more fixed edge cases. On balance, A is the leaner PR to merge.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "dex"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t003-bare-csv-rfc4180-r2:t007-dex-csv-rfc4180-r2": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex"
+      ],
+      "trials": [
+        "t003-bare-csv-rfc4180-r2",
+        "t007-dex-csv-rfc4180-r2"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "Both implementations use the same kind of state machine and look correct against the spec. That includes CRLF split across chunks, escaped quotes split across chunks, BOM handling, error positions and the round-trip guarantee. A's tests are stronger. They compare parse against an independent reference parser on 20k random inputs, and check every split into up to three chunks across the whole corpus. B tests only single split points plus random chunking. B adds features nobody asked for: an unrequested README, and strict boolean checks on header and skipEmptyLines. Those checks also contradict B's own README, which says one options object can be passed to both parse and stringify. B's error messages are more descriptive, but that is a small gain.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "Both use the same four-state machine, which reads each character once. I found no spec violations in either: BOM, CRLF split across chunks, error positions, header errors, lifecycle and stringify quoting (including the leading-BOM case) all behave correctly in both. A adds strict boolean checks and more detailed error messages, which are nice but minor. B's tests are stronger. They compare parse against an independent reference parser on 20k random inputs, check every split into up to three chunks, and time four input shapes for linear cost. A only compares the streaming parser with parse itself, so a bug shared by both would go unnoticed. A also adds a README nobody asked for. B is leaner and verified more thoroughly.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "bare",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t006-dex-at-HEAD-csv-rfc4180-r2:t007-dex-csv-rfc4180-r2": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "dex@HEAD",
+        "dex"
+      ],
+      "trials": [
+        "t006-dex-at-HEAD-csv-rfc4180-r2",
+        "t007-dex-csv-rfc4180-r2"
+      ],
+      "runs": [
+        {
+          "a": "dex@HEAD",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex@HEAD",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "dex@HEAD",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "I traced both state machines and found no spec violations in either. Both handle CRLF split across chunks, escaped quotes split across chunks, the BOM, error positions, duplicate headers and one-time streaming reads correctly. A's parser uses separate per-state methods and splits the code into modules, which makes it a little easier to extend. B's single loop is compact and just as readable. A's tests are stronger: they try every 2-way and 3-way split of the corpus and check error codes and error causes. B relies on single splits plus random fuzzing. B stays closer to the brief. A adds a `code` property on errors, a lint script and a long decisions section in the README, none of which was asked for. Overall A is slightly better.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "tie",
+            "scope": "dex"
+          },
+          "reasoning": "I traced both parsers through the risky cases: CRLF split across chunks, a BOM arriving after empty chunks, positions of fields after a trailing delimiter, duplicate header names, and escaped quotes split across chunks. I found no spec violations in either. A is one short state machine with a single place that counts lines, so it is easy to follow. B splits the code across five modules, tracks line counts in several places, and adds things nobody asked for: error `code` values, a `cause` on lifecycle errors, a lint script and extra package.json fields. Both test suites are strong. B checks every 2- and 3-way split; A uses seeded random chunking plus timing tests that would catch quadratic behaviour. A is the smaller, cleaner change that meets the spec.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "dex"
+        },
+        "position_consistent": false
+      }
+    },
+    "csv-rfc4180:t008-bare-csv-rfc4180-r3:t021-dex-csv-rfc4180-r3": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex"
+      ],
+      "trials": [
+        "t008-bare-csv-rfc4180-r3",
+        "t021-dex-csv-rfc4180-r3"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "dex",
+            "tests": "dex",
+            "scope": "bare"
+          },
+          "reasoning": "I traced both parsers through the tricky cases and could not find a spec violation in either: CRLF split across chunks, escaped quotes split across chunks, BOM handling, error positions and ending the parser after a throw. Each also quotes a leading BOM so round trips survive. B is easier to follow: it reads one code unit at a time, stores positions as absolute offsets, and gives clearer error messages. B's tests are better organised, with split files and a shared helpers module, and they check error messages, exhaustive splits and linear cost. B also adds things nobody asked for: a README, a smoke test, and strict boolean checks on header and skipEmptyLines. A is leaner and stays within scope. Overall B is slightly better to merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "dex",
+            "tests": "dex",
+            "scope": "bare"
+          },
+          "reasoning": "I found no correctness bugs in either submission. Both handle CRLF split across chunks, escaped quotes split across chunks, the BOM, and error positions and ordering. A tracks positions as absolute offsets and checks the LF of a CRLF once for every state. B's class keeps state explicitly and scans runs of characters quickly. Both are easy to read. A checks option types strictly and names positions in its error messages, which helps maintenance. A's tests go further: they are split by area with shared helpers, test chunking with a custom delimiter, include a harder performance test with escaped quotes split across writes, and add a smoke test. B's timing check depends on wall-clock time. A adds a README nobody asked for, which is a small scope cost. Overall A is slightly better.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "dex",
+          "tests": "dex",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t010-dex-at-HEAD-csv-rfc4180-r3:t021-dex-csv-rfc4180-r3": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "dex@HEAD",
+        "dex"
+      ],
+      "trials": [
+        "t010-dex-at-HEAD-csv-rfc4180-r3",
+        "t021-dex-csv-rfc4180-r3"
+      ],
+      "runs": [
+        {
+          "a": "dex@HEAD",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex@HEAD",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "dex@HEAD",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "Both implement the same state-machine design. Tracing CRLF split across chunks, BOM handling, escaped quotes split across writes, header errors, closing the parser after an error and quoting a leading BOM found no spec violations in either. A splits the code into focused modules (scanner, header mapper, options, stringify) and adds error codes. The codes are extra, but it keeps the parts easy to change. A's tests are broader and more systematic: errors are checked in tables with exact positions, error-ordering cases are covered, and fuzz and exhaustive split tests compare against parse including error messages. B is a compact single file with less unrequested surface (no codes, shorter README), so it wins on scope. On balance, A's structure and stronger regression tests make it the better merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "tie",
+            "scope": "dex"
+          },
+          "reasoning": "Both implement the same five-state scanner and handle the hard cases correctly: CRLF split across chunks, escaped quotes split across chunks, BOM column offsets, first-error ordering, __proto__ keys and quoting a leading BOM in stringify output. Both test suites cover every split point and use seeded random round trips, so they are about equally strong. B adds features nobody asked for: a CsvError `code` property, stringify rejecting empty or duplicate header arrays, and six modules plus a long README. That is neat work but more surface than the task needs. A fits the spec in one readable 421-line file with less to review, so A is the one to merge.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "dex"
+        },
+        "position_consistent": false
+      }
+    },
+    "csv-rfc4180:t003-bare-csv-rfc4180-r2:t004-dex-loop-csv-rfc4180-r2": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex-loop"
+      ],
+      "trials": [
+        "t003-bare-csv-rfc4180-r2",
+        "t004-dex-loop-csv-rfc4180-r2"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "Both submissions use nearly the same single-pass state machine. Both handle chunk splits, BOM, CRLF across chunks, escaped quotes, error positions and the parser lifecycle correctly, and neither shows a clear bug. B also rejects non-boolean `header` and `skipEmptyLines` values, which the spec never asked for, and it adds a README nobody requested. B's class layout and JSDoc are pleasant to read. A's code is just as clear and more compact. A's tests are stronger: they compare parse against a separate, simple reference parser on 20k random inputs, check stream output against parse for every split into up to three chunks, run random chunked tests, and include linear-time stress checks. B has a good corpus and round-trip fuzzing but no independent reference parser. So A wins on tests and scope.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "bare",
+            "scope": "bare"
+          },
+          "reasoning": "I read both diffs but did not run either test suite. Both use a single-pass state machine shared by parse and createParser, and both handle BOM, CRLF split across chunks, escaped quotes split across chunks, first-error ordering, header checks, parser lifecycle and the stringify BOM case. I found no correctness bug in either. A's class-based tokenizer is slightly more explicit and its tests use visible \\uFEFF escapes. B is more compact, but its tests embed literal BOM characters, which hurts readability. B's tests are stronger: they compare parse against a separate reference parser on 20k random inputs and fuzz chunked input. A adds a README and strict boolean option checks that were not requested. I lean B.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "bare",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t015-bare-csv-rfc4180-r1:t016-dex-loop-csv-rfc4180-r1": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex-loop"
+      ],
+      "trials": [
+        "t015-bare-csv-rfc4180-r1",
+        "t016-dex-loop-csv-rfc4180-r1"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Tracing both parsers, I found no spec bugs in either. Both handle CRLF split across chunks, escaped quotes split across chunks, BOM-relative columns, duplicate-header positions, left-to-right error order, closed-parser behaviour and the BOM case in stringify. B's Tokenizer class tracks line and column directly, avoids A's switch fall-through and keeps option reading in small named helpers, so it is easier to follow and extend. Both test suites are strong, each with a reference parser, exhaustive split tests, round-trip fuzzing and linear-time checks. A runs more fuzz iterations; B's tests are better organised and cover the package entry point. B goes beyond the task with a README and strict boolean checks on flags, while A stays tighter. On balance, B's clearer structure outweighs A's tighter scope.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "dex-loop",
+            "scope": "bare"
+          },
+          "reasoning": "I found no spec violations in either submission. Both handle CRLF split across chunks, escaped quotes split across chunks, BOM columns, error order, duplicate empty header names at end of input, and a leading U+FEFF in stringify output. A's Tokenizer class is easier to follow: each state has a clear case, errors carry better context, and flags are validated. B's single closure with absolute-offset position tracking is compact but harder to check. Both test suites are strong and fuzz against independent reference parsers. A's tests are better organised, try every one- and two-point split under all option sets, and check that the package entry point works. B's fuzz runs more iterations and also checks error messages. A adds a README nobody asked for, so B wins on scope.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex-loop",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex-loop",
+          "maintainability": "dex-loop",
+          "tests": "tie",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t008-bare-csv-rfc4180-r3:t012-dex-loop-csv-rfc4180-r3": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "bare",
+        "dex-loop"
+      ],
+      "trials": [
+        "t008-bare-csv-rfc4180-r3",
+        "t012-dex-loop-csv-rfc4180-r3"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Both submissions implement the spec correctly. Line and column tracking, CRLF split across chunks, BOM handling, error order and round-trip safety all behave the same way in each, and both avoid re-reading earlier input. B's state machine reads one character at a time with a single shared place for position updates, so it is easier to follow than A's fast-scan inner loops, where the CR/LF bookkeeping is duplicated. B's test files are split by area and name each case clearly. A runs more random rounds and also checks the streaming round trip, so on tests the two come out about even. B adds validation nobody asked for (boolean flags, lone-surrogate delimiters) and a README, which is scope creep. A stays closer to the brief. On balance B is slightly easier to review and maintain.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "dex-loop",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Both parsers handle chunking, CRLF split across chunks, error positions and a BOM correctly. The only functional difference is in stringify. The spec says 'No rows gives '''. A follows that even when a header is set. B writes the header row for an empty rows array and has a test that locks in this behaviour. A's parser is one per-character state machine with a single place that tracks position, so it is easier to check. B's parser has separate scanning loops for each state and repeats the line and column bookkeeping, which makes it harder to verify. Both test suites are strong, with exhaustive splits, fuzzing and linearity checks. A adds a README nobody asked for, so B's scope is slightly tighter.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex-loop",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex-loop",
+          "maintainability": "dex-loop",
+          "tests": "tie",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t018-dex-csv-rfc4180-r1:t016-dex-loop-csv-rfc4180-r1": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "dex",
+        "dex-loop"
+      ],
+      "trials": [
+        "t018-dex-csv-rfc4180-r1",
+        "t016-dex-loop-csv-rfc4180-r1"
+      ],
+      "runs": [
+        {
+          "a": "dex",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "dex-loop",
+            "scope": "tie"
+          },
+          "reasoning": "Both submissions have nearly the same design: one incremental state machine that both parse and createParser use. I found no bugs in either. Both handle a CR and LF split across chunks, BOM handling, duplicate empty header names at end of input, field-count errors, and quoting the output when it would start with a BOM. A's separate RECORD_START state reads a little more simply. B's parts array avoids repeated string concatenation. Neither difference matters much. The tests are the real difference. B checks parse against a separately written reference parser on thousands of random inputs across several option sets, and also runs random split and round-trip checks. A tests exhaustive two- and three-way splits and round trips, but has no independent reference parser. B is slightly more likely to catch a regression.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "dex-loop",
+            "scope": "tie"
+          },
+          "reasoning": "Both submissions use the same design: one incremental state machine drives both parse and createParser, so chunked input gives the same records and error positions as whole input. Neither shows a real bug. Both keep the two quotes of an escaped quote correct across chunks, handle a CRLF split between chunks, strip the BOM only at the start of the whole input, quote a leading BOM in stringify, and handle __proto__. B's switch fallthrough is compact but slightly harder to follow; A's separate states are more explicit. The deciding factor is A's tests. They add a separately written reference parser that checks parse on random inputs, and a random-chunk stream check. B tests every split into two and three pieces and mixes in empty chunks, but it has no oracle. So A is slightly stronger overall.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex-loop",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "dex-loop",
+          "scope": "tie"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t023-bare-inventory-race-r1:t013-dex-at-HEAD-inventory-race-r1": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex@HEAD"
+      ],
+      "trials": [
+        "t023-bare-inventory-race-r1",
+        "t013-dex-at-HEAD-inventory-race-r1"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "bare",
+            "maintainability": "bare",
+            "tests": "dex@HEAD",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix every cause: per-key locks shared per store, sorted SKU locking, order lock held across the whole reserve, release rejecting committed orders, and expire re-checking status under the lock. Neither uses a global lock. B adds rollback on store write failures, constructor validation of the store (a behaviour change) and a 142-line README. None of these was asked for, and they add code to review. A's change is smaller and easier to follow, and its tests cover every symptom, including isolation and a mixed-load run. B's tests are stronger: offset sweeps land the second call at each stage of the first, and there are failure-injection tests. That is not enough to outweigh the scope creep, so A is the better merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex@HEAD",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex@HEAD",
+          "criteria": {
+            "correctness": "dex@HEAD",
+            "readability": "bare",
+            "maintainability": "dex@HEAD",
+            "tests": "dex@HEAD",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix every symptom correctly. Each takes the order lock first, then SKU locks in sorted order, stores locks per store, rejects releasing a committed order, and has expire re-check the order's status under its lock. A goes further: it checks every item before writing anything, and rolls back partial writes if a store write fails. B can leave partial holds if a write fails. A's tests are much stronger: they start the second call at offsets 0\u20138 store round trips, which hits races that calls started together can hide. They also include isolation tests, store-failure tests and seeded stress runs. B's race tests mostly start calls together or one tick apart. B is leaner and easier to read. A adds an unrequested README and a new constructor ValidationError, so it is broader in scope. On balance A is the safer merge.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "bare",
+          "maintainability": "tie",
+          "tests": "dex@HEAD",
+          "scope": "bare"
+        },
+        "position_consistent": false
+      }
+    },
+    "csv-rfc4180:t007-dex-csv-rfc4180-r2:t004-dex-loop-csv-rfc4180-r2": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "dex",
+        "dex-loop"
+      ],
+      "trials": [
+        "t007-dex-csv-rfc4180-r2",
+        "t004-dex-loop-csv-rfc4180-r2"
+      ],
+      "runs": [
+        {
+          "a": "dex",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex-loop",
+            "maintainability": "tie",
+            "tests": "dex-loop",
+            "scope": "tie"
+          },
+          "reasoning": "Both implementations use a single-pass state machine that reads each character once. Tracing them, I found no spec violations in either: CRLF split across chunks, BOM handling, error positions, duplicate headers, field-count timing, stringify quoting and BOM protection all look right. B keeps line and column counters directly and uses separate RECORD_START and FIELD_START states. That is slightly easier to follow than A's offset arithmetic plus a recordStarted flag. For tests, B checks every one- and two-cut split of its corpus, and it round-trips stringify output through createParser with random chunking. A fuzzes random malformed inputs with random chunking, which is valuable. Overall B's coverage is marginally broader. Scope and docs are comparable.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "tie",
+            "scope": "tie"
+          },
+          "reasoning": "I traced both state machines through the tricky cases and found no spec violations in either: CR/LF split across chunks, escaped quotes split across chunks, BOM handling, duplicate-header positions, field-count timing and the unclosed-quote position. A tracks the column with a plain counter and has a separate RECORD_START state, which makes it easier to follow than B's offset and lineStart arithmetic with hot locals written back after the loop. B's handling of an escaped quote (keeping the second quote in the next piece) is clever but less obvious. On tests, A checks every one- and two-cut split of its corpus, and B fuzzes random inputs against parse. Both are strong, and both include linear-time stress tests. The scope and READMEs are comparable. A edges ahead on clarity.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex-loop",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex-loop",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "tie"
+        },
+        "position_consistent": true
+      }
+    },
+    "csv-rfc4180:t021-dex-csv-rfc4180-r3:t012-dex-loop-csv-rfc4180-r3": {
+      "scenario": "csv-rfc4180",
+      "arms": [
+        "dex",
+        "dex-loop"
+      ],
+      "trials": [
+        "t021-dex-csv-rfc4180-r3",
+        "t012-dex-loop-csv-rfc4180-r3"
+      ],
+      "runs": [
+        {
+          "a": "dex",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "dex-loop",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "dex",
+            "scope": "tie"
+          },
+          "reasoning": "Both use nearly the same state machine and handle CRLF across chunks, escaped quotes split across writes, BOM columns, error order and __proto__ correctly. Neither has a clear bug. The main difference: the spec says 'No rows gives ''', and B follows it literally even when header is set, while A writes the header line. B's rejection of lone-surrogate delimiters goes slightly beyond the spec but is defensible. B tracks line and column directly, which is a little simpler than A's offset arithmetic. A's tests are somewhat broader: a shared helper module, more random streaming runs and a corpus crossed with option sets. B's tests are also thorough and include a timing budget. Overall it is close, with B slightly ahead on spec fidelity.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "dex-loop",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "tie",
+            "scope": "tie"
+          },
+          "reasoning": "Both parsers use nearly the same state machine and look correct on CRLF across chunks, escaped quotes split between writes, BOM handling, error order and error positions. The main difference is in stringify. The spec says no rows gives '', and A does that even when a header is set. B writes the header line instead, which departs from the literal spec. A tracks line and column one character at a time, which is easier to follow than B's offset and lineStart arithmetic, where the CRLF `continue` path is subtle. The tests are comparable. B adds a streaming round-trip and runs its corpus under more option sets. However, B's `{ timeout }` on synchronous tests does nothing, while A checks its time budget inside the loop. Overall A is slightly better.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex-loop",
+        "criteria": {
+          "correctness": "dex-loop",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "tie"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t009-bare-inventory-race-r3:t001-dex-at-HEAD-inventory-race-r3": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex@HEAD"
+      ],
+      "trials": [
+        "t009-bare-inventory-race-r3",
+        "t001-dex-at-HEAD-inventory-race-r3"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "bare",
+            "maintainability": "bare",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix every cause the report describes. They add per-key FIFO locks shared through a WeakMap keyed by the store, take the order lock before sorted SKU locks, check a whole bundle before writing, reject release on committed orders, and make expire re-read each order under its lock. A does this in a small, readable diff. B adds rollback on store failure (which can throw a new AggregateError), a 138-line README, a package.json change and about 1,400 lines of tests, including input validation and synchronous-store edge cases. None of that was asked for, it makes B harder to review, and the AggregateError slightly changes the error contract. A's focused tests, which include a randomized interleaving check, cover every symptom and the throughput requirement.",
+          "parsed": true
+        },
+        {
+          "a": "dex@HEAD",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "dex@HEAD",
+            "readability": "bare",
+            "maintainability": "bare",
+            "tests": "dex@HEAD",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix every incident cause the same way. Each call locks the order, then its SKUs in sorted order, and the locks are stored per store object. Both check a bundle's items before holding any, stop release and expire from touching committed orders, and re-read orders under lock in expire. A adds rollback when a store write fails and reads/writes a bundle's SKUs in parallel, so it is a little more robust. That extra code is outside what the incident needs, and so are A's 138-line README, test-timeout change and very large test suite. B is small and easy to follow. Its tests cover every symptom, including deterministic stalled retries, the no-global-lock rule and a seeded random workload. B's fix is enough, and it is easier to review and maintain.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "bare",
+          "maintainability": "bare",
+          "tests": "tie",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t024-bare-inventory-race-r2:t005-dex-at-HEAD-inventory-race-r2": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex@HEAD"
+      ],
+      "trials": [
+        "t024-bare-inventory-race-r2",
+        "t005-dex-at-HEAD-inventory-race-r2"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "bare",
+            "maintainability": "tie",
+            "tests": "dex@HEAD",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix every cause in the incident report: per-order and per-SKU FIFO locks, locks shared through the store, SKU locks taken in sorted order after the order lock, check-all-before-write for bundles, status checks in release and expire, and a re-check under the lock in expire. B also rolls back writes when the store fails. That is more robust, but the task did not ask for it. B also adds a README, a package.json timeout and a new ValidationError in the constructor, which changes behaviour outside the task. B's tests are broader, adding gated, failing and counting stores. A's tests are tighter and sweep the timing gap between racing calls, which is effective. A is smaller, stays in scope and is easier to review, so I would merge A.",
+          "parsed": true
+        },
+        {
+          "a": "dex@HEAD",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "dex@HEAD",
+            "readability": "bare",
+            "maintainability": "tie",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix every symptom the same way. Each uses per-order then sorted per-SKU FIFO locks, keyed to the store object. Both re-check expire under the lock, reject release of committed orders and serialize idempotent retries. A is somewhat more robust: it rolls back writes when the store fails and never mutates objects read from the store. B has neither. B is a tighter fix to review. A adds a README, changes the test timeout, and adds constructor validation that throws where it didn't before, which is an unrequested behaviour change. Its separate lock module and rollback layer also add review surface. Both test suites are strong. B's gap sweeps cover the race windows systematically, and A's gated and failing stores go deeper on failure paths.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "bare",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t023-bare-inventory-race-r1:t022-dex-inventory-race-r1": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex"
+      ],
+      "trials": [
+        "t023-bare-inventory-race-r1",
+        "t022-dex-inventory-race-r1"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "dex",
+            "tests": "dex",
+            "scope": "tie"
+          },
+          "reasoning": "Both fixes are essentially the same and both are correct. Each adds per-key locks shared through a store-keyed WeakMap, takes the order lock before SKU locks, and takes SKU locks in sorted order. Each checks the whole bundle before writing, rejects invalid state transitions, and re-reads orders under the lock in expire. B puts the SKU read-modify-write in one #updateItems helper, so reserve, commit and release share one code path. B also keeps the locks private, while A exposes `this.locks` as a public field. B's tests go further: unit tests for KeyedLock, 40 workers sharing one store, a deadlock check with SKUs in opposite orders, a test that mutating the items array after the call has no effect, and a randomized workload across eight seeds that also checks no order expires twice. A's tests are good but slightly narrower.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "bare",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "dex",
+            "scope": "tie"
+          },
+          "reasoning": "Both use the same design: a per-key lock map attached to each store object, the order lock taken before SKU locks, SKU keys sorted, state rechecked under the lock in expire, and items copied before the first await. The difference is how they write records back. A changes the objects returned by `store.get` in place. If a substitute store returns live references, a bundle that fails on a later item has already changed the earlier ones before the throw, so the all-or-nothing guarantee breaks. B builds new objects and checks every item before writing, and it guards against a missing order in expire. A's tests are somewhat stronger: several randomized seeds, error-type checks, a check that each order expires only once, and unit tests for the lock itself. B is more robust against the stores tests may supply, so B edges it.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "dex",
+          "scope": "tie"
+        },
+        "position_consistent": false
+      }
+    },
+    "inventory-race:t024-bare-inventory-race-r2:t002-dex-inventory-race-r2": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex"
+      ],
+      "trials": [
+        "t024-bare-inventory-race-r2",
+        "t002-dex-inventory-race-r2"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "dex",
+            "readability": "tie",
+            "maintainability": "dex",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix the same races correctly. Each uses per-key locks shared through a per-store WeakMap, takes the order lock before sorted SKU locks, checks every item before holding any, and re-checks state under the lock in expire. B is more robust: it writes in sequence with the order record last and rolls back if a store write fails, so a failed write cannot leave a bundle half-held. A writes in parallel with no rollback. B also moves the lock into a separate, unit-tested KeyedLock module and updates counters without mutating them, which makes it easier to maintain. A's tests sweep race gaps more thoroughly; B's tests add coverage of write failures and of the lock itself. A is slightly tighter in scope.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "dex",
+            "readability": "tie",
+            "maintainability": "dex",
+            "tests": "tie",
+            "scope": "tie"
+          },
+          "reasoning": "Both submissions fix the same races in the same way. Each keeps a lock table per store, takes the order lock before any SKU lock, sorts the SKU locks, checks every item before writing anything, and re-checks expired orders under the lock. A goes further: its writes are sequential and roll back on failure, so a store error mid-write leaves no partial update. B writes in parallel with no rollback, so a failed write can leave SKU counters changed without the order record. A also puts the lock in its own module (KeyedLock) with its own tests, which is easier to maintain. On tests, B varies the timing gap between racing calls more thoroughly and adds a cancel-during-reserve case. A adds tests for store-write failures and rollback. The test suites are about even.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex",
+        "criteria": {
+          "correctness": "dex",
+          "readability": "tie",
+          "maintainability": "dex",
+          "tests": "tie",
+          "scope": "tie"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t009-bare-inventory-race-r3:t019-dex-inventory-race-r3": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex"
+      ],
+      "trials": [
+        "t009-bare-inventory-race-r3",
+        "t019-dex-inventory-race-r3"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "bare",
+            "readability": "tie",
+            "maintainability": "bare",
+            "tests": "tie",
+            "scope": "tie"
+          },
+          "reasoning": "Both use the same design: per-key FIFO locks shared through a WeakMap keyed on the store, the order lock taken before SKU locks, SKU locks in sorted order, status checks done under the lock, and expire re-reading each order under its lock. The difference is that B's updateItems changes the fetched item objects in place before checking every item. If a substitute store returns live references, which the task allows, a bundle that fails on its second item has already changed its first item in the store. A builds new objects and writes nothing until every check passes, so it is safer. B's lock unit tests and opposite-order bundle test are good. A's randomized test runs 25 seeds and also checks that a same-SKU call waits.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "bare",
+            "readability": "tie",
+            "maintainability": "bare",
+            "tests": "tie",
+            "scope": "tie"
+          },
+          "reasoning": "Both fix every symptom the same way: per-key locks shared through a store-keyed WeakMap, the order lock before sorted SKU locks, commit and release checking the order's status, expire reading under the order lock, and bundles checked in full before anything is written. B builds new objects for each change instead of mutating them. A mutates items in place before writing, so a mid-bundle throw would corrupt state if the store ever returned live references. B's lock also releases only the keys it actually took. On tests, A adds KeyedLock unit tests and a broader check that unrelated calls don't block. B uses a stalling store to reproduce true mid-flight retries and runs its randomized test over 25 seeds. The two are otherwise very close.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "bare",
+          "readability": "tie",
+          "maintainability": "bare",
+          "tests": "tie",
+          "scope": "tie"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t013-dex-at-HEAD-inventory-race-r1:t022-dex-inventory-race-r1": {
+      "scenario": "inventory-race",
+      "arms": [
+        "dex@HEAD",
+        "dex"
+      ],
+      "trials": [
+        "t013-dex-at-HEAD-inventory-race-r1",
+        "t022-dex-inventory-race-r1"
+      ],
+      "runs": [
+        {
+          "a": "dex@HEAD",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex@HEAD",
+          "criteria": {
+            "correctness": "dex@HEAD",
+            "readability": "tie",
+            "maintainability": "dex@HEAD",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "Both fix the same root causes with essentially the same design: a per-store keyed FIFO lock, the order lock taken before SKU locks, SKU locks in sorted order, and state-checked release and expire. B changes store records in place. If a test passes in a non-cloning store (which the task allows) and a bundle fails partway through, B leaves the earlier items' counters corrupted. A computes new copies, checks every line before writing, and rolls back if a write fails. A's tests are broader: they try the second call at each point of the first, check that unrelated SKUs don't wait, and cover store failures and non-cloning stores. A adds an unrequested README and a store check in the constructor, so B is tighter in scope, but A is safer to merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "dex@HEAD",
+          "criteria": {
+            "correctness": "dex@HEAD",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "Both fix every cause with per-key FIFO locks that are shared per store. Both take the order lock before any SKU lock, take SKU locks in sorted order, re-check state in expire and copy the caller's items. A's #updateItems changes the records returned by the store in place. With a store that returns live references (which the task allows), a bundle that fails on a later item leaves the earlier item's reservation changed in the store. B builds new objects, so it avoids this, and it also rolls back when a store write fails. B's tests go further: offset sweeps, a non-cloning store and failure injection. A is tighter and easier to read. B adds a README and constructor validation nobody asked for, which is scope creep, but its edge-case correctness wins.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex@HEAD",
+        "criteria": {
+          "correctness": "dex@HEAD",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "dex@HEAD",
+          "scope": "dex"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t005-dex-at-HEAD-inventory-race-r2:t002-dex-inventory-race-r2": {
+      "scenario": "inventory-race",
+      "arms": [
+        "dex@HEAD",
+        "dex"
+      ],
+      "trials": [
+        "t005-dex-at-HEAD-inventory-race-r2",
+        "t002-dex-inventory-race-r2"
+      ],
+      "runs": [
+        {
+          "a": "dex@HEAD",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "dex",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "Both use the same sound design: per-order then per-SKU FIFO locks taken in sorted order and shared per store object, status checks in release/expire, a re-check under the lock in expire, all-or-nothing bundles, and rollback on store failure. Correctness is essentially equal. A's advantages are small: it copies items before awaiting and writes in parallel. B's in-place addStock mutation is minor too. A adds unrequested extras: a 127-line README, a package.json timeout change, and constructor validation, which changes constructor behaviour despite the fixed public API. A's tests are more thorough, with a gated-store retry window, failure injection and a multi-worker replay. B's tests still cover every symptom well. B is leaner, easier to review and stays in scope.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "Both fix every cause the same way. Each uses per-key FIFO locks shared through a WeakMap keyed on the store, takes the order lock before SKU locks in sorted order, checks every item before writing, rolls back failed writes, enforces status checks in release, and re-checks under the lock in expire. B adds small extras: it preserves error order with allSettled, copies items before the first await, and dedupes keys. B's tests are broader, with a gated-store retry window, several seeds, multiple workers and more failure injection. But B also adds a large unrequested README, changes the test script's timeout, and makes the constructor throw a new ValidationError, which changes public behaviour. A is tighter, easier to review and stays within scope.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex",
+          "maintainability": "tie",
+          "tests": "dex@HEAD",
+          "scope": "dex"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t001-dex-at-HEAD-inventory-race-r3:t019-dex-inventory-race-r3": {
+      "scenario": "inventory-race",
+      "arms": [
+        "dex@HEAD",
+        "dex"
+      ],
+      "trials": [
+        "t001-dex-at-HEAD-inventory-race-r3",
+        "t019-dex-inventory-race-r3"
+      ],
+      "runs": [
+        {
+          "a": "dex@HEAD",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex@HEAD",
+          "criteria": {
+            "correctness": "dex@HEAD",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "dex@HEAD",
+            "scope": "dex"
+          },
+          "reasoning": "Both fix the same causes the same way: per-key locks tied to the store, the order lock taken before sorted SKU locks, every item checked before any write, expire re-reading each order under its lock, and release rejecting committed orders. A goes further. If a store write fails, it restores the SKU values it read, so a failed write cannot leave units held with no order record. B has no such rollback. A also never mutates objects it gets from the store. A's tests are stronger: they use a gated store to reproduce the retry and double-commit timing deterministically, and they check parallelism directly. B relies on staggered ticks, which is less reliable. A adds an unrequested 138-line README and changes the test timeout in package.json. B is leaner and easier to read.",
+          "parsed": true
+        },
+        {
+          "a": "dex",
+          "b": "dex@HEAD",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "dex",
+            "tests": "dex",
+            "scope": "dex"
+          },
+          "reasoning": "Both fix every symptom the same way: per-key locks tied to the store object, the order lock taken before SKU locks in sorted order, all items checked before any write, `release` rejecting committed orders, and `expire` re-reading each order under its lock. Both hold under concurrency, and neither uses a service-wide lock. B adds rollback on store write failures, avoids mutating objects returned by the store, and introduces a new `AggregateError` outcome. None of that was asked for, and the new error type slightly stretches the unchanged-API requirement. B also adds a long README, changes `package.json`, and brings in about 1,500 lines of tests and helpers. A's code and tests are tighter, cover each symptom plus a seeded random-interleaving check, and are much easier to review. A is the better merge.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "dex"
+        },
+        "position_consistent": false
+      }
+    },
+    "inventory-race:t024-bare-inventory-race-r2:t011-dex-loop-inventory-race-r2": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex-loop"
+      ],
+      "trials": [
+        "t024-bare-inventory-race-r2",
+        "t011-dex-loop-inventory-race-r2"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "dex-loop",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Both submissions lock per order and per SKU, share the locks per store through a WeakMap and take SKU locks in sorted order. A does not remove repeated keys before locking, so a bundle that lists the same SKU twice waits on its own lock and deadlocks. B's KeyedLock removes repeated keys, and its reserve copies records before changing them. B also puts the lock in its own tested module (src/lock.js), which is cleaner to maintain. A's expire skips final-state orders without locking them, a small efficiency gain. A's race tests step through fixed event-loop gaps, which makes them thorough. B has comparable workload tests plus a store-failure test and lock unit tests. B adds a few unrelated tests, such as the NaN TTL case and a public-surface check, so it drifts slightly on scope.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex-loop",
+            "maintainability": "dex-loop",
+            "tests": "tie",
+            "scope": "bare"
+          },
+          "reasoning": "Both fixes look correct. Each takes one order lock first and then the SKU locks in sorted order. Both keep lock tables per store, check a whole bundle before holding any of it, and re-check an order's state under its lock in expire, so neither can deadlock. A puts the locking in its own module, KeyedLock, which is easy to follow and has unit tests. That makes it easier to maintain than B's promise-chain helpers written inline in inventory.js. B's systematic gap-sweep race tests are strong, and so are A's seeded jitter store and mixed-workload test. A adds some extra tests that go beyond the task, such as the NaN TTL and public-surface checks, so B is slightly tighter on scope. On balance A's structure wins.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "dex-loop",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex-loop",
+          "maintainability": "dex-loop",
+          "tests": "tie",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t023-bare-inventory-race-r1:t017-dex-loop-inventory-race-r1": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex-loop"
+      ],
+      "trials": [
+        "t023-bare-inventory-race-r1",
+        "t017-dex-loop-inventory-race-r1"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "bare",
+            "readability": "bare",
+            "maintainability": "bare",
+            "tests": "dex-loop",
+            "scope": "bare"
+          },
+          "reasoning": "A holds every SKU lock of a bundle together, taken in sorted order, and checks all items before writing any. Reserve is therefore truly all-or-nothing and cannot deadlock. B holds one SKU at a time and undoes earlier holds when a later item fails. Other callers can see those holds briefly, so a competing order can be wrongly rejected with InsufficientStockError, which weakens the documented 'then holds nothing' guarantee. B's approach does avoid A's indirect waits through bundles that chain across SKUs. However, those waits only happen between calls that share a SKU, so A still meets the requirement. B's tests go further: KeyedLock unit tests, a store failure part-way through reserve, and chained-bundle blocking. B also edits package.json, which nobody asked for. A is simpler, and its guarantees are stronger.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "bare",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "dex-loop",
+            "readability": "tie",
+            "maintainability": "dex-loop",
+            "tests": "dex-loop",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix the lost updates, retried reserves, double commits and releases, release-after-commit and the expire races, using per-key locks tied to the store. B holds all of a bundle's SKU locks at once, taken in sorted order. That lets waits chain across SKUs: a call on SKU aaa can wait behind a bundle {aaa, acc}, which waits behind {acc, slow}, which waits on slow. That call shares nothing with the stalled call, which breaks the no-waiting requirement. A holds at most one SKU lock at a time and returns earlier holds if a later one fails. It documents the brief visibility trade-off and tests the chained case directly. A's tests are broader: store write failure, a store that doesn't copy values, and lock unit tests. A's package.json timeout change is minor extra scope.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "dex-loop",
+          "scope": "bare"
+        },
+        "position_consistent": false
+      }
+    },
+    "inventory-race:t009-bare-inventory-race-r3:t014-dex-loop-inventory-race-r3": {
+      "scenario": "inventory-race",
+      "arms": [
+        "bare",
+        "dex-loop"
+      ],
+      "trials": [
+        "t009-bare-inventory-race-r3",
+        "t014-dex-loop-inventory-race-r3"
+      ],
+      "runs": [
+        {
+          "a": "bare",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "bare",
+            "readability": "bare",
+            "maintainability": "bare",
+            "tests": "dex-loop",
+            "scope": "bare"
+          },
+          "reasoning": "Both use the same design: per-key FIFO locks shared through a WeakMap keyed on the store, the order lock taken before the SKU locks, sorted acquisition to avoid deadlock, and state checks done under the lock in commit, release and expire. Both fix every reported race. A builds new objects instead of editing what the store returns, so a throw partway through cannot corrupt state if the store hands back references. B edits in place. B also adds unrequested behaviour: an AggregateError for failed writes and a change to the test timeout in package.json. A's code is shorter and easier to follow. B's tests are stronger: they sweep race offsets, unit-test the lock, and cover write failures. A's tests are still solid, with stalling-store retries and randomized interleavings.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "bare",
+          "exit": 0,
+          "overall": "bare",
+          "criteria": {
+            "correctness": "bare",
+            "readability": "tie",
+            "maintainability": "tie",
+            "tests": "dex-loop",
+            "scope": "bare"
+          },
+          "reasoning": "Both fix the same bugs with a nearly identical design: a per-key FIFO lock shared by every service on the same store, the order lock taken before the SKU locks, sorted key order, validation before any hold, state checks in release and expire, and an input copy. B builds updated records as copies, so a throw partway through cannot change a record the store may share by reference. A edits the fetched records in place, adds an AggregateError path (a new error type) and changes the test timeout in package.json, which nobody asked for. A's tests are somewhat stronger: they sweep race timings tick by tick, add unit tests for the lock, and check counters against order records after every race. B's tests use stalled writes to reproduce the retry races and are also solid.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "bare",
+        "criteria": {
+          "correctness": "bare",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "dex-loop",
+          "scope": "bare"
+        },
+        "position_consistent": true
+      }
+    },
+    "inventory-race:t022-dex-inventory-race-r1:t017-dex-loop-inventory-race-r1": {
+      "scenario": "inventory-race",
+      "arms": [
+        "dex",
+        "dex-loop"
+      ],
+      "trials": [
+        "t022-dex-inventory-race-r1",
+        "t017-dex-loop-inventory-race-r1"
+      ],
+      "runs": [
+        {
+          "a": "dex",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "dex",
+            "readability": "dex",
+            "maintainability": "dex",
+            "tests": "dex-loop",
+            "scope": "dex"
+          },
+          "reasoning": "A locks all of a bundle's SKUs together, in sorted order, after taking the order lock. Checking and holding stock is therefore atomic, and a rejected bundle never holds anything, even briefly. B locks one SKU at a time: it checks the bundle up front without locks, holds items one by one and rolls back on failure. A concurrent bundle can still briefly hold units and cause spurious InsufficientStockErrors for other orders, which is the incident symptom it was meant to fix. B documents this weakness rather than removing it. A's single #updateItems helper is simpler than B's SETTLE table plus manual rollback. B's tests are broader (store failure, validation, transitive-blocking checks), but it also makes an unrequested package.json change. A is the safer merge.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "dex-loop",
+            "readability": "dex",
+            "maintainability": "dex-loop",
+            "tests": "dex-loop",
+            "scope": "dex"
+          },
+          "reasoning": "Both add per-key locks shared through the store and fix the double-apply bugs. B changes objects read from the store in place. With a store that does not copy values, a bundle that fails on a later item has already raised the earlier item's reserved count in the store. B also leaves partial writes if a store call fails, and it holds all of a bundle's SKU locks while waiting on a busy one, so unrelated SKUs end up waiting on it. A copies values instead of changing them, rolls back on failure, and never waits for a lock while holding a SKU's. Its tests cover all three cases. B's all-SKUs-locked design is easier to follow and avoids A's brief partial holds. A's package.json timeout change is minor extra scope.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex",
+          "maintainability": "tie",
+          "tests": "dex-loop",
+          "scope": "dex"
+        },
+        "position_consistent": false
+      }
+    },
+    "inventory-race:t002-dex-inventory-race-r2:t011-dex-loop-inventory-race-r2": {
+      "scenario": "inventory-race",
+      "arms": [
+        "dex",
+        "dex-loop"
+      ],
+      "trials": [
+        "t002-dex-inventory-race-r2",
+        "t011-dex-loop-inventory-race-r2"
+      ],
+      "runs": [
+        {
+          "a": "dex",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "dex",
+            "readability": "tie",
+            "maintainability": "dex",
+            "tests": "tie",
+            "scope": "dex"
+          },
+          "reasoning": "Both submissions lock the order key first and then the SKU keys in sorted order, and both share those locks between services built on the same store. Both fix the oversell, double-hold, negative-reserved and double-sell races, and both re-check order status under the lock in expire. A also rolls back the SKU writes already made if a later store write fails, so a timeout halfway through a bundle cannot leave some items held. B has no rollback, so that failure still leaves a stuck partial hold. A builds new counter objects through the holdUnits, sellUnits and returnUnits helpers, which is easier to extend. B edits the store's objects in place in closeOrder. B's tests check the ledger thoroughly, but B also adds unrelated tests (a NaN TTL, the public surface) to the existing test file.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "dex-loop",
+            "readability": "dex-loop",
+            "maintainability": "tie",
+            "tests": "dex-loop",
+            "scope": "dex-loop"
+          },
+          "reasoning": "Both fix the reported problems the same way: per-key locks shared per store, the order lock taken before SKU locks, a check-then-write reserve, status checks under the lock, and an expire that re-reads each order under its lock. They differ in two places. First, A's KeyedLock drops duplicate keys. B's requires distinct keys, so if items are not validated as unique, a bundle that lists the same SKU twice would deadlock waiting on its own lock. Second, B adds store-write rollback with AggregateError reporting. Nobody asked for it, it adds complexity, and the rollback is only best-effort. A's code is easier to follow. A's tests are also stronger: a ledger check against the order records, a mixed workload with expire running mid-flight, a live-object store, and a case for a lock freed after a failed write.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "tie",
+          "maintainability": "tie",
+          "tests": "tie",
+          "scope": "tie"
+        },
+        "position_consistent": false
+      }
+    },
+    "inventory-race:t019-dex-inventory-race-r3:t014-dex-loop-inventory-race-r3": {
+      "scenario": "inventory-race",
+      "arms": [
+        "dex",
+        "dex-loop"
+      ],
+      "trials": [
+        "t019-dex-inventory-race-r3",
+        "t014-dex-loop-inventory-race-r3"
+      ],
+      "runs": [
+        {
+          "a": "dex",
+          "b": "dex-loop",
+          "exit": 0,
+          "overall": "dex",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "dex",
+            "tests": "dex-loop",
+            "scope": "dex"
+          },
+          "reasoning": "Both fixes are essentially the same and both are correct. Each uses a per-store KeyedLock with sorted multi-key acquisition, takes the order lock before any SKU locks, reads every SKU before writing any, checks status under the lock, and runs expire under each order's lock. B adds extras nobody asked for: an AggregateError path with parallel allSettled writes, held-key tracking for an acquire that cannot throw, and a package.json test-timeout change. That makes B larger without fixing anything real. B's tests are somewhat stronger: they sweep tick offsets across the single-order races, check that edits to the items array after the call are ignored, and cover write failures. A's tests still cover every symptom well, including multiple workers and randomized interleavings. A is tighter and stays in scope.",
+          "parsed": true
+        },
+        {
+          "a": "dex-loop",
+          "b": "dex",
+          "exit": 0,
+          "overall": "dex-loop",
+          "criteria": {
+            "correctness": "tie",
+            "readability": "dex",
+            "maintainability": "tie",
+            "tests": "dex-loop",
+            "scope": "dex"
+          },
+          "reasoning": "Both use the same fix: a per-key lock shared by every service on the same store, the order lock taken before sorted SKU locks, and all SKUs read before any write. Expire rechecks each order under its lock. Both correct the bugs in the report. A writes SKUs in parallel and waits for every write, but it can throw AggregateError, an error type outside the stated API. A also changes the test timeout in package.json. B writes one SKU at a time, which is simpler and slightly easier to read. A's tests are stronger: they replay each same-order race at every start offset from 0 to 12 ticks, run seeded random loads, and test partial write failures. B's tests are well organised by symptom but check fewer interleavings. A's more thorough tests decide it narrowly.",
+          "parsed": true
+        }
+      ],
+      "combined": {
+        "overall": "tie",
+        "criteria": {
+          "correctness": "tie",
+          "readability": "dex",
+          "maintainability": "tie",
+          "tests": "dex-loop",
+          "scope": "dex"
+        },
+        "position_consistent": false
+      }
+    }
+  },
+  "accuracy": {
+    "t001-dex-at-HEAD-inventory-race-r3": {
+      "arm": "dex@HEAD",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t002-dex-inventory-race-r2": {
+      "arm": "dex",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t004-dex-loop-csv-rfc4180-r2": {
+      "arm": "dex-loop",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t003-bare-csv-rfc4180-r2": {
+      "arm": "bare",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t005-dex-at-HEAD-inventory-race-r2": {
+      "arm": "dex@HEAD",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t006-dex-at-HEAD-csv-rfc4180-r2": {
+      "arm": "dex@HEAD",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t007-dex-csv-rfc4180-r2": {
+      "arm": "dex",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t009-bare-inventory-race-r3": {
+      "arm": "bare",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t008-bare-csv-rfc4180-r3": {
+      "arm": "bare",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t010-dex-at-HEAD-csv-rfc4180-r3": {
+      "arm": "dex@HEAD",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t012-dex-loop-csv-rfc4180-r3": {
+      "arm": "dex-loop",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t011-dex-loop-inventory-race-r2": {
+      "arm": "dex-loop",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t013-dex-at-HEAD-inventory-race-r1": {
+      "arm": "dex@HEAD",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t014-dex-loop-inventory-race-r3": {
+      "arm": "dex-loop",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t015-bare-csv-rfc4180-r1": {
+      "arm": "bare",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t016-dex-loop-csv-rfc4180-r1": {
+      "arm": "dex-loop",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t017-dex-loop-inventory-race-r1": {
+      "arm": "dex-loop",
+      "scenario": "inventory-race",
+      "rating": 0,
+      "issues": [
+        "\"Every mutant is caught\" is false: the agent's tests caught 37 of the 40 planted bugs, so 3 were missed.",
+        "The report suggests the concurrency fix works, but a hidden robustness test failed: opposite-order bundles either deadlock or leave partial holds."
+      ],
+      "exit": 0
+    },
+    "t018-dex-csv-rfc4180-r1": {
+      "arm": "dex",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t019-dex-inventory-race-r3": {
+      "arm": "dex",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t020-dex-at-HEAD-csv-rfc4180-r1": {
+      "arm": "dex@HEAD",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t021-dex-csv-rfc4180-r3": {
+      "arm": "dex",
+      "scenario": "csv-rfc4180",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t022-dex-inventory-race-r1": {
+      "arm": "dex",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t023-bare-inventory-race-r1": {
+      "arm": "bare",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    },
+    "t024-bare-inventory-race-r2": {
+      "arm": "bare",
+      "scenario": "inventory-race",
+      "rating": 2,
+      "issues": [],
+      "exit": 0
+    }
+  }
+}

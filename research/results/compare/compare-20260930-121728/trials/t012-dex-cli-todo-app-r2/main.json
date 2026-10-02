@@ -1,0 +1,425 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 7.582511199999998,
+    "num_turns": 18,
+    "duration_ms": 548237,
+    "duration_api_ms": 2037013,
+    "tokens": {
+      "input": 154,
+      "output": 202179,
+      "cache_read": 9974646,
+      "cache_creation": 296940,
+      "total": 10473919
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 154,
+        "outputTokens": 202179,
+        "cacheReadInputTokens": 9974646,
+        "cacheCreationInputTokens": 296940,
+        "webSearchRequests": 0,
+        "costUSD": 7.582511199999998,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 112666,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 65,
+      "Write": 23,
+      "Edit": 12,
+      "Agent": 1,
+      "Read": 3
+    },
+    "final_text": "The todo CLI is built and working. All 205 tests pass, lint is clean, and the work is committed on the branch `feat/cli-todo-app`. I didn't push because the repo has no remote.\n\n**Usage:** `node index.js add \"Buy groceries\"`, then `list`, `complete 1`, `delete 1`. Output looks like this:\n```\n1. [ ] Buy groceries\n2. [x] Walk the dog\n\n2 todos: 1 pending, 1 done\n```\n\n**Choices I made where the spec was silent:**\n- **Exit codes:** 0 for success, 1 when a valid command can't be carried out (unknown id, unreadable or corrupt file), 2 for usage errors (missing argument, bad id, empty or too-long text).\n- **Empty list:** `list` prints \"No todos yet\" and exits 0. Completing an already-done todo prints a note and also exits 0.\n- **IDs:** the spec doesn't say whether \"auto-incrementing\" can reuse a deleted id, so there are two strategies. The default `max` (highest id + 1) keeps `todos.json` a plain array. `sequence` never reuses an id and adds `lastId` to the file.\n- **Several ids at once:** `complete` and `delete` accept several ids. If any id is unknown, nothing changes.\n- **Protecting the file:** a corrupt `todos.json` is reported and never overwritten. Writes can't leave a half-written file. A lock file stops commands run at the same time from overwriting each other's changes.\n- **Limits:** text length (default 500), item count (default 10,000) and lock wait (default 5 s) can be changed through `TODO_*` environment variables. The README explains all of this.\n\nThe code is split into an entry point, a CLI layer, pure todo logic, and storage (9 source files). The tests are unit, integration, end-to-end (running real `node index.js` processes, including several at once) and edge cases.\n\n**How I checked it:**\n- **Tests catch breakage:** I deliberately broke the code three ways (removed the lock, swapped `[x]` and `[ ]`, stopped escaping text), and the matching tests failed each time.\n- **Independent review:** a separate review found 5 real bugs, each shown with a small script. The worst: after a crash, several commands running together could both take over the leftover lock, and one command reported success while its todo was lost. I fixed those plus three smaller issues, each with a test that failed first. The same scenario then ran 90 processes with no lost todos.\n- **My own fixes:** invalid text now fails immediately instead of waiting on the lock, the help columns ran together and now line up, and the README examples match the real output exactly.\n\n**Things to know:**\n- I've only run it on macOS.\n- A project hook required a commit message format and a `Co-Authored-By: Dex` line in place of the Claude one, so I used those.\n- CLAUDE.md asks for a `humanizer` skill on docs, but that skill isn't installed here, so I wrote the README plainly without it.\n- A lock taken over only because it's more than 10 seconds old may still belong to a running command. The two commands could then overlap, but only if a command held the lock that long; normally that takes milliseconds. This is listed in the README.",
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 24,
+    "by_category": {
+      "config": {
+        "files": 3,
+        "added": 50,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 1,
+        "added": 157,
+        "deleted": 0
+      },
+      "source": {
+        "files": 9,
+        "added": 998,
+        "deleted": 0
+      },
+      "test": {
+        "files": 11,
+        "added": 1670,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 998,
+    "test_lines": 1670,
+    "total_lines": 2875
+  },
+  "install": {
+    "needed": true,
+    "ok": true,
+    "seconds": 1.5,
+    "output_tail": ""
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 205,
+      "failed": 0
+    },
+    "seconds": 3.4,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 1,
+    "seconds": 2.9,
+    "groups": {
+      "spec": {
+        "passed": 11,
+        "total": 11,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 5,
+        "total": 6,
+        "rate": 0.8333
+      }
+    },
+    "failed": [
+      "[robust] ids are not reused after deleting the newest todo"
+    ],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "The todo CLI is built and working. All 205 tests pass, lint is clean, and the work is committed on the branch `fe",
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 33,
+    "survived": 7,
+    "invalid": 0,
+    "score": 0.825,
+    "mutants": [
+      {
+        "file": "src/cli.js",
+        "line": 28,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cli.js",
+        "line": 38,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cli.js",
+        "line": 57,
+        "from": ">",
+        "to": ">=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cli.js",
+        "line": 129,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cli.js",
+        "line": 137,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cli.js",
+        "line": 145,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/config.js",
+        "line": 34,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/config.js",
+        "line": 46,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/format.js",
+        "line": 40,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/id-strategies.js",
+        "line": 49,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/id-strategies.js",
+        "line": 66,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 43,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 47,
+        "from": "===",
+        "to": "!==",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 47,
+        "from": "true",
+        "to": "false",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 76,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 90,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 116,
+        "from": "&&",
+        "to": "||",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 135,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 151,
+        "from": "&&",
+        "to": "||",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 152,
+        "from": ">=",
+        "to": ">",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 159,
+        "from": "+",
+        "to": "-",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 159,
+        "from": "*",
+        "to": "/",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 168,
+        "from": "!==",
+        "to": "===",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/lock.js",
+        "line": 172,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 21,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 25,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 34,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 34,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 34,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 52,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 54,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 83,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 106,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 110,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 136,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/storage.js",
+        "line": 158,
+        "from": "true",
+        "to": "false",
+        "outcome": "survived"
+      },
+      {
+        "file": "src/todos.js",
+        "line": 119,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/todos.js",
+        "line": 134,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/todos.js",
+        "line": 134,
+        "from": "true",
+        "to": "false",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/todos.js",
+        "line": 134,
+        "from": "false",
+        "to": "true",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "index.js",
+      "src/cli.js",
+      "src/config.js",
+      "src/errors.js",
+      "src/format.js",
+      "src/id-strategies.js",
+      "src/lock.js",
+      "src/storage.js",
+      "src/todos.js"
+    ],
+    "sites": 116,
+    "seconds": 512.2
+  }
+}

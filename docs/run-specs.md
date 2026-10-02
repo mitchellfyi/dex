@@ -118,9 +118,8 @@ Optional fields:
 |-------|-------|
 | `harness.name` | `claude-code`, `claude`, or `codex`. Defaults to `claude-code`. |
 | `harness.model` | Optional model override for the selected harness. |
-| `workflow.name` | `ticket_to_pr` (default) or `benchmark`. A benchmark runs Plan, Implement and Review only and leaves the change in the checkout for an evaluation harness; see [benchmarks.md](benchmarks.md). |
-| `workflow.requires_plan_approval` | Defaults to `true`, or `false` for a benchmark, which cannot require approval. When `false`, the run spec authorizes Phase 1 after plan quality checks pass. |
-| `workflow.requires_ui_evidence` | `auto`, `always`, `never`, `true`, or `false`. Defaults to `never` for a benchmark. |
+| `workflow.requires_plan_approval` | Defaults to `true`. When `false`, the run spec authorizes Phase 1 after plan quality checks pass. |
+| `workflow.requires_ui_evidence` | `auto`, `always`, `never`, `true`, or `false`. |
 | `sync.factory_url` | Enables Factory event sync unless `DEX_FACTORY_SYNC` disables it. |
 | `sync.events_endpoint` | Exact event endpoint. Takes precedence over `sync.factory_url`. |
 

@@ -51,8 +51,11 @@ Usage: dx sync [options]
 Refresh Dex project context and repo memory in .dex/.
 
 Options:
-  --dry-run                         Explain proposed changes without writing files
+  --dry-run                         Explain proposed changes without writing files;
+                                    fails if the provider changes any file
   --state-dir <path>                Read raw observations/episodes from this directory
+                                    (default: $DX_MEMORY_STORE_DIR, else
+                                    ~/.claude/.dex-memory/<repo-key>)
   --since <ref|date>                Limit repository/review-history scanning
   --budget-minutes <n>              Maximum provider runtime (default: 60)
   --no-pr                           Do not create or update a PR
@@ -77,8 +80,33 @@ __dx_sync_project_context_complete() {
   return 0
 }
 
+# __dx_sync_tree_snapshot <root>
+# One line per `git status` entry for the whole repository, plus a checksum
+# line per memory file. A read-only run compares two of these. Status alone
+# misses a change to a file that was already dirty before the provider ran;
+# checksums alone miss a new file outside .dex/memory.
+__dx_sync_tree_snapshot() {
+  local root="$1" file
+  git -C "$root" status --porcelain=v1 --untracked-files=all 2>/dev/null \
+    | awk '{ printf "status\t%s\n", $0 }' || true
+  for file in "$root/.dex/memory/index.md" "$root"/.dex/memory/domains/*.md; do
+    [[ -f "$file" ]] || continue
+    printf 'content\t%s\t%s\n' "$(cksum < "$file" | awk '{ print $1 "-" $2 }')" "${file#"$root"/}"
+  done
+}
+
+# __dx_sync_snapshot_changed_paths <before> <after>
+# Paths whose entry differs between two snapshots, one per line.
+__dx_sync_snapshot_changed_paths() {
+  printf '%s\n%s\n' "$1" "$2" \
+    | sort | uniq -u \
+    | awk -F'\t' '$1 == "status" { print substr($2, 4) } $1 == "content" { print $3 }' \
+    | sort -u
+}
+
 DRY_RUN=0
 NO_PR=0
+FORCE=0
 STATE_DIR=""
 SINCE=""
 TRACE_RETRIEVAL=""
@@ -103,6 +131,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-pr)
       NO_PR=1
+      shift
+      ;;
+    --force)
+      FORCE=1
       shift
       ;;
     --state-dir)
@@ -208,6 +240,17 @@ else
   SYNC_RUN_ID=""
 fi
 
+STATE_DIR_DEFAULTED=0
+if [[ -z "$STATE_DIR" ]]; then
+  STATE_DIR="${DX_MEMORY_STORE_DIR:-$HOME/.claude/.dex-memory/$(dx_session_repo_key)}"
+  STATE_DIR_DEFAULTED=1
+fi
+if [[ "$STATE_DIR_DEFAULTED" -eq 1 ]]; then
+  dx_info "State dir: $STATE_DIR (default; --state-dir or DX_MEMORY_STORE_DIR changes it)"
+else
+  dx_info "State dir: $STATE_DIR"
+fi
+
 if [[ "$READ_ONLY" -eq 1 ]]; then
   if ! dx_bootstrap_agent_tooling "$repo_root" "check"; then
     dx_warn "Read-only sync found Claude/Codex tooling drift; run 'dx sync' or 'dx tools bootstrap' to reinstall it."
@@ -303,6 +346,39 @@ MEMORYINDEX
   fi
 fi
 
+if [[ "$READ_ONLY" -eq 0 && "$STATE_DIR_DEFAULTED" -eq 1 && ! -d "$STATE_DIR" ]]; then
+  # Raw observations are private notes about the user's repositories.
+  if ! (umask 077 && mkdir -p "$STATE_DIR"); then
+    dx_error "Could not create the memory state directory: $STATE_DIR"
+    exit 1
+  fi
+fi
+
+# The store trims itself and, when enough changed since the last review, gets
+# its critical review before the sync agent reads it, so promotion starts from
+# decided statuses (curated, retired, overlay). Read-only runs leave it alone.
+if [[ "$READ_ONLY" -eq 0 && "${DEX_MEMORY_CURATE:-1}" != 0 ]]; then
+  if ! DX_MEMORY_STORE_DIR="$STATE_DIR" bash "$DEX_DIR/bin/memory.sh" --repo "$repo_root" curate; then
+    dx_warn "Memory curation did not complete; sync continues on the maintained store."
+  fi
+  # Curator-promoted entries land in this checkout; the publish step that
+  # follows sync carries them with the agent's own changes.
+  if [[ "${DEX_MEMORY_LAND:-1}" != 0 ]] \
+    && ! DX_MEMORY_STORE_DIR="$STATE_DIR" bash "$DEX_DIR/bin/memory.sh" --repo "$repo_root" land --in-place; then
+    dx_warn "Memory landing did not complete; curated entries stay in the store."
+  fi
+fi
+
+# Nothing new since the last write run means no model: the store has no
+# changed entries and the .dex files are as the last sync left them.
+if [[ "$READ_ONLY" -eq 0 && "$FORCE" -eq 0 ]]; then
+  sync_check=$(DX_MEMORY_STORE_DIR="$STATE_DIR" python3 "$DEX_DIR/scripts/memory_store.py" "$STATE_DIR" sync-check --repo "$repo_root" 2>/dev/null || printf '{"due": true}')
+  if [[ "$(printf '%s' "$sync_check" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("due", True) else "0")' 2>/dev/null || echo 1)" == 0 ]]; then
+    dx_info "Nothing new since the last sync ($(printf '%s' "$sync_check" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("last_synced_at"))')); no agent started. Use --force to run it anyway."
+    exit 0
+  fi
+fi
+
 dx_info "Preparing DXSync provider session"
 dx_provider_apply || exit 1
 dx_provider_agent_ready_check || exit 1
@@ -315,7 +391,7 @@ invocation=$(cat <<EOF
 Repo: $repo_root
 Dry run: $DRY_RUN
 No PR: $NO_PR
-State dir: ${STATE_DIR:-N/A}
+State dir: $STATE_DIR
 Since: ${SINCE:-N/A}
 Budget minutes: $SYNC_BUDGET_MINUTES
 Trace retrieval: ${TRACE_RETRIEVAL:-N/A}
@@ -323,7 +399,9 @@ Phase: ${PHASE:-N/A}
 Include working tree evidence: $INCLUDE_WORKING_TREE
 
 Follow the DXSync Memory Refresh prompt above. If Dry run is 1 or Trace
-retrieval is not N/A, do not modify files.
+retrieval is not N/A, do not modify files: dx sync compares the repository
+before and after this session and fails, naming the changed paths, if
+anything differs.
 EOF
 )
 
@@ -331,6 +409,10 @@ SYNC_PROVIDER_SESSION_ID="${SYNC_RUN_SESSION_ID:-sync-$(dx_unique_session_id)}"
 dx_provider_cleanup_session_state "$SYNC_PROVIDER_SESSION_ID"
 
 sync_status_before=$(git -C "$repo_root" status --porcelain=v1 -- .dex 2>/dev/null || true)
+sync_snapshot_before=""
+if [[ "$READ_ONLY" -eq 1 ]]; then
+  sync_snapshot_before=$(__dx_sync_tree_snapshot "$repo_root")
+fi
 model_flags=()
 if [[ -n "${DX_CLAUDE_MODEL:-}" ]]; then
   model_flags+=(--model "$DX_CLAUDE_MODEL")
@@ -360,6 +442,18 @@ echo ""
 dx_provider_cleanup_session_state "$SYNC_PROVIDER_SESSION_ID"
 SYNC_PROVIDER_SESSION_ID=""
 
+sync_read_only_changed=""
+if [[ "$READ_ONLY" -eq 1 ]]; then
+  sync_snapshot_after=$(__dx_sync_tree_snapshot "$repo_root")
+  sync_read_only_changed=$(__dx_sync_snapshot_changed_paths "$sync_snapshot_before" "$sync_snapshot_after")
+  if [[ -n "$sync_read_only_changed" ]]; then
+    # The provider runs with permissions bypassed, so the prompt alone cannot
+    # keep a dry run read-only. Report the writes; never revert them.
+    dx_error "Read-only sync changed files. The provider wrote despite the dry-run contract; nothing was reverted. Changed paths:"
+    printf '%s\n' "$sync_read_only_changed" | sed 's/^/  /' >&2
+  fi
+fi
+
 if [[ $CLAUDE_EXIT -ne 0 ]]; then
   if [[ $CLAUDE_EXIT -eq 124 ]]; then
     dx_error "Sync exceeded budget of ${SYNC_BUDGET_MINUTES} minute(s)."
@@ -367,6 +461,9 @@ if [[ $CLAUDE_EXIT -ne 0 ]]; then
     dx_error "Sync exited with code $CLAUDE_EXIT."
   fi
   exit "$CLAUDE_EXIT"
+fi
+if [[ -n "$sync_read_only_changed" ]]; then
+  exit 1
 fi
 
 sync_status_after=$(git -C "$repo_root" status --porcelain=v1 -- .dex 2>/dev/null || true)
@@ -394,5 +491,9 @@ echo ""
 # A user-level choice, so a repo that never ran dx config still learns of it.
 if [[ "$(dx_session_messaging_preference 2>/dev/null || echo unset)" == off ]]; then
   dx_info "Messages between your Dex sessions are held for approval; run 'dx config --session-messaging on' to deliver them unattended."
+fi
+# A completed write run is the baseline the next run's "nothing new" check compares against.
+if [[ "$READ_ONLY" -eq 0 ]]; then
+  DX_MEMORY_STORE_DIR="$STATE_DIR" python3 "$DEX_DIR/scripts/memory_store.py" "$STATE_DIR" sync-mark --repo "$repo_root" >/dev/null 2>&1 || true
 fi
 dx_done "Sync complete for: $repo_name"

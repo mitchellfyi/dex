@@ -48,14 +48,14 @@ GIT_COMMIT_NO_CREATE_OPTIONS = {
 }
 
 
-def code_git_commit_target(code, cwd, depth=0, whole_file=False):
+def code_git_commit_target(code, cwd, depth=0, whole_file=False, kind=''):
     if code is UNKNOWN_SHELL_STDIN:
         return None
     if depth > 24:
         return None
     if not code or not code.strip():
         return None
-    for fragment in code_execution_fragments(code, whole_file=whole_file):
+    for fragment in code_execution_fragments(code, whole_file=whole_file, kind=kind):
         target = has_git_commit(fragment, cwd, depth + 1)
         if target:
             return target
@@ -73,7 +73,7 @@ def executable_script_git_commit_target(script_body, cwd, depth=0, kind=''):
     script_kind = kind or shebang_interpreter_kind(script_body)
     if not script_kind:
         return None
-    return code_git_commit_target(script_body, cwd, depth + 1, whole_file=True)
+    return code_git_commit_target(script_body, cwd, depth + 1, whole_file=True, kind=script_kind)
 
 
 def xargs_commit_target(tokens, command_index, command_start, cwd, variables=None, depth=0):
@@ -341,14 +341,12 @@ def has_git_commit(text, cwd, depth=0):
         target = has_git_commit(body, cwd, depth + 1)
         if target:
             return target
-    # A heredoc body is a script, not a -c one-liner: only a literal passed to
-    # a launch call is a command. Read as a one-liner, any mention of a launch
-    # word (`# no subprocess here`) made every string literal in the body a
-    # candidate, and a script that only printed "git commit" was reported as
-    # having committed. The guard keeps the wider reading; a missed warning
-    # costs more there than a false one.
-    for _kind, body in interpreter_heredoc_bodies(text):
-        target = code_git_commit_target(body, cwd, depth + 1, whole_file=True)
+    # Read a heredoc as a script file: a literal is a command only if a launch
+    # call receives it. The guards keep the one-liner reading, where any launch
+    # makes every literal count, because a missed warning costs them more. Here
+    # a false answer tells the agent to amend a commit it never made.
+    for kind, body in interpreter_heredoc_bodies(text):
+        target = code_git_commit_target(body, cwd, depth + 1, whole_file=True, kind=kind)
         if target:
             return target
     for fragment in extract_executable_backticks(shell_text):
@@ -602,11 +600,11 @@ def has_git_commit(text, cwd, depth=0):
                 target = has_git_commit(env_payload, cwd, depth + 1) if env_payload else None
                 if target:
                     return target
-                for _kind, script, from_file in interpreter_code_payloads(
+                for kind, script, from_file in interpreter_code_payloads(
                         tokens, command_index, index, generated_scripts, shell_vars, cwd):
                     if script is UNKNOWN_SHELL_STDIN:
                         continue
-                    target = code_git_commit_target(script, cwd, depth + 1, whole_file=from_file)
+                    target = code_git_commit_target(script, cwd, depth + 1, whole_file=from_file, kind=kind)
                     if target:
                         return target
                 target = xargs_commit_target(tokens, command_index, index, cwd, shell_vars, depth)

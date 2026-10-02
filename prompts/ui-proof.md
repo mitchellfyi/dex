@@ -111,6 +111,18 @@ not evidence that the application reached the intended state. When unrelated
 transient chrome would obscure the proof, use the storyboard's opt-in
 `suppress` selectors and keep the list as narrow as possible.
 
+An `assert` is a claim, not only a gate. Give it a `predicate` (`text_equals`,
+`text_contains`, `value_equals`, `attribute`, `count`, `url_matches`; `visible`
+is the default) and, when the visible result proves an approved acceptance
+criterion, a `criterion` index into that list. The producer records whether
+each claim held. An after-stage claim that did not hold leaves the bundle
+`NEEDS_REVIEW` and names the predicate. End each stage with a gate that holds
+in that stage, usually a `waitFor`, and put criterion claims before it: a
+before-stage claim that is expected to fail must not be the stage's last gate.
+A proof whose after state renders exactly like its before state is also
+`NEEDS_REVIEW`, unless the storyboard declares `expect_identical: true` with
+an `identical_reason`.
+
 Prepare the tools and the session storyboard:
 
 ```bash
@@ -149,7 +161,8 @@ dx run-gate -- bash "$DEX_DIR/bin/ui-capture.sh" capture \
 Pass `--mobile` to both stages when responsive behavior is in scope. The final
 bundle must include recorded before and after footage, visible stage/chapter
 labels, `walkthrough.mp4`, `poster.png`, `captions.vtt`, `transcript.md`, the
-editable storyboard, screenshots, failure or explicitly requested traces, and reviewed browser logs. Narration
+editable storyboard, screenshots, failure or explicitly requested traces, and
+reviewed browser logs, plus `contact.png` whenever ffmpeg could render it. Narration
 is optional; captions are not. The combined MP4 should make the comparison
 clear on its first viewing.
 
@@ -160,13 +173,19 @@ in `docs/ui-capture.md`.
 
 ## Review and revise
 
-Run `dx ui-capture show`, play the entire MP4, and inspect both raw stage
-captures. Confirm that:
+Run `dx ui-capture show`, open `contact.png` and both stage screenshots, read
+the `## Acceptance criteria` and `## Claims` sections of `visual-evidence.md`,
+then spot-check the MP4. The contact sheet is the keyframe record; a session
+cannot watch the video end to end. Confirm that:
 
 - every material visible change found in the diff is covered or explicitly
   listed as out of scope with a reason
 - before and after use equivalent routes, data, actions, and viewports
 - the visible result, stage labels, and captions are readable and synchronized
+- every after-stage claim held, and each criterion the storyboard names shows
+  `satisfied` in the after column
+- the after state differs from the before state, or the storyboard declares
+  `expect_identical` with a reason
 - the media contains no secrets, personal data, notifications, or unrelated UI
 - console, page, request, and HTTP logs contain no unexplained errors
 - the final video is at most 90 seconds and preferably under 10 MiB
@@ -194,7 +213,7 @@ Do not remove a pre-existing worktree or any user-owned checkout. If cleanup
 fails, report the exact retained path.
 
 Finish with the proof state, comparison base and commit, covered flows and
-viewports, and clickable absolute paths to `walkthrough.mp4`, `poster.png`,
+viewports, and clickable absolute paths to `walkthrough.mp4`, `poster.png`, `contact.png`,
 `captions.vtt`, `transcript.md`, `walkthrough.json`, and
 `visual-evidence.md`. Mention any `after_only` limitation or uncovered change.
 When the structured bundle is `READY`, also report the number of current

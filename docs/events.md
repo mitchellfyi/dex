@@ -87,9 +87,14 @@ Current lifecycle event types include:
 - `session.reaped`
 - `session.reap.completed`
 - `session.summary`
+- `session.usage`
+- `mission.*` (mission mode; see docs/mission-mode.md)
+- `memory.curated` (the memory store's critical review applied; see docs/mission-mode.md)
+- `memory.landed` (curated entries committed into `.dex/memory`; see docs/mission-mode.md)
 - `gate.queued`
 - `gate.started`
 - `gate.finished`
+- `gate.reused`
 - `plan.created` and other event types emitted by future lifecycle helpers
 
 ## Session Process Ownership
@@ -104,7 +109,7 @@ reaper stops what it owns and says what it stopped.
 |-------|--------------|-------------|
 | `session.reaped` | One per process the reaper stopped | `pid`, `ppid`, `age_seconds`, `rss_kb`, `cwd`, `command` (truncated to 200 characters), `method`, `reason` |
 | `session.reap.completed` | Once per reap pass that found at least one owned process | `reason`, `scope`, `method`, `candidates`, `reaped`, `survived` |
-| `session.summary` | Once per provider session, after the reap that ended it | `reason`, `phase`, `heavy_commands`, `heavy_seconds`, `queue_seconds`, `over_budget_commands`, `peak_rss_mb`, `peak_rss_samples`, `reaped`, `survived` |
+| `session.summary` | Once per provider session, after the reap that ended it | `reason`, `phase`, `heavy_commands`, `heavy_seconds`, `queue_seconds`, `over_budget_commands`, `ungated_heavy_commands`, `peak_rss_mb`, `peak_rss_samples`, `reaped`, `survived` |
 
 `session.summary` completes the pair: the reap events say what was still
 running, and the summary says what the session spent getting there, with the
@@ -142,19 +147,64 @@ it again. Only a pass with no survivors removes them.
 A pass that found nothing emits nothing. `dx ps` shows the same ownership
 without stopping anything.
 
+## Mission Ledger
+
+In mission mode (docs/mission-mode.md) every write to the session's mission
+ledger also leaves one event in the run journal, so the journal shows the
+mission's shape next to its gates and reviews. The ledger is authoritative;
+these events are the projection.
+
+| Event | When emitted | Data |
+|-------|--------------|------|
+| `mission.started` | The ledger is initialised for the session | The `mission` record: `mission_id`, `brief_file`, `brief_sha256`, `workspace`, `branch`, `base_revision`, `source_tickets`, `dex_version` |
+| `mission.lease.acquired` / `mission.lease.released` | The write lease changes hands | The `write-lease` record: `holder`, `scope`, `revision` or `revision_after`, `lease_generation` |
+| `mission.assignment.<status>` | A helper is registered or reports (`started`, `implemented`, `blocked`, `finding`, `investigated`, `reviewed`, `check_result`, `unreported`, `planned`) | The `assignment` record: `id`, `agent_id`, `agent_type`, `status`, `summary`, `changed_paths`, `checks`, `revision_before`/`revision_after`, `reported` |
+| `mission.decision`, `mission.selfcheck`, `mission.evidence.linked`, `mission.observation`, `mission.feedback`, `mission.note` | The lead records one | The record's `fields` as written |
+| `memory.curated` | `dx memory curate` applied the curator's decisions for the repository (written when a session id is known, so from the lifecycle's completion path) | `applied`, `rejected`, `actor` |
+| `memory.landed` | `dx memory land` committed curated entries into `.dex/memory` on a `dex/memory-*` branch (written when a session id is known) | `entries`, `status_changes`, `branch`, `commit`, `pr` |
+
+Every record carries `generation` (strictly increasing per ledger), `actor`
+(`lead` or the helper's agent id; self-declared by the caller, like
+`dx control --source`) and `recorded_at`. The event's `message` is
+`Mission ledger: <type>`.
+
 ## Heavy Gates
 
 `dx run-gate` runs one heavy command — a project gate, a test suite, a build;
 never a dev server, which starts directly and is session-owned — under
 host-wide admission. Three events cover its life, so a run
 journal shows how long the host made it wait as distinct from how long the work
-itself took.
+itself took. A fourth, `gate.reused`, is emitted by the read side
+(`bin/gate-receipt.sh`) when a later phase skips a gate on the strength of a
+recorded pass instead of running it.
 
 | Event | When emitted | Data fields |
 |-------|--------------|-------------|
 | `gate.queued` | Before the gate waits for a `heavy` lease | `gate`, `pool`, `limit`, `priority_wrapper` |
 | `gate.started` | After admission, immediately before the command runs | `gate`, `pool`, `limit`, `queue_seconds`, `priority_wrapper`, `test_jobs`, `command`, `timeout_seconds` |
-| `gate.finished` | After the command exits, whatever its status | `gate`, `pool`, `exit_code`, `duration_seconds`, `queue_seconds`, `priority_wrapper`, `test_jobs`, `checkout_fingerprint`, `working_fingerprint`, `stable`, `command`, `timeout_seconds`, `over_budget`, `receipt` |
+| `gate.finished` | After the command exits, whatever its status | `gate`, `pool`, `exit_code`, `duration_seconds`, `queue_seconds`, `priority_wrapper`, `test_jobs`, `checkout_fingerprint`, `working_fingerprint`, `env_fingerprint`, `stable`, `command`, `timeout_seconds`, `over_budget`, `receipt` |
+| `gate.reused` | When `gate-receipt.sh` answers "reuse" for a named gate | `gate`, `checkout_fingerprint`, `working_fingerprint`, `env_fingerprint`, `receipt_recorded_at`, `receipt_session` |
+
+`env_fingerprint` is the environment binding from
+`scripts/gate_env_fingerprint.py` (docs/host-budget.md): the toolchain on
+`PATH`, the job budget, the platform and the dependency manifests. A receipt
+is reused only when the tree and the environment both match, and
+`gate.reused` records all three fingerprints so the reuse can be traced to
+the `gate.finished` that produced the receipt. `receipt_recorded_at` and
+`receipt_session` name that receipt; with `--session` or `--all-sessions` the
+session is not the one journaling the reuse. It is written to the reusing
+session's run. An empty `env_fingerprint` on `gate.finished` means the
+environment could not be fingerprinted; that receipt is never reused.
+
+Heavy work that bypassed the queue leaves a trace too. When the
+`warn-detached-processes` guard sees a command the project declared under
+`heavy_commands` run outside `dx run-gate` in a session with `DEX_SESSION_ID`,
+it appends one line — `recorded_at`, `session`, `command` — to
+`$DX_LOOP_DIR/<session>.gate-receipts/ungated.jsonl`, beside the receipts the
+gated runs produced. It is a counter, not a receipt: nothing about the result
+is known, only that the run happened unqueued. The session summary reports the
+line count as `ungated_heavy_commands`. The write is best effort and never
+fails the guard.
 
 `priority_wrapper` names the reduced-priority wrapper the command actually ran
 under: `nice+taskpolicy` on macOS, `systemd-run` or `nice+ionice` on Linux,
@@ -530,8 +580,10 @@ for the whole ticket.
 `heavy_commands`, `heavy_seconds` and `queue_seconds` come from the gate
 ledger the session keeps beside its token — one row per `dx run-gate` that
 finished, so the same gate run twice counts twice. `over_budget_commands`
-counts the ones that reached their deadline. Heavy work run outside a gate is
-not counted, because nothing observed it.
+counts the ones that reached their deadline. `ungated_heavy_commands` counts
+the declared heavy commands the `warn-detached-processes` guard saw run
+outside a gate (§ Heavy Gates); it is a count of launches the guard observed,
+with no duration or result, because nothing owned the work.
 
 `peak_rss_mb` is the largest total resident size the session's token-carrying
 process tree reached, in whole megabytes. The runtime supervisor samples it on
@@ -549,12 +601,45 @@ answers "what did this cost and did it clean up" without joining two.
 The same numbers are printed once, as a line a human reads:
 
 ```
-[info]  worktree-cc-700: session summary: phase 4, 3 heavy command(s) (812s running, 41s queued), peak RSS 1842 MB, 2 reaped, 0 survived
+[info]  worktree-cc-700: session summary: phase 4, 3 heavy command(s) (812s running, 41s queued), 0 ungated, peak RSS 1842 MB, 2 reaped, 0 survived
 ```
 
 An unsampled host prints `peak RSS unavailable` in place of the megabytes, and
 a session outside a lifecycle prints `phase -`. A session that never took
 process ownership has nothing to summarise and prints nothing.
+
+### Model usage
+
+`session.usage` is the second event the SessionEnd hook writes, after
+`session.summary`: what the provider session's requests cost in tokens, read
+from the transcript Claude Code names in the hook payload (`transcript_path`)
+and from the `subagents/` directory beside it. `scripts/usage_collect.py` does
+the reading and the hook keeps its full output under the run directory as
+`usage/<provider-session-id>.json`; the event carries the totals.
+
+Claude Code writes one transcript line per content block, so a request's
+`usage` block appears on several lines. The collector counts a request once,
+by `requestId`, and reports how many duplicate lines it skipped. The
+provider's `input_tokens` excludes cached input, so `prompt_tokens_total` is
+the sum of `input_tokens`, `cache_creation_input_tokens` and
+`cache_read_input_tokens`; nothing is added twice. `usage_schema:
+anthropic-exclusive` records that convention so a later normaliser for a
+provider that reports inclusive totals cannot be confused with this one.
+
+| Field | Meaning |
+|-------|---------|
+| `available` | `false` when the payload named no transcript, the file was missing, or the collector failed; then `reason` says which and no totals are present. An unmeasured session is unknown, not free |
+| `provider_session_id`, `transcript_path`, `usage_file` | Where the numbers came from and where the full record is |
+| `requests` | Distinct requests seen across the main transcript and every subagent transcript |
+| `duplicate_lines_skipped`, `requests_without_usage`, `malformed_lines` | What the collector set aside: repeated lines, requests whose line had no usage block, lines that did not parse (a transcript still being written) |
+| `complete` | `true` only when nothing was malformed and every request had usage |
+| `totals` | `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `output_tokens`, `thinking_tokens`, `prompt_tokens_total`, `requests` |
+| `by_agent` | The same counters per transcript: `main` for the session's own, the agent id for each subagent, with `agent_type` from its `.meta.json` |
+| `by_model` | `requests`, `prompt_tokens_total` and `output_tokens` per model name as the transcript reports it; a model alias is not an immutable version |
+
+The transcript is written asynchronously, so the last turn can be missing at
+SessionEnd. Anything that compares sessions re-collects from disk afterwards
+and treats the event as the live reading, not the final one.
 
 ### Heavy-gate fields
 

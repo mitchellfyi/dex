@@ -187,6 +187,11 @@ else
   if [[ "$current_ui_proof" != "MISSING" ]]; then
     echo "  UI Details: $(dx_ui_capture_evidence_file "$current_session")"
   fi
+  current_qa=$(dx_qa_status "$current_session")
+  echo "  QA:         $current_qa"
+  if [[ "$current_qa" != "MISSING" ]]; then
+    echo "  QA Details: $(dx_qa_markdown_file "$current_session")"
+  fi
 fi
 
 # Changes available immediately?

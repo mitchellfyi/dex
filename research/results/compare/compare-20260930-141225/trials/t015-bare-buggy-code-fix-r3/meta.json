@@ -1,0 +1,19 @@
+{
+  "trial_id": "t015-bare-buggy-code-fix-r3",
+  "arm": "bare",
+  "arm_family": "bare",
+  "prompts_source": "none",
+  "scenario": "buggy-code-fix",
+  "replica": 3,
+  "seeded": 0,
+  "model": "opus",
+  "effort": "xhigh",
+  "timeout_s": 3600,
+  "exit_code": 0,
+  "wall_seconds": 153,
+  "legacy_total": 92,
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 29
+}

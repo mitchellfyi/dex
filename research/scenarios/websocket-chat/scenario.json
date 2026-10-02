@@ -1,7 +1,0 @@
-{
-  "name": "websocket-chat",
-  "type": "feature",
-  "description": "Build a WebSocket chat server with rooms, nicknames, and message history.",
-  "timeout": 5400,
-  "language": "node"
-}

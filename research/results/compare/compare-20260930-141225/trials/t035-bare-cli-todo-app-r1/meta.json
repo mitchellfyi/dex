@@ -1,0 +1,19 @@
+{
+  "trial_id": "t035-bare-cli-todo-app-r1",
+  "arm": "bare",
+  "arm_family": "bare",
+  "prompts_source": "none",
+  "scenario": "cli-todo-app",
+  "replica": 1,
+  "seeded": 0,
+  "model": "opus",
+  "effort": "xhigh",
+  "timeout_s": 3600,
+  "exit_code": 0,
+  "wall_seconds": 212,
+  "legacy_total": 89,
+  "followup_model": "sonnet",
+  "followup_effort": "high",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 51
+}

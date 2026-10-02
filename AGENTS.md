@@ -26,13 +26,13 @@ Dex is a standalone workflow automation framework for Claude Code and the Codex 
 
 ```
 bin/                 CLI scripts (install, init, config, status, etc.)
-docs/                Extended documentation (guards, autonomous mode, run specs, UI capture)
+docs/                Extended documentation (guards, autonomous mode, run specs, UI capture, manual QA)
 hooks/               Claude Code hooks, guard handler, shared shell parser
   guards/            Built-in guard rules (markdown with YAML frontmatter)
 lib/                 Shared shell libraries sourced by common.sh; see the module table below
 prompts/             Prompt templates for skills and CLI harness workflows
   phase-audits/      Phase-specific audit prompts (0-6 + prompt-loop)
-research/            Benchmarks: scenario suite, Dex-vs-bare comparison (compare/), review-loop evaluation, public benchmarks via Harbor (public-benchmarks/) — not shipped functionality
+research/            Benchmarks: scenario suite, Dex-vs-bare comparison (compare/), review-loop evaluation — not shipped functionality
 scripts/             Python/Node helpers imported by lib/ and Dex-managed tooling
 skills/              Lifecycle skills (linked into ~/.claude/skills/ and individually to $CODEX_HOME/skills/)
 templates/           Files Dex installs into other repos (the dx-maintain GitHub workflow)
@@ -217,7 +217,8 @@ env_value: optional-exact-value
   `warn-claude-attribution`, `warn-destructive-commands`, `warn-raw-codex-delegation`,
   `warn-review-assessment-bash`, `warn-review-assessment-file-edits`,
   `warn-await-in-loop`, `warn-hardcoded-secrets`, `warn-sensitive-files`,
-  `warn-ccr-live-state`, `warn-detached-processes`
+  `warn-ccr-live-state`, `warn-detached-processes`,
+  `mission-write-lease`, `mission-git-mutation` (advisory; evaluated only when `DX_MISSION_ACTIVE=1`)
 - Every built-in guard advises rather than denies. The message reaches the agent as context
   and the tool call proceeds — the agent is expected to read it and decide, which is why the
   wording is guidance rather than a verdict. `action: block` still works for anyone who wants
@@ -258,6 +259,22 @@ Stored in `prompts/`. Skills reference them by plain repo-relative path, e.g.
 - `phase-audits/*.md` — Numbered 0-6 matching lifecycle phases (Phase 0 is Setup), plus `prompt-loop.md`; `3-review-loop.md` is the lifecycle Phase 3 audit and `3-review.md` the per-wave audit the review loop injects
 
 ## Key Architecture Concepts
+
+### Mission mode
+
+Every lifecycle runs as one lead with native Claude Code subagents available as helpers in the
+same worktree: a durable ledger with an exclusive write lease (`lib/mission.sh`,
+`scripts/mission_ledger.py`, `bin/mission.sh`), helper roles passed with `claude --agents` at
+launch, SubagentStart/SubagentStop hooks, two advisory guards, and the contract in
+`prompts/mission-delegation.md`. Whether the lead delegates is its own call; small work is done
+alone. `DEX_ORCHESTRATION_MODE=legacy` opts a launch out (for comparisons); session-only
+runs, review children, assessments and triage never take the path; a Codex-engine lifecycle gets the
+ledger, lease and memory capture but not the roles. Everything checks
+`DX_MISSION_ACTIVE=1` first and is inert otherwise. Never ship subagent definitions as `agents/*.md`: on an installed host
+`~/.claude/agents` links into this checkout, so a file there is live for every session.
+`lib/mission.sh`, `lib/memory.sh` and `lib/feedback.sh` load on demand (`lib/provider.sh` sources
+the first; hooks and `bin/mission.sh` name them through `DX_COMMON_MODULES`); the
+docs-consistency test lists them as deliberately lazy. See `docs/mission-mode.md`.
 
 ### Provider launch policy
 
@@ -336,7 +353,9 @@ Hooks defined in `settings.json`, referenced by paths to Dex scripts:
 | PostToolUse | `Bash` | `post-commit-guard.sh` | Validate commit format via guards |
 | Stop | Interactive agent tries to stop | `phase-loop.sh`, `stop-sound.sh` | Phase audit loop (when active) plus best-effort macOS sound notification |
 | PreCompact | Before compaction | `pre-compact.sh` | Preserve Dex context across compaction |
-| SessionEnd | Session ends | `session-end.sh` | Record session end metadata, reap the processes the session owns, remove its temp root |
+| SessionEnd | Session ends | `session-end.sh` | Record session end metadata, reap the processes the session owns, remove its temp root, journal `session.usage`, ingest a mission's helper observations |
+| SubagentStart | `dx-implementer`, `dx-investigator`, `dx-reviewer` | `subagent-start.sh` | Mission mode only: register the helper in the mission ledger, grant or refuse the write lease, inject its context and scoped memory |
+| SubagentStop | `dx-implementer`, `dx-investigator`, `dx-reviewer` | `subagent-stop.sh` | Mission mode only: record the helper's `dx-result`, release its lease, keep its observations |
 
 ### Phase audit loops
 
@@ -481,6 +500,11 @@ Derived from a stable repo key plus worktree names (`worktree-<name>`) or branch
 Free-form `dx "<prompt>"` requests first choose session only (default) or the
 full workflow. `--session` and `--workflow` bypass the menu; non-terminal
 prompts require a mode. Ticket IDs and workspace flags select the lifecycle.
+So does any input `lib/input.sh` can classify as a source: a GitHub issue or
+PR URL on the origin repository and a Linear issue URL become that ticket (or
+`--from-pr`); a Linear or GitHub project URL, another URL or an existing
+document path runs the workflow, named after the source, and Phase 0 follows
+the "Resolving a source first" section of `prompts/freeform-intake.md`.
 Session-only runs use the current checkout and selected provider without
 worktree creation or phase audits. `DEX_SESSION_ONLY=1` suppresses ticket
 intake and lifecycle hooks; its unique `prompt-` state must not overwrite
@@ -599,7 +623,6 @@ measure the outcome, before and after.
 | Prompts, guardrails, skills, audits: anything that changes what an agent writes | `bash research/compare/run.sh --arms bare,dex@HEAD,dex` runs the working tree against HEAD and against the same model without Dex. See `research/compare/README.md` for the metrics and how to read the report. |
 | The review loop | `research/review-loop/` (seeded defects, tier accuracy, false-clean waves) |
 | Operational behaviour: hooks, host budget, session ownership, cost | run journals under `~/.dex/runs`, `dx review stats`, and session transcripts. First check that the failure you are fixing happens, and how often. |
-| Whether Dex beats plain Claude Code on tasks nobody here wrote | `research/public-benchmarks/` runs SWE-bench Pro and Terminal-Bench through Harbor. Its README has the plan, the status and the results so far. |
 | A problem no scenario covers | turn it into one (below) |
 
 ### Turning a problem into a scenario

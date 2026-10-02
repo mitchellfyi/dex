@@ -143,9 +143,21 @@ Accept any well-supported terminal decision:
 - `SKIPPED`: browser UI changed, but the agent explains why a produced walkthrough would not improve the review or would be unsafe or disproportionate.
 - `N/A`: no browser-rendered behavior changed, with a reason.
 
-`NEEDS_REVIEW` means the agent chose capture but the bundle still needs work. `MISSING` means no decision was recorded. Resolve those when practical; do not turn this advisory proof workflow into a claim that product functionality passed. Manual smoke testing remains a separate requirement.
+`NEEDS_REVIEW` means the agent chose capture but the bundle still needs work. `MISSING` means no decision was recorded. Resolve those when practical; do not turn this advisory proof workflow into a claim that product functionality passed. The manual QA report (Step 6.5) is the separate functional check.
 
 All generated files must live under Dex's temporary artifact directory (`${DX_ARTIFACT_DIR:-~/.claude/.dex-artifacts}`) and must not be committed or staged.
+
+## Step 6.5: Manual QA Report
+
+Run `dx qa show` and read the recorded status:
+
+- `PASSED`: every acceptance criterion and verification requirement has a row with outcome `MET` (or `N_A` with a note), each `MET` row cites an evidence file under the QA evidence directory, and every exploratory finding of medium or higher severity is `fixed` or filed as a `follow-up` with a reference.
+- `FINDINGS`: a criterion is `NOT_MET`, or a medium or high exploratory finding is parked as a `note`. Fix `NOT_MET` criteria now, re-run `dxqa` for the affected rows, and route the rest through `prompts/issue-hygiene.md` as linked follow-ups. Do not complete Phase 2 with a `NOT_MET` row.
+- `BLOCKED`: the change could not be started or driven. The reason must clear the Step 3 blocker rule: a busy port you did not open, a missing local service, or an unavailable tool is a problem to resolve, not a reason.
+- `N_A`: the change has no runnable surface to exercise by hand. The report says why.
+- `MISSING`: run `dxqa` now.
+
+The report is advisory evidence for the reviewer, like UI proof. It does not replace automated tests; it is the one place the change is shown working from the user's side. If later Phase 2 edits made it stale (`dx qa status` exits 3), the summary names what changed and why the exercised behaviour did not.
 
 ## Step 7: Select Phase 3 Review Risk
 
@@ -223,8 +235,9 @@ ALL of these must be true before you stop:
 - No acceptance criterion or verification gate is deferred, skipped, blocked, or delegated to future CI
 - Material implementation discoveries were handled under
   `prompts/issue-hygiene.md`, and the summary contains `Issue/PR work:`
-- The change was exercised end-to-end locally and passed the manual smoke
-  test, or manual verification is explicitly N/A with a reason
+- The QA report (`dx qa show`) is `PASSED`, or `BLOCKED`/`N_A` with a reason
+  that clears the blocker rule; no criterion row is `NOT_MET`, and a stale
+  report is explained in the summary
 - No TODO/FIXME/debugging artifacts remain
 - The implementation history contains the natural coherent checkpoints created
   during the work; every commit was pushed immediately after creation, local

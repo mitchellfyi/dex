@@ -55,7 +55,7 @@ Examples:
 - [ ] Unit tests: [coverage, key scenarios]
 - [ ] Integration tests: [scenarios with real dependencies]
 - [ ] E2E tests: [user flows tested]
-- [ ] Manual verification: [what was manually checked]
+- [ ] Manual verification: QA <status> — <n>/<total> criteria MET, <k> NOT_MET, <b> BLOCKED; exploratory: <fixed>/<follow-up keys>; report: <qa-report.md path> (stale: <what changed>, only when `dx qa status` exits 3)
 
 ## Visual Evidence
 

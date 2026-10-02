@@ -1,0 +1,126 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 0.0921719,
+    "num_turns": 6,
+    "duration_ms": 35620,
+    "duration_api_ms": 22238,
+    "tokens": {
+      "input": 8,
+      "output": 3238,
+      "cache_read": 69352,
+      "cache_creation": 14965,
+      "total": 87563
+    },
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 8,
+        "outputTokens": 3238,
+        "cacheReadInputTokens": 69352,
+        "cacheCreationInputTokens": 14965,
+        "webSearchRequests": 0,
+        "costUSD": 0.0921719,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 197,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Read": 3,
+      "Bash": 2
+    },
+    "final_text": "`buildUrl` now takes an optional `queryOrder` option, and `buildSignedUrl` gets it because it already passes its options through. All 16 tests pass: the 10 that were already there and 6 new ones. I haven't committed anything.\n\n- **Values:** `'sorted'` is the default, and so is leaving the option out or passing `undefined`. `'insertion'` keeps the keys in `Object.keys` order. Any other value throws a `TypeError`, including `null`, `''` and wrong case like `'SORTED'`.\n- **Invalid values:** they throw even when `query` is a `URLSearchParams`, so a typo can't be silently ignored.\n- **Arrays and `URLSearchParams`:** arrays still give one pair per item in array order under both orderings. A `URLSearchParams` query passes through unchanged, as before.\n- **Insertion order:** it follows JavaScript's own property order, so integer-like keys such as `'10'` or `'2'` come first in ascending order, ahead of the other keys.\n- **Signed URLs:** the signature is computed over the URL as built, so different orderings give different signatures for the same query.\n- **Private helper:** `_private.serializeQuery` takes the order as a second argument and validates it the same way.\n\nThe change is in `src/url-builder.js`, with the new tests in `tests/url-builder.test.js`.",
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 2,
+    "by_category": {
+      "source": {
+        "files": 1,
+        "added": 17,
+        "deleted": 3
+      },
+      "test": {
+        "files": 1,
+        "added": 84,
+        "deleted": 0
+      },
+      "docs": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      },
+      "config": {
+        "files": 0,
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 20,
+    "test_lines": 84,
+    "total_lines": 104
+  },
+  "install": {
+    "needed": false,
+    "ok": true
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 16,
+      "failed": 0
+    },
+    "seconds": 1.6,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.4,
+    "groups": {
+      "followup": {
+        "passed": 7,
+        "total": 7,
+        "rate": 1.0
+      },
+      "spec": {
+        "passed": 3,
+        "total": 3,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 21,
+        "total": 21,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "Url` gets it because it already passes its options through. All 16 tests pass: the 10 that were already there and 6 new ones. I haven't c",
+    "false_claim": false
+  }
+}

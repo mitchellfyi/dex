@@ -1,0 +1,44 @@
+You are working in an empty project directory. Your task:
+
+Build a CSV parser and serializer for Node.js with no dependencies. Create `src/csv.js` (CommonJS) exporting `parse`, `stringify` and `CsvError`, a `package.json` with a test script, and tests.
+
+## `parse(text, options = {})`
+
+- `text` must be a string; anything else throws `TypeError`. An empty string returns `[]`.
+- Returns an array of records. Each record is an array of strings, or an object when `options.header` is `true` (see below).
+- Fields are separated by `options.delimiter`, default `,`. The delimiter must be a single character that is not `"`, CR or LF; anything else throws `TypeError`.
+- Records are separated by CRLF, LF or CR; one input may mix them.
+- A leading byte order mark (`﻿`) is ignored.
+- A field that starts with `"` is quoted. Inside it, delimiters, CR and LF are literal, and `""` is one literal `"`. The field ends at the closing `"`, which must be followed by a delimiter, a line break or the end of input. Anything else is an error.
+- In a field that does not start with `"`, a `"` is an ordinary character.
+- Whitespace is kept exactly: fields are never trimmed.
+- One line break at the very end of the input does not start another record. Every other empty line is a record with one empty field, `['']`, unless `options.skipEmptyLines` is `true`, in which case empty lines are skipped.
+- With `options.header: true`, the first record gives the column names and every later record becomes an object keyed by them. Duplicate column names are an error. A later record with more or fewer fields than the header is an error. An input with only a header returns `[]`.
+
+Errors in the input throw a `CsvError` (a subclass of `Error`) with `line` and `column` properties, both 1-based, counting lines by the line breaks above and columns in UTF-16 code units:
+
+- a quoted field that is never closed: the position of its opening `"`;
+- a character other than a delimiter or line break after a closing `"`: the position of that character;
+- a duplicate header name: the line and column where the second occurrence's field starts;
+- a record with the wrong number of fields in header mode: that record's line, column 1.
+
+## `stringify(rows, options = {})`
+
+- `rows` is an array of records, each an array of values. With `options.header` set to an array of column names, each record may instead be an object: the header row is written first, then each object's values in header order, with a missing key written as an empty field.
+- Values: a string is written as is, a number or boolean via `String()`, `null` and `undefined` as an empty field. Any other type throws `TypeError`.
+- A field is quoted when it contains the delimiter, `"`, CR or LF, or begins or ends with a space; every `"` inside is doubled.
+- A record with exactly one field that is the empty string is written as `""`, so it survives a round trip.
+- Records are joined by `options.eol` (`'\r\n'` by default, or `'\n'`; anything else throws `TypeError`), and the output ends with one `eol`. No rows gives `''`.
+- `options.delimiter` works and is validated as in `parse`.
+
+For any rows that are non-empty arrays of strings, `parse(stringify(rows, opts), opts)` must return the same rows, with or without `skipEmptyLines`.
+
+Instructions:
+1. Read the CLAUDE.md in this directory — it contains implementation guardrails you must follow.
+2. Plan your approach first — think about the structure, files needed, and edge cases.
+3. Implement the solution — write all code, tests, and configuration files.
+4. Verify your work — run the tests, check for lint errors, review your own code.
+5. Fix any issues you find — iterate until everything works correctly.
+6. Do a final self-review: check for edge cases, error handling, input validation, and code quality.
+
+Work autonomously. Create all files from scratch. Do not ask questions — make reasonable assumptions for anything unspecified.

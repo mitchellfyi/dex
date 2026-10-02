@@ -1,4 +1,0 @@
-{
-  "fuzz": { "sequences": 40, "steps": 40 },
-  "perf": { "reps": 6 }
-}

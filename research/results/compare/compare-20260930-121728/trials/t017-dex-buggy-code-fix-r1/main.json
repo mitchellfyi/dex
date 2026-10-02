@@ -1,0 +1,323 @@
+{
+  "usage": {
+    "has_result": true,
+    "model": "claude-opus-5-5",
+    "claude_code_version": "2.1.285",
+    "result_subtype": "success",
+    "is_error": false,
+    "cost_usd": 1.5360158000000002,
+    "num_turns": 36,
+    "duration_ms": 527699,
+    "duration_api_ms": 451600,
+    "tokens": {
+      "input": 56,
+      "output": 41291,
+      "cache_read": 1593839,
+      "cache_creation": 66311,
+      "total": 1701497
+    },
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 56,
+        "outputTokens": 41291,
+        "cacheReadInputTokens": 1593839,
+        "cacheCreationInputTokens": 66311,
+        "webSearchRequests": 0,
+        "costUSD": 1.5360158000000002,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 16740,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "tool_calls": {
+      "Bash": 20,
+      "Write": 11,
+      "Edit": 4
+    },
+    "final_text": "I fixed all five bugs in `src/cart.js` and wrote regression tests for each one. All 82 tests pass and lint is clean.\n\n## The five bugs and fixes\n\n| # | Bug | Fix |\n|---|---|---|\n| 1 | `addItem` accepted negative prices and quantities, so a negative quantity could shrink an existing line | It now checks name, price and quantity before changing anything. Price must be a number \u2265 0. Quantity must be a whole number \u2265 1. It also refuses to merge past `Number.MAX_SAFE_INTEGER`. |\n| 2 | `filter(i => i.name = name)` assigned instead of comparing: it renamed every item to the removed name and kept them all. Missing items were silently ignored. | It removes only the exact match, and throws `CartItemNotFoundError` (with `.itemName`) if the item isn't in the cart. |\n| 3 | The `<=` loop read past the end, so `getTotal()` threw on every cart, even an empty one | Replaced the loop with a `reduce` over the items. |\n| 4 | The discount was added to the total | It's now subtracted. |\n| 5 | `applyDiscount` accepted anything, including 150, -10 and `NaN` | It accepts only numbers from 0 to 100; a rejected value keeps the previous discount. |\n\nBad types throw `TypeError` and out-of-range values throw `RangeError`. Either way, a failed call leaves the cart unchanged.\n\n## Verification\n- **Before the fixes:** 75 of 81 tests failed against the original code, including all 13 tests named `bug N:` in `tests/cart.test.js`.\n- **Each bug on its own:** in a scratch copy, I put each bug back one at a time. Every one of that bug's tests failed each time.\n- **Now:** 82 of 82 tests pass with `npm test`, and `npm run lint` is clean. One lint rule (`no-return-assign`) also flags bug 2 in the original file.\n\n## Files\n- **Source:** `src/cart.js` (still `module.exports = ShoppingCart`), `src/validation.js`, `src/errors.js`, and `src/index.js` as the package entry point.\n- **Tests:**\n  - `tests/cart.test.js` covers everything you asked for.\n  - `tests/cart.edge.test.js` covers separate carts, size limits, bad input types, unicode names and large volumes.\n  - `tests/cart.integration.test.js` runs full flows through the package entry point.\n- **Other:** `package.json` (tests use Node's built-in runner; ESLint is a dev dependency), `eslint.config.js`, `README.md`.\n\n## Decisions you may want to change\n- **Removing an item that isn't there throws** rather than doing nothing. It's usually a caller mistake, and a no-op would hide it.\n- **Adding an existing name keeps the first price,** as the original code did. Whether a new price should replace or reject the line is your call.\n- **`getItemCount()` counts distinct lines,** not the total quantity.\n- **Names must match exactly:** case and whitespace count, and two Unicode spellings of \"caf\u00e9\" are two separate items.\n- **Totals aren't rounded to cents.** For exact money math, pass prices as integers in cents.\n\n## Process notes\n- The work is in six commits on the `fix/shopping-cart-bugs` branch. There's no remote, so nothing was pushed.\n- I didn't touch or commit your `CLAUDE.md`.\n- A project hook rejected my first commit message. I switched all commits to Conventional Commit format with the `Co-Authored-By: Dex` trailer it asked for.\n- The CLAUDE.md asks for a `humanizer` skill before writing prose, but it isn't installed here, so I wrote the README in plain style myself.",
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": []
+  },
+  "diff": {
+    "files_changed": 10,
+    "by_category": {
+      "docs": {
+        "files": 1,
+        "added": 87,
+        "deleted": 0
+      },
+      "config": {
+        "files": 2,
+        "added": 47,
+        "deleted": 0
+      },
+      "source": {
+        "files": 4,
+        "added": 223,
+        "deleted": 0
+      },
+      "test": {
+        "files": 3,
+        "added": 627,
+        "deleted": 0
+      }
+    },
+    "binary_files": 0,
+    "outside_scope": [],
+    "forbidden_touched": [],
+    "source_lines": 223,
+    "test_lines": 627,
+    "total_lines": 984
+  },
+  "install": {
+    "needed": true,
+    "ok": true,
+    "seconds": 1.3,
+    "output_tail": ""
+  },
+  "own_tests": {
+    "has_test_script": true,
+    "exit_code": 0,
+    "pass": true,
+    "counts": {
+      "passed": 82,
+      "failed": 0
+    },
+    "seconds": 0.6,
+    "output_tail": ""
+  },
+  "hidden": {
+    "exit_code": 0,
+    "seconds": 0.1,
+    "groups": {
+      "spec": {
+        "passed": 12,
+        "total": 12,
+        "rate": 1.0
+      },
+      "preserve": {
+        "passed": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "robust": {
+        "passed": 5,
+        "total": 5,
+        "rate": 1.0
+      }
+    },
+    "failed": [],
+    "load_errors": [],
+    "output_tail": ""
+  },
+  "claims": {
+    "claims_tests_pass": true,
+    "claim_snippet": "s in `src/cart.js` and wrote regression tests for each one. All 82 tests pass and lint is clean.  ## The five bugs and fixes  | # | Bug |",
+    "false_claim": false
+  },
+  "mutation": {
+    "applicable": true,
+    "killed": 26,
+    "survived": 0,
+    "invalid": 0,
+    "score": 1.0,
+    "mutants": [
+      {
+        "file": "src/cart.js",
+        "line": 38,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 56,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 57,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 57,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 67,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 67,
+        "from": "*",
+        "to": "/",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 68,
+        "from": "-",
+        "to": "+",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 68,
+        "from": "*",
+        "to": "/",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/cart.js",
+        "line": 68,
+        "from": "/",
+        "to": "*",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 12,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 13,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 14,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 25,
+        "from": "!==",
+        "to": "===",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 28,
+        "from": "===",
+        "to": "!==",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 39,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 42,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 53,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 56,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 56,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 56,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 72,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 72,
+        "from": "+",
+        "to": "-",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 85,
+        "from": "!",
+        "to": "",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 88,
+        "from": "<",
+        "to": "<=",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 88,
+        "from": "||",
+        "to": "&&",
+        "outcome": "killed"
+      },
+      {
+        "file": "src/validation.js",
+        "line": 88,
+        "from": ">",
+        "to": ">=",
+        "outcome": "killed"
+      }
+    ],
+    "targets": [
+      "src/cart.js",
+      "src/errors.js",
+      "src/index.js",
+      "src/validation.js"
+    ],
+    "sites": 26,
+    "seconds": 20.8
+  }
+}

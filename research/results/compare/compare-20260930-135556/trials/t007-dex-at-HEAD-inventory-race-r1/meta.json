@@ -1,0 +1,19 @@
+{
+  "trial_id": "t007-dex-at-HEAD-inventory-race-r1",
+  "arm": "dex@HEAD",
+  "arm_family": "dex",
+  "prompts_source": "0a54338d03604f0d884a20b1dc968bbafefdd6d8",
+  "scenario": "inventory-race",
+  "replica": 1,
+  "seeded": 1,
+  "model": "sonnet",
+  "effort": "low",
+  "timeout_s": 1200,
+  "exit_code": 0,
+  "wall_seconds": 51,
+  "legacy_total": 91,
+  "followup_model": "sonnet",
+  "followup_effort": "low",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 31
+}

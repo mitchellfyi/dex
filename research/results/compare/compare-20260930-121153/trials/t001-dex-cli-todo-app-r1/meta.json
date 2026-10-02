@@ -1,0 +1,17 @@
+{
+  "trial_id": "t001-dex-cli-todo-app-r1",
+  "arm": "dex",
+  "scenario": "cli-todo-app",
+  "replica": 1,
+  "seeded": 0,
+  "model": "sonnet",
+  "effort": "low",
+  "timeout_s": 1200,
+  "exit_code": 0,
+  "wall_seconds": 61,
+  "legacy_total": 90,
+  "followup_model": "sonnet",
+  "followup_effort": "low",
+  "followup_exit_code": 0,
+  "followup_wall_seconds": 30
+}
