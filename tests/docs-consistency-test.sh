@@ -78,7 +78,8 @@ for path in tracked("hooks/guards/*.md"):
     name = re.search(r"^name: (\S+)", (root / path).read_text(encoding="utf-8"), re.M)
     if name:
         guards.add(name.group(1))
-undocumented = guards - set(re.findall(r"`(warn-[a-z-]+)`", agents))
+# Any backticked name counts: the mission guards are not warn-* names.
+undocumented = guards - set(re.findall(r"`([a-z][a-z0-9-]*)`", agents))
 if undocumented:
     problems.append(f"built-in guards not named in AGENTS.md: {sorted(undocumented)}")
 
