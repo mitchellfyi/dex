@@ -28,6 +28,8 @@ export DX_ARTIFACT_DIR="$TMP_DIR/artifacts"
 export DX_TOOL_DIR="$TMP_DIR/tools"
 export DX_RUN_ROOT="$TMP_DIR/runs"
 export HOME="$TMP_DIR/home"
+# The scout assertions pin the default; a value from the caller's shell is not it.
+unset DEX_REVIEW_SCOUT_PARALLELISM DX_HOST_ACTIVE_HEAVY
 mkdir -p "$HOME"
 # shellcheck disable=SC1091
 source "$ROOT/tests/helpers.sh"
@@ -465,7 +467,9 @@ assert_eq "3" "$(dx_review_findings_ledger_count "$LEDGER_SESSION" checked)" \
 dx_review_findings_ledger_seed "$LEDGER_SESSION" "correctness" || assert_at $LINENO
 assert_eq "3" "$(dx_review_findings_ledger_count "$LEDGER_SESSION")" "seeding twice adds nothing"
 assert_contains '"lens": "coherence"' "$LEDGER_FILE"
-assert_eq "600" "$(printf '%o\n' "$(( 0$(stat -f '%Lp' "$LEDGER_FILE" 2>/dev/null || stat -c '%a' "$LEDGER_FILE") ))")" \
+# GNU stat first: its -f means filesystem status and prints a report even
+# while failing, where BSD stat -c fails without printing anything.
+assert_eq "600" "$(stat -c '%a' "$LEDGER_FILE" 2>/dev/null || stat -f '%Lp' "$LEDGER_FILE")" \
   "the ledger is private to its owner"
 
 # A wave appends its own rows; the loop must read them back.
